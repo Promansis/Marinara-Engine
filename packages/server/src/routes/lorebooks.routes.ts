@@ -498,6 +498,7 @@ export async function lorebooksRoutes(app: FastifyInstance) {
     let characterIds: string[] = [];
     let personaId: string | null = null;
     let activeLorebookIds: string[] = [];
+    let chatMeta: Record<string, unknown> = {};
     if (chat) {
       personaId = typeof chat.personaId === "string" ? chat.personaId : null;
       if (!personaId && chat.mode !== "game") {
@@ -518,11 +519,11 @@ export async function lorebooksRoutes(app: FastifyInstance) {
         /* ignore */
       }
       try {
-        const meta =
+        chatMeta =
           typeof chat.metadata === "string"
             ? JSON.parse(chat.metadata)
             : ((chat.metadata as Record<string, unknown>) ?? {});
-        activeLorebookIds = Array.isArray(meta.activeLorebookIds) ? meta.activeLorebookIds : [];
+        activeLorebookIds = Array.isArray(chatMeta.activeLorebookIds) ? chatMeta.activeLorebookIds : [];
       } catch {
         /* ignore */
       }
@@ -538,6 +539,7 @@ export async function lorebooksRoutes(app: FastifyInstance) {
       characterIds,
       personaId,
       activeLorebookIds,
+      tokenBudget: typeof chatMeta.lorebookTokenBudget === "number" ? chatMeta.lorebookTokenBudget : undefined,
       generationTriggers: resolveScanGenerationTriggers(chat?.mode),
     });
 

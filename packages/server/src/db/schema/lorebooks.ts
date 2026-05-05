@@ -15,6 +15,7 @@ export const lorebooks = sqliteTable("lorebooks", {
   characterId: text("character_id"),
   personaId: text("persona_id"),
   chatId: text("chat_id"),
+  isGlobal: text("is_global").notNull().default("false"),
   enabled: text("enabled").notNull().default("true"),
   /** Tags for organizing/filtering lorebooks (JSON array of strings) */
   tags: text("tags").notNull().default("[]"),

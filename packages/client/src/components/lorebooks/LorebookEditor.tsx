@@ -30,6 +30,7 @@ import { useCharacters, usePersonas } from "../../hooks/use-characters";
 import { useConnections } from "../../hooks/use-connections";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { useUIStore } from "../../stores/ui.store";
+import { useChatStore } from "../../stores/chat.store";
 import {
   ArrowLeft,
   Save,
@@ -126,6 +127,7 @@ const SORT_OPTIONS: Array<{ value: EntrySortKey; label: string }> = [
 export function LorebookEditor() {
   const lorebookId = useUIStore((s) => s.lorebookDetailId);
   const closeDetail = useUIStore((s) => s.closeLorebookDetail);
+  const activeChat = useChatStore((s) => s.activeChat);
   const { data: rawLorebook, isLoading } = useLorebook(lorebookId);
   const { data: rawLorebooks } = useLorebooks();
   const { data: rawEntries } = useLorebookEntries(lorebookId);
@@ -169,6 +171,18 @@ export function LorebookEditor() {
       comment: p.comment ?? null,
     }));
   }, [rawPersonas]);
+  const activeChatLorebookIds = useMemo(() => {
+    if (!activeChat?.metadata) return [] as string[];
+    try {
+      const meta =
+        typeof activeChat.metadata === "string"
+          ? JSON.parse(activeChat.metadata)
+          : (activeChat.metadata as Record<string, unknown>);
+      return Array.isArray(meta.activeLorebookIds) ? meta.activeLorebookIds.map(String) : [];
+    } catch {
+      return [];
+    }
+  }, [activeChat?.metadata]);
 
   const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [expandedEntryId, setExpandedEntryId] = useState<string | null>(null);
@@ -230,6 +244,7 @@ export function LorebookEditor() {
   const [formDescription, setFormDescription] = useState("");
   const [formCategory, setFormCategory] = useState<LorebookCategory>("uncategorized");
   const [formEnabled, setFormEnabled] = useState(true);
+  const [formIsGlobal, setFormIsGlobal] = useState(false);
   const [formScanDepth, setFormScanDepth] = useState(2);
   const [formTokenBudget, setFormTokenBudget] = useState(2048);
   const [formRecursive, setFormRecursive] = useState(false);
@@ -238,6 +253,21 @@ export function LorebookEditor() {
   const [formPersonaId, setFormPersonaId] = useState<string | null>(null);
   const [formTags, setFormTags] = useState<string[]>([]);
   const [newTag, setNewTag] = useState("");
+
+  const scopeLabel = useMemo(() => {
+    if (!formEnabled) return null;
+    if (formIsGlobal) return "Global";
+    if (lorebookId && activeChatLorebookIds.includes(lorebookId)) return "Attached to this chat";
+    if (formCharacterId) {
+      const name = characters.find((character) => character.id === formCharacterId)?.name ?? formCharacterId;
+      return `Linked to Character ${name}`;
+    }
+    if (formPersonaId) {
+      const name = personas.find((persona) => persona.id === formPersonaId)?.name ?? formPersonaId;
+      return `Linked to Persona ${name}`;
+    }
+    return "Not active anywhere yet";
+  }, [activeChatLorebookIds, characters, formCharacterId, formEnabled, formIsGlobal, formPersonaId, lorebookId, personas]);
 
   const loadedLorebookIdRef = useRef<string | null>(null);
 
@@ -251,6 +281,7 @@ export function LorebookEditor() {
     setFormDescription(lorebook.description);
     setFormCategory(lorebook.category);
     setFormEnabled(lorebook.enabled);
+    setFormIsGlobal(lorebook.isGlobal ?? false);
     setFormScanDepth(lorebook.scanDepth);
     setFormTokenBudget(lorebook.tokenBudget);
     setFormRecursive(lorebook.recursiveScanning);
@@ -633,6 +664,7 @@ export function LorebookEditor() {
         description: formDescription,
         category: formCategory,
         enabled: formEnabled,
+        isGlobal: formIsGlobal,
         scanDepth: formScanDepth,
         tokenBudget: formTokenBudget,
         recursiveScanning: formRecursive,
@@ -651,6 +683,7 @@ export function LorebookEditor() {
     formDescription,
     formCategory,
     formEnabled,
+    formIsGlobal,
     formScanDepth,
     formTokenBudget,
     formRecursive,
@@ -953,6 +986,7 @@ export function LorebookEditor() {
                 </div>
 
                 {/* Character Link */}
+                {!formIsGlobal && (
                 <div>
                   <label className="mb-1.5 flex items-center gap-1 text-xs font-medium">
                     Linked Character{" "}
@@ -990,8 +1024,10 @@ export function LorebookEditor() {
                     )}
                   </div>
                 </div>
+                )}
 
                 {/* Persona Link */}
+                {!formIsGlobal && (
                 <div>
                   <label className="mb-1.5 flex items-center gap-1 text-xs font-medium">
                     Linked Persona{" "}
@@ -1029,23 +1065,58 @@ export function LorebookEditor() {
                     )}
                   </div>
                 </div>
+                )}
 
                 {/* Enabled toggle */}
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div className="flex items-center justify-between rounded-xl bg-[var(--secondary)] px-4 py-3 ring-1 ring-[var(--border)]">
+                    <div>
+                      <p className="text-xs font-medium">Enabled</p>
+                      <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
+                        When off, entries in this lorebook won't activate
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setFormEnabled(!formEnabled);
+                        markLorebookDirty();
+                      }}
+                      className="transition-colors"
+                    >
+                      {formEnabled ? (
+                        <ToggleRight size="1.75rem" className="text-amber-400" />
+                      ) : (
+                        <ToggleLeft size="1.75rem" className="text-[var(--muted-foreground)]" />
+                      )}
+                    </button>
+                  </div>
+
+                  {scopeLabel && (
+                    <div className="flex items-center justify-between rounded-xl bg-[var(--secondary)] px-4 py-3 ring-1 ring-[var(--border)]">
+                      <div>
+                        <p className="text-xs font-medium">Scope</p>
+                        <p className="text-[0.6875rem] text-[var(--muted-foreground)]">{scopeLabel}</p>
+                      </div>
+                      <Globe size="1rem" className="text-amber-400" />
+                    </div>
+                  )}
+                </div>
+
                 <div className="flex items-center justify-between rounded-xl bg-[var(--secondary)] px-4 py-3 ring-1 ring-[var(--border)]">
                   <div>
-                    <p className="text-xs font-medium">Enabled</p>
+                    <p className="text-xs font-medium">Global</p>
                     <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
-                      When off, entries in this lorebook won't activate
+                      Active in every chat when this lorebook is enabled
                     </p>
                   </div>
                   <button
                     onClick={() => {
-                      setFormEnabled(!formEnabled);
+                      setFormIsGlobal(!formIsGlobal);
                       markLorebookDirty();
                     }}
                     className="transition-colors"
                   >
-                    {formEnabled ? (
+                    {formIsGlobal ? (
                       <ToggleRight size="1.75rem" className="text-amber-400" />
                     ) : (
                       <ToggleLeft size="1.75rem" className="text-[var(--muted-foreground)]" />

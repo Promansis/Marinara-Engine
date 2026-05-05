@@ -4,9 +4,14 @@ import type { Lorebook, LorebookEntry } from "@marinara-engine/shared";
 import {
   applyLorebookDefaults,
   applyPerLorebookTokenBudgets,
+  enforceMaxActivatedEntries,
   filterRelevantLorebooks,
 } from "../src/services/lorebook/index.js";
-import { scanForActivatedEntries, type ActivatedEntry } from "../src/services/lorebook/keyword-scanner.js";
+import {
+  scanForActivatedEntries,
+  updateTimingStatesForScan,
+  type ActivatedEntry,
+} from "../src/services/lorebook/keyword-scanner.js";
 
 function makeLorebook(overrides: Partial<Lorebook> = {}): Lorebook {
   return {
@@ -21,6 +26,7 @@ function makeLorebook(overrides: Partial<Lorebook> = {}): Lorebook {
     characterId: null,
     personaId: null,
     chatId: null,
+    isGlobal: false,
     enabled: true,
     tags: [],
     generatedBy: null,
@@ -156,6 +162,24 @@ test("persona-linked lorebooks activate only for the active persona", () => {
   );
 });
 
+test("global lorebooks bypass other scope filters when enabled", () => {
+  const globalBook = makeLorebook({ id: "global-book", isGlobal: true });
+  const inactiveGlobalBook = makeLorebook({ id: "disabled-global-book", isGlobal: true, enabled: false });
+  const otherPersonaBook = makeLorebook({ id: "other-persona-book", personaId: "persona-2" });
+
+  const relevant = filterRelevantLorebooks([globalBook, inactiveGlobalBook, otherPersonaBook], {
+    characterIds: [],
+    personaId: "persona-1",
+    activeLorebookIds: [],
+    chatId: "chat-1",
+  });
+
+  assert.deepEqual(
+    relevant.map((book) => book.id),
+    ["global-book"],
+  );
+});
+
 test("per-entry scan depth overrides the lorebook default", () => {
   const entry = makeEntry({ scanDepth: 0 });
   const entries = applyLorebookDefaults([entry], new Map([["book-1", makeLorebook({ scanDepth: 2 })]]));
@@ -209,4 +233,75 @@ test("token budgets are enforced independently per lorebook", () => {
     budgeted.map((entry) => entry.entry.id),
     ["b-1", "a-1", "b-2"],
   );
+});
+
+test("max activated lorebook entries keeps highest-priority entries", () => {
+  const activatedEntries: ActivatedEntry[] = [
+    { entry: makeEntry({ id: "late", order: 30 }), matchedKeys: ["keyword"], injectionOrder: 30 },
+    { entry: makeEntry({ id: "constant", constant: true, order: 40 }), matchedKeys: ["[constant]"], injectionOrder: 40 },
+    { entry: makeEntry({ id: "early", order: 10 }), matchedKeys: ["keyword"], injectionOrder: 10 },
+  ];
+
+  const capped = enforceMaxActivatedEntries(activatedEntries, 2);
+
+  assert.deepEqual(
+    capped.map((entry) => entry.entry.id),
+    ["early", "constant"],
+  );
+});
+
+test("timing state persists delay, cooldown, and sticky activation windows", () => {
+  const entry = makeEntry({ sticky: 1, cooldown: 2, delay: 1 });
+  const delayed = scanForActivatedEntries([{ role: "user", content: "keyword" }], [entry], {
+    timingStates: new Map([
+      [
+        entry.id,
+        {
+          lastActivatedAt: null,
+          stickyCount: 0,
+          cooldownRemaining: 0,
+          delayRemaining: 1,
+        },
+      ],
+    ]),
+    currentMessageIndex: 1,
+  });
+  assert.equal(delayed.length, 0);
+
+  const afterDelay = updateTimingStatesForScan(
+    [entry],
+    delayed,
+    new Map([
+      [
+        entry.id,
+        {
+          lastActivatedAt: null,
+          stickyCount: 0,
+          cooldownRemaining: 0,
+          delayRemaining: 1,
+        },
+      ],
+    ]),
+    1,
+  );
+  assert.equal(afterDelay.get(entry.id)?.delayRemaining, 0);
+
+  const activated = scanForActivatedEntries([{ role: "user", content: "keyword" }], [entry], {
+    timingStates: afterDelay,
+    currentMessageIndex: 2,
+  });
+  assert.deepEqual(activated.map((result) => result.entry.id), [entry.id]);
+
+  const afterActivation = updateTimingStatesForScan([entry], activated, afterDelay, 2);
+  assert.equal(afterActivation.get(entry.id)?.stickyCount, 1);
+  assert.equal(afterActivation.get(entry.id)?.cooldownRemaining, 2);
+
+  const sticky = scanForActivatedEntries([{ role: "user", content: "no match" }], [entry], {
+    timingStates: afterActivation,
+    currentMessageIndex: 3,
+  });
+  assert.deepEqual(sticky.map((result) => result.matchedKeys[0]), ["[sticky]"]);
+
+  const afterSticky = updateTimingStatesForScan([entry], sticky, afterActivation, 3);
+  assert.equal(afterSticky.get(entry.id)?.stickyCount, 0);
 });

@@ -12,6 +12,7 @@ import {
   DEFAULT_AGENT_TOOLS,
   LOCAL_SIDECAR_CONNECTION_ID,
   resolveMacros,
+  LIMITS,
 } from "@marinara-engine/shared";
 import type {
   AgentContext,
@@ -22,6 +23,7 @@ import type {
   GameState,
   HapticDeviceCommand,
   PlayerStats,
+  LorebookEntryTimingState,
 } from "@marinara-engine/shared";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
@@ -379,6 +381,51 @@ async function updateJournal(db: any, chatId: string, transform: (journal: Journ
   } catch {
     // Non-critical — don't break generation
   }
+}
+
+function resolveLorebookTokenBudget(meta: Record<string, unknown>): number {
+  const raw = meta.lorebookTokenBudget;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
+    return LIMITS.DEFAULT_LOREBOOK_TOKEN_BUDGET;
+  }
+  return Math.floor(raw);
+}
+
+async function persistLorebookRuntimeState(args: {
+  chats: ReturnType<typeof createChatsStorage>;
+  chatId: string;
+  fallbackMeta: Record<string, unknown>;
+  entryStateOverrides?: Record<string, { ephemeral?: number | null; enabled?: boolean }>;
+  entryTimingStates?: Record<string, LorebookEntryTimingState>;
+}): Promise<void> {
+  if (!args.entryStateOverrides && !args.entryTimingStates) return;
+  const freshChat = await args.chats.getById(args.chatId);
+  const freshMeta = freshChat ? (parseExtra(freshChat.metadata) as Record<string, unknown>) : args.fallbackMeta;
+  await args.chats.updateMetadata(args.chatId, {
+    ...freshMeta,
+    ...(args.entryStateOverrides ? { entryStateOverrides: args.entryStateOverrides } : {}),
+    ...(args.entryTimingStates ? { entryTimingStates: args.entryTimingStates } : {}),
+  });
+}
+
+async function resolveLatestGameStateForLorebooks(db: any, chatId: string): Promise<Record<string, unknown> | null> {
+  const committedRows = await db
+    .select()
+    .from(gameStateSnapshotsTable)
+    .where(and(eq(gameStateSnapshotsTable.chatId, chatId), eq(gameStateSnapshotsTable.committed, 1)))
+    .orderBy(desc(gameStateSnapshotsTable.createdAt))
+    .limit(1);
+  const committed = committedRows[0];
+  if (committed) return parseGameStateRow(committed as Record<string, unknown>) as unknown as Record<string, unknown>;
+
+  const latestRows = await db
+    .select()
+    .from(gameStateSnapshotsTable)
+    .where(eq(gameStateSnapshotsTable.chatId, chatId))
+    .orderBy(desc(gameStateSnapshotsTable.createdAt))
+    .limit(1);
+  const latest = latestRows[0];
+  return latest ? (parseGameStateRow(latest as Record<string, unknown>) as unknown as Record<string, unknown>) : null;
 }
 
 /** Read a character's avatar from disk as base64, or return undefined if unavailable. */
@@ -1077,10 +1124,13 @@ export async function generateRoutes(app: FastifyInstance) {
             enableAgents: chatEnableAgents,
             activeAgentIds: chatActiveAgentIds,
             activeLorebookIds: chatActiveLorebookIds,
+            lorebookTokenBudget: resolveLorebookTokenBudget(chatMeta),
             chatEmbedding: chatContextEmbedding,
             entryStateOverrides:
               (chatMeta.entryStateOverrides as Record<string, { ephemeral?: number | null; enabled?: boolean }>) ??
               undefined,
+            entryTimingStates: (chatMeta.entryTimingStates as Record<string, LorebookEntryTimingState>) ?? undefined,
+            gameState: chatMode === "game" ? await resolveLatestGameStateForLorebooks(app.db, input.chatId) : null,
             generationTriggers: lorebookGenerationTriggers,
             groupScenarioOverrideText:
               typeof chatMeta.groupScenarioText === "string" && (chatMeta.groupScenarioText as string).trim()
@@ -1107,16 +1157,15 @@ export async function generateRoutes(app: FastifyInstance) {
             : normalizeMaxContext(assembled.parameters.maxContext);
           effectiveMaxContext = minContextLimit(effectiveMaxContext, presetMaxContext);
 
-          // Persist updated per-chat entry state overrides (ephemeral countdown)
-          if (assembled.updatedEntryStateOverrides) {
-            chatMeta.entryStateOverrides = assembled.updatedEntryStateOverrides;
-            const freshChat = await chats.getById(input.chatId);
-            const freshMeta = freshChat ? (parseExtra(freshChat.metadata) as Record<string, unknown>) : chatMeta;
-            await chats.updateMetadata(input.chatId, {
-              ...freshMeta,
-              entryStateOverrides: assembled.updatedEntryStateOverrides,
-            });
-          }
+          if (assembled.updatedEntryStateOverrides) chatMeta.entryStateOverrides = assembled.updatedEntryStateOverrides;
+          if (assembled.updatedEntryTimingStates) chatMeta.entryTimingStates = assembled.updatedEntryTimingStates;
+          await persistLorebookRuntimeState({
+            chats,
+            chatId: input.chatId,
+            fallbackMeta: chatMeta,
+            entryStateOverrides: assembled.updatedEntryStateOverrides,
+            entryTimingStates: assembled.updatedEntryTimingStates,
+          });
         }
       }
 
@@ -2141,23 +2190,24 @@ export async function generateRoutes(app: FastifyInstance) {
             characterIds,
             personaId,
             activeLorebookIds: chatActiveLorebookIds,
+            tokenBudget: resolveLorebookTokenBudget(chatMeta),
             chatEmbedding: chatContextEmbedding,
             entryStateOverrides:
               (chatMeta.entryStateOverrides as Record<string, { ephemeral?: number | null; enabled?: boolean }>) ??
               undefined,
+            entryTimingStates: (chatMeta.entryTimingStates as Record<string, LorebookEntryTimingState>) ?? undefined,
             generationTriggers: lorebookGenerationTriggers,
           });
 
-          // Persist updated per-chat entry state overrides (ephemeral countdown)
-          if (lorebookResult.updatedEntryStateOverrides) {
-            chatMeta.entryStateOverrides = lorebookResult.updatedEntryStateOverrides;
-            const freshChat = await chats.getById(input.chatId);
-            const freshMeta = freshChat ? (parseExtra(freshChat.metadata) as Record<string, unknown>) : chatMeta;
-            await chats.updateMetadata(input.chatId, {
-              ...freshMeta,
-              entryStateOverrides: lorebookResult.updatedEntryStateOverrides,
-            });
-          }
+          if (lorebookResult.updatedEntryStateOverrides) chatMeta.entryStateOverrides = lorebookResult.updatedEntryStateOverrides;
+          if (lorebookResult.updatedEntryTimingStates) chatMeta.entryTimingStates = lorebookResult.updatedEntryTimingStates;
+          await persistLorebookRuntimeState({
+            chats,
+            chatId: input.chatId,
+            fallbackMeta: chatMeta,
+            entryStateOverrides: lorebookResult.updatedEntryStateOverrides,
+            entryTimingStates: lorebookResult.updatedEntryTimingStates,
+          });
           const loreContent = [lorebookResult.worldInfoBefore, lorebookResult.worldInfoAfter]
             .filter(Boolean)
             .join("\n");
@@ -2195,22 +2245,24 @@ export async function generateRoutes(app: FastifyInstance) {
           characterIds,
           personaId,
           activeLorebookIds: chatActiveLorebookIds,
+          tokenBudget: resolveLorebookTokenBudget(chatMeta),
           chatEmbedding: chatContextEmbedding,
           entryStateOverrides:
             (chatMeta.entryStateOverrides as Record<string, { ephemeral?: number | null; enabled?: boolean }>) ??
             undefined,
+          entryTimingStates: (chatMeta.entryTimingStates as Record<string, LorebookEntryTimingState>) ?? undefined,
           generationTriggers: lorebookGenerationTriggers,
         });
 
-        if (lorebookResult.updatedEntryStateOverrides) {
-          chatMeta.entryStateOverrides = lorebookResult.updatedEntryStateOverrides;
-          const freshChat = await chats.getById(input.chatId);
-          const freshMeta = freshChat ? (parseExtra(freshChat.metadata) as Record<string, unknown>) : chatMeta;
-          await chats.updateMetadata(input.chatId, {
-            ...freshMeta,
-            entryStateOverrides: lorebookResult.updatedEntryStateOverrides,
-          });
-        }
+        if (lorebookResult.updatedEntryStateOverrides) chatMeta.entryStateOverrides = lorebookResult.updatedEntryStateOverrides;
+        if (lorebookResult.updatedEntryTimingStates) chatMeta.entryTimingStates = lorebookResult.updatedEntryTimingStates;
+        await persistLorebookRuntimeState({
+          chats,
+          chatId: input.chatId,
+          fallbackMeta: chatMeta,
+          entryStateOverrides: lorebookResult.updatedEntryStateOverrides,
+          entryTimingStates: lorebookResult.updatedEntryTimingStates,
+        });
         const loreContent = [lorebookResult.worldInfoBefore, lorebookResult.worldInfoAfter].filter(Boolean).join("\n");
         if (loreContent) {
           const loreBlock = `<lore>\n${loreContent}\n</lore>`;
@@ -3225,27 +3277,34 @@ export async function generateRoutes(app: FastifyInstance) {
             role: m.role as "user" | "assistant" | "system",
             content: m.content,
           }));
-          const lorebookResult = await processLorebooks(app.db, scanMessages, null, {
+          const lorebookResult = await processLorebooks(
+            app.db,
+            scanMessages,
+            await resolveLatestGameStateForLorebooks(app.db, input.chatId),
+            {
             chatId: input.chatId,
             characterIds,
             personaId,
             activeLorebookIds: chatActiveLorebookIds,
+            tokenBudget: resolveLorebookTokenBudget(chatMeta),
             chatEmbedding: chatContextEmbedding,
             entryStateOverrides:
               (chatMeta.entryStateOverrides as Record<string, { ephemeral?: number | null; enabled?: boolean }>) ??
               undefined,
+            entryTimingStates: (chatMeta.entryTimingStates as Record<string, LorebookEntryTimingState>) ?? undefined,
             generationTriggers: lorebookGenerationTriggers,
-          });
+            },
+          );
 
-          if (lorebookResult.updatedEntryStateOverrides) {
-            chatMeta.entryStateOverrides = lorebookResult.updatedEntryStateOverrides;
-            const freshChat = await chats.getById(input.chatId);
-            const freshMeta = freshChat ? (parseExtra(freshChat.metadata) as Record<string, unknown>) : chatMeta;
-            await chats.updateMetadata(input.chatId, {
-              ...freshMeta,
-              entryStateOverrides: lorebookResult.updatedEntryStateOverrides,
-            });
-          }
+          if (lorebookResult.updatedEntryStateOverrides) chatMeta.entryStateOverrides = lorebookResult.updatedEntryStateOverrides;
+          if (lorebookResult.updatedEntryTimingStates) chatMeta.entryTimingStates = lorebookResult.updatedEntryTimingStates;
+          await persistLorebookRuntimeState({
+            chats,
+            chatId: input.chatId,
+            fallbackMeta: chatMeta,
+            entryStateOverrides: lorebookResult.updatedEntryStateOverrides,
+            entryTimingStates: lorebookResult.updatedEntryTimingStates,
+          });
           const loreContent = [lorebookResult.worldInfoBefore, lorebookResult.worldInfoAfter]
             .filter(Boolean)
             .map((content) => resolvePromptMacros(content))

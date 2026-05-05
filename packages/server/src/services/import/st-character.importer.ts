@@ -62,6 +62,7 @@ export async function importSTCharacter(raw: Record<string, unknown>, db: DB, op
   delete raw._botBrowserSource;
 
   const data = normalizeCharacterData(raw);
+  const rawEmbeddedLorebook = extractRawCharacterBook(raw) ?? data.character_book;
 
   // Tag with browser source if imported from browser
   if (botBrowserSource) {
@@ -108,11 +109,20 @@ export async function importSTCharacter(raw: Record<string, unknown>, db: DB, op
   // Extract character_book into a standalone lorebook linked to this character
   let lorebookResult: { lorebookId?: string; entriesImported?: number } | null = null;
   if (shouldImportEmbeddedLorebook && data.character_book && charId) {
-    const bookRaw = data.character_book as unknown as Record<string, unknown>;
+    const bookRaw = rawEmbeddedLorebook as unknown as Record<string, unknown>;
     // ST character_book uses the same shape as World Info
     const wiData: Record<string, unknown> = {
       name: `${data.name}'s Lorebook`,
       entries: bookRaw.entries ?? {},
+      description: bookRaw.description,
+      scan_depth: bookRaw.scan_depth,
+      scanDepth: bookRaw.scanDepth,
+      token_budget: bookRaw.token_budget,
+      tokenBudget: bookRaw.tokenBudget,
+      recursive_scanning: bookRaw.recursive_scanning,
+      recursiveScanning: bookRaw.recursiveScanning,
+      max_recursion_depth: bookRaw.max_recursion_depth,
+      maxRecursionDepth: bookRaw.maxRecursionDepth,
       extensions: bookRaw.extensions ?? {},
     };
 
@@ -281,6 +291,16 @@ function normalizeCharacterData(raw: Record<string, unknown>): CharacterData {
   }
   // Try treating the whole object as character data
   return normalizeV2(raw);
+}
+
+function extractRawCharacterBook(raw: Record<string, unknown>): unknown {
+  if ((raw.spec === "chara_card_v2" || raw.spec === "chara_card_v3") && raw.data && typeof raw.data === "object") {
+    return (raw.data as Record<string, unknown>).character_book;
+  }
+  if (raw.type === "character" && raw.data && typeof raw.data === "object") {
+    return (raw.data as Record<string, unknown>).character_book;
+  }
+  return raw.character_book;
 }
 
 function buildCardSpecMetadata(raw: Record<string, unknown>) {

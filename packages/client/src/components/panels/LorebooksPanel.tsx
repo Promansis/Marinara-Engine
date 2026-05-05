@@ -167,12 +167,13 @@ export function LorebooksPanel() {
     if (!lorebooks) return [];
     let list = lorebooks as Lorebook[];
     // "Active" filter: show lorebooks active in the current chat
-    // Mirrors server-side filterRelevantLorebooks: pinned + character-linked + persona-linked + chat-scoped
+    // Mirrors server-side filterRelevantLorebooks: global + pinned + character-linked + persona-linked + chat-scoped
     if (activeCategory === "active") {
       list = list.filter(
         (lb) =>
           lb.enabled &&
-          (activeLorebookIds.includes(lb.id) ||
+          (lb.isGlobal ||
+            activeLorebookIds.includes(lb.id) ||
             (lb.characterId && activeCharacterIds.includes(lb.characterId)) ||
             (lb.personaId && lb.personaId === activePersonaId) ||
             (lb.chatId && lb.chatId === activeChatId)),

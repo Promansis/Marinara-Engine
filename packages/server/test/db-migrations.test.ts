@@ -102,6 +102,12 @@ test("startup migrations add lorebook folders schema to existing installs", asyn
 
     assert.equal(folderTables.length, 1);
     assert.ok(entryColumns.some((column) => column.name === "folder_id"));
+    const lorebookColumns = await db.all<{ name: string }>(sql.raw("PRAGMA table_info(lorebooks)"));
+    const migratedBooks = await db.all<{ id: string; is_global: string }>(
+      sql.raw(`SELECT id, is_global FROM lorebooks WHERE id = 'legacy-book'`),
+    );
+    assert.ok(lorebookColumns.some((column) => column.name === "is_global"));
+    assert.deepEqual(migratedBooks, [{ id: "legacy-book", is_global: "false" }]);
     assert.deepEqual(preservedEntries, [{ id: "legacy-entry", folder_id: null }]);
   } finally {
     client.close();
