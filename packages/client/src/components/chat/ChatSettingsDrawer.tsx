@@ -123,6 +123,7 @@ import {
   DEFAULT_IMPERSONATE_PROMPT,
   DEFAULT_AGENT_MAX_TOKENS,
   DEFAULT_AGENT_PROMPTS,
+  LIMITS,
   MAX_AGENT_MAX_TOKENS,
   MIN_AGENT_MAX_TOKENS,
   estimateAgentLoadCost,
@@ -321,6 +322,10 @@ export function ChatSettingsDrawer({
       return lorebook ? [lorebook] : [];
     });
   }, [activeLorebookIds, lorebooks]);
+  const lorebookTokenBudget =
+    typeof metadata.lorebookTokenBudget === "number" && Number.isFinite(metadata.lorebookTokenBudget)
+      ? Math.max(0, Math.floor(metadata.lorebookTokenBudget))
+      : LIMITS.DEFAULT_LOREBOOK_TOKEN_BUDGET;
   const activeAgentIds = useMemo<string[]>(() => metadata.activeAgentIds ?? [], [metadata.activeAgentIds]);
   const activeToolIds: string[] = metadata.activeToolIds ?? [];
   const gameLorebookKeeperEnabled = metadata.gameLorebookKeeperEnabled === true;
@@ -847,6 +852,37 @@ export function ChatSettingsDrawer({
   };
 
   const currentPromptPresetHasVariables = (currentPromptPresetFull?.choiceBlocks?.length ?? 0) > 0;
+  const currentPromptPresetHasLorebookMarker = useMemo(() => {
+    const sections = currentPromptPresetFull?.sections ?? [];
+    return sections.some((section) => {
+      if (section.isMarker !== true) return false;
+      try {
+        const config =
+          typeof section.markerConfig === "string" ? JSON.parse(section.markerConfig) : section.markerConfig;
+        return (
+          config?.type === "lorebook" ||
+          config?.type === "world_info_before" ||
+          config?.type === "world_info_after"
+        );
+      } catch {
+        return false;
+      }
+    });
+  }, [currentPromptPresetFull?.sections]);
+  const hasScopedOrGlobalLorebooks = useMemo(() => {
+    const characterIds = Array.isArray(chat.characterIds) ? chat.characterIds : [];
+    return ((lorebooks ?? []) as Array<{ id: string; enabled?: boolean; isGlobal?: boolean; characterId?: string | null; personaId?: string | null; chatId?: string | null }>).some(
+      (lorebook) =>
+        lorebook.enabled !== false &&
+        (lorebook.isGlobal ||
+          activeLorebookIds.includes(lorebook.id) ||
+          (lorebook.characterId && characterIds.includes(lorebook.characterId)) ||
+          (lorebook.personaId && lorebook.personaId === chat.personaId) ||
+          (lorebook.chatId && lorebook.chatId === chat.id)),
+    );
+  }, [activeLorebookIds, chat.characterIds, chat.id, chat.personaId, lorebooks]);
+  const showLorebookMarkerWarning =
+    !!chat.promptPresetId && hasScopedOrGlobalLorebooks && !currentPromptPresetHasLorebookMarker;
 
   const setPreset = (presetId: string | null) => {
     updateChat.mutate(
@@ -1507,6 +1543,12 @@ export function ChatSettingsDrawer({
                   </button>
                 )}
               </div>
+              {showLorebookMarkerWarning && (
+                <div className="mt-2 flex items-start gap-2 rounded-lg bg-amber-400/10 px-3 py-2 text-[0.6875rem] text-amber-200 ring-1 ring-amber-400/25">
+                  <AlertTriangle size="0.75rem" className="mt-[0.125rem] shrink-0" />
+                  <span>This preset has active lorebooks available, but no lorebook marker.</span>
+                </div>
+              )}
             </Section>
           )}
 
@@ -2917,6 +2959,26 @@ export function ChatSettingsDrawer({
                 })}
               </div>
             )}
+
+            <div className="mt-2 rounded-lg bg-[var(--secondary)]/70 p-3 ring-1 ring-[var(--border)]">
+              <label className="mb-1.5 flex items-center gap-1 text-xs font-medium">
+                Lorebook Token Budget{" "}
+                <HelpTooltip text="Global cap for activated lorebook text in this chat. Missing uses the app default. Set 0 for unlimited." />
+              </label>
+              <input
+                type="number"
+                min={0}
+                value={lorebookTokenBudget}
+                onChange={(event) => {
+                  const next = Math.max(0, Math.floor(Number(event.target.value) || 0));
+                  updateMeta.mutate({ id: chat.id, lorebookTokenBudget: next });
+                }}
+                className="w-full rounded-lg bg-[var(--background)] px-3 py-2 text-xs ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+              />
+              <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
+                Default: {LIMITS.DEFAULT_LOREBOOK_TOKEN_BUDGET}. 0 means unlimited.
+              </p>
+            </div>
 
             {/* Add lorebook picker */}
             {!showLbPicker ? (

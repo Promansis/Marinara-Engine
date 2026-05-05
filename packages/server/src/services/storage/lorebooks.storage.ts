@@ -30,6 +30,7 @@ function parseLorebookRow(row: Record<string, unknown>) {
     ...row,
     recursiveScanning: row.recursiveScanning === "true",
     maxRecursionDepth: typeof row.maxRecursionDepth === "number" ? row.maxRecursionDepth : 3,
+    isGlobal: row.isGlobal === "true",
     enabled: row.enabled === "true",
     generatedBy: row.generatedBy || null,
     sourceAgentId: row.sourceAgentId || null,
@@ -154,6 +155,7 @@ export function createLorebooksStorage(db: DB) {
         characterId: input.characterId ?? null,
         personaId: input.personaId ?? null,
         chatId: input.chatId ?? null,
+        isGlobal: String(input.isGlobal ?? false),
         enabled: String(input.enabled ?? true),
         tags: input.tags ? JSON.stringify(input.tags) : "[]",
         generatedBy: input.generatedBy ?? null,
@@ -176,6 +178,7 @@ export function createLorebooksStorage(db: DB) {
       if (input.characterId !== undefined) updates.characterId = input.characterId;
       if (input.personaId !== undefined) updates.personaId = input.personaId;
       if (input.chatId !== undefined) updates.chatId = input.chatId;
+      if (input.isGlobal !== undefined) updates.isGlobal = String(input.isGlobal);
       if (input.enabled !== undefined) updates.enabled = String(input.enabled);
       if (input.tags !== undefined) updates.tags = JSON.stringify(input.tags);
       if (input.generatedBy !== undefined) updates.generatedBy = input.generatedBy;
@@ -214,6 +217,7 @@ export function createLorebooksStorage(db: DB) {
     /**
      * Get all enabled entries from lorebooks that are relevant for a given context.
      * A lorebook is relevant if it's enabled AND one of:
+     *  - `isGlobal` is true
      *  - Its ID is in `activeLorebookIds` (user explicitly added it to this chat)
      *  - Its `characterId` matches one of the chat's active characters
      *  - Its `personaId` matches the chat's active persona
@@ -237,6 +241,8 @@ export function createLorebooksStorage(db: DB) {
       let relevantBooks = enabledBooks;
       if (filters) {
         relevantBooks = enabledBooks.filter((b) => {
+          // Globally active lorebooks bypass all scope filters
+          if (b.isGlobal === "true") return true;
           // Explicitly added to this chat
           if (filters.activeLorebookIds?.includes(b.id)) return true;
           // Belongs to one of the active characters

@@ -108,6 +108,7 @@ const CREATE_TABLES: string[] = [
     character_id TEXT,
     persona_id TEXT,
     chat_id TEXT,
+    is_global TEXT NOT NULL DEFAULT 'false',
     enabled TEXT NOT NULL DEFAULT 'true',
     generated_by TEXT,
     source_agent_id TEXT,
@@ -583,6 +584,11 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
     table: "lorebooks",
     column: "tags",
     definition: "TEXT NOT NULL DEFAULT '[]'",
+  },
+  {
+    table: "lorebooks",
+    column: "is_global",
+    definition: "TEXT NOT NULL DEFAULT 'false'",
   },
   {
     table: "api_connections",

@@ -47,6 +47,7 @@ import {
   User,
   Bot,
   X,
+  AlertTriangle,
   Maximize2,
   BookOpen,
   ListChecks,
@@ -97,12 +98,12 @@ const ROLE_ICONS: Record<string, FC<{ size: string | number; className?: string 
 
 const MARKER_LABELS: Record<MarkerType, string> = {
   character: "Character Info",
-  lorebook: "Lorebook (All)",
+  lorebook: "Lorebook Marker (All)",
   persona: "Persona",
   chat_history: "Chat History",
   chat_summary: "Chat Summary",
-  world_info_before: "World Info (Before)",
-  world_info_after: "World Info (After)",
+  world_info_before: "Lorebook Marker (Before)",
+  world_info_after: "Lorebook Marker (After)",
   dialogue_examples: "Dialogue Examples",
   agent_data: "Agent Data",
 };
@@ -810,6 +811,10 @@ function SectionsTab({
         >
           <FolderOpen size="0.8125rem" /> Groups ({groupMap.size})
         </button>
+        <div className="flex items-center gap-1.5 rounded-lg bg-amber-400/10 px-2.5 py-1.5 text-[0.6875rem] text-amber-200 ring-1 ring-amber-400/25">
+          <AlertTriangle size="0.75rem" className="shrink-0" />
+          <span>Add a lorebook marker when this preset should receive active lorebook entries.</span>
+        </div>
       </div>
 
       {/* ── Groups Management Panel ── */}
@@ -1116,8 +1121,13 @@ function SectionsTab({
                             <div className="rounded-lg bg-violet-400/5 p-3 text-xs text-violet-300">
                               Marker type: <strong>{MARKER_LABELS[mc.type as MarkerType] ?? "Unknown"}</strong>
                               <p className="mt-1 text-[var(--muted-foreground)]">
-                                Content is auto-generated at assembly time from your characters, lorebook, etc.
+                                Content is auto-generated at assembly time from your characters, lorebooks, etc.
                               </p>
+                              {["lorebook", "world_info_before", "world_info_after"].includes(mc.type) && (
+                                <p className="mt-1 text-amber-200">
+                                  This is where active lorebook entries are inserted.
+                                </p>
+                              )}
                             </div>
                           );
                         })()}

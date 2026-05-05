@@ -13,6 +13,7 @@ import type {
   MarkerConfig,
   WrapFormat,
   GenerationParameters,
+  LorebookEntryTimingState,
 } from "@marinara-engine/shared";
 import { resolveMacros } from "@marinara-engine/shared";
 import type { MacroContext } from "@marinara-engine/shared";
@@ -109,6 +110,12 @@ export interface AssemblerInput {
   chatEmbedding?: number[] | null;
   /** Per-chat ephemeral state overrides for lorebook entries (from chat metadata). */
   entryStateOverrides?: Record<string, { ephemeral?: number | null; enabled?: boolean }>;
+  /** Per-chat sticky/cooldown/delay timing state for lorebook entries. */
+  entryTimingStates?: Record<string, LorebookEntryTimingState>;
+  /** Global lorebook token budget for this chat/generation. */
+  lorebookTokenBudget?: number;
+  /** Current game state for lorebook conditions and schedules. */
+  gameState?: Record<string, unknown> | null;
   /** Generation trigger labels used by per-entry lorebook include/exclude filters. */
   generationTriggers?: string[];
   /** When set, replaces individual character scenario fields with this group scenario. */
@@ -125,6 +132,8 @@ export interface AssemblerOutput {
   lorebookDepthEntriesCount: number;
   /** Updated per-chat entry state overrides after ephemeral processing. Caller should persist to chat metadata. */
   updatedEntryStateOverrides?: Record<string, { ephemeral?: number | null; enabled?: boolean }>;
+  /** Updated per-chat sticky/cooldown/delay timing state. Caller should persist to chat metadata. */
+  updatedEntryTimingStates?: Record<string, LorebookEntryTimingState>;
 }
 
 // ═══════════════════════════════════════════════
@@ -219,6 +228,9 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
     activeLorebookIds: input.activeLorebookIds ?? [],
     chatEmbedding: input.chatEmbedding ?? null,
     entryStateOverrides: input.entryStateOverrides,
+    entryTimingStates: input.entryTimingStates,
+    lorebookTokenBudget: input.lorebookTokenBudget,
+    gameState: input.gameState ?? null,
     generationTriggers: input.generationTriggers ?? ["chat"],
     groupScenarioOverrideText: input.groupScenarioOverrideText ?? null,
   };
@@ -409,6 +421,9 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
     lorebookDepthEntriesCount,
     ...(markerCtx.updatedEntryStateOverrides
       ? { updatedEntryStateOverrides: markerCtx.updatedEntryStateOverrides }
+      : {}),
+    ...(markerCtx.updatedEntryTimingStates
+      ? { updatedEntryTimingStates: markerCtx.updatedEntryTimingStates }
       : {}),
   };
 }
