@@ -25,6 +25,24 @@ export const lorebooks = sqliteTable("lorebooks", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export const lorebookCharacterLinks = sqliteTable("lorebook_character_links", {
+  id: text("id").primaryKey(),
+  lorebookId: text("lorebook_id")
+    .notNull()
+    .references(() => lorebooks.id, { onDelete: "cascade" }),
+  characterId: text("character_id").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
+export const lorebookPersonaLinks = sqliteTable("lorebook_persona_links", {
+  id: text("id").primaryKey(),
+  lorebookId: text("lorebook_id")
+    .notNull()
+    .references(() => lorebooks.id, { onDelete: "cascade" }),
+  personaId: text("persona_id").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
 /**
  * Lorebook folders — collapsible containers that group entries to reduce
  * visual clutter in the editor. Folders are flat in v1; `parentFolderId` is

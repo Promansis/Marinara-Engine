@@ -331,6 +331,7 @@ export async function importSTLorebook(
     maxRecursionDepth: asNumber(wi.max_recursion_depth ?? wi.maxRecursionDepth, 3),
     generatedBy: "import" as const,
     characterId: options?.characterId ?? null,
+    characterIds: options?.characterId ? [options.characterId] : [],
   };
 
   let lorebook: Record<string, unknown> | null = null;

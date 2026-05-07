@@ -855,7 +855,10 @@ export function ChatSettingsDrawer({
   const currentPromptPresetHasLorebookMarker = useMemo(() => {
     const sections = currentPromptPresetFull?.sections ?? [];
     return sections.some((section) => {
-      if (section.isMarker !== true) return false;
+      const enabled = (section as { enabled?: boolean | string }).enabled;
+      const isMarker = (section as { isMarker?: boolean | string }).isMarker;
+      if (enabled === false || enabled === "false") return false;
+      if (isMarker !== true && isMarker !== "true") return false;
       try {
         const config =
           typeof section.markerConfig === "string" ? JSON.parse(section.markerConfig) : section.markerConfig;
@@ -871,12 +874,23 @@ export function ChatSettingsDrawer({
   }, [currentPromptPresetFull?.sections]);
   const hasScopedOrGlobalLorebooks = useMemo(() => {
     const characterIds = Array.isArray(chat.characterIds) ? chat.characterIds : [];
-    return ((lorebooks ?? []) as Array<{ id: string; enabled?: boolean; isGlobal?: boolean; characterId?: string | null; personaId?: string | null; chatId?: string | null }>).some(
+    return ((lorebooks ?? []) as Array<{
+      id: string;
+      enabled?: boolean;
+      isGlobal?: boolean;
+      characterId?: string | null;
+      characterIds?: string[];
+      personaId?: string | null;
+      personaIds?: string[];
+      chatId?: string | null;
+    }>).some(
       (lorebook) =>
         lorebook.enabled !== false &&
         (lorebook.isGlobal ||
           activeLorebookIds.includes(lorebook.id) ||
+          lorebook.characterIds?.some((id) => characterIds.includes(id)) ||
           (lorebook.characterId && characterIds.includes(lorebook.characterId)) ||
+          (chat.personaId && lorebook.personaIds?.includes(chat.personaId)) ||
           (lorebook.personaId && lorebook.personaId === chat.personaId) ||
           (lorebook.chatId && lorebook.chatId === chat.id)),
     );

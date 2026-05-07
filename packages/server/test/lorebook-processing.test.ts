@@ -24,7 +24,9 @@ function makeLorebook(overrides: Partial<Lorebook> = {}): Lorebook {
     recursiveScanning: false,
     maxRecursionDepth: 3,
     characterId: null,
+    characterIds: [],
     personaId: null,
+    personaIds: [],
     chatId: null,
     isGlobal: false,
     enabled: true,
@@ -159,6 +161,35 @@ test("persona-linked lorebooks activate only for the active persona", () => {
   assert.deepEqual(
     relevant.map((book) => book.id),
     ["persona-book"],
+  );
+});
+
+test("multi-linked lorebooks activate for any linked character or persona", () => {
+  const multiCharacterBook = makeLorebook({
+    id: "multi-character-book",
+    characterId: "legacy-char",
+    characterIds: ["character-2", "character-3"],
+  });
+  const multiPersonaBook = makeLorebook({
+    id: "multi-persona-book",
+    personaId: "legacy-persona",
+    personaIds: ["persona-2", "persona-3"],
+  });
+  const unrelatedBook = makeLorebook({
+    id: "unrelated-book",
+    characterIds: ["character-x"],
+    personaIds: ["persona-x"],
+  });
+
+  const relevant = filterRelevantLorebooks([multiCharacterBook, multiPersonaBook, unrelatedBook], {
+    characterIds: ["character-3"],
+    personaId: "persona-2",
+    activeLorebookIds: [],
+  });
+
+  assert.deepEqual(
+    relevant.map((book) => book.id),
+    ["multi-character-book", "multi-persona-book"],
   );
 });
 
@@ -304,4 +335,125 @@ test("timing state persists delay, cooldown, and sticky activation windows", () 
 
   const afterSticky = updateTimingStatesForScan([entry], sticky, afterActivation, 3);
   assert.equal(afterSticky.get(entry.id)?.stickyCount, 0);
+});
+
+test("constant entries obey delay and activation conditions", () => {
+  const entry = makeEntry({
+    constant: true,
+    delay: 1,
+    activationConditions: [{ field: "location", operator: "equals", value: "forest" }],
+  });
+  const waiting = scanForActivatedEntries([{ role: "user", content: "" }], [entry], {
+    gameState: { location: "forest" },
+    timingStates: new Map([
+      [
+        entry.id,
+        {
+          lastActivatedAt: null,
+          stickyCount: 0,
+          cooldownRemaining: 0,
+          delayRemaining: 1,
+        },
+      ],
+    ]),
+  });
+  assert.deepEqual(waiting, []);
+
+  const wrongLocation = scanForActivatedEntries([{ role: "user", content: "" }], [entry], {
+    gameState: { location: "city" },
+    timingStates: new Map([
+      [
+        entry.id,
+        {
+          lastActivatedAt: null,
+          stickyCount: 0,
+          cooldownRemaining: 0,
+          delayRemaining: 0,
+        },
+      ],
+    ]),
+  });
+  assert.deepEqual(wrongLocation, []);
+
+  const activated = scanForActivatedEntries([{ role: "user", content: "" }], [entry], {
+    gameState: { location: "forest" },
+    timingStates: new Map([
+      [
+        entry.id,
+        {
+          lastActivatedAt: null,
+          stickyCount: 0,
+          cooldownRemaining: 0,
+          delayRemaining: 0,
+        },
+      ],
+    ]),
+  });
+  assert.deepEqual(activated.map((result) => result.matchedKeys[0]), ["[constant]"]);
+});
+
+test("semantic fallback obeys timing, conditions, and schedule", () => {
+  const entry = makeEntry({
+    id: "semantic-entry",
+    keys: ["no-keyword-match"],
+    embedding: [1, 0],
+    delay: 1,
+    activationConditions: [{ field: "location", operator: "equals", value: "forest" }],
+    schedule: { activeTimes: ["night"], activeDates: [], activeLocations: [] },
+  });
+  const blocked = scanForActivatedEntries([{ role: "user", content: "ordinary chat" }], [entry], {
+    chatEmbedding: [1, 0],
+    semanticThreshold: 0.9,
+    gameState: { location: "forest", time: "night" },
+    timingStates: new Map([
+      [
+        entry.id,
+        {
+          lastActivatedAt: null,
+          stickyCount: 0,
+          cooldownRemaining: 0,
+          delayRemaining: 1,
+        },
+      ],
+    ]),
+  });
+  assert.deepEqual(blocked, []);
+
+  const wrongSchedule = scanForActivatedEntries([{ role: "user", content: "ordinary chat" }], [entry], {
+    chatEmbedding: [1, 0],
+    semanticThreshold: 0.9,
+    gameState: { location: "forest", time: "morning" },
+    timingStates: new Map([
+      [
+        entry.id,
+        {
+          lastActivatedAt: null,
+          stickyCount: 0,
+          cooldownRemaining: 0,
+          delayRemaining: 0,
+        },
+      ],
+    ]),
+  });
+  assert.deepEqual(wrongSchedule, []);
+
+  const activated = scanForActivatedEntries([{ role: "user", content: "ordinary chat" }], [entry], {
+    chatEmbedding: [1, 0],
+    semanticThreshold: 0.9,
+    gameState: { location: "forest", time: "night" },
+    timingStates: new Map([
+      [
+        entry.id,
+        {
+          lastActivatedAt: null,
+          stickyCount: 0,
+          cooldownRemaining: 0,
+          delayRemaining: 0,
+        },
+      ],
+    ]),
+  });
+
+  assert.deepEqual(activated.map((result) => result.entry.id), ["semantic-entry"]);
+  assert.ok(activated[0]?.matchedKeys[0]?.startsWith("[semantic:"));
 });

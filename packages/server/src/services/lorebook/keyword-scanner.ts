@@ -225,7 +225,6 @@ function evaluateSchedule(schedule: LorebookSchedule | null, gameState: GameStat
 function checkTiming(
   entry: LorebookEntry,
   timingState: EntryTimingState | undefined,
-  currentMessageIndex: number,
 ): boolean {
   if (!timingState) return !(entry.delay !== null && entry.delay > 0);
 
@@ -239,6 +238,23 @@ function checkTiming(
     if (timingState.cooldownRemaining > 0) return false;
   }
 
+  return true;
+}
+
+function passesActivationGate(
+  entry: LorebookEntry,
+  timingState: EntryTimingState | undefined,
+  filterContext: LorebookFilterValueContext,
+  gameState: GameStateForScanning | null,
+): boolean {
+  if (!entry.enabled) return false;
+  if (!passesEntryFilters(entry, filterContext)) return false;
+  if (!checkTiming(entry, timingState)) return false;
+  if (!evaluateConditions(entry.activationConditions, gameState)) return false;
+  if (!evaluateSchedule(entry.schedule, gameState)) return false;
+  if (entry.probability !== null && entry.probability < 100) {
+    if (Math.random() * 100 > entry.probability) return false;
+  }
   return true;
 }
 
@@ -449,24 +465,10 @@ export function scanForActivatedEntries(
   const activatedIds = new Set<string>();
 
   for (const entry of entries) {
-    // Skip disabled entries
-    if (!entry.enabled) continue;
-    if (!passesEntryFilters(entry, filterContext)) continue;
-
     const timingState = timingStates.get(entry.id);
 
-    // Constant entries are always activated
-    if (entry.constant) {
-      activated.push({
-        entry,
-        matchedKeys: ["[constant]"],
-        injectionOrder: entry.order,
-      });
-      activatedIds.add(entry.id);
-      continue;
-    }
-
     if (timingState?.stickyCount && timingState.stickyCount > 0) {
+      if (!entry.enabled || !passesEntryFilters(entry, filterContext)) continue;
       activated.push({
         entry,
         matchedKeys: ["[sticky]"],
@@ -477,23 +479,17 @@ export function scanForActivatedEntries(
       continue;
     }
 
-    // Probability check
-    if (entry.probability !== null && entry.probability < 100) {
-      if (Math.random() * 100 > entry.probability) continue;
-    }
+    if (!passesActivationGate(entry, timingState, filterContext, gameState)) continue;
 
-    // Check timing
-    if (!checkTiming(entry, timingState, currentMessageIndex)) {
-      continue;
-    }
-
-    // Check activation conditions
-    if (!evaluateConditions(entry.activationConditions, gameState)) {
-      continue;
-    }
-
-    // Check schedule
-    if (!evaluateSchedule(entry.schedule, gameState)) {
+    // Constant entries still activate without keywords, but they obey timing,
+    // context filters, activation conditions, schedule, and probability gates.
+    if (entry.constant) {
+      activated.push({
+        entry,
+        matchedKeys: ["[constant]"],
+        injectionOrder: entry.order,
+      });
+      activatedIds.add(entry.id);
       continue;
     }
 
@@ -537,8 +533,9 @@ export function scanForActivatedEntries(
   if (chatEmbedding && chatEmbedding.length > 0) {
     for (const entry of entries) {
       if (!entry.enabled || entry.constant || activatedIds.has(entry.id)) continue;
-      if (!passesEntryFilters(entry, filterContext)) continue;
       if (!entry.embedding || entry.embedding.length === 0) continue;
+      const timingState = timingStates.get(entry.id);
+      if (!passesActivationGate(entry, timingState, filterContext, gameState)) continue;
 
       const similarity = cosineSimilarity(chatEmbedding, entry.embedding);
       if (similarity >= semanticThreshold) {

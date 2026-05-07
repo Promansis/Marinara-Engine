@@ -235,6 +235,23 @@ export function PresetEditor() {
     return sectionOrder.map((id: string) => map.get(id)).filter(Boolean) as any[];
   }, [data?.sections, sectionOrder]);
 
+  const sectionHasLorebookMarker = useMemo(() => {
+    return orderedSections.some((section: any) => {
+      if (section.enabled !== "true" && section.enabled !== true) return false;
+      if (section.isMarker !== "true" && section.isMarker !== true) return false;
+      try {
+        const config = typeof section.markerConfig === "string" ? JSON.parse(section.markerConfig) : section.markerConfig;
+        return (
+          config?.type === "lorebook" ||
+          config?.type === "world_info_before" ||
+          config?.type === "world_info_after"
+        );
+      } catch {
+        return false;
+      }
+    });
+  }, [orderedSections]);
+
   const groupMap = useMemo(() => {
     if (!data?.groups) return new Map<string, any>();
     return new Map((data.groups as any[]).map((g) => [g.id, g]));
@@ -439,6 +456,7 @@ export function PresetEditor() {
                 onUpdateVariable={updateVariable}
                 onDeleteVariable={deleteVariable}
                 onReorderVariables={reorderVariables}
+                hasLorebookMarker={sectionHasLorebookMarker}
               />
             )}
 
@@ -577,6 +595,7 @@ function SectionsTab({
   onUpdateVariable,
   onDeleteVariable,
   onReorderVariables,
+  hasLorebookMarker,
 }: {
   presetId: string;
   sections: any[];
@@ -594,6 +613,7 @@ function SectionsTab({
   onUpdateVariable: any;
   onDeleteVariable: any;
   onReorderVariables: any;
+  hasLorebookMarker: boolean;
 }) {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [showAddMenu, setShowAddMenu] = useState(false);
@@ -811,10 +831,12 @@ function SectionsTab({
         >
           <FolderOpen size="0.8125rem" /> Groups ({groupMap.size})
         </button>
-        <div className="flex items-center gap-1.5 rounded-lg bg-amber-400/10 px-2.5 py-1.5 text-[0.6875rem] text-amber-200 ring-1 ring-amber-400/25">
-          <AlertTriangle size="0.75rem" className="shrink-0" />
-          <span>Add a lorebook marker when this preset should receive active lorebook entries.</span>
-        </div>
+        {!hasLorebookMarker && (
+          <div className="flex items-center gap-1.5 rounded-lg bg-amber-400/10 px-2.5 py-1.5 text-[0.6875rem] text-amber-200 ring-1 ring-amber-400/25">
+            <AlertTriangle size="0.75rem" className="shrink-0" />
+            <span>Add a lorebook marker when this preset should receive active lorebook entries.</span>
+          </div>
+        )}
       </div>
 
       {/* ── Groups Management Panel ── */}

@@ -116,6 +116,18 @@ const CREATE_TABLES: string[] = [
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS lorebook_character_links (
+    id TEXT PRIMARY KEY NOT NULL,
+    lorebook_id TEXT NOT NULL REFERENCES lorebooks(id) ON DELETE CASCADE,
+    character_id TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS lorebook_persona_links (
+    id TEXT PRIMARY KEY NOT NULL,
+    lorebook_id TEXT NOT NULL REFERENCES lorebooks(id) ON DELETE CASCADE,
+    persona_id TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS lorebook_folders (
     id TEXT PRIMARY KEY NOT NULL,
     lorebook_id TEXT NOT NULL REFERENCES lorebooks(id) ON DELETE CASCADE,
@@ -677,6 +689,41 @@ export async function runMigrations(db: DB) {
   );
   await db.run(
     sql.raw(`CREATE INDEX IF NOT EXISTS idx_game_state_message ON game_state_snapshots(message_id, swipe_index)`),
+  );
+  await db.run(sql.raw(`CREATE INDEX IF NOT EXISTS idx_lorebook_character_links_book ON lorebook_character_links(lorebook_id)`));
+  await db.run(
+    sql.raw(`CREATE INDEX IF NOT EXISTS idx_lorebook_character_links_character ON lorebook_character_links(character_id)`),
+  );
+  await db.run(sql.raw(`CREATE INDEX IF NOT EXISTS idx_lorebook_persona_links_book ON lorebook_persona_links(lorebook_id)`));
+  await db.run(sql.raw(`CREATE INDEX IF NOT EXISTS idx_lorebook_persona_links_persona ON lorebook_persona_links(persona_id)`));
+
+  await db.run(
+    sql.raw(`
+      INSERT INTO lorebook_character_links (id, lorebook_id, character_id, created_at)
+      SELECT 'legacy-char-' || id, id, character_id, created_at
+      FROM lorebooks
+      WHERE character_id IS NOT NULL
+        AND character_id <> ''
+        AND NOT EXISTS (
+          SELECT 1 FROM lorebook_character_links
+          WHERE lorebook_character_links.lorebook_id = lorebooks.id
+            AND lorebook_character_links.character_id = lorebooks.character_id
+        )
+    `),
+  );
+  await db.run(
+    sql.raw(`
+      INSERT INTO lorebook_persona_links (id, lorebook_id, persona_id, created_at)
+      SELECT 'legacy-persona-' || id, id, persona_id, created_at
+      FROM lorebooks
+      WHERE persona_id IS NOT NULL
+        AND persona_id <> ''
+        AND NOT EXISTS (
+          SELECT 1 FROM lorebook_persona_links
+          WHERE lorebook_persona_links.lorebook_id = lorebooks.id
+            AND lorebook_persona_links.persona_id = lorebooks.persona_id
+        )
+    `),
   );
   await db.run(
     sql.raw(`CREATE INDEX IF NOT EXISTS idx_game_checkpoints_chat ON game_checkpoints(chat_id, created_at DESC)`),
