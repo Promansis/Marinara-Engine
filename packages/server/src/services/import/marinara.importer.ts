@@ -178,7 +178,17 @@ async function importLorebook(data: unknown, db: DB) {
       recursiveScanning: Boolean(lb.recursiveScanning),
       maxRecursionDepth: Number(lb.maxRecursionDepth ?? 3),
       characterId: typeof lb.characterId === "string" ? lb.characterId : null,
+      characterIds: Array.isArray(lb.characterIds)
+        ? lb.characterIds.filter((value): value is string => typeof value === "string")
+        : typeof lb.characterId === "string"
+          ? [lb.characterId]
+          : [],
       personaId: typeof lb.personaId === "string" ? lb.personaId : null,
+      personaIds: Array.isArray(lb.personaIds)
+        ? lb.personaIds.filter((value): value is string => typeof value === "string")
+        : typeof lb.personaId === "string"
+          ? [lb.personaId]
+          : [],
       chatId: typeof lb.chatId === "string" ? lb.chatId : null,
       isGlobal: lb.isGlobal === true || lb.isGlobal === "true",
       enabled: lb.enabled !== false,

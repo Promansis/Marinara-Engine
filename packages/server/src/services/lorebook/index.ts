@@ -55,7 +55,9 @@ type RelevantLorebook = Pick<
   | "maxRecursionDepth"
   | "isGlobal"
   | "characterId"
+  | "characterIds"
   | "personaId"
+  | "personaIds"
   | "chatId"
 >;
 
@@ -158,7 +160,9 @@ export function filterRelevantLorebooks(lorebooks: RelevantLorebook[], filters?:
   return enabledBooks.filter((book) => {
     if (book.isGlobal) return true;
     if (filters.activeLorebookIds?.includes(book.id)) return true;
+    if ((book.characterIds ?? []).some((id) => filters.characterIds?.includes(id))) return true;
     if (book.characterId && filters.characterIds?.includes(book.characterId)) return true;
+    if (filters.personaId && (book.personaIds ?? []).includes(filters.personaId)) return true;
     if (book.personaId && book.personaId === filters.personaId) return true;
     if (book.chatId && book.chatId === filters.chatId) return true;
     return false;
