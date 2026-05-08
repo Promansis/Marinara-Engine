@@ -276,6 +276,8 @@ export async function processLorebooks(
     entryStateOverrides?: Record<string, { ephemeral?: number | null; enabled?: boolean }>;
     /** Per-chat timing state for sticky/cooldown/delay. */
     entryTimingStates?: Record<string, LorebookEntryTimingState>;
+    /** Preview/debug scan: ignore mutable timing state and do not return timing updates. */
+    previewOnly?: boolean;
     /** Generation trigger labels used by per-entry include/exclude filters. */
     generationTriggers?: string[];
   },
@@ -339,7 +341,8 @@ export async function processLorebooks(
   }
 
   const tokenBudget = options?.tokenBudget ?? LIMITS.DEFAULT_LOREBOOK_TOKEN_BUDGET;
-  const timingStates = toTimingStateMap(options?.entryTimingStates);
+  const previewOnly = options?.previewOnly === true;
+  const timingStates = previewOnly ? new Map<string, EntryTimingState>() : toTimingStateMap(options?.entryTimingStates);
   const currentMessageIndex = messages.length;
   const matchingContext = await buildLorebookMatchingContext(
     db,
@@ -360,6 +363,7 @@ export async function processLorebooks(
     additionalMatchingSourceText: matchingContext.additionalMatchingSourceText,
     timingStates,
     currentMessageIndex,
+    ignoreTiming: previewOnly,
   };
 
   // Determine recursion settings from relevant enabled lorebooks only.
@@ -390,7 +394,9 @@ export async function processLorebooks(
   // that don't pass a chatId).
   let updatedOverrides: Record<string, { ephemeral?: number | null; enabled?: boolean }> | undefined;
 
-  if (overrides) {
+  if (previewOnly) {
+    updatedOverrides = undefined;
+  } else if (overrides) {
     // Per-chat tracking: write to overrides, leave global entry untouched
     updatedOverrides = { ...overrides };
     for (const a of cappedActivated) {
@@ -420,8 +426,9 @@ export async function processLorebooks(
   // don't modify global state or return overrides.
 
   // Process into injectable content
-  const updatedTimingMap = updateTimingStatesForScan(allEntries, cappedActivated, timingStates, currentMessageIndex);
-  const updatedEntryTimingStates = fromTimingStateMap(updatedTimingMap);
+  const updatedEntryTimingStates = previewOnly
+    ? undefined
+    : fromTimingStateMap(updateTimingStatesForScan(allEntries, cappedActivated, timingStates, currentMessageIndex));
 
   const result = processActivatedEntries(cappedActivated, tokenBudget);
 
