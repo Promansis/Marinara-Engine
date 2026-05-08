@@ -337,6 +337,55 @@ test("timing state persists delay, cooldown, and sticky activation windows", () 
   assert.equal(afterSticky.get(entry.id)?.stickyCount, 0);
 });
 
+test("preview scans ignore mutable timing state without sticky activations", () => {
+  const delayed = makeEntry({ id: "delayed", delay: 2, order: 10 });
+  const coolingDown = makeEntry({ id: "cooldown", cooldown: 3, order: 20 });
+  const sticky = makeEntry({ id: "sticky", sticky: 2, order: 30 });
+
+  const activated = scanForActivatedEntries(
+    [{ role: "user", content: "keyword" }],
+    [delayed, coolingDown, sticky],
+    {
+      ignoreTiming: true,
+      timingStates: new Map([
+        [
+          delayed.id,
+          { lastActivatedAt: null, stickyCount: 0, cooldownRemaining: 0, delayRemaining: 2 },
+        ],
+        [
+          coolingDown.id,
+          { lastActivatedAt: 1, stickyCount: 0, cooldownRemaining: 3, delayRemaining: 0 },
+        ],
+        [
+          sticky.id,
+          { lastActivatedAt: 1, stickyCount: 2, cooldownRemaining: 0, delayRemaining: 0 },
+        ],
+      ]),
+    },
+  );
+
+  assert.deepEqual(
+    activated.map((result) => result.entry.id),
+    ["delayed", "cooldown", "sticky"],
+  );
+  assert.deepEqual(
+    activated.map((result) => result.matchedKeys[0]),
+    ["keyword", "keyword", "keyword"],
+  );
+
+  const noKeywordActivated = scanForActivatedEntries([{ role: "user", content: "no match" }], [sticky], {
+    ignoreTiming: true,
+    timingStates: new Map([
+      [
+        sticky.id,
+        { lastActivatedAt: 1, stickyCount: 2, cooldownRemaining: 0, delayRemaining: 0 },
+      ],
+    ]),
+  });
+
+  assert.deepEqual(noKeywordActivated, []);
+});
+
 test("constant entries obey delay and activation conditions", () => {
   const entry = makeEntry({
     constant: true,

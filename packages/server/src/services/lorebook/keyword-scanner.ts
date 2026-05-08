@@ -246,10 +246,11 @@ function passesActivationGate(
   timingState: EntryTimingState | undefined,
   filterContext: LorebookFilterValueContext,
   gameState: GameStateForScanning | null,
+  ignoreTiming: boolean = false,
 ): boolean {
   if (!entry.enabled) return false;
   if (!passesEntryFilters(entry, filterContext)) return false;
-  if (!checkTiming(entry, timingState)) return false;
+  if (!ignoreTiming && !checkTiming(entry, timingState)) return false;
   if (!evaluateConditions(entry.activationConditions, gameState)) return false;
   if (!evaluateSchedule(entry.schedule, gameState)) return false;
   if (entry.probability !== null && entry.probability < 100) {
@@ -428,6 +429,8 @@ export interface ScanOptions {
   generationTriggers?: string[];
   /** Extra source text entries may opt into scanning. */
   additionalMatchingSourceText?: Partial<Record<LorebookMatchingSource, string>>;
+  /** Ignore sticky/cooldown/delay runtime state for preview/debug scans. */
+  ignoreTiming?: boolean;
 }
 
 /**
@@ -450,6 +453,7 @@ export function scanForActivatedEntries(
     activeCharacterTags = [],
     generationTriggers = ["chat"],
     additionalMatchingSourceText = {},
+    ignoreTiming = false,
   } = options;
   const filterContext: LorebookFilterValueContext = {
     activeCharacterIds: makeValueSet(activeCharacterIds),
@@ -467,7 +471,7 @@ export function scanForActivatedEntries(
   for (const entry of entries) {
     const timingState = timingStates.get(entry.id);
 
-    if (timingState?.stickyCount && timingState.stickyCount > 0) {
+    if (!ignoreTiming && timingState?.stickyCount && timingState.stickyCount > 0) {
       if (!entry.enabled || !passesEntryFilters(entry, filterContext)) continue;
       activated.push({
         entry,
@@ -479,7 +483,7 @@ export function scanForActivatedEntries(
       continue;
     }
 
-    if (!passesActivationGate(entry, timingState, filterContext, gameState)) continue;
+    if (!passesActivationGate(entry, timingState, filterContext, gameState, ignoreTiming)) continue;
 
     // Constant entries still activate without keywords, but they obey timing,
     // context filters, activation conditions, schedule, and probability gates.
@@ -535,7 +539,7 @@ export function scanForActivatedEntries(
       if (!entry.enabled || entry.constant || activatedIds.has(entry.id)) continue;
       if (!entry.embedding || entry.embedding.length === 0) continue;
       const timingState = timingStates.get(entry.id);
-      if (!passesActivationGate(entry, timingState, filterContext, gameState)) continue;
+      if (!passesActivationGate(entry, timingState, filterContext, gameState, ignoreTiming)) continue;
 
       const similarity = cosineSimilarity(chatEmbedding, entry.embedding);
       if (similarity >= semanticThreshold) {
