@@ -358,6 +358,7 @@ export async function promptsRoutes(app: FastifyInstance) {
           : undefined,
       lorebookTokenBudget:
         typeof chatMeta.lorebookTokenBudget === "number" ? chatMeta.lorebookTokenBudget : undefined,
+      previewOnly: true,
     };
 
     const result = await assemblePrompt(assemblerInput);

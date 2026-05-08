@@ -241,6 +241,18 @@ function checkTiming(
   return true;
 }
 
+function passesContextualActivationGate(
+  entry: LorebookEntry,
+  filterContext: LorebookFilterValueContext,
+  gameState: GameStateForScanning | null,
+): boolean {
+  if (!entry.enabled) return false;
+  if (!passesEntryFilters(entry, filterContext)) return false;
+  if (!evaluateConditions(entry.activationConditions, gameState)) return false;
+  if (!evaluateSchedule(entry.schedule, gameState)) return false;
+  return true;
+}
+
 function passesActivationGate(
   entry: LorebookEntry,
   timingState: EntryTimingState | undefined,
@@ -248,11 +260,8 @@ function passesActivationGate(
   gameState: GameStateForScanning | null,
   ignoreTiming: boolean = false,
 ): boolean {
-  if (!entry.enabled) return false;
-  if (!passesEntryFilters(entry, filterContext)) return false;
+  if (!passesContextualActivationGate(entry, filterContext, gameState)) return false;
   if (!ignoreTiming && !checkTiming(entry, timingState)) return false;
-  if (!evaluateConditions(entry.activationConditions, gameState)) return false;
-  if (!evaluateSchedule(entry.schedule, gameState)) return false;
   if (entry.probability !== null && entry.probability < 100) {
     if (Math.random() * 100 > entry.probability) return false;
   }
@@ -274,6 +283,12 @@ function cloneTimingState(state: EntryTimingState): EntryTimingState {
     cooldownRemaining: state.cooldownRemaining,
     delayRemaining: state.delayRemaining,
   };
+}
+
+function shouldPersistTimingState(entry: LorebookEntry, state: EntryTimingState): boolean {
+  if (state.stickyCount > 0 || state.cooldownRemaining > 0 || state.delayRemaining > 0) return true;
+  if (entry.delay !== null && entry.delay > 0) return true;
+  return false;
 }
 
 export function updateTimingStatesForScan(
@@ -309,13 +324,7 @@ export function updateTimingStatesForScan(
       if (state.stickyCount > 0) state.stickyCount -= 1;
     }
 
-    if (
-      state.lastActivatedAt !== null ||
-      state.stickyCount > 0 ||
-      state.cooldownRemaining > 0 ||
-      state.delayRemaining > 0 ||
-      (entry.delay !== null && entry.delay > 0)
-    ) {
+    if (shouldPersistTimingState(entry, state)) {
       nextStates.set(entry.id, state);
     }
   }
@@ -472,7 +481,7 @@ export function scanForActivatedEntries(
     const timingState = timingStates.get(entry.id);
 
     if (!ignoreTiming && timingState?.stickyCount && timingState.stickyCount > 0) {
-      if (!entry.enabled || !passesEntryFilters(entry, filterContext)) continue;
+      if (!passesContextualActivationGate(entry, filterContext, gameState)) continue;
       activated.push({
         entry,
         matchedKeys: ["[sticky]"],

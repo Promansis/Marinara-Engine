@@ -112,6 +112,7 @@ export async function promptReviewerRoutes(app: FastifyInstance) {
           { role: "assistant", content: "(Sample assistant response)" },
         ],
         activeLorebookIds: [],
+        previewOnly: true,
       };
 
       const result = await assemblePrompt(assemblerInput);

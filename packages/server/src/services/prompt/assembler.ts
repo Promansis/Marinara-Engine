@@ -118,6 +118,8 @@ export interface AssemblerInput {
   gameState?: Record<string, unknown> | null;
   /** Generation trigger labels used by per-entry lorebook include/exclude filters. */
   generationTriggers?: string[];
+  /** Preview/debug assembly: lorebook markers should not consume timing or ephemeral state. */
+  previewOnly?: boolean;
   /** When set, replaces individual character scenario fields with this group scenario. */
   groupScenarioOverrideText?: string | null;
 }
@@ -232,6 +234,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
     lorebookTokenBudget: input.lorebookTokenBudget,
     gameState: input.gameState ?? null,
     generationTriggers: input.generationTriggers ?? ["chat"],
+    previewOnly: input.previewOnly === true,
     groupScenarioOverrideText: input.groupScenarioOverrideText ?? null,
   };
 
@@ -422,7 +425,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
     ...(markerCtx.updatedEntryStateOverrides
       ? { updatedEntryStateOverrides: markerCtx.updatedEntryStateOverrides }
       : {}),
-    ...(markerCtx.updatedEntryTimingStates
+    ...(markerCtx.updatedEntryTimingStates !== undefined
       ? { updatedEntryTimingStates: markerCtx.updatedEntryTimingStates }
       : {}),
   };
