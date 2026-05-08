@@ -6,6 +6,7 @@ import {
   applyPerLorebookTokenBudgets,
   enforceMaxActivatedEntries,
   filterRelevantLorebooks,
+  serializeTimingStateMap,
 } from "../src/services/lorebook/index.js";
 import {
   scanForActivatedEntries,
@@ -337,6 +338,45 @@ test("timing state persists delay, cooldown, and sticky activation windows", () 
   assert.equal(afterSticky.get(entry.id)?.stickyCount, 0);
 });
 
+test("timing state clears when sticky-only and cooldown-only windows expire", () => {
+  const stickyEntry = makeEntry({ id: "sticky", keys: ["sticky-key"], sticky: 1 });
+  const cooldownEntry = makeEntry({ id: "cooldown", keys: ["cooldown-key"], cooldown: 1 });
+
+  const afterStickyActivation = updateTimingStatesForScan(
+    [stickyEntry],
+    [{ entry: stickyEntry, matchedKeys: ["sticky-key"], injectionOrder: stickyEntry.order }],
+    new Map(),
+    1,
+  );
+  assert.equal(afterStickyActivation.get(stickyEntry.id)?.stickyCount, 1);
+
+  const sticky = scanForActivatedEntries([{ role: "user", content: "no match" }], [stickyEntry], {
+    timingStates: afterStickyActivation,
+    currentMessageIndex: 2,
+  });
+  assert.deepEqual(sticky.map((result) => result.matchedKeys[0]), ["[sticky]"]);
+  const afterStickyExpires = updateTimingStatesForScan([stickyEntry], sticky, afterStickyActivation, 2);
+  assert.deepEqual(Array.from(afterStickyExpires.entries()), []);
+  assert.deepEqual(serializeTimingStateMap(afterStickyExpires), {});
+
+  const afterCooldownActivation = updateTimingStatesForScan(
+    [cooldownEntry],
+    [{ entry: cooldownEntry, matchedKeys: ["cooldown-key"], injectionOrder: cooldownEntry.order }],
+    new Map(),
+    1,
+  );
+  assert.equal(afterCooldownActivation.get(cooldownEntry.id)?.cooldownRemaining, 1);
+
+  const blocked = scanForActivatedEntries([{ role: "user", content: "cooldown-key" }], [cooldownEntry], {
+    timingStates: afterCooldownActivation,
+    currentMessageIndex: 2,
+  });
+  assert.deepEqual(blocked, []);
+  const afterCooldownExpires = updateTimingStatesForScan([cooldownEntry], blocked, afterCooldownActivation, 2);
+  assert.deepEqual(Array.from(afterCooldownExpires.entries()), []);
+  assert.deepEqual(serializeTimingStateMap(afterCooldownExpires), {});
+});
+
 test("preview scans ignore mutable timing state without sticky activations", () => {
   const delayed = makeEntry({ id: "delayed", delay: 2, order: 10 });
   const coolingDown = makeEntry({ id: "cooldown", cooldown: 3, order: 20 });
@@ -384,6 +424,69 @@ test("preview scans ignore mutable timing state without sticky activations", () 
   });
 
   assert.deepEqual(noKeywordActivated, []);
+});
+
+test("preview-style scans honor supplied timing state without forcing activation", () => {
+  const delayed = makeEntry({ id: "delayed", delay: 2, order: 10 });
+  const coolingDown = makeEntry({ id: "cooldown", cooldown: 3, order: 20 });
+  const sticky = makeEntry({ id: "sticky", sticky: 2, order: 30 });
+  const timingStates = new Map([
+    [delayed.id, { lastActivatedAt: null, stickyCount: 0, cooldownRemaining: 0, delayRemaining: 2 }],
+    [coolingDown.id, { lastActivatedAt: 1, stickyCount: 0, cooldownRemaining: 3, delayRemaining: 0 }],
+    [sticky.id, { lastActivatedAt: 1, stickyCount: 2, cooldownRemaining: 0, delayRemaining: 0 }],
+  ]);
+
+  const activated = scanForActivatedEntries(
+    [{ role: "user", content: "keyword" }],
+    [delayed, coolingDown, sticky],
+    { timingStates },
+  );
+
+  assert.deepEqual(
+    activated.map((result) => result.entry.id),
+    ["sticky"],
+  );
+  assert.deepEqual(
+    activated.map((result) => result.matchedKeys[0]),
+    ["[sticky]"],
+  );
+});
+
+test("sticky activations still obey game-state conditions and schedules", () => {
+  const entry = makeEntry({
+    sticky: 2,
+    activationConditions: [{ field: "location", operator: "equals", value: "forest" }],
+    schedule: { activeTimes: ["night"], activeDates: [], activeLocations: [] },
+  });
+  const timingStates = new Map([
+    [
+      entry.id,
+      {
+        lastActivatedAt: 1,
+        stickyCount: 2,
+        cooldownRemaining: 0,
+        delayRemaining: 0,
+      },
+    ],
+  ]);
+
+  const wrongLocation = scanForActivatedEntries([{ role: "user", content: "no match" }], [entry], {
+    gameState: { location: "city", time: "night" },
+    timingStates,
+  });
+  assert.deepEqual(wrongLocation, []);
+
+  const wrongSchedule = scanForActivatedEntries([{ role: "user", content: "no match" }], [entry], {
+    gameState: { location: "forest", time: "morning" },
+    timingStates,
+  });
+  assert.deepEqual(wrongSchedule, []);
+
+  const activated = scanForActivatedEntries([{ role: "user", content: "no match" }], [entry], {
+    gameState: { location: "forest", time: "night" },
+    timingStates,
+  });
+  assert.deepEqual(activated.map((result) => result.matchedKeys[0]), ["[sticky]"]);
 });
 
 test("constant entries obey delay and activation conditions", () => {

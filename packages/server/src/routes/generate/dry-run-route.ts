@@ -1023,6 +1023,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
                     >)
                   : undefined,
               generationTriggers: lorebookGenerationTriggers,
+              previewOnly: true,
             });
             const loreContent = [lorebookResult.worldInfoBefore, lorebookResult.worldInfoAfter]
               .filter((content): content is string => typeof content === "string" && content.length > 0)
@@ -1223,6 +1224,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
               : undefined,
           lorebookTokenBudget:
             typeof chatMeta.lorebookTokenBudget === "number" ? chatMeta.lorebookTokenBudget : undefined,
+          previewOnly: true,
           groupScenarioOverrideText:
             typeof chatMeta.groupScenarioText === "string" && (chatMeta.groupScenarioText as string).trim()
               ? (chatMeta.groupScenarioText as string).trim()
@@ -1317,6 +1319,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
               >)
             : undefined,
         generationTriggers: lorebookGenerationTriggers,
+        previewOnly: true,
       });
       const loreContent = [lorebookResult.worldInfoBefore, lorebookResult.worldInfoAfter]
         .filter((content): content is string => typeof content === "string" && content.length > 0)

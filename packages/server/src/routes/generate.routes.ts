@@ -398,13 +398,13 @@ async function persistLorebookRuntimeState(args: {
   entryStateOverrides?: Record<string, { ephemeral?: number | null; enabled?: boolean }>;
   entryTimingStates?: Record<string, LorebookEntryTimingState>;
 }): Promise<void> {
-  if (!args.entryStateOverrides && !args.entryTimingStates) return;
+  if (args.entryStateOverrides === undefined && args.entryTimingStates === undefined) return;
   const freshChat = await args.chats.getById(args.chatId);
   const freshMeta = freshChat ? (parseExtra(freshChat.metadata) as Record<string, unknown>) : args.fallbackMeta;
   await args.chats.updateMetadata(args.chatId, {
     ...freshMeta,
-    ...(args.entryStateOverrides ? { entryStateOverrides: args.entryStateOverrides } : {}),
-    ...(args.entryTimingStates ? { entryTimingStates: args.entryTimingStates } : {}),
+    ...(args.entryStateOverrides !== undefined ? { entryStateOverrides: args.entryStateOverrides } : {}),
+    ...(args.entryTimingStates !== undefined ? { entryTimingStates: args.entryTimingStates } : {}),
   });
 }
 

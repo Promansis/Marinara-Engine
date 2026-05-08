@@ -56,6 +56,8 @@ export interface MarkerContext {
   gameState?: Record<string, unknown> | null;
   /** Generation trigger labels used by per-entry lorebook include/exclude filters. */
   generationTriggers?: string[];
+  /** Preview/debug expansion: lorebook markers should not consume timing or ephemeral state. */
+  previewOnly?: boolean;
   /** Collector for lorebook depth entries — populated during expansion, consumed by the assembler. */
   lorebookDepthEntries?: Array<{ content: string; role: "system" | "user" | "assistant"; depth: number }>;
   /** Collector for updated entry state overrides after ephemeral processing — saved to chat metadata by caller. */
@@ -249,13 +251,14 @@ async function expandLorebook(config: MarkerConfig, ctx: MarkerContext): Promise
     entryStateOverrides: ctx.entryStateOverrides,
     entryTimingStates: ctx.entryTimingStates,
     generationTriggers: ctx.generationTriggers ?? ["chat"],
+    previewOnly: ctx.previewOnly === true,
   });
 
   // Collect updated per-chat entry state overrides for the caller to persist
   if (result.updatedEntryStateOverrides) {
     ctx.updatedEntryStateOverrides = result.updatedEntryStateOverrides;
   }
-  if (result.updatedEntryTimingStates) {
+  if (result.updatedEntryTimingStates !== undefined) {
     ctx.updatedEntryTimingStates = result.updatedEntryTimingStates;
   }
 

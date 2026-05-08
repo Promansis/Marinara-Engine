@@ -184,8 +184,11 @@ function toTimingStateMap(states?: Record<string, LorebookEntryTimingState>): Ma
   return map;
 }
 
-function fromTimingStateMap(states: Map<string, EntryTimingState>): Record<string, LorebookEntryTimingState> | undefined {
-  if (states.size === 0) return undefined;
+function hasSerializedTimingStates(states?: Record<string, LorebookEntryTimingState>): boolean {
+  return states !== undefined && Object.keys(states).length > 0;
+}
+
+export function serializeTimingStateMap(states: Map<string, EntryTimingState>): Record<string, LorebookEntryTimingState> {
   const record: Record<string, LorebookEntryTimingState> = {};
   for (const [entryId, state] of states) {
     record[entryId] = {
@@ -276,7 +279,7 @@ export async function processLorebooks(
     entryStateOverrides?: Record<string, { ephemeral?: number | null; enabled?: boolean }>;
     /** Per-chat timing state for sticky/cooldown/delay. */
     entryTimingStates?: Record<string, LorebookEntryTimingState>;
-    /** Preview/debug scan: ignore mutable timing state and do not return timing updates. */
+    /** Preview/debug scan: read timing state but do not return mutable timing updates. */
     previewOnly?: boolean;
     /** Generation trigger labels used by per-entry include/exclude filters. */
     generationTriggers?: string[];
@@ -329,6 +332,8 @@ export async function processLorebooks(
       });
   }
 
+  const previewOnly = options?.previewOnly === true;
+
   if (allEntries.length === 0) {
     return {
       worldInfoBefore: "",
@@ -337,12 +342,12 @@ export async function processLorebooks(
       totalEntries: 0,
       totalTokensEstimate: 0,
       activatedEntryIds: [],
+      ...(!previewOnly && hasSerializedTimingStates(options?.entryTimingStates) ? { updatedEntryTimingStates: {} } : {}),
     };
   }
 
   const tokenBudget = options?.tokenBudget ?? LIMITS.DEFAULT_LOREBOOK_TOKEN_BUDGET;
-  const previewOnly = options?.previewOnly === true;
-  const timingStates = previewOnly ? new Map<string, EntryTimingState>() : toTimingStateMap(options?.entryTimingStates);
+  const timingStates = toTimingStateMap(options?.entryTimingStates);
   const currentMessageIndex = messages.length;
   const matchingContext = await buildLorebookMatchingContext(
     db,
@@ -363,7 +368,6 @@ export async function processLorebooks(
     additionalMatchingSourceText: matchingContext.additionalMatchingSourceText,
     timingStates,
     currentMessageIndex,
-    ignoreTiming: previewOnly,
   };
 
   // Determine recursion settings from relevant enabled lorebooks only.
@@ -426,9 +430,13 @@ export async function processLorebooks(
   // don't modify global state or return overrides.
 
   // Process into injectable content
-  const updatedEntryTimingStates = previewOnly
+  const updatedTimingMap = previewOnly
     ? undefined
-    : fromTimingStateMap(updateTimingStatesForScan(allEntries, cappedActivated, timingStates, currentMessageIndex));
+    : updateTimingStatesForScan(allEntries, cappedActivated, timingStates, currentMessageIndex);
+  const updatedEntryTimingStates =
+    updatedTimingMap && (timingStates.size > 0 || updatedTimingMap.size > 0)
+      ? serializeTimingStateMap(updatedTimingMap)
+      : undefined;
 
   const result = processActivatedEntries(cappedActivated, tokenBudget);
 
