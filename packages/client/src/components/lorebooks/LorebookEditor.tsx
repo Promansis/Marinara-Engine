@@ -73,7 +73,7 @@ import { api } from "../../lib/api-client";
 import type { Lorebook, LorebookEntry, LorebookFolder, LorebookCategory } from "@marinara-engine/shared";
 import { LorebookEntryRow } from "./LorebookEntryRow";
 import { LorebookFolderRow } from "./LorebookFolderRow";
-import { estimateTokens } from "./LorebookFormFields";
+import { ExpandableTextarea, estimateTokens } from "./LorebookFormFields";
 import { ExportFormatDialog, type ExportFormatChoice } from "../ui/ExportFormatDialog";
 
 // ──────────────────────────────────────────────
@@ -412,26 +412,29 @@ export function LorebookEditor() {
     return map;
   }, [personas]);
 
-  const scopeLabel = useMemo(() => {
+  const scopeSummary = useMemo(() => {
     if (!formEnabled) return null;
-    if (formIsGlobal) return "Global";
-    if (lorebookId && activeChatLorebookIds.includes(lorebookId)) return "Attached to this chat";
+    if (formIsGlobal) return { text: "Global" };
+    if (lorebookId && activeChatLorebookIds.includes(lorebookId)) return { text: "Attached to this chat" };
     if (formCharacterIds.length > 0 || formPersonaIds.length > 0) {
-      const parts = [
-        formCharacterIds.length > 0
-          ? `${formCharacterIds.length} character${formCharacterIds.length === 1 ? "" : "s"}`
-          : null,
-        formPersonaIds.length > 0
-          ? `${formPersonaIds.length} persona${formPersonaIds.length === 1 ? "" : "s"}`
-          : null,
-      ].filter(Boolean);
-      const names = [
-        ...formCharacterIds.map((id) => characterNameById.get(id) ?? id),
-        ...formPersonaIds.map((id) => personaNameById.get(id) ?? id),
-      ];
-      return `${parts.join(" + ")} linked${names.length > 0 ? `: ${names.slice(0, 3).join(", ")}${names.length > 3 ? "..." : ""}` : ""}`;
+      return {
+        characters:
+          formCharacterIds.length > 0
+            ? {
+                label: `${formCharacterIds.length} Character${formCharacterIds.length === 1 ? "" : "s"}:`,
+                names: formCharacterIds.map((id) => characterNameById.get(id) ?? id).join(", "),
+              }
+            : null,
+        personas:
+          formPersonaIds.length > 0
+            ? {
+                label: `${formPersonaIds.length} Persona${formPersonaIds.length === 1 ? "" : "s"}:`,
+                names: formPersonaIds.map((id) => personaNameById.get(id) ?? id).join(", "),
+              }
+            : null,
+      };
     }
-    return "Not active anywhere yet";
+    return { text: "Not active anywhere yet" };
   }, [
     activeChatLorebookIds,
     characterNameById,
@@ -1063,14 +1066,14 @@ export function LorebookEditor() {
                 {/* Description */}
                 <div>
                   <label className="mb-1.5 block text-xs font-medium">Description</label>
-                  <textarea
+                  <ExpandableTextarea
                     value={formDescription}
-                    onChange={(e) => {
-                      setFormDescription(e.target.value);
+                    onChange={(value) => {
+                      setFormDescription(value);
                       markLorebookDirty();
                     }}
                     rows={3}
-                    className="w-full resize-y rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                    title="Edit lorebook description"
                   />
                 </div>
 
@@ -1160,73 +1163,75 @@ export function LorebookEditor() {
                   </div>
                 </div>
 
-                {/* Character Link */}
                 {!formIsGlobal && (
-                  <LinkedResourcePicker
-                    label="Linked Characters"
-                    help="When linked to characters, this lorebook auto-activates in chats that include any of them."
-                    emptyText="No characters selected"
-                    addLabel="Add Character"
-                    searchPlaceholder="Search characters..."
-                    icon={<Users size="0.875rem" />}
-                    items={characters}
-                    selectedIds={formCharacterIds}
-                    search={characterLinkSearch}
-                    onSearchChange={setCharacterLinkSearch}
-                    isOpen={characterLinkPickerOpen}
-                    onOpen={() => {
-                      setCharacterLinkPickerOpen(true);
-                      setCharacterLinkSearch("");
-                    }}
-                    onClose={() => setCharacterLinkPickerOpen(false)}
-                    onAdd={(id) => {
-                      setFormCharacterIds((current) => (current.includes(id) ? current : [...current, id]));
-                      markLorebookDirty();
-                    }}
-                    onRemove={(id) => {
-                      setFormCharacterIds((current) => current.filter((characterId) => characterId !== id));
-                      markLorebookDirty();
-                    }}
-                  />
+                  <div className="rounded-xl bg-[var(--secondary)]/60 p-4 ring-1 ring-[var(--border)]">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      {/* Character Link */}
+                      <LinkedResourcePicker
+                        label="Linked Characters"
+                        help="When linked to characters, this lorebook auto-activates in chats that include any of them."
+                        emptyText="No characters selected"
+                        addLabel="Add Character"
+                        searchPlaceholder="Search characters..."
+                        icon={<Users size="0.875rem" />}
+                        items={characters}
+                        selectedIds={formCharacterIds}
+                        search={characterLinkSearch}
+                        onSearchChange={setCharacterLinkSearch}
+                        isOpen={characterLinkPickerOpen}
+                        onOpen={() => {
+                          setCharacterLinkPickerOpen(true);
+                          setCharacterLinkSearch("");
+                        }}
+                        onClose={() => setCharacterLinkPickerOpen(false)}
+                        onAdd={(id) => {
+                          setFormCharacterIds((current) => (current.includes(id) ? current : [...current, id]));
+                          markLorebookDirty();
+                        }}
+                        onRemove={(id) => {
+                          setFormCharacterIds((current) => current.filter((characterId) => characterId !== id));
+                          markLorebookDirty();
+                        }}
+                      />
+
+                      {/* Persona Link */}
+                      <LinkedResourcePicker
+                        label="Linked Personas"
+                        help="When linked to personas, this lorebook auto-activates in chats that use any of them."
+                        emptyText="No personas selected"
+                        addLabel="Add Persona"
+                        searchPlaceholder="Search personas..."
+                        icon={<UserRound size="0.875rem" />}
+                        items={personas.map((persona) => ({
+                          id: persona.id,
+                          name: persona.name,
+                          description: persona.comment,
+                        }))}
+                        selectedIds={formPersonaIds}
+                        search={personaLinkSearch}
+                        onSearchChange={setPersonaLinkSearch}
+                        isOpen={personaLinkPickerOpen}
+                        onOpen={() => {
+                          setPersonaLinkPickerOpen(true);
+                          setPersonaLinkSearch("");
+                        }}
+                        onClose={() => setPersonaLinkPickerOpen(false)}
+                        onAdd={(id) => {
+                          setFormPersonaIds((current) => (current.includes(id) ? current : [...current, id]));
+                          markLorebookDirty();
+                        }}
+                        onRemove={(id) => {
+                          setFormPersonaIds((current) => current.filter((personaId) => personaId !== id));
+                          markLorebookDirty();
+                        }}
+                      />
+                    </div>
+                  </div>
                 )}
 
-                {/* Persona Link */}
-                {!formIsGlobal && (
-                  <LinkedResourcePicker
-                    label="Linked Personas"
-                    help="When linked to personas, this lorebook auto-activates in chats that use any of them."
-                    emptyText="No personas selected"
-                    addLabel="Add Persona"
-                    searchPlaceholder="Search personas..."
-                    icon={<UserRound size="0.875rem" />}
-                    items={personas.map((persona) => ({
-                      id: persona.id,
-                      name: persona.name,
-                      description: persona.comment,
-                    }))}
-                    selectedIds={formPersonaIds}
-                    search={personaLinkSearch}
-                    onSearchChange={setPersonaLinkSearch}
-                    isOpen={personaLinkPickerOpen}
-                    onOpen={() => {
-                      setPersonaLinkPickerOpen(true);
-                      setPersonaLinkSearch("");
-                    }}
-                    onClose={() => setPersonaLinkPickerOpen(false)}
-                    onAdd={(id) => {
-                      setFormPersonaIds((current) => (current.includes(id) ? current : [...current, id]));
-                      markLorebookDirty();
-                    }}
-                    onRemove={(id) => {
-                      setFormPersonaIds((current) => current.filter((personaId) => personaId !== id));
-                      markLorebookDirty();
-                    }}
-                  />
-                )}
-
-                {/* Enabled toggle */}
+                {/* Status cards */}
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <div className="flex items-center justify-between rounded-xl bg-[var(--secondary)] px-4 py-3 ring-1 ring-[var(--border)]">
+                  <div className="flex min-h-[4.75rem] items-center justify-between rounded-xl bg-[var(--secondary)] px-4 py-3 ring-1 ring-[var(--border)]">
                     <div>
                       <p className="text-xs font-medium">Enabled</p>
                       <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
@@ -1248,37 +1253,61 @@ export function LorebookEditor() {
                     </button>
                   </div>
 
-                  {scopeLabel && (
-                    <div className="flex items-center justify-between rounded-xl bg-[var(--secondary)] px-4 py-3 ring-1 ring-[var(--border)]">
-                      <div>
-                        <p className="text-xs font-medium">Scope</p>
-                        <p className="text-[0.6875rem] text-[var(--muted-foreground)]">{scopeLabel}</p>
+                  {scopeSummary && (
+                    <div className="flex h-[10.25rem] items-start overflow-hidden rounded-xl bg-[var(--secondary)] px-4 py-3 ring-1 ring-[var(--border)] md:row-span-2">
+                      <div className="min-w-0 overflow-hidden">
+                        <p className="text-xs font-medium mb-1">Linked To:</p>
+                        {"text" in scopeSummary ? (
+                          <p className="text-[0.6875rem] text-[var(--muted-foreground)]">{scopeSummary.text}</p>
+                        ) : (
+                          <div
+                            className="space-y-1 overflow-hidden text-[0.6875rem] leading-snug text-[var(--muted-foreground)]"
+                            title={[scopeSummary.characters, scopeSummary.personas]
+                              .filter((line): line is { label: string; names: string } => line !== null)
+                              .map((line) => `${line.label} ${line.names}`)
+                              .join("\n")}
+                          >
+                            {scopeSummary.characters && (
+                              <p>
+                                <span className="font-medium text-[var(--foreground)]">
+                                  {scopeSummary.characters.label}
+                                </span>{" "}
+                                {scopeSummary.characters.names}
+                              </p>
+                            )}
+                            {scopeSummary.personas && (
+                              <p>
+                                <span className="font-medium text-[var(--foreground)]">{scopeSummary.personas.label}</span>{" "}
+                                {scopeSummary.personas.names}
+                              </p>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      <Globe size="1rem" className="text-amber-400" />
                     </div>
                   )}
-                </div>
 
-                <div className="flex items-center justify-between rounded-xl bg-[var(--secondary)] px-4 py-3 ring-1 ring-[var(--border)]">
-                  <div>
-                    <p className="text-xs font-medium">Global</p>
-                    <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
-                      Active in every chat when this lorebook is enabled
-                    </p>
+                  <div className="flex min-h-[4.75rem] items-center justify-between rounded-xl bg-[var(--secondary)] px-4 py-3 ring-1 ring-[var(--border)]">
+                    <div>
+                      <p className="text-xs font-medium">Global</p>
+                      <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
+                        Active in every chat when this lorebook is enabled
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setFormIsGlobal(!formIsGlobal);
+                        markLorebookDirty();
+                      }}
+                      className="transition-colors"
+                    >
+                      {formIsGlobal ? (
+                        <ToggleRight size="1.75rem" className="text-amber-400" />
+                      ) : (
+                        <ToggleLeft size="1.75rem" className="text-[var(--muted-foreground)]" />
+                      )}
+                    </button>
                   </div>
-                  <button
-                    onClick={() => {
-                      setFormIsGlobal(!formIsGlobal);
-                      markLorebookDirty();
-                    }}
-                    className="transition-colors"
-                  >
-                    {formIsGlobal ? (
-                      <ToggleRight size="1.75rem" className="text-amber-400" />
-                    ) : (
-                      <ToggleLeft size="1.75rem" className="text-[var(--muted-foreground)]" />
-                    )}
-                  </button>
                 </div>
 
                 {/* Scan settings */}

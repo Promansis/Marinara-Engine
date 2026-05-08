@@ -1225,7 +1225,6 @@ export async function generateRoutes(app: FastifyInstance) {
             entryStateOverrides: assembled.updatedEntryStateOverrides,
             entryTimingStates: assembled.updatedEntryTimingStates,
           });
-        }
       }
 
       // ── Conversation mode: inject built-in DM-style system prompt when no preset ──
