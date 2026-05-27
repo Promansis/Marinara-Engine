@@ -1,0 +1,69 @@
+  UI Source Map
+
+  ┌────────────────────────┬─────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┬──────────────────────────┐
+  │ Surface                │ User Goal               │ Primary Source                                                                                                                      │ Notes                    │
+  ├────────────────────────┼─────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼──────────────────────────┤
+  │ App bootstrap          │ Mount app, query cache, │ src/app/main.tsx:19, src/app/App.tsx:118                                                                                            │ App injects theme,       │
+  │                        │ global providers        │                                                                                                                                     │ shell, modal renderer,   │
+  │                        │                         │                                                                                                                                     │ dialogs, toaster, font   │
+  │                        │                         │                                                                                                                                     │ loading.                 │
+  │ App chrome             │ Window shell, layout,   │ src/app/shell/AppShell.tsx:882                                                                                                      │ Owns titlebar/topbar,    │
+  │                        │ side panels             │                                                                                                                                     │ chat sidebar, main pane, │
+  │                        │                         │                                                                                                                                     │ tracker panel, right     │
+  │                        │                         │                                                                                                                                     │ panel, onboarding.       │
+  │ Desktop/mobile nav     │ Open chats, tools,      │ src/app/shell/WindowTitleBar.tsx:166, src/app/shell/TopBar.tsx:88, src/app/shell/PanelNavButtons.tsx:7                              │ Panel button registry    │
+  │                        │ Professor Mari, panels  │                                                                                                                                     │ lives in                 │
+  │                        │                         │                                                                                                                                     │ PanelNavButtons; right   │
+  │                        │                         │                                                                                                                                     │ panel component registry │
+  │                        │                         │                                                                                                                                     │ lives in RightPanel.     │
+  │ Left chat list         │ Browse/create/select    │ src/app/shell/ChatSidebar.tsx:120                                                                                                   │ Tabs are conversation,   │
+  │                        │ chats by mode           │                                                                                                                                     │ roleplay, game; data     │
+  │                        │                         │                                                                                                                                     │ comes from catalog chat  │
+  │                        │                         │                                                                                                                                     │ hooks.                   │
+  │ Main route switch      │ Show home or active     │ src/features/modes/router/components/ModeSurface.tsx:22                                                                             │ Lazy-loads conversation, │
+  │                        │ chat mode               │                                                                                                                                     │ roleplay, or game route  │
+  │                        │                         │                                                                                                                                     │ from chat.mode.          │
+  │ Home surface           │ Quick start and recent  │ src/features/modes/router/components/ModeHomeSurface.tsx:16                                                                         │ Creates new chats and    │
+  │                        │ chats                   │                                                                                                                                     │ opens setup flow.        │
+  │ Conversation mode      │ Text/chat surface       │ src/features/modes/conversation/components/ConversationModeRoute.tsx:111, ChatConversationSurface.tsx                               │ Uses shared chat UI      │
+  │                        │                         │                                                                                                                                     │ primitives.              │
+  │ Roleplay mode          │ Immersive RP surface,   │ src/features/modes/roleplay/components/RoleplayModeRoute.tsx:67, src/features/modes/roleplay/components/ChatRoleplaySurface.tsx:675 │ Owns RP toolbar, HUD,    │
+  │                        │ HUD, scenes             │                                                                                                                                     │ CYOA choices, encounter  │
+  │                        │                         │                                                                                                                                     │ modal, scene controls.   │
+  │ Game mode              │ RPG/gameplay surface    │ src/features/modes/game/components/GameModeRoute.tsx:18, GameSurface.tsx                                                            │ Game-specific UI uses    │
+  │                        │                         │                                                                                                                                     │ src/features/modes/game/ │
+  │                        │                         │                                                                                                                                     │ components and game      │
+  │                        │                         │                                                                                                                                     │ stores.                  │
+  │ Shared chat overlays   │ Settings/files/gallery/ │ src/features/modes/shared/chat-ui/components/ChatCommonOverlays.tsx:209                                                             │ Shared by conversation,  │
+  │                        │ wizard/delete/          │                                                                                                                                     │ roleplay, and game       │
+  │                        │ multiselect             │                                                                                                                                     │ routes.                  │
+  │ Right tools panel      │ Characters, lorebooks,  │ src/app/shell/RightPanel.tsx:29                                                                                                     │ Registry maps panel      │
+  │                        │ presets, connections,   │                                                                                                                                     │ names to feature panels. │
+  │                        │ agents, personas,       │                                                                                                                                     │                          │
+  │                        │ settings, browser       │                                                                                                                                     │                          │
+  │ Catalog/detail editors │ Durable content editing │ src/features/catalog/*/components                                                                                                   │ Owners include           │
+  │                        │                         │                                                                                                                                     │ CharactersPanel,         │
+  │                        │                         │                                                                                                                                     │ CharacterEditor,         │
+  │                        │                         │                                                                                                                                     │ LorebooksPanel,          │
+  │                        │                         │                                                                                                                                     │ LorebookEditor,          │
+  │                        │                         │                                                                                                                                     │ PresetsPanel,            │
+  │                        │                         │                                                                                                                                     │ AgentsPanel,             │
+  │                        │                         │                                                                                                                                     │ PersonasPanel.           │
+  │ Professor Mari         │ Standalone assistant    │ src/features/shell/mari/components/ProfessorMariSurface.tsx:101                                                                     │ UI calls src/shared/api/ │
+  │                        │ surface                 │                                                                                                                                     │ mari-api.ts, backend/    │
+  │                        │                         │                                                                                                                                     │ tooling in src-tauri/    │
+  │                        │                         │                                                                                                                                     │ src/commands/storage/    │
+  │                        │                         │                                                                                                                                     │ mari.rs.                 │
+  │ Tracker panel          │ Runtime world/character │ src/features/runtime/tracker/components/TrackerDataSidebar.tsx:9                                                                    │ Rendered by AppShell;    │
+  │                        │ state sidebar           │                                                                                                                                     │ model from tracker       │
+  │                        │                         │                                                                                                                                     │ hooks.                   │
+  │ Styling/theme          │ Global tokens, shell    │ src/styles/globals.css:24                                                                                                           │ Main stylesheet. src/    │
+  │                        │ classes, responsive     │                                                                                                                                     │ app/App.css appears      │
+  │                        │ rules                   │                                                                                                                                     │ legacy/minimal compared  │
+  │                        │                         │                                                                                                                                     │ with globals.css.        │
+  └────────────────────────┴─────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴──────────────────────────┘
+
+  State And Data Sources
+  UI state is mostly Zustand in src/shared/stores/ui.store.ts:98 and chat runtime state in src/shared/stores/chat.store.ts:172. Data access flows through React Query hooks in src/features/catalog/**/hooks, usually
+  backed by src/shared/api/storage-api.ts:42. Host/runtime calls route through src/shared/api/tauri-client.ts:25, with remote-capable routing handled by remote-runtime.ts.
+
