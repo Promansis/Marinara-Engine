@@ -64,13 +64,19 @@ function DeleteConfirmationDialog({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-message-dialog-title"
         className="mx-4 w-full max-w-xs rounded-xl bg-[var(--card)] p-5 shadow-2xl ring-1 ring-[var(--border)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <p className="mb-4 text-center text-sm font-semibold">How to proceed?</p>
+        <p id="delete-message-dialog-title" className="mb-4 text-center text-sm font-semibold">
+          Delete message?
+        </p>
         <div className="flex flex-col gap-2">
           {canDeleteSwipe && (
             <button
+              type="button"
               onClick={onDeleteSwipe}
               className="rounded-lg bg-[var(--secondary)] px-4 py-2 text-xs font-medium transition-colors hover:bg-[var(--accent)]"
             >
@@ -78,18 +84,21 @@ function DeleteConfirmationDialog({
             </button>
           )}
           <button
+            type="button"
             onClick={onConfirm}
             className="rounded-lg bg-[var(--destructive)] px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-[var(--destructive)]/80"
           >
             Delete this message
           </button>
           <button
+            type="button"
             onClick={onDeleteMore}
             className="rounded-lg bg-[var(--secondary)] px-4 py-2 text-xs font-medium transition-colors hover:bg-[var(--accent)]"
           >
-            Delete more
+            Select this and later messages
           </button>
           <button
+            type="button"
             onClick={onClose}
             className="rounded-lg px-4 py-2 text-xs font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)]"
           >
@@ -127,14 +136,16 @@ function MultiSelectBar({
       <div className="flex items-center gap-3">
         <span className="text-xs font-medium text-[var(--muted-foreground)]">{selectedCount} selected</span>
         <button
+          type="button"
           onClick={onDelete}
           disabled={selectedCount === 0}
           className="flex items-center gap-1.5 rounded-lg bg-[var(--destructive)] px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-[var(--destructive)]/80 disabled:opacity-40"
         >
           <Trash2 size="0.75rem" />
-          Delete selected
+          Delete {selectedCount} {selectedCount === 1 ? "message" : "messages"}
         </button>
         <button
+          type="button"
           onClick={onCancel}
           className="rounded-lg px-4 py-2 text-xs font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)]"
         >
@@ -142,7 +153,9 @@ function MultiSelectBar({
         </button>
       </div>
       <div className="flex items-center justify-center gap-2">
+        <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Selection</span>
         <button
+          type="button"
           onClick={onSelectAllAbove}
           disabled={selectedCount === 0}
           title="Select all messages above"
@@ -152,6 +165,7 @@ function MultiSelectBar({
           <ChevronUp size="0.85rem" />
         </button>
         <button
+          type="button"
           onClick={onUnselectAll}
           disabled={selectedCount === 0}
           className="rounded-lg px-3 py-1 text-[11px] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] disabled:opacity-40"
@@ -159,6 +173,7 @@ function MultiSelectBar({
           Unselect all
         </button>
         <button
+          type="button"
           onClick={onSelectAllBelow}
           disabled={selectedCount === 0}
           title="Select all messages below"

@@ -7502,7 +7502,7 @@ export function GameSurface({
               </div>
             )}
 
-            {/* World overview — only revealed via typewriter after pressing Start Game */}
+            {/* World overview — only revealed via typewriter after pressing Begin First Scene */}
             {worldOverview && introPhase === "intro" && (
               <div className="min-h-0 flex-1 overflow-y-auto">
                 <IntroTypewriter text={worldOverview} onComplete={() => setIntroTypewriterDone(true)} />
@@ -7608,7 +7608,7 @@ export function GameSurface({
                   className="group flex items-center gap-2 rounded-xl bg-[var(--primary)] px-6 py-3 text-sm font-semibold text-white transition-all hover:scale-105 hover:shadow-lg hover:shadow-[var(--primary)]/30 disabled:opacity-50 disabled:hover:scale-100"
                 >
                   <Play size={18} className="transition-transform group-hover:scale-110" />
-                  Start Game
+                  Begin First Scene
                 </button>
               )}
             </div>

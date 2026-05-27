@@ -781,8 +781,8 @@ export function GameWidgetSessionPrepModal({
             removeConfirm: "Remove {label} from the starting session?",
             savingError: "Failed to save starting widget changes.",
             cancelLabel: "Back",
-            startLabel: "Start Game",
-            startingLabel: "Starting Game...",
+            startLabel: "Begin First Scene",
+            startingLabel: "Beginning First Scene...",
             editorDescription:
               "Adjust the starting values, or reshape stat blocks before the first game turn uses them.",
             numericValueLabel: "Starting value",

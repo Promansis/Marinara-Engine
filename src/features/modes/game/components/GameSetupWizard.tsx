@@ -1736,7 +1736,7 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading, charac
             ) : (
               <>
                 <Wand2 size={14} />
-                Start Game
+                Generate World
               </>
             )}
           </button>

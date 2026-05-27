@@ -1,5 +1,5 @@
-import { Suspense, lazy, useEffect, useRef } from "react";
-import { useChat, type ChatMode } from "../../../catalog/chats/index";
+import { Suspense, lazy, useEffect } from "react";
+import { useChat } from "../../../catalog/chats/index";
 import { ApiError } from "../../../../shared/api/api-errors";
 import { useChatStore } from "../../../../shared/stores/chat.store";
 import { ModeHomeSurface } from "./ModeHomeSurface";
@@ -23,7 +23,6 @@ export function ModeSurface() {
   const activeChatId = useChatStore((state) => state.activeChatId);
   const setActiveChatId = useChatStore((state) => state.setActiveChatId);
   const { data: chat, error: chatError } = useChat(activeChatId);
-  const lastModeRef = useRef<ChatMode>("conversation");
 
   useEffect(() => {
     if (!activeChatId || !(chatError instanceof ApiError) || chatError.status !== 404) return;
@@ -32,19 +31,25 @@ export function ModeSurface() {
 
   if (!activeChatId) return <ModeHomeSurface />;
 
-  if (chat?.mode) lastModeRef.current = chat.mode;
-  const chatMode = chat?.mode ?? lastModeRef.current;
-  const fallback = <div className="flex flex-1 overflow-hidden" />;
+  if (!chat?.mode) return <OpeningChatState />;
 
   return (
-    <Suspense fallback={fallback}>
-      {chatMode === "game" ? (
+    <Suspense fallback={<OpeningChatState />}>
+      {chat.mode === "game" ? (
         <GameModeRoute activeChatId={activeChatId} />
-      ) : chatMode === "conversation" ? (
+      ) : chat.mode === "conversation" ? (
         <ConversationModeRoute activeChatId={activeChatId} />
       ) : (
         <RoleplayModeRoute activeChatId={activeChatId} fallbackChatMode="roleplay" />
       )}
     </Suspense>
+  );
+}
+
+function OpeningChatState() {
+  return (
+    <div className="flex flex-1 items-center justify-center overflow-hidden text-sm text-[var(--muted-foreground)]">
+      Opening chat...
+    </div>
   );
 }

@@ -3,7 +3,7 @@
 // interacted chats on the homepage (compact row)
 // ──────────────────────────────────────────────
 import { useMemo } from "react";
-import { MessageSquare, BookOpen } from "lucide-react";
+import { MessageSquare, BookOpen, Theater } from "lucide-react";
 import { useRecentChatSummaries, type ChatListItem } from "../../../catalog/chats/index";
 import { useCharactersByIds } from "../../../catalog/characters/index";
 import { useChatStore } from "../../../../shared/stores/chat.store";
@@ -19,6 +19,16 @@ const MODE_BADGE: Record<string, { icon: React.ReactNode; bg: string; label: str
     icon: <BookOpen size="0.375rem" />,
     bg: "linear-gradient(135deg, #eb8951, #d97530)",
     label: "Roleplay",
+  },
+  game: {
+    icon: <Theater size="0.375rem" />,
+    bg: "linear-gradient(135deg, #e15c8c, #c94776)",
+    label: "Game",
+  },
+  visual_novel: {
+    icon: <BookOpen size="0.375rem" />,
+    bg: "linear-gradient(135deg, #eb8951, #d97530)",
+    label: "Visual Novel",
   },
 };
 
@@ -96,7 +106,9 @@ function RecentChatChip({
 
   return (
     <button
+      type="button"
       onClick={onClick}
+      aria-label={`Open recent chat: ${chat.name}, ${mode.label}`}
       className={cn(
         "group relative flex max-w-[8rem] items-center gap-1.5 rounded-lg border border-[var(--border)]/50 bg-[var(--card)]/50 px-2 py-1.5",
         "transition-all duration-150 hover:border-[var(--primary)]/40 hover:bg-[var(--card)] hover:shadow-sm",

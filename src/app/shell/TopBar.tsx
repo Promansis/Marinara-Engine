@@ -1,8 +1,9 @@
 // ──────────────────────────────────────────────
 // Layout: Mobile App Top Bar
 // ──────────────────────────────────────────────
-import { Bot, ChevronDown, Menu, Sparkles, X } from "lucide-react";
+import { ChevronDown, Menu, Sparkles, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useAgentStore } from "../../shared/stores/agent.store";
 import { useChatStore } from "../../shared/stores/chat.store";
 import { useUIStore } from "../../shared/stores/ui.store";
 import { cn } from "../../shared/lib/utils";
@@ -28,6 +29,7 @@ export function TopBar({
   const closeRightPanel = useUIStore((s) => s.closeRightPanel);
   const setTrackerPanelOpen = useUIStore((s) => s.setTrackerPanelOpen);
   const closeAllDetails = useUIStore((s) => s.closeAllDetails);
+  const failedAgentCount = useAgentStore((s) => s.failedAgentTypes.length);
   const hasOpenSurface = useUIStore((s) =>
     Boolean(
       s.characterDetailId ||
@@ -151,23 +153,27 @@ export function TopBar({
         </button>
 
         {toolsOpen && (
-          <div className="mari-mobile-tools-menu" role="menu" aria-label="Tools and panels">
+          <div className="mari-mobile-tools-menu" role="group" aria-label="Tools and panels">
             <button
               type="button"
-              onClick={() => {
-                setSidebarOpen(false);
-                setTrackerPanelOpen(false);
-                openRightPanel("bot-browser");
-                setToolsOpen(false);
-              }}
-              className="mari-mobile-tools-item"
-              role="menuitem"
+              onClick={openProfessorMari}
+              className={cn("mari-mobile-tools-item min-[361px]:hidden", professorMariOpen && "mari-mobile-tools-item-active")}
+              aria-current={professorMariOpen ? "page" : undefined}
             >
-              <Bot size="0.95rem" aria-hidden />
-              Browser
+              <img
+                src="/sprites/mari/Mari_profile.png"
+                alt=""
+                className="mari-titlebar-avatar-icon rounded-[0.2rem] object-cover"
+                draggable={false}
+              />
+              <span className="truncate">Professor Mari</span>
             </button>
-            {RIGHT_PANEL_BUTTONS.filter(({ panel }) => panel !== "bot-browser").map(({ panel, icon: Icon, label }) => {
+            {RIGHT_PANEL_BUTTONS.map(({ panel, icon: Icon, label }) => {
               const isActive = rightPanelOpen && rightPanel === panel;
+              const itemLabel =
+                panel === "agents" && failedAgentCount > 0
+                  ? `Agents, ${failedAgentCount} failed`
+                  : label;
               return (
                 <button
                   key={panel}
@@ -179,11 +185,11 @@ export function TopBar({
                     setToolsOpen(false);
                   }}
                   className={cn("mari-mobile-tools-item", isActive && "mari-mobile-tools-item-active")}
-                  role="menuitem"
+                  aria-label={itemLabel}
                   aria-current={isActive ? "page" : undefined}
                 >
                   <Icon size="0.95rem" aria-hidden />
-                  <span className="truncate">{label}</span>
+                  <span className="truncate">{itemLabel}</span>
                 </button>
               );
             })}

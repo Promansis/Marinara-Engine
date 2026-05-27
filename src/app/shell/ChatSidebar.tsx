@@ -561,35 +561,53 @@ export function ChatSidebar({
     const cfg = MODE_CONFIG[chat.mode] ?? MODE_CONFIG.conversation;
     const isActive = activeChatId === chat.id || (chat.groupId != null && chat.groupId === activeGroupId);
     const isSelected = selectedChatIds.has(chat.id);
+    const modeLabel = cfg.label;
+    const unreadCount = unreadCounts.get(chat.id) || 0;
+    const rowLabel = multiSelectMode
+      ? `${isSelected ? "Unselect" : "Select"} chat: ${chat.name}, ${modeLabel}`
+      : `Open chat: ${chat.name}, ${modeLabel}${branchCount > 1 ? `, ${branchCount} branches` : ""}${
+          unreadCount > 0 ? `, ${unreadCount} unread` : ""
+        }`;
+    const handleActivateChat = async () => {
+      if (multiSelectMode) {
+        toggleSelectChat(chat.id);
+        return;
+      }
+      if (hasAnyDetailOpen()) {
+        if (editorDirty) {
+          if (
+            !(await showConfirmDialog({
+              title: "Unsaved Changes",
+              message: "You have unsaved changes. Discard and continue?",
+              confirmLabel: "Discard",
+              tone: "destructive",
+            }))
+          ) {
+            return;
+          }
+        }
+        closeAllDetails();
+      }
+      internalNavRef.current = true;
+      setActiveChatId(chat.id);
+      if (window.innerWidth < 768) setSidebarOpen(false);
+    };
     return (
       <div
         role="button"
         tabIndex={0}
         key={chat.groupId ?? chat.id}
         data-chat-id={chat.id}
-        onClick={async () => {
-          if (multiSelectMode) {
-            toggleSelectChat(chat.id);
-            return;
+        aria-label={rowLabel}
+        aria-current={isActive ? "page" : undefined}
+        aria-pressed={multiSelectMode ? isSelected : undefined}
+        onClick={handleActivateChat}
+        onKeyDown={(event) => {
+          if (event.currentTarget !== event.target) return;
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            void handleActivateChat();
           }
-          if (hasAnyDetailOpen()) {
-            if (editorDirty) {
-              if (
-                !(await showConfirmDialog({
-                  title: "Unsaved Changes",
-                  message: "You have unsaved changes. Discard and continue?",
-                  confirmLabel: "Discard",
-                  tone: "destructive",
-                }))
-              ) {
-                return;
-              }
-            }
-            closeAllDetails();
-          }
-          internalNavRef.current = true;
-          setActiveChatId(chat.id);
-          if (window.innerWidth < 768) setSidebarOpen(false);
         }}
         className={cn(
           "group relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-all duration-150",
@@ -727,11 +745,10 @@ export function ChatSidebar({
 
           {/* Unread count badge */}
           {(() => {
-            const count = unreadCounts.get(chat.id) || 0;
-            if (count === 0 || isActive) return null;
+            if (unreadCount === 0 || isActive) return null;
             return (
               <span className="absolute -top-1 -right-1 z-20 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[0.5625rem] font-bold leading-none text-white shadow-sm ring-2 ring-[var(--sidebar-background)]">
-                {count > 99 ? "99+" : count}
+                {unreadCount > 99 ? "99+" : unreadCount}
               </span>
             );
           })()}
@@ -767,12 +784,14 @@ export function ChatSidebar({
         {/* Move to folder */}
         {!multiSelectMode && modeFolders.length > 0 && (
           <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation();
               setMovingChatId(chat.id);
             }}
             className="shrink-0 rounded-md p-1 opacity-0 transition-all hover:bg-[var(--accent)] group-hover:opacity-100 max-md:opacity-100"
             title="Move to folder"
+            aria-label={`Move ${chat.name} to folder`}
           >
             <FolderOpen size="0.75rem" className="text-[var(--muted-foreground)]" />
           </button>
@@ -781,6 +800,7 @@ export function ChatSidebar({
         {/* Delete button */}
         {!multiSelectMode && (
           <button
+            type="button"
             onClick={async (e) => {
               e.stopPropagation();
               if (branchCount > 1 && chat.groupId) {
@@ -800,6 +820,8 @@ export function ChatSidebar({
               }
             }}
             className="shrink-0 rounded-md p-1 opacity-0 transition-all hover:bg-[var(--destructive)]/20 group-hover:opacity-100 max-md:opacity-100"
+            title={`Delete ${chat.name}`}
+            aria-label={`Delete ${chat.name}`}
           >
             <Trash2 size="0.75rem" className="text-[var(--destructive)]" />
           </button>
@@ -815,6 +837,7 @@ export function ChatSidebar({
         <div className="absolute inset-x-0 bottom-0 h-px bg-[var(--border)]/30" />
         <h2 className="retro-glow-text truncate text-sm font-bold tracking-tight">✧ Chats</h2>
         <button
+          type="button"
           onClick={() => setSidebarOpen(false)}
           className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-all hover:bg-[var(--sidebar-accent)] hover:text-[var(--primary)] active:scale-90 md:hidden"
           title="Back to chat"
@@ -834,7 +857,10 @@ export function ChatSidebar({
           return (
             <button
               key={tab}
+              type="button"
               onClick={() => onActiveTabChange(tab)}
+              aria-label={`${cfg.label}${tabUnread > 0 ? `, ${tabUnread} unread` : ""}`}
+              aria-current={isActive ? "page" : undefined}
               className={cn(
                 "relative flex min-h-[2.125rem] flex-1 items-center justify-center gap-1.5 overflow-visible rounded-lg px-2 py-2 text-xs leading-normal font-medium transition-all",
                 isActive
@@ -916,6 +942,7 @@ export function ChatSidebar({
           ) : (
             <div className="grid grid-cols-2 gap-1.5">
               <button
+                type="button"
                 onClick={handleNewChatFromTab}
                 className="flex min-h-9 items-center justify-center gap-1.5 rounded-lg bg-[var(--primary)]/15 px-2.5 text-[0.72rem] font-semibold text-[var(--primary)] transition-all hover:bg-[var(--primary)]/25 active:scale-[0.98]"
               >
@@ -923,6 +950,7 @@ export function ChatSidebar({
                 New {activeTab === "conversation" ? "chat" : activeTab === "game" ? "game" : "RP"}
               </button>
               <button
+                type="button"
                 onClick={() => setCreatingFolder(true)}
                 className="flex min-h-9 items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 text-[0.72rem] font-semibold text-[var(--muted-foreground)] transition-all hover:bg-[var(--sidebar-accent)]/50 hover:text-[var(--foreground)] active:scale-[0.98]"
               >
@@ -934,6 +962,7 @@ export function ChatSidebar({
 
           {displayChats.length > 0 && (
             <button
+              type="button"
               onClick={() => (multiSelectMode ? exitMultiSelect() : setMultiSelectMode(true))}
               className={cn(
                 "flex min-h-8 items-center justify-center gap-1.5 rounded-lg px-2.5 text-[0.6875rem] font-medium transition-all",
@@ -950,6 +979,7 @@ export function ChatSidebar({
           {allTags.length > 0 && (
             <div className="flex max-w-full flex-wrap items-center gap-1">
               <button
+                type="button"
                 onClick={() => setTagsExpanded((prev) => !prev)}
                 className={cn(
                   "flex max-w-full items-center gap-1 rounded-lg px-1.5 py-1 text-[0.625rem] transition-colors",
@@ -971,6 +1001,7 @@ export function ChatSidebar({
               </button>
               {activeTag && (
                 <button
+                  type="button"
                   onClick={() => setActiveTag(null)}
                   className="rounded-lg px-2 py-1 text-[0.625rem] text-[var(--destructive)] transition-colors hover:bg-[var(--destructive)]/10"
                 >
@@ -979,6 +1010,7 @@ export function ChatSidebar({
               )}
               {(tagsExpanded ? allTags : allTags.slice(0, 4)).map((tag) => (
                 <button
+                  type="button"
                   key={tag}
                   onClick={() => setActiveTag((prev) => (prev === tag ? null : tag))}
                   className={cn(
@@ -994,6 +1026,7 @@ export function ChatSidebar({
               ))}
               {!tagsExpanded && allTags.length > 4 && (
                 <button
+                  type="button"
                   onClick={() => setTagsExpanded(true)}
                   className="rounded-lg px-2 py-1 text-[0.625rem] text-[var(--muted-foreground)] transition-colors hover:bg-[var(--sidebar-accent)]/40 hover:text-[var(--foreground)]"
                 >
@@ -1024,6 +1057,7 @@ export function ChatSidebar({
               Marinara is still waking up. Chats should appear in a moment.
             </p>
             <button
+              type="button"
               onClick={() => void refetchChats()}
               disabled={isFetching}
               className="mt-1 rounded-lg bg-[var(--primary)]/15 px-3 py-1.5 text-[0.6875rem] font-medium text-[var(--primary)] transition-all hover:bg-[var(--primary)]/25 disabled:cursor-not-allowed disabled:opacity-60"
@@ -1050,6 +1084,7 @@ export function ChatSidebar({
                 : `No ${activeTab === "conversation" ? "conversations" : activeTab === "game" ? "games" : "roleplays"} yet`}
             </p>
             <button
+              type="button"
               onClick={handleNewChatFromTab}
               className="mt-1 rounded-lg bg-[var(--primary)]/15 px-3 py-1.5 text-[0.6875rem] font-medium text-[var(--primary)] transition-all hover:bg-[var(--primary)]/25"
             >
@@ -1101,6 +1136,7 @@ export function ChatSidebar({
           <div className="flex gap-2">
             {modeFolders.length > 0 && (
               <button
+                type="button"
                 onClick={() => setBatchMovingFolder(true)}
                 disabled={selectedChatIds.size === 0}
                 className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs font-medium transition-all hover:bg-[var(--accent)] disabled:opacity-40"
@@ -1111,6 +1147,7 @@ export function ChatSidebar({
             )}
             <div className="relative flex flex-1">
               <button
+                type="button"
                 onClick={() => setBatchExportMenuOpen((open) => !open)}
                 disabled={selectedChatIds.size === 0 || bulkExportChats.isPending}
                 className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs font-medium transition-all hover:bg-[var(--accent)] disabled:opacity-40"
@@ -1138,6 +1175,7 @@ export function ChatSidebar({
               )}
             </div>
             <button
+              type="button"
               onClick={handleBatchDelete}
               disabled={selectedChatIds.size === 0}
               className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--destructive)]/10 px-3 py-2 text-xs font-medium text-[var(--destructive)] transition-all hover:bg-[var(--destructive)]/20 disabled:opacity-40"
@@ -1168,6 +1206,7 @@ export function ChatSidebar({
             </div>
             <div className="flex flex-col gap-2">
               <button
+                type="button"
                 onClick={() => {
                   deleteChat.mutate(deleteTarget.chatId);
                   if (activeChatId === deleteTarget.chatId) setActiveChatId(null);
@@ -1179,6 +1218,7 @@ export function ChatSidebar({
                 Delete This Branch Only
               </button>
               <button
+                type="button"
                 onClick={() => {
                   if (deleteTarget.groupId) {
                     deleteChatGroup.mutate(deleteTarget.groupId);
@@ -1201,6 +1241,7 @@ export function ChatSidebar({
         {movingChatId && (
           <div className="flex flex-col gap-1">
             <button
+              type="button"
               onClick={() => handleMoveToFolder(movingChatId, null)}
               className={cn(
                 "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs transition-all hover:bg-[var(--accent)]",
@@ -1212,6 +1253,7 @@ export function ChatSidebar({
             </button>
             {modeFolders.map((f) => (
               <button
+                type="button"
                 key={f.id}
                 onClick={() => handleMoveToFolder(movingChatId, f.id)}
                 className={cn(
@@ -1236,6 +1278,7 @@ export function ChatSidebar({
       >
         <div className="flex flex-col gap-1">
           <button
+            type="button"
             onClick={() => handleBatchMoveToFolder(null)}
             className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs transition-all hover:bg-[var(--accent)]"
           >
@@ -1244,6 +1287,7 @@ export function ChatSidebar({
           </button>
           {modeFolders.map((f) => (
             <button
+              type="button"
               key={f.id}
               onClick={() => handleBatchMoveToFolder(f.id)}
               className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs transition-all hover:bg-[var(--accent)]"
@@ -1352,6 +1396,7 @@ function FolderRow({
           <span className="text-[0.5625rem] text-[var(--muted-foreground)] shrink-0">{entries.length}</span>
         )}
         <button
+          type="button"
           onClick={(e) => {
             e.stopPropagation();
             setRenameValue(folder.name);
@@ -1359,15 +1404,19 @@ function FolderRow({
           }}
           className="shrink-0 rounded-md p-1 opacity-0 transition-all hover:bg-[var(--accent)] group-hover:opacity-100 max-md:opacity-100"
           title="Rename folder"
+          aria-label={`Rename folder ${folder.name}`}
         >
           <Pencil size="0.75rem" className="text-[var(--muted-foreground)]" />
         </button>
         <button
+          type="button"
           onClick={(e) => {
             e.stopPropagation();
             onDelete(folder.id);
           }}
           className="shrink-0 rounded-md p-1 opacity-0 transition-all hover:bg-[var(--destructive)]/20 group-hover:opacity-100 max-md:opacity-100"
+          title={`Delete folder ${folder.name}`}
+          aria-label={`Delete folder ${folder.name}`}
         >
           <Trash2 size="0.75rem" className="text-[var(--destructive)]" />
         </button>
@@ -1440,6 +1489,7 @@ function UserStatusFooter() {
         <div className="absolute bottom-full left-2 right-2 mb-1 rounded-xl bg-[var(--popover)] p-1.5 shadow-xl ring-1 ring-[var(--border)]/40">
           {STATUS_OPTIONS.map((opt) => (
             <button
+              type="button"
               key={opt.value}
               onClick={() => {
                 setUserStatusManual(opt.value);
@@ -1462,6 +1512,7 @@ function UserStatusFooter() {
 
       <div className="flex min-w-0 items-center gap-1.5">
         <button
+          type="button"
           onClick={() => setOpen((v) => !v)}
           className="flex min-w-0 shrink-0 items-center gap-2 rounded-lg px-2 py-1.5 transition-all hover:bg-[var(--sidebar-accent)]/60"
           title="Change activity status"

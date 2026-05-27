@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { BookOpen, HelpCircle, MessageSquare, Theater } from "lucide-react";
 import { APP_VERSION } from "../../../../engine/contracts/constants/defaults";
 import { useConnections } from "../../../catalog/connections/index";
@@ -17,13 +17,18 @@ export function ModeHomeSurface() {
   const { data: connections } = useConnections();
   const createChat = useCreateChat();
   const pendingNewChatMode = useChatStore((state) => state.pendingNewChatMode);
+  const languageConnections = useMemo(
+    () =>
+      filterLanguageGenerationConnections((connections ?? []) as Array<{ id: string; provider?: string }>).filter(
+        (connection) => !!connection.id,
+      ),
+    [connections],
+  );
+  const hasModelConnection = languageConnections.length > 0;
 
   const handleQuickStart = useCallback(
     (mode: QuickStartMode) => {
-      const connectionRows = filterLanguageGenerationConnections(
-        (connections ?? []) as Array<{ id: string; provider?: string }>,
-      ).filter((connection) => !!connection.id);
-      if (connectionRows.length === 0) {
+      if (languageConnections.length === 0) {
         useChatStore.getState().setPendingNewChatMode(mode);
         return;
       }
@@ -40,7 +45,7 @@ export function ModeHomeSurface() {
         },
       );
     },
-    [connections, createChat],
+    [createChat, languageConnections],
   );
 
   const showEmptyStateEffects = true;
@@ -80,10 +85,19 @@ export function ModeHomeSurface() {
             </p>
           </div>
 
-          <div className={cn("flex flex-wrap justify-center gap-2 sm:gap-3", showEmptyStateEffects && "stagger-children")}>
+          <div className="flex flex-col items-center gap-1.5">
+            <p
+              className={cn(
+                "text-[0.6875rem] font-medium",
+                hasModelConnection ? "text-[var(--muted-foreground)]/70" : "text-[var(--destructive)]/80",
+              )}
+            >
+              {hasModelConnection ? "Model connection available" : "Model connection required"}
+            </p>
+            <div className={cn("flex flex-wrap justify-center gap-2 sm:gap-3", showEmptyStateEffects && "stagger-children")}>
             <QuickStartCard
               icon={<MessageSquare size="1.125rem" />}
-              label="Conversation"
+              label="New conversation"
               bg="linear-gradient(135deg, #4de5dd, #3ab8b1)"
               shadowColor="rgba(77,229,221,0.15)"
               tooltip="General chat with one or more characters, or a model itself"
@@ -91,7 +105,7 @@ export function ModeHomeSurface() {
             />
             <QuickStartCard
               icon={<BookOpen size="1.125rem" />}
-              label="Roleplay"
+              label="New roleplay"
               bg="linear-gradient(135deg, #eb8951, #d97530)"
               shadowColor="rgba(235,137,81,0.15)"
               tooltip="For roleplaying or creative writing with one or more characters"
@@ -99,12 +113,13 @@ export function ModeHomeSurface() {
             />
             <QuickStartCard
               icon={<Theater size="1.125rem" />}
-              label="Game"
+              label="New game"
               bg="linear-gradient(135deg, #e15c8c, #c94776)"
               shadowColor="rgba(225,92,140,0.15)"
               tooltip="AI-managed singleplayer RPG with a Game Master, party, dice, maps, and quests"
               onClick={() => handleQuickStart("game")}
             />
+            </div>
           </div>
 
           <RecentChats />
@@ -230,12 +245,14 @@ function QuickStartCard({
   };
 
   return (
-    <div
+    <button
+      type="button"
       onClick={handleClick}
       title={tooltip}
+      aria-disabled={comingSoon && !onClick ? true : undefined}
       className={cn(
         "group card-3d-tilt btn-scanlines relative flex w-20 sm:w-28 flex-col items-center justify-center gap-1.5 sm:gap-2 rounded-xl border-2 border-[var(--border)] bg-[var(--card)] p-2.5 sm:p-4 text-center transition-all",
-        "cursor-pointer hover:-translate-y-1 hover:border-[var(--primary)]/40 hover:shadow-lg",
+        "cursor-pointer hover:-translate-y-1 hover:border-[var(--primary)]/40 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]/50",
       )}
       style={shadowColor ? { ["--tw-shadow-color" as string]: shadowColor } : undefined}
     >
@@ -251,6 +268,6 @@ function QuickStartCard({
         {icon}
       </div>
       <span className="text-[0.625rem] sm:text-xs font-medium text-[var(--muted-foreground)]">{label}</span>
-    </div>
+    </button>
   );
 }

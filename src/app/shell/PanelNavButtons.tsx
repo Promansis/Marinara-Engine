@@ -5,7 +5,7 @@ import { useUIStore } from "../../shared/stores/ui.store";
 import { cn } from "../../shared/lib/utils";
 
 export const RIGHT_PANEL_BUTTONS = [
-  { panel: "bot-browser" as const, icon: Bot, label: "Browser", activeClass: "text-cyan-500", hoverClass: "hover:text-cyan-300", underlineClass: "from-cyan-500 to-blue-500" },
+  { panel: "bot-browser" as const, icon: Bot, label: "Character Browser", activeClass: "text-cyan-500", hoverClass: "hover:text-cyan-300", underlineClass: "from-cyan-500 to-blue-500" },
   { panel: "characters" as const, icon: Users, label: "Characters", activeClass: "text-rose-500", hoverClass: "hover:text-rose-300", underlineClass: "from-pink-500 to-rose-500" },
   { panel: "lorebooks" as const, icon: BookOpen, label: "Lorebooks", activeClass: "text-amber-500", hoverClass: "hover:text-amber-300", underlineClass: "from-amber-500 to-orange-500" },
   { panel: "presets" as const, icon: FileText, label: "Presets", activeClass: "text-violet-500", hoverClass: "hover:text-violet-300", underlineClass: "from-purple-500 to-violet-500" },
@@ -35,6 +35,10 @@ export function PanelNavButtons({ className }: { className?: string }) {
     >
       {RIGHT_PANEL_BUTTONS.map(({ panel, icon: Icon, label, activeClass, hoverClass, underlineClass }) => {
         const isActive = rightPanelOpen && rightPanel === panel;
+        const buttonLabel =
+          panel === "agents" && failedAgentCount > 0
+            ? `Agents, ${failedAgentCount} failed`
+            : label;
         return (
           <button
             key={panel}
@@ -48,8 +52,8 @@ export function PanelNavButtons({ className }: { className?: string }) {
                 ? cn(activeClass, "mari-titlebar-action-active [&>svg]:stroke-[2.3]")
                 : cn("text-[var(--muted-foreground)]", hoverClass),
             )}
-            title={label}
-            aria-label={label}
+            title={buttonLabel}
+            aria-label={buttonLabel}
             aria-pressed={isActive}
           >
             <Icon size="0.875rem" />
@@ -62,7 +66,10 @@ export function PanelNavButtons({ className }: { className?: string }) {
               />
             )}
             {panel === "agents" && failedAgentCount > 0 && (
-              <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-amber-500 ring-1 ring-[var(--card)]" />
+              <span
+                className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-amber-500 ring-1 ring-[var(--card)]"
+                aria-hidden="true"
+              />
             )}
           </button>
         );
