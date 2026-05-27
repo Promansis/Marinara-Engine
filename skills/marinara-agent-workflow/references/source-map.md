@@ -34,6 +34,10 @@ The JSON and PR proof templates are kept source-shaped. `status-snippets.md` is 
 - `reference/FULL_WORKFLOW_REFERENCE.md` -> `SKILL.md`, `references/marinara-overrides.md`, `references/proof-templates.md`, and the workflow/template files.
 - `adapters/codex.md`, `adapters/claude.md`, `adapters/generic-chat.md` -> `SKILL.md` tool capability fallback.
 
+## Local Additions
+
+- `references/workflows/ui-audit.md`: Marinara-specific workflow card for UI maps, confusing controls, labels, hierarchy, and simplification passes.
+
 ## Not Imported
 
 - `README.md`, `GET_STARTED.md`, `SETUP.md`, `ADD_TO_EXISTING_WORKFLOW.md`, `manifest.json`, and `CHANGELOG.md`: distribution/setup files for sharing the workflow pack. They are represented by this source map and the skill metadata, not copied into the repo skill.

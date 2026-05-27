@@ -1,6 +1,6 @@
 ---
 name: marinara-agent-workflow
-description: "Apply Marinara's repo-local version of the Chai agent workflow pack for proof discipline, investigations, feature sizing, refactor handoffs, reviews, PR readiness, reviewer feedback iteration, issue drafting, UI/UX proof, security-sensitive checks, risky-work evidence, debt notes, and final status reports. Use for nontrivial coding work, ambiguous symptoms, refactors, reviews, PR/issue workflows, or any task where an agent must prove claims while preserving Marinara's code separation and module ownership rules."
+description: "Apply Marinara's repo-local version of the Chai agent workflow pack for proof discipline, investigations, feature sizing, UI/control audits, refactor handoffs, reviews, PR readiness, reviewer feedback iteration, issue drafting, security-sensitive checks, risky-work evidence, debt notes, and final status reports. Use for nontrivial coding work, ambiguous symptoms, refactors, reviews, PR/issue workflows, confusing controls, or any task where an agent must prove claims while preserving Marinara's code separation and module ownership rules."
 ---
 
 # Marinara Agent Workflow
@@ -33,6 +33,7 @@ Load only the workflow card that matches the current lane:
 - `references/workflows/investigate.md` for symptoms, logs, screenshots, confusing runtime behavior, or suspected regressions.
 - `references/workflows/bugfix.md` for broken behavior and root-cause fixes.
 - `references/workflows/feature-build.md` for new capability work.
+- `references/workflows/ui-audit.md` for UI maps, confusing controls, simplification passes, labels, hierarchy, or workflow clarity.
 - `references/workflows/refactor-handoff.md` for refactor, cleanup, architecture, and modernization work.
 - `references/workflows/review-and-pr.md` for reviews, PR readiness, shipping, and reviewer feedback.
 - `references/workflows/issue-submission.md` for GitHub issue drafting or filing.
@@ -64,7 +65,7 @@ If ownership, callers, contract shape, or dependency direction cannot be named c
 
 ## Core Loop
 
-1. Pick the lane: investigate, bugfix, feature build, refactor, review/PR, issue drafting, or durable note.
+1. Pick the lane: investigate, bugfix, feature build, UI audit, refactor, review/PR, issue drafting, or durable note.
 2. State the narrow claim being proven.
 3. Name the owner and expected impact before editing.
 4. Reproduce or inspect enough evidence to avoid patching the wrong layer.
