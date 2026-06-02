@@ -1540,34 +1540,49 @@ fn project_row(
 fn project_nested_value(value: Value, fields: &HashSet<String>) -> Value {
     match value {
         Value::Object(object) => {
-            let projected = fields
-                .iter()
-                .filter_map(|field| {
-                    object
-                        .get(field)
-                        .cloned()
-                        .map(|value| (field.clone(), value))
-                })
-                .collect();
-            Value::Object(projected)
+            Value::Object(project_nested_object(&object, fields))
         }
         Value::String(raw) => match serde_json::from_str::<Value>(&raw) {
-            Ok(Value::Object(object)) => {
-                let projected = fields
-                    .iter()
-                    .filter_map(|field| {
-                        object
-                            .get(field)
-                            .cloned()
-                            .map(|value| (field.clone(), value))
-                    })
-                    .collect();
-                Value::Object(projected)
-            }
+            Ok(Value::Object(object)) => Value::Object(project_nested_object(&object, fields)),
             _ => Value::String(raw),
         },
         other => other,
     }
+}
+
+fn nested_child_fields(fields: &HashSet<String>, parent: &str) -> HashSet<String> {
+    let prefix = format!("{parent}.");
+    fields
+        .iter()
+        .filter_map(|field| field.strip_prefix(&prefix))
+        .filter(|field| !field.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn project_nested_object(object: &Map<String, Value>, fields: &HashSet<String>) -> Map<String, Value> {
+    let mut projected = Map::new();
+    for field in fields {
+        if field.contains('.') {
+            continue;
+        }
+        if let Some(value) = object.get(field) {
+            projected.insert(field.clone(), value.clone());
+        }
+    }
+    for key in object.keys() {
+        if fields.contains(key) {
+            continue;
+        }
+        let child_fields = nested_child_fields(fields, key);
+        if child_fields.is_empty() {
+            continue;
+        }
+        if let Some(value) = object.get(key) {
+            projected.insert(key.clone(), project_nested_value(value.clone(), &child_fields));
+        }
+    }
+    projected
 }
 
 struct ProjectedRowsVisitor<'a> {
@@ -1688,6 +1703,14 @@ impl<'de, 'a> Visitor<'de> for ProjectedNestedVisitor<'a> {
         while let Some(key) = map.next_key::<String>()? {
             if self.fields.contains(&key) {
                 object.insert(key, map.next_value::<Value>()?);
+            } else if !nested_child_fields(self.fields, &key).is_empty() {
+                let child_fields = nested_child_fields(self.fields, &key);
+                object.insert(
+                    key,
+                    map.next_value_seed(ProjectedNestedSeed {
+                        fields: &child_fields,
+                    })?,
+                );
             } else {
                 let _ = map.next_value::<serde::de::IgnoredAny>()?;
             }
@@ -2503,6 +2526,10 @@ fn read_pretty_projected_nested_value<R: BufRead>(
         if fields.contains(&field) {
             let value = read_pretty_json_value(reader, value_start)?;
             projected.insert(field, value);
+        } else if !nested_child_fields(fields, &field).is_empty() {
+            let child_fields = nested_child_fields(fields, &field);
+            let value = read_pretty_projected_nested_value(reader, value_start, &child_fields)?;
+            projected.insert(field, value);
         } else {
             skip_pretty_json_value(reader, value_start)?;
         }
@@ -3189,6 +3216,55 @@ mod tests {
                         "metadata": { "tone": "warm" }
                     }
                 ]
+            })]
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn list_projected_preserves_selected_dotted_nested_fields() {
+        let root = temp_storage_root("list-projected-preserves-selected-dotted-nested-fields");
+        let storage = FileStorage::new(&root).unwrap();
+
+        storage
+            .replace_all(
+                "characters",
+                vec![json!({
+                    "id": "target",
+                    "data": {
+                        "name": "Rina",
+                        "extensions": {
+                            "fav": true,
+                            "avatarCrop": { "x": 0.5 },
+                            "backstory": "large prompt text"
+                        }
+                    }
+                })],
+            )
+            .unwrap();
+        let fields = vec!["id".to_string(), "data".to_string()];
+        let mut selections = Map::new();
+        selections.insert(
+            "data".to_string(),
+            json!(["name", "extensions.fav", "extensions.avatarCrop"]),
+        );
+
+        let rows = storage
+            .list_projected("characters", &fields, &selections)
+            .expect("projected list should read");
+
+        assert_eq!(
+            rows,
+            vec![json!({
+                "id": "target",
+                "data": {
+                    "name": "Rina",
+                    "extensions": {
+                        "fav": true,
+                        "avatarCrop": { "x": 0.5 }
+                    }
+                }
             })]
         );
 

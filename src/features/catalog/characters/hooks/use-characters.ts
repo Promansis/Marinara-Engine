@@ -2,7 +2,7 @@
 // React Query: Character & Group hooks
 // ──────────────────────────────────────────────
 import { useMemo } from "react";
-import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueries, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { characterKeys } from "../query-keys";
 import {
   createCharacterSchema,
@@ -92,7 +92,10 @@ const CHARACTER_PANEL_COMPACT_FIELDS = [
   "creator",
   "character_version",
   "tags",
-  "extensions",
+  "extensions.fav",
+  "extensions.avatarCrop",
+  "extensions.nameColor",
+  "extensions.importMetadata",
 ];
 const CHARACTER_PANEL_PROMPT_FIELDS = ["description", "personality"];
 const CHARACTER_PANEL_COMPACT_OPTIONS = {
@@ -191,6 +194,14 @@ export function useCharacterPanelSummaries(enabled = true, search?: string, incl
     enabled,
     staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
+  });
+}
+
+export function prefetchCharacterPanelSummaries(queryClient: QueryClient): Promise<unknown> {
+  return queryClient.prefetchQuery({
+    queryKey: characterKeys.panelSummaries("", false),
+    queryFn: () => listCharacterPanelSummaries("", false),
+    staleTime: 5 * 60_000,
   });
 }
 

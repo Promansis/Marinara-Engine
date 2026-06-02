@@ -1,8 +1,15 @@
 import { BookOpen, Bot, FileText, Link, Settings, Sparkles, User, Users } from "lucide-react";
-import type { MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, type MouseEvent as ReactMouseEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAgentStore } from "../../shared/stores/agent.store";
 import { useUIStore } from "../../shared/stores/ui.store";
 import { cn } from "../../shared/lib/utils";
+
+function preloadCharactersPanel(queryClient: ReturnType<typeof useQueryClient>) {
+  void import("../../features/catalog/characters/panel-shell")
+    .then((module) => module.prefetchCharactersPanelData(queryClient))
+    .catch(() => {});
+}
 
 export const RIGHT_PANEL_BUTTONS = [
   {
@@ -76,10 +83,19 @@ function stopTitlebarDrag(event: ReactMouseEvent<HTMLElement>) {
 }
 
 export function PanelNavButtons({ className }: { className?: string }) {
+  const queryClient = useQueryClient();
   const toggleRightPanel = useUIStore((s) => s.toggleRightPanel);
   const rightPanel = useUIStore((s) => s.rightPanel);
   const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
   const failedAgentCount = useAgentStore((s) => s.failedAgentTypes.length);
+  const preloadCharacters = useCallback(() => preloadCharactersPanel(queryClient), [queryClient]);
+
+  useEffect(() => {
+    const scheduleIdle = window.requestIdleCallback ?? ((callback: IdleRequestCallback) => window.setTimeout(callback, 800));
+    const cancelIdle = window.cancelIdleCallback ?? window.clearTimeout;
+    const handle = scheduleIdle(() => preloadCharacters(), { timeout: 2_500 });
+    return () => cancelIdle(handle);
+  }, [preloadCharacters]);
 
   return (
     <nav
@@ -96,6 +112,8 @@ export function PanelNavButtons({ className }: { className?: string }) {
             key={panel}
             type="button"
             onClick={() => toggleRightPanel(panel)}
+            onPointerEnter={panel === "characters" ? preloadCharacters : undefined}
+            onFocus={panel === "characters" ? preloadCharacters : undefined}
             onMouseDown={stopTitlebarDrag}
             onDoubleClick={stopTitlebarDrag}
             className={cn(
