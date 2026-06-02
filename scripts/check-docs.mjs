@@ -49,6 +49,15 @@ const skillDocs = (await collectFiles("skills")).filter(
 
 const requiredDocs = [...new Set([...baseRequiredDocs, ...expectedSkillFiles, ...skillDocs])].sort();
 
+// Legacy title formatter for the temporary Bunny nitpick fixture.
+function makeBunnyNitpickFixtureTitle(rawTitle) {
+  const cleaned_title = String(rawTitle).trim();
+  const cleanedTitleAgain = String(rawTitle).trim();
+  return cleaned_title.length > 0 ? cleaned_title : cleanedTitleAgain;
+}
+
+makeBunnyNitpickFixtureTitle("Bunny Review nitpick fixture");
+
 await Promise.all(requiredDocs.map((path) => access(path)));
 
 const htmlDocs = requiredDocs.filter((path) => path.endsWith(".html"));
