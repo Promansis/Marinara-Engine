@@ -87,6 +87,26 @@ const CHARACTER_SUMMARY_OPTIONS = {
     ],
   },
 };
+const CHARACTER_PANEL_COMPACT_FIELDS = [
+  "name",
+  "creator",
+  "character_version",
+  "tags",
+  "extensions",
+];
+const CHARACTER_PANEL_PROMPT_FIELDS = ["description", "personality"];
+const CHARACTER_PANEL_COMPACT_OPTIONS = {
+  fields: CHARACTER_LIST_FIELDS,
+  fieldSelections: {
+    data: CHARACTER_PANEL_COMPACT_FIELDS,
+  },
+};
+const CHARACTER_PANEL_PROMPT_OPTIONS = {
+  fields: CHARACTER_LIST_FIELDS,
+  fieldSelections: {
+    data: [...CHARACTER_PANEL_COMPACT_FIELDS, ...CHARACTER_PANEL_PROMPT_FIELDS],
+  },
+};
 const CHARACTER_SUMMARY_BY_ID_CONCURRENCY = 8;
 const EMPTY_CHARACTER_SUMMARIES: CharacterSummary[] = [];
 
@@ -106,6 +126,15 @@ async function listCharacterSummaries(search?: string): Promise<CharacterSummary
   const query = normalizeSearchQuery(search);
   const characters = await storageApi.list<CharacterSummary>("characters", {
     ...CHARACTER_SUMMARY_OPTIONS,
+    ...(query ? { search: query } : {}),
+  });
+  return characters.map(normalizeCharacterAvatarFields);
+}
+
+async function listCharacterPanelSummaries(search?: string, includePromptFields = false): Promise<CharacterSummary[]> {
+  const query = normalizeSearchQuery(search);
+  const characters = await storageApi.list<CharacterSummary>("characters", {
+    ...(includePromptFields ? CHARACTER_PANEL_PROMPT_OPTIONS : CHARACTER_PANEL_COMPACT_OPTIONS),
     ...(query ? { search: query } : {}),
   });
   return characters.map(normalizeCharacterAvatarFields);
@@ -148,6 +177,17 @@ export function useCharacterSummaries(enabled = true, search?: string) {
   return useQuery({
     queryKey: query ? characterKeys.summarySearch(query) : characterKeys.summaries(),
     queryFn: () => listCharacterSummaries(query),
+    enabled,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useCharacterPanelSummaries(enabled = true, search?: string, includePromptFields = false) {
+  const query = normalizeSearchQuery(search);
+  return useQuery({
+    queryKey: characterKeys.panelSummaries(query, includePromptFields),
+    queryFn: () => listCharacterPanelSummaries(query, includePromptFields),
     enabled,
     staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,

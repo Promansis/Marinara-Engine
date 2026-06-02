@@ -3,6 +3,8 @@ export const characterKeys = {
   list: () => [...characterKeys.all, "list"] as const,
   summaries: () => [...characterKeys.all, "summaries"] as const,
   summarySearch: (query: string) => [...characterKeys.summaries(), "search", query] as const,
+  panelSummaries: (query: string, includePromptFields: boolean) =>
+    [...characterKeys.summaries(), "panel", includePromptFields ? "prompt" : "compact", query] as const,
   summaryDetail: (id: string) => [...characterKeys.summaries(), id] as const,
   summaryByIds: (ids: string[]) => [...characterKeys.summaries(), "byIds", ...ids] as const,
   detail: (id: string) => [...characterKeys.all, "detail", id] as const,

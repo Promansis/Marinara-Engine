@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { toast } from "sonner";
 import {
-  useCharacterSummaries,
+  useCharacterPanelSummaries,
   useDeleteCharacter,
   useCharacterGroups,
   useDeleteGroup,
@@ -46,7 +46,14 @@ export function CharactersPanel() {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search, 180);
   const searchQuery = useMemo(() => parseCharacterSearchQuery(debouncedSearch), [debouncedSearch]);
-  const { data: characters, isLoading, isFetching, isError, refetch } = useCharacterSummaries(true, searchQuery.text);
+  const needsPromptFields = searchQuery.scopedTerms.some(
+    (term) => term.scope === "description" || term.scope === "personality",
+  );
+  const { data: characters, isLoading, isFetching, isError, refetch } = useCharacterPanelSummaries(
+    true,
+    searchQuery.text,
+    needsPromptFields,
+  );
   const { data: groups } = useCharacterGroups();
   const deleteCharacter = useDeleteCharacter();
   const duplicateCharacter = useDuplicateCharacter();

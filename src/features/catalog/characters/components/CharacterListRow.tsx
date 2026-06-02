@@ -4,7 +4,6 @@ import { getCharacterTitle } from "../../../../shared/lib/character-display";
 import { cn } from "../../../../shared/lib/utils";
 import { characterAvatarUrl } from "../lib/character-avatar-url";
 import { getText } from "../lib/character-library-model";
-import { estimateCharacterCardTokens, formatEstimatedTokens } from "../lib/character-token-count";
 import { getCharacterPreviewMetadata, getCharacterTags, type ParsedCharacterRow } from "../lib/characters-panel-model";
 import { CharacterAvatarImage } from "./CharacterAvatarImage";
 
@@ -65,9 +64,7 @@ export function CharacterListRow({
   const avatarUrl = characterAvatarUrl(character);
   const isInTargetGroup = assigningGroup?.memberIds.includes(character.id) ?? false;
   const previewMetadata = getCharacterPreviewMetadata(character);
-  const tokenEstimate = estimateCharacterCardTokens(character.parsed);
-  const tokenLabel = formatEstimatedTokens(tokenEstimate);
-  const detailLine = [previewMetadata, tokenLabel].filter(Boolean).join(" · ");
+  const detailLine = previewMetadata ?? "";
   const rowActionLabel = selectionMode
     ? `${isBulkSelected ? "Deselect" : "Select"} ${charName}`
     : assigningGroup
