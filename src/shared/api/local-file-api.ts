@@ -364,6 +364,14 @@ function inlineImageDataUrl(value: string | null | undefined): string | null {
   return wrapped?.[1] ?? null;
 }
 
+function hasInlineImageDataUrlPrefix(value: string | null | undefined): boolean {
+  if (!value) return false;
+  return (
+    /^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(value) ||
+    /^[a-z][a-z0-9+.-]*:\/\/data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(value)
+  );
+}
+
 function inlineAvatarThumbnailRemotePath(path: string | null | undefined, size: number): string | null {
   const filename = path?.replace(/\\/g, "/").split("/").filter(Boolean).pop();
   if (!filename || !/^[a-f0-9]{64}\.thumb\.png$/i.test(filename)) return null;
@@ -445,7 +453,7 @@ export function canGenerateAvatarThumbnail(
     extension === "jpeg" ||
     extension === "webp" ||
     extension === "gif" ||
-    !!inlineImageDataUrl(sourceUrl)
+    hasInlineImageDataUrlPrefix(sourceUrl)
   );
 }
 
@@ -485,7 +493,7 @@ export function avatarThumbnailFileUrlFromPath(
 ): string | null {
   const path = avatarRemoteManagedPath(filename, absolutePath);
   const remoteUrl = remoteManagedAssetUrl("avatar-thumbnail", path ? `${size}/${path}` : null);
-  if (!remoteUrl && inlineImageDataUrl(sourceUrl)) return null;
+  if (!remoteUrl && hasInlineImageDataUrlPrefix(sourceUrl)) return null;
   return remoteUrl;
 }
 
@@ -542,10 +550,7 @@ export async function resolveGalleryFileUrl(
   return absolutePath && isAbsoluteFilesystemPath(absolutePath) ? filePathToAssetUrl(absolutePath) : null;
 }
 
-export function galleryThumbnailPath(
-  filename: string | null | undefined,
-  absolutePath?: string | null,
-): string | null {
+export function galleryThumbnailPath(filename: string | null | undefined, absolutePath?: string | null): string | null {
   return galleryRemoteManagedPath(filename, absolutePath);
 }
 
@@ -654,7 +659,11 @@ export async function resolveManagedLocalAssetThumbnailUrl(
     );
   }
   if (url.startsWith(GAME_ASSET_URL_PREFIX)) {
-    return resolveManagedAssetThumbnailFileUrl("game", decodeLocalAssetPath(url.slice(GAME_ASSET_URL_PREFIX.length)), size);
+    return resolveManagedAssetThumbnailFileUrl(
+      "game",
+      decodeLocalAssetPath(url.slice(GAME_ASSET_URL_PREFIX.length)),
+      size,
+    );
   }
   if (url.startsWith(LOREBOOK_IMAGE_URL_PREFIX)) {
     return resolveManagedAssetThumbnailFileUrl(

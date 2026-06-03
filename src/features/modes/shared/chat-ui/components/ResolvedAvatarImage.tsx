@@ -38,6 +38,22 @@ function isLikelyFilesystemPath(value: string): boolean {
   );
 }
 
+function compactSrcKey(value: string | null | undefined): string {
+  if (!value) return "";
+  if (value.length <= 4096) return value;
+  const sampleSize = 128;
+  return [
+    "long-src",
+    String(value.length),
+    value.slice(0, sampleSize),
+    value.slice(
+      Math.max(0, Math.floor(value.length / 2) - Math.floor(sampleSize / 2)),
+      Math.floor(value.length / 2) + Math.ceil(sampleSize / 2),
+    ),
+    value.slice(Math.max(0, value.length - sampleSize)),
+  ].join("\0");
+}
+
 export const ResolvedAvatarImage = forwardRef<
   HTMLImageElement,
   {
@@ -87,12 +103,12 @@ export const ResolvedAvatarImage = forwardRef<
     if (!syncUrl || isLikelyFilesystemPath(syncUrl)) return effectiveThumbnailSize ? null : fallbackSrc;
     return syncUrl;
   }, [avatarFilePath, avatarFilename, effectiveThumbnailSize, fallbackSrc, hasManagedAvatar, src]);
-  const resolutionKey = JSON.stringify([
-    src ?? "",
+  const resolutionKey = [
+    compactSrcKey(src),
     avatarFilename ?? "",
     avatarFilePath ?? "",
-    effectiveThumbnailSize ?? "",
-  ]);
+    String(effectiveThumbnailSize ?? ""),
+  ].join("\0");
   const cachedResolvedSrc = hasResolvableAvatar ? readCachedResolvedAvatarSrc(resolutionKey) : null;
   const [resolvedState, setResolvedState] = useState<{ key: string; src: string | null }>({
     key: resolutionKey,
