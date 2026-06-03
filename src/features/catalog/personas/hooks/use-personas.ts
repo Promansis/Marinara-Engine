@@ -62,6 +62,10 @@ async function getPersona(id: string): Promise<unknown> {
   return normalizePersonaAvatarFields(await storageApi.get<unknown>("personas", id));
 }
 
+async function getPersonaSummary(id: string): Promise<PersonaSummary | null> {
+  return normalizePersonaAvatarFields(await storageApi.get<PersonaSummary>("personas", id, PERSONA_SUMMARY_OPTIONS));
+}
+
 async function listPersonaSummaries(): Promise<PersonaSummary[]> {
   const personas = await storageApi.list<PersonaSummary>("personas", PERSONA_SUMMARY_OPTIONS);
   return personas.map(normalizePersonaAvatarFields);
@@ -87,6 +91,16 @@ export function usePersonaSummaries(enabled = true) {
   });
 }
 
+export function usePersonaSummary(id: string | null, enabled = true) {
+  return useQuery({
+    queryKey: personaKeys.summaryDetail(id ?? ""),
+    queryFn: () => getPersonaSummary(id!),
+    enabled: enabled && !!id,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
 export function usePersona(id: string | null, enabled = true) {
   return useQuery({
     queryKey: personaKeys.detail(id ?? ""),
@@ -104,6 +118,16 @@ export function useActivePersona(enabled = true) {
       const activePersona = (await listPersonaSummaries()).find(personaIsActive);
       return activePersona?.id ? getPersona(activePersona.id) : null;
     },
+    enabled,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useActivePersonaSummary(enabled = true) {
+  return useQuery({
+    queryKey: [...personaKeys.active, "summary"] as const,
+    queryFn: async () => (await listPersonaSummaries()).find(personaIsActive) ?? null,
     enabled,
     staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,

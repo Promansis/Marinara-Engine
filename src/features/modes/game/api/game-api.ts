@@ -28,6 +28,7 @@ import { integrationGateway } from "../../../../shared/api/integration-gateway";
 import { spotifyApi } from "../../../../shared/api/integration-utility-api";
 import { llmApi } from "../../../../shared/api/llm-api";
 import { chatCommandApi } from "../../../../shared/api/chat-command-api";
+import { npcAvatarApi } from "../../../../shared/api/avatar-api";
 import { storageApi } from "../../../../shared/api/storage-api";
 import {
   createLorebookEntrySchema,
@@ -2837,9 +2838,17 @@ export const gameApi = {
           gameLastIllustrationTag: tag,
         });
       } else if (item.kind === "portrait") {
+        const avatarPayload = image.image?.startsWith("data:image/")
+          ? image.image
+          : `data:${image.mimeType};base64,${image.base64}`;
+        const avatar = await npcAvatarApi.upload(
+          chatId,
+          item.title.replace(/^Portrait:\s*/, "") || "NPC",
+          avatarPayload,
+        );
         generatedNpcAvatars.push({
           name: item.title.replace(/^Portrait:\s*/, "") || "NPC",
-          avatarUrl: image.image ?? `data:${image.mimeType};base64,${image.base64}`,
+          avatarUrl: avatar.avatarPath,
         });
       }
     }

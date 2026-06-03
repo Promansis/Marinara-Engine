@@ -38,8 +38,8 @@ pub(crate) fn update_character_avatar(
         collection,
         id,
         json!({
-            "avatar": stored.data_url,
-            "avatarPath": stored.data_url,
+            "avatar": stored.asset_url,
+            "avatarPath": stored.asset_url,
             "avatarFilePath": stored.absolute_path,
             "avatarFilename": stored.filename,
             "avatarUpdatedAt": now_iso()
@@ -484,7 +484,7 @@ pub(crate) fn update_npc_avatar(state: &AppState, chat_id: &str, body: Value) ->
     Ok(json!({
         "chatId": chat_id,
         "name": name,
-        "avatarPath": stored.data_url,
+        "avatarPath": stored.asset_url,
         "avatarFilePath": stored.absolute_path,
         "avatarFilename": stored.filename
     }))
@@ -537,13 +537,34 @@ mod tests {
             )
             .expect("character should be created");
 
-        update_character_avatar(
+        let updated = update_character_avatar(
             &state,
             "characters",
             "char-1",
             json!({ "avatar": "data:image/png;base64,bmV3" }),
         )
         .expect("avatar should update");
+        let updated_avatar_path = updated
+            .get("avatarPath")
+            .and_then(Value::as_str)
+            .expect("updated avatar path should be present");
+        assert!(
+            !updated_avatar_path.starts_with("data:image/"),
+            "current character row should store managed asset URL"
+        );
+        assert_eq!(updated["avatar"], updated["avatarPath"]);
+        assert!(
+            updated
+                .get("avatarFilePath")
+                .and_then(Value::as_str)
+                .is_some_and(|path| state
+                    .data_dir
+                    .join("avatars")
+                    .join("characters")
+                    .join("old.png")
+                    != PathBuf::from(path)),
+            "updated avatar should have managed file metadata"
+        );
 
         let versions = state
             .storage
@@ -565,6 +586,42 @@ mod tests {
         assert_eq!(restored["avatarPath"], "data:image/png;base64,b2xk");
         assert_eq!(restored["avatarFilePath"], Value::Null);
         assert_eq!(restored["avatarFilename"], Value::Null);
+    }
+
+    #[test]
+    fn npc_avatar_update_returns_managed_asset_url() {
+        let state = test_state("npc-avatar-managed-url");
+        let updated = update_npc_avatar(
+            &state,
+            "chat-1",
+            json!({
+                "name": "Merchant",
+                "avatar": "data:image/png;base64,bmV3"
+            }),
+        )
+        .expect("npc avatar should update");
+
+        let avatar_path = updated
+            .get("avatarPath")
+            .and_then(Value::as_str)
+            .expect("npc avatar path should be present");
+        assert!(
+            !avatar_path.starts_with("data:image/"),
+            "npc avatar response should use managed asset URL"
+        );
+        let filename = updated
+            .get("avatarFilename")
+            .and_then(Value::as_str)
+            .expect("npc avatar filename should be present");
+        assert!(
+            state
+                .data_dir
+                .join("avatars")
+                .join("npc")
+                .join(filename)
+                .exists(),
+            "npc managed avatar file should exist"
+        );
     }
 
     #[test]
