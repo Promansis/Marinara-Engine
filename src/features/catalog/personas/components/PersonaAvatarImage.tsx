@@ -127,7 +127,7 @@ export function PersonaAvatarImage({
     : avatarFileUrlFromPath(persona.avatarFilename, persona.avatarFilePath);
   const hasManagedAvatarInput = Boolean(persona.avatarFilename || persona.avatarFilePath);
   const hasResolvableAvatarInput = hasManagedAvatarInput || Boolean(effectiveThumbnailSize && persona.avatarPath);
-  const initialSrc = managedInitialSrc ?? persona.avatarPath ?? null;
+  const initialSrc = managedInitialSrc ?? (effectiveThumbnailSize ? null : (persona.avatarPath ?? null));
   const [asyncSrc, setAsyncSrc] = useState<string | null>(initialSrc);
 
   useEffect(() => {
@@ -159,10 +159,10 @@ export function PersonaAvatarImage({
     };
     resolveUrl()
       .then((url) => {
-        if (!cancelled) setAsyncSrc(url ?? persona.avatarPath ?? null);
+        if (!cancelled) setAsyncSrc(url ?? (effectiveThumbnailSize ? null : (persona.avatarPath ?? null)));
       })
       .catch(() => {
-        if (!cancelled) setAsyncSrc(persona.avatarPath ?? null);
+        if (!cancelled) setAsyncSrc(effectiveThumbnailSize ? null : (persona.avatarPath ?? null));
       });
     return () => {
       cancelled = true;

@@ -115,7 +115,7 @@ export function CharacterAvatarImage({
     : avatarFileUrlFromPath(avatarFilename, avatarFilePath);
   const hasManagedAvatarInput = Boolean(avatarFilename || avatarFilePath);
   const hasResolvableAvatarInput = hasManagedAvatarInput || Boolean(effectiveThumbnailSize && src);
-  const initialSrc = managedInitialSrc ?? src ?? null;
+  const initialSrc = managedInitialSrc ?? (effectiveThumbnailSize ? null : (src ?? null));
   const [asyncSrc, setAsyncSrc] = useState<string | null>(initialSrc);
   const failedThumbnailSrcRef = useRef<string | null>(null);
 
@@ -146,7 +146,7 @@ export function CharacterAvatarImage({
         setAsyncSrc(nextSrc && nextSrc !== failedThumbnailSrcRef.current ? nextSrc : src ?? null);
       })
       .catch(() => {
-        if (!cancelled) setAsyncSrc(src ?? null);
+        if (!cancelled) setAsyncSrc(effectiveThumbnailSize ? null : (src ?? null));
       });
     return () => {
       cancelled = true;

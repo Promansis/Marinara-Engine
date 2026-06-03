@@ -66,11 +66,11 @@ function FolderSelectionMark({ status }: { status: GameAssetSelectionStatus }) {
 }
 
 function GameAssetImage({ node, alt, className }: { node: TreeNode; alt: string; className: string }) {
-  const [src, setSrc] = useState(() => gameAssetFileUrlFromPath(node.path, node.absolutePath));
+  const [src, setSrc] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    setSrc(gameAssetFileUrlFromPath(node.path, node.absolutePath));
+    setSrc(null);
     resolveManagedAssetThumbnailFileUrl("game", node.path, 256)
       .then((url) => {
         if (!cancelled) setSrc(url || gameAssetFileUrlFromPath(node.path, node.absolutePath));
@@ -83,6 +83,7 @@ function GameAssetImage({ node, alt, className }: { node: TreeNode; alt: string;
     };
   }, [node.absolutePath, node.path]);
 
+  if (!src) return <div className={className} aria-hidden="true" />;
   return <img src={src} alt={alt} className={className} loading="lazy" />;
 }
 
