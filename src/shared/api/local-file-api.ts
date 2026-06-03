@@ -22,6 +22,7 @@ const remoteAssetObjectUrls = new Map<string, RemoteAssetObjectUrlEntry>();
 const remoteAssetInvalidationVersions = new Map<string, number>();
 let remoteAssetInvalidationVersion = 0;
 let remoteAssetGlobalInvalidationVersion = 0;
+const pendingAvatarFileResolutions = new Map<string, Promise<string | null>>();
 const pendingAvatarThumbnailResolutions = new Map<string, Promise<string | null>>();
 let activeAvatarThumbnailResolutions = 0;
 const queuedAvatarThumbnailResolutions: Array<() => void> = [];
@@ -422,6 +423,18 @@ function avatarThumbnailResolutionCacheKey(
   ].join("\0");
 }
 
+function avatarFileResolutionCacheKey(
+  filename: string | null | undefined,
+  absolutePath: string | null | undefined,
+): string {
+  const target = remoteRuntimeTarget();
+  return [
+    target ? `${target.baseUrl}\0${target.authorization ?? ""}` : "embedded",
+    filename?.trim() ?? "",
+    absolutePath?.trim() ?? "",
+  ].join("\0");
+}
+
 function scheduleAvatarThumbnailResolution<T>(task: () => Promise<T>): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const run = () => {
@@ -536,9 +549,23 @@ export async function resolveAvatarFileUrl(
   filename: string | null | undefined,
   absolutePath?: string | null,
 ): Promise<string | null> {
-  const remoteUrl = await remoteManagedAssetResolvableUrl("avatar", avatarRemoteManagedPath(filename, absolutePath));
-  if (remoteUrl) return remoteUrl;
-  return absolutePath ? filePathToAssetUrl(absolutePath) : null;
+  const cacheKey = avatarFileResolutionCacheKey(filename, absolutePath);
+  const pending = pendingAvatarFileResolutions.get(cacheKey);
+  if (pending) return pending;
+  const promise = (async () => {
+    const remoteUrl = await remoteManagedAssetResolvableUrl("avatar", avatarRemoteManagedPath(filename, absolutePath));
+    if (remoteUrl) return remoteUrl;
+    return absolutePath ? filePathToAssetUrl(absolutePath) : null;
+  })();
+  pendingAvatarFileResolutions.set(cacheKey, promise);
+  promise
+    .finally(() => {
+      if (pendingAvatarFileResolutions.get(cacheKey) === promise) {
+        pendingAvatarFileResolutions.delete(cacheKey);
+      }
+    })
+    .catch(() => {});
+  return promise;
 }
 
 export async function resolveGalleryFileUrl(
