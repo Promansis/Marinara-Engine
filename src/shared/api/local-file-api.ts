@@ -380,6 +380,24 @@ function hashCacheInput(value: string | null | undefined): string {
   return `${input.length}:${(hash >>> 0).toString(16)}`;
 }
 
+function boundedHashCacheInput(value: string | null | undefined): string {
+  const input = value ?? "";
+  const length = input.length;
+  if (length <= 4096) return hashCacheInput(input);
+
+  const sampleSize = 1024;
+  const sampleAt = (offset: number) => input.slice(offset, offset + sampleSize);
+  // Inline data URLs can be megabytes long; this key is built on the chat render path.
+  const samples = [
+    sampleAt(0),
+    sampleAt(Math.max(0, Math.floor(length * 0.25) - Math.floor(sampleSize / 2))),
+    sampleAt(Math.max(0, Math.floor(length * 0.5) - Math.floor(sampleSize / 2))),
+    sampleAt(Math.max(0, Math.floor(length * 0.75) - Math.floor(sampleSize / 2))),
+    input.slice(Math.max(0, length - sampleSize)),
+  ].join("\0");
+  return `${length}:${hashCacheInput(samples)}`;
+}
+
 function avatarThumbnailResolutionCacheKey(
   filename: string | null | undefined,
   absolutePath: string | null | undefined,
@@ -392,7 +410,7 @@ function avatarThumbnailResolutionCacheKey(
     filename?.trim() ?? "",
     absolutePath?.trim() ?? "",
     String(size),
-    hashCacheInput(sourceUrl),
+    boundedHashCacheInput(sourceUrl),
   ].join("\0");
 }
 
