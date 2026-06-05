@@ -35,6 +35,7 @@ MAX_FILE_SUMMARY_CHARS = 9_000
 MAX_REVIEW_CHUNKS = 8
 MAX_CHUNK_PATCH_CHARS = 90_000
 MAX_INLINE_COMMENT_CHARS = 1_200
+MAX_COPY_PROMPT_FIELD_CHARS = 90
 MAX_CONTRACT_STATE_ENTRIES = 12
 MAX_CONTRACT_STATE_TEXT_CHARS = 320
 MAX_CONTRACT_STATE_LIST_ITEMS = 3
@@ -118,6 +119,13 @@ def inline_truncate(text, limit=MAX_INLINE_COMMENT_CHARS):
     suffix = f"\n\n[truncated: inline finding was {len(text)} chars, limit is {limit} chars]"
     keep = max(0, limit - len(suffix))
     return text[:keep].rstrip() + suffix
+
+
+def plain_truncate(text, limit):
+    text = str(text or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
 
 
 def compact_state_text(value, limit=MAX_CONTRACT_STATE_TEXT_CHARS):
@@ -1178,6 +1186,50 @@ CONTRACT_LABELS = (
 CONTRACT_LABEL_TO_KEY = {label.lower(): key for key, label in CONTRACT_LABELS}
 
 
+def code_block_text(text):
+    return str(text or "").replace("```", "'''").strip()
+
+
+def agent_prompt_for_finding(finding):
+    contract = finding.repair_contract or {}
+    expected_proof = "; ".join(compact_state_values(contract.get("expected_proof")))
+    invariant = "; ".join(compact_state_values(contract.get("invariant")))
+    lines = [
+        f"Repair `{finding.path}:{finding.line}` ({finding.severity}): {plain_truncate(finding.title, MAX_COPY_PROMPT_FIELD_CHARS)}",
+        f"Problem: {plain_truncate(finding.body, MAX_COPY_PROMPT_FIELD_CHARS)}",
+    ]
+    if finding.fix_hint:
+        lines.append(f"Fix: {plain_truncate(finding.fix_hint, MAX_COPY_PROMPT_FIELD_CHARS)}")
+    if invariant and finding.severity != "nitpick":
+        lines.append(f"Invariant: {plain_truncate(invariant, MAX_COPY_PROMPT_FIELD_CHARS)}")
+    if expected_proof and finding.severity != "nitpick":
+        lines.append(f"Proof: {plain_truncate(expected_proof, MAX_COPY_PROMPT_FIELD_CHARS)}")
+    lines.append("If stale, leave code unchanged and record why.")
+    return "\n".join(lines)
+
+
+def render_agent_prompt_details(findings, summary):
+    if not findings:
+        return ""
+    prompt = code_block_text(
+        "\n\n".join(agent_prompt_for_finding(finding) for finding in findings)
+    )
+    if not prompt:
+        return ""
+    return "\n".join(
+        [
+            "<details>",
+            f"<summary>{summary}</summary>",
+            "",
+            "```text",
+            prompt,
+            "```",
+            "",
+            "</details>",
+        ]
+    )
+
+
 def compact_contract_for_state(contract):
     if not isinstance(contract, dict):
         return None
@@ -1471,6 +1523,11 @@ def render_walkthrough(
             )
     else:
         body.append("- None recorded.")
+    agent_prompt = render_agent_prompt_details(
+        findings, "🤖 Copy prompt for isolated Bunny findings"
+    )
+    if agent_prompt:
+        body.extend(["", agent_prompt])
     if pre_merge:
         body.extend(
             [
@@ -2031,7 +2088,7 @@ def findings_for_inline_comments(findings):
     return [
         finding
         for finding in findings
-        if severity_meta(finding.severity)["rank"] <= severity_meta("high")["rank"]
+        if severity_meta(finding.severity)["rank"] <= severity_meta("medium")["rank"]
     ]
 
 
