@@ -1016,23 +1016,23 @@ export function SettingsPanel() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Tab bar */}
-      <div className="flex flex-shrink-0 flex-wrap border-b border-[var(--sidebar-border)]">
+      <div className="grid flex-shrink-0 grid-cols-2 gap-2 p-3 pb-2 md:grid-cols-3">
         {TABS.map((tab) => (
           <button
             key={tab.id}
+            type="button"
+            aria-pressed={settingsTab === tab.id}
             onClick={() => setSettingsTab(tab.id)}
             className={cn(
-              "relative px-3 py-2.5 text-xs font-medium transition-colors",
+              "flex min-w-0 items-center justify-center rounded-xl border px-2 py-2.5 font-medium text-white transition-all [container-type:inline-size] active:scale-[0.98]",
               settingsTab === tab.id
-                ? "text-[var(--foreground)]"
-                : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
+                ? "border-[var(--primary)]/35 bg-[var(--accent)]"
+                : "border-[var(--border)] bg-[var(--card)] hover:border-[var(--primary)]/35 hover:bg-[var(--accent)]",
             )}
           >
-            {tab.label}
-            {settingsTab === tab.id && (
-              <span className="absolute inset-x-1 bottom-0 h-0.5 rounded-full bg-[var(--primary)]" />
-            )}
+            <span className="max-w-full whitespace-nowrap text-center text-[clamp(0.5625rem,12cqw,0.75rem)] leading-tight">
+              {tab.label}
+            </span>
           </button>
         ))}
       </div>
