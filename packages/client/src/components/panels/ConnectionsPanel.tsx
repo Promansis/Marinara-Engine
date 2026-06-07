@@ -222,14 +222,22 @@ function SidecarCard() {
         </div>
         <div className="flex items-center gap-1.5">
           <button
-            onClick={openLocalModelSettings}
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              openLocalModelSettings();
+            }}
             className="rounded-lg p-1.5 text-sky-400 transition-all hover:bg-sky-400/15 active:scale-90"
             title="Open local model settings"
           >
             <Settings2 size="0.8125rem" />
           </button>
           <button
-            onClick={() => setExpanded((v) => !v)}
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setExpanded((v) => !v);
+            }}
             className="rounded-lg p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
             title={expanded ? "Collapse" : "Expand"}
           >
