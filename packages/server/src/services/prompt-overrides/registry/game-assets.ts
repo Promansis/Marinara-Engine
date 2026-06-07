@@ -51,7 +51,6 @@ export const GAME_NPC_PORTRAIT: PromptOverrideKeyDef<GameNpcPortraitCtx> = {
   ],
   defaultBuilder: (ctx) =>
     [
-      `NPC portrait for ${ctx.npcName}.`,
       ctx.appearanceLine,
       ctx.nonHumanRule,
       ctx.artStyleLine,
@@ -112,6 +111,7 @@ export const GAME_BACKGROUND: PromptOverrideKeyDef<GameBackgroundCtx> = {
 // empty lines dropped.
 
 export interface GameSceneIllustrationCtx extends Record<string, string | number | undefined> {
+  sceneTitleLine: string;
   scenePrompt: string;
   narrativePurposeLine: string;
   charactersLine: string;
@@ -125,6 +125,11 @@ export const GAME_SCENE_ILLUSTRATION: PromptOverrideKeyDef<GameSceneIllustration
   key: "game.sceneIllustration",
   description: "VN-style first-person POV CG illustration prompt (rare, story-defining moments only).",
   variables: [
+    {
+      name: "sceneTitleLine",
+      description: "Pre-formatted visual subject sentence without a metadata label, or empty string.",
+      example: "Lyra watching Korr fall after the moonlit duel.",
+    },
     {
       name: "scenePrompt",
       description: "The exact illustrated moment, written by the scene-analyzer.",
@@ -168,6 +173,7 @@ export const GAME_SCENE_ILLUSTRATION: PromptOverrideKeyDef<GameSceneIllustration
     [
       "Image type: polished visual novel CG illustration replacing the game background for one important scene.",
       "Camera / POV: first-person view from the player protagonist's eyes. Do not show the protagonist except hands or arms when the moment explicitly requires them.",
+      ctx.sceneTitleLine,
       `Scene moment: ${ctx.scenePrompt}`,
       ctx.narrativePurposeLine,
       ctx.charactersLine,
@@ -182,6 +188,7 @@ export const GAME_SCENE_ILLUSTRATION: PromptOverrideKeyDef<GameSceneIllustration
       .filter(Boolean)
       .join("\n"),
   exampleContext: {
+    sceneTitleLine: "Lyra watching Korr fall after the moonlit duel.",
     scenePrompt: "the moonlit duel finally ends — Korr falls to one knee, sword in the dirt",
     narrativePurposeLine: "Narrative purpose: duel climax — major story beat.",
     charactersLine: "Characters: Lyra, Korr.",

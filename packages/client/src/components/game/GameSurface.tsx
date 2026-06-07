@@ -134,7 +134,7 @@ type JournalReadable = ReadableTag & {
 type GameAssetGenerationPayload = {
   chatId: string;
   backgroundTag?: string;
-  npcsNeedingAvatars?: Array<{ name: string; description: string }>;
+  npcsNeedingAvatars?: Array<{ name: string; description: string; gender?: string | null; pronouns?: string | null }>;
   forceNpcAvatarNames?: string[];
   illustration?: import("@marinara-engine/shared").SceneIllustrationRequest;
   debugMode?: boolean;
@@ -2931,7 +2931,12 @@ export function GameSurface({
         (npc) =>
           !npc.avatarUrl && !npcAvatarLookup.has(normalizeSceneAssetName(npc.name)) && npc.description && npc.name,
       )
-      .map((npc) => ({ name: npc.name, description: npc.description }))
+      .map((npc) => ({
+        name: npc.name,
+        description: npc.description,
+        gender: npc.gender ?? null,
+        pronouns: npc.pronouns ?? null,
+      }))
       .slice(0, 10);
 
     return npcsNeedingAvatars;
@@ -3841,8 +3846,13 @@ export function GameSurface({
       currentSpotifyTrack: recentSpotifyTrackHistoryRef.current[0] ?? null,
       recentSpotifyTracks: recentSpotifyTrackHistoryRef.current,
       currentAmbient: useGameAssetStore.getState().currentAmbient,
+      currentLocation: gameSnapshot?.location ?? null,
       currentWeather: gameSnapshot?.weather ?? null,
       currentTimeOfDay: gameSnapshot?.time ?? null,
+      genre: ((chatMeta.gameSetupConfig as Record<string, unknown> | undefined)?.genre as string | undefined) ?? null,
+      setting:
+        ((chatMeta.gameSetupConfig as Record<string, unknown> | undefined)?.setting as string | undefined) ?? null,
+      worldOverview: (chatMeta.gameWorldOverview as string | undefined) ?? null,
       canGenerateBackgrounds: !!chatMeta.enableSpriteGeneration && !!chatMeta.gameImageConnectionId,
       canGenerateIllustrations: !!chatMeta.enableSpriteGeneration && !!chatMeta.gameImageConnectionId,
       artStylePrompt:
@@ -4666,8 +4676,12 @@ export function GameSurface({
       currentSpotifyTrack: recentSpotifyTrackHistoryRef.current[0] ?? null,
       recentSpotifyTracks: recentSpotifyTrackHistoryRef.current,
       currentAmbient: useGameAssetStore.getState().currentAmbient,
+      currentLocation: gameSnapshot?.location ?? null,
       currentWeather: gameSnapshot?.weather ?? null,
       currentTimeOfDay: gameSnapshot?.time ?? null,
+      genre: (setupConfig?.genre as string | undefined) ?? null,
+      setting: (setupConfig?.setting as string | undefined) ?? null,
+      worldOverview: (chatMeta.gameWorldOverview as string | undefined) ?? null,
       canGenerateBackgrounds: !!chatMeta.enableSpriteGeneration && !!chatMeta.gameImageConnectionId,
       canGenerateIllustrations: !!chatMeta.enableSpriteGeneration && !!chatMeta.gameImageConnectionId,
       artStylePrompt:
@@ -4726,8 +4740,10 @@ export function GameSurface({
     chatMeta.gameImagePromptInstructions,
     chatMeta.gameSceneConnectionId,
     chatMeta.gameSetupConfig,
+    chatMeta.gameWorldOverview,
     currentBackground,
     fetchSpotifySceneCandidates,
+    gameSnapshot?.location,
     gameSnapshot?.time,
     gameSnapshot?.weather,
     gameState,
@@ -5001,7 +5017,14 @@ export function GameSurface({
         const result = await runGameAssetGeneration(
           {
             chatId: activeChatId,
-            npcsNeedingAvatars: [{ name: targetNpc.name, description: targetNpc.description ?? "" }],
+            npcsNeedingAvatars: [
+              {
+                name: targetNpc.name,
+                description: targetNpc.description ?? "",
+                gender: targetNpc.gender ?? null,
+                pronouns: targetNpc.pronouns ?? null,
+              },
+            ],
             forceNpcAvatarNames: [targetNpc.name],
             debugMode: useUIStore.getState().debugMode,
           },
@@ -7471,8 +7494,12 @@ export function GameSurface({
       currentMusic: useGameAssetStore.getState().currentMusic,
       recentMusic: recentMusicHistoryRef.current,
       currentAmbient: useGameAssetStore.getState().currentAmbient,
+      currentLocation: gameSnapshot?.location ?? null,
       currentWeather: gameSnapshot?.weather ?? null,
       currentTimeOfDay: gameSnapshot?.time ?? null,
+      genre: (setupConfig?.genre as string | undefined) ?? null,
+      setting: (setupConfig?.setting as string | undefined) ?? null,
+      worldOverview: (chatMeta.gameWorldOverview as string | undefined) ?? null,
       canGenerateBackgrounds: !!chatMeta.enableSpriteGeneration && !!chatMeta.gameImageConnectionId,
       canGenerateIllustrations: !!chatMeta.enableSpriteGeneration && !!chatMeta.gameImageConnectionId,
       artStylePrompt: (setupConfig?.artStylePrompt as string | undefined) ?? null,

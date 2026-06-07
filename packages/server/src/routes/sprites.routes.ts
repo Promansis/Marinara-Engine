@@ -60,6 +60,8 @@ async function getSpriteCapabilities() {
 }
 import { generateImage } from "../services/image/image-generation.js";
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
+import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
+import { compileImagePrompt } from "../services/image/image-prompt-compiler.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { createPromptOverridesStorage } from "../services/storage/prompt-overrides.storage.js";
 import {
@@ -69,6 +71,7 @@ import {
   SPRITES_SINGLE_FULL_BODY,
   SPRITES_FULL_BODY_SHEET,
 } from "../services/prompt-overrides/index.js";
+import type { ImageGenerationDefaultsProfile, ImageStyleProfileSettings } from "@marinara-engine/shared";
 
 const SPRITES_ROOT = join(DATA_DIR, "sprites");
 const ROUTE_DIR = dirname(fileURLToPath(import.meta.url));
@@ -98,6 +101,12 @@ type SpriteType = "expressions" | "full-body";
 type SpritePromptOverride = {
   id: string;
   prompt: string;
+  negativePrompt?: string;
+};
+
+type SpriteCompiledPrompt = {
+  prompt: string;
+  negativePrompt: string;
 };
 
 type SpriteGenerateSheetBody = {
@@ -128,7 +137,7 @@ type SpritePromptPlan = {
   sheetHeight: number;
   cellWidth: number;
   cellHeight: number;
-  promptOverrides: Map<string, string>;
+  promptOverrides: Map<string, SpriteCompiledPrompt>;
   promptOverridesStorage: ReturnType<typeof createPromptOverridesStorage>;
 };
 
@@ -217,6 +226,31 @@ function applyNativeTransparentPngPrompt(prompt: string, cleanupFriendly = false
       : updated;
   }
   return `${updated}, ${replacement}`;
+}
+
+function compileSpritePrompt(
+  prompt: string,
+  options: {
+    negativePrompt?: string;
+    styleProfiles: ImageStyleProfileSettings;
+    imageDefaults?: ImageGenerationDefaultsProfile | null;
+  },
+): SpriteCompiledPrompt {
+  const compiled = compileImagePrompt({
+    kind: "sprite",
+    prompt,
+    negativePrompt: options.negativePrompt,
+    styleProfiles: options.styleProfiles,
+    imageDefaults: options.imageDefaults,
+  });
+  return {
+    prompt: compiled.prompt,
+    negativePrompt: compiled.negativePrompt,
+  };
+}
+
+function finalSpritePromptOverride(override: SpriteCompiledPrompt | undefined, fallback: SpriteCompiledPrompt) {
+  return override ?? fallback;
 }
 
 function formatSpriteLabelForPrompt(label: string): string {
@@ -1052,7 +1086,22 @@ async function buildSpritePromptPlan(
     sheetHeight,
     cellWidth,
     cellHeight,
-    promptOverrides: new Map((body.promptOverrides ?? []).map((item) => [item.id, item.prompt.trim()])),
+    promptOverrides: new Map(
+      (Array.isArray(body.promptOverrides) ? body.promptOverrides : []).flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const override = item as Record<string, unknown>;
+        if (typeof override.id !== "string" || typeof override.prompt !== "string") return [];
+        return [
+          [
+            override.id,
+            {
+              prompt: override.prompt.trim(),
+              negativePrompt: typeof override.negativePrompt === "string" ? override.negativePrompt.trim() : "",
+            },
+          ] as const,
+        ];
+      }),
+    ),
     promptOverridesStorage,
   };
 }
@@ -1416,6 +1465,8 @@ export async function spritesRoutes(app: FastifyInstance) {
     }
 
     const imgModel = conn.model || "";
+    const imageDefaults = resolveConnectionImageDefaults(conn);
+    const imageSettings = await loadImageGenerationUserSettings(app.db);
     const plan = await buildSpritePromptPlan(app, body, imgModel);
 
     if (plan.generateExpressionsIndividually) {
@@ -1431,11 +1482,20 @@ export async function spritesRoutes(app: FastifyInstance) {
           if (nativeTransparentPng) {
             expressionPrompt = applyNativeTransparentPngPrompt(expressionPrompt, cleanupFriendlyTransparentPrompt);
           }
+          const compiledPrompt = compileSpritePrompt(expressionPrompt, {
+            styleProfiles: imageSettings.styleProfiles,
+            imageDefaults,
+          });
+          const reviewedPrompt = finalSpritePromptOverride(
+            plan.promptOverrides.get(spritePromptReviewId("expression", plan.spriteType, expression)),
+            compiledPrompt,
+          );
           return {
             id: spritePromptReviewId("expression", plan.spriteType, expression),
             kind: "sprite",
             title: `Expression: ${expression.replace(/_/g, " ")}`,
-            prompt: expressionPrompt,
+            prompt: reviewedPrompt.prompt,
+            negativePrompt: reviewedPrompt.negativePrompt,
             width: 1024,
             height: 1024,
           };
@@ -1444,16 +1504,27 @@ export async function spritesRoutes(app: FastifyInstance) {
       return { items };
     }
 
+    const compiledPrompt = compileSpritePrompt(plan.prompt, {
+      styleProfiles: imageSettings.styleProfiles,
+      imageDefaults,
+    });
+    const sheetPromptId = spritePromptReviewId(
+      "sheet",
+      plan.spriteType,
+      `${plan.cols}x${plan.rows}-${plan.expressions.join(",")}`,
+    );
+    const reviewedPrompt = finalSpritePromptOverride(plan.promptOverrides.get(sheetPromptId), compiledPrompt);
     return {
       items: [
         {
-          id: spritePromptReviewId("sheet", plan.spriteType, `${plan.cols}x${plan.rows}-${plan.expressions.join(",")}`),
+          id: sheetPromptId,
           kind: "sprite",
           title:
             plan.spriteType === "full-body"
               ? `Full-body sprites: ${plan.cols}x${plan.rows}`
               : `Expression sprites: ${plan.cols}x${plan.rows}`,
-          prompt: plan.prompt,
+          prompt: reviewedPrompt.prompt,
+          negativePrompt: reviewedPrompt.negativePrompt,
           width: plan.sheetWidth,
           height: plan.sheetHeight,
         },
@@ -1495,6 +1566,7 @@ export async function spritesRoutes(app: FastifyInstance) {
     const imgSource = (conn as any).imageGenerationSource || imgModel;
     const imgServiceHint = conn.imageService || imgSource;
     const imageDefaults = resolveConnectionImageDefaults(conn);
+    const imageSettings = await loadImageGenerationUserSettings(app.db);
     const nativeTransparentPng = body.nativeTransparentPng === true;
     const cleanupFriendlyTransparentPrompt =
       nativeTransparentPng && shouldUseCleanupFriendlyTransparentPrompt(imgModel);
@@ -1504,7 +1576,11 @@ export async function spritesRoutes(app: FastifyInstance) {
       plan.spriteType,
       `${plan.cols}x${plan.rows}-${plan.expressions.join(",")}`,
     );
-    const prompt = plan.promptOverrides.get(sheetPromptId) ?? plan.prompt;
+    const compiledSheetPrompt = compileSpritePrompt(plan.prompt, {
+      styleProfiles: imageSettings.styleProfiles,
+      imageDefaults,
+    });
+    const sheetPrompt = finalSpritePromptOverride(plan.promptOverrides.get(sheetPromptId), compiledSheetPrompt);
 
     // Parse reference images to raw base64 (supports data URL, raw base64, or local avatar URL)
     const rawRefs = body.referenceImages?.length
@@ -1528,13 +1604,19 @@ export async function spritesRoutes(app: FastifyInstance) {
             if (nativeTransparentPng) {
               expressionPrompt = applyNativeTransparentPngPrompt(expressionPrompt, cleanupFriendlyTransparentPrompt);
             }
-            expressionPrompt =
-              plan.promptOverrides.get(spritePromptReviewId("expression", plan.spriteType, expression)) ??
-              expressionPrompt;
+            const compiledExpressionPrompt = compileSpritePrompt(expressionPrompt, {
+              styleProfiles: imageSettings.styleProfiles,
+              imageDefaults,
+            });
+            const finalExpressionPrompt = finalSpritePromptOverride(
+              plan.promptOverrides.get(spritePromptReviewId("expression", plan.spriteType, expression)),
+              compiledExpressionPrompt,
+            );
 
             const targetSize = 1024;
             const imageResult = await generateImage(imgModel, imgBaseUrl, imgApiKey, imgServiceHint, {
-              prompt: expressionPrompt,
+              prompt: finalExpressionPrompt.prompt,
+              negativePrompt: finalExpressionPrompt.negativePrompt || undefined,
               model: imgModel,
               width: targetSize,
               height: targetSize,
@@ -1592,7 +1674,8 @@ export async function spritesRoutes(app: FastifyInstance) {
       }
 
       const imageResult = await generateImage(imgModel, imgBaseUrl, imgApiKey, imgServiceHint, {
-        prompt,
+        prompt: sheetPrompt.prompt,
+        negativePrompt: sheetPrompt.negativePrompt || undefined,
         model: imgModel,
         width: plan.sheetWidth,
         height: plan.sheetHeight,

@@ -60,6 +60,7 @@ import { injectAtDepth } from "../services/lorebook/prompt-injector.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
+import { compileImagePrompt } from "../services/image/image-prompt-compiler.js";
 import { extractLeadingThinkingBlocks } from "../services/llm/inline-thinking.js";
 import { resolveSpotifyCredentials, spotifyHasScope } from "../services/spotify/spotify.service.js";
 import { buildSpotifyDjConstraints } from "../services/spotify/spotify-dj-constraints.js";
@@ -5426,6 +5427,22 @@ export async function generateRoutes(app: FastifyInstance) {
           if (backgroundAgent.settings?.autoGenerateBackgrounds === true) {
             agentContext.memory._backgroundGenerationEnabled = true;
           }
+          if (backgroundAgent.settings?.autoGenerateBackgrounds === true) {
+            const setupConfigForBackground =
+              chatMeta.gameSetupConfig &&
+              typeof chatMeta.gameSetupConfig === "object" &&
+              !Array.isArray(chatMeta.gameSetupConfig)
+                ? (chatMeta.gameSetupConfig as Record<string, unknown>)
+                : null;
+            agentContext.memory._backgroundWorldContext = {
+              genre: (setupConfigForBackground?.genre as string | undefined) ?? null,
+              setting: (setupConfigForBackground?.setting as string | undefined) ?? null,
+              location: gameState?.location ?? null,
+              weather: gameState?.weather ?? null,
+              timeOfDay: gameState?.time ?? null,
+              worldOverview: (chatMeta.gameWorldOverview as string | undefined) ?? null,
+            };
+          }
           try {
             const { readdirSync, readFileSync, existsSync } = await import("fs");
             const { join, extname } = await import("path");
@@ -8618,10 +8635,27 @@ export async function generateRoutes(app: FastifyInstance) {
                       const imageDefaults = resolveConnectionImageDefaults(imgConnFull);
                       const imageSettings = await loadImageGenerationUserSettings(app.db);
                       const promptOverridesStorage = createPromptOverridesStorage(app.db);
+                      const setupConfigForImage =
+                        chatMeta.gameSetupConfig &&
+                        typeof chatMeta.gameSetupConfig === "object" &&
+                        !Array.isArray(chatMeta.gameSetupConfig)
+                          ? (chatMeta.gameSetupConfig as Record<string, unknown>)
+                          : null;
+                      const styleProfileId =
+                        (setupConfigForImage?.imageStyleProfileId as string | undefined) ??
+                        (chatMeta.imageStyleProfileId as string | undefined) ??
+                        null;
                       const generatedFilename = await generateChatBackground({
                         chatId: input.chatId,
                         locationSlug: locationText.slice(0, 120),
                         sceneDescription: promptText.slice(0, 1000),
+                        genre: (setupConfigForImage?.genre as string | undefined) ?? undefined,
+                        setting: (setupConfigForImage?.setting as string | undefined) ?? undefined,
+                        currentLocation: gameState?.location ?? null,
+                        currentWeather: gameState?.weather ?? null,
+                        currentTimeOfDay: gameState?.time ?? null,
+                        worldOverview: (chatMeta.gameWorldOverview as string | undefined) ?? null,
+                        artStyle: (setupConfigForImage?.artStylePrompt as string | undefined) ?? undefined,
                         reason:
                           typeof generationRequest.reason === "string"
                             ? generationRequest.reason.trim().slice(0, 300)
@@ -8634,6 +8668,8 @@ export async function generateRoutes(app: FastifyInstance) {
                         imgEndpointId: imgConnFull.imageEndpointId || undefined,
                         imgComfyWorkflow: imgConnFull.comfyuiWorkflow || undefined,
                         imgDefaults: imageDefaults,
+                        styleProfiles: imageSettings.styleProfiles,
+                        styleProfileId,
                         promptOverridesStorage,
                         size: {
                           width: imageSettings.background.width,
@@ -8974,6 +9010,12 @@ export async function generateRoutes(app: FastifyInstance) {
                         const imgServiceHint = imgConnFull.imageService || imgSource;
                         const imageDefaults = resolveConnectionImageDefaults(imgConnFull);
                         const imageSettings = await loadImageGenerationUserSettings(app.db);
+                        const styleProfileId =
+                          ((chatMeta.gameSetupConfig as Record<string, unknown> | undefined)?.imageStyleProfileId as
+                            | string
+                            | undefined) ??
+                          (chatMeta.imageStyleProfileId as string | undefined) ??
+                          null;
 
                         for (const npc of charsNeedingAvatars) {
                           try {
@@ -8985,9 +9027,17 @@ export async function generateRoutes(app: FastifyInstance) {
                                 0,
                                 1000,
                               );
+                            const compiledPrompt = compileImagePrompt({
+                              kind: "portrait",
+                              prompt,
+                              styleProfiles: imageSettings.styleProfiles,
+                              styleProfileId,
+                              imageDefaults,
+                            });
 
                             const imageResult = await generateImage(imgModel, imgBaseUrl, imgApiKey, imgServiceHint, {
-                              prompt,
+                              prompt: compiledPrompt.prompt,
+                              negativePrompt: compiledPrompt.negativePrompt || undefined,
                               model: imgModel,
                               width: imageSettings.portrait.width,
                               height: imageSettings.portrait.height,
@@ -9444,21 +9494,16 @@ export async function generateRoutes(app: FastifyInstance) {
                       const imgServiceHint = imgConnFull.imageService || imgSource;
                       const imageDefaults = resolveConnectionImageDefaults(imgConnFull);
                       const imageSettings = await loadImageGenerationUserSettings(app.db);
+                      const styleProfileId =
+                        ((chatMeta.gameSetupConfig as Record<string, unknown> | undefined)?.imageStyleProfileId as
+                          | string
+                          | undefined) ??
+                        (chatMeta.imageStyleProfileId as string | undefined) ??
+                        null;
 
-                      // Use per-chat selfie resolution if set; otherwise use the synced global selfie canvas.
-                      const selfieRes = (chatMeta.selfieResolution as string) ?? "";
-                      const resParts = selfieRes.split("x").map(Number);
-                      const parsedW = resParts[0] ?? 0;
-                      const parsedH = resParts[1] ?? 0;
-                      let imgWidth: number;
-                      let imgHeight: number;
-                      if (parsedW > 0 && parsedH > 0) {
-                        imgWidth = parsedW;
-                        imgHeight = parsedH;
-                      } else {
-                        imgWidth = imageSettings.selfie.width;
-                        imgHeight = imageSettings.selfie.height;
-                      }
+                      // Scene illustrations share the landscape background canvas.
+                      const imgWidth = imageSettings.background.width;
+                      const imgHeight = imageSettings.background.height;
 
                       // Prepend style to the prompt for better results
                       let fullPrompt = style ? `${style}, ${imagePrompt}` : imagePrompt;
@@ -9536,9 +9581,20 @@ export async function generateRoutes(app: FastifyInstance) {
                         }
                       }
 
-                      const imageResult = await generateImage(imgModel, imgBaseUrl, imgApiKey, imgServiceHint, {
+                      const compiledPrompt = compileImagePrompt({
+                        kind: "illustration",
                         prompt: fullPrompt,
                         negativePrompt: finalNegativePrompt || undefined,
+                        styleProfiles: imageSettings.styleProfiles,
+                        styleProfileId,
+                        imageDefaults,
+                        generatedStyle: style,
+                      });
+                      fullPrompt = compiledPrompt.prompt;
+
+                      const imageResult = await generateImage(imgModel, imgBaseUrl, imgApiKey, imgServiceHint, {
+                        prompt: compiledPrompt.prompt,
+                        negativePrompt: compiledPrompt.negativePrompt || undefined,
                         model: imgModel,
                         width: imgWidth,
                         height: imgHeight,
@@ -9959,20 +10015,34 @@ export async function generateRoutes(app: FastifyInstance) {
                         const imgSource = (imgConnFull as any).imageGenerationSource || imgModel;
                         const imageDefaults = resolveConnectionImageDefaults(imgConnFull);
                         const imageSettings = await loadImageGenerationUserSettings(app.db);
+                        const styleProfileId =
+                          ((chatMeta.gameSetupConfig as Record<string, unknown> | undefined)?.imageStyleProfileId as
+                            | string
+                            | undefined) ??
+                          (chatMeta.imageStyleProfileId as string | undefined) ??
+                          null;
 
                         // Parse per-chat selfie resolution, otherwise use the global selfie canvas.
                         const selfieRes = (chatMeta.selfieResolution as string) ?? "";
                         const [selfieW, selfieH] = selfieRes.split("x").map(Number) as [number, number];
 
                         const serviceHint = imgConnFull.imageService || "";
+                        const compiledSelfiePrompt = compileImagePrompt({
+                          kind: "selfie",
+                          prompt: finalSelfiePrompt,
+                          negativePrompt: selfieNegativePrompt || undefined,
+                          styleProfiles: imageSettings.styleProfiles,
+                          styleProfileId,
+                          imageDefaults,
+                        });
                         const imageResult = await generateImage(
                           imgModel,
                           imgBaseUrl,
                           imgApiKey,
                           serviceHint || imgSource,
                           {
-                            prompt: finalSelfiePrompt,
-                            negativePrompt: selfieNegativePrompt || undefined,
+                            prompt: compiledSelfiePrompt.prompt,
+                            negativePrompt: compiledSelfiePrompt.negativePrompt || undefined,
                             model: imgModel,
                             width: selfieW || imageSettings.selfie.width,
                             height: selfieH || imageSettings.selfie.height,
@@ -9987,7 +10057,7 @@ export async function generateRoutes(app: FastifyInstance) {
                         const galleryEntry = await galleryStore.create({
                           chatId: input.chatId,
                           filePath,
-                          prompt: finalSelfiePrompt,
+                          prompt: compiledSelfiePrompt.prompt,
                           provider: imgConnFull.provider ?? "image_generation",
                           model: imgModel || "unknown",
                           width: selfieW || imageSettings.selfie.width,
@@ -10003,7 +10073,7 @@ export async function generateRoutes(app: FastifyInstance) {
                             type: "image",
                             url: imageUrl,
                             filename: `selfie_${charName.toLowerCase().replace(/\s+/g, "_")}.${imageResult.ext}`,
-                            prompt: finalSelfiePrompt,
+                            prompt: compiledSelfiePrompt.prompt,
                             galleryId: (galleryEntry as any)?.id,
                           };
                           await chats.appendSwipeAttachment(messageId, generationSwipeIndex, attachment);
@@ -10023,7 +10093,7 @@ export async function generateRoutes(app: FastifyInstance) {
                               characterName: charName,
                               messageId,
                               imageUrl,
-                              prompt: finalSelfiePrompt,
+                              prompt: compiledSelfiePrompt.prompt,
                               galleryId: (galleryEntry as any)?.id,
                             },
                           })}\n\n`,
