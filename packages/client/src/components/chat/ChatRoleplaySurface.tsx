@@ -4,6 +4,7 @@ import {
   lazy,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentProps,
@@ -37,6 +38,7 @@ import {
 import { cn } from "../../lib/utils";
 import { getConnectedChatDisplayName } from "../../lib/chat-display";
 import { playNotificationPing } from "../../lib/notification-sound";
+import { getTranscriptRenderWindow, TRANSCRIPT_RENDER_WINDOW_STEP } from "../../lib/transcript-render-window";
 import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { useGameStateStore } from "../../stores/game-state.store";
@@ -46,6 +48,7 @@ import { ChatMessage } from "./ChatMessage";
 import { ChatInput } from "./ChatInput";
 import { CyoaChoices } from "./CyoaChoices";
 import { ChatBranchSelector } from "./ChatBranchSelector";
+import { TranscriptWindowControls } from "./TranscriptWindowControls";
 import { EndSceneBar } from "./SceneBanner";
 import { ChatCommonOverlays } from "./ChatCommonOverlays";
 import { ActiveWorldInfoButton } from "./ActiveWorldInfoButton";
@@ -881,6 +884,35 @@ export function ChatRoleplaySurface({
     prevMessageKeysRef.current = new Set();
   }, [activeChatId]);
 
+  const [transcriptWindowStart, setTranscriptWindowStart] = useState<number | null>(null);
+
+  useEffect(() => {
+    setTranscriptWindowStart(null);
+  }, [activeChatId]);
+
+  const transcriptWindow = useMemo(
+    () => getTranscriptRenderWindow(messages, { startIndex: transcriptWindowStart }),
+    [messages, transcriptWindowStart],
+  );
+
+  const showOlderTranscriptMessages = () => {
+    setTranscriptWindowStart((current) => {
+      const start = current ?? transcriptWindow.startIndex;
+      return Math.max(0, start - TRANSCRIPT_RENDER_WINDOW_STEP);
+    });
+  };
+
+  const showNewerTranscriptMessages = () => {
+    setTranscriptWindowStart((current) => {
+      const start = current ?? transcriptWindow.startIndex;
+      return Math.min(transcriptWindow.latestStartIndex, start + TRANSCRIPT_RENDER_WINDOW_STEP);
+    });
+  };
+
+  const jumpToLatestTranscriptMessages = () => {
+    setTranscriptWindowStart(null);
+  };
+
   useEffect(() => {
     if (!messages) return;
     const currentKeys = new Set(messages.map((message) => `${activeChatId}:${message.id}`));
@@ -918,6 +950,9 @@ export function ChatRoleplaySurface({
       playNotificationPing();
     }
   }, [activeChatId, messages]);
+
+  const visibleMessages = transcriptWindow.messages;
+  const loadedMessageOffset = totalMessageCount - (messages?.length ?? 0);
 
   return (
     <div data-component="ChatArea.Roleplay" className="flex flex-1 overflow-hidden">
@@ -1245,14 +1280,24 @@ export function ChatRoleplaySurface({
                   </div>
                 )}
 
+                <TranscriptWindowControls
+                  hiddenBeforeCount={transcriptWindow.hiddenBeforeCount}
+                  hiddenAfterCount={transcriptWindow.hiddenAfterCount}
+                  onShowOlder={transcriptWindow.hiddenBeforeCount > 0 ? showOlderTranscriptMessages : undefined}
+                  className="pt-0"
+                />
+
                 {isLoading && (
                   <div className="flex flex-col items-center gap-3 py-12">
                     <div className="h-8 w-8 animate-spin rounded-full border-2 border-foreground/20 border-t-white/60" />
                   </div>
                 )}
 
-                {messages?.map((msg, i) => {
+                {visibleMessages?.map((msg, i) => {
                   if (isHiddenFromUser(msg)) return null;
+                  const sourceIndex = transcriptWindow.startIndex + i;
+                  const messageDepth = (messages?.length ?? 0) - 1 - sourceIndex;
+                  const messageOrderIndex = loadedMessageOffset + sourceIndex;
                   const isRegenerating = isStreaming && regenerateMessageId === msg.id;
                   return (
                     <div
@@ -1281,10 +1326,10 @@ export function ChatRoleplaySurface({
                           characterMap={characterMap}
                           personaInfo={personaInfo}
                           chatMode={chatMode}
-                          messageDepth={messages.length - 1 - i}
-                          messageIndex={totalMessageCount - messages.length + i + 1}
-                          messageOrderIndex={totalMessageCount - messages.length + i}
-                          isGrouped={isGrouped(i)}
+                          messageDepth={messageDepth}
+                          messageIndex={messageOrderIndex + 1}
+                          messageOrderIndex={messageOrderIndex}
+                          isGrouped={isGrouped(sourceIndex)}
                           groupChatMode={groupChatMode}
                           chatCharacterIds={chatCharIds}
                           expressionAvatarResolver={expressionAvatarResolver}
@@ -1310,10 +1355,10 @@ export function ChatRoleplaySurface({
                           characterMap={characterMap}
                           personaInfo={personaInfo}
                           chatMode={chatMode}
-                          messageDepth={messages.length - 1 - i}
-                          messageIndex={totalMessageCount - messages.length + i + 1}
-                          messageOrderIndex={totalMessageCount - messages.length + i}
-                          isGrouped={isGrouped(i)}
+                          messageDepth={messageDepth}
+                          messageIndex={messageOrderIndex + 1}
+                          messageOrderIndex={messageOrderIndex}
+                          isGrouped={isGrouped(sourceIndex)}
                           groupChatMode={groupChatMode}
                           chatCharacterIds={chatCharIds}
                           expressionAvatarResolver={expressionAvatarResolver}
@@ -1326,7 +1371,14 @@ export function ChatRoleplaySurface({
                   );
                 })}
 
-                {!isStreaming && <CyoaChoices messages={messages} />}
+                <TranscriptWindowControls
+                  hiddenBeforeCount={transcriptWindow.hiddenBeforeCount}
+                  hiddenAfterCount={transcriptWindow.hiddenAfterCount}
+                  onShowNewer={transcriptWindow.hiddenAfterCount > 0 ? showNewerTranscriptMessages : undefined}
+                  onJumpToLatest={transcriptWindow.hiddenAfterCount > 0 ? jumpToLatestTranscriptMessages : undefined}
+                />
+
+                {!isStreaming && <CyoaChoices messages={visibleMessages} />}
 
                 {isStreaming && !regenerateMessageId && (
                   <StreamingIndicator

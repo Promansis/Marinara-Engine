@@ -50,6 +50,7 @@ import { api, getJsonRepairRequest, type JsonRepairRequest } from "../../lib/api
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { cn, type AvatarCrop, type LegacyAvatarCrop, type AvatarCropValue } from "../../lib/utils";
 import { filterLanguageGenerationConnections } from "../../lib/connection-filters";
+import { gameAssetFileUrl } from "../../lib/game-asset-urls";
 import { audioManager } from "../../lib/game-audio";
 import {
   parseGmTags,
@@ -1063,7 +1064,7 @@ function backgroundAssetUrl(entry: { path: string }): string {
     const filename = entry.path.replace("__user_bg__/", "");
     return `/api/backgrounds/file/${encodeURIComponent(filename)}`;
   }
-  return `/api/game-assets/file/${entry.path}`;
+  return gameAssetFileUrl(entry.path) ?? "";
 }
 
 const BACKGROUND_FALLBACK_IGNORED_WORDS = new Set(["background", "backgrounds", "generated", "user"]);

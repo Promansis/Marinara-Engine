@@ -3312,7 +3312,7 @@ type ProfileImportProgressData = {
 };
 
 type ProfileImportProgressState = {
-  status: "reading" | "starting" | "running" | "success" | "error";
+  status: "reading" | "preview" | "starting" | "running" | "success" | "error";
   label: string;
   completedItems: number;
   totalItems: number;
@@ -3338,6 +3338,16 @@ type ProfileImportStreamEvent =
     }
   | { type: "error"; data?: string | { error?: string; message?: string } };
 
+type ProfileImportPreviewResult = {
+  success?: boolean;
+  preview?: boolean;
+  imported?: ProfileImportStats;
+  warnings?: ProfileImportWarning[];
+  fileFingerprint?: string;
+  error?: string;
+  message?: string;
+};
+
 function formatProfileImportDuration(seconds: number) {
   const safeSeconds = Math.max(0, Math.round(seconds));
   if (safeSeconds < 60) return `${safeSeconds}s`;
@@ -3356,6 +3366,7 @@ function estimateProfileImportRemainingSeconds(progress: ProfileImportProgressSt
 
 function getProfileImportPercent(progress: ProfileImportProgressState) {
   if (progress.status === "success") return 100;
+  if (progress.status === "preview") return 0;
   if (progress.totalItems <= 0) return progress.status === "running" ? 8 : 0;
   const percent = Math.round((progress.completedItems / progress.totalItems) * 100);
   return Math.min(99, Math.max(progress.status === "running" ? 8 : 0, percent));
@@ -3379,6 +3390,23 @@ function formatProfileImportStats(stats?: ProfileImportStats) {
     .filter(([count]) => typeof count === "number" && count > 0)
     .map(([count, label]) => `${count} ${label}`)
     .join(", ");
+}
+
+function getProfileImportItemCount(stats?: ProfileImportStats) {
+  if (!stats) return 0;
+  const counts: Array<number | undefined> = [
+    stats.characters,
+    stats.personas,
+    stats.lorebooks,
+    stats.presets,
+    stats.agents,
+    stats.themes,
+    stats.chats,
+    stats.messages,
+    stats.connections,
+    stats.files,
+  ];
+  return counts.reduce<number>((total, count) => total + (typeof count === "number" && count > 0 ? count : 0), 0);
 }
 
 function getProfileImportErrorMessage(data: unknown) {
@@ -3418,6 +3446,22 @@ function formatProfileImportWarningDetails(warnings: ProfileImportWarning[]) {
   const visible = paths.slice(0, 3).join(", ");
   const extra = paths.length > 3 ? `, +${paths.length - 3} more` : "";
   return `Missing: ${visible}${extra}`;
+}
+
+function formatProfileImportConfirmationMessage(preview: ProfileImportPreviewResult) {
+  const warnings = normalizeProfileImportWarnings(preview.warnings);
+  const found = formatProfileImportStats(preview.imported) || "no counted records";
+  const warningDetail =
+    warnings.length > 0
+      ? `${formatProfileImportWarningSummary(warnings)} ${formatProfileImportWarningDetails(warnings)}`
+      : "";
+  return [
+    `Found: ${found}.`,
+    warningDetail,
+    "Importing writes profile data from this file and cannot be undone. Continue?",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function getDownloadFilename(res: Response, fallback: string) {
@@ -3495,6 +3539,7 @@ function ImportSettings() {
   const [profileImportProgress, setProfileImportProgress] = useState<ProfileImportProgressState | null>(null);
   const profileImportBusy =
     profileImportProgress?.status === "reading" ||
+    profileImportProgress?.status === "preview" ||
     profileImportProgress?.status === "starting" ||
     profileImportProgress?.status === "running";
 
@@ -3502,7 +3547,11 @@ function ImportSettings() {
     if (!profileImportBusy) return;
     const timer = window.setInterval(() => {
       setProfileImportProgress((current) =>
-        current && (current.status === "reading" || current.status === "starting" || current.status === "running")
+        current &&
+        (current.status === "reading" ||
+          current.status === "preview" ||
+          current.status === "starting" ||
+          current.status === "running")
           ? { ...current, elapsedSeconds: Math.floor((Date.now() - current.startedAt) / 1000) }
           : current,
       );
@@ -3560,6 +3609,12 @@ function ImportSettings() {
     const file = e.target.files?.[0];
     if (!file) return;
     const startedAt = Date.now();
+    const makeImportBody = (isZip: boolean, text: string): BodyInit => {
+      if (!isZip) return text;
+      const form = new FormData();
+      form.append("file", file, file.name);
+      return form;
+    };
     setProfileImportProgress({
       status: "reading",
       label: "Reading profile file",
@@ -3570,14 +3625,10 @@ function ImportSettings() {
     });
     try {
       const isZip = await isZipFile(file);
-      let body: BodyInit;
-      if (isZip) {
-        const form = new FormData();
-        form.append("file", file, file.name);
-        body = form;
-      } else {
-        const text = await file.text();
-        const envelope = JSON.parse(text) as { type?: string };
+      let profileText = "";
+      if (!isZip) {
+        profileText = await file.text();
+        const envelope = JSON.parse(profileText) as { type?: string };
         if (envelope.type !== "marinara_profile") {
           setProfileImportProgress({
             status: "error",
@@ -3592,7 +3643,75 @@ function ImportSettings() {
           e.target.value = "";
           return;
         }
-        body = text;
+      }
+
+      setProfileImportProgress((current) =>
+        current
+          ? {
+              ...current,
+              status: "preview",
+              label: isZip ? "Scanning profile archive" : "Scanning profile file",
+              elapsedSeconds: Math.floor((Date.now() - startedAt) / 1000),
+            }
+          : current,
+      );
+      const previewRes = await api.raw("/backup/import-profile?preview=true", {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        body: makeImportBody(isZip, profileText),
+      });
+      if (!previewRes.ok) {
+        const data = (await previewRes.json().catch(() => ({}))) as { error?: string; message?: string };
+        throw new Error(data.message ?? data.error ?? previewRes.statusText ?? "Unknown error");
+      }
+      const preview = (await previewRes.json()) as ProfileImportPreviewResult;
+      if (preview.success === false) {
+        throw new Error(preview.message ?? preview.error ?? "Unknown error");
+      }
+      const previewWarnings = normalizeProfileImportWarnings(preview.warnings);
+      const previewTotalItems = Math.max(1, getProfileImportItemCount(preview.imported));
+      setProfileImportProgress({
+        status: "preview",
+        label: "Review profile import",
+        completedItems: 0,
+        totalItems: previewTotalItems,
+        startedAt,
+        elapsedSeconds: Math.floor((Date.now() - startedAt) / 1000),
+        imported: preview.imported,
+        warnings: previewWarnings,
+      });
+
+      const confirmed = await showConfirmDialog({
+        title: "Import Profile",
+        message: formatProfileImportConfirmationMessage(preview),
+        confirmLabel: "Import",
+        cancelLabel: "Cancel",
+        tone: "destructive",
+      });
+      if (!confirmed) {
+        setProfileImportProgress(null);
+        e.target.value = "";
+        return;
+      }
+
+      if (!isZip) {
+        // Re-parse the cached text after the confirmation boundary so malformed
+        // JSON still reports as a profile-file error before we start streaming.
+        const envelope = JSON.parse(profileText) as { type?: string };
+        if (envelope.type !== "marinara_profile") {
+          setProfileImportProgress({
+            status: "error",
+            label: "Profile import failed",
+            completedItems: 0,
+            totalItems: 1,
+            startedAt,
+            elapsedSeconds: Math.floor((Date.now() - startedAt) / 1000),
+            error: "Not a valid profile export file.",
+          });
+          toast.error("Not a valid profile export file.");
+          e.target.value = "";
+          return;
+        }
       }
       setProfileImportProgress((current) =>
         current
@@ -3608,8 +3727,9 @@ function ImportSettings() {
         method: "POST",
         headers: {
           Accept: "text/event-stream",
+          ...(preview.fileFingerprint ? { "X-Profile-Preview-Fingerprint": preview.fileFingerprint } : {}),
         },
-        body,
+        body: makeImportBody(isZip, profileText),
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
@@ -3708,7 +3828,11 @@ function ImportSettings() {
         )}
       >
         {profileImportBusy ? <Loader2 size="1rem" className="animate-spin" /> : <Download size="1rem" />}
-        {profileImportBusy ? "Importing Profile..." : "Import Profile (JSON/ZIP)"}
+        {profileImportBusy
+          ? profileImportProgress?.status === "reading" || profileImportProgress?.status === "preview"
+            ? "Scanning Profile..."
+            : "Importing Profile..."
+          : "Import Profile (JSON/ZIP)"}
         <input
           type="file"
           accept=".json,.zip,application/json,application/zip"
@@ -3778,7 +3902,8 @@ function ImportSettings() {
               </div>
               {formatProfileImportStats(profileImportProgress.imported) && (
                 <div className="text-[0.6875rem] text-[var(--muted-foreground)]">
-                  Imported so far: {formatProfileImportStats(profileImportProgress.imported)}
+                  {profileImportProgress.status === "preview" ? "Found" : "Imported so far"}:{" "}
+                  {formatProfileImportStats(profileImportProgress.imported)}
                 </div>
               )}
               {profileImportProgress.warnings?.length ? (

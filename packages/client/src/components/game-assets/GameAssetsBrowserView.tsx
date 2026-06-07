@@ -35,7 +35,7 @@ import { FileEditorModal } from "./FileEditorModal";
 import { ActionDropdown } from "./ActionDropdown";
 import { DEFAULT_DESCRIPTIONS } from "./constants";
 import { isImage, isAudio, isEditableText, countItems } from "./utils";
-import { encodeAssetPath } from "./encode-asset-path";
+import { resolveGameAssetFileUrl } from "../../lib/game-asset-urls";
 import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { useChat, useUpdateChatMetadata } from "../../hooks/use-chats";
@@ -435,9 +435,11 @@ export function GameAssetsBrowserView() {
     [copyAsset, selectedPath],
   );
 
-  const handleDownload = useCallback((node: TreeNode) => {
+  const handleDownload = useCallback(async (node: TreeNode) => {
+    const assetUrl = await resolveGameAssetFileUrl(node.path);
+    if (!assetUrl) return;
     const a = document.createElement("a");
-    a.href = `/api/game-assets/file/${encodeAssetPath(node.path)}`;
+    a.href = assetUrl;
     a.download = node.name;
     document.body.appendChild(a);
     a.click();
@@ -476,7 +478,7 @@ export function GameAssetsBrowserView() {
           });
         }
         items.push(
-          { label: "Download", onSelect: () => handleDownload(node) },
+          { label: "Download", onSelect: () => void handleDownload(node) },
           {
             label: "Rename",
             onSelect: () => {

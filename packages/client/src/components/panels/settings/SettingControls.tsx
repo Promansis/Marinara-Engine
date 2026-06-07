@@ -1,5 +1,12 @@
-import { Volume2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Bell, Volume2 } from "lucide-react";
+import { toast } from "sonner";
 import { useUIStore } from "../../../stores/ui.store";
+import {
+  getLocalNotificationPermission,
+  requestLocalNotificationPermission,
+  type LocalNotificationPermission,
+} from "../../../lib/local-notifications";
 import { playNotificationPing } from "../../../lib/notification-sound";
 import { HelpTooltip } from "../../ui/HelpTooltip";
 
@@ -8,6 +15,41 @@ export function ConversationSoundSetting() {
   const setConvoNotificationSound = useUIStore((s) => s.setConvoNotificationSound);
   const rpNotificationSound = useUIStore((s) => s.rpNotificationSound);
   const setRpNotificationSound = useUIStore((s) => s.setRpNotificationSound);
+  const conversationBrowserNotifications = useUIStore((s) => s.conversationBrowserNotifications);
+  const setConversationBrowserNotifications = useUIStore((s) => s.setConversationBrowserNotifications);
+  const [browserPermission, setBrowserPermission] = useState<LocalNotificationPermission>("default");
+
+  useEffect(() => {
+    let cancelled = false;
+    void getLocalNotificationPermission().then((permission) => {
+      if (!cancelled) setBrowserPermission(permission);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleBrowserNotificationToggle = (enabled: boolean) => {
+    if (!enabled) {
+      setConversationBrowserNotifications(false);
+      return;
+    }
+
+    void requestLocalNotificationPermission().then((permission) => {
+      setBrowserPermission(permission);
+      if (permission === "granted") {
+        setConversationBrowserNotifications(true);
+        toast.success("Browser notifications enabled for background Conversation replies.");
+        return;
+      }
+      setConversationBrowserNotifications(false);
+      toast.error(
+        permission === "unsupported"
+          ? "Browser notifications are not available in this environment."
+          : "Browser notification permission was not granted.",
+      );
+    });
+  };
 
   return (
     <div className="flex flex-col gap-2">
@@ -31,6 +73,16 @@ export function ConversationSoundSetting() {
           setRpNotificationSound(v);
           if (v) playNotificationPing();
         }}
+      />
+      <div className="mt-1 flex items-center gap-1.5">
+        <Bell size="0.75rem" className="text-[var(--muted-foreground)]" />
+        <span className="text-xs font-medium">Browser Notifications</span>
+        <HelpTooltip text="Show an operating-system browser notification when a background Conversation reply arrives while Marinara is not focused. Message content is hidden." />
+      </div>
+      <ToggleSetting
+        label="Background Conversation replies"
+        checked={conversationBrowserNotifications && browserPermission === "granted"}
+        onChange={handleBrowserNotificationToggle}
       />
     </div>
   );

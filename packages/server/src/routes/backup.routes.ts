@@ -9,6 +9,7 @@ import { cp, mkdir, copyFile, readFile, readdir, writeFile, stat, mkdtemp, rm, o
 import type { FileHandle } from "fs/promises";
 import { tmpdir } from "os";
 import { pipeline } from "stream/promises";
+import { createHash } from "crypto";
 import { inflateRawSync } from "zlib";
 import AdmZip from "adm-zip";
 import { FILE_BACKED_TABLES } from "../db/file-backed-store.js";
@@ -28,7 +29,17 @@ import { assertInsideDir } from "../utils/security.js";
 import { logger } from "../lib/logger.js";
 
 /** Directories inside DATA_DIR that should be included in every backup. */
-const BACKUP_DIRS = ["storage", "avatars", "sprites", "backgrounds", "gallery", "fonts", "knowledge-sources"];
+const BACKUP_DIRS = [
+  "storage",
+  "avatars",
+  "sprites",
+  "backgrounds",
+  "gallery",
+  "fonts",
+  "knowledge-sources",
+  "game-assets",
+  "lorebooks/images",
+];
 const PROFILE_ASSET_DIRS = BACKUP_DIRS.filter((dirName) => dirName !== "storage");
 const PROFILE_IMPORT_BODY_LIMIT_BYTES = 256 * 1024 * 1024;
 const PROFILE_IMPORT_ARCHIVE_LIMIT_BYTES = 1024 * 1024 * 1024;
@@ -101,6 +112,7 @@ type ProfileImportInput = {
   readAsset?: ProfileAssetReader;
   warnings?: ProfileImportWarning[];
   cleanup?: () => Promise<void>;
+  fileFingerprint?: string;
 };
 type ProfileImportStats = {
   characters: number;
@@ -362,9 +374,13 @@ function normalizeProfileAssetPath(pathValue: unknown) {
   if (pathValue.includes("\0")) return null;
   const parts = pathValue.replace(/\\/g, "/").split("/").filter(Boolean);
   if (parts.length < 2) return null;
-  if (!PROFILE_ASSET_DIRS.includes(parts[0]!)) return null;
   if (parts.some((part) => part === "." || part === ".." || part.includes(":"))) return null;
-  return parts.join("/");
+  const normalized = parts.join("/");
+  const isAllowedAssetPath = PROFILE_ASSET_DIRS.some(
+    (dirName) => normalized === dirName || normalized.startsWith(`${dirName}/`),
+  );
+  if (!isAllowedAssetPath) return null;
+  return normalized;
 }
 
 function profileArchiveSizeError(label: string, size: number, limit: number) {
@@ -490,6 +506,73 @@ function buildProfileImportStats(tableCounts: Record<string, number>, files: num
     connections: tableCounts.api_connections ?? 0,
     files,
     tables: tableCounts,
+  };
+}
+
+function profileEnvelopeFingerprint(envelope: ExportEnvelope) {
+  return `sha256:${createHash("sha256").update(JSON.stringify(envelope ?? null)).digest("hex")}`;
+}
+
+async function fileFingerprint(filePath: string) {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(filePath)) {
+    hash.update(chunk);
+  }
+  return `sha256:${hash.digest("hex")}`;
+}
+
+function profileMissingAssetWarningPathSet(warnings: ProfileImportWarning[]) {
+  return new Set(
+    warnings.flatMap((warning) => (warning.type === "missing_asset" && warning.path ? [warning.path] : [])),
+  );
+}
+
+function addProfileImportWarning(warnings: ProfileImportWarning[], warning: ProfileImportWarning) {
+  if (warnings.some((existing) => existing.type === warning.type && existing.path === warning.path)) return;
+  warnings.push(warning);
+}
+
+function previewProfileStorageSnapshotStats(
+  snapshot: ProfileStorageSnapshot,
+  readAsset: ProfileAssetReader | undefined,
+  warnings: ProfileImportWarning[],
+) {
+  const tableCounts: Record<string, number> = {};
+  for (const tableName of FILE_BACKED_TABLES) {
+    const rows = snapshot.tables[tableName];
+    tableCounts[tableName] = Array.isArray(rows) ? rows.length : 0;
+  }
+
+  const missingAssetPaths = profileMissingAssetWarningPathSet(warnings);
+  let files = 0;
+  if (Array.isArray(snapshot.files)) {
+    for (const file of snapshot.files) {
+      const safePath = normalizeProfileAssetPath(file?.path);
+      if (!safePath || missingAssetPaths.has(safePath)) continue;
+      if (typeof file.data === "string" || readAsset) {
+        files++;
+        continue;
+      }
+      addProfileImportWarning(warnings, {
+        type: "missing_asset",
+        path: safePath,
+        message: `Profile JSON is missing ${safePath}. Imported the rest of the profile without that asset.`,
+      });
+    }
+  }
+
+  return buildProfileImportStats(tableCounts, files);
+}
+
+function previewLegacyProfileImportStats(data: Record<string, any>): ProfileImportStats {
+  return {
+    characters: Array.isArray(data.characters) ? data.characters.length : 0,
+    personas: Array.isArray(data.personas) ? data.personas.length : 0,
+    lorebooks: Array.isArray(data.lorebooks) ? data.lorebooks.length : 0,
+    presets: Array.isArray(data.presets) ? data.presets.length : 0,
+    agents: Array.isArray(data.agents) ? data.agents.length : 0,
+    themes: Array.isArray(data.themes) ? data.themes.length : 0,
+    files: 0,
   };
 }
 
@@ -1401,7 +1484,8 @@ async function readProfileArchiveAsset(
 async function readProfileImportRequest(req: FastifyRequest): Promise<ProfileImportInput> {
   const contentType = String(req.headers["content-type"] ?? "").toLowerCase();
   if (!contentType.includes("multipart/form-data")) {
-    return { envelope: req.body as ExportEnvelope };
+    const envelope = req.body as ExportEnvelope;
+    return { envelope, fileFingerprint: profileEnvelopeFingerprint(envelope) };
   }
 
   const uploadDir = await mkdtemp(join(tmpdir(), "marinara-profile-import-"));
@@ -1424,11 +1508,13 @@ async function readProfileImportRequest(req: FastifyRequest): Promise<ProfileImp
     const { envelope, basePath } = await readProfileEnvelopeFromArchive(zip);
     const warnings: ProfileImportWarning[] = [];
     const archiveAssets = validateProfileArchiveAssets(zip, basePath, envelope, warnings);
+    const fingerprint = await fileFingerprint(archivePath);
     return {
       envelope,
       readAsset: (safePath) => readProfileArchiveAsset(zip, archiveAssets, safePath),
       warnings,
       cleanup: () => rm(uploadDir, { recursive: true, force: true }),
+      fileFingerprint: fingerprint,
     };
   } catch (err) {
     await rm(uploadDir, { recursive: true, force: true }).catch(() => {});
@@ -1669,6 +1755,11 @@ export async function backupRoutes(app: FastifyInstance) {
     if (!requirePrivilegedAccess(req, reply, { feature: "Profile import" })) return;
 
     const wantsProgressStream = String(req.headers.accept ?? "").includes("text/event-stream");
+    const previewOnly = (req.query as { preview?: unknown } | undefined)?.preview === "true";
+    const expectedFingerprint =
+      typeof req.headers["x-profile-preview-fingerprint"] === "string"
+        ? req.headers["x-profile-preview-fingerprint"].trim()
+        : "";
     let importInput: ProfileImportInput;
     try {
       importInput = await readProfileImportRequest(req);
@@ -1688,9 +1779,34 @@ export async function backupRoutes(app: FastifyInstance) {
 
       const data = envelope.data as Record<string, any>;
       const warnings = importInput.warnings ?? [];
+      const profileStoragePreviewStats = isProfileStorageSnapshot(data.fileStorage)
+        ? previewProfileStorageSnapshotStats(data.fileStorage, importInput.readAsset, warnings)
+        : null;
+      if (!previewOnly && expectedFingerprint && importInput.fileFingerprint !== expectedFingerprint) {
+        return reply.status(409).send({
+          error: "Profile file changed",
+          code: "PROFILE_FILE_CHANGED_AFTER_PREVIEW",
+          message: "Profile file changed after preview. Select the file again before importing.",
+          expectedFingerprint,
+          actualFingerprint: importInput.fileFingerprint,
+        });
+      }
       const totalItems = isProfileStorageSnapshot(data.fileStorage)
         ? Math.max(1, countProfileStorageSnapshotItems(data.fileStorage))
         : Math.max(1, countLegacyProfileImportItems(data));
+
+      if (previewOnly) {
+        const imported = profileStoragePreviewStats ?? previewLegacyProfileImportStats(data);
+        return {
+          success: true,
+          preview: true,
+          imported,
+          warnings,
+          fileFingerprint: importInput.fileFingerprint,
+          totalItems,
+        };
+      }
+
       const sendEvent = (event: { type: string; data?: unknown; [key: string]: unknown }) => {
         if (wantsProgressStream && !reply.raw.destroyed) {
           reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);

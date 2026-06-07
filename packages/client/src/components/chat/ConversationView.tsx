@@ -29,10 +29,12 @@ import { ConversationInput } from "./ConversationInput";
 import { SceneBanner, EndSceneBar } from "./SceneBanner";
 import { ChatBranchSelector } from "./ChatBranchSelector";
 import { ActiveWorldInfoButton, ActiveWorldInfoModal } from "./ActiveWorldInfoButton";
+import { TranscriptWindowControls } from "./TranscriptWindowControls";
 import { useChatStore } from "../../stores/chat.store";
 import { useUIStore } from "../../stores/ui.store";
 import { playNotificationPing } from "../../lib/notification-sound";
 import { getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
+import { getTranscriptRenderWindow, TRANSCRIPT_RENDER_WINDOW_STEP } from "../../lib/transcript-render-window";
 import { characterKeys } from "../../hooks/use-characters";
 import { api } from "../../lib/api-client";
 import type { CharacterMap, MessageSelectionToggle, PersonaInfo } from "./chat-area.types";
@@ -516,6 +518,35 @@ export function ConversationView({
     fetchNextPage();
   }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
+  const [transcriptWindowStart, setTranscriptWindowStart] = useState<number | null>(null);
+
+  useEffect(() => {
+    setTranscriptWindowStart(null);
+  }, [chatId]);
+
+  const transcriptWindow = useMemo(
+    () => getTranscriptRenderWindow(messages, { startIndex: transcriptWindowStart }),
+    [messages, transcriptWindowStart],
+  );
+
+  const showOlderTranscriptMessages = useCallback(() => {
+    setTranscriptWindowStart((current) => {
+      const start = current ?? transcriptWindow.startIndex;
+      return Math.max(0, start - TRANSCRIPT_RENDER_WINDOW_STEP);
+    });
+  }, [transcriptWindow.startIndex]);
+
+  const showNewerTranscriptMessages = useCallback(() => {
+    setTranscriptWindowStart((current) => {
+      const start = current ?? transcriptWindow.startIndex;
+      return Math.min(transcriptWindow.latestStartIndex, start + TRANSCRIPT_RENDER_WINDOW_STEP);
+    });
+  }, [transcriptWindow.latestStartIndex, transcriptWindow.startIndex]);
+
+  const jumpToLatestTranscriptMessages = useCallback(() => {
+    setTranscriptWindowStart(null);
+  }, []);
+
   // ── Build message list with day separators ──
   // Assistant messages with multiple lines are split into separate visual
   // messages so each line appears as its own bubble (Discord-style).
@@ -528,24 +559,25 @@ export function ConversationView({
       .trim();
 
   const renderedItems = useMemo(() => {
-    if (!messages) return [];
+    const visibleMessages = transcriptWindow.messages;
+    if (!messages || !visibleMessages) return [];
     // Offset so message numbers reflect absolute position in the full chat history,
-    // not just the position within the paginated window.
-    const messageOffset = totalMessageCount - messages.length;
+    // not just the position within the paginated and mounted render windows.
+    const messageOffset = totalMessageCount - messages.length + transcriptWindow.startIndex;
     const items: Array<
       | { type: "separator"; key: string; label: string }
       | { type: "message"; key: string; msg: Message; isGrouped: boolean; index: number }
     > = [];
     let lastDay = "";
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i]!;
+    for (let i = 0; i < visibleMessages.length; i++) {
+      const msg = visibleMessages[i]!;
       if (isHiddenFromUser(msg)) continue;
       const day = getDayKey(msg.createdAt);
       if (day !== lastDay) {
         items.push({ type: "separator", key: `sep-${day}`, label: formatDaySeparator(msg.createdAt) });
         lastDay = day;
       }
-      const prev = i > 0 ? messages[i - 1]! : null;
+      const prev = i > 0 ? visibleMessages[i - 1]! : null;
       // Break grouping if >5 minutes apart (like Discord)
       const TIME_GAP_MS = 5 * 60 * 1000;
       const timeTooFar = prev
@@ -624,7 +656,7 @@ export function ConversationView({
       items.push({ type: "message", key: msg.id, msg: displayMsg, isGrouped: grouped, index: messageOffset + i });
     }
     return items;
-  }, [messages, characterMap, chatCharIds, totalMessageCount]);
+  }, [messages, transcriptWindow.messages, transcriptWindow.startIndex, characterMap, chatCharIds, totalMessageCount]);
 
   // ── Staggered reveal for split assistant lines ──
   // When a new multi-line assistant message arrives, show lines one by one
@@ -913,6 +945,12 @@ export function ConversationView({
           </div>
         )}
 
+        <TranscriptWindowControls
+          hiddenBeforeCount={transcriptWindow.hiddenBeforeCount}
+          hiddenAfterCount={transcriptWindow.hiddenAfterCount}
+          onShowOlder={transcriptWindow.hiddenBeforeCount > 0 ? showOlderTranscriptMessages : undefined}
+        />
+
         {isLoading && (
           <div className="flex flex-col items-center gap-3 py-12">
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--muted-foreground)]/20 border-t-[var(--muted-foreground)]/60" />
@@ -1044,6 +1082,13 @@ export function ConversationView({
           }
           return elements;
         })()}
+
+        <TranscriptWindowControls
+          hiddenBeforeCount={transcriptWindow.hiddenBeforeCount}
+          hiddenAfterCount={transcriptWindow.hiddenAfterCount}
+          onShowNewer={transcriptWindow.hiddenAfterCount > 0 ? showNewerTranscriptMessages : undefined}
+          onJumpToLatest={transcriptWindow.hiddenAfterCount > 0 ? jumpToLatestTranscriptMessages : undefined}
+        />
 
         {/* Delayed indicator (DND/idle — waiting for character to become available) */}
         {delayedCharacterInfo && isStreaming && !streamBuffer && !thinkingBuffer && (

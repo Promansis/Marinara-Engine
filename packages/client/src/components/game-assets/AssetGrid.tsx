@@ -5,9 +5,9 @@ import { Check, Folder, FolderOpen, Minus, MoreHorizontal } from "lucide-react";
 import type { TreeNode } from "../../hooks/use-game-assets";
 import type { GameAssetSelectionStatus } from "../../lib/game-asset-selection";
 import { formatBytes, formatDate } from "../../lib/format";
+import { gameAssetFileUrl } from "../../lib/game-asset-urls";
 import { CATEGORY_ICONS } from "./constants";
 import { FileIcon, isImage } from "./utils";
-import { encodeAssetPath } from "./encode-asset-path";
 
 /**
  * Props for the AssetGrid component.
@@ -167,7 +167,7 @@ export function AssetGrid({
                   })()
                 ) : isImage(node.ext) ? (
                   <img
-                    src={`/api/game-assets/file/${encodeAssetPath(node.path)}`}
+                    src={gameAssetFileUrl(node.path) ?? ""}
                     alt={node.name}
                     className="h-full w-full object-cover"
                     loading="lazy"
@@ -253,7 +253,7 @@ export function AssetGrid({
             ) : isImage(node.ext) ? (
               <div className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded bg-[var(--accent)]">
                 <img
-                  src={`/api/game-assets/file/${encodeAssetPath(node.path)}`}
+                  src={gameAssetFileUrl(node.path) ?? ""}
                   alt=""
                   className="h-full w-full object-cover"
                   loading="lazy"
