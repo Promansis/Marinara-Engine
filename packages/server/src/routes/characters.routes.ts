@@ -276,7 +276,8 @@ export async function charactersRoutes(app: FastifyInstance) {
   // ── Characters ──
 
   app.get("/", async () => {
-    return storage.list();
+    const characters = await storage.list();
+    return characters.filter((character) => character.id !== PROFESSOR_MARI_ID);
   });
 
   app.post("/avatar-generation/preview", async (req, reply) => {

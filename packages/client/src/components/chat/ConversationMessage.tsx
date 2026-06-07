@@ -304,6 +304,7 @@ interface ConversationMessageProps {
   isGrouped?: boolean;
   hideActions?: boolean;
   noHoverGroup?: boolean;
+  hideTimestamp?: boolean;
   forceShowActions?: boolean;
   onDelete?: (messageId: string) => void;
   onRegenerate?: (messageId: string) => void;
@@ -332,6 +333,7 @@ export const ConversationMessage = memo(function ConversationMessage({
   isGrouped,
   hideActions,
   noHoverGroup,
+  hideTimestamp,
   forceShowActions,
   onDelete,
   onRegenerate,
@@ -824,7 +826,7 @@ export const ConversationMessage = memo(function ConversationMessage({
                             >
                               {segName}
                             </span>
-                            {isFirst && (
+                            {isFirst && !hideTimestamp && (
                               <span className="text-[0.6875rem] text-[var(--muted-foreground)]/60">
                                 {formatTimestamp(message.createdAt)}
                               </span>
@@ -1086,9 +1088,11 @@ export const ConversationMessage = memo(function ConversationMessage({
             >
               {displayName}
             </span>
-            <span className="mari-message-timestamp text-[0.6875rem] text-[var(--muted-foreground)]/60">
-              {formatTimestamp(message.createdAt)}
-            </span>
+            {!hideTimestamp && (
+              <span className="mari-message-timestamp text-[0.6875rem] text-[var(--muted-foreground)]/60">
+                {formatTimestamp(message.createdAt)}
+              </span>
+            )}
           </div>
         )}
 

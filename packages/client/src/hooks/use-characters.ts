@@ -8,7 +8,7 @@ import {
   serializeTrackerCardColorConfig,
   TRACKER_CARD_COLOR_PREVIEW_BASE_FIELD,
 } from "../lib/tracker-card-colors";
-import type { CharacterCardVersion } from "@marinara-engine/shared";
+import { PROFESSOR_MARI_ID, type CharacterCardVersion } from "@marinara-engine/shared";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -44,7 +44,10 @@ export const characterKeys = {
 export function useCharacters(enabled = true) {
   return useQuery({
     queryKey: characterKeys.list(),
-    queryFn: () => api.get<unknown[]>("/characters"),
+    queryFn: async () => {
+      const characters = await api.get<Array<{ id?: unknown }>>("/characters");
+      return characters.filter((character) => character.id !== PROFESSOR_MARI_ID);
+    },
     enabled,
     staleTime: 5 * 60_000,
   });

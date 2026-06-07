@@ -4519,8 +4519,8 @@ export async function generateRoutes(app: FastifyInstance) {
             `- No GPTisms/AI Slop. BAN and NEVER output generic structures (such as "if X, then Y", or "not X, but Y"), and literature clichés (NO: "physical punches," "practiced things," "predatory instincts," "mechanical precisions," or "jaws working"). Combat them with the human touch.`,
             `- Describe what DOES happen, rather than what doesn't (for example, go for "remains still" instead of "doesn't move"). Mention what occurs, or show the consequences of happenings ("the water sits untouched" instead of "isn't being drunk").`,
             `- CRITICAL! Do not repeat, echo, parrot, or restate distinctive words, phrases, and dialogues. When reacting to speech, show interpretation or response, NOT repetition.`,
-            `EXAMPLE: "Are you a gooner?"`,
-            `BAD: "Gooner?"`,
+            `EXAMPLE: "Are you even listening?"`,
+            `BAD: "Listening?"`,
             `GOOD: A flat look. "What type of question is that?"`,
             `</output_format>`,
           ].join("\n");

@@ -56,18 +56,27 @@ export function RecentChats() {
     return [...chats].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()).slice(0, 3);
   }, [chats]);
 
-  if (recentChats.length === 0) return null;
-
   return (
     <div className="flex w-full max-w-md flex-col items-center gap-1.5">
       <p className="text-[0.625rem] font-medium text-[var(--muted-foreground)]/50 tracking-wide uppercase">
         Recent Chats
       </p>
-      <div className="flex w-full items-center justify-center gap-1.5">
-        {recentChats.map((chat) => (
-          <RecentChatChip key={chat.id} chat={chat} charLookup={charLookup} onClick={() => setActiveChatId(chat.id)} />
-        ))}
-      </div>
+      {recentChats.length === 0 ? (
+        <p className="rounded-lg border border-[var(--border)]/45 bg-[var(--card)]/45 px-3 py-1.5 text-xs text-[var(--muted-foreground)]/70">
+          No chats yet
+        </p>
+      ) : (
+        <div className="flex w-full items-center justify-center gap-1.5">
+          {recentChats.map((chat) => (
+            <RecentChatChip
+              key={chat.id}
+              chat={chat}
+              charLookup={charLookup}
+              onClick={() => setActiveChatId(chat.id)}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

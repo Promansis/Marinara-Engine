@@ -869,7 +869,7 @@ export function ConnectionsPanel() {
 
       {sortedFolders.length > 0 && (
         <p className="px-2.5 text-[0.625rem] leading-snug text-[var(--muted-foreground)]/70">
-          Drag and drop connections to folders.
+          Drag and drop connections to folders
         </p>
       )}
 

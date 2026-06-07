@@ -698,7 +698,7 @@ export function PresetsPanel() {
           </div>
           {presetFolders.length > 0 && (
             <p className="px-2.5 pb-1 text-[0.625rem] leading-snug text-[var(--muted-foreground)]/70">
-              Drag and drop presets to folders.
+              Drag and drop presets to folders
             </p>
           )}
           {presetFolders.map((folder) => {

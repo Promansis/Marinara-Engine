@@ -1,17 +1,7 @@
 // ──────────────────────────────────────────────
 // Chat: Main chat area — mode-aware rendering
 // ──────────────────────────────────────────────
-import {
-  Suspense,
-  lazy,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import {
   useChatMessages,
@@ -23,7 +13,6 @@ import {
   useUpdateMessage,
   useUpdateMessageExtra,
   usePeekPrompt,
-  useCreateChat,
   useSetActiveSwipe,
   useUpdateChatMetadata,
   useBranchChat,
@@ -33,10 +22,8 @@ import {
 import { useChatStore } from "../../stores/chat.store";
 import { useGenerate } from "../../hooks/use-generate";
 import { spriteKeys, useCharacters, usePersonas, type SpriteInfo } from "../../hooks/use-characters";
-import { useConnections } from "../../hooks/use-connections";
 import { usePageActivity } from "../../hooks/use-page-activity";
 import { api, ApiError } from "../../lib/api-client";
-import { filterLanguageGenerationConnections } from "../../lib/connection-filters";
 import { getChatDisplayName, getConnectedChatDisplayName, parseChatMetadata } from "../../lib/chat-display";
 import { resolveCurrentGameSessionChatId } from "../../lib/game-session-resolution";
 import { parseCharacterDisplayData } from "../../lib/character-display";
@@ -44,7 +31,7 @@ import { showConfirmDialog } from "../../lib/app-dialogs";
 import { chatBackgroundMetadataToUrl, chatBackgroundUrlToMetadata } from "../../lib/backgrounds";
 import { useGameStateStore } from "../../stores/game-state.store";
 import { toast } from "sonner";
-import { BookOpen, Check, HelpCircle, MessageSquare, Theater, X } from "lucide-react";
+import { Check, HelpCircle, List, X } from "lucide-react";
 import {
   APP_VERSION,
   BUILT_IN_AGENTS,
@@ -73,7 +60,8 @@ import type {
   PeekPromptData,
 } from "./chat-area.types";
 import { RecentChats } from "./RecentChats";
-import { HomeFaq } from "./HomeFaq";
+import { HomeCreditsModal } from "./HomeCreditsModal";
+import { HomeProfessorMariChat } from "./HomeProfessorMariChat";
 import { NewChatConnectionGate } from "./NewChatConnectionGate";
 import { ChatCommonOverlays } from "./ChatCommonOverlays";
 
@@ -207,6 +195,7 @@ export function ChatArea() {
   const [spriteArrangeMode, setSpriteArrangeMode] = useState(false);
   const [agentInjectionReview, setAgentInjectionReview] = useState<AgentInjectionReviewRequest | null>(null);
   const [agentInjectionDrafts, setAgentInjectionDrafts] = useState<Record<string, string>>({});
+  const [creditsOpen, setCreditsOpen] = useState(false);
 
   // Delete dialog & multi-select state
   const [deleteDialogMessageId, setDeleteDialogMessageId] = useState<string | null>(null);
@@ -259,14 +248,12 @@ export function ChatArea() {
   }, [messageOffset, messages]);
   const { data: allCharacters } = useCharacters();
   const { data: allPersonas } = usePersonas();
-  const { data: connections } = useConnections();
   const deleteMessage = useDeleteMessage(activeChatId);
   const deleteMessages = useDeleteMessages(activeChatId);
   const deleteSwipe = useDeleteSwipe(activeChatId);
   const updateMessage = useUpdateMessage(activeChatId);
   const updateMessageExtra = useUpdateMessageExtra(activeChatId);
   const peekPrompt = usePeekPrompt();
-  const createChat = useCreateChat();
   const branchChat = useBranchChat();
   const { generate, retryAgents } = useGenerate();
   const setActiveSwipe = useSetActiveSwipe(activeChatId);
@@ -318,31 +305,6 @@ export function ChatArea() {
     setAgentInjectionReview(null);
     setAgentInjectionDrafts({});
   }, []);
-
-  const handleQuickStart = useCallback(
-    (mode: "conversation" | "roleplay" | "game") => {
-      const connectionRows = filterLanguageGenerationConnections(
-        (connections ?? []) as Array<{ id: string; provider?: string }>,
-      ).filter((connection) => !!connection.id);
-      if (connectionRows.length === 0) {
-        useChatStore.getState().setPendingNewChatMode(mode);
-        return;
-      }
-
-      const label = mode === "conversation" ? "Conversation" : mode === "game" ? "Game" : "Roleplay";
-      createChat.mutate(
-        { name: `New ${label}`, mode, characterIds: [] },
-        {
-          onSuccess: (chat) => {
-            useChatStore.getState().setActiveChatId(chat.id);
-            useChatStore.getState().setShouldOpenSettings(true);
-            useChatStore.getState().setShouldOpenWizard(true);
-          },
-        },
-      );
-    },
-    [connections, createChat],
-  );
 
   // Build character lookup map
   const characterMap: CharacterMap = useMemo(() => {
@@ -1562,16 +1524,17 @@ export function ChatArea() {
 
     return (
       <>
+        <HomeCreditsModal open={creditsOpen} onClose={() => setCreditsOpen(false)} />
         <div
           data-component="ChatArea.EmptyState"
-          className="flex flex-1 flex-col items-center overflow-y-auto p-3 sm:p-5 lg:p-6"
+          className="flex flex-1 flex-col items-center overflow-y-auto p-1.5 sm:p-3 lg:p-3"
         >
-          <div className="flex w-full max-w-2xl flex-col items-center gap-3 py-2 sm:gap-4 sm:py-3 lg:pt-4 lg:pb-5">
+          <div className="flex w-full max-w-3xl flex-col items-center gap-1.5 py-0 sm:gap-2 lg:pt-0 lg:pb-2">
             {/* Central hero */}
             <div className="relative">
               <div
                 className={cn(
-                  "flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl shadow-xl shadow-orange-500/20 sm:h-20 sm:w-20",
+                  "flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl shadow-xl shadow-orange-500/20 sm:h-16 sm:w-16",
                   showEmptyStateEffects && "animate-pulse-ring bunny-glow",
                 )}
               >
@@ -1591,57 +1554,22 @@ export function ChatArea() {
 
             <div className="text-center">
               <h3 className="retro-glow-text text-base sm:text-xl font-bold tracking-tight">✧ Marinara Engine ✧</h3>
-              <p className="mt-1.5 sm:mt-2 max-w-xs text-xs sm:text-sm text-[var(--muted-foreground)]">
-                To get started, choose the type of chat you'd like to have with the AI
-              </p>
-            </div>
-
-            <div
-              className={cn(
-                "flex flex-wrap justify-center gap-2 sm:gap-3",
-                showEmptyStateEffects && "stagger-children",
-              )}
-            >
-              <QuickStartCard
-                icon={<MessageSquare size="1.125rem" />}
-                label="Conversation"
-                bg="linear-gradient(135deg, #4de5dd, #3ab8b1)"
-                shadowColor="rgba(77,229,221,0.15)"
-                tooltip="General chat with one or more characters, or a model itself"
-                onClick={() => handleQuickStart("conversation")}
-              />
-              <QuickStartCard
-                icon={<BookOpen size="1.125rem" />}
-                label="Roleplay"
-                bg="linear-gradient(135deg, #eb8951, #d97530)"
-                shadowColor="rgba(235,137,81,0.15)"
-                tooltip="For roleplaying or creative writing with one or more characters"
-                onClick={() => handleQuickStart("roleplay")}
-              />
-              <QuickStartCard
-                icon={<Theater size="1.125rem" />}
-                label="Game"
-                bg="linear-gradient(135deg, #e15c8c, #c94776)"
-                shadowColor="rgba(225,92,140,0.15)"
-                tooltip="AI-managed singleplayer RPG with a Game Master, party, dice, maps, and quests"
-                onClick={() => handleQuickStart("game")}
-              />
             </div>
 
             {/* Recent Chats */}
             <RecentChats />
 
-            <HomeFaq />
+            <HomeProfessorMariChat />
 
             <div
               className={cn(
-                "w-48",
+                "w-48 [--retro-divider-margin:0]",
                 showEmptyStateEffects ? "retro-divider" : "h-px rounded-[1px] bg-[var(--border)]/40",
               )}
             />
 
             {/* Footer */}
-            <div className="flex w-full max-w-2xl flex-col items-center gap-2">
+            <div className="flex w-full max-w-2xl flex-col items-center gap-1">
               <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-0.5 text-center text-[0.625rem] leading-tight text-[var(--muted-foreground)]/55 sm:text-xs">
                 <span>
                   Created by{" "}
@@ -1677,7 +1605,7 @@ export function ChatArea() {
                   </a>
                 </span>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap justify-center gap-2">
                 <a
                   href="https://discord.com/invite/KdAkTg94ME"
                   target="_blank"
@@ -1700,16 +1628,15 @@ export function ChatArea() {
                   </svg>
                   Support
                 </a>
+                <button
+                  type="button"
+                  onClick={() => setCreditsOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/60 px-3 py-1.5 text-xs font-medium text-[var(--muted-foreground)] transition-all hover:border-[var(--primary)]/40 hover:text-[var(--primary)]"
+                >
+                  <List size="0.875rem" />
+                  Credits
+                </button>
               </div>
-
-              {/* Special thanks */}
-              <p className="max-w-[42rem] px-1 text-center text-[0.625rem] leading-snug text-[var(--muted-foreground)]/40 sm:max-w-[46rem]">
-                Special thanks to Xel, Jorge, Cha1latte, Javedz678, Teuku, Shadota, Romu, Mm14141, MagicGoddess, John,
-                Pwildani, Romu, Felor, MuniMuni, Guybrush01, Joshellis625, LukaTheHero, Coxde, JorgeLTE, Seele The Seal
-                King, Loungemeister, Kale, Tabris, GREGOR OVECH, Coins, Tacoman, Jorge, Promansis, Kitsumiro, Sheep,
-                Pod042, Prolix, PlutoMayhem, Mezzeh, Kuc0, Exalted, Yang Best Girl, MidnightSleeper, Geechan,
-                TheLonelyDevil, Artus, and you!
-              </p>
 
               {/* Restart tutorial */}
               <button
@@ -2166,59 +2093,5 @@ function AgentInjectionReviewModal({
         </div>
       </div>
     </Modal>
-  );
-}
-
-function QuickStartCard({
-  icon,
-  label,
-  bg,
-  shadowColor,
-  onClick,
-  comingSoon,
-  tooltip,
-}: {
-  icon: ReactNode;
-  label: string;
-  bg: string;
-  shadowColor?: string;
-  onClick?: () => void;
-  comingSoon?: boolean;
-  tooltip?: string;
-}) {
-  const [showComingSoon, setShowComingSoon] = useState(false);
-
-  const handleClick = () => {
-    if (comingSoon && !onClick) {
-      setShowComingSoon(true);
-      setTimeout(() => setShowComingSoon(false), 1500);
-      return;
-    }
-    onClick?.();
-  };
-
-  return (
-    <div
-      onClick={handleClick}
-      title={tooltip}
-      className={cn(
-        "group card-3d-tilt btn-scanlines relative flex w-20 sm:w-28 flex-col items-center justify-center gap-1.5 sm:gap-2 rounded-xl border-2 border-[var(--border)] bg-[var(--card)] p-2.5 sm:p-4 text-center transition-all",
-        "cursor-pointer hover:-translate-y-1 hover:border-[var(--primary)]/40 hover:shadow-lg",
-      )}
-      style={shadowColor ? { ["--tw-shadow-color" as string]: shadowColor } : undefined}
-    >
-      {showComingSoon && (
-        <span className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-[var(--secondary)] px-2 py-0.5 text-[0.5625rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)] shadow-md animate-fade-in-up">
-          Coming Soon
-        </span>
-      )}
-      <div
-        className="flex h-8 w-8 sm:h-10 sm:w-10 items-center justify-center rounded-xl text-white shadow-sm transition-transform group-hover:scale-110"
-        style={{ background: bg }}
-      >
-        {icon}
-      </div>
-      <span className="text-[0.625rem] sm:text-xs font-medium text-[var(--muted-foreground)]">{label}</span>
-    </div>
   );
 }

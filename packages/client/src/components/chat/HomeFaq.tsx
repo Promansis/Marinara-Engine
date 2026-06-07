@@ -412,12 +412,118 @@ const CATEGORY_STYLES: Record<string, string> = {
   Misc: "border-[var(--border)] bg-[var(--muted)]/30 text-[var(--muted-foreground)]",
 };
 
-export function HomeFaq() {
-  const [expanded, setExpanded] = useState(false);
+export function HomeFaq({
+  defaultExpanded = false,
+  className,
+  compact = false,
+}: {
+  defaultExpanded?: boolean;
+  className?: string;
+  compact?: boolean;
+} = {}) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const [openItemId, setOpenItemId] = useState<string | null>("game-mode-model");
 
+  if (compact) {
+    return (
+      <section className={cn("w-full", className)}>
+        <div className="overflow-hidden rounded-lg border border-[var(--border)]/60 bg-[var(--card)]/70">
+          <button
+            type="button"
+            onClick={() => setExpanded((current) => !current)}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+            aria-expanded={expanded}
+          >
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[var(--primary)]/25 bg-[linear-gradient(135deg,rgba(235,137,81,0.18),rgba(77,229,221,0.14))] text-[var(--primary)]">
+              <HelpCircle size="0.875rem" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <p className="truncate text-xs font-semibold text-[var(--foreground)]">FAQ</p>
+                <span className="rounded-full border border-[var(--border)]/60 bg-black/5 px-1.5 py-0.5 text-[0.5rem] uppercase tracking-[0.12em] text-[var(--muted-foreground)]/80 dark:bg-white/6">
+                  {HOME_FAQ_ITEMS.length}
+                </span>
+              </div>
+            </div>
+            <ChevronDown
+              size="0.875rem"
+              className={cn(
+                "shrink-0 text-[var(--muted-foreground)] transition-transform duration-200",
+                expanded && "rotate-180 text-[var(--primary)]",
+              )}
+            />
+          </button>
+
+          {expanded && (
+            <div className="border-t border-[var(--border)]/60 p-2">
+              <div className="max-h-64 space-y-1.5 overflow-y-auto pr-1">
+                {HOME_FAQ_ITEMS.map((item) => {
+                  const isOpen = openItemId === item.id;
+
+                  return (
+                    <div
+                      key={item.id}
+                      className={cn(
+                        "overflow-hidden rounded-lg border border-[var(--border)]/55 bg-[var(--card)]/45 transition-colors",
+                        isOpen && "border-[var(--primary)]/30 bg-[var(--card)]/70",
+                      )}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setOpenItemId((current) => (current === item.id ? null : item.id))}
+                        className="flex w-full items-start gap-2 px-2.5 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                        aria-expanded={isOpen}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span
+                              className={cn(
+                                "shrink-0 rounded-full border px-1.5 py-0.5 text-[0.5rem] font-medium uppercase tracking-[0.12em]",
+                                CATEGORY_STYLES[item.category] ?? CATEGORY_STYLES.Misc,
+                              )}
+                            >
+                              {item.category}
+                            </span>
+                            <span className="min-w-0 text-[0.6875rem] font-medium leading-snug text-[var(--foreground)]">
+                              {item.question}
+                            </span>
+                          </div>
+                        </div>
+                        {isOpen ? (
+                          <ChevronDown size="0.8125rem" className="mt-0.5 shrink-0 text-[var(--primary)]" />
+                        ) : (
+                          <ChevronRight size="0.8125rem" className="mt-0.5 shrink-0 text-[var(--muted-foreground)]" />
+                        )}
+                      </button>
+
+                      {isOpen && (
+                        <div className="border-t border-[var(--border)]/55 bg-[var(--muted)]/30 px-2.5 py-2 dark:bg-black/10">
+                          <p className="text-[0.6875rem] leading-relaxed text-[var(--foreground)]/92">{item.answer}</p>
+                          {item.bullets?.length ? (
+                            <ul className="mt-2 space-y-1.5 text-[0.65625rem] leading-relaxed text-[var(--muted-foreground)]/85">
+                              {item.bullets.map((bullet) => (
+                                <li key={bullet} className="flex gap-1.5">
+                                  <span className="mt-[0.18rem] h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--primary)]/70" />
+                                  <span>{bullet}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+    );
+  }
+
   return (
-    <section className="w-full max-w-md">
+    <section className={cn("w-full max-w-md", className)}>
       <div className="overflow-hidden rounded-[1rem] border border-[var(--border)]/60 bg-[var(--card)] shadow-[0_14px_38px_rgba(0,0,0,0.24)] backdrop-blur-xl dark:bg-[linear-gradient(180deg,rgba(18,14,23,0.92),rgba(11,10,16,0.86))]">
         <button
           type="button"
