@@ -2,6 +2,9 @@
 // Routes: Agents
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
+import { existsSync } from "fs";
+import { mkdir, readFile, writeFile } from "fs/promises";
+import { extname, join } from "path";
 import {
   createAgentConfigSchema,
   updateAgentConfigSchema,
@@ -11,7 +14,11 @@ import {
 } from "@marinara-engine/shared";
 import { createAgentsStorage } from "../services/storage/agents.storage.js";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
+import { DATA_DIR } from "../utils/data-dir.js";
+import { assertInsideDir, extensionFromImageMime, isAllowedImageBuffer } from "../utils/security.js";
 import { z } from "zod";
+
+const AGENT_IMAGES_DIR = join(DATA_DIR, "agents", "images");
 
 const updateAgentRunSchema = z.object({
   resultData: z.unknown(),
@@ -78,6 +85,28 @@ function normalizeRunInterval(value: unknown, fallback: number, max = 100): numb
   return Number.isFinite(parsed) && parsed >= 1 ? Math.min(max, Math.floor(parsed)) : fallback;
 }
 
+function parseImageUpload(image: string): { buffer: Buffer; hintedExt: string } {
+  let base64 = image;
+  let hintedExt = "png";
+  if (base64.startsWith("data:")) {
+    const match = base64.match(/^data:image\/([\w.+-]+);base64,/i);
+    if (match?.[1]) {
+      hintedExt = match[1].replace("+xml", "");
+      base64 = base64.slice(base64.indexOf(",") + 1);
+    }
+  }
+  return { buffer: Buffer.from(base64, "base64"), hintedExt };
+}
+
+function getSafeAgentImagePath(filename: string): string | null {
+  if (!filename || filename.includes("..") || filename.includes("/") || filename.includes("\\")) return null;
+  try {
+    return assertInsideDir(AGENT_IMAGES_DIR, join(AGENT_IMAGES_DIR, filename));
+  } catch {
+    return null;
+  }
+}
+
 export async function agentsRoutes(app: FastifyInstance) {
   const storage = createAgentsStorage(app.db);
   const chats = createChatsStorage(app.db);
@@ -93,6 +122,7 @@ export async function agentsRoutes(app: FastifyInstance) {
       phase: builtIn.phase,
       enabled: builtIn.enabledByDefault,
       connectionId: null,
+      imagePath: null,
       promptTemplate: "",
       settings: {
         ...getDefaultBuiltInAgentSettings(builtIn.id),
@@ -103,6 +133,20 @@ export async function agentsRoutes(app: FastifyInstance) {
 
   app.get("/", async () => {
     return storage.list();
+  });
+
+  app.get<{ Params: { filename: string } }>("/images/file/:filename", async (req, reply) => {
+    const filepath = getSafeAgentImagePath(req.params.filename);
+    if (!filepath || !existsSync(filepath)) return reply.status(404).send({ error: "Image not found" });
+
+    const buffer = await readFile(filepath);
+    const imageInfo = isAllowedImageBuffer(buffer, extname(filepath));
+    if (!imageInfo) return reply.status(404).send({ error: "Image not found" });
+
+    return reply
+      .header("Content-Type", imageInfo.mimeType)
+      .header("Cache-Control", "public, max-age=31536000, immutable")
+      .send(buffer);
   });
 
   /** Get editable custom-agent outputs for a roleplay chat. */
@@ -187,6 +231,30 @@ export async function agentsRoutes(app: FastifyInstance) {
     return storage.update(req.params.id, data);
   });
 
+  app.post<{ Params: { id: string } }>("/:id/image", async (req, reply) => {
+    const config = (await storage.getById(req.params.id)) ?? (await getOrCreateConfigByType(req.params.id));
+    if (!config) return reply.status(404).send({ error: "Agent not found" });
+
+    const body = req.body as { image?: string };
+    if (!body.image) return reply.status(400).send({ error: "No image data provided" });
+
+    const { buffer, hintedExt } = parseImageUpload(body.image);
+    const imageInfo = isAllowedImageBuffer(buffer, `.${hintedExt}`);
+    if (!imageInfo) return reply.status(400).send({ error: "Unsupported or invalid agent image" });
+
+    const ext = extensionFromImageMime(imageInfo.mimeType);
+    await mkdir(AGENT_IMAGES_DIR, { recursive: true });
+    const filename = `agent-${config.id.replace(/[^a-zA-Z0-9_-]/g, "-")}-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}.${ext}`;
+    const filepath = assertInsideDir(AGENT_IMAGES_DIR, join(AGENT_IMAGES_DIR, filename));
+    await writeFile(filepath, buffer);
+
+    const updated = await storage.update(config.id, { imagePath: `/api/agents/images/file/${filename}` });
+    if (!updated) return reply.status(404).send({ error: "Agent not found" });
+    return updated;
+  });
+
   app.delete<{ Params: { id: string } }>("/:id", async (req, reply) => {
     try {
       await storage.remove(req.params.id);
@@ -219,6 +287,7 @@ export async function agentsRoutes(app: FastifyInstance) {
       phase: builtIn.phase,
       enabled: !builtIn.enabledByDefault,
       connectionId: null,
+      imagePath: null,
       promptTemplate: "",
       settings: builtIn.defaultInjectAsSection ? { injectAsSection: true } : {},
     });

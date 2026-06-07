@@ -774,7 +774,7 @@ export const useUIStore = create<UIState>()(
   persist(
     (set, get) => ({
       sidebarOpen: true,
-      sidebarWidth: 280,
+      sidebarWidth: 320,
       rightPanelOpen: false,
       rightPanelWidth: 320,
       rightPanel: "chat" as Panel,
@@ -980,8 +980,12 @@ export const useUIStore = create<UIState>()(
           presetDetailId: null,
           connectionDetailId: null,
           agentDetailId: null,
+          toolDetailId: null,
           personaDetailId: null,
           regexDetailId: null,
+          characterLibraryOpen: false,
+          botBrowserOpen: false,
+          gameAssetsBrowserOpen: false,
           ...getMobileDetailReturnState(s),
         })),
       closeCharacterDetail: () =>
@@ -994,10 +998,13 @@ export const useUIStore = create<UIState>()(
         set((s) => ({
           lorebookDetailId: id,
           characterLibraryOpen: false,
+          botBrowserOpen: false,
+          gameAssetsBrowserOpen: false,
           characterDetailId: null,
           presetDetailId: null,
           connectionDetailId: null,
           agentDetailId: null,
+          toolDetailId: null,
           personaDetailId: null,
           regexDetailId: null,
           ...getMobileDetailReturnState(s),
@@ -1012,10 +1019,13 @@ export const useUIStore = create<UIState>()(
         set((s) => ({
           presetDetailId: id,
           characterLibraryOpen: false,
+          botBrowserOpen: false,
+          gameAssetsBrowserOpen: false,
           characterDetailId: null,
           lorebookDetailId: null,
           connectionDetailId: null,
           agentDetailId: null,
+          toolDetailId: null,
           personaDetailId: null,
           regexDetailId: null,
           ...getMobileDetailReturnState(s),
@@ -1030,10 +1040,13 @@ export const useUIStore = create<UIState>()(
         set((s) => ({
           connectionDetailId: id,
           characterLibraryOpen: false,
+          botBrowserOpen: false,
+          gameAssetsBrowserOpen: false,
           characterDetailId: null,
           lorebookDetailId: null,
           presetDetailId: null,
           agentDetailId: null,
+          toolDetailId: null,
           personaDetailId: null,
           regexDetailId: null,
           ...getMobileDetailReturnState(s),
@@ -1048,6 +1061,8 @@ export const useUIStore = create<UIState>()(
         set((s) => ({
           agentDetailId: agentType,
           characterLibraryOpen: false,
+          botBrowserOpen: false,
+          gameAssetsBrowserOpen: false,
           characterDetailId: null,
           lorebookDetailId: null,
           presetDetailId: null,
@@ -1068,6 +1083,8 @@ export const useUIStore = create<UIState>()(
           toolDetailId: id,
           agentDetailId: null,
           characterLibraryOpen: false,
+          botBrowserOpen: false,
+          gameAssetsBrowserOpen: false,
           characterDetailId: null,
           lorebookDetailId: null,
           presetDetailId: null,
@@ -1086,6 +1103,8 @@ export const useUIStore = create<UIState>()(
         set((s) => ({
           personaDetailId: id,
           characterLibraryOpen: false,
+          botBrowserOpen: false,
+          gameAssetsBrowserOpen: false,
           characterDetailId: null,
           lorebookDetailId: null,
           presetDetailId: null,
@@ -1106,6 +1125,8 @@ export const useUIStore = create<UIState>()(
           regexDetailId: id,
           personaDetailId: null,
           characterLibraryOpen: false,
+          botBrowserOpen: false,
+          gameAssetsBrowserOpen: false,
           characterDetailId: null,
           lorebookDetailId: null,
           presetDetailId: null,
@@ -1488,6 +1509,9 @@ export const useUIStore = create<UIState>()(
         if (version <= 7) {
           if (persisted.rightPanelWidth === undefined) {
             persisted.rightPanelWidth = 320;
+          }
+          if (persisted.sidebarWidth === 280) {
+            persisted.sidebarWidth = 320;
           }
         }
         // v8 → v9: add roleplay avatar layout setting

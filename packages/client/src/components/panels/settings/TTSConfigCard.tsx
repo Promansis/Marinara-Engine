@@ -665,13 +665,13 @@ export function TTSConfigCard() {
   return (
     <div
       className={cn(
-        "rounded-xl border border-rose-400/20 bg-gradient-to-br from-rose-500/5 to-orange-500/5 p-3 transition-all",
-        expanded && "border-rose-400/30",
+        "rounded-xl border border-sky-400/20 bg-gradient-to-br from-sky-400/5 to-blue-500/5 p-3 transition-all",
+        expanded && "border-sky-400/30",
       )}
     >
       {/* ── Header ── */}
       <div className="flex items-center gap-2.5">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-rose-400 to-orange-500 text-white shadow-sm">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-blue-500 text-white shadow-sm">
           <Volume2 size="1rem" />
         </div>
 
@@ -698,7 +698,7 @@ export function TTSConfigCard() {
                 }}
                 className="peer sr-only"
               />
-              <div className="h-5 w-9 rounded-full bg-[var(--border)] transition-colors peer-checked:bg-rose-400/70" />
+              <div className="h-5 w-9 rounded-full bg-[var(--border)] transition-colors peer-checked:bg-sky-400/70" />
               <div className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4" />
             </div>
           </label>
@@ -743,7 +743,7 @@ export function TTSConfigCard() {
             }
           >
             <div className="relative">
-              <Globe size="0.875rem" className="absolute left-3 top-1/2 -translate-y-1/2 text-rose-400" />
+              <Globe size="0.875rem" className="absolute left-3 top-1/2 -translate-y-1/2 text-sky-400" />
               <input
                 value={baseUrl}
                 onChange={(e) => {
@@ -762,7 +762,7 @@ export function TTSConfigCard() {
             help="Your API key for the TTS provider. Encrypted at rest. Keep the masked value to preserve the current key, or clear the field to remove it."
           >
             <div className="relative">
-              <Key size="0.875rem" className="absolute left-3 top-1/2 -translate-y-1/2 text-rose-400" />
+              <Key size="0.875rem" className="absolute left-3 top-1/2 -translate-y-1/2 text-sky-400" />
               <input
                 value={apiKey}
                 onChange={(e) => {
@@ -1246,8 +1246,8 @@ export function TTSConfigCard() {
               className={cn(
                 "flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs ring-1 transition-all",
                 ttsState === "playing"
-                  ? "bg-rose-500/10 text-rose-400 ring-rose-400/30 hover:bg-rose-500/20"
-                  : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-[var(--border)] hover:text-[var(--foreground)] hover:ring-rose-400/60",
+                  ? "bg-sky-500/10 text-sky-400 ring-sky-400/30 hover:bg-sky-500/20"
+                  : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-[var(--border)] hover:text-[var(--foreground)] hover:ring-sky-400/60",
                 previewDisabled && "cursor-not-allowed opacity-50",
               )}
               title={previewTitle}

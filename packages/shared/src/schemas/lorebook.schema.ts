@@ -5,6 +5,13 @@ import { z } from "zod";
 
 export const lorebookCategorySchema = z.enum(["world", "character", "npc", "spellbook", "uncategorized"]);
 
+export const lorebookScopeModeSchema = z.enum(["all", "disabled", "specific"]);
+
+export const lorebookScopeSchema = z.object({
+  mode: lorebookScopeModeSchema.default("all"),
+  chatIds: z.array(z.string()).default([]),
+});
+
 export const selectiveLogicSchema = z.enum(["and", "or", "not"]);
 
 export const lorebookFilterModeSchema = z.enum(["any", "include", "exclude"]);
@@ -68,6 +75,7 @@ export const createLorebookSchema = z.object({
   chatId: z.string().nullable().default(null),
   isGlobal: z.boolean().default(false),
   enabled: z.boolean().default(true),
+  scope: lorebookScopeSchema.default({ mode: "all", chatIds: [] }),
   tags: z.array(z.string()).default([]),
   generatedBy: z.enum(["user", "agent", "import", "lorebook-maker"]).nullable().default(null),
   sourceAgentId: z.string().nullable().default(null),
@@ -91,6 +99,7 @@ export const updateLorebookSchema = z
     chatId: z.string().nullable().optional(),
     isGlobal: z.boolean().optional(),
     enabled: z.boolean().optional(),
+    scope: lorebookScopeSchema.optional(),
     tags: z.array(z.string()).optional(),
     generatedBy: z.enum(["user", "agent", "import", "lorebook-maker"]).nullable().optional(),
     sourceAgentId: z.string().nullable().optional(),

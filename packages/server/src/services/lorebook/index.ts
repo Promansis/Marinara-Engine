@@ -80,6 +80,7 @@ type RelevantLorebook = Pick<
   | "personaId"
   | "personaIds"
   | "chatId"
+  | "scope"
   | "sourceAgentId"
 >;
 
@@ -176,7 +177,9 @@ async function buildLorebookMatchingContext(
 }
 
 export function filterRelevantLorebooks(lorebooks: RelevantLorebook[], filters?: LorebookFilters): RelevantLorebook[] {
-  const enabledBooks = lorebooks.filter((book) => book.enabled);
+  const enabledBooks = lorebooks.filter(
+    (book) => book.enabled && isLorebookScopeActiveForChat(book.scope, filters?.chatId),
+  );
   if (!filters) return enabledBooks;
 
   const excludedLorebookIds = new Set(filters.excludedLorebookIds ?? []);
@@ -194,6 +197,24 @@ export function filterRelevantLorebooks(lorebooks: RelevantLorebook[], filters?:
     if (book.chatId && book.chatId === filters.chatId) return true;
     return false;
   });
+}
+
+function readLorebookScope(value: unknown): { mode: "all" | "disabled" | "specific"; chatIds: string[] } {
+  if (value && typeof value === "object") {
+    const raw = value as Record<string, unknown>;
+    return {
+      mode: raw.mode === "disabled" || raw.mode === "specific" ? raw.mode : "all",
+      chatIds: uniqueStrings(Array.isArray(raw.chatIds) ? raw.chatIds.map(String) : []),
+    };
+  }
+  return { mode: "all", chatIds: [] };
+}
+
+function isLorebookScopeActiveForChat(value: unknown, chatId?: string | null): boolean {
+  const scope = readLorebookScope(value);
+  if (scope.mode === "disabled") return false;
+  if (scope.mode === "specific") return !!chatId && scope.chatIds.includes(chatId);
+  return true;
 }
 
 function toTimingStateMap(states?: Record<string, LorebookEntryTimingState>): Map<string, EntryTimingState> {

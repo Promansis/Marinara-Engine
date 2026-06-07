@@ -19,6 +19,8 @@ export const lorebooks = sqliteTable("lorebooks", {
   chatId: text("chat_id"),
   isGlobal: text("is_global").notNull().default("false"),
   enabled: text("enabled").notNull().default("true"),
+  /** JSON object: { mode: "all" | "disabled" | "specific", chatIds: string[] } */
+  scope: text("scope").notNull().default('{"mode":"all","chatIds":[]}'),
   /** Tags for organizing/filtering lorebooks (JSON array of strings) */
   tags: text("tags").notNull().default("[]"),
   generatedBy: text("generated_by"),

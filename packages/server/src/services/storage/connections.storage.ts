@@ -74,6 +74,7 @@ export function createConnectionsStorage(db: DB) {
         baseUrl: input.baseUrl ?? "",
         apiKeyEncrypted: encryptApiKey(input.apiKey ?? ""),
         model: input.model ?? "",
+        imagePath: input.imagePath ?? null,
         maxContext: input.maxContext ?? 128000,
         isDefault: String(input.isDefault ?? false),
         useForRandom: String(input.useForRandom ?? false),
@@ -109,6 +110,7 @@ export function createConnectionsStorage(db: DB) {
       if (data.baseUrl !== undefined) updateFields.baseUrl = data.baseUrl;
       if (data.apiKey !== undefined) updateFields.apiKeyEncrypted = encryptApiKey(data.apiKey);
       if (data.model !== undefined) updateFields.model = data.model;
+      if (data.imagePath !== undefined) updateFields.imagePath = data.imagePath;
       if (data.maxContext !== undefined) updateFields.maxContext = data.maxContext;
       if (data.isDefault !== undefined) {
         if (data.isDefault) {
@@ -199,6 +201,7 @@ export function createConnectionsStorage(db: DB) {
         baseUrl: source.baseUrl,
         apiKeyEncrypted: source.apiKeyEncrypted,
         model: source.model,
+        imagePath: source.imagePath,
         maxContext: source.maxContext,
         isDefault: "false",
         useForRandom: source.useForRandom,

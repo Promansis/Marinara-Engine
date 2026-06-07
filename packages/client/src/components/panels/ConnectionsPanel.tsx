@@ -1,13 +1,14 @@
 // ──────────────────────────────────────────────
 // Panel: API Connections (polished, with folders)
 // ──────────────────────────────────────────────
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, type ChangeEvent } from "react";
 import { Reorder, useDragControls } from "framer-motion";
 import {
   useConnections,
   useDuplicateConnection,
   useDeleteConnection,
   useUpdateConnection,
+  useUploadConnectionImage,
 } from "../../hooks/use-connections";
 import {
   useConnectionFolders,
@@ -28,7 +29,6 @@ import {
   type ConnectionFolder,
 } from "@marinara-engine/shared";
 import { showConfirmDialog } from "../../lib/app-dialogs";
-import { Modal } from "../ui/Modal";
 import {
   Plus,
   Trash2,
@@ -44,33 +44,38 @@ import {
   ChevronUp,
   ChevronRight,
   FolderPlus,
-  FolderOpen,
   GripVertical,
   Pencil,
+  Camera,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { toast } from "sonner";
 import { TTSConfigCard } from "./settings/TTSConfigCard";
 
-/** Provider → gradient color pair for connection icons. */
-const PROVIDER_COLORS: Record<string, { from: string; to: string; ring: string; badge: string }> = {
-  openai: { from: "from-emerald-400", to: "to-teal-500", ring: "ring-emerald-400/40", badge: "bg-emerald-400" },
-  anthropic: { from: "from-orange-400", to: "to-amber-500", ring: "ring-orange-400/40", badge: "bg-orange-400" },
-  google: { from: "from-blue-400", to: "to-indigo-500", ring: "ring-blue-400/40", badge: "bg-blue-400" },
-  google_vertex: { from: "from-cyan-400", to: "to-blue-500", ring: "ring-cyan-400/40", badge: "bg-cyan-400" },
-  mistral: { from: "from-violet-400", to: "to-purple-500", ring: "ring-violet-400/40", badge: "bg-violet-400" },
-  cohere: { from: "from-rose-400", to: "to-pink-500", ring: "ring-rose-400/40", badge: "bg-rose-400" },
-  openrouter: { from: "from-sky-400", to: "to-cyan-500", ring: "ring-sky-400/40", badge: "bg-sky-400" },
-  xai: { from: "from-neutral-300", to: "to-zinc-600", ring: "ring-zinc-300/40", badge: "bg-zinc-300" },
-  custom: { from: "from-gray-400", to: "to-slate-500", ring: "ring-gray-400/40", badge: "bg-gray-400" },
-  image_generation: {
-    from: "from-fuchsia-400",
-    to: "to-pink-500",
-    ring: "ring-fuchsia-400/40",
-    badge: "bg-fuchsia-400",
-  },
+/** Provider color pair for connection icons. Kept as one blue family by design. */
+const CONNECTION_ICON_COLORS = {
+  from: "from-sky-400",
+  to: "to-blue-500",
+  ring: "ring-sky-400/40",
+  badge: "bg-sky-400",
 };
-const DEFAULT_COLOR = { from: "from-sky-400", to: "to-blue-500", ring: "ring-sky-400/40", badge: "bg-sky-400" };
+const PROVIDER_COLORS: Record<string, { from: string; to: string; ring: string; badge: string }> = {
+  openai: CONNECTION_ICON_COLORS,
+  openai_chatgpt: CONNECTION_ICON_COLORS,
+  anthropic: CONNECTION_ICON_COLORS,
+  claude_subscription: CONNECTION_ICON_COLORS,
+  google: CONNECTION_ICON_COLORS,
+  google_vertex: CONNECTION_ICON_COLORS,
+  mistral: CONNECTION_ICON_COLORS,
+  cohere: CONNECTION_ICON_COLORS,
+  openrouter: CONNECTION_ICON_COLORS,
+  nanogpt: CONNECTION_ICON_COLORS,
+  xai: CONNECTION_ICON_COLORS,
+  custom: CONNECTION_ICON_COLORS,
+  image_generation: CONNECTION_ICON_COLORS,
+};
+const DEFAULT_COLOR = CONNECTION_ICON_COLORS;
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
@@ -80,6 +85,14 @@ function formatBytes(bytes: number): string {
 function formatRuntimeVariantLabel(variant: string | null): string | null {
   if (!variant) return null;
   return variant.replace(/-/g, " ");
+}
+
+function getNextUnnamedFolderName(existingFolders: Array<{ name: string }>): string {
+  const names = new Set(existingFolders.map((folder) => folder.name.trim().toLowerCase()).filter(Boolean));
+  if (!names.has("unnamed")) return "unnamed";
+  let index = 2;
+  while (names.has(`unnamed ${index}`)) index += 1;
+  return `unnamed ${index}`;
 }
 
 function SidecarCard() {
@@ -94,7 +107,10 @@ function SidecarCard() {
     modelSize,
     startupError,
     failedRuntimeVariant,
+    curatedModels,
+    downloadProgress,
     setShowDownloadModal,
+    startDownload,
     updateConfig,
     fetchStatus,
   } = useSidecarStore();
@@ -162,15 +178,30 @@ function SidecarCard() {
     setShowDownloadModal(true);
   };
 
+  const handleDownloadNow = () => {
+    const quantization =
+      curatedModels.find((model) => model.quantization === "q4_k_m")?.quantization ??
+      curatedModels[0]?.quantization ??
+      "q4_k_m";
+    void startDownload(quantization);
+  };
+
+  const isDownloading = downloadProgress?.status === "downloading";
+
   return (
     <div
       className={cn(
-        "rounded-xl border border-purple-400/20 bg-gradient-to-br from-purple-500/5 to-fuchsia-500/5 p-3 transition-all",
-        expanded && "border-purple-400/30",
+        "rounded-xl border border-sky-400/20 bg-gradient-to-br from-sky-400/5 to-blue-500/5 p-3 transition-all",
+        expanded && "border-sky-400/30",
       )}
     >
-      <div className="flex items-center gap-2.5">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-purple-400 to-fuchsia-500 text-white shadow-sm">
+      <div
+        className={cn("flex items-center gap-2.5", !isDownloaded && "cursor-pointer")}
+        onClick={() => {
+          if (!isDownloaded) setExpanded(true);
+        }}
+      >
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-blue-500 text-white shadow-sm">
           <BrainCircuit size="1rem" />
         </div>
         <div className="min-w-0 flex-1">
@@ -192,7 +223,7 @@ function SidecarCard() {
         <div className="flex items-center gap-1.5">
           <button
             onClick={openLocalModelSettings}
-            className="rounded-lg p-1.5 text-purple-400 transition-all hover:bg-purple-400/15 active:scale-90"
+            className="rounded-lg p-1.5 text-sky-400 transition-all hover:bg-sky-400/15 active:scale-90"
             title="Open local model settings"
           >
             <Settings2 size="0.8125rem" />
@@ -210,23 +241,23 @@ function SidecarCard() {
       {expanded && (
         <>
           {isDownloaded && (
-            <div className="mt-2.5 flex flex-col gap-1.5 border-t border-purple-400/10 pt-2.5">
+            <div className="mt-2.5 flex flex-col gap-1.5 border-t border-sky-400/10 pt-2.5">
               <button
                 type="button"
                 onClick={() => void handleAssignTrackersToLocal()}
                 disabled={assigningTrackers}
-                className="flex items-center justify-between gap-3 rounded-lg border border-purple-400/15 bg-purple-400/8 px-3 py-2 text-left transition-all hover:bg-purple-400/12 disabled:cursor-not-allowed disabled:opacity-60"
+                className="flex items-center justify-between gap-3 rounded-lg border border-sky-400/15 bg-sky-400/8 px-3 py-2 text-left transition-all hover:bg-sky-400/12 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <div className="min-w-0 flex-1">
-                  <div className="text-xs font-medium text-purple-200">Use local model for all tracker agents</div>
+                  <div className="text-xs font-medium text-sky-200">Use local model for all tracker agents</div>
                   <div className="mt-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
                     Assigns the built-in local model as the connection override for every built-in tracker agent.
                   </div>
                 </div>
                 {assigningTrackers ? (
-                  <BrainCircuit size="0.875rem" className="animate-pulse text-purple-300" />
+                  <BrainCircuit size="0.875rem" className="animate-pulse text-sky-300" />
                 ) : (
-                  <Link size="0.875rem" className="text-purple-300" />
+                  <Link size="0.875rem" className="text-sky-300" />
                 )}
               </button>
               <p className="px-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
@@ -242,7 +273,7 @@ function SidecarCard() {
                   <div
                     className={cn(
                       "h-4 w-7 rounded-full transition-colors",
-                      config.useForTrackers ? "bg-purple-400/70" : "bg-[var(--border)]",
+                      config.useForTrackers ? "bg-sky-400/70" : "bg-[var(--border)]",
                     )}
                   />
                   <div
@@ -263,7 +294,7 @@ function SidecarCard() {
                   <div
                     className={cn(
                       "h-4 w-7 rounded-full transition-colors",
-                      config.useForGameScene ? "bg-purple-400/70" : "bg-[var(--border)]",
+                      config.useForGameScene ? "bg-sky-400/70" : "bg-[var(--border)]",
                     )}
                   />
                   <div
@@ -274,6 +305,25 @@ function SidecarCard() {
                   />
                 </div>
                 <span className="text-xs text-[var(--muted-foreground)]">Use for game scene analysis</span>
+              </button>
+            </div>
+          )}
+          {!isDownloaded && (
+            <div className="mt-2.5 flex flex-col gap-2 border-t border-sky-400/10 pt-2.5">
+              <button
+                type="button"
+                onClick={handleDownloadNow}
+                disabled={isDownloading}
+                className="flex items-center justify-center gap-2 rounded-lg bg-sky-400/15 px-3 py-2 text-xs font-medium text-sky-200 transition-colors hover:bg-sky-400/25 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isDownloading ? "Downloading..." : "Download now"}
+              </button>
+              <button
+                type="button"
+                onClick={openLocalModelSettings}
+                className="text-center text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
+              >
+                Choose model options
               </button>
             </div>
           )}
@@ -309,22 +359,62 @@ type ConnectionRowData = {
   name: string;
   provider: string;
   model: string;
+  imagePath?: string | null;
   useForRandom?: string;
+  defaultForAgents?: boolean | string;
   folderId?: string | null;
 };
+
+function DefaultAgentConnectionCard({ connectionsList }: { connectionsList: ConnectionRowData[] }) {
+  const openConnectionDetail = useUIStore((s) => s.openConnectionDetail);
+  const defaultConnection =
+    connectionsList.find((conn) => conn.defaultForAgents === true || conn.defaultForAgents === "true") ?? null;
+
+  return (
+    <div className="rounded-xl border border-sky-400/20 bg-gradient-to-br from-sky-400/5 to-blue-500/5 p-3">
+      <div className="flex items-center gap-2.5">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-blue-500 text-white shadow-sm">
+          <Sparkles size="1rem" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium">Default for Agents</div>
+          <div className="truncate text-[0.6875rem] text-[var(--muted-foreground)]">
+            {defaultConnection
+              ? `${defaultConnection.name} • ${defaultConnection.model || "No model set"}`
+              : "No default agent connection set"}
+          </div>
+        </div>
+        {defaultConnection && (
+          <button
+            type="button"
+            onClick={() => openConnectionDetail(defaultConnection.id)}
+            className="rounded-lg p-1.5 text-sky-400 transition-all hover:bg-sky-400/15 active:scale-90"
+            title="Open default agent connection"
+          >
+            <Settings2 size="0.8125rem" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function ConnectionRow({
   conn,
   isSelected,
   onClickRow,
-  onMove,
-  showMoveButton,
+  isDragging,
+  onDragStart,
+  onDragEnd,
+  onImagePick,
 }: {
   conn: ConnectionRowData;
   isSelected: boolean;
   onClickRow: () => void;
-  onMove: () => void;
-  showMoveButton: boolean;
+  isDragging: boolean;
+  onDragStart: (event: React.DragEvent<HTMLDivElement>) => void;
+  onDragEnd: () => void;
+  onImagePick: () => void;
 }) {
   const duplicateConnection = useDuplicateConnection();
   const deleteConnection = useDeleteConnection();
@@ -333,23 +423,45 @@ function ConnectionRow({
 
   const inRandomPool = conn.useForRandom === "true";
   const colors = PROVIDER_COLORS[conn.provider] ?? DEFAULT_COLOR;
+  const iconContent = conn.imagePath ? (
+    <img src={conn.imagePath} alt="" className="h-full w-full object-cover" draggable={false} />
+  ) : (
+    <Link size="1rem" />
+  );
+  const iconClasses = cn(
+    "relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br text-white shadow-sm",
+    conn.imagePath ? "bg-[var(--muted)]" : `${colors.from} ${colors.to}`,
+  );
 
   return (
     <div
       onClick={onClickRow}
+      draggable
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       className={cn(
         "group relative flex cursor-pointer items-center gap-3 rounded-xl p-2.5 transition-all hover:bg-[var(--sidebar-accent)]",
         isSelected && `ring-1 ${colors.ring} bg-[var(--sidebar-accent)]/50`,
+        isDragging && "opacity-50",
       )}
     >
-      <div
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          onImagePick();
+        }}
         className={cn(
-          "relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm",
-          colors.from,
-          colors.to,
+          iconClasses,
+          "transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-sky-400/50",
         )}
+        title={conn.imagePath ? "Replace connection picture" : "Upload connection picture"}
+        aria-label={conn.imagePath ? "Replace connection picture" : "Upload connection picture"}
       >
-        <Link size="1rem" />
+        {iconContent}
+        <span className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition-opacity group-hover:opacity-100">
+          <Camera size="0.875rem" />
+        </span>
         {isSelected && (
           <div
             className={cn(
@@ -360,7 +472,7 @@ function ConnectionRow({
             <Check size="0.625rem" className="text-white" />
           </div>
         )}
-      </div>
+      </button>
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium" title={conn.name}>
           {conn.name}
@@ -385,18 +497,6 @@ function ConnectionRow({
         >
           <Shuffle size="0.75rem" />
         </button>
-        {showMoveButton && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onMove();
-            }}
-            className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] active:scale-90"
-            title="Move to folder"
-          >
-            <FolderOpen size="0.75rem" />
-          </button>
-        )}
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -443,6 +543,8 @@ function ConnectionFolderRow({
   onToggleCollapse,
   onRename,
   onDelete,
+  draggedConnectionId,
+  onDropConnection,
 }: {
   folder: ConnectionFolder;
   entries: ConnectionRowData[];
@@ -450,13 +552,50 @@ function ConnectionFolderRow({
   onToggleCollapse: (folder: ConnectionFolder) => void;
   onRename: (id: string, name: string) => void;
   onDelete: (folder: ConnectionFolder) => void;
+  draggedConnectionId: string | null;
+  onDropConnection: (connectionId: string, folderId: string | null) => void;
 }) {
   const dragControls = useDragControls();
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(folder.name);
+  const [isDropTarget, setIsDropTarget] = useState(false);
 
   return (
-    <Reorder.Item value={folder.id} dragListener={false} dragControls={dragControls} as="div" className="flex flex-col">
+    <Reorder.Item
+      value={folder.id}
+      dragListener={false}
+      dragControls={dragControls}
+      as="div"
+      onDragEnter={(event) => {
+        if (!draggedConnectionId) return;
+        event.preventDefault();
+        setIsDropTarget(true);
+      }}
+      onDragOver={(event) => {
+        if (!draggedConnectionId) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setIsDropTarget(false);
+        }
+      }}
+      onDrop={(event) => {
+        if (!draggedConnectionId) return;
+        event.preventDefault();
+        const connectionId =
+          event.dataTransfer.getData("application/x-marinara-connection-id") ||
+          event.dataTransfer.getData("text/plain") ||
+          draggedConnectionId;
+        if (connectionId) onDropConnection(connectionId, folder.id);
+        setIsDropTarget(false);
+      }}
+      className={cn(
+        "flex flex-col rounded-lg transition-colors",
+        isDropTarget && "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30",
+      )}
+    >
       {/* Folder header */}
       <div
         onClick={() => onToggleCollapse(folder)}
@@ -471,11 +610,6 @@ function ConnectionFolderRow({
         <ChevronRight
           size="0.75rem"
           className={cn("text-[var(--muted-foreground)] transition-transform", !folder.collapsed && "rotate-90")}
-        />
-        <div
-          className="h-2 w-2 rounded-full flex-shrink-0"
-          style={{ backgroundColor: folder.color || "#6b7280" }}
-          title={folder.name}
         />
         {renaming ? (
           <input
@@ -543,6 +677,7 @@ function ConnectionFolderRow({
 
 export function ConnectionsPanel() {
   const { data: connections, isLoading } = useConnections();
+  const uploadConnectionImage = useUploadConnectionImage();
   const activeChat = useChatStore((s) => s.activeChat);
 
   const activeConnectionId = activeChat?.connectionId ?? null;
@@ -559,10 +694,9 @@ export function ConnectionsPanel() {
   const reorderFoldersMut = useReorderConnectionFolders();
   const moveConnectionMut = useMoveConnection();
 
-  // Folder UI state
-  const [creatingFolder, setCreatingFolder] = useState(false);
-  const [newFolderName, setNewFolderName] = useState("");
-  const [movingConnectionId, setMovingConnectionId] = useState<string | null>(null);
+  const [draggedConnectionId, setDraggedConnectionId] = useState<string | null>(null);
+  const connectionImageInputRef = useRef<HTMLInputElement>(null);
+  const imageTargetConnectionIdRef = useRef<string | null>(null);
 
   const connectionsList = useMemo(() => (connections as ConnectionRowData[] | undefined) ?? [], [connections]);
 
@@ -595,21 +729,7 @@ export function ConnectionsPanel() {
   }, [connectionsList, sortedFolders]);
 
   const handleCreateFolder = () => {
-    const name = newFolderName.trim();
-    if (!name) {
-      setCreatingFolder(false);
-      setNewFolderName("");
-      return;
-    }
-    createFolderMut.mutate(
-      { name },
-      {
-        onSuccess: () => {
-          setNewFolderName("");
-          setCreatingFolder(false);
-        },
-      },
-    );
+    createFolderMut.mutate({ name: getNextUnnamedFolderName(sortedFolders) });
   };
 
   const handleFolderReorder = (newOrder: string[]) => {
@@ -638,10 +758,56 @@ export function ConnectionsPanel() {
     deleteFolderMut.mutate(folder.id);
   };
 
-  const handleMoveConnection = (connectionId: string, folderId: string | null) => {
+  const handleDropConnectionToFolder = (connectionId: string, folderId: string | null) => {
     moveConnectionMut.mutate({ connectionId, folderId });
-    setMovingConnectionId(null);
+    setDraggedConnectionId(null);
   };
+
+  const handlePickConnectionImage = useCallback((connectionId: string) => {
+    imageTargetConnectionIdRef.current = connectionId;
+    if (connectionImageInputRef.current) {
+      connectionImageInputRef.current.value = "";
+      connectionImageInputRef.current.click();
+    }
+  }, []);
+
+  const handleConnectionImageSelected = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      const connectionId = imageTargetConnectionIdRef.current;
+      if (!file || !connectionId) return;
+
+      if (!file.type.startsWith("image/")) {
+        imageTargetConnectionIdRef.current = null;
+        toast.error("Choose an image file for the connection picture");
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const image = typeof reader.result === "string" ? reader.result : "";
+        if (!image) {
+          toast.error("Could not read that image");
+          return;
+        }
+
+        try {
+          await uploadConnectionImage.mutateAsync({ id: connectionId, image });
+          toast.success("Connection picture updated");
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : "Failed to upload connection picture");
+        } finally {
+          imageTargetConnectionIdRef.current = null;
+        }
+      };
+      reader.onerror = () => {
+        imageTargetConnectionIdRef.current = null;
+        toast.error("Could not read that image");
+      };
+      reader.readAsDataURL(file);
+    },
+    [uploadConnectionImage],
+  );
 
   const renderConnectionRow = (conn: ConnectionRowData) => {
     const isSelected = activeConnectionId === conn.id;
@@ -651,66 +817,60 @@ export function ConnectionsPanel() {
         conn={conn}
         isSelected={isSelected}
         onClickRow={() => openConnectionDetail(conn.id)}
-        onMove={() => setMovingConnectionId(conn.id)}
-        showMoveButton={sortedFolders.length > 0}
+        isDragging={draggedConnectionId === conn.id}
+        onDragStart={(event) => {
+          setDraggedConnectionId(conn.id);
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("application/x-marinara-connection-id", conn.id);
+          event.dataTransfer.setData("text/plain", conn.id);
+        }}
+        onDragEnd={() => setDraggedConnectionId(null)}
+        onImagePick={() => handlePickConnectionImage(conn.id)}
       />
     );
   };
 
-  const movingConnection = movingConnectionId
-    ? (connectionsList.find((c) => c.id === movingConnectionId) ?? null)
-    : null;
-
   return (
     <div className="flex flex-col gap-2 p-3">
+      <input
+        ref={connectionImageInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleConnectionImageSelected}
+      />
+
+      <button
+        onClick={() => openModal("create-connection")}
+        className="flex items-center justify-center rounded-xl bg-gradient-to-r from-sky-400 to-blue-500 px-3 py-2.5 text-xs font-medium text-white shadow-md shadow-sky-400/15 transition-all hover:shadow-lg hover:shadow-sky-400/25 active:scale-[0.98]"
+        title="Add Connection"
+        aria-label="Add Connection"
+      >
+        <Plus size="0.875rem" />
+      </button>
+
       {/* ── Local Model (Sidecar) ── */}
       {import.meta.env.VITE_MARINARA_LITE !== "true" && <SidecarCard />}
 
       {/* ── Text to Speech ── */}
       <TTSConfigCard />
 
-      <button
-        onClick={() => openModal("create-connection")}
-        className="flex items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-xs font-medium transition-all active:scale-[0.98] bg-gradient-to-r from-sky-400 to-blue-500 text-white shadow-md shadow-sky-400/15 hover:shadow-lg hover:shadow-sky-400/25"
-      >
-        <Plus size="0.8125rem" />
-        Add Connection
-      </button>
+      <DefaultAgentConnectionCard connectionsList={connectionsList} />
 
-      {/* ── New folder button / inline input ── */}
-      {creatingFolder ? (
-        <div className="flex items-center gap-1.5 rounded-lg border border-[var(--border)]/40 bg-[var(--secondary)]/30 px-2.5 py-1.5">
-          <FolderPlus size="0.75rem" className="text-[var(--muted-foreground)]" />
-          <input
-            autoFocus
-            value={newFolderName}
-            onChange={(e) => setNewFolderName(e.target.value)}
-            placeholder="Folder name"
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleCreateFolder();
-              if (e.key === "Escape") {
-                setCreatingFolder(false);
-                setNewFolderName("");
-              }
-            }}
-            onBlur={() => {
-              if (newFolderName.trim()) handleCreateFolder();
-              else {
-                setCreatingFolder(false);
-                setNewFolderName("");
-              }
-            }}
-            className="flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
-          />
-        </div>
-      ) : (
+      <div className="flex items-center gap-1">
         <button
-          onClick={() => setCreatingFolder(true)}
-          className="flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[0.6875rem] text-[var(--muted-foreground)] transition-all hover:bg-[var(--sidebar-accent)]/40 hover:text-[var(--foreground)]"
+          onClick={handleCreateFolder}
+          className="flex flex-1 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[0.6875rem] text-[var(--muted-foreground)] transition-all hover:bg-[var(--sidebar-accent)]/40 hover:text-[var(--foreground)]"
         >
           <FolderPlus size="0.75rem" />
           New Folder
         </button>
+      </div>
+
+      {sortedFolders.length > 0 && (
+        <p className="px-2.5 text-[0.625rem] leading-snug text-[var(--muted-foreground)]/70">
+          Drag and drop connections to folders.
+        </p>
       )}
 
       {isLoading && (
@@ -788,6 +948,8 @@ export function ConnectionsPanel() {
                 onToggleCollapse={handleToggleCollapse}
                 onRename={handleRenameFolder}
                 onDelete={handleDeleteFolder}
+                draggedConnectionId={draggedConnectionId}
+                onDropConnection={handleDropConnectionToFolder}
               />
             );
           })}
@@ -802,42 +964,6 @@ export function ConnectionsPanel() {
           Click to edit · Set active connection in Chat Settings
         </p>
       )}
-
-      {/* ── Move to Folder Modal ── */}
-      <Modal
-        open={movingConnectionId !== null}
-        onClose={() => setMovingConnectionId(null)}
-        title="Move to Folder"
-        width="max-w-xs"
-      >
-        {movingConnection && (
-          <div className="flex flex-col gap-1">
-            <button
-              onClick={() => handleMoveConnection(movingConnection.id, null)}
-              className={cn(
-                "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs transition-all hover:bg-[var(--accent)]",
-                !movingConnection.folderId && "bg-[var(--accent)] font-medium",
-              )}
-            >
-              <Link size="0.75rem" className="text-[var(--muted-foreground)]" />
-              Unfiled
-            </button>
-            {sortedFolders.map((f) => (
-              <button
-                key={f.id}
-                onClick={() => handleMoveConnection(movingConnection.id, f.id)}
-                className={cn(
-                  "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs transition-all hover:bg-[var(--accent)]",
-                  movingConnection.folderId === f.id && "bg-[var(--accent)] font-medium",
-                )}
-              >
-                <div className="h-2 w-2 rounded-full flex-shrink-0" style={{ backgroundColor: f.color || "#6b7280" }} />
-                {f.name}
-              </button>
-            ))}
-          </div>
-        )}
-      </Modal>
     </div>
   );
 }

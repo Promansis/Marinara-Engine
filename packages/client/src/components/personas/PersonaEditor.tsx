@@ -2,7 +2,7 @@
 // Persona Editor — Full-page detail view
 // Replaces the chat area when editing a persona.
 // Sections: Description, Personality, Backstory,
-//           Appearance, Scenario
+//           Appearance, Scenario, Lorebook
 // ──────────────────────────────────────────────
 import { useState, useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
@@ -36,6 +36,7 @@ import {
   Eraser,
   RotateCcw,
   Crop,
+  Library,
 } from "lucide-react";
 import { cn, generateClientId, getAvatarCropStyle, type AvatarCrop, type LegacyAvatarCrop } from "../../lib/utils";
 import { showAlertDialog, showConfirmDialog } from "../../lib/app-dialogs";
@@ -65,6 +66,7 @@ import { ExportFormatDialog, type ExportFormatChoice } from "../ui/ExportFormatD
 import { Modal } from "../ui/Modal";
 import type { TrackerCardColorConfig } from "@marinara-engine/shared";
 import { useQuoteFormatter } from "../../hooks/use-quote-formatter";
+import { LorebookAssignmentSection } from "../lorebooks/LorebookAssignmentSection";
 
 // ── Tabs ──
 const TABS = [
@@ -73,6 +75,7 @@ const TABS = [
   { id: "backstory", label: "Backstory", icon: BookOpen },
   { id: "appearance", label: "Appearance", icon: Eye },
   { id: "scenario", label: "Scenario", icon: MapPin },
+  { id: "lorebook", label: "Lorebook", icon: Library },
   { id: "sprites", label: "Sprites", icon: Image },
   { id: "colors", label: "Colors", icon: Palette },
   { id: "stats", label: "Stats", icon: Activity },
@@ -439,7 +442,7 @@ export function PersonaEditor() {
       />
 
       {/* ── Header ── */}
-      <div className="flex flex-wrap items-center gap-3 border-b border-[var(--border)] bg-[var(--card)] px-4 py-3 max-md:gap-2 max-md:px-3">
+      <div className="flex flex-wrap items-center gap-3 border-b border-[var(--border)] px-4 py-3 max-md:gap-2 max-md:px-3">
         <button
           type="button"
           onClick={handleClose}
@@ -583,7 +586,7 @@ export function PersonaEditor() {
       {/* ── Body: Tabs + Content ── */}
       <div className="flex flex-1 overflow-hidden @max-5xl:flex-col">
         {/* Tab Rail */}
-        <nav className="flex w-44 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-[var(--border)] bg-[var(--card)] p-2 @max-5xl:w-full @max-5xl:flex-row @max-5xl:overflow-x-auto @max-5xl:border-r-0 @max-5xl:border-b @max-5xl:p-1.5">
+        <nav className="flex w-44 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-[var(--border)] p-2 @max-5xl:w-full @max-5xl:flex-row @max-5xl:overflow-x-auto @max-5xl:border-r-0 @max-5xl:border-b @max-5xl:p-1.5">
           {TABS.map((tab) => {
             const Icon = tab.icon;
             return (
@@ -655,6 +658,9 @@ export function PersonaEditor() {
                 placeholder="A wandering adventurer seeking answers about a mysterious artifact…"
                 rows={8}
               />
+            )}
+            {activeTab === "lorebook" && personaId && (
+              <LorebookAssignmentSection ownerType="persona" ownerId={personaId} ownerName={formData.name} />
             )}
             {activeTab === "colors" && (
               <PersonaColorsTab formData={formData} updateField={updateField} avatarUrl={avatarPreview} />

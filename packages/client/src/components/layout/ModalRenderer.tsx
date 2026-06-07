@@ -4,6 +4,7 @@
 import { lazy, Suspense } from "react";
 import { useUIStore } from "../../stores/ui.store";
 import type { AgentData } from "../modals/EditAgentModal";
+import type { LorebookCategory, LorebookScope } from "@marinara-engine/shared";
 
 const CreateCharacterModal = lazy(() =>
   import("../modals/CreateCharacterModal").then((module) => ({ default: module.CreateCharacterModal })),
@@ -70,7 +71,16 @@ export function ModalRenderer() {
       content = <CharacterMakerModal open onClose={closeModal} />;
       break;
     case "create-lorebook":
-      content = <CreateLorebookModal open onClose={closeModal} />;
+      content = (
+        <CreateLorebookModal
+          open
+          onClose={closeModal}
+          defaultCategory={(modal?.props?.defaultCategory as LorebookCategory | undefined) ?? undefined}
+          characterId={(modal?.props?.characterId as string | null | undefined) ?? null}
+          personaId={(modal?.props?.personaId as string | null | undefined) ?? null}
+          defaultScope={(modal?.props?.defaultScope as LorebookScope | null | undefined) ?? null}
+        />
+      );
       break;
     case "import-lorebook":
       content = <ImportLorebookModal open onClose={closeModal} />;

@@ -102,6 +102,7 @@ import {
   stepCadenceValue,
 } from "../../lib/agent-cadence";
 import { getCharacterTitle, parseCharacterDisplayData } from "../../lib/character-display";
+import { isLorebookScopeActiveForChat } from "../../lib/lorebook-scope";
 import { useUIStore } from "../../stores/ui.store";
 import {
   useChatPresets,
@@ -403,7 +404,7 @@ export function ChatSettingsDrawer({
       const reasons: LorebookActiveReason[] = [];
       const isPinned = pinnedIds.has(lorebook.id);
 
-      if (lorebook.enabled !== false) {
+      if (lorebook.enabled !== false && isLorebookScopeActiveForChat(lorebook.scope, chat.id)) {
         if (isPinned) reasons.push("Chat");
         if (lorebook.isGlobal) reasons.push("Global");
         if (
@@ -1056,21 +1057,10 @@ export function ChatSettingsDrawer({
     });
   }, [currentPromptPresetFull?.sections]);
   const hasScopedOrGlobalLorebooks = useMemo(() => {
-    return (
-      (lorebooks ?? []) as Array<{
-        id: string;
-        enabled?: boolean;
-        isGlobal?: boolean;
-        characterId?: string | null;
-        characterIds?: string[];
-        personaId?: string | null;
-        personaIds?: string[];
-        chatId?: string | null;
-        sourceAgentId?: string | null;
-      }>
-    ).some(
+    return ((lorebooks ?? []) as Lorebook[]).some(
       (lorebook) =>
         lorebook.enabled !== false &&
+        isLorebookScopeActiveForChat(lorebook.scope, chat.id) &&
         !(
           isGame &&
           !gameLorebookKeeperEnabled &&
@@ -3635,7 +3625,8 @@ export function ChatSettingsDrawer({
                 onClose={() => setShowLbPicker(false)}
                 placeholder="Search lorebooks…"
               >
-                {((lorebooks ?? []) as Array<{ id: string; name: string }>)
+                {((lorebooks ?? []) as Lorebook[])
+                  .filter((lb) => isLorebookScopeActiveForChat(lb.scope, chat.id))
                   .filter((lb) => !activeLorebookIdSet.has(lb.id))
                   .filter((lb) => lb.name.toLowerCase().includes(lbSearch.toLowerCase()))
                   .map((lb) => (
@@ -3652,12 +3643,14 @@ export function ChatSettingsDrawer({
                       <Plus size="0.75rem" className="text-[var(--muted-foreground)]" />
                     </button>
                   ))}
-                {((lorebooks ?? []) as Array<{ id: string; name: string }>)
+                {((lorebooks ?? []) as Lorebook[])
+                  .filter((lb) => isLorebookScopeActiveForChat(lb.scope, chat.id))
                   .filter((lb) => !activeLorebookIdSet.has(lb.id))
                   .filter((lb) => lb.name.toLowerCase().includes(lbSearch.toLowerCase())).length === 0 && (
                   <p className="px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)]">
-                    {((lorebooks ?? []) as Array<{ id: string }>).filter((lb) => !activeLorebookIdSet.has(lb.id))
-                      .length === 0
+                    {((lorebooks ?? []) as Lorebook[])
+                      .filter((lb) => isLorebookScopeActiveForChat(lb.scope, chat.id))
+                      .filter((lb) => !activeLorebookIdSet.has(lb.id)).length === 0
                       ? "All available lorebooks are already active here."
                       : "No matches."}
                   </p>

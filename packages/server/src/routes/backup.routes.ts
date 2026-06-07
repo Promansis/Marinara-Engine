@@ -39,6 +39,8 @@ const BACKUP_DIRS = [
   "knowledge-sources",
   "game-assets",
   "lorebooks/images",
+  "agents/images",
+  "connections/images",
 ];
 const PROFILE_ASSET_DIRS = BACKUP_DIRS.filter((dirName) => dirName !== "storage");
 const PROFILE_IMPORT_BODY_LIMIT_BYTES = 256 * 1024 * 1024;
@@ -54,6 +56,16 @@ const ZIP_LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;
 const ZIP_EOCD_MIN_SIZE = 22;
 const ZIP_EOCD_MAX_COMMENT_BYTES = 0xffff;
 const ZIP_ENCRYPTED_FLAG = 0x0001;
+
+function normalizeLorebookScope(value: unknown): { mode: "all" | "disabled" | "specific"; chatIds: string[] } {
+  if (!value || typeof value !== "object") return { mode: "all", chatIds: [] };
+  const raw = value as Record<string, unknown>;
+  const mode = raw.mode === "disabled" || raw.mode === "specific" ? raw.mode : "all";
+  const chatIds = Array.isArray(raw.chatIds)
+    ? raw.chatIds.filter((chatId): chatId is string => typeof chatId === "string" && chatId.trim().length > 0)
+    : [];
+  return { mode, chatIds: Array.from(new Set(chatIds)) };
+}
 
 type ExportFormat = "native" | "compatible" | "zip";
 type ProfileTableSnapshots = Record<string, Array<Record<string, unknown>>>;
@@ -510,7 +522,9 @@ function buildProfileImportStats(tableCounts: Record<string, number>, files: num
 }
 
 function profileEnvelopeFingerprint(envelope: ExportEnvelope) {
-  return `sha256:${createHash("sha256").update(JSON.stringify(envelope ?? null)).digest("hex")}`;
+  return `sha256:${createHash("sha256")
+    .update(JSON.stringify(envelope ?? null))
+    .digest("hex")}`;
 }
 
 async function fileFingerprint(filePath: string) {
@@ -1978,6 +1992,7 @@ export async function backupRoutes(app: FastifyInstance) {
                       : [],
                   chatId: lb.chatId ?? null,
                   isGlobal: lb.isGlobal ?? false,
+                  scope: normalizeLorebookScope(lb.scope),
                   tags: Array.isArray(lb.tags) ? lb.tags : [],
                   generatedBy: lb.generatedBy ?? null,
                   sourceAgentId: lb.sourceAgentId ?? null,
@@ -2144,6 +2159,7 @@ export async function backupRoutes(app: FastifyInstance) {
                   phase: a.phase,
                   enabled: a.enabled === "true" || a.enabled === true,
                   connectionId: a.connectionId ?? null,
+                  imagePath: a.imagePath ?? null,
                   promptTemplate: a.promptTemplate ?? "",
                   settings: typeof a.settings === "string" ? JSON.parse(a.settings) : (a.settings ?? {}),
                 });

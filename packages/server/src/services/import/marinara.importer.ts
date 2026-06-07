@@ -55,6 +55,16 @@ async function saveAvatarFromDataUrl(dataUrl: unknown, prefix: string, id: strin
   return `/api/avatars/file/${filename}`;
 }
 
+function readLorebookScope(value: unknown): { mode: "all" | "disabled" | "specific"; chatIds: string[] } {
+  if (!value || typeof value !== "object") return { mode: "all", chatIds: [] };
+  const raw = value as Record<string, unknown>;
+  const mode = raw.mode === "disabled" || raw.mode === "specific" ? raw.mode : "all";
+  const chatIds = Array.isArray(raw.chatIds)
+    ? raw.chatIds.filter((chatId): chatId is string => typeof chatId === "string" && chatId.trim().length > 0)
+    : [];
+  return { mode, chatIds: Array.from(new Set(chatIds)) };
+}
+
 // Restore sprites embedded as [{ filename, data }, ...] in a native export
 // by writing each one under data/sprites/<id>/. Filenames are sanitized to
 // just an expression stem + an extension matching the actual image bytes, so
@@ -383,6 +393,7 @@ async function importLorebook(data: unknown, db: DB) {
       chatId: typeof lb.chatId === "string" ? lb.chatId : null,
       isGlobal: lb.isGlobal === true || lb.isGlobal === "true",
       enabled: lb.enabled !== false,
+      scope: readLorebookScope(lb.scope),
       tags: Array.isArray(lb.tags) ? lb.tags.map(String) : [],
       generatedBy: "import",
       sourceAgentId: typeof lb.sourceAgentId === "string" ? lb.sourceAgentId : null,

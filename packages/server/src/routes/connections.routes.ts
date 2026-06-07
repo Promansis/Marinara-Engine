@@ -2,6 +2,9 @@
 // Routes: Connections
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
+import { existsSync } from "fs";
+import { mkdir, readFile, writeFile } from "fs/promises";
+import { extname, join } from "path";
 import { MODEL_LISTS, createConnectionSchema, inferImageSource } from "@marinara-engine/shared";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
@@ -10,9 +13,17 @@ import { buildGoogleVertexModelUrl, googleAuthHeadersForVertex } from "../servic
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import { isImageLocalUrlsEnabled, isProviderLocalUrlsEnabled } from "../config/runtime-config.js";
 import { logDebugOverride } from "../lib/logger.js";
-import { normalizeLoopbackUrl, safeFetch } from "../utils/security.js";
+import {
+  assertInsideDir,
+  extensionFromImageMime,
+  isAllowedImageBuffer,
+  normalizeLoopbackUrl,
+  safeFetch,
+} from "../utils/security.js";
+import { DATA_DIR } from "../utils/data-dir.js";
 
 const CONNECTION_TEST_ERROR_PREVIEW_CHARS = 2000;
+const CONNECTION_IMAGES_DIR = join(DATA_DIR, "connections", "images");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -125,6 +136,28 @@ function normalizeConnectionTestBaseUrl(baseUrl: string, provider: string): stri
   }
 }
 
+function parseImageUpload(image: string): { buffer: Buffer; hintedExt: string } {
+  let base64 = image;
+  let hintedExt = "png";
+  if (base64.startsWith("data:")) {
+    const match = base64.match(/^data:image\/([\w.+-]+);base64,/i);
+    if (match?.[1]) {
+      hintedExt = match[1].replace("+xml", "");
+      base64 = base64.slice(base64.indexOf(",") + 1);
+    }
+  }
+  return { buffer: Buffer.from(base64, "base64"), hintedExt };
+}
+
+function getSafeConnectionImagePath(filename: string): string | null {
+  if (!filename || filename.includes("..") || filename.includes("/") || filename.includes("\\")) return null;
+  try {
+    return assertInsideDir(CONNECTION_IMAGES_DIR, join(CONNECTION_IMAGES_DIR, filename));
+  } catch {
+    return null;
+  }
+}
+
 function buildStabilityUrl(baseUrl: string, targetPath: string): string {
   try {
     const url = new URL(baseUrl);
@@ -189,6 +222,20 @@ export async function connectionsRoutes(app: FastifyInstance) {
     return storage.list();
   });
 
+  app.get<{ Params: { filename: string } }>("/images/file/:filename", async (req, reply) => {
+    const filepath = getSafeConnectionImagePath(req.params.filename);
+    if (!filepath || !existsSync(filepath)) return reply.status(404).send({ error: "Image not found" });
+
+    const buffer = await readFile(filepath);
+    const imageInfo = isAllowedImageBuffer(buffer, extname(filepath));
+    if (!imageInfo) return reply.status(404).send({ error: "Image not found" });
+
+    return reply
+      .header("Content-Type", imageInfo.mimeType)
+      .header("Cache-Control", "public, max-age=31536000, immutable")
+      .send(buffer);
+  });
+
   app.get<{ Params: { id: string } }>("/:id", async (req, reply) => {
     const conn = await storage.getById(req.params.id);
     if (!conn) return reply.status(404).send({ error: "Connection not found" });
@@ -204,6 +251,30 @@ export async function connectionsRoutes(app: FastifyInstance) {
   app.patch<{ Params: { id: string } }>("/:id", async (req) => {
     const data = createConnectionSchema.partial().parse(req.body);
     return storage.update(req.params.id, data);
+  });
+
+  app.post<{ Params: { id: string } }>("/:id/image", async (req, reply) => {
+    const connection = await storage.getById(req.params.id);
+    if (!connection) return reply.status(404).send({ error: "Connection not found" });
+
+    const body = req.body as { image?: string };
+    if (!body.image) return reply.status(400).send({ error: "No image data provided" });
+
+    const { buffer, hintedExt } = parseImageUpload(body.image);
+    const imageInfo = isAllowedImageBuffer(buffer, `.${hintedExt}`);
+    if (!imageInfo) return reply.status(400).send({ error: "Unsupported or invalid connection image" });
+
+    const ext = extensionFromImageMime(imageInfo.mimeType);
+    await mkdir(CONNECTION_IMAGES_DIR, { recursive: true });
+    const filename = `connection-${req.params.id.replace(/[^a-zA-Z0-9_-]/g, "-")}-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}.${ext}`;
+    const filepath = assertInsideDir(CONNECTION_IMAGES_DIR, join(CONNECTION_IMAGES_DIR, filename));
+    await writeFile(filepath, buffer);
+
+    const updated = await storage.update(req.params.id, { imagePath: `/api/connections/images/file/${filename}` });
+    if (!updated) return reply.status(404).send({ error: "Connection not found" });
+    return updated;
   });
 
   // Save default generation parameters for a connection

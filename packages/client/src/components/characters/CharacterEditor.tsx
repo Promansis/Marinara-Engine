@@ -2,7 +2,7 @@
 // Character Editor — Full-page detail view
 // Replaces the chat area when editing a character.
 // Sections: Metadata, Description, Personality, Backstory,
-//           Appearance, Scenario, Dialogue, Advanced, Lorebook
+//           Appearance, Scenario, Dialogue, Lorebook, Advanced
 // ──────────────────────────────────────────────
 import { useState, useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
@@ -91,6 +91,7 @@ import { ExportFormatDialog, type ExportFormatChoice } from "../ui/ExportFormatD
 import type { CharacterCardVersion, CharacterData, RPGStatsConfig } from "@marinara-engine/shared";
 import { parseTrackerCardColorConfig, serializeTrackerCardColorConfig } from "../../lib/tracker-card-colors";
 import { useQuoteFormatter } from "../../hooks/use-quote-formatter";
+import { LorebookAssignmentSection } from "../lorebooks/LorebookAssignmentSection";
 
 // ── Tabs ──
 const TABS = [
@@ -101,22 +102,15 @@ const TABS = [
   { id: "appearance", label: "Appearance", icon: Eye },
   { id: "scenario", label: "Scenario", icon: MapPin },
   { id: "dialogue", label: "Dialogue", icon: MessageCircle },
+  { id: "lorebook", label: "Lorebook", icon: Library },
   { id: "sprites", label: "Sprites", icon: Image },
   { id: "gallery", label: "Gallery", icon: Camera },
   { id: "colors", label: "Colors", icon: Palette },
   { id: "stats", label: "Stats", icon: Swords },
   { id: "advanced", label: "Advanced", icon: Settings2 },
-  { id: "lorebook", label: "Lorebook", icon: Library },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
-
-interface AltDescriptionEntry {
-  id: string;
-  label: string;
-  content: string;
-  active: boolean;
-}
 
 interface ParsedCharacter {
   id: string;
@@ -124,28 +118,6 @@ interface ParsedCharacter {
   comment: string;
   avatarPath: string | null;
   spriteFolderPath: string | null;
-}
-
-function normalizeAltDescriptions(value: unknown): AltDescriptionEntry[] {
-  const raw = (() => {
-    if (Array.isArray(value)) return value;
-    if (typeof value !== "string" || !value.trim()) return [];
-    try {
-      const parsed = JSON.parse(value);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  })();
-
-  return raw
-    .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === "object")
-    .map((entry, index) => ({
-      id: typeof entry.id === "string" && entry.id.trim() ? entry.id : `extension-${index}`,
-      label: typeof entry.label === "string" ? entry.label : "Extension",
-      content: typeof entry.content === "string" ? entry.content : "",
-      active: entry.active !== false,
-    }));
 }
 
 function appendNewTags(existingTags: string[], rawInput: string) {
@@ -811,7 +783,7 @@ export function CharacterEditor() {
       />
 
       {/* ── Header ── */}
-      <div className="flex flex-wrap items-start gap-3 border-b border-[var(--border)] bg-[var(--card)] px-4 py-3 max-md:gap-2 max-md:px-3">
+      <div className="flex flex-wrap items-start gap-3 border-b border-[var(--border)] px-4 py-3 max-md:gap-2 max-md:px-3">
         <div className="flex min-w-0 flex-1 items-center gap-3 max-md:min-w-full">
           <button
             type="button"
@@ -937,7 +909,7 @@ export function CharacterEditor() {
       {/* ── Body: Tabs + Content ── */}
       <div className="flex flex-1 overflow-hidden @max-5xl:flex-col">
         {/* Tab Rail */}
-        <nav className="flex w-44 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-[var(--border)] bg-[var(--card)] p-2 @max-5xl:w-full @max-5xl:flex-row @max-5xl:overflow-x-auto @max-5xl:border-r-0 @max-5xl:border-b @max-5xl:p-1.5">
+        <nav className="flex w-44 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-[var(--border)] p-2 @max-5xl:w-full @max-5xl:flex-row @max-5xl:overflow-x-auto @max-5xl:border-r-0 @max-5xl:border-b @max-5xl:p-1.5">
           {TABS.map((tab) => {
             const Icon = tab.icon;
             return (
@@ -979,13 +951,7 @@ export function CharacterEditor() {
                 removingAvatar={removeAvatar.isPending}
               />
             )}
-            {activeTab === "description" && (
-              <CharacterDescriptionTab
-                formData={formData}
-                updateField={updateField}
-                updateExtension={updateExtension}
-              />
-            )}
+            {activeTab === "description" && <CharacterDescriptionTab formData={formData} updateField={updateField} />}
             {activeTab === "personality" && (
               <TextareaTab
                 title="Personality"
@@ -1068,34 +1034,11 @@ function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }
 function CharacterDescriptionTab({
   formData,
   updateField,
-  updateExtension,
 }: {
   formData: CharacterData;
   updateField: <K extends keyof CharacterData>(key: K, value: CharacterData[K]) => void;
-  updateExtension: (key: string, value: unknown) => void;
 }) {
-  const altDescs = normalizeAltDescriptions(formData.extensions?.altDescriptions);
-  const [expandedField, setExpandedField] = useState<"description" | string | null>(null);
-
-  const updateAltDescs = (next: AltDescriptionEntry[]) => {
-    updateExtension("altDescriptions", next);
-  };
-
-  const addAltDesc = () => {
-    updateAltDescs([...altDescs, { id: generateClientId(), label: "Extension", content: "", active: true }]);
-  };
-
-  const toggleAltDesc = (id: string) => {
-    updateAltDescs(altDescs.map((desc) => (desc.id === id ? { ...desc, active: !desc.active } : desc)));
-  };
-
-  const updateAltDescField = (id: string, field: "label" | "content", value: string) => {
-    updateAltDescs(altDescs.map((desc) => (desc.id === id ? { ...desc, [field]: value } : desc)));
-  };
-
-  const removeAltDesc = (id: string) => {
-    updateAltDescs(altDescs.filter((desc) => desc.id !== id));
-  };
+  const [expandedField, setExpandedField] = useState(false);
 
   return (
     <div className="space-y-6">
@@ -1107,7 +1050,7 @@ function CharacterDescriptionTab({
           />
           <button
             type="button"
-            onClick={() => setExpandedField("description")}
+            onClick={() => setExpandedField(true)}
             className="mt-0.5 shrink-0 rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
             title="Expand editor"
           >
@@ -1126,116 +1069,14 @@ function CharacterDescriptionTab({
         </p>
       </div>
 
-      <div>
-        <div className="mb-4 flex items-start justify-between gap-2">
-          <div>
-            <h3 className="text-sm font-semibold">Description Extensions</h3>
-            <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">
-              Toggleable additions appended to this character's main description. Use these for situational states,
-              relationships, combat details, or story-phase context.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={addAltDesc}
-            className="flex shrink-0 items-center gap-1 rounded-lg bg-[var(--primary)]/15 px-2.5 py-1 text-[0.6875rem] font-medium text-[var(--primary)] transition-colors hover:bg-[var(--primary)]/25"
-          >
-            <Plus size="0.75rem" />
-            Add
-          </button>
-        </div>
-
-        {altDescs.length === 0 ? (
-          <p className="text-[0.6875rem] italic text-[var(--muted-foreground)]">
-            No description extensions yet. Add one to toggle extra character context on and off.
-          </p>
-        ) : (
-          <div className="space-y-3">
-            {altDescs.map((desc) => (
-              <div
-                key={desc.id}
-                className={cn(
-                  "rounded-xl border bg-[var(--card)] p-4 transition-all",
-                  desc.active
-                    ? "border-[var(--primary)]/30 ring-1 ring-[var(--primary)]/10"
-                    : "border-[var(--border)] opacity-60",
-                )}
-              >
-                <div className="mb-3 flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => toggleAltDesc(desc.id)}
-                    className={cn(
-                      "flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors",
-                      desc.active ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/30",
-                    )}
-                    title={desc.active ? "Disable extension" : "Enable extension"}
-                  >
-                    <div
-                      className={cn(
-                        "h-4 w-4 rounded-full bg-[var(--primary-foreground)] shadow-sm transition-transform",
-                        desc.active && "translate-x-4",
-                      )}
-                    />
-                  </button>
-                  <input
-                    value={desc.label}
-                    onChange={(event) => updateAltDescField(desc.id, "label", event.target.value)}
-                    className="flex-1 rounded-lg border border-[var(--border)] bg-[var(--input)] px-2.5 py-1 text-xs font-medium outline-none focus:border-[var(--primary)]/40"
-                    placeholder="Label (e.g. Combat Skills)"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeAltDesc(desc.id)}
-                    className="rounded-lg p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
-                    title="Remove extension"
-                  >
-                    <X size="0.75rem" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setExpandedField(desc.id)}
-                    className="rounded-lg p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                    title="Expand editor"
-                  >
-                    <Maximize2 size="0.75rem" />
-                  </button>
-                </div>
-                <textarea
-                  value={desc.content}
-                  onChange={(event) => updateAltDescField(desc.id, "content", event.target.value)}
-                  placeholder="Additional description content…"
-                  rows={4}
-                  className="w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--secondary)] p-3 text-sm leading-relaxed outline-none transition-colors placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
-                />
-                <p className="mt-1 text-right text-[0.625rem] text-[var(--muted-foreground)]">
-                  {desc.content.length} characters
-                </p>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
       <ExpandedTextarea
-        open={expandedField === "description"}
-        onClose={() => setExpandedField(null)}
+        open={expandedField}
+        onClose={() => setExpandedField(false)}
         title="Description"
         value={formData.description}
         onChange={(value) => updateField("description", value)}
         placeholder="Describe who this character is, their role, and their key traits…"
       />
-      {altDescs.map((desc) => (
-        <ExpandedTextarea
-          key={desc.id}
-          open={expandedField === desc.id}
-          onClose={() => setExpandedField(null)}
-          title={desc.label || "Description Extension"}
-          value={desc.content}
-          onChange={(value) => updateAltDescField(desc.id, "content", value)}
-          placeholder="Additional description content…"
-        />
-      ))}
     </div>
   );
 }
@@ -3320,6 +3161,8 @@ function LorebookTab({ characterId, formData }: { characterId: string | null; fo
         subtitle="World-building entries embedded in this character. Triggered by keywords in conversation."
       />
 
+      <LorebookAssignmentSection ownerType="character" ownerId={characterId} ownerName={formData.name} />
+
       {hasEmbeddedLorebook && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2.5">
           <button
@@ -3354,17 +3197,7 @@ function LorebookTab({ characterId, formData }: { characterId: string | null; fo
         </div>
       )}
 
-      {entries.length === 0 ? (
-        <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-[var(--border)] py-12 text-center">
-          <Library size="1.5rem" className="text-[var(--muted-foreground)]/40" />
-          <div>
-            <p className="text-sm font-medium text-[var(--muted-foreground)]">No lorebook entries</p>
-            <p className="mt-0.5 text-xs text-[var(--muted-foreground)]/60">
-              Import a character with an embedded lorebook, or add entries via the Lorebooks panel.
-            </p>
-          </div>
-        </div>
-      ) : (
+      {entries.length > 0 && (
         <div className="space-y-2">
           {entries.map((entry, i) => (
             <div key={entry.id ?? i} className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-3">

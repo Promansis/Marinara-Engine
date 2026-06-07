@@ -43,6 +43,33 @@ function resolveLinkIds(arrayValue: unknown, singleValue: unknown): string[] {
   return uniqueStrings(typeof singleValue === "string" ? [singleValue] : []);
 }
 
+function parseLorebookScope(value: unknown): { mode: "all" | "disabled" | "specific"; chatIds: string[] } {
+  const raw = (() => {
+    if (value && typeof value === "object") return value as Record<string, unknown>;
+    if (typeof value === "string" && value.trim()) {
+      try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+      } catch {
+        return {};
+      }
+    }
+    return {};
+  })();
+  const mode = raw.mode === "disabled" || raw.mode === "specific" ? raw.mode : "all";
+  return {
+    mode,
+    chatIds: uniqueStrings(Array.isArray(raw.chatIds) ? raw.chatIds : []),
+  };
+}
+
+function isLorebookScopeActiveForChat(value: unknown, chatId?: string | null): boolean {
+  const scope = parseLorebookScope(value);
+  if (scope.mode === "disabled") return false;
+  if (scope.mode === "specific") return !!chatId && scope.chatIds.includes(chatId);
+  return true;
+}
+
 /** Parse DB row booleans ("true"/"false") → real booleans and JSON strings → objects. */
 function parseLorebookRow(row: Record<string, unknown>) {
   const characterIds = resolveLinkIds(row.characterIds, row.characterId);
@@ -54,6 +81,7 @@ function parseLorebookRow(row: Record<string, unknown>) {
     excludeFromVectorization: row.excludeFromVectorization === "true",
     isGlobal: row.isGlobal === "true",
     enabled: row.enabled === "true",
+    scope: parseLorebookScope(row.scope),
     imagePath: row.imagePath || null,
     generatedBy: row.generatedBy || null,
     sourceAgentId: row.sourceAgentId || null,
@@ -248,6 +276,7 @@ export function createLorebooksStorage(db: DB) {
           chatId: input.chatId ?? null,
           isGlobal: String(input.isGlobal ?? false),
           enabled: String(input.enabled ?? true),
+          scope: JSON.stringify(parseLorebookScope(input.scope)),
           tags: input.tags ? JSON.stringify(input.tags) : "[]",
           generatedBy: input.generatedBy ?? null,
           sourceAgentId: input.sourceAgentId ?? null,
@@ -286,6 +315,7 @@ export function createLorebooksStorage(db: DB) {
       if (input.chatId !== undefined) updates.chatId = input.chatId;
       if (input.isGlobal !== undefined) updates.isGlobal = String(input.isGlobal);
       if (input.enabled !== undefined) updates.enabled = String(input.enabled);
+      if (input.scope !== undefined) updates.scope = JSON.stringify(parseLorebookScope(input.scope));
       if (input.tags !== undefined) updates.tags = JSON.stringify(input.tags);
       if (input.generatedBy !== undefined) updates.generatedBy = input.generatedBy;
       if (input.sourceAgentId !== undefined) updates.sourceAgentId = input.sourceAgentId;
@@ -362,15 +392,16 @@ export function createLorebooksStorage(db: DB) {
         personaId?: string | null;
         personaIds?: string[];
         chatId?: string | null;
+        scope?: unknown;
         sourceAgentId?: string | null;
         excludeFromVectorization?: boolean;
       }>;
 
-      let relevantBooks = enabledBooks;
+      let relevantBooks = enabledBooks.filter((b) => isLorebookScopeActiveForChat(b.scope, filters?.chatId));
       if (filters) {
         const excludedLorebookIds = new Set(filters.excludedLorebookIds ?? []);
         const excludedSourceAgentIds = new Set(filters.excludedSourceAgentIds ?? []);
-        relevantBooks = enabledBooks.filter((b) => {
+        relevantBooks = relevantBooks.filter((b) => {
           if (excludedLorebookIds.has(b.id)) return false;
           if (b.sourceAgentId && excludedSourceAgentIds.has(b.sourceAgentId)) return false;
           // Globally active lorebooks bypass all scope filters

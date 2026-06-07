@@ -2,7 +2,7 @@
 // Panel: Lorebooks (overhauled)
 // Category tabs, search, click-to-edit, AI generate
 // ──────────────────────────────────────────────
-import { useState, useMemo, useCallback, useRef, type ChangeEvent } from "react";
+import { useState, useMemo, useCallback, useRef, type ChangeEvent, type DragEvent, type TouchEvent } from "react";
 import { toast } from "sonner";
 import {
   Plus,
@@ -11,18 +11,16 @@ import {
   Sparkles,
   BookOpen,
   Search,
-  Globe,
-  Users,
   UserRound,
-  Layers,
   ArrowUpDown,
   Tag,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
+  FolderPlus,
+  Pencil,
   X,
-  Wand2,
   Trash2,
-  Zap,
   Camera,
 } from "lucide-react";
 import { useUIStore } from "../../stores/ui.store";
@@ -34,23 +32,33 @@ import { showConfirmDialog } from "../../lib/app-dialogs";
 import { cn } from "../../lib/utils";
 import { api } from "../../lib/api-client";
 import { getChatCharacterIds } from "../../lib/chat-macros";
+import {
+  getNextUnnamedLibraryFolderName,
+  useCreateLibraryFolder,
+  useDeleteLibraryFolder,
+  useLibraryFolders,
+  useMoveLibraryItem,
+  useUpdateLibraryFolder,
+} from "../../hooks/use-library-folders";
 import { ExportFormatDialog, type ExportFormatChoice } from "../ui/ExportFormatDialog";
 
-const CATEGORIES: Array<{ id: LorebookCategory | "all" | "active"; label: string; icon: typeof Globe }> = [
-  { id: "all", label: "All", icon: Layers },
-  { id: "active", label: "Active", icon: Zap },
-  { id: "world", label: "World", icon: Globe },
-  { id: "character", label: "Character", icon: Users },
-  { id: "npc", label: "NPC", icon: UserRound },
-  { id: "spellbook", label: "Spellbook", icon: Wand2 },
-  { id: "uncategorized", label: "Other", icon: BookOpen },
+const CATEGORIES: Array<{ id: LorebookCategory | "all" | "active"; label: string }> = [
+  { id: "all", label: "All" },
+  { id: "active", label: "Active" },
+  { id: "world", label: "World" },
+  { id: "character", label: "Character" },
+  { id: "npc", label: "NPC" },
+  { id: "spellbook", label: "Spellbook" },
+  { id: "uncategorized", label: "Other" },
 ];
+const PRIMARY_CATEGORIES = CATEGORIES.filter((category) => category.id === "all" || category.id === "active");
+const TAGGED_CATEGORIES = CATEGORIES.filter((category) => category.id !== "all" && category.id !== "active");
 
 const CATEGORY_COLORS: Record<string, string> = {
-  world: "from-emerald-400 to-teal-500",
-  character: "from-violet-400 to-purple-500",
-  npc: "from-rose-400 to-pink-500",
-  spellbook: "from-blue-400 to-indigo-500",
+  world: "from-amber-400 to-orange-500",
+  character: "from-amber-400 to-orange-500",
+  npc: "from-amber-400 to-orange-500",
+  spellbook: "from-amber-400 to-orange-500",
   uncategorized: "from-amber-400 to-orange-500",
   all: "from-amber-400 to-orange-500",
 };
@@ -65,8 +73,14 @@ export function LorebooksPanel() {
   const [selectedLorebookIds, setSelectedLorebookIds] = useState<Set<string>>(new Set());
   const [exportingSelected, setExportingSelected] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [expandedFolderId, setExpandedFolderId] = useState<string | null>(null);
+  const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
+  const [editFolderName, setEditFolderName] = useState("");
+  const [draggedLorebookId, setDraggedLorebookId] = useState<string | null>(null);
   const lorebookImageInputRef = useRef<HTMLInputElement>(null);
   const imageTargetLorebookIdRef = useRef<string | null>(null);
+  const lorebookTouchDragRef = useRef<{ id: string; timer: number | null; active: boolean } | null>(null);
+  const suppressLorebookClickRef = useRef(false);
 
   // Active chat context for the "Active" filter
   const activeChat = useChatStore((s) => s.activeChat);
@@ -93,6 +107,11 @@ export function LorebooksPanel() {
   const deleteLorebook = useDeleteLorebook();
   const updateLorebook = useUpdateLorebook();
   const uploadLorebookImage = useUploadLorebookImage();
+  const { data: lorebookFolders = [] } = useLibraryFolders("lorebooks");
+  const createLorebookFolder = useCreateLibraryFolder("lorebooks");
+  const updateLorebookFolder = useUpdateLibraryFolder("lorebooks");
+  const deleteLorebookFolder = useDeleteLibraryFolder("lorebooks");
+  const moveLorebookItem = useMoveLibraryItem("lorebooks");
   const openModal = useUIStore((s) => s.openModal);
   const openLorebookDetail = useUIStore((s) => s.openLorebookDetail);
 
@@ -158,6 +177,8 @@ export function LorebooksPanel() {
     }
     return Array.from(tagSet).sort();
   }, [lorebooks]);
+  const categoryTagActive = activeCategory !== "all" && activeCategory !== "active";
+  const tagFilterActive = categoryTagActive || !!activeTag;
 
   const handleDeleteTag = useCallback(
     async (tag: string) => {
@@ -249,18 +270,33 @@ export function LorebooksPanel() {
     }
   }, [filtered, sort]);
 
+  const lorebookById = useMemo(() => new Map(sorted.map((lorebook) => [lorebook.id, lorebook])), [sorted]);
+
+  const folderedLorebookIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const folder of lorebookFolders) {
+      for (const id of folder.itemIds) ids.add(id);
+    }
+    return ids;
+  }, [lorebookFolders]);
+
+  const rootLorebooks = useMemo(
+    () => sorted.filter((lorebook) => !folderedLorebookIds.has(lorebook.id)),
+    [sorted, folderedLorebookIds],
+  );
+
   // Group by category for "all" view
   const grouped = useMemo(() => {
     if (activeCategory !== "all") return null;
     const map = new Map<string, Lorebook[]>();
-    for (const lb of sorted) {
+    for (const lb of rootLorebooks) {
       const cat = lb.category || "uncategorized";
       const list = map.get(cat) ?? [];
       list.push(lb);
       map.set(cat, list);
     }
     return map;
-  }, [sorted, activeCategory]);
+  }, [rootLorebooks, activeCategory]);
 
   const exitSelectionMode = useCallback(() => {
     setSelectionMode(false);
@@ -373,6 +409,153 @@ export function LorebooksPanel() {
       reader.readAsDataURL(file);
     },
     [uploadLorebookImage],
+  );
+
+  const handleCreateFolder = useCallback(() => {
+    createLorebookFolder.mutate(
+      { name: getNextUnnamedLibraryFolderName(lorebookFolders) },
+      {
+        onSuccess: (folder) => {
+          setExpandedFolderId(folder.id);
+        },
+      },
+    );
+  }, [createLorebookFolder, lorebookFolders]);
+
+  const handleRenameFolder = useCallback(
+    (folderId: string) => {
+      const name = editFolderName.trim();
+      if (!name) return;
+      updateLorebookFolder.mutate({ id: folderId, name });
+      setEditingFolderId(null);
+      setEditFolderName("");
+    },
+    [editFolderName, updateLorebookFolder],
+  );
+
+  const moveLorebookToFolder = useCallback(
+    (lorebookId: string, folderId: string | null) => {
+      moveLorebookItem.mutate({ itemId: lorebookId, folderId });
+    },
+    [moveLorebookItem],
+  );
+
+  const handleLorebookDrop = useCallback(
+    (folderId: string | null) => {
+      if (!draggedLorebookId) return;
+      moveLorebookToFolder(draggedLorebookId, folderId);
+      setDraggedLorebookId(null);
+    },
+    [draggedLorebookId, moveLorebookToFolder],
+  );
+
+  const startLorebookTouchDrag = useCallback(
+    (event: TouchEvent, lorebookId: string) => {
+      if (selectionMode) return;
+      const timer = window.setTimeout(() => {
+        lorebookTouchDragRef.current = { id: lorebookId, timer: null, active: true };
+        suppressLorebookClickRef.current = true;
+        setDraggedLorebookId(lorebookId);
+      }, 450);
+      lorebookTouchDragRef.current = { id: lorebookId, timer, active: false };
+      event.currentTarget.addEventListener(
+        "touchcancel",
+        () => {
+          const current = lorebookTouchDragRef.current;
+          if (current?.timer) window.clearTimeout(current.timer);
+          lorebookTouchDragRef.current = null;
+          setDraggedLorebookId(null);
+        },
+        { once: true },
+      );
+    },
+    [selectionMode],
+  );
+
+  const finishLorebookTouchDrag = useCallback(
+    (event: TouchEvent) => {
+      const current = lorebookTouchDragRef.current;
+      if (!current) return;
+      if (current.timer) window.clearTimeout(current.timer);
+      lorebookTouchDragRef.current = null;
+      if (!current.active) return;
+      const touch = event.changedTouches[0];
+      const target = touch ? document.elementFromPoint(touch.clientX, touch.clientY) : null;
+      const folderElement = target?.closest("[data-lorebook-folder-id]") as HTMLElement | null;
+      const rootElement = target?.closest("[data-lorebook-folder-root]") as HTMLElement | null;
+      if (folderElement?.dataset.lorebookFolderId) {
+        moveLorebookToFolder(current.id, folderElement.dataset.lorebookFolderId);
+      } else if (rootElement) {
+        moveLorebookToFolder(current.id, null);
+      }
+      setDraggedLorebookId(null);
+      window.setTimeout(() => {
+        suppressLorebookClickRef.current = false;
+      }, 0);
+    },
+    [moveLorebookToFolder],
+  );
+
+  const renderLorebookRow = useCallback(
+    (lb: Lorebook) => {
+      const combinedNames = [...getCharacterNames(lb), ...getPersonaNames(lb)].join(", ") || undefined;
+      return (
+        <LorebookRow
+          key={lb.id}
+          lorebook={lb}
+          characterName={combinedNames}
+          personaName={undefined}
+          onClick={() => {
+            if (suppressLorebookClickRef.current) return;
+            if (selectionMode) toggleSelection(lb.id);
+            else openLorebookDetail(lb.id);
+          }}
+          onDelete={async () => {
+            if (
+              await showConfirmDialog({
+                title: "Delete Lorebook",
+                message: `Delete "${lb.name}"? All entries will be lost.`,
+                confirmLabel: "Delete",
+                tone: "destructive",
+              })
+            ) {
+              deleteLorebook.mutate(lb.id);
+            }
+          }}
+          onImagePick={() => handlePickLorebookImage(lb.id)}
+          selectionMode={selectionMode}
+          isSelected={selectedLorebookIds.has(lb.id)}
+          onToggleSelect={() => toggleSelection(lb.id)}
+          draggable={!selectionMode}
+          isDragging={draggedLorebookId === lb.id}
+          onDragStart={(event) => {
+            if (selectionMode) {
+              event.preventDefault();
+              return;
+            }
+            setDraggedLorebookId(lb.id);
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData("text/plain", lb.id);
+          }}
+          onDragEnd={() => setDraggedLorebookId(null)}
+          onTouchStart={(event) => startLorebookTouchDrag(event, lb.id)}
+          onTouchEnd={finishLorebookTouchDrag}
+        />
+      );
+    },
+    [
+      deleteLorebook,
+      draggedLorebookId,
+      finishLorebookTouchDrag,
+      getCharacterNames,
+      getPersonaNames,
+      handlePickLorebookImage,
+      openLorebookDetail,
+      selectedLorebookIds,
+      selectionMode,
+      startLorebookTouchDrag,
+      toggleSelection,
+    ],
   );
 
   return (
@@ -512,10 +695,9 @@ export function LorebooksPanel() {
         </div>
       </div>
 
-      {/* Category tabs */}
+      {/* Filters */}
       <div className="flex flex-wrap gap-1">
-        {CATEGORIES.map((cat) => {
-          const Icon = cat.icon;
+        {PRIMARY_CATEGORIES.map((cat) => {
           const isActive = activeCategory === cat.id;
           return (
             <button
@@ -528,25 +710,58 @@ export function LorebooksPanel() {
                   : "text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]",
               )}
             >
-              <Icon size="0.75rem" />
               {cat.label}
             </button>
           );
         })}
+        <button
+          onClick={() => setTagsExpanded(!tagsExpanded)}
+          className={cn(
+            "flex items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-medium transition-all",
+            tagFilterActive
+              ? "bg-amber-400/15 text-amber-400 ring-1 ring-amber-400/30"
+              : "text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]",
+          )}
+          title={tagsExpanded ? "Collapse tags" : "Expand tags"}
+        >
+          <Tag size="0.6875rem" />
+          Tags
+          {tagsExpanded ? <ChevronUp size="0.625rem" /> : <ChevronDown size="0.625rem" />}
+        </button>
       </div>
 
-      {/* Tag filter */}
-      {allTags.length > 0 && (
+      {tagsExpanded && (
         <div className="flex flex-wrap items-center gap-1">
-          <button
-            onClick={() => setTagsExpanded(!tagsExpanded)}
-            className="flex items-center gap-1 rounded-lg px-1.5 py-1 text-[0.625rem] text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
-            title={tagsExpanded ? "Collapse tags" : "Expand tags"}
-          >
-            <Tag size="0.6875rem" />
-            {tagsExpanded ? <ChevronUp size="0.625rem" /> : <ChevronDown size="0.625rem" />}
-          </button>
-          {(tagsExpanded ? allTags : allTags.slice(0, 5)).map((tag) => (
+          {tagFilterActive && (
+            <button
+              onClick={() => {
+                setActiveCategory("all");
+                setActiveTag(null);
+              }}
+              className="flex items-center gap-1 rounded-full bg-[var(--destructive)]/10 px-2 py-0.5 text-[0.625rem] font-medium text-[var(--destructive)] transition-all hover:bg-[var(--destructive)]/20"
+            >
+              <X size="0.5rem" /> Clear
+            </button>
+          )}
+          {TAGGED_CATEGORIES.map((cat) => {
+            const isActive = activeCategory === cat.id;
+            return (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => setActiveCategory(isActive ? "all" : cat.id)}
+                className={cn(
+                  "flex cursor-pointer items-center gap-1 rounded-full px-2 py-0.5 text-[0.625rem] font-medium transition-all",
+                  isActive
+                    ? "bg-amber-400/20 text-amber-400 ring-1 ring-amber-400/30"
+                    : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                )}
+              >
+                {cat.label}
+              </button>
+            );
+          })}
+          {allTags.map((tag) => (
             <div
               key={tag}
               role="button"
@@ -559,10 +774,10 @@ export function LorebooksPanel() {
                 }
               }}
               className={cn(
-                "group/tag flex items-center gap-1 rounded-lg px-2 py-1 text-[0.625rem] font-medium transition-all cursor-pointer",
+                "group/tag flex cursor-pointer items-center gap-1 rounded-full px-2 py-0.5 text-[0.625rem] font-medium transition-all",
                 activeTag === tag
-                  ? "bg-amber-400/15 text-amber-400 ring-1 ring-amber-400/30"
-                  : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:text-[var(--foreground)]",
+                  ? "bg-amber-400/20 text-amber-400 ring-1 ring-amber-400/30"
+                  : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
               )}
             >
               {tag}
@@ -579,16 +794,124 @@ export function LorebooksPanel() {
               </button>
             </div>
           ))}
-          {!tagsExpanded && allTags.length > 5 && (
-            <button
-              onClick={() => setTagsExpanded(true)}
-              className="rounded-lg px-2 py-1 text-[0.625rem] text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
-            >
-              +{allTags.length - 5} more
-            </button>
-          )}
         </div>
       )}
+
+      <div className="flex flex-col gap-0.5">
+        <div className="flex items-center gap-1">
+          <button
+            onClick={handleCreateFolder}
+            className="flex flex-1 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[0.6875rem] text-[var(--muted-foreground)] transition-all hover:bg-[var(--sidebar-accent)]/40 hover:text-[var(--foreground)]"
+          >
+            <FolderPlus size="0.75rem" />
+            New Folder
+          </button>
+        </div>
+        {lorebookFolders.length > 0 && (
+          <p className="px-2.5 pb-1 text-[0.625rem] leading-snug text-[var(--muted-foreground)]/70">
+            Drag and drop lorebooks to folders.
+          </p>
+        )}
+        {lorebookFolders.map((folder) => {
+          const isExpanded = expandedFolderId === folder.id;
+          const isEditing = editingFolderId === folder.id;
+          const folderItems = folder.itemIds
+            .map((id) => lorebookById.get(id))
+            .filter((item): item is Lorebook => Boolean(item));
+          return (
+            <div
+              key={folder.id}
+              data-lorebook-folder-id={folder.id}
+              onDragOver={(event) => {
+                if (draggedLorebookId) {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                }
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                handleLorebookDrop(folder.id);
+              }}
+              className="flex flex-col rounded-lg transition-colors"
+            >
+              <div
+                className="group relative flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1.5 transition-all hover:bg-[var(--sidebar-accent)]/40"
+                onClick={() => setExpandedFolderId(isExpanded ? null : folder.id)}
+              >
+                <ChevronRight
+                  size="0.75rem"
+                  className={cn(
+                    "shrink-0 text-[var(--muted-foreground)] transition-transform",
+                    isExpanded && "rotate-90",
+                  )}
+                />
+                <div className="min-w-0 flex-1">
+                  {isEditing ? (
+                    <input
+                      autoFocus
+                      value={editFolderName}
+                      onChange={(event) => setEditFolderName(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") handleRenameFolder(folder.id);
+                        if (event.key === "Escape") {
+                          setEditingFolderId(null);
+                          setEditFolderName("");
+                        }
+                      }}
+                      onClick={(event) => event.stopPropagation()}
+                      onBlur={() => handleRenameFolder(folder.id)}
+                      className="w-full rounded bg-transparent px-1 py-0.5 text-xs font-medium outline-none ring-1 ring-amber-400/30"
+                    />
+                  ) : (
+                    <>
+                      <div className="truncate text-xs font-medium text-[var(--muted-foreground)]">{folder.name}</div>
+                    </>
+                  )}
+                </div>
+                {folder.itemIds.length > 0 && (
+                  <span className="shrink-0 text-[0.5625rem] text-[var(--muted-foreground)]">
+                    {folder.itemIds.length}
+                  </span>
+                )}
+                <div className="absolute right-2 top-1/2 flex -translate-y-1/2 shrink-0 items-center gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-[var(--border)] transition-opacity group-hover:opacity-100 max-md:opacity-100">
+                  <button
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setEditingFolderId(folder.id);
+                      setEditFolderName(folder.name);
+                    }}
+                    className="rounded-lg p-1 transition-colors hover:bg-[var(--accent)]"
+                    title="Rename folder"
+                  >
+                    <Pencil size="0.6875rem" />
+                  </button>
+                  <button
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      deleteLorebookFolder.mutate(folder.id);
+                      if (expandedFolderId === folder.id) setExpandedFolderId(null);
+                    }}
+                    className="rounded-lg p-1 transition-colors hover:bg-[var(--destructive)]/15"
+                    title="Delete folder"
+                  >
+                    <Trash2 size="0.6875rem" className="text-[var(--destructive)]" />
+                  </button>
+                </div>
+              </div>
+              {isExpanded && (
+                <div className="ml-4 flex flex-col gap-0.5 border-l border-[var(--border)]/20 pb-1 pl-1">
+                  {folderItems.length === 0 ? (
+                    <p className="py-2 text-[0.625rem] italic text-[var(--muted-foreground)]">Drop lorebooks here.</p>
+                  ) : (
+                    folderItems.map((lb) => renderLorebookRow(lb))
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
 
       {/* Loading */}
       {isLoading && (
@@ -613,85 +936,39 @@ export function LorebooksPanel() {
 
       {/* Lorebook list */}
       {!isLoading && sorted.length > 0 && (
-        <div className="stagger-children flex flex-col gap-1">
+        <div
+          data-lorebook-folder-root
+          onDragOver={(event) => {
+            if (draggedLorebookId) {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+            }
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            handleLorebookDrop(null);
+          }}
+          className={cn(
+            "stagger-children flex min-h-8 flex-col gap-1 rounded-xl transition-colors",
+            draggedLorebookId && "ring-1 ring-amber-400/20",
+          )}
+        >
           {activeCategory === "all" && grouped
             ? // Grouped view
               Array.from(grouped.entries()).map(([category, books]) => {
-                const catMeta = CATEGORIES.find((c) => c.id === category) ?? CATEGORIES[5];
-                const CatIcon = catMeta.icon;
+                const catMeta = CATEGORIES.find((c) => c.id === category) ?? CATEGORIES[6];
                 return (
                   <div key={category} className="mb-2">
                     <div className="mb-1 flex items-center gap-1.5 px-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
-                      <CatIcon size="0.6875rem" />
                       {catMeta.label}
                       <span className="ml-auto text-[0.625rem] font-normal">{books.length}</span>
                     </div>
-                    {books.map((lb) => {
-                      const combinedNames = [...getCharacterNames(lb), ...getPersonaNames(lb)].join(", ") || undefined;
-                      return (
-                        <LorebookRow
-                          key={lb.id}
-                          lorebook={lb}
-                          characterName={combinedNames}
-                          personaName={undefined}
-                          onClick={() => {
-                            if (selectionMode) toggleSelection(lb.id);
-                            else openLorebookDetail(lb.id);
-                          }}
-                          onDelete={async () => {
-                            if (
-                              await showConfirmDialog({
-                                title: "Delete Lorebook",
-                                message: `Delete "${lb.name}"? All entries will be lost.`,
-                                confirmLabel: "Delete",
-                                tone: "destructive",
-                              })
-                            ) {
-                              deleteLorebook.mutate(lb.id);
-                            }
-                          }}
-                          onImagePick={() => handlePickLorebookImage(lb.id)}
-                          selectionMode={selectionMode}
-                          isSelected={selectedLorebookIds.has(lb.id)}
-                          onToggleSelect={() => toggleSelection(lb.id)}
-                        />
-                      );
-                    })}
+                    {books.map((lb) => renderLorebookRow(lb))}
                   </div>
                 );
               })
             : // Flat view
-              sorted.map((lb: Lorebook) => {
-                const combinedNames = [...getCharacterNames(lb), ...getPersonaNames(lb)].join(", ") || undefined;
-                return (
-                  <LorebookRow
-                    key={lb.id}
-                    lorebook={lb}
-                    characterName={combinedNames}
-                    personaName={undefined}
-                    onClick={() => {
-                      if (selectionMode) toggleSelection(lb.id);
-                      else openLorebookDetail(lb.id);
-                    }}
-                    onDelete={async () => {
-                      if (
-                        await showConfirmDialog({
-                          title: "Delete Lorebook",
-                          message: `Delete "${lb.name}"? All entries will be lost.`,
-                          confirmLabel: "Delete",
-                          tone: "destructive",
-                        })
-                      ) {
-                        deleteLorebook.mutate(lb.id);
-                      }
-                    }}
-                    onImagePick={() => handlePickLorebookImage(lb.id)}
-                    selectionMode={selectionMode}
-                    isSelected={selectedLorebookIds.has(lb.id)}
-                    onToggleSelect={() => toggleSelection(lb.id)}
-                  />
-                );
-              })}
+              rootLorebooks.map((lb: Lorebook) => renderLorebookRow(lb))}
         </div>
       )}
     </div>
@@ -708,6 +985,12 @@ function LorebookRow({
   selectionMode,
   isSelected,
   onToggleSelect,
+  draggable,
+  isDragging,
+  onDragStart,
+  onDragEnd,
+  onTouchStart,
+  onTouchEnd,
 }: {
   lorebook: Lorebook;
   characterName?: string;
@@ -718,13 +1001,18 @@ function LorebookRow({
   selectionMode?: boolean;
   isSelected?: boolean;
   onToggleSelect?: () => void;
+  draggable?: boolean;
+  isDragging?: boolean;
+  onDragStart?: (event: DragEvent<HTMLDivElement>) => void;
+  onDragEnd?: () => void;
+  onTouchStart?: (event: TouchEvent<HTMLDivElement>) => void;
+  onTouchEnd?: (event: TouchEvent<HTMLDivElement>) => void;
 }) {
   const gradient = CATEGORY_COLORS[lorebook.category] ?? CATEGORY_COLORS.uncategorized;
-  const CatIcon = CATEGORIES.find((c) => c.id === lorebook.category)?.icon ?? BookOpen;
   const imageContent = lorebook.imagePath ? (
     <img src={lorebook.imagePath} alt="" className="h-full w-full object-cover" draggable={false} />
   ) : (
-    <CatIcon size="1rem" />
+    <BookOpen size="1rem" />
   );
   const imageClasses = cn(
     "relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl text-white shadow-sm",
@@ -736,8 +1024,14 @@ function LorebookRow({
       className={cn(
         "group relative flex cursor-pointer items-center gap-3 rounded-xl p-2.5 transition-all hover:bg-[var(--sidebar-accent)]",
         selectionMode && isSelected && "ring-1 ring-amber-400/40 bg-amber-400/10",
+        isDragging && "opacity-50",
       )}
       onClick={onClick}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
     >
       {selectionMode && (
         <button

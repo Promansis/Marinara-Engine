@@ -55,6 +55,18 @@ export function useUpdateConnection() {
   });
 }
 
+export function useUploadConnectionImage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, image }: { id: string; image: string }) =>
+      api.post<Record<string, unknown>>(`/connections/${id}/image`, { image }),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: connectionKeys.list() });
+      qc.invalidateQueries({ queryKey: connectionKeys.detail(variables.id) });
+    },
+  });
+}
+
 export function useDuplicateConnection() {
   const qc = useQueryClient();
   return useMutation({

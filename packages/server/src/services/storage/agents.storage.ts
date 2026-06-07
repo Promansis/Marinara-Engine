@@ -122,6 +122,7 @@ export function createAgentsStorage(db: DB) {
         phase: builtIn.phase,
         enabled: String(builtIn.enabledByDefault),
         connectionId: null,
+        imagePath: null,
         promptTemplate: "",
         settings: JSON.stringify(getDefaultBuiltInAgentSettings(builtIn.id)),
         createdAt: timestamp,
@@ -179,6 +180,7 @@ export function createAgentsStorage(db: DB) {
         phase: input.phase,
         enabled: String(input.enabled ?? true),
         connectionId: input.connectionId ?? null,
+        imagePath: input.imagePath ?? null,
         promptTemplate: input.promptTemplate ?? "",
         settings: JSON.stringify(settings),
         createdAt: timestamp,
@@ -194,6 +196,7 @@ export function createAgentsStorage(db: DB) {
       if (data.phase !== undefined) updateFields.phase = data.phase;
       if (data.enabled !== undefined) updateFields.enabled = String(data.enabled);
       if (data.connectionId !== undefined) updateFields.connectionId = data.connectionId;
+      if (data.imagePath !== undefined) updateFields.imagePath = data.imagePath;
       if (data.promptTemplate !== undefined) updateFields.promptTemplate = data.promptTemplate;
       if (data.settings !== undefined || data.resultType !== undefined) {
         if (data.settings !== undefined) {

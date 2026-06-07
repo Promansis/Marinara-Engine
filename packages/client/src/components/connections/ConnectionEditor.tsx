@@ -37,7 +37,7 @@ import {
   Globe,
   Key,
   Server,
-  Bot,
+  Sparkles,
   ChevronDown,
   ExternalLink,
   ImageIcon,
@@ -688,7 +688,7 @@ export function ConnectionEditor() {
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* ── Header ── */}
-      <div className="flex items-center gap-3 border-b border-[var(--border)] bg-[var(--card)] px-4 py-3">
+      <div className="flex items-center gap-3 border-b border-[var(--border)] px-4 py-3">
         <button
           onClick={handleClose}
           className="shrink-0 rounded-xl p-2 transition-all hover:bg-[var(--accent)] active:scale-95"
@@ -1697,7 +1697,7 @@ export function ConnectionEditor() {
           {/* ── Default for Agents ── */}
           <FieldGroup
             label={isImageGenerationProvider ? "Default for Illustrator" : "Default for Agents"}
-            icon={<Bot size="0.875rem" className="text-teal-400" />}
+            icon={<Sparkles size="0.875rem" className="text-sky-400" />}
             help={
               isImageGenerationProvider
                 ? "When enabled, the Illustrator agent will use this image generation connection by default whenever it does not have a specific Image Generation Connection assigned."
@@ -1715,7 +1715,7 @@ export function ConnectionEditor() {
                   }}
                   className="peer sr-only"
                 />
-                <div className="h-5 w-9 rounded-full bg-[var(--border)] transition-colors peer-checked:bg-teal-400/70" />
+                <div className="h-5 w-9 rounded-full bg-[var(--border)] transition-colors peer-checked:bg-sky-400/70" />
                 <div className="absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-4" />
               </div>
               <span className="text-sm">

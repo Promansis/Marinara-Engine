@@ -46,6 +46,7 @@ export const createAgentConfigSchema = z.object({
   phase: agentPhaseSchema,
   enabled: z.boolean().default(true),
   connectionId: z.string().nullable().default(null),
+  imagePath: z.string().nullable().default(null),
   resultType: agentResultTypeSchema.optional(),
   promptTemplate: z.string().default(""),
   settings: z.record(z.unknown()).default({}),
