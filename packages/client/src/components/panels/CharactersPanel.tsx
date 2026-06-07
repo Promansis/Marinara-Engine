@@ -42,6 +42,7 @@ import {
   MessageCircle,
   Wand2,
   Hash,
+  Star,
 } from "lucide-react";
 import { getCharacterTitle } from "../../lib/character-display";
 import { useUIStore } from "../../stores/ui.store";
@@ -186,9 +187,17 @@ export function CharactersPanel() {
   }, [characters]) as ParsedCharacterRow[];
 
   const charMap = useMemo(() => {
-    const map = new Map<string, { name: string; comment?: string | null; avatarPath: string | null }>();
+    const map = new Map<
+      string,
+      { name: string; comment?: string | null; avatarPath: string | null; isFavorite: boolean }
+    >();
     for (const c of parsedCharacters) {
-      map.set(c.id, { name: c.parsed.name ?? "Unknown", comment: c.comment, avatarPath: c.avatarPath });
+      map.set(c.id, {
+        name: c.parsed.name ?? "Unknown",
+        comment: c.comment,
+        avatarPath: c.avatarPath,
+        isFavorite: !!c.parsed.extensions?.fav,
+      });
     }
     return map;
   }, [parsedCharacters]);
@@ -1036,16 +1045,28 @@ export function CharactersPanel() {
                         }}
                         className="group/member flex cursor-pointer items-center gap-2 rounded-lg p-1.5 transition-all hover:bg-[var(--sidebar-accent)]"
                       >
-                        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg overflow-hidden bg-gradient-to-br from-pink-400 to-rose-500 text-white">
-                          {member.avatarPath ? (
-                            <img
-                              src={member.avatarPath}
-                              alt={member.name}
-                              loading="lazy"
-                              className="h-full w-full object-cover"
-                            />
-                          ) : (
-                            <User size="0.75rem" />
+                        <div className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-pink-400 to-rose-500 text-white">
+                          <div className="absolute inset-0 overflow-hidden rounded-lg">
+                            {member.avatarPath ? (
+                              <img
+                                src={member.avatarPath}
+                                alt={member.name}
+                                loading="lazy"
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center">
+                                <User size="0.75rem" />
+                              </div>
+                            )}
+                          </div>
+                          {member.isFavorite && (
+                            <div
+                              aria-hidden="true"
+                              className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[var(--background)] text-amber-300 shadow-sm ring-1 ring-[var(--border)]"
+                            >
+                              <Star size="0.5625rem" className="fill-current" />
+                            </div>
                           )}
                         </div>
                         <div className="min-w-0 flex-1">
@@ -1146,6 +1167,7 @@ export function CharactersPanel() {
           const charNameColor = (char.parsed.extensions?.nameColor as string) || undefined;
           const isSelected = chatCharacterIds.includes(char.id);
           const isBulkSelected = selectedCharacterIds.has(char.id);
+          const isFavorite = !!char.parsed.extensions?.fav;
           const avatarUrl = char.avatarPath;
           const previewMetadata = getCharacterPreviewMetadata(char);
           const tokenEstimate = estimateCharacterCardTokens(char.parsed);
@@ -1225,8 +1247,16 @@ export function CharactersPanel() {
                 ) : (
                   <User size="1rem" />
                 )}
+                {isFavorite && (
+                  <div
+                    aria-hidden="true"
+                    className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-[var(--background)] text-amber-300 shadow-sm ring-1 ring-[var(--border)]"
+                  >
+                    <Star size="0.625rem" className="fill-current" />
+                  </div>
+                )}
                 {isSelected && (
-                  <div className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-[var(--primary)] shadow-sm">
+                  <div className="absolute -left-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-[var(--primary)] shadow-sm">
                     <Check size="0.5625rem" className="text-white" />
                   </div>
                 )}
