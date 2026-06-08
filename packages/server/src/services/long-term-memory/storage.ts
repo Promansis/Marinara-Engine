@@ -10,7 +10,12 @@ import {
   type LtmNoteType,
 } from "@marinara-engine/shared";
 import { logger } from "../../lib/logger.js";
-import { appendJsonLineAtomic, readJsonFile, writeJsonAtomic } from "./atomic-json.js";
+import {
+  appendJsonLineAtomic,
+  createJsonFileExclusive,
+  readJsonFile,
+  writeJsonAtomic,
+} from "./atomic-json.js";
 import { DEFAULT_LTM_POLICIES, DEFAULT_LTM_RETRIEVAL_CONFIG } from "./default-config.js";
 import {
   getLongTermMemoryDirectories,
@@ -28,6 +33,8 @@ type LtmEventContext = {
   summary?: string;
   payload?: Record<string, unknown>;
 };
+
+const noteWriteLocks = new Map<string, Promise<void>>();
 
 export type LtmListNotesFilter = {
   type?: LtmNoteType;
@@ -62,6 +69,26 @@ function eventFor(type: string, target: string | undefined, context: LtmEventCon
     summary: context.summary,
     payload: context.payload ?? {},
   });
+}
+
+async function withNoteWriteLock<T>(path: string, operation: () => Promise<T>): Promise<T> {
+  const previous = noteWriteLocks.get(path) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(() => current, () => current);
+  noteWriteLocks.set(path, tail);
+
+  try {
+    await previous.catch(() => {});
+    return await operation();
+  } finally {
+    release();
+    if (noteWriteLocks.get(path) === tail) {
+      noteWriteLocks.delete(path);
+    }
+  }
 }
 
 export class LongTermMemoryStorage {
@@ -135,14 +162,16 @@ export class LongTermMemoryStorage {
       version: input.version ?? 1,
     });
     const path = notePathForId(note.id, note.type, this.root);
-    const existing = await this.getNote(note.id);
-    if (existing) {
-      throw new Error(`Long-term memory note already exists: ${note.id}`);
-    }
+    return withNoteWriteLock(path, async () => {
+      const existing = await this.getNote(note.id);
+      if (existing) {
+        throw new Error(`Long-term memory note already exists: ${note.id}`);
+      }
 
-    await this.appendEvent(eventFor(`${note.type}.created`, note.id, eventContext));
-    await writeJsonAtomic(path, note);
-    return note;
+      await createJsonFileExclusive(path, note);
+      await this.appendEvent(eventFor(`${note.type}.created`, note.id, eventContext));
+      return note;
+    });
   }
 
   async updateNote(id: string, patch: UpdateLtmNotePatch, eventContext: LtmEventContext = {}) {
@@ -205,22 +234,26 @@ export class LongTermMemoryStorage {
     eventType: string,
     eventContext: LtmEventContext,
   ) {
-    const timestamp = nowIso();
-    const next = ltmNoteSchema.parse({
-      ...existing,
-      ...patch,
-      scope: patch.scope ?? existing.scope,
-      links: patch.links ?? existing.links,
-      sections: patch.sections ?? existing.sections,
-      conflicts: patch.conflicts ?? existing.conflicts,
-      updatedAt: timestamp,
-      version: existing.version + 1,
-      previousHash: hashNote(existing),
-    });
+    const path = notePathForId(existing.id, existing.type, this.root);
+    return withNoteWriteLock(path, async () => {
+      const current = await this.getRequiredNote(existing.id);
+      const timestamp = nowIso();
+      const next = ltmNoteSchema.parse({
+        ...current,
+        ...patch,
+        scope: patch.scope ?? current.scope,
+        links: patch.links ?? current.links,
+        sections: patch.sections ?? current.sections,
+        conflicts: patch.conflicts ?? current.conflicts,
+        updatedAt: timestamp,
+        version: current.version + 1,
+        previousHash: hashNote(current),
+      });
 
-    await this.appendEvent(eventFor(eventType, existing.id, eventContext));
-    await writeJsonAtomic(notePathForId(next.id, next.type, this.root), next);
-    return next;
+      await writeJsonAtomic(path, next);
+      await this.appendEvent(eventFor(eventType, existing.id, eventContext));
+      return next;
+    });
   }
 }
 
