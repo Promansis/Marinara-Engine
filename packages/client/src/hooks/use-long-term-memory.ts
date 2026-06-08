@@ -70,6 +70,7 @@ export const longTermMemoryKeys = {
   status: () => [...longTermMemoryKeys.all, "status"] as const,
   integrity: () => [...longTermMemoryKeys.all, "integrity"] as const,
   notes: (filter?: LtmNoteFilter) => [...longTermMemoryKeys.all, "notes", filter ?? {}] as const,
+  note: (id: string) => [...longTermMemoryKeys.all, "notes", id] as const,
   drafts: (filter?: LtmDraftFilter) => [...longTermMemoryKeys.all, "drafts", filter ?? {}] as const,
   importPreview: (source: LtmInteropSource, limit: number) =>
     [...longTermMemoryKeys.all, "import-preview", source, limit] as const,
@@ -85,6 +86,16 @@ export type LtmDraftFilter = {
   status?: LtmDraftStatus;
   chatId?: string;
 };
+
+export type CreateLongTermMemoryNoteInput = Omit<
+  LtmNote,
+  "createdAt" | "updatedAt" | "version" | "previousHash"
+> &
+  Partial<Pick<LtmNote, "createdAt" | "updatedAt" | "version" | "previousHash">>;
+
+export type UpdateLongTermMemoryNoteInput = Partial<
+  Omit<LtmNote, "id" | "type" | "createdAt" | "updatedAt" | "version" | "previousHash">
+>;
 
 function qs(params: Record<string, string | undefined>) {
   const search = new URLSearchParams();
@@ -116,6 +127,49 @@ export function useLongTermMemoryNotes(filter: LtmNoteFilter = {}) {
     queryKey: longTermMemoryKeys.notes(filter),
     queryFn: () => api.get<LtmNote[]>(`/long-term-memory/notes${qs(filter)}`),
     staleTime: 30_000,
+  });
+}
+
+export function useLongTermMemoryNote(id?: string) {
+  return useQuery({
+    queryKey: longTermMemoryKeys.note(id ?? ""),
+    queryFn: () => api.get<LtmNote>(`/long-term-memory/notes/${id}`),
+    enabled: !!id,
+    staleTime: 30_000,
+  });
+}
+
+export function useCreateLongTermMemoryNote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: CreateLongTermMemoryNoteInput) => api.post<LtmNote>("/long-term-memory/notes", data),
+    onSuccess: (note) => {
+      qc.setQueryData(longTermMemoryKeys.note(note.id), note);
+      qc.invalidateQueries({ queryKey: longTermMemoryKeys.all });
+    },
+  });
+}
+
+export function useUpdateLongTermMemoryNote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: UpdateLongTermMemoryNoteInput }) =>
+      api.patch<LtmNote>(`/long-term-memory/notes/${id}`, patch),
+    onSuccess: (note) => {
+      qc.setQueryData(longTermMemoryKeys.note(note.id), note);
+      qc.invalidateQueries({ queryKey: longTermMemoryKeys.all });
+    },
+  });
+}
+
+export function useArchiveLongTermMemoryNote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete<{ archived: true; note: LtmNote }>(`/long-term-memory/notes/${id}`),
+    onSuccess: (result) => {
+      qc.setQueryData(longTermMemoryKeys.note(result.note.id), result.note);
+      qc.invalidateQueries({ queryKey: longTermMemoryKeys.all });
+    },
   });
 }
 

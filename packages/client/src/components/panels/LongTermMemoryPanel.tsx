@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
   AlertTriangle,
+  Archive,
+  ChevronDown,
   Check,
   DatabaseZap,
   FileJson,
@@ -9,6 +11,8 @@ import {
   History,
   Import,
   Loader2,
+  Pencil,
+  Plus,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -18,6 +22,7 @@ import {
 import type { LtmDraftStatus, LtmExtractionDraft, LtmNote, LtmNoteType, LtmStatus } from "@marinara-engine/shared";
 import {
   useAcceptLongTermMemoryDraft,
+  useArchiveLongTermMemoryNote,
   useCreateLongTermMemoryImportDrafts,
   useLongTermMemoryDrafts,
   useLongTermMemoryImportPreview,
@@ -33,6 +38,13 @@ import {
 import { useChatStore } from "../../stores/chat.store";
 import { useChat, useUpdateChatMetadata } from "../../hooks/use-chats";
 import { cn } from "../../lib/utils";
+import {
+  CreateLongTermMemoryNoteForm,
+  type CreateLongTermMemoryNoteDraft,
+} from "../long-term-memory/CreateLongTermMemoryNoteForm";
+import { LongTermMemoryNoteEditor } from "../long-term-memory/LongTermMemoryNoteEditor";
+import { SettingField } from "../long-term-memory/LtmFields";
+import { StatusPill, ToolButton } from "../long-term-memory/LtmPills";
 
 const NOTE_TYPES: Array<"all" | LtmNoteType> = [
   "all",
@@ -66,22 +78,6 @@ function parseMetadata(raw: unknown): Record<string, unknown> {
   }
 }
 
-function StatusPill({ label, tone = "neutral" }: { label: string; tone?: "neutral" | "good" | "warn" | "bad" }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-md border px-1.5 py-0.5 text-[0.625rem] font-medium leading-tight",
-        tone === "good" && "border-emerald-400/40 bg-emerald-500/10 text-emerald-200",
-        tone === "warn" && "border-amber-400/40 bg-amber-500/10 text-amber-200",
-        tone === "bad" && "border-rose-400/40 bg-rose-500/10 text-rose-200",
-        tone === "neutral" && "border-[var(--border)] bg-[var(--muted)]/40 text-[var(--muted-foreground)]",
-      )}
-    >
-      {label}
-    </span>
-  );
-}
-
 function SettingToggle({
   label,
   checked,
@@ -112,21 +108,6 @@ function SettingToggle({
   );
 }
 
-function SettingField({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">{label}</span>
-      {children}
-    </label>
-  );
-}
-
 function normalizeScopeIdentifier(value: string) {
   const normalized = value
     .trim()
@@ -145,35 +126,6 @@ function readScopeValue(metadata: Record<string, unknown>, key: "universe" | "rp
   return typeof value === "string" ? value : "";
 }
 
-function ToolButton({
-  onClick,
-  disabled,
-  children,
-  tone = "secondary",
-}: {
-  onClick: () => void;
-  disabled?: boolean;
-  children: ReactNode;
-  tone?: "primary" | "secondary" | "danger";
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className={cn(
-        "inline-flex min-h-8 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-50",
-        tone === "primary" && "bg-[var(--primary)] text-white hover:opacity-90",
-        tone === "secondary" &&
-          "bg-[var(--secondary)] text-[var(--foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
-        tone === "danger" &&
-          "bg-[var(--destructive)]/10 text-[var(--destructive)] ring-1 ring-[var(--destructive)]/25 hover:bg-[var(--destructive)]/15",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="border-b border-[var(--border)]/35 px-3 py-3 last:border-b-0">
@@ -183,7 +135,23 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function NoteRow({ note }: { note: LtmNote }) {
+function NoteRow({
+  note,
+  expanded,
+  onToggle,
+  onClose,
+  onArchive,
+  onDirtyChange,
+  onSaved,
+}: {
+  note: LtmNote;
+  expanded: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+  onArchive: () => void;
+  onDirtyChange: (dirty: boolean) => void;
+  onSaved: (note: LtmNote) => void;
+}) {
   const sectionCount = Object.keys(note.sections).length;
   return (
     <article className="rounded-lg bg-[var(--secondary)]/50 p-3 ring-1 ring-[var(--border)]">
@@ -196,9 +164,39 @@ function NoteRow({ note }: { note: LtmNote }) {
             <StatusPill label={`${sectionCount} sections`} />
           </div>
         </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={onArchive}
+            disabled={note.status === "archived"}
+            className="rounded-md p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)] disabled:cursor-not-allowed disabled:opacity-45"
+            aria-label={`Archive ${note.id}`}
+          >
+            <Archive size="0.875rem" />
+          </button>
+          <button
+            type="button"
+            onClick={onToggle}
+            className="rounded-md p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+            aria-label={`${expanded ? "Collapse" : "Edit"} ${note.id}`}
+          >
+            {expanded ? <ChevronDown size="0.875rem" /> : <Pencil size="0.875rem" />}
+          </button>
+        </div>
       </div>
       {note.tags.length > 0 && (
         <div className="mt-2 truncate text-[0.625rem] text-[var(--muted-foreground)]">Tags: {note.tags.join(", ")}</div>
+      )}
+      {expanded && (
+        <LongTermMemoryNoteEditor
+          note={note}
+          onCancel={onClose}
+          onDirtyChange={onDirtyChange}
+          onSaved={(saved) => {
+            onDirtyChange(false);
+            onSaved(saved);
+          }}
+        />
       )}
     </article>
   );
@@ -407,6 +405,11 @@ export function LongTermMemoryPanel() {
   const [query, setQuery] = useState("");
   const [importSource, setImportSource] = useState<LtmInteropSource>("characters");
   const [importLimit, setImportLimit] = useState(25);
+  const [creatingNote, setCreatingNote] = useState(false);
+  const [createNoteDraft, setCreateNoteDraft] = useState<CreateLongTermMemoryNoteDraft | null>(null);
+  const [createNoteDirty, setCreateNoteDirty] = useState(false);
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editedNoteDirty, setEditedNoteDirty] = useState(false);
 
   const status = useLongTermMemoryStatus();
   const integrity = useLongTermMemoryIntegrity();
@@ -420,6 +423,7 @@ export function LongTermMemoryPanel() {
   const replay = useReplayLongTermMemory();
   const repair = useRepairLongTermMemory();
   const createImports = useCreateLongTermMemoryImportDrafts();
+  const archiveNote = useArchiveLongTermMemoryNote();
 
   const filteredNotes = useMemo(() => {
     const list = notes.data ?? [];
@@ -435,6 +439,66 @@ export function LongTermMemoryPanel() {
 
   const filteredDrafts = drafts.data ?? [];
   const statusTone = integrity.data?.ok ? "good" : integrity.data ? "bad" : "neutral";
+  const editingNote = useMemo(
+    () => (editingNoteId ? (notes.data ?? []).find((note) => note.id === editingNoteId) ?? null : null),
+    [editingNoteId, notes.data],
+  );
+  const editedNoteFilteredOut = Boolean(editingNote && !filteredNotes.some((note) => note.id === editingNote.id));
+
+  const closeEditor = () => {
+    setEditingNoteId(null);
+    setEditedNoteDirty(false);
+  };
+
+  const closeCreateForm = () => {
+    setCreatingNote(false);
+    setCreateNoteDirty(false);
+    setCreateNoteDraft(null);
+  };
+
+  const confirmDiscardCreate = () => !createNoteDirty || confirm("Discard unsaved vault note draft?");
+
+  const confirmDiscardEditor = () => !editedNoteDirty || confirm("Discard unsaved vault note changes?");
+
+  const setTabWithGuards = (nextTab: TabId) => {
+    if (nextTab === tab) return;
+    if (creatingNote && !confirmDiscardCreate()) return;
+    if (editingNoteId && !confirmDiscardEditor()) return;
+    if (creatingNote) closeCreateForm();
+    if (editingNoteId) closeEditor();
+    setTab(nextTab);
+  };
+
+  const requestEditNote = (id: string) => {
+    if (editingNoteId === id) {
+      if (!confirmDiscardEditor()) return;
+      closeEditor();
+      return;
+    }
+    if (creatingNote && !confirmDiscardCreate()) return;
+    if (!confirmDiscardEditor()) return;
+    closeCreateForm();
+    setEditingNoteId(id);
+    setEditedNoteDirty(false);
+  };
+
+  const requestCreateNote = () => {
+    if (!confirmDiscardEditor()) return;
+    setEditingNoteId(null);
+    setEditedNoteDirty(false);
+    setCreatingNote(true);
+  };
+
+  const archiveFromRow = (note: LtmNote) => {
+    if (!confirm(`Archive ${note.id}?`)) return;
+    archiveNote
+      .mutateAsync(note.id)
+      .then((result) => {
+        toast.success("Vault note archived");
+        if (editingNoteId === result.note.id) closeEditor();
+      })
+      .catch((err: Error) => toast.error(err.message));
+  };
 
   return (
     <div className="min-h-full bg-[var(--background)] text-[var(--foreground)]">
@@ -460,7 +524,7 @@ export function LongTermMemoryPanel() {
         {(["notes", "drafts", "tools", "import"] as TabId[]).map((id) => (
           <button
             key={id}
-            onClick={() => setTab(id)}
+            onClick={() => setTabWithGuards(id)}
             className={cn(
               "min-w-0 rounded-lg px-2 py-2 text-xs font-medium capitalize transition-all active:scale-[0.98]",
               tab === id
@@ -475,14 +539,20 @@ export function LongTermMemoryPanel() {
 
       {tab === "notes" && (
         <Section title="Vault Notes">
-          <div className="mb-3 flex items-center gap-2 rounded-lg bg-[var(--secondary)] px-3 py-2 ring-1 ring-transparent transition-shadow focus-within:ring-[var(--primary)]">
-            <Search size="0.875rem" className="text-[var(--muted-foreground)]" />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search notes"
-              className="min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
-            />
+          <div className="mb-3 grid grid-cols-[1fr_auto] gap-2">
+            <div className="flex items-center gap-2 rounded-lg bg-[var(--secondary)] px-3 py-2 ring-1 ring-transparent transition-shadow focus-within:ring-[var(--primary)]">
+              <Search size="0.875rem" className="text-[var(--muted-foreground)]" />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search notes"
+                className="min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
+              />
+            </div>
+            <ToolButton onClick={requestCreateNote} disabled={creatingNote}>
+              <Plus size="0.875rem" />
+              New
+            </ToolButton>
           </div>
           <div className="mb-3 grid grid-cols-2 gap-2">
             <select
@@ -508,6 +578,37 @@ export function LongTermMemoryPanel() {
               ))}
             </select>
           </div>
+          {creatingNote && (
+            <CreateLongTermMemoryNoteForm
+              initialDraft={createNoteDraft}
+              onCancel={() => {
+                if (!confirmDiscardCreate()) return;
+                closeCreateForm();
+              }}
+              onDirtyChange={setCreateNoteDirty}
+              onDraftChange={setCreateNoteDraft}
+              onCreated={(note) => {
+                closeCreateForm();
+                setEditingNoteId(note.id);
+                setEditedNoteDirty(false);
+              }}
+            />
+          )}
+          {editedNoteFilteredOut && editingNote && (
+            <div className="mb-3 rounded-lg bg-amber-500/10 p-3 ring-1 ring-amber-400/30">
+              <div className="text-xs font-medium text-amber-100">Open note is hidden by filters</div>
+              <p className="mt-1 text-[0.6875rem] text-amber-100/80">It stays open here so unsaved edits are not lost.</p>
+              <LongTermMemoryNoteEditor
+                note={editingNote}
+                onCancel={closeEditor}
+                onDirtyChange={setEditedNoteDirty}
+                onSaved={(saved) => {
+                  setEditedNoteDirty(false);
+                  setEditingNoteId(saved.id);
+                }}
+              />
+            </div>
+          )}
           <div className="space-y-2">
             {notes.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
             {!notes.isLoading && filteredNotes.length === 0 && (
@@ -516,7 +617,19 @@ export function LongTermMemoryPanel() {
               </p>
             )}
             {filteredNotes.map((note) => (
-              <NoteRow key={note.id} note={note} />
+              <NoteRow
+                key={note.id}
+                note={note}
+                expanded={editingNoteId === note.id}
+                onToggle={() => requestEditNote(note.id)}
+                onClose={closeEditor}
+                onArchive={() => archiveFromRow(note)}
+                onDirtyChange={setEditedNoteDirty}
+                onSaved={(saved) => {
+                  setEditedNoteDirty(false);
+                  setEditingNoteId(saved.id);
+                }}
+              />
             ))}
           </div>
         </Section>
