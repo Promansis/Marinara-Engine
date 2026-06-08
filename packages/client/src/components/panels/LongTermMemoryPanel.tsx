@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -31,7 +31,7 @@ import {
   type LtmInteropSource,
 } from "../../hooks/use-long-term-memory";
 import { useChatStore } from "../../stores/chat.store";
-import { useUpdateChatMetadata } from "../../hooks/use-chats";
+import { useChat, useUpdateChatMetadata } from "../../hooks/use-chats";
 import { cn } from "../../lib/utils";
 
 const NOTE_TYPES: Array<"all" | LtmNoteType> = [
@@ -80,6 +80,64 @@ function StatusPill({ label, tone = "neutral" }: { label: string; tone?: "neutra
       {label}
     </span>
   );
+}
+
+function SettingToggle({
+  label,
+  checked,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex min-h-12 items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-[var(--card)]/70 p-3">
+      <span className="text-sm font-semibold text-[var(--foreground)]">{label}</span>
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+        className="h-4 w-4 shrink-0 accent-[var(--primary)]"
+      />
+    </label>
+  );
+}
+
+function SettingField({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-semibold text-[var(--muted-foreground)]">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function normalizeScopeIdentifier(value: string) {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/_+/g, "_");
+  if (!normalized) return "";
+  return /^[a-z]/.test(normalized) ? normalized : `scope_${normalized}`;
+}
+
+function readScopeValue(metadata: Record<string, unknown>, key: "universe" | "rpId") {
+  const scope = metadata.longTermMemoryScope;
+  if (!scope || typeof scope !== "object" || Array.isArray(scope)) return "";
+  const value = (scope as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : "";
 }
 
 function ToolButton({
@@ -189,11 +247,38 @@ function DraftRow({ draft }: { draft: LtmExtractionDraft }) {
 }
 
 function ChatMemorySettings() {
-  const activeChat = useChatStore((s) => s.activeChat);
+  const activeChatId = useChatStore((s) => s.activeChatId);
+  const cachedActiveChat = useChatStore((s) => s.activeChat);
+  const activeChatQuery = useChat(activeChatId);
+  const activeChat = activeChatQuery.data ?? cachedActiveChat;
   const updateMeta = useUpdateChatMetadata();
-  const metadata = parseMetadata(activeChat?.metadata);
+  const metadata = useMemo(() => parseMetadata(activeChat?.metadata), [activeChat?.metadata]);
+  const enabled = metadata.enableLongTermMemory === true;
+  const debug = metadata.longTermMemoryDebug === true;
   const autoExtract = metadata.longTermMemoryAutoExtract === true;
   const autoApplyLowRisk = metadata.longTermMemoryAutoApplyLowRisk === true;
+  const scopeUniverse = readScopeValue(metadata, "universe");
+  const scopeRpId = readScopeValue(metadata, "rpId");
+  const budgetValue =
+    typeof metadata.longTermMemoryBudgetTokens === "number" && Number.isFinite(metadata.longTermMemoryBudgetTokens)
+      ? Math.max(128, Math.min(16_384, Math.floor(metadata.longTermMemoryBudgetTokens)))
+      : 2048;
+  const [scopeDraft, setScopeDraft] = useState({
+    universe: scopeUniverse,
+    rpId: scopeRpId,
+  });
+  const [budgetDraft, setBudgetDraft] = useState(String(budgetValue));
+  const sliderBudget = Number.isFinite(Number(budgetDraft))
+    ? Math.max(128, Math.min(16_384, Math.floor(Number(budgetDraft))))
+    : budgetValue;
+
+  useEffect(() => {
+    setScopeDraft({
+      universe: scopeUniverse,
+      rpId: scopeRpId,
+    });
+    setBudgetDraft(String(budgetValue));
+  }, [activeChat?.id, budgetValue, scopeRpId, scopeUniverse]);
 
   if (!activeChat) {
     return <p className="text-sm text-[var(--muted-foreground)]">Open a chat to edit its long-term memory settings.</p>;
@@ -205,37 +290,103 @@ function ChatMemorySettings() {
       .then(() => toast.success("Chat memory settings updated"))
       .catch((err: Error) => toast.error(err.message));
 
+  const commitScope = (draft = scopeDraft) => {
+    const universe = normalizeScopeIdentifier(draft.universe);
+    const rpId = normalizeScopeIdentifier(draft.rpId);
+    setScopeDraft({ universe, rpId });
+    if (universe === scopeUniverse && rpId === scopeRpId) {
+      return Promise.resolve();
+    }
+    return patch({
+      longTermMemoryScope: {
+        ...(universe ? { universe } : {}),
+        ...(rpId ? { rpId } : {}),
+      },
+    });
+  };
+
+  const commitBudget = (value: string) => {
+    const numeric = Number(value);
+    const next = Number.isFinite(numeric) ? Math.max(128, Math.min(16_384, Math.floor(numeric))) : 2048;
+    setBudgetDraft(String(next));
+    if (next === budgetValue) return Promise.resolve();
+    return patch({ longTermMemoryBudgetTokens: next });
+  };
+
   return (
     <div className="space-y-3">
-      <label className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-[var(--card)]/70 p-3">
-        <span className="text-sm font-semibold text-[var(--foreground)]">Create drafts after replies</span>
-        <input
-          type="checkbox"
-          checked={autoExtract}
-          onChange={(event) =>
-            patch({
-              longTermMemoryAutoExtract: event.target.checked,
-              ...(event.target.checked ? {} : { longTermMemoryAutoApplyLowRisk: false }),
-            })
-          }
-          className="h-4 w-4 accent-[var(--primary)]"
-        />
-      </label>
-      <label className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-[var(--card)]/70 p-3">
-        <span className="text-sm font-semibold text-[var(--foreground)]">Auto-apply low-risk drafts</span>
-        <input
-          type="checkbox"
-          checked={autoExtract && autoApplyLowRisk}
-          disabled={!autoExtract}
-          onChange={(event) =>
-            patch({
-              longTermMemoryAutoExtract: true,
-              longTermMemoryAutoApplyLowRisk: event.target.checked,
-            })
-          }
-          className="h-4 w-4 accent-[var(--primary)]"
-        />
-      </label>
+      <SettingToggle label="Use memory in prompts" checked={enabled} onChange={(checked) => patch({ enableLongTermMemory: checked })} />
+
+      <div className="grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--card)]/70 p-3">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <SettingField label="Universe">
+            <input
+              value={scopeDraft.universe}
+              onChange={(event) => setScopeDraft((current) => ({ ...current, universe: event.target.value }))}
+              onBlur={() => commitScope()}
+              placeholder="shared_realm"
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]"
+            />
+          </SettingField>
+          <SettingField label="RP scope">
+            <input
+              value={scopeDraft.rpId}
+              onChange={(event) => setScopeDraft((current) => ({ ...current, rpId: event.target.value }))}
+              onBlur={() => commitScope()}
+              placeholder="main_story"
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]"
+            />
+          </SettingField>
+        </div>
+
+        <SettingField label="Token budget">
+          <div className="grid grid-cols-[1fr_5.5rem] items-center gap-3">
+            <input
+              type="range"
+              min={128}
+              max={16384}
+              step={128}
+              value={sliderBudget}
+              onChange={(event) => setBudgetDraft(event.target.value)}
+              onPointerUp={(event) => commitBudget((event.target as HTMLInputElement).value)}
+              className="min-w-0 accent-[var(--primary)]"
+            />
+            <input
+              type="number"
+              min={128}
+              max={16384}
+              step={128}
+              value={budgetDraft}
+              onChange={(event) => setBudgetDraft(event.target.value)}
+              onBlur={(event) => commitBudget(event.target.value)}
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-2 text-sm outline-none focus:border-[var(--primary)]"
+            />
+          </div>
+        </SettingField>
+      </div>
+
+      <SettingToggle label="Debug retrieval logs" checked={debug} onChange={(checked) => patch({ longTermMemoryDebug: checked })} />
+      <SettingToggle
+        label="Create drafts after replies"
+        checked={autoExtract}
+        onChange={(checked) =>
+          patch({
+            longTermMemoryAutoExtract: checked,
+            ...(checked ? {} : { longTermMemoryAutoApplyLowRisk: false }),
+          })
+        }
+      />
+      <SettingToggle
+        label="Auto-apply low-risk drafts"
+        checked={autoExtract && autoApplyLowRisk}
+        disabled={!autoExtract}
+        onChange={(checked) =>
+          patch({
+            longTermMemoryAutoExtract: true,
+            longTermMemoryAutoApplyLowRisk: checked,
+          })
+        }
+      />
     </div>
   );
 }
