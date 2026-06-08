@@ -151,6 +151,10 @@ import { eq } from "drizzle-orm";
 import { PROFESSOR_MARI_ID } from "@marinara-engine/shared";
 import { chunkAndEmbedMessages, embedMemoryRecallTexts, recallMemories } from "../services/memory-recall.js";
 import { resolveMemoryRecallEmbeddingSource } from "../services/memory-recall-embedding.js";
+import { retrieveLongTermMemory } from "../services/long-term-memory/retrieval.js";
+import { runLongTermMemoryExtraction, LongTermMemoryDraftStore } from "../services/long-term-memory/extraction.js";
+import { applyLongTermMemoryDraft, isLowRiskAutoApplyMutation } from "../services/long-term-memory/reconciliation.js";
+import { LongTermMemoryStorage } from "../services/long-term-memory/storage.js";
 import { postToDiscordWebhook } from "../services/discord-webhook.js";
 import {
   appendGenerationTailMessages,
@@ -273,6 +277,31 @@ function bumpCharacterVersion(value: unknown): string {
 
 function hasConversationSchedules(value: unknown): value is Record<string, any> {
   return !!value && typeof value === "object" && Object.keys(value as Record<string, unknown>).length > 0;
+}
+
+function normalizeLtmIdentifier(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(trimmed) ? trimmed : undefined;
+}
+
+function ltmModeForChatMode(mode: string): "conversation" | "roleplay" | "visual_novel" | "game" {
+  if (mode === "conversation" || mode === "game" || mode === "visual_novel") return mode;
+  return "roleplay";
+}
+
+function resolveLtmScope(chat: { id: string; groupId?: string | null; characterIds?: string[] }, chatMeta: Record<string, unknown>) {
+  const configuredScope =
+    chatMeta.longTermMemoryScope && typeof chatMeta.longTermMemoryScope === "object"
+      ? (chatMeta.longTermMemoryScope as Record<string, unknown>)
+      : {};
+  return {
+    chatId: chat.id,
+    ...(chat.groupId ? { groupId: chat.groupId } : {}),
+    ...(chat.characterIds?.length ? { characterIds: chat.characterIds } : {}),
+    ...(normalizeLtmIdentifier(configuredScope.universe) ? { universe: normalizeLtmIdentifier(configuredScope.universe) } : {}),
+    ...(normalizeLtmIdentifier(configuredScope.rpId) ? { rpId: normalizeLtmIdentifier(configuredScope.rpId) } : {}),
+  };
 }
 
 function parsePromptPresetChoices(value: unknown): Record<string, string | string[]> | null {
@@ -1776,6 +1805,7 @@ export async function generateRoutes(app: FastifyInstance) {
     // ── Discord webhook URL (parsed once, used for mirroring below) ──
     const discordWebhookUrl = typeof earlyMeta.discordWebhookUrl === "string" ? earlyMeta.discordWebhookUrl : "";
     let pendingUserDiscordMsg = "";
+    let savedUserMessageId: string | null = null;
 
     // Save user message — skip for impersonate (no real user message to save)
     if (!input.impersonate && (input.userMessage || input.attachments?.length)) {
@@ -1798,6 +1828,7 @@ export async function generateRoutes(app: FastifyInstance) {
         characterId: null,
         content: input.userMessage ?? "",
       });
+      savedUserMessageId = userMsg?.id ?? null;
       if (requestChatMode === "conversation") {
         recordUserActivity(input.chatId);
       }
@@ -8000,6 +8031,73 @@ export async function generateRoutes(app: FastifyInstance) {
             if (chatMode === "conversation" && !input.impersonate && !input.regenerateMessageId) {
               recordAssistantActivity(input.chatId, targetCharId ?? undefined);
               conversationAssistantSaved = true;
+            }
+
+            if (
+              chatMeta.longTermMemoryAutoExtract === true &&
+              !input.impersonate &&
+              !input.regenerateMessageId &&
+              savedMsg?.id &&
+              fullResponse.trim()
+            ) {
+              const ltmScope = resolveLtmScope({ id: input.chatId, groupId: chat.groupId, characterIds }, chatMeta);
+              const ltmModes = [ltmModeForChatMode(chatMode)];
+              const ltmSource = {
+                chatId: input.chatId,
+                ...(savedUserMessageId ? { userMessageId: savedUserMessageId } : {}),
+                assistantMessageId: savedMsg.id,
+              };
+              const shouldAutoApplyLowRisk = chatMeta.longTermMemoryAutoApplyLowRisk === true;
+              void (async () => {
+                try {
+                  const retrieval = await retrieveLongTermMemory({
+                    queryText: `${input.userMessage ?? ""}\n${fullResponse}`,
+                    recentUserMessage: input.userMessage ?? undefined,
+                    scope: ltmScope,
+                    characterIds,
+                    maxChunks: 8,
+                    maxTokens: 1800,
+                    embeddingSource: memoryRecallEmbeddingSource ?? undefined,
+                  });
+                  const existingNotes = await Promise.all(
+                    Array.from(new Set(retrieval.chunks.map((result) => result.chunk.noteId))).map((noteId) =>
+                      new LongTermMemoryStorage().getNote(noteId),
+                    ),
+                  );
+                  const extraction = await runLongTermMemoryExtraction({
+                    provider,
+                    model: conn.model,
+                    userMessage: input.userMessage ?? "",
+                    assistantReply: fullResponse,
+                    scope: ltmScope,
+                    modes: ltmModes,
+                    source: ltmSource,
+                    existingNotes: existingNotes.filter((note): note is NonNullable<typeof note> => Boolean(note)),
+                    signal: abortController.signal,
+                  });
+                  if (extraction.mutations.length === 0) return;
+                  const canAutoApplyDraft =
+                    shouldAutoApplyLowRisk && extraction.mutations.every(isLowRiskAutoApplyMutation);
+                  const draft = await new LongTermMemoryDraftStore().createDraft({
+                    userMessage: input.userMessage ?? "",
+                    assistantReply: fullResponse,
+                    scope: ltmScope,
+                    modes: ltmModes,
+                    source: ltmSource,
+                    response: extraction,
+                  });
+                  if (canAutoApplyDraft) {
+                    await applyLongTermMemoryDraft(draft.id, {
+                      actor: "auto_low_risk",
+                      autoApplyLowRiskOnly: true,
+                    });
+                  }
+                } catch (err) {
+                  if (!abortController.signal.aborted) {
+                    logger.warn(err, "[ltm] Long-term memory extraction skipped after generation");
+                  }
+                }
+              })();
             }
 
             // Persist thinking/reasoning and generation info

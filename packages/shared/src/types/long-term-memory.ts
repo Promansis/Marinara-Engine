@@ -1,6 +1,8 @@
 export type {
   LtmConflict,
   LtmEvent,
+  LtmExtractionDraft,
+  LtmExtractionResponse,
   LtmGate,
   LtmIndexMetadata,
   LtmLink,
@@ -13,4 +15,9 @@ export type {
   LtmScope,
   LtmSection,
   LtmStatus,
+  LtmDraftMutation,
+  LtmDraftNoteInput,
+  LtmDraftRisk,
+  LtmDraftSource,
+  LtmDraftStatus,
 } from "../schemas/long-term-memory.schema.js";

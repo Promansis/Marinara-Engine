@@ -196,6 +196,12 @@ export interface ChatMetadata {
   manualTrackers?: boolean;
   /** Whether to recall memories from this chat during generation. Default: true for conversation/scenes, false for roleplay. */
   enableMemoryRecall?: boolean;
+  /** Optional local long-term memory universe/RP scope for this chat. */
+  longTermMemoryScope?: { universe?: string; rpId?: string };
+  /** When true, save draft long-term memory mutations after generated turns. Default: false. */
+  longTermMemoryAutoExtract?: boolean;
+  /** When true with longTermMemoryAutoExtract, auto-apply only low-risk extraction mutations. Default: false. */
+  longTermMemoryAutoApplyLowRisk?: boolean;
   /** Discord webhook URL to mirror messages to a Discord channel. */
   discordWebhookUrl?: string;
   /** Per-chat ephemeral / enabled overrides for lorebook entries (entryId → state).

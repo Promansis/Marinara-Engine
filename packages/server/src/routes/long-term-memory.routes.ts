@@ -5,6 +5,8 @@ import { readFile, stat } from "node:fs/promises";
 import type { FastifyInstance } from "fastify";
 import {
   ltmConflictSchema,
+  ltmDraftStatusSchema,
+  ltmExtractionResponseSchema,
   ltmGateSchema,
   ltmIndexMetadataSchema,
   ltmIsoTimestampSchema,
@@ -27,11 +29,14 @@ import {
   LTM_DIR_NAME,
   safeJoin,
 } from "../services/long-term-memory/paths.js";
+import { LongTermMemoryDraftStore } from "../services/long-term-memory/extraction.js";
 import { rebuildLongTermMemoryIndexes, type LtmEmbeddingIndex } from "../services/long-term-memory/rebuild.js";
+import { applyLongTermMemoryDraft, rejectLongTermMemoryDraft } from "../services/long-term-memory/reconciliation.js";
 import { retrieveLongTermMemory } from "../services/long-term-memory/retrieval.js";
 import { LongTermMemoryStorage } from "../services/long-term-memory/storage.js";
 
 const NOTE_BODY_LIMIT_BYTES = 512 * 1024;
+const DRAFT_BODY_LIMIT_BYTES = 512 * 1024;
 const SEARCH_BODY_LIMIT_BYTES = 128 * 1024;
 const REBUILD_BODY_LIMIT_BYTES = 8 * 1024;
 
@@ -81,6 +86,40 @@ const updateNoteBodySchema = z
   .refine((value) => Object.keys(value).length > 0, "Patch body must include at least one updatable field.");
 
 const rebuildBodySchema = z.object({}).strict().default({});
+
+const draftIdParamSchema = z.object({ id: z.string().uuid() }).strict();
+
+const listDraftsQuerySchema = z
+  .object({
+    status: ltmDraftStatusSchema.optional(),
+    chatId: z.string().min(1).max(120).optional(),
+  })
+  .strict();
+
+const createDraftBodySchema = z
+  .object({
+    source: z
+      .object({
+        chatId: z.string().min(1).max(120).optional(),
+        userMessageId: z.string().min(1).max(120).optional(),
+        assistantMessageId: z.string().min(1).max(120).optional(),
+        turn: z.number().int().min(0).optional(),
+      })
+      .strict()
+      .default({}),
+    scope: ltmScopeSchema.default({}),
+    modes: z.array(ltmModeSchema).min(1).max(8),
+    summary: z.string().max(2_000).optional(),
+    response: ltmExtractionResponseSchema,
+  })
+  .strict();
+
+const rejectDraftBodySchema = z
+  .object({
+    reason: z.string().max(1_000).optional(),
+  })
+  .strict()
+  .default({});
 
 const searchBodySchema = z
   .object({
@@ -165,6 +204,7 @@ function summarizeNotes(notes: LtmNote[]) {
 
 export async function longTermMemoryRoutes(app: FastifyInstance) {
   const storage = new LongTermMemoryStorage();
+  const draftStore = new LongTermMemoryDraftStore();
 
   app.get("/status", async () => {
     await storage.initializeLtmStore();
@@ -287,6 +327,66 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
         ...result,
         warnings: result.warnings.map(sanitizeStorageText),
       };
+    },
+  );
+
+  app.get<{ Querystring: unknown }>("/drafts", async (req) => {
+    const query = listDraftsQuerySchema.parse(req.query);
+    return draftStore.listDrafts(query);
+  });
+
+  app.get<{ Params: { id: string } }>("/drafts/:id", async (req, reply) => {
+    const { id } = draftIdParamSchema.parse(req.params);
+    const draft = await draftStore.getDraft(id);
+    if (!draft) return reply.status(404).send({ error: "Long-term memory draft not found" });
+    return draft;
+  });
+
+  app.post<{ Body: unknown }>(
+    "/drafts",
+    { bodyLimit: DRAFT_BODY_LIMIT_BYTES },
+    async (req, reply) => {
+      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft creation" })) return;
+      const body = createDraftBodySchema.parse(req.body);
+      const draft = await draftStore.createDraft({
+        source: body.source,
+        scope: body.scope,
+        modes: body.modes,
+        summary: body.summary,
+        response: body.response,
+        userMessage: "",
+        assistantReply: "",
+      });
+      return reply.status(201).send(draft);
+    },
+  );
+
+  app.post<{ Params: { id: string } }>("/drafts/:id/accept", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft acceptance" })) return;
+    const { id } = draftIdParamSchema.parse(req.params);
+    try {
+      return await applyLongTermMemoryDraft(id, { actor: "maintenance_api" });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to apply long-term memory draft";
+      const status = message.includes("not found") ? 404 : message.includes("not pending") ? 409 : 400;
+      return reply.status(status).send({ error: message });
+    }
+  });
+
+  app.post<{ Params: { id: string }; Body: unknown }>(
+    "/drafts/:id/reject",
+    { bodyLimit: REBUILD_BODY_LIMIT_BYTES },
+    async (req, reply) => {
+      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft rejection" })) return;
+      const { id } = draftIdParamSchema.parse(req.params);
+      const body = rejectDraftBodySchema.parse(req.body ?? {});
+      try {
+        return await rejectLongTermMemoryDraft(id, { reason: body.reason });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to reject long-term memory draft";
+        const status = message.includes("not found") ? 404 : message.includes("not pending") ? 409 : 400;
+        return reply.status(status).send({ error: message });
+      }
     },
   );
 }

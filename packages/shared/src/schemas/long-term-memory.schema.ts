@@ -242,6 +242,126 @@ export const ltmIndexMetadataSchema = z
   })
   .strict();
 
+export const ltmDraftStatusSchema = z.enum(["pending", "accepted", "rejected", "auto_applied"]);
+
+export const ltmDraftRiskSchema = z.enum(["low", "medium", "high"]);
+
+export const ltmDraftSourceSchema = z
+  .object({
+    chatId: z.string().min(1).max(120).optional(),
+    userMessageId: z.string().min(1).max(120).optional(),
+    assistantMessageId: z.string().min(1).max(120).optional(),
+    turn: z.number().int().min(0).optional(),
+  })
+  .strict();
+
+export const ltmDraftNoteInputSchema = z
+  .object({
+    id: ltmNoteIdSchema,
+    type: ltmNoteTypeSchema,
+    status: ltmStatusSchema.default("active"),
+    modes: z.array(ltmModeSchema).min(1).max(8),
+    scope: ltmScopeSchema.default({}),
+    tags: z.array(ltmIdentifierSchema).max(100).default([]),
+    createdAt: ltmIsoTimestampSchema.optional(),
+    updatedAt: ltmIsoTimestampSchema.optional(),
+    links: z.array(ltmLinkSchema).max(250).default([]),
+    sections: z.record(ltmSectionKeySchema, ltmSectionSchema),
+    conflicts: z.array(ltmConflictSchema).max(250).optional(),
+    version: z.number().int().min(1).optional(),
+    previousHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  })
+  .strict()
+  .superRefine((note, ctx) => {
+    const allowedPrefixes = idPrefixesByType[note.type];
+    if (!allowedPrefixes.some((prefix) => note.id === prefix || note.id.startsWith(prefix))) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["id"],
+        message: `ID for ${note.type} notes must start with ${allowedPrefixes.join(" or ")}.`,
+      });
+    }
+  });
+
+const ltmDraftMutationBaseSchema = z.object({
+  id: z.string().uuid(),
+  risk: ltmDraftRiskSchema.default("medium"),
+  confidence: z.number().finite().min(0).max(1).default(0.5),
+  summary: z.string().min(1).max(1_000),
+  evidence: z.array(z.string().min(1).max(240)).min(1).max(20),
+});
+
+export const ltmDraftMutationSchema = z.discriminatedUnion("kind", [
+  ltmDraftMutationBaseSchema
+    .extend({
+      kind: z.literal("create_note"),
+      note: ltmDraftNoteInputSchema,
+    })
+    .strict(),
+  ltmDraftMutationBaseSchema
+    .extend({
+      kind: z.literal("append_section"),
+      noteId: ltmNoteIdSchema,
+      sectionKey: ltmSectionKeySchema,
+      text: z.string().min(1).max(20_000),
+      salience: z.number().finite().min(0).max(1).optional(),
+      gates: z.array(ltmGateSchema).max(8).optional(),
+    })
+    .strict(),
+  ltmDraftMutationBaseSchema
+    .extend({
+      kind: z.literal("update_section"),
+      noteId: ltmNoteIdSchema,
+      sectionKey: ltmSectionKeySchema,
+      section: ltmSectionSchema,
+    })
+    .strict(),
+  ltmDraftMutationBaseSchema
+    .extend({
+      kind: z.literal("add_link"),
+      noteId: ltmNoteIdSchema,
+      link: ltmLinkSchema,
+    })
+    .strict(),
+  ltmDraftMutationBaseSchema
+    .extend({
+      kind: z.literal("set_status"),
+      noteId: ltmNoteIdSchema,
+      status: ltmStatusSchema,
+    })
+    .strict(),
+  ltmDraftMutationBaseSchema
+    .extend({
+      kind: z.literal("flag_conflict"),
+      noteId: ltmNoteIdSchema,
+      conflict: ltmConflictSchema,
+    })
+    .strict(),
+]);
+
+export const ltmExtractionDraftSchema = z
+  .object({
+    id: z.string().uuid(),
+    status: ltmDraftStatusSchema.default("pending"),
+    createdAt: ltmIsoTimestampSchema,
+    updatedAt: ltmIsoTimestampSchema,
+    source: ltmDraftSourceSchema.default({}),
+    scope: ltmScopeSchema.default({}),
+    modes: z.array(ltmModeSchema).min(1).max(8),
+    summary: z.string().max(2_000).default(""),
+    mutations: z.array(ltmDraftMutationSchema).min(1).max(25),
+    rejectedReason: z.string().max(1_000).optional(),
+    appliedAt: ltmIsoTimestampSchema.optional(),
+  })
+  .strict();
+
+export const ltmExtractionResponseSchema = z
+  .object({
+    summary: z.string().max(2_000).default(""),
+    mutations: z.array(ltmDraftMutationSchema).max(25).default([]),
+  })
+  .strict();
+
 export type LtmNoteType = z.infer<typeof ltmNoteTypeSchema>;
 export type LtmStatus = z.infer<typeof ltmStatusSchema>;
 export type LtmMode = z.infer<typeof ltmModeSchema>;
@@ -256,3 +376,10 @@ export type LtmPolicy = z.infer<typeof ltmPolicySchema>;
 export type LtmPoliciesConfig = z.infer<typeof ltmPoliciesConfigSchema>;
 export type LtmRetrievalConfig = z.infer<typeof ltmRetrievalConfigSchema>;
 export type LtmIndexMetadata = z.infer<typeof ltmIndexMetadataSchema>;
+export type LtmDraftStatus = z.infer<typeof ltmDraftStatusSchema>;
+export type LtmDraftRisk = z.infer<typeof ltmDraftRiskSchema>;
+export type LtmDraftSource = z.infer<typeof ltmDraftSourceSchema>;
+export type LtmDraftNoteInput = z.infer<typeof ltmDraftNoteInputSchema>;
+export type LtmDraftMutation = z.infer<typeof ltmDraftMutationSchema>;
+export type LtmExtractionDraft = z.infer<typeof ltmExtractionDraftSchema>;
+export type LtmExtractionResponse = z.infer<typeof ltmExtractionResponseSchema>;
