@@ -9,8 +9,9 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import { Check, GripHorizontal, X } from "lucide-react";
+import { Check, Eye, GripHorizontal, ListChecks, List, Pencil, X } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { applyInlineMarkdown, renderMarkdownBlocks } from "../../lib/markdown";
 
 interface FloatingMessageEditorProps {
   open: boolean;
@@ -18,6 +19,7 @@ interface FloatingMessageEditorProps {
   initialContent: string;
   fontSize?: string | number;
   normalizeQuotes?: boolean;
+  showFormatting?: boolean;
   onSave: (content: string) => void;
   onCancel: () => void;
 }
@@ -38,6 +40,17 @@ const CHAT_INPUT_GAP = 84;
 
 function quoteNormalized(value: string): string {
   return value.replace(/[\u201C\u201D\u201E\u201F]/g, '"').replace(/[\u2018\u2019]/g, "'");
+}
+
+function getTextareaValue(textarea: HTMLTextAreaElement) {
+  return textarea.value;
+}
+
+function setTextareaValue(textarea: HTMLTextAreaElement, value: string, selectionStart: number, selectionEnd = selectionStart) {
+  textarea.value = value;
+  textarea.focus();
+  textarea.setSelectionRange(selectionStart, selectionEnd);
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 function getDefaultLayout(): PanelLayout {
@@ -78,6 +91,7 @@ export const FloatingMessageEditor = memo(function FloatingMessageEditor({
   initialContent,
   fontSize,
   normalizeQuotes = false,
+  showFormatting = false,
   onSave,
   onCancel,
 }: FloatingMessageEditorProps) {
@@ -87,12 +101,17 @@ export const FloatingMessageEditor = memo(function FloatingMessageEditor({
   const [layout, setLayout] = useState<PanelLayout>(() => getDefaultLayout());
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
+  const [previewMode, setPreviewMode] = useState(false);
+  const [editorContent, setEditorContent] = useState(initialContent);
 
   useEffect(() => {
     if (!open) return;
+    const nextContent = normalizeQuotes ? quoteNormalized(initialContent) : initialContent;
+    setPreviewMode(false);
+    setEditorContent(nextContent);
     setLayout((current) => constrainLayout(current));
     requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }));
-  }, [open]);
+  }, [initialContent, normalizeQuotes, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -122,8 +141,42 @@ export const FloatingMessageEditor = memo(function FloatingMessageEditor({
   );
 
   const handleSave = useCallback(() => {
-    onSave(textareaRef.current?.value ?? "");
-  }, [onSave]);
+    onSave(textareaRef.current?.value ?? editorContent);
+  }, [editorContent, onSave]);
+
+  const insertTextFormat = useCallback((before: string, after = before) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart ?? textarea.value.length;
+    const end = textarea.selectionEnd ?? start;
+    const value = getTextareaValue(textarea);
+    const selected = value.slice(start, end);
+    const insert = `${before}${selected}${after}`;
+    setTextareaValue(textarea, `${value.slice(0, start)}${insert}${value.slice(end)}`, start + before.length, start + before.length + selected.length);
+    setEditorContent(textarea.value);
+  }, []);
+
+  const applyLineFormat = useCallback((marker: string) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart ?? textarea.value.length;
+    const end = textarea.selectionEnd ?? start;
+    const value = getTextareaValue(textarea);
+    const lineStart = value.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+    const lineEndIndex = value.indexOf("\n", end);
+    const lineEnd = lineEndIndex === -1 ? value.length : lineEndIndex;
+    const block = value.slice(lineStart, lineEnd);
+    const lines = block.split("\n");
+    const next = lines
+      .map((line) => {
+        if (!line.trim()) return `${marker}`;
+        if (/^\s*[-*]\s+/.test(line)) return line;
+        return `${marker}${line}`;
+      })
+      .join("\n");
+    setTextareaValue(textarea, `${value.slice(0, lineStart)}${next}${value.slice(lineEnd)}`, lineStart, lineStart + next.length);
+    setEditorContent(textarea.value);
+  }, []);
 
   const startDrag = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
@@ -233,23 +286,68 @@ export const FloatingMessageEditor = memo(function FloatingMessageEditor({
             <Check size="0.95rem" />
           </button>
         </header>
-        <textarea
-          ref={textareaRef}
-          defaultValue={normalizeQuotes ? quoteNormalized(initialContent) : initialContent}
-          spellCheck
-          className="min-h-0 flex-1 resize-none border-0 bg-[var(--background)] p-3 text-[var(--foreground)] outline-none focus:shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--primary)_28%,transparent)]"
-          style={{ fontSize, lineHeight: 1.5 }}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              onCancel();
-            }
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-              event.preventDefault();
-              handleSave();
-            }
-          }}
-        />
+        {showFormatting && (
+          <div className="flex items-center justify-between gap-1 border-b border-[var(--border)]/70 bg-[color-mix(in_srgb,var(--card)_82%,var(--background))] px-2 py-1">
+            <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
+              <button type="button" onClick={() => insertTextFormat("**")} disabled={previewMode} title="Bold selected text" className="inline-flex min-h-5 min-w-6 items-center justify-center rounded-md border border-[var(--border)]/70 bg-[var(--secondary)]/35 px-1.5 text-[0.625rem] font-black text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] disabled:opacity-40">
+                B
+              </button>
+              <button type="button" onClick={() => insertTextFormat("*")} disabled={previewMode} title="Italicize selected text" className="inline-flex min-h-5 min-w-6 items-center justify-center rounded-md border border-[var(--border)]/70 bg-[var(--secondary)]/35 px-1.5 text-[0.625rem] font-bold italic text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] disabled:opacity-40">
+                I
+              </button>
+              <button type="button" onClick={() => insertTextFormat("__")} disabled={previewMode} title="Underline selected text" className="inline-flex min-h-5 min-w-6 items-center justify-center rounded-md border border-[var(--border)]/70 bg-[var(--secondary)]/35 px-1.5 text-[0.625rem] font-bold text-[var(--muted-foreground)] underline underline-offset-2 hover:bg-[var(--secondary)] hover:text-[var(--foreground)] disabled:opacity-40">
+                U
+              </button>
+              <button type="button" onClick={() => insertTextFormat("~~")} disabled={previewMode} title="Strikethrough selected text" className="inline-flex min-h-5 min-w-6 items-center justify-center rounded-md border border-[var(--border)]/70 bg-[var(--secondary)]/35 px-1.5 text-[0.625rem] font-bold text-[var(--muted-foreground)] line-through hover:bg-[var(--secondary)] hover:text-[var(--foreground)] disabled:opacity-40">
+                S
+              </button>
+              <button type="button" onClick={() => applyLineFormat("- ")} disabled={previewMode} title="Add bullet list item" className="inline-flex min-h-5 min-w-6 items-center justify-center rounded-md border border-[var(--border)]/70 bg-[var(--secondary)]/35 text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] disabled:opacity-40">
+                <List size="0.75rem" />
+              </button>
+              <button type="button" onClick={() => applyLineFormat("- [ ] ")} disabled={previewMode} title="Add checklist item" className="inline-flex min-h-5 min-w-6 items-center justify-center rounded-md border border-[var(--border)]/70 bg-[var(--secondary)]/35 text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] disabled:opacity-40">
+                <ListChecks size="0.75rem" />
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const nextPreviewMode = !previewMode;
+                if (nextPreviewMode) setEditorContent(textareaRef.current?.value ?? editorContent);
+                setPreviewMode(nextPreviewMode);
+              }}
+              title={previewMode ? "Preview mode. Switch to edit" : "Edit mode. Switch to preview"}
+              aria-pressed={previewMode}
+              className="inline-flex min-h-5 min-w-12 items-center justify-center gap-1 rounded-full border border-[color-mix(in_srgb,var(--primary)_38%,var(--border))] bg-[var(--secondary)]/45 px-1.5 text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
+            >
+              <Pencil size="0.7rem" className={cn(!previewMode && "text-[var(--foreground)]")} />
+              <Eye size="0.7rem" className={cn(previewMode && "text-[var(--foreground)]")} />
+            </button>
+          </div>
+        )}
+        {previewMode ? (
+          <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--background)] p-3 text-[var(--foreground)]" style={{ fontSize, lineHeight: 1.5 }}>
+            {renderMarkdownBlocks(editorContent, applyInlineMarkdown, "floating-editor-preview")}
+          </div>
+        ) : (
+          <textarea
+            ref={textareaRef}
+            value={editorContent}
+            spellCheck
+            className="min-h-0 flex-1 resize-none border-0 bg-[var(--background)] p-3 text-[var(--foreground)] outline-none focus:shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--primary)_28%,transparent)]"
+            style={{ fontSize, lineHeight: 1.5 }}
+            onChange={(event) => setEditorContent(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                onCancel();
+              }
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                handleSave();
+              }
+            }}
+          />
+        )}
         <div
           aria-hidden="true"
           title="Resize editor"

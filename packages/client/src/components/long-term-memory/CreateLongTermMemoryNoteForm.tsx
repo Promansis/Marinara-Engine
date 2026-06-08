@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Loader2, Plus, X } from "lucide-react";
+import { Loader2, Pencil, Plus, X } from "lucide-react";
 import type { Chat, LtmMode, LtmNote, LtmNoteType } from "@marinara-engine/shared";
 import { useChat } from "../../hooks/use-chats";
 import { useCreateLongTermMemoryNote } from "../../hooks/use-long-term-memory";
 import { useChatStore } from "../../stores/chat.store";
-import { compactInputClassName, SettingField, textareaClassName } from "./LtmFields";
+import { cn } from "../../lib/utils";
+import { FloatingMessageEditor } from "../chat/FloatingMessageEditor";
+import { compactInputClassName, SettingField } from "./LtmFields";
 import { ToolButton } from "./LtmPills";
 import {
   allowedIdPrefixesByType,
@@ -102,6 +104,7 @@ export function CreateLongTermMemoryNoteForm({
     [activeChat, defaultMode, metadataScope],
   );
   const [draft, setDraft] = useState<CreateLongTermMemoryNoteDraft>(initialDraft ?? defaultDraft);
+  const [summaryEditorOpen, setSummaryEditorOpen] = useState(false);
   const dirty = useMemo(() => serializedCreateDraft(draft) !== serializedCreateDraft(defaultDraft), [defaultDraft, draft]);
   const { type, id, status, modes, tagsText, scopeDraft, sectionKey, sectionText } = draft;
 
@@ -300,11 +303,30 @@ export function CreateLongTermMemoryNoteForm({
               className={compactInputClassName}
             />
           </SettingField>
-          <textarea
-            value={sectionText}
-            onChange={(event) => setDraft((current) => ({ ...current, sectionText: event.target.value }))}
-            placeholder="Section text"
-            className={textareaClassName}
+          <button
+            type="button"
+            onClick={() => setSummaryEditorOpen(true)}
+            className="group/summary flex min-h-24 w-full flex-col rounded-lg bg-[var(--background)] px-3 py-2 text-left text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/35 focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
+          >
+            <span className="mb-2 inline-flex items-center gap-1.5 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+              <Pencil size="0.75rem" />
+              Edit summary
+            </span>
+            <span className={cn("line-clamp-4 whitespace-pre-wrap", !sectionText.trim() && "text-[var(--muted-foreground)]/70")}>
+              {sectionText.trim() || "No summary text yet."}
+            </span>
+          </button>
+          <FloatingMessageEditor
+            open={summaryEditorOpen}
+            title="Edit vault summary"
+            initialContent={sectionText}
+            fontSize={13}
+            showFormatting
+            onSave={(content) => {
+              setDraft((current) => ({ ...current, sectionText: content }));
+              setSummaryEditorOpen(false);
+            }}
+            onCancel={() => setSummaryEditorOpen(false)}
           />
         </div>
 

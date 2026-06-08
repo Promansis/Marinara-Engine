@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Archive, Loader2, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
+import { Archive, Loader2, Pencil, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
 import type { LtmGate, LtmLink, LtmMode, LtmNote, LtmSection } from "@marinara-engine/shared";
 import {
   useArchiveLongTermMemoryNote,
@@ -8,6 +8,7 @@ import {
   useUpdateLongTermMemoryNote,
 } from "../../hooks/use-long-term-memory";
 import { cn } from "../../lib/utils";
+import { FloatingMessageEditor } from "../chat/FloatingMessageEditor";
 import { compactInputClassName, SettingField, textareaClassName } from "./LtmFields";
 import { ToolButton } from "./LtmPills";
 import {
@@ -49,6 +50,7 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
   const [tagsText, setTagsText] = useState(note.tags.join(", "));
   const [characterIdsText, setCharacterIdsText] = useState(joinIdentifierList(note.scope.characterIds));
   const [linkDraft, setLinkDraft] = useState<LtmLink>({ target: "", relation: "" });
+  const [floatingSectionKey, setFloatingSectionKey] = useState<string | null>(null);
   const updateNote = useUpdateLongTermMemoryNote();
   const archiveNote = useArchiveLongTermMemoryNote();
   const rebuild = useRebuildLongTermMemory();
@@ -189,6 +191,8 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
     setDraft((current) => ({ ...current, links: [...current.links, { target, relation }] }));
     setLinkDraft({ target: "", relation: "" });
   };
+
+  const floatingSection = floatingSectionKey ? draft.sections[floatingSectionKey] : null;
 
   return (
     <div className="mt-3 rounded-lg bg-[var(--card)] p-3 ring-1 ring-[var(--border)]">
@@ -335,16 +339,19 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
                   <Trash2 size="0.875rem" />
                 </button>
               </div>
-              <textarea
-                value={section.text}
-                onChange={(event) =>
-                  setSection(key, (current) => ({
-                    ...current,
-                    text: event.target.value,
-                  }))
-                }
-                className={textareaClassName}
-              />
+              <button
+                type="button"
+                onClick={() => setFloatingSectionKey(key)}
+                className="group/summary flex min-h-24 w-full flex-col rounded-lg bg-[var(--background)] px-3 py-2 text-left text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/35 focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
+              >
+                <span className="mb-2 inline-flex items-center gap-1.5 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                  <Pencil size="0.75rem" />
+                  Edit summary
+                </span>
+                <span className={cn("line-clamp-4 whitespace-pre-wrap", !section.text.trim() && "text-[var(--muted-foreground)]/70")}>
+                  {section.text.trim() || "No summary text yet."}
+                </span>
+              </button>
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
                 <input
                   type="number"
@@ -406,6 +413,23 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
               </div>
             </section>
           ))}
+          {floatingSectionKey && floatingSection && (
+            <FloatingMessageEditor
+              open
+              title={`Edit ${floatingSectionKey}`}
+              initialContent={floatingSection.text}
+              fontSize={13}
+              showFormatting
+              onSave={(content) => {
+                setSection(floatingSectionKey, (current) => ({
+                  ...current,
+                  text: content,
+                }));
+                setFloatingSectionKey(null);
+              }}
+              onCancel={() => setFloatingSectionKey(null)}
+            />
+          )}
         </div>
 
         <div className="space-y-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
