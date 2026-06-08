@@ -3,7 +3,6 @@ import { toast } from "sonner";
 import {
   AlertTriangle,
   Archive,
-  ChevronDown,
   Check,
   DatabaseZap,
   FileJson,
@@ -45,6 +44,7 @@ import {
 import { LongTermMemoryNoteEditor } from "../long-term-memory/LongTermMemoryNoteEditor";
 import { SettingField } from "../long-term-memory/LtmFields";
 import { StatusPill, ToolButton } from "../long-term-memory/LtmPills";
+import { Modal } from "../ui/Modal";
 
 const NOTE_TYPES: Array<"all" | LtmNoteType> = [
   "all",
@@ -137,20 +137,14 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 function NoteRow({
   note,
-  expanded,
-  onToggle,
-  onClose,
+  editing,
+  onEdit,
   onArchive,
-  onDirtyChange,
-  onSaved,
 }: {
   note: LtmNote;
-  expanded: boolean;
-  onToggle: () => void;
-  onClose: () => void;
+  editing: boolean;
+  onEdit: () => void;
   onArchive: () => void;
-  onDirtyChange: (dirty: boolean) => void;
-  onSaved: (note: LtmNote) => void;
 }) {
   const sectionCount = Object.keys(note.sections).length;
   return (
@@ -176,27 +170,19 @@ function NoteRow({
           </button>
           <button
             type="button"
-            onClick={onToggle}
-            className="rounded-md p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-            aria-label={`${expanded ? "Collapse" : "Edit"} ${note.id}`}
+            onClick={onEdit}
+            className={cn(
+              "rounded-md p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+              editing && "bg-[var(--accent)] text-[var(--foreground)]",
+            )}
+            aria-label={`Edit ${note.id}`}
           >
-            {expanded ? <ChevronDown size="0.875rem" /> : <Pencil size="0.875rem" />}
+            <Pencil size="0.875rem" />
           </button>
         </div>
       </div>
       {note.tags.length > 0 && (
         <div className="mt-2 truncate text-[0.625rem] text-[var(--muted-foreground)]">Tags: {note.tags.join(", ")}</div>
-      )}
-      {expanded && (
-        <LongTermMemoryNoteEditor
-          note={note}
-          onCancel={onClose}
-          onDirtyChange={onDirtyChange}
-          onSaved={(saved) => {
-            onDirtyChange(false);
-            onSaved(saved);
-          }}
-        />
       )}
     </article>
   );
@@ -444,6 +430,7 @@ export function LongTermMemoryPanel() {
     [editingNoteId, notes.data],
   );
   const editedNoteFilteredOut = Boolean(editingNote && !filteredNotes.some((note) => note.id === editingNote.id));
+  const editingNoteHiddenByFilters = Boolean(editedNoteFilteredOut && editingNote);
 
   const closeEditor = () => {
     setEditingNoteId(null);
@@ -471,8 +458,6 @@ export function LongTermMemoryPanel() {
 
   const requestEditNote = (id: string) => {
     if (editingNoteId === id) {
-      if (!confirmDiscardEditor()) return;
-      closeEditor();
       return;
     }
     if (creatingNote && !confirmDiscardCreate()) return;
@@ -483,6 +468,7 @@ export function LongTermMemoryPanel() {
   };
 
   const requestCreateNote = () => {
+    if (creatingNote) return;
     if (!confirmDiscardEditor()) return;
     setEditingNoteId(null);
     setEditedNoteDirty(false);
@@ -578,7 +564,38 @@ export function LongTermMemoryPanel() {
               ))}
             </select>
           </div>
-          {creatingNote && (
+          {editingNoteHiddenByFilters && (
+            <div className="mb-3 rounded-lg bg-amber-500/10 p-3 ring-1 ring-amber-400/30">
+              <div className="text-xs font-medium text-amber-100">Open note is hidden by filters</div>
+              <p className="mt-1 text-[0.6875rem] text-amber-100/80">The editor stays open so unsaved edits are not lost.</p>
+            </div>
+          )}
+          <div className="space-y-2">
+            {notes.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
+            {!notes.isLoading && filteredNotes.length === 0 && (
+              <p className="rounded-lg bg-[var(--secondary)]/50 p-3 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                No matching notes.
+              </p>
+            )}
+            {filteredNotes.map((note) => (
+              <NoteRow
+                key={note.id}
+                note={note}
+                editing={editingNoteId === note.id}
+                onEdit={() => requestEditNote(note.id)}
+                onArchive={() => archiveFromRow(note)}
+              />
+            ))}
+          </div>
+          <Modal
+            open={creatingNote}
+            onClose={() => {
+              if (!confirmDiscardCreate()) return;
+              closeCreateForm();
+            }}
+            title="New Vault Note"
+            width="max-w-3xl"
+          >
             <CreateLongTermMemoryNoteForm
               initialDraft={createNoteDraft}
               onCancel={() => {
@@ -593,11 +610,17 @@ export function LongTermMemoryPanel() {
                 setEditedNoteDirty(false);
               }}
             />
-          )}
-          {editedNoteFilteredOut && editingNote && (
-            <div className="mb-3 rounded-lg bg-amber-500/10 p-3 ring-1 ring-amber-400/30">
-              <div className="text-xs font-medium text-amber-100">Open note is hidden by filters</div>
-              <p className="mt-1 text-[0.6875rem] text-amber-100/80">It stays open here so unsaved edits are not lost.</p>
+          </Modal>
+          <Modal
+            open={Boolean(editingNote)}
+            onClose={() => {
+              if (!confirmDiscardEditor()) return;
+              closeEditor();
+            }}
+            title={editingNote ? `Edit ${editingNote.id}` : "Edit Vault Note"}
+            width="max-w-4xl"
+          >
+            {editingNote && (
               <LongTermMemoryNoteEditor
                 note={editingNote}
                 onCancel={closeEditor}
@@ -607,31 +630,8 @@ export function LongTermMemoryPanel() {
                   setEditingNoteId(saved.id);
                 }}
               />
-            </div>
-          )}
-          <div className="space-y-2">
-            {notes.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
-            {!notes.isLoading && filteredNotes.length === 0 && (
-              <p className="rounded-lg bg-[var(--secondary)]/50 p-3 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-                No matching notes.
-              </p>
             )}
-            {filteredNotes.map((note) => (
-              <NoteRow
-                key={note.id}
-                note={note}
-                expanded={editingNoteId === note.id}
-                onToggle={() => requestEditNote(note.id)}
-                onClose={closeEditor}
-                onArchive={() => archiveFromRow(note)}
-                onDirtyChange={setEditedNoteDirty}
-                onSaved={(saved) => {
-                  setEditedNoteDirty(false);
-                  setEditingNoteId(saved.id);
-                }}
-              />
-            ))}
-          </div>
+          </Modal>
         </Section>
       )}
 

@@ -49,9 +49,29 @@ export type CreateLongTermMemoryNoteDraft = {
 };
 
 function readLtmScopeMetadata(chat: Chat | null | undefined) {
-  const scope = chat?.metadata.longTermMemoryScope;
+  const metadata =
+    chat?.metadata && typeof chat.metadata === "object" && !Array.isArray(chat.metadata)
+      ? (chat.metadata as Record<string, unknown>)
+      : {};
+  const scope = metadata.longTermMemoryScope;
   if (!scope || typeof scope !== "object" || Array.isArray(scope)) return {};
   return scope as { universe?: string; rpId?: string };
+}
+
+function readChatCharacterIds(chat: Chat | null | undefined) {
+  const raw = chat?.characterIds as unknown;
+  if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
+  if (typeof raw !== "string" || !raw.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+  } catch {
+    return raw
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
 }
 
 function createDefaultDraft({
@@ -74,7 +94,7 @@ function createDefaultDraft({
       rpId: metadataScope.rpId ?? "",
       chatId: activeChat?.id ?? "",
       groupId: activeChat?.groupId ?? "",
-      characterIdsText: activeChat?.characterIds.join(", ") ?? "",
+      characterIdsText: readChatCharacterIds(activeChat).join(", "),
     },
     sectionKey: defaultSectionKeyForType("scene"),
     sectionText: "",
