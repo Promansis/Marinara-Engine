@@ -349,6 +349,7 @@ function ChatMemorySettings() {
               value={sliderBudget}
               onChange={(event) => setBudgetDraft(event.target.value)}
               onPointerUp={(event) => commitBudget((event.target as HTMLInputElement).value)}
+              onBlur={(event) => commitBudget(event.target.value)}
               className="min-w-0 accent-[var(--primary)]"
             />
             <input
