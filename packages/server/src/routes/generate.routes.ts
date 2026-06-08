@@ -152,6 +152,8 @@ import { PROFESSOR_MARI_ID } from "@marinara-engine/shared";
 import { chunkAndEmbedMessages, embedMemoryRecallTexts, recallMemories } from "../services/memory-recall.js";
 import { resolveMemoryRecallEmbeddingSource } from "../services/memory-recall-embedding.js";
 import { retrieveLongTermMemory } from "../services/long-term-memory/retrieval.js";
+import type { LtmBudgetedChunk } from "../services/long-term-memory/budget.js";
+import { recordLongTermMemoryInjection } from "../services/long-term-memory/usage.js";
 import { runLongTermMemoryExtraction, LongTermMemoryDraftStore } from "../services/long-term-memory/extraction.js";
 import { applyLongTermMemoryDraft, isLowRiskAutoApplyMutation } from "../services/long-term-memory/reconciliation.js";
 import { LongTermMemoryStorage } from "../services/long-term-memory/storage.js";
@@ -302,6 +304,29 @@ function resolveLtmScope(chat: { id: string; groupId?: string | null; characterI
     ...(normalizeLtmIdentifier(configuredScope.universe) ? { universe: normalizeLtmIdentifier(configuredScope.universe) } : {}),
     ...(normalizeLtmIdentifier(configuredScope.rpId) ? { rpId: normalizeLtmIdentifier(configuredScope.rpId) } : {}),
   };
+}
+
+function parseLongTermMemoryBudgetTokens(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return Math.max(128, Math.min(16_384, Math.floor(value)));
+}
+
+function formatLongTermMemoryBlock(chunks: LtmBudgetedChunk[]) {
+  const lines = [
+    "<long_term_memory>",
+    "Use these local memory notes for continuity. Treat them as private context unless the scene makes disclosure natural.",
+  ];
+
+  chunks.forEach((item, index) => {
+    const reasonText = item.reasons.length > 0 ? ` reasons:${item.reasons.join(",")}` : "";
+    lines.push(
+      `--- Memory ${index + 1} | tier:${item.tier} | note:${item.chunk.noteId} | section:${item.chunk.sectionKey}${reasonText} ---`,
+      item.chunk.text.trim(),
+    );
+  });
+
+  lines.push("</long_term_memory>");
+  return lines.join("\n");
 }
 
 function parsePromptPresetChoices(value: unknown): Record<string, string | string[]> | null {
@@ -5224,6 +5249,74 @@ export async function generateRoutes(app: FastifyInstance) {
         const baseGameStateSnapshot = latestGameState;
         const allowLatestGameStateFallback = !input.regenerateMessageId;
         const gameState = latestGameState ? parseGameStateRow(latestGameState as Record<string, unknown>) : null;
+
+        // ── Long-term memory: opt-in local retrieval before final context fitting ──
+        if (chatMeta.enableLongTermMemory === true) {
+          const _tLtm = Date.now();
+          try {
+            const lastUserMsg = [...currentInputMessages()].reverse().find((message) => message.role === "user");
+            const generationGuideText =
+              typeof input.generationGuide === "string" && input.generationGuide.trim()
+                ? `Generation guide:\n${input.generationGuide.trim()}`
+                : "";
+            const gameStateQuery =
+              chatMode === "game" && gameState ? `Game state:\n${JSON.stringify(gameState).slice(0, 4_000)}` : "";
+            const ltmQueryText = [
+              lastUserMsg?.content ?? input.userMessage ?? "",
+              charInfo.length > 0 ? `Active characters: ${charInfo.map((character) => character.name).join(", ")}` : "",
+              lorebookGenerationTriggers.length > 0
+                ? `Generation triggers: ${lorebookGenerationTriggers.join(", ")}`
+                : "",
+              generationGuideText,
+              gameStateQuery,
+            ]
+              .filter((part) => part.trim().length > 0)
+              .join("\n\n");
+            const retrieval = await retrieveLongTermMemory({
+              queryText: ltmQueryText,
+              recentUserMessage: lastUserMsg?.content ?? input.userMessage ?? undefined,
+              mentionedCharacterNames: [
+                ...charInfo.map((character) => character.name),
+                ...((input.mentionedCharacterNames as string[] | undefined) ?? []),
+              ],
+              scope: resolveLtmScope(
+                { id: input.chatId, groupId: chat.groupId, characterIds: promptCharacterIds },
+                chatMeta,
+              ),
+              characterIds: promptCharacterIds,
+              maxTokens: parseLongTermMemoryBudgetTokens(chatMeta.longTermMemoryBudgetTokens),
+              embeddingSource: memoryRecallEmbeddingSource ?? undefined,
+            });
+
+            if (retrieval.chunks.length > 0) {
+              const ltmBlock = formatLongTermMemoryBlock(retrieval.chunks);
+              const firstUserIdx = finalMessages.findIndex((message) => message.role === "user" || message.role === "assistant");
+              const insertAt = firstUserIdx >= 0 ? firstUserIdx : finalMessages.length;
+              finalMessages.splice(insertAt, 0, { role: "system" as const, content: ltmBlock, contextKind: "injection" });
+              try {
+                await recordLongTermMemoryInjection(retrieval.chunks);
+              } catch (err) {
+                logger.warn(err, "[ltm] Failed to record long-term memory usage after prompt injection");
+              }
+              logger.debug(
+                "[ltm] Injected %d long-term memory chunks (~%d/%d tokens) into chat %s",
+                retrieval.chunks.length,
+                retrieval.usedTokens,
+                retrieval.maxTokens,
+                input.chatId,
+              );
+            } else if (chatMeta.longTermMemoryDebug === true || requestDebug) {
+              logger.debug(
+                "[ltm] No long-term memory chunks injected for chat %s%s",
+                input.chatId,
+                retrieval.warnings.length > 0 ? `; warnings: ${retrieval.warnings.join("; ")}` : "",
+              );
+            }
+          } catch (err) {
+            logger.warn(err, "[ltm] Retrieval failed during generation; skipping long-term memory injection");
+          }
+          logger.debug("[timing] Long-term memory retrieval: %dms", Date.now() - _tLtm);
+        }
 
         // Build base agent context (without mainResponse — that comes after generation)
         // Fetch enough history for the hungriest agent — individual agents trim to their own contextSize.

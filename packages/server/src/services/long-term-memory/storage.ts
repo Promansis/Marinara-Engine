@@ -32,6 +32,7 @@ type LtmEventContext = {
   cause?: string;
   summary?: string;
   payload?: Record<string, unknown>;
+  suppressEvent?: boolean;
 };
 
 const noteWriteLocks = new Map<string, Promise<void>>();
@@ -57,7 +58,12 @@ function hashNote(note: LtmNote) {
   return createHash("sha256").update(JSON.stringify(note)).digest("hex");
 }
 
-function eventFor(type: string, target: string | undefined, context: LtmEventContext = {}): LtmEvent {
+function eventFor(
+  type: string,
+  target: string | undefined,
+  context: LtmEventContext = {},
+  payload: Record<string, unknown> = {},
+): LtmEvent {
   return ltmEventSchema.parse({
     id: randomUUID(),
     ts: nowIso(),
@@ -67,7 +73,7 @@ function eventFor(type: string, target: string | undefined, context: LtmEventCon
     turn: context.turn,
     cause: context.cause,
     summary: context.summary,
-    payload: context.payload ?? {},
+    payload: { ...(context.payload ?? {}), ...payload },
   });
 }
 
@@ -169,8 +175,10 @@ export class LongTermMemoryStorage {
         throw new Error(`Long-term memory note already exists: ${note.id}`);
       }
 
+      if (!eventContext.suppressEvent) {
+        await this.appendEvent(eventFor(`${note.type}.created`, note.id, eventContext, { note }));
+      }
       await createJsonFileExclusive(path, note);
-      await this.appendEvent(eventFor(`${note.type}.created`, note.id, eventContext));
       return note;
     });
   }
@@ -251,8 +259,10 @@ export class LongTermMemoryStorage {
         previousHash: hashNote(current),
       });
 
+      if (!eventContext.suppressEvent) {
+        await this.appendEvent(eventFor(eventType, existing.id, eventContext, { patch, note: next }));
+      }
       await writeJsonAtomic(path, next);
-      await this.appendEvent(eventFor(eventType, existing.id, eventContext));
       return next;
     });
   }

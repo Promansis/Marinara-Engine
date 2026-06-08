@@ -26,6 +26,7 @@ import {
 } from "./paths.js";
 import { rebuildLongTermMemoryIndexes } from "./rebuild.js";
 import { LongTermMemoryStorage } from "./storage.js";
+import { writeJsonAtomic } from "./atomic-json.js";
 
 type IntegritySeverity = "info" | "warning" | "error";
 type IntegrityIssue = {
@@ -172,6 +173,11 @@ async function listVaultFiles(root: string) {
   return files;
 }
 
+async function writeReplayNoteExact(root: string, note: LtmNote) {
+  const parsed = ltmNoteSchema.parse(note);
+  await writeJsonAtomic(notePathForId(parsed.id, parsed.type, root), parsed);
+}
+
 export async function checkLongTermMemoryIntegrity(root = getLongTermMemoryRoot()): Promise<LtmIntegrityResult> {
   const storage = new LongTermMemoryStorage(root);
   await storage.initializeLtmStore();
@@ -259,12 +265,17 @@ export async function auditLongTermMemoryReplay(root = getLongTermMemoryRoot()):
       try {
         if (payload.note) {
           const note = ltmNoteSchema.parse(payload.note);
-          await replayStorage.createNote(note, {
-            actor: "replay",
-            cause: event.id,
-            summary: event.summary,
-            payload: { sourceEventId: event.id },
-          });
+          if (event.type.endsWith(".created")) {
+            await replayStorage.createNote(note, {
+              actor: "replay",
+              cause: event.id,
+              summary: event.summary,
+              payload: { sourceEventId: event.id },
+              suppressEvent: true,
+            });
+          } else {
+            await writeReplayNoteExact(replayRoot, note);
+          }
           replayedEventCount += 1;
           continue;
         }
@@ -274,6 +285,7 @@ export async function auditLongTermMemoryReplay(root = getLongTermMemoryRoot()):
             cause: event.id,
             summary: event.summary,
             payload: { sourceEventId: event.id },
+            suppressEvent: true,
           });
           replayedEventCount += 1;
           continue;

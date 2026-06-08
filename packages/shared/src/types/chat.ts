@@ -196,8 +196,14 @@ export interface ChatMetadata {
   manualTrackers?: boolean;
   /** Whether to recall memories from this chat during generation. Default: true for conversation/scenes, false for roleplay. */
   enableMemoryRecall?: boolean;
+  /** When true, inject retrieved local long-term memory into generation prompts. Default: false. */
+  enableLongTermMemory?: boolean;
   /** Optional local long-term memory universe/RP scope for this chat. */
   longTermMemoryScope?: { universe?: string; rpId?: string };
+  /** Per-chat token budget for injected local long-term memory. Missing uses server retrieval defaults. */
+  longTermMemoryBudgetTokens?: number;
+  /** When true, log/debug local long-term memory prompt injection decisions for this chat. Default: false. */
+  longTermMemoryDebug?: boolean;
   /** When true, save draft long-term memory mutations after generated turns. Default: false. */
   longTermMemoryAutoExtract?: boolean;
   /** When true with longTermMemoryAutoExtract, auto-apply only low-risk extraction mutations. Default: false. */
