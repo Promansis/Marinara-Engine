@@ -30,6 +30,15 @@ import {
   safeJoin,
 } from "../services/long-term-memory/paths.js";
 import { LongTermMemoryDraftStore } from "../services/long-term-memory/extraction.js";
+import {
+  auditLongTermMemoryReplay,
+  checkLongTermMemoryIntegrity,
+  createLongTermMemoryInteropDrafts,
+  previewLongTermMemoryInterop,
+  repairLongTermMemory,
+  type LtmInteropSource,
+  type LtmRepairAction,
+} from "../services/long-term-memory/maintenance.js";
 import { rebuildLongTermMemoryIndexes, type LtmEmbeddingIndex } from "../services/long-term-memory/rebuild.js";
 import { applyLongTermMemoryDraft, rejectLongTermMemoryDraft } from "../services/long-term-memory/reconciliation.js";
 import { retrieveLongTermMemory } from "../services/long-term-memory/retrieval.js";
@@ -39,6 +48,7 @@ const NOTE_BODY_LIMIT_BYTES = 512 * 1024;
 const DRAFT_BODY_LIMIT_BYTES = 512 * 1024;
 const SEARCH_BODY_LIMIT_BYTES = 128 * 1024;
 const REBUILD_BODY_LIMIT_BYTES = 8 * 1024;
+const MAINTENANCE_BODY_LIMIT_BYTES = 32 * 1024;
 
 const ltmIdentifierSchema = z
   .string()
@@ -86,6 +96,24 @@ const updateNoteBodySchema = z
   .refine((value) => Object.keys(value).length > 0, "Patch body must include at least one updatable field.");
 
 const rebuildBodySchema = z.object({}).strict().default({});
+
+const repairActionSchema = z.enum(["rebuild_indexes", "quarantine_malformed_notes"]);
+
+const repairBodySchema = z
+  .object({
+    actions: z.array(repairActionSchema).min(1).max(2),
+  })
+  .strict();
+
+const interopSourceSchema = z.enum(["characters", "lorebooks", "chats"]);
+
+const interopBodySchema = z
+  .object({
+    source: interopSourceSchema,
+    limit: z.number().int().min(1).max(100).default(25),
+    scope: ltmScopeSchema.optional(),
+  })
+  .strict();
 
 const draftIdParamSchema = z.object({ id: z.string().uuid() }).strict();
 
@@ -314,6 +342,50 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
       rebuildBodySchema.parse(req.body ?? {});
       const result = await rebuildLongTermMemoryIndexes();
       return publicRebuildResult(result);
+    },
+  );
+
+  app.get("/integrity", async () => checkLongTermMemoryIntegrity());
+
+  app.post(
+    "/replay",
+    { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES },
+    async (req, reply) => {
+      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory replay audit" })) return;
+      rebuildBodySchema.parse(req.body ?? {});
+      return auditLongTermMemoryReplay();
+    },
+  );
+
+  app.post<{ Body: unknown }>(
+    "/repair",
+    { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES },
+    async (req, reply) => {
+      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory repair" })) return;
+      const body = repairBodySchema.parse(req.body);
+      return repairLongTermMemory(body.actions as LtmRepairAction[]);
+    },
+  );
+
+  app.post<{ Body: unknown }>(
+    "/import/preview",
+    { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES },
+    async (req) => {
+      const body = interopBodySchema.parse(req.body);
+      return previewLongTermMemoryInterop(app.db, body.source as LtmInteropSource, body.limit);
+    },
+  );
+
+  app.post<{ Body: unknown }>(
+    "/import/drafts",
+    { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES },
+    async (req, reply) => {
+      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory import draft creation" })) return;
+      const body = interopBodySchema.parse(req.body);
+      return createLongTermMemoryInteropDrafts(app.db, body.source as LtmInteropSource, {
+        limit: body.limit,
+        scope: body.scope,
+      });
     },
   );
 

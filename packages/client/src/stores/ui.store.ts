@@ -19,6 +19,7 @@ type Panel =
   | "connections"
   | "agents"
   | "personas"
+  | "long-term-memory"
   | "settings"
   | "bot-browser";
 export type ChatModeShortcut = "conversation" | "roleplay" | "game";
