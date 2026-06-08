@@ -70,7 +70,7 @@ function StatusPill({ label, tone = "neutral" }: { label: string; tone?: "neutra
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full border px-2 py-0.5 text-[0.7rem] font-semibold",
+        "inline-flex items-center rounded-md border px-1.5 py-0.5 text-[0.625rem] font-medium leading-tight",
         tone === "good" && "border-emerald-400/40 bg-emerald-500/10 text-emerald-200",
         tone === "warn" && "border-amber-400/40 bg-amber-500/10 text-amber-200",
         tone === "bad" && "border-rose-400/40 bg-rose-500/10 text-rose-200",
@@ -94,15 +94,20 @@ function SettingToggle({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex min-h-12 items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-[var(--card)]/70 p-3">
-      <span className="text-sm font-semibold text-[var(--foreground)]">{label}</span>
+    <label
+      className={cn(
+        "flex items-center gap-2.5 rounded-lg p-1 transition-colors hover:bg-[var(--secondary)]/50",
+        disabled && "pointer-events-none opacity-45",
+      )}
+    >
       <input
         type="checkbox"
         checked={checked}
         disabled={disabled}
         onChange={(event) => onChange(event.target.checked)}
-        className="h-4 w-4 shrink-0 accent-[var(--primary)]"
+        className="h-3.5 w-3.5 shrink-0 rounded border-[var(--border)] accent-[var(--primary)]"
       />
+      <span className="min-w-0 flex-1 text-xs text-[var(--foreground)]">{label}</span>
     </label>
   );
 }
@@ -116,7 +121,7 @@ function SettingField({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-semibold text-[var(--muted-foreground)]">{label}</span>
+      <span className="mb-1 block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">{label}</span>
       {children}
     </label>
   );
@@ -156,10 +161,12 @@ function ToolButton({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "inline-flex min-h-9 items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-60",
-        tone === "primary" && "bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm",
-        tone === "secondary" && "border border-[var(--border)] bg-[var(--card)] text-[var(--foreground)] hover:bg-[var(--accent)]",
-        tone === "danger" && "border border-rose-400/40 bg-rose-500/10 text-rose-200 hover:bg-rose-500/20",
+        "inline-flex min-h-8 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-50",
+        tone === "primary" && "bg-[var(--primary)] text-white hover:opacity-90",
+        tone === "secondary" &&
+          "bg-[var(--secondary)] text-[var(--foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
+        tone === "danger" &&
+          "bg-[var(--destructive)]/10 text-[var(--destructive)] ring-1 ring-[var(--destructive)]/25 hover:bg-[var(--destructive)]/15",
       )}
     >
       {children}
@@ -169,8 +176,8 @@ function ToolButton({
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="border-b border-[var(--border)]/40 px-4 py-4 last:border-b-0">
-      <h3 className="mb-3 text-sm font-semibold text-[var(--foreground)]">{title}</h3>
+    <section className="border-b border-[var(--border)]/35 px-3 py-3 last:border-b-0">
+      <h3 className="mb-2.5 text-xs font-medium text-[var(--foreground)]">{title}</h3>
       {children}
     </section>
   );
@@ -179,10 +186,10 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 function NoteRow({ note }: { note: LtmNote }) {
   const sectionCount = Object.keys(note.sections).length;
   return (
-    <article className="rounded-lg border border-[var(--border)] bg-[var(--card)]/70 p-3">
+    <article className="rounded-lg bg-[var(--secondary)]/50 p-3 ring-1 ring-[var(--border)]">
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-[var(--foreground)]">{note.id}</div>
+          <div className="truncate text-xs font-medium text-[var(--foreground)]">{note.id}</div>
           <div className="mt-1 flex flex-wrap gap-1.5">
             <StatusPill label={note.type} />
             <StatusPill label={note.status} tone={note.status === "active" ? "good" : "neutral"} />
@@ -191,7 +198,7 @@ function NoteRow({ note }: { note: LtmNote }) {
         </div>
       </div>
       {note.tags.length > 0 && (
-        <div className="mt-2 truncate text-xs text-[var(--muted-foreground)]">Tags: {note.tags.join(", ")}</div>
+        <div className="mt-2 truncate text-[0.625rem] text-[var(--muted-foreground)]">Tags: {note.tags.join(", ")}</div>
       )}
     </article>
   );
@@ -203,10 +210,10 @@ function DraftRow({ draft }: { draft: LtmExtractionDraft }) {
   const pending = draft.status === "pending";
 
   return (
-    <article className="rounded-lg border border-[var(--border)] bg-[var(--card)]/70 p-3">
+    <article className="rounded-lg bg-[var(--secondary)]/50 p-3 ring-1 ring-[var(--border)]">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-[var(--foreground)]">{draft.summary || draft.id}</div>
+          <div className="truncate text-xs font-medium text-[var(--foreground)]">{draft.summary || draft.id}</div>
           <div className="mt-1 flex flex-wrap gap-1.5">
             <StatusPill label={draft.status} tone={pending ? "warn" : draft.status === "accepted" ? "good" : "neutral"} />
             <StatusPill label={`${draft.mutations.length} mutations`} />
@@ -281,7 +288,7 @@ function ChatMemorySettings() {
   }, [activeChat?.id, budgetValue, scopeRpId, scopeUniverse]);
 
   if (!activeChat) {
-    return <p className="text-sm text-[var(--muted-foreground)]">Open a chat to edit its long-term memory settings.</p>;
+    return <p className="text-xs text-[var(--muted-foreground)]">Open a chat to edit its long-term memory settings.</p>;
   }
 
   const patch = (next: Record<string, unknown>) =>
@@ -317,7 +324,7 @@ function ChatMemorySettings() {
     <div className="space-y-3">
       <SettingToggle label="Use memory in prompts" checked={enabled} onChange={(checked) => patch({ enableLongTermMemory: checked })} />
 
-      <div className="grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--card)]/70 p-3">
+      <div className="grid gap-3 rounded-xl bg-[var(--secondary)]/50 p-3 ring-1 ring-[var(--border)]">
         <div className="grid gap-3 sm:grid-cols-2">
           <SettingField label="Universe">
             <input
@@ -325,7 +332,7 @@ function ChatMemorySettings() {
               onChange={(event) => setScopeDraft((current) => ({ ...current, universe: event.target.value }))}
               onBlur={() => commitScope()}
               placeholder="shared_realm"
-              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]"
+              className="w-full rounded-lg bg-[var(--background)] px-3 py-2 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:ring-[var(--primary)]"
             />
           </SettingField>
           <SettingField label="RP scope">
@@ -334,7 +341,7 @@ function ChatMemorySettings() {
               onChange={(event) => setScopeDraft((current) => ({ ...current, rpId: event.target.value }))}
               onBlur={() => commitScope()}
               placeholder="main_story"
-              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]"
+              className="w-full rounded-lg bg-[var(--background)] px-3 py-2 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:ring-[var(--primary)]"
             />
           </SettingField>
         </div>
@@ -360,7 +367,7 @@ function ChatMemorySettings() {
               value={budgetDraft}
               onChange={(event) => setBudgetDraft(event.target.value)}
               onBlur={(event) => commitBudget(event.target.value)}
-              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-2 text-sm outline-none focus:border-[var(--primary)]"
+              className="w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-2 py-1.5 text-xs outline-none focus:border-[var(--primary)]"
             />
           </div>
         </SettingField>
@@ -433,13 +440,13 @@ export function LongTermMemoryPanel() {
     <div className="min-h-full bg-[var(--background)] text-[var(--foreground)]">
       <Section title="Overview">
         <div className="grid grid-cols-2 gap-2">
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--card)]/70 p-3">
-            <div className="text-xl font-bold">{status.data?.notes.total ?? 0}</div>
-            <div className="text-xs text-[var(--muted-foreground)]">Notes</div>
+          <div className="rounded-lg bg-[var(--secondary)]/50 p-3 ring-1 ring-[var(--border)]">
+            <div className="text-lg font-semibold tabular-nums">{status.data?.notes.total ?? 0}</div>
+            <div className="text-[0.625rem] text-[var(--muted-foreground)]">Notes</div>
           </div>
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--card)]/70 p-3">
-            <div className="text-xl font-bold">{status.data?.indexes.chunkCount ?? 0}</div>
-            <div className="text-xs text-[var(--muted-foreground)]">Chunks</div>
+          <div className="rounded-lg bg-[var(--secondary)]/50 p-3 ring-1 ring-[var(--border)]">
+            <div className="text-lg font-semibold tabular-nums">{status.data?.indexes.chunkCount ?? 0}</div>
+            <div className="text-[0.625rem] text-[var(--muted-foreground)]">Chunks</div>
           </div>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
@@ -449,14 +456,16 @@ export function LongTermMemoryPanel() {
         </div>
       </Section>
 
-      <div className="sticky top-0 z-10 flex gap-1 border-b border-[var(--border)] bg-[var(--background)]/95 px-3 py-2 backdrop-blur-sm">
+      <div className="sticky top-0 z-10 grid grid-cols-4 gap-1 border-b border-[var(--border)]/35 bg-[var(--background)]/95 px-3 py-2 backdrop-blur-sm">
         {(["notes", "drafts", "tools", "import"] as TabId[]).map((id) => (
           <button
             key={id}
             onClick={() => setTab(id)}
             className={cn(
-              "rounded-lg px-3 py-1.5 text-sm font-semibold capitalize transition-colors",
-              tab === id ? "bg-[var(--primary)] text-[var(--primary-foreground)]" : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
+              "min-w-0 rounded-lg px-2 py-2 text-xs font-medium capitalize transition-all active:scale-[0.98]",
+              tab === id
+                ? "bg-[var(--accent)] text-[var(--foreground)] ring-1 ring-[var(--primary)]/35"
+                : "bg-[var(--card)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
             )}
           >
             {id}
@@ -466,20 +475,20 @@ export function LongTermMemoryPanel() {
 
       {tab === "notes" && (
         <Section title="Vault Notes">
-          <div className="mb-3 flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card)]/70 px-3 py-2">
+          <div className="mb-3 flex items-center gap-2 rounded-lg bg-[var(--secondary)] px-3 py-2 ring-1 ring-transparent transition-shadow focus-within:ring-[var(--primary)]">
             <Search size="0.875rem" className="text-[var(--muted-foreground)]" />
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search notes"
-              className="min-w-0 flex-1 bg-transparent text-sm text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
+              className="min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
             />
           </div>
           <div className="mb-3 grid grid-cols-2 gap-2">
             <select
               value={noteType}
               onChange={(event) => setNoteType(event.target.value as "all" | LtmNoteType)}
-              className="rounded-lg border border-[var(--border)] bg-[var(--card)] px-2 py-2 text-sm"
+              className="rounded-lg bg-[var(--secondary)] px-2.5 py-2 text-xs outline-none ring-1 ring-transparent focus:ring-[var(--primary)]"
             >
               {NOTE_TYPES.map((type) => (
                 <option key={type} value={type}>
@@ -490,7 +499,7 @@ export function LongTermMemoryPanel() {
             <select
               value={noteStatus}
               onChange={(event) => setNoteStatus(event.target.value as "all" | LtmStatus)}
-              className="rounded-lg border border-[var(--border)] bg-[var(--card)] px-2 py-2 text-sm"
+              className="rounded-lg bg-[var(--secondary)] px-2.5 py-2 text-xs outline-none ring-1 ring-transparent focus:ring-[var(--primary)]"
             >
               {NOTE_STATUSES.map((statusId) => (
                 <option key={statusId} value={statusId}>
@@ -502,7 +511,7 @@ export function LongTermMemoryPanel() {
           <div className="space-y-2">
             {notes.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
             {!notes.isLoading && filteredNotes.length === 0 && (
-              <p className="rounded-lg border border-[var(--border)] bg-[var(--card)]/70 p-3 text-sm text-[var(--muted-foreground)]">
+              <p className="rounded-lg bg-[var(--secondary)]/50 p-3 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
                 No matching notes.
               </p>
             )}
@@ -518,7 +527,7 @@ export function LongTermMemoryPanel() {
           <select
             value={draftStatus}
             onChange={(event) => setDraftStatus(event.target.value as "all" | LtmDraftStatus)}
-            className="mb-3 w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-2 py-2 text-sm"
+            className="mb-3 w-full rounded-lg bg-[var(--secondary)] px-2.5 py-2 text-xs outline-none ring-1 ring-transparent focus:ring-[var(--primary)]"
           >
             {DRAFT_STATUSES.map((statusId) => (
               <option key={statusId} value={statusId}>
@@ -528,7 +537,7 @@ export function LongTermMemoryPanel() {
           </select>
           <div className="space-y-2">
             {filteredDrafts.length === 0 && (
-              <p className="rounded-lg border border-[var(--border)] bg-[var(--card)]/70 p-3 text-sm text-[var(--muted-foreground)]">
+              <p className="rounded-lg bg-[var(--secondary)]/50 p-3 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
                 No drafts in this view.
               </p>
             )}
@@ -582,8 +591,11 @@ export function LongTermMemoryPanel() {
             </div>
             <div className="mt-3 space-y-2">
               {(integrity.data?.issues ?? []).slice(0, 8).map((issue) => (
-                <div key={`${issue.code}-${issue.path ?? issue.noteId ?? issue.message}`} className="rounded-lg border border-[var(--border)] bg-[var(--card)]/70 p-3 text-sm">
-                  <div className="flex items-center gap-2 font-semibold">
+                <div
+                  key={`${issue.code}-${issue.path ?? issue.noteId ?? issue.message}`}
+                  className="rounded-lg bg-[var(--secondary)]/50 p-3 text-xs ring-1 ring-[var(--border)]"
+                >
+                  <div className="flex items-center gap-2 font-medium">
                     {issue.severity === "error" ? <AlertTriangle size="0.875rem" className="text-rose-300" /> : <ShieldCheck size="0.875rem" />}
                     {issue.code}
                   </div>
@@ -601,7 +613,7 @@ export function LongTermMemoryPanel() {
             <select
               value={importSource}
               onChange={(event) => setImportSource(event.target.value as LtmInteropSource)}
-              className="rounded-lg border border-[var(--border)] bg-[var(--card)] px-2 py-2 text-sm"
+              className="rounded-lg bg-[var(--secondary)] px-2.5 py-2 text-xs outline-none ring-1 ring-transparent focus:ring-[var(--primary)]"
             >
               {IMPORT_SOURCES.map((source) => (
                 <option key={source.id} value={source.id}>
@@ -615,25 +627,25 @@ export function LongTermMemoryPanel() {
               max={100}
               value={importLimit}
               onChange={(event) => setImportLimit(Number(event.target.value))}
-              className="w-20 rounded-lg border border-[var(--border)] bg-[var(--card)] px-2 py-2 text-sm"
+              className="w-20 rounded-lg bg-[var(--secondary)] px-2.5 py-2 text-xs outline-none ring-1 ring-transparent focus:ring-[var(--primary)]"
             />
           </div>
-          <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--card)]/70 p-3">
+          <div className="mt-3 rounded-lg bg-[var(--secondary)]/50 p-3 ring-1 ring-[var(--border)]">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-sm font-semibold text-[var(--foreground)]">
+                <div className="text-xs font-medium text-[var(--foreground)]">
                   {importPreview.data?.draftable ?? 0} draftable sources
                 </div>
-                <div className="text-xs text-[var(--muted-foreground)]">Imports create drafts only. Existing data is not changed.</div>
+                <div className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">Imports create drafts only. Existing data is not changed.</div>
               </div>
               {importPreview.isLoading ? <Loader2 className="animate-spin" size="1rem" /> : <FileJson size="1rem" />}
             </div>
           </div>
           <div className="mt-3 space-y-2">
             {(importPreview.data?.samples ?? []).map((sample) => (
-              <div key={sample.sourceId} className="rounded-lg border border-[var(--border)] bg-[var(--card)]/70 p-3">
-                <div className="truncate text-sm font-semibold">{sample.title}</div>
-                <div className="mt-1 text-xs text-[var(--muted-foreground)]">{sample.summary}</div>
+              <div key={sample.sourceId} className="rounded-lg bg-[var(--secondary)]/50 p-3 ring-1 ring-[var(--border)]">
+                <div className="truncate text-xs font-medium">{sample.title}</div>
+                <div className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">{sample.summary}</div>
               </div>
             ))}
           </div>
@@ -656,11 +668,11 @@ export function LongTermMemoryPanel() {
       )}
 
       {(status.isLoading || integrity.isLoading) && (
-        <div className="fixed bottom-3 right-3 rounded-full border border-[var(--border)] bg-[var(--card)] p-2 shadow-sm">
+        <div className="fixed bottom-3 right-3 rounded-full bg-[var(--card)] p-2 shadow-sm ring-1 ring-[var(--border)]">
           <Loader2 size="1rem" className="animate-spin" />
         </div>
       )}
-      <div className="px-4 pb-4 text-xs text-[var(--muted-foreground)]">
+      <div className="px-3 pb-4 text-[0.625rem] text-[var(--muted-foreground)]">
         <div className="flex items-center gap-2">
           <DatabaseZap size="0.875rem" />
           Draft extraction only runs when enabled for the active chat.
