@@ -18,6 +18,7 @@ import {
   Trash2,
   GitBranch,
   Pencil,
+  Check,
   X,
   Flag,
   Eye,
@@ -54,7 +55,6 @@ import type { CharacterMap, ExpressionAvatarResolver, MessageSelectionToggle, Pe
 import { GenerationReplayDetailsModal, hasGenerationReplayDetails } from "./GenerationReplayDetailsModal";
 import { ImagePromptPanel } from "./ImagePromptPanel";
 import { SwipeJumpControl } from "./SwipeJumpControl";
-import { FloatingMessageEditor } from "./FloatingMessageEditor";
 
 const MESSAGE_ACTION_ICON_SIZE = "1em";
 const MESSAGE_SWIPE_ICON_SIZE = "1.15em";
@@ -135,6 +135,81 @@ function HiddenFromAIMessageSummary({ roleplay, onExpand }: { roleplay?: boolean
     </button>
   );
 }
+
+/** Isolated edit textarea — uncontrolled to avoid React re-renders on every keystroke. */
+const EditTextarea = memo(function EditTextarea({
+  initialContent,
+  fontSize,
+  onSave,
+  onCancel,
+}: {
+  initialContent: string;
+  fontSize: string | number | undefined;
+  onSave: (content: string) => void;
+  onCancel: () => void;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  const autoResize = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    // Find the nearest scrollable ancestor so we can freeze its scroll
+    // position while we re-measure the textarea height.
+    const scroller = el.closest("[data-chat-scroll]") as HTMLElement | null;
+    const scrollTop = scroller?.scrollTop ?? 0;
+    el.style.height = "0";
+    el.style.height = el.scrollHeight + "px";
+    if (scroller) scroller.scrollTop = scrollTop;
+  }, []);
+
+  useLayoutEffect(() => {
+    if (ref.current) {
+      autoResize();
+      ref.current.focus({ preventScroll: true });
+    }
+  }, [autoResize]);
+
+  const handleSave = useCallback(() => {
+    if (ref.current) onSave(ref.current.value);
+  }, [onSave]);
+
+  return (
+    <div className="flex flex-col gap-2">
+      <textarea
+        ref={ref}
+        defaultValue={initialContent.replace(/[\u201C\u201D\u201E\u201F]/g, '"').replace(/[\u2018\u2019]/g, "'")}
+        rows={1}
+        onInput={autoResize}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSave();
+          if (e.key === "Escape") onCancel();
+        }}
+        className="w-full resize-none overflow-y-hidden rounded-lg bg-black/30 px-3 py-2 text-white outline-none ring-1 ring-white/20 focus:ring-blue-400/50"
+        style={{ fontSize, lineHeight: 1.5 }}
+      />
+      <div className="flex items-center gap-1.5 justify-end">
+        <button
+          type="button"
+          onClick={onCancel}
+          aria-label="Cancel edit"
+          className="rounded-md p-1 text-white/40 hover:bg-white/10 hover:text-white/70"
+          title="Cancel (Esc)"
+        >
+          <X size="0.8125rem" />
+        </button>
+        <button
+          type="button"
+          onClick={handleSave}
+          aria-label="Save edit"
+          className="rounded-md p-1 text-emerald-400/70 hover:bg-emerald-400/10 hover:text-emerald-400"
+          title="Save (Cmd+Enter)"
+        >
+          <Check size="0.8125rem" />
+        </button>
+      </div>
+    </div>
+  );
+});
 
 /** Props for a single rendered chat message, including optional scene fork actions. */
 interface ChatMessageProps {
@@ -1016,18 +1091,6 @@ export const ChatMessage = memo(function ChatMessage({
     setEditing(false);
   }, []);
 
-  const floatingEditor = (
-    <FloatingMessageEditor
-      open={editing}
-      title="Edit message"
-      initialContent={message.content}
-      fontSize={chatFontSize}
-      normalizeQuotes
-      onSave={handleSaveEdit}
-      onCancel={handleCancelEdit}
-    />
-  );
-
   // Apply regex scripts to AI output (assistant/narrator roles)
   const { applyToAIOutput } = useApplyRegex();
 
@@ -1348,9 +1411,15 @@ export const ChatMessage = memo(function ChatMessage({
   ) : null;
   const roleplayBubbleContent = isHiddenCollapsed ? (
     <HiddenFromAIMessageSummary roleplay={isRoleplay} onExpand={() => setManuallyExpandedHidden(true)} />
+  ) : editing ? (
+    <EditTextarea
+      initialContent={message.content}
+      fontSize={chatFontSize}
+      onSave={handleSaveEdit}
+      onCancel={handleCancelEdit}
+    />
   ) : (
     <>
-      {floatingEditor}
       <div
         className={cn("mari-message-content break-words", !isHtmlContent && "whitespace-pre-wrap")}
         style={messageTextStyle}
@@ -1613,6 +1682,7 @@ export const ChatMessage = memo(function ChatMessage({
             className={cn(
               "mari-message-body flex min-w-0 max-w-[82%] flex-col gap-0.5",
               isUser && "items-end",
+              editing && "w-[82%]",
             )}
           >
             {/* Name + time (only if not grouped) */}
@@ -1668,6 +1738,7 @@ export const ChatMessage = memo(function ChatMessage({
                 isStreaming && "rpg-streaming",
                 isConversationStart && "ring-amber-400/30",
                 isHiddenFromAI && "ring-amber-300/35 saturate-75",
+                editing && "w-full",
               )}
               style={{
                 ...messageTextStyle,
@@ -1774,7 +1845,7 @@ export const ChatMessage = memo(function ChatMessage({
             </div>
 
             {/* Image attachments (illustrations, selfies) */}
-            {extra.attachments?.length > 0 && !IMAGE_URL_RE.test(message.content.trim()) && (
+            {!editing && extra.attachments?.length > 0 && !IMAGE_URL_RE.test(message.content.trim()) && (
               <div className="mt-1.5 flex flex-col items-center gap-2 px-3 pb-2">
                 {extra.attachments.map((att: any, i: number) =>
                   att.type === "image" || att.type?.startsWith("image/") ? (
@@ -2040,7 +2111,9 @@ export const ChatMessage = memo(function ChatMessage({
       data-message-role={message.role}
       onClick={handleMobileTap}
     >
-      <div className={cn("flex min-w-0 max-w-[72%] gap-2", isUser && "flex-row-reverse")}>
+      <div
+        className={cn("flex min-w-0 max-w-[72%] gap-2", isUser && "flex-row-reverse", editing && "w-[85%] max-w-[85%]")}
+      >
         {/* Avatar — only show for first in group */}
         {(!isUser || displayAvatarUrl) && (
           <div
@@ -2107,6 +2180,7 @@ export const ChatMessage = memo(function ChatMessage({
           className={cn(
             "mari-message-body flex flex-col gap-0.5",
             isUser ? "items-end" : "items-start",
+            editing && "w-full",
           )}
         >
           {/* Name — only for first in group */}
@@ -2147,14 +2221,21 @@ export const ChatMessage = memo(function ChatMessage({
               isGrouped && !isUser && "rounded-bl-2xl rounded-tl-md",
               isStreaming && "ring-2 ring-[var(--primary)]/20",
               isConversationStart && "ring-1 ring-amber-500/30",
+              editing && "w-full",
             )}
             style={{ ...messageTextStyle, ...(boxBgColor ? { backgroundColor: boxBgColor } : {}) }}
           >
             {isHiddenCollapsed ? (
               <HiddenFromAIMessageSummary onExpand={() => setManuallyExpandedHidden(true)} />
+            ) : editing ? (
+              <EditTextarea
+                initialContent={message.content}
+                fontSize={chatFontSize}
+                onSave={handleSaveEdit}
+                onCancel={handleCancelEdit}
+              />
             ) : (
               <>
-                {floatingEditor}
                 <div
                   className={cn("mari-message-content break-words", !isHtmlContent && "whitespace-pre-wrap")}
                   style={messageTextStyle}
@@ -2191,7 +2272,7 @@ export const ChatMessage = memo(function ChatMessage({
           </div>
 
           {/* Image attachments (illustrations, selfies) */}
-          {extra.attachments?.length > 0 && !IMAGE_URL_RE.test(message.content.trim()) && (
+          {!editing && extra.attachments?.length > 0 && !IMAGE_URL_RE.test(message.content.trim()) && (
             <div className="mt-1.5 flex flex-col items-center gap-2 px-3 pb-2">
               {extra.attachments.map((att: any, i: number) =>
                 att.type === "image" || att.type?.startsWith("image/") ? (

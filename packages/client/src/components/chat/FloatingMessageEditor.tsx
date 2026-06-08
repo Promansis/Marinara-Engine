@@ -36,7 +36,6 @@ const DEFAULT_HEIGHT = 420;
 const MIN_WIDTH = 280;
 const MIN_HEIGHT = 260;
 const VIEWPORT_MARGIN = 12;
-const CHAT_INPUT_GAP = 84;
 
 function quoteNormalized(value: string): string {
   return value.replace(/[\u201C\u201D\u201E\u201F]/g, '"').replace(/[\u2018\u2019]/g, "'");
@@ -62,8 +61,8 @@ function getDefaultLayout(): PanelLayout {
   const width = Math.min(DEFAULT_WIDTH, maxWidth);
   const height = Math.min(DEFAULT_HEIGHT, maxHeight);
   return {
-    x: Math.max(VIEWPORT_MARGIN, window.innerWidth - width - 16),
-    y: Math.max(VIEWPORT_MARGIN, window.innerHeight - height - CHAT_INPUT_GAP),
+    x: Math.max(VIEWPORT_MARGIN, Math.round((window.innerWidth - width) / 2)),
+    y: Math.max(VIEWPORT_MARGIN, Math.round((window.innerHeight - height) / 2)),
     width,
     height,
   };
@@ -242,7 +241,7 @@ export const FloatingMessageEditor = memo(function FloatingMessageEditor({
   if (!open) return null;
 
   return createPortal(
-    <div className="pointer-events-none fixed inset-0 z-[120]" data-no-message-quick-edit>
+    <div className="pointer-events-none fixed inset-0 z-[9998]" data-no-message-quick-edit>
       <section
         aria-label={title}
         className={cn(

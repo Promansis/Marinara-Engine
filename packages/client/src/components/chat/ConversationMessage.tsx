@@ -32,7 +32,6 @@ import type { CharacterMap, MessageSelectionToggle, PersonaInfo } from "./chat-a
 import { GenerationReplayDetailsModal, hasGenerationReplayDetails } from "./GenerationReplayDetailsModal";
 import { ImagePromptPanel } from "./ImagePromptPanel";
 import { SwipeJumpControl } from "./SwipeJumpControl";
-import { FloatingMessageEditor } from "./FloatingMessageEditor";
 
 /** Build style object for name color (supports gradients). */
 function nameColorStyle(color?: string): CSSProperties | undefined {
@@ -358,6 +357,7 @@ export const ConversationMessage = memo(function ConversationMessage({
   onToggleSelect,
 }: ConversationMessageProps) {
   const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState(message.content);
   const [showActions, setShowActions] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showThinking, setShowThinking] = useState(false);
@@ -365,6 +365,7 @@ export const ConversationMessage = memo(function ConversationMessage({
   const [manuallyExpandedHidden, setManuallyExpandedHidden] = useState(false);
   const collapseHiddenMessages = useUIStore((s) => s.summaryPopoverSettings.collapseHiddenMessages);
   const [imageLightbox, setImageLightbox] = useState<{ url: string; prompt?: string | null } | null>(null);
+  const editRef = useRef<HTMLTextAreaElement>(null);
   const msgRef = useRef<HTMLDivElement>(null);
   const hasInput = useChatStore((s) => s.currentInput.trim().length > 0);
   const guideGenerations = useUIStore((s) => s.guideGenerations);
@@ -644,7 +645,16 @@ export const ConversationMessage = memo(function ConversationMessage({
 
   const startEditing = useCallback(() => {
     setEditing(true);
-  }, []);
+    setEditValue(message.content);
+    requestAnimationFrame(() => {
+      const el = editRef.current;
+      if (el) {
+        el.style.height = "auto";
+        el.style.height = `${Math.min(el.scrollHeight, 300)}px`;
+        el.focus();
+      }
+    });
+  }, [message.content]);
 
   useEffect(() => {
     if (!onEdit) return;
@@ -658,31 +668,16 @@ export const ConversationMessage = memo(function ConversationMessage({
     return () => window.removeEventListener("marinara:start-edit-message", handler);
   }, [message.id, onEdit, onEditClick, startEditing]);
 
-  const handleSaveEdit = useCallback(
-    (content: string) => {
-      const val = content.trim();
-      if (val !== message.content) {
-        onEdit?.(message.id, val);
-      }
-      setEditing(false);
-    },
-    [message.content, message.id, onEdit],
-  );
+  const editValueRef = useRef(editValue);
+  editValueRef.current = editValue;
 
-  const handleCancelEdit = useCallback(() => {
+  const handleSaveEdit = useCallback(() => {
+    const val = editValueRef.current.trim();
+    if (val !== message.content) {
+      onEdit?.(message.id, val);
+    }
     setEditing(false);
-  }, []);
-
-  const floatingEditor = (
-    <FloatingMessageEditor
-      open={editing}
-      title="Edit message"
-      initialContent={message.content}
-      fontSize={chatFontSize}
-      onSave={handleSaveEdit}
-      onCancel={handleCancelEdit}
-    />
-  );
+  }, [message.content, message.id, onEdit]);
 
   // System messages — minimal display
   if (isSystem) {
@@ -1121,6 +1116,40 @@ export const ConversationMessage = memo(function ConversationMessage({
         {/* Message body */}
         {isHiddenCollapsed ? (
           <HiddenFromAIConversationSummary onExpand={() => setManuallyExpandedHidden(true)} />
+        ) : editing ? (
+          <div className="space-y-2">
+            <textarea
+              ref={editRef}
+              value={editValue}
+              onChange={(e) => {
+                setEditValue(e.target.value);
+                const el = e.target;
+                el.style.height = "auto";
+                el.style.height = `${Math.min(el.scrollHeight, 300)}px`;
+              }}
+              className="w-full resize-none rounded-lg border border-[var(--border)] bg-[var(--secondary)] p-2.5 text-[0.9375rem] leading-relaxed outline-none"
+              rows={1}
+              style={{ overflow: "auto", ...messageTextStyle }}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  setEditing(false);
+                }
+              }}
+            />
+            <div className="flex items-center gap-2 text-[0.6875rem] text-[var(--muted-foreground)]">
+              <button
+                onClick={() => setEditing(false)}
+                className="text-foreground/70 hover:underline hover:text-foreground"
+              >
+                cancel
+              </button>
+              <span>·</span>
+              <button onClick={handleSaveEdit} className="text-foreground/70 hover:underline hover:text-foreground">
+                save
+              </button>
+            </div>
+          </div>
         ) : (
           <div
             className={cn(
@@ -1129,7 +1158,6 @@ export const ConversationMessage = memo(function ConversationMessage({
             )}
             style={messageTextStyle}
           >
-            {floatingEditor}
             {isStreaming && !renderedContent ? (
               <div className="flex items-center gap-1">
                 <span className="h-2 w-2 animate-bounce rounded-full bg-[var(--muted-foreground)]/60 [animation-delay:0ms]" />
