@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rename } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import {
   ltmExtractionResponseSchema,
@@ -249,62 +249,66 @@ export async function auditLongTermMemoryReplay(root = getLongTermMemoryRoot()):
   const events = await storage.readEvents();
   const replayRoot = join(dirname(root), `${basename(root)}-replay-${Date.now()}`);
   const replayStorage = new LongTermMemoryStorage(replayRoot);
-  await replayStorage.initializeLtmStore();
-  const unsupported = [];
-  let replayedEventCount = 0;
+  try {
+    await replayStorage.initializeLtmStore();
+    const unsupported = [];
+    let replayedEventCount = 0;
 
-  for (const event of events) {
-    const payload = event.payload ?? {};
-    try {
-      if (payload.note) {
-        const note = ltmNoteSchema.parse(payload.note);
-        await replayStorage.createNote(note, {
-          actor: "replay",
-          cause: event.id,
-          summary: event.summary,
-          payload: { sourceEventId: event.id },
-        });
-        replayedEventCount += 1;
-        continue;
+    for (const event of events) {
+      const payload = event.payload ?? {};
+      try {
+        if (payload.note) {
+          const note = ltmNoteSchema.parse(payload.note);
+          await replayStorage.createNote(note, {
+            actor: "replay",
+            cause: event.id,
+            summary: event.summary,
+            payload: { sourceEventId: event.id },
+          });
+          replayedEventCount += 1;
+          continue;
+        }
+        if (typeof event.target === "string" && payload.patch && typeof payload.patch === "object" && !Array.isArray(payload.patch)) {
+          await replayStorage.updateNote(event.target, payload.patch, {
+            actor: "replay",
+            cause: event.id,
+            summary: event.summary,
+            payload: { sourceEventId: event.id },
+          });
+          replayedEventCount += 1;
+          continue;
+        }
+        unsupported.push(event);
+      } catch {
+        unsupported.push(event);
       }
-      if (typeof event.target === "string" && payload.patch && typeof payload.patch === "object" && !Array.isArray(payload.patch)) {
-        await replayStorage.updateNote(event.target, payload.patch, {
-          actor: "replay",
-          cause: event.id,
-          summary: event.summary,
-          payload: { sourceEventId: event.id },
-        });
-        replayedEventCount += 1;
-        continue;
-      }
-      unsupported.push(event);
-    } catch {
-      unsupported.push(event);
     }
-  }
 
-  const driftCount =
-    unsupported.length === 0
-      ? await compareVaults(storage, replayStorage)
-      : null;
-  return {
-    replayable: unsupported.length === 0,
-    checkedAt: nowIso(),
-    replayRoot: relative(dirname(root), replayRoot).split(/[\\/]+/).join("/"),
-    eventCount: events.length,
-    unsupportedEventCount: unsupported.length,
-    replayedEventCount,
-    driftCount,
-    messages:
-      unsupported.length > 0
-        ? [
-            "Event log is mutation history, but existing events do not include enough note payload data for full vault replay.",
-            "Use integrity check plus rebuild for current recovery; future event writers should include note or patch payloads for deterministic replay.",
-          ]
-        : driftCount === 0
-          ? ["Replay finished and matched the current vault."]
-          : [`Replay finished with ${driftCount} note difference(s).`],
-  };
+    const driftCount =
+      unsupported.length === 0
+        ? await compareVaults(storage, replayStorage)
+        : null;
+    return {
+      replayable: unsupported.length === 0,
+      checkedAt: nowIso(),
+      replayRoot: relative(dirname(root), replayRoot).split(/[\\/]+/).join("/"),
+      eventCount: events.length,
+      unsupportedEventCount: unsupported.length,
+      replayedEventCount,
+      driftCount,
+      messages:
+        unsupported.length > 0
+          ? [
+              "Event log is mutation history, but existing events do not include enough note payload data for full vault replay.",
+              "Use integrity check plus rebuild for current recovery; future event writers should include note or patch payloads for deterministic replay.",
+            ]
+          : driftCount === 0
+            ? ["Replay finished and matched the current vault."]
+            : [`Replay finished with ${driftCount} note difference(s).`],
+    };
+  } finally {
+    await rm(replayRoot, { recursive: true, force: true });
+  }
 }
 
 async function compareVaults(left: LongTermMemoryStorage, right: LongTermMemoryStorage) {

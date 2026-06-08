@@ -192,9 +192,8 @@ function ChatMemorySettings() {
   const activeChat = useChatStore((s) => s.activeChat);
   const updateMeta = useUpdateChatMetadata();
   const metadata = parseMetadata(activeChat?.metadata);
-  const enabled = metadata.enableLongTermMemory === true;
-  const debug = metadata.longTermMemoryDebug === true;
-  const budget = typeof metadata.longTermMemoryBudgetTokens === "number" ? metadata.longTermMemoryBudgetTokens : 2048;
+  const autoExtract = metadata.longTermMemoryAutoExtract === true;
+  const autoApplyLowRisk = metadata.longTermMemoryAutoApplyLowRisk === true;
 
   if (!activeChat) {
     return <p className="text-sm text-[var(--muted-foreground)]">Open a chat to edit its long-term memory settings.</p>;
@@ -209,31 +208,31 @@ function ChatMemorySettings() {
   return (
     <div className="space-y-3">
       <label className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-[var(--card)]/70 p-3">
-        <span className="text-sm font-semibold text-[var(--foreground)]">Use LTM in this chat</span>
+        <span className="text-sm font-semibold text-[var(--foreground)]">Create drafts after replies</span>
         <input
           type="checkbox"
-          checked={enabled}
-          onChange={(event) => patch({ enableLongTermMemory: event.target.checked })}
+          checked={autoExtract}
+          onChange={(event) =>
+            patch({
+              longTermMemoryAutoExtract: event.target.checked,
+              ...(event.target.checked ? {} : { longTermMemoryAutoApplyLowRisk: false }),
+            })
+          }
           className="h-4 w-4 accent-[var(--primary)]"
         />
       </label>
-      <label className="block rounded-lg border border-[var(--border)] bg-[var(--card)]/70 p-3">
-        <span className="text-sm font-semibold text-[var(--foreground)]">Budget tokens</span>
-        <input
-          type="number"
-          min={128}
-          max={16384}
-          value={budget}
-          onChange={(event) => patch({ longTermMemoryBudgetTokens: Number(event.target.value) })}
-          className="mt-2 w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)]"
-        />
-      </label>
       <label className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-[var(--card)]/70 p-3">
-        <span className="text-sm font-semibold text-[var(--foreground)]">Debug events</span>
+        <span className="text-sm font-semibold text-[var(--foreground)]">Auto-apply low-risk drafts</span>
         <input
           type="checkbox"
-          checked={debug}
-          onChange={(event) => patch({ longTermMemoryDebug: event.target.checked })}
+          checked={autoExtract && autoApplyLowRisk}
+          disabled={!autoExtract}
+          onChange={(event) =>
+            patch({
+              longTermMemoryAutoExtract: true,
+              longTermMemoryAutoApplyLowRisk: event.target.checked,
+            })
+          }
           className="h-4 w-4 accent-[var(--primary)]"
         />
       </label>
@@ -512,7 +511,7 @@ export function LongTermMemoryPanel() {
       <div className="px-4 pb-4 text-xs text-[var(--muted-foreground)]">
         <div className="flex items-center gap-2">
           <DatabaseZap size="0.875rem" />
-          Prompt injection stays disabled unless a chat enables it.
+          Draft extraction only runs when enabled for the active chat.
         </div>
         <div className="mt-1 flex items-center gap-2">
           <Sparkles size="0.875rem" />
