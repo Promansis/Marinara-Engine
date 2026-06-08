@@ -25,6 +25,7 @@ export * from "./types/game.js";
 export * from "./types/sidecar.js";
 export * from "./types/image-generation-defaults.js";
 export * from "./types/image-style-profile.js";
+export * from "./types/long-term-memory.js";
 
 // Schemas
 export * from "./schemas/chat.schema.js";
@@ -39,6 +40,7 @@ export * from "./schemas/regex.schema.js";
 export * from "./schemas/theme.schema.js";
 export * from "./schemas/extension.schema.js";
 export * from "./schemas/app-settings.schema.js";
+export * from "./schemas/long-term-memory.schema.js";
 
 // Constants
 export * from "./constants/providers.js";

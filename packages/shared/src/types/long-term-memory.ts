@@ -1,0 +1,16 @@
+export type {
+  LtmConflict,
+  LtmEvent,
+  LtmGate,
+  LtmIndexMetadata,
+  LtmLink,
+  LtmMode,
+  LtmNote,
+  LtmNoteType,
+  LtmPoliciesConfig,
+  LtmPolicy,
+  LtmRetrievalConfig,
+  LtmScope,
+  LtmSection,
+  LtmStatus,
+} from "../schemas/long-term-memory.schema.js";

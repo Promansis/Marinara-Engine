@@ -1,0 +1,231 @@
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readdir, readFile } from "node:fs/promises";
+import {
+  ltmEventSchema,
+  ltmNoteSchema,
+  ltmPoliciesConfigSchema,
+  ltmRetrievalConfigSchema,
+  type LtmEvent,
+  type LtmNote,
+  type LtmNoteType,
+} from "@marinara-engine/shared";
+import { logger } from "../../lib/logger.js";
+import { appendJsonLineAtomic, readJsonFile, writeJsonAtomic } from "./atomic-json.js";
+import { DEFAULT_LTM_POLICIES, DEFAULT_LTM_RETRIEVAL_CONFIG } from "./default-config.js";
+import {
+  getLongTermMemoryDirectories,
+  getLongTermMemoryRoot,
+  LTM_VAULT_FOLDERS,
+  notePathForId,
+  safeJoin,
+  vaultFolderForNoteType,
+} from "./paths.js";
+
+type LtmEventContext = {
+  actor?: string;
+  turn?: number;
+  cause?: string;
+  summary?: string;
+  payload?: Record<string, unknown>;
+};
+
+export type LtmListNotesFilter = {
+  type?: LtmNoteType;
+  status?: LtmNote["status"];
+  tag?: string;
+};
+
+export type CreateLtmNoteInput = Omit<LtmNote, "createdAt" | "updatedAt" | "version" | "previousHash"> &
+  Partial<Pick<LtmNote, "createdAt" | "updatedAt" | "version" | "previousHash">>;
+
+export type UpdateLtmNotePatch = Partial<
+  Omit<LtmNote, "id" | "type" | "createdAt" | "updatedAt" | "version" | "previousHash">
+>;
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function hashNote(note: LtmNote) {
+  return createHash("sha256").update(JSON.stringify(note)).digest("hex");
+}
+
+function eventFor(type: string, target: string | undefined, context: LtmEventContext = {}): LtmEvent {
+  return ltmEventSchema.parse({
+    id: randomUUID(),
+    ts: nowIso(),
+    type,
+    target,
+    actor: context.actor,
+    turn: context.turn,
+    cause: context.cause,
+    summary: context.summary,
+    payload: context.payload ?? {},
+  });
+}
+
+export class LongTermMemoryStorage {
+  readonly root: string;
+
+  constructor(root = getLongTermMemoryRoot()) {
+    this.root = root;
+  }
+
+  private get dirs() {
+    return getLongTermMemoryDirectories(this.root);
+  }
+
+  async initializeLtmStore() {
+    const dirs = this.dirs;
+    await Promise.all([
+      mkdir(dirs.events, { recursive: true }),
+      mkdir(dirs.indexes, { recursive: true }),
+      mkdir(dirs.config, { recursive: true }),
+      ...LTM_VAULT_FOLDERS.map((folder) => mkdir(safeJoin(dirs.vault, folder), { recursive: true })),
+    ]);
+
+    const policiesPath = safeJoin(dirs.config, "policies.json");
+    const retrievalPath = safeJoin(dirs.config, "retrieval.json");
+    const existingPolicies = ltmPoliciesConfigSchema.parse(
+      await readJsonFile(policiesPath, DEFAULT_LTM_POLICIES),
+    );
+    const existingRetrieval = ltmRetrievalConfigSchema.parse(
+      await readJsonFile(retrievalPath, DEFAULT_LTM_RETRIEVAL_CONFIG),
+    );
+
+    await writeJsonAtomic(policiesPath, existingPolicies);
+    await writeJsonAtomic(retrievalPath, existingRetrieval);
+    logger.debug("[ltm] Initialized inert long-term memory store at %s", this.root);
+  }
+
+  async listNotes(filter: LtmListNotesFilter = {}) {
+    await this.initializeLtmStore();
+    const dirs = this.dirs;
+    const folders = filter.type ? [vaultFolderForNoteType(filter.type)] : LTM_VAULT_FOLDERS;
+    const notes: LtmNote[] = [];
+
+    for (const folder of folders) {
+      const folderPath = safeJoin(dirs.vault, folder);
+      const entries = await readdir(folderPath, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+        const note = await this.readNoteFile(safeJoin(folderPath, entry.name), folder);
+        if (filter.status && note.status !== filter.status) continue;
+        if (filter.tag && !note.tags.includes(filter.tag)) continue;
+        notes.push(note);
+      }
+    }
+
+    return notes.sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  async getNote(id: string) {
+    await this.initializeLtmStore();
+    const notes = await this.listNotes();
+    return notes.find((note) => note.id === id) ?? null;
+  }
+
+  async createNote(input: CreateLtmNoteInput, eventContext: LtmEventContext = {}) {
+    await this.initializeLtmStore();
+    const timestamp = nowIso();
+    const note = ltmNoteSchema.parse({
+      ...input,
+      createdAt: input.createdAt ?? timestamp,
+      updatedAt: input.updatedAt ?? timestamp,
+      version: input.version ?? 1,
+    });
+    const path = notePathForId(note.id, note.type, this.root);
+    const existing = await this.getNote(note.id);
+    if (existing) {
+      throw new Error(`Long-term memory note already exists: ${note.id}`);
+    }
+
+    await this.appendEvent(eventFor(`${note.type}.created`, note.id, eventContext));
+    await writeJsonAtomic(path, note);
+    return note;
+  }
+
+  async updateNote(id: string, patch: UpdateLtmNotePatch, eventContext: LtmEventContext = {}) {
+    await this.initializeLtmStore();
+    const existing = await this.getRequiredNote(id);
+    return this.writeNotePatch(existing, patch, `${existing.type}.updated`, eventContext);
+  }
+
+  async archiveNote(id: string, eventContext: LtmEventContext = {}) {
+    await this.initializeLtmStore();
+    const existing = await this.getRequiredNote(id);
+    return this.writeNotePatch(existing, { status: "archived" }, `${existing.type}.archived`, eventContext);
+  }
+
+  async appendEvent(event: LtmEvent) {
+    const parsed = ltmEventSchema.parse(event);
+    await appendJsonLineAtomic(this.dirs.eventLog, parsed);
+    return parsed;
+  }
+
+  async readEvents(options: { limit?: number; target?: string } = {}) {
+    await this.initializeLtmStore();
+    let content = "";
+    try {
+      content = await readFile(this.dirs.eventLog, "utf8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      return [];
+    }
+
+    const events = content
+      .split("\n")
+      .filter((line) => line.trim().length > 0)
+      .map((line) => ltmEventSchema.parse(JSON.parse(line)))
+      .filter((event) => !options.target || event.target === options.target);
+
+    return typeof options.limit === "number" ? events.slice(-options.limit) : events;
+  }
+
+  private async getRequiredNote(id: string) {
+    const note = await this.getNote(id);
+    if (!note) {
+      throw new Error(`Long-term memory note not found: ${id}`);
+    }
+    return note;
+  }
+
+  private async readNoteFile(path: string, folder: (typeof LTM_VAULT_FOLDERS)[number]) {
+    const raw = JSON.parse(await readFile(path, "utf8"));
+    const note = ltmNoteSchema.parse(raw);
+    if (vaultFolderForNoteType(note.type) !== folder) {
+      throw new Error(`Long-term memory note ${note.id} has type ${note.type} but is stored in ${folder}.`);
+    }
+    return note;
+  }
+
+  private async writeNotePatch(
+    existing: LtmNote,
+    patch: UpdateLtmNotePatch,
+    eventType: string,
+    eventContext: LtmEventContext,
+  ) {
+    const timestamp = nowIso();
+    const next = ltmNoteSchema.parse({
+      ...existing,
+      ...patch,
+      scope: patch.scope ?? existing.scope,
+      links: patch.links ?? existing.links,
+      sections: patch.sections ?? existing.sections,
+      conflicts: patch.conflicts ?? existing.conflicts,
+      updatedAt: timestamp,
+      version: existing.version + 1,
+      previousHash: hashNote(existing),
+    });
+
+    await this.appendEvent(eventFor(eventType, existing.id, eventContext));
+    await writeJsonAtomic(notePathForId(next.id, next.type, this.root), next);
+    return next;
+  }
+}
+
+export async function initializeLtmStore(root?: string) {
+  const storage = new LongTermMemoryStorage(root);
+  await storage.initializeLtmStore();
+  return storage;
+}
