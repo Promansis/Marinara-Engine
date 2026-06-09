@@ -2647,8 +2647,8 @@ export async function chatsRoutes(app: FastifyInstance) {
     }
 
     // Build conversation context (use contextSize from popover, or a custom range).
-    // Manual ranges are explicit transcript selections, so include the full
-    // selected span. The "last N" path still excludes hidden-from-AI messages.
+    // Hidden-from-AI messages are excluded from summary generation, including
+    // when they fall inside an explicit manual range.
     const allMessages = await storage.listMessages(req.params.id);
     let selectedRangeStartIndex: number | undefined;
     let selectedRangeEndIndex: number | undefined;
@@ -2675,8 +2675,9 @@ export async function chatsRoutes(app: FastifyInstance) {
           }
           selectedRangeStartIndex = from + 1;
           selectedRangeEndIndex = to + 1;
-          selectedSourceLabel = `Messages ${selectedRangeStartIndex}-${selectedRangeEndIndex} (${count} selected)`;
-          return allMessages.slice(from, to + 1);
+          const visibleInRange = allMessages.slice(from, to + 1).filter((message) => !isMessageHiddenFromAI(message));
+          selectedSourceLabel = `Messages ${selectedRangeStartIndex}-${selectedRangeEndIndex} (${visibleInRange.length}/${count} non-hidden selected)`;
+          return visibleInRange;
         })()
       : (() => {
           const visibleMessages = allMessages.filter((message) => !isMessageHiddenFromAI(message));
