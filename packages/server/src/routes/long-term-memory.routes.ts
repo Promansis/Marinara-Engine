@@ -4,7 +4,9 @@
 import { readFile, stat } from "node:fs/promises";
 import type { FastifyInstance } from "fastify";
 import {
+  LOCAL_SIDECAR_CONNECTION_ID,
   ltmConflictSchema,
+  ltmDraftSourceSchema,
   ltmDraftStatusSchema,
   ltmExtractionResponseSchema,
   ltmGateSchema,
@@ -19,10 +21,17 @@ import {
   ltmSectionSchema,
   ltmStatusSchema,
   type LtmIndexMetadata,
+  type LtmMode,
   type LtmNote,
+  type LtmScope,
 } from "@marinara-engine/shared";
 import { z } from "zod";
 import { requirePrivilegedAccess } from "../middleware/privileged-gate.js";
+import { createLLMProvider } from "../services/llm/provider-registry.js";
+import { getLocalSidecarProvider, LOCAL_SIDECAR_MODEL } from "../services/llm/local-sidecar.js";
+import { createChatsStorage } from "../services/storage/chats.storage.js";
+import { createConnectionsStorage } from "../services/storage/connections.storage.js";
+import { resolveBaseUrl } from "./generate/generate-route-utils.js";
 import {
   getLongTermMemoryDirectories,
   getLongTermMemoryRoot,
@@ -42,6 +51,10 @@ import {
 import { rebuildLongTermMemoryIndexes, type LtmEmbeddingIndex } from "../services/long-term-memory/rebuild.js";
 import { applyLongTermMemoryDraft, rejectLongTermMemoryDraft } from "../services/long-term-memory/reconciliation.js";
 import { retrieveLongTermMemory } from "../services/long-term-memory/retrieval.js";
+import {
+  extractLongTermMemoryFromSourceNote,
+  isLtmSourceNote,
+} from "../services/long-term-memory/source-extraction.js";
 import { LongTermMemoryStorage } from "../services/long-term-memory/storage.js";
 
 const NOTE_BODY_LIMIT_BYTES = 512 * 1024;
@@ -116,6 +129,7 @@ const interopBodySchema = z
   .strict();
 
 const draftIdParamSchema = z.object({ id: z.string().uuid() }).strict();
+const noteIdParamSchema = z.object({ id: ltmNoteIdSchema }).strict();
 
 const listDraftsQuerySchema = z
   .object({
@@ -126,15 +140,7 @@ const listDraftsQuerySchema = z
 
 const createDraftBodySchema = z
   .object({
-    source: z
-      .object({
-        chatId: z.string().min(1).max(120).optional(),
-        userMessageId: z.string().min(1).max(120).optional(),
-        assistantMessageId: z.string().min(1).max(120).optional(),
-        turn: z.number().int().min(0).optional(),
-      })
-      .strict()
-      .default({}),
+    source: ltmDraftSourceSchema.default({}),
     scope: ltmScopeSchema.default({}),
     modes: z.array(ltmModeSchema).min(1).max(8),
     summary: z.string().max(2_000).optional(),
@@ -145,6 +151,26 @@ const createDraftBodySchema = z
 const rejectDraftBodySchema = z
   .object({
     reason: z.string().max(1_000).optional(),
+  })
+  .strict()
+  .default({});
+
+const acceptDraftBodySchema = z
+  .object({
+    mutationIds: z.array(z.string().uuid()).min(1).max(25).optional(),
+    lowRiskOnly: z.boolean().optional(),
+  })
+  .strict()
+  .default({});
+
+const extractSourceNoteBodySchema = z
+  .object({
+    chatId: z.string().min(1).max(120).optional(),
+    connectionId: z.string().min(1).max(120).optional(),
+    model: z.string().min(1).max(240).optional(),
+    instruction: z.string().max(2_000).optional(),
+    applyLowRisk: z.boolean().optional(),
+    includeExistingNotes: z.boolean().optional(),
   })
   .strict()
   .default({});
@@ -161,6 +187,8 @@ const searchBodySchema = z
     includeGates: z.array(ltmGateSchema).max(8).optional(),
     includeArchived: z.boolean().optional(),
     includeResolved: z.boolean().optional(),
+    includeSourceNotes: z.boolean().optional(),
+    debug: z.boolean().optional(),
     maxChunks: z.number().int().min(1).max(100).optional(),
     maxTokens: z.number().int().min(128).max(16_384).optional(),
   })
@@ -211,6 +239,58 @@ function sanitizeStorageText(value: string) {
   return value.split(getLongTermMemoryRoot()).join(LTM_DIR_NAME);
 }
 
+function parseMetadata(raw: unknown): Record<string, unknown> {
+  if (!raw) return {};
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+}
+
+function normalizeCharacterIds(value: unknown) {
+  if (Array.isArray(value)) return value.filter((id): id is string => typeof id === "string" && id.trim().length > 0);
+  if (typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeLtmIdentifier(value: unknown) {
+  return typeof value === "string" && /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(value) ? value : null;
+}
+
+function ltmModeForChatMode(mode: unknown): LtmMode {
+  return ltmModeSchema.catch("roleplay").parse(mode);
+}
+
+function resolveChatLtmScope(chat: { id: string; groupId?: string | null; characterIds?: unknown; metadata?: unknown }) {
+  const meta = parseMetadata(chat.metadata);
+  const configuredScope =
+    meta.longTermMemoryScope && typeof meta.longTermMemoryScope === "object" && !Array.isArray(meta.longTermMemoryScope)
+      ? (meta.longTermMemoryScope as Record<string, unknown>)
+      : {};
+  const universe = normalizeLtmIdentifier(configuredScope.universe);
+  const rpId = normalizeLtmIdentifier(configuredScope.rpId);
+  const characterIds = normalizeCharacterIds(chat.characterIds);
+  return {
+    chatId: chat.id,
+    ...(chat.groupId ? { groupId: chat.groupId } : {}),
+    ...(characterIds.length ? { characterIds } : {}),
+    ...(universe ? { universe } : {}),
+    ...(rpId ? { rpId } : {}),
+  } satisfies LtmScope;
+}
+
 function publicRebuildResult(result: Awaited<ReturnType<typeof rebuildLongTermMemoryIndexes>>) {
   return {
     generatedAt: result.generatedAt,
@@ -230,9 +310,66 @@ function summarizeNotes(notes: LtmNote[]) {
   };
 }
 
+class LtmExtractionRouteError extends Error {
+  constructor(
+    message: string,
+    readonly statusCode: number,
+  ) {
+    super(message);
+  }
+}
+
 export async function longTermMemoryRoutes(app: FastifyInstance) {
   const storage = new LongTermMemoryStorage();
   const draftStore = new LongTermMemoryDraftStore();
+  const chats = createChatsStorage(app.db);
+  const connections = createConnectionsStorage(app.db);
+
+  async function resolveExtractionProvider(
+    body: z.infer<typeof extractSourceNoteBodySchema>,
+    chatConnectionId?: string | null,
+  ) {
+    const defaultAgentConn = body.connectionId ? null : await connections.getDefaultForAgents();
+    let connId = body.connectionId ?? defaultAgentConn?.id ?? chatConnectionId ?? null;
+    if (connId === "random") {
+      const pool = await connections.listRandomPool();
+      if (!pool.length) throw new LtmExtractionRouteError("No connections are marked for the random pool", 400);
+      connId = pool[Math.floor(Math.random() * pool.length)]!.id;
+    }
+
+    if (connId === LOCAL_SIDECAR_CONNECTION_ID) {
+      return {
+        provider: getLocalSidecarProvider(),
+        model: body.model ?? LOCAL_SIDECAR_MODEL,
+      };
+    }
+
+    let conn = connId === defaultAgentConn?.id ? defaultAgentConn : connId ? await connections.getWithKey(connId) : null;
+    if (body.connectionId && !conn) {
+      throw new LtmExtractionRouteError(`API connection not found: ${body.connectionId}`, 400);
+    }
+    if (chatConnectionId && connId === chatConnectionId && !conn) {
+      throw new LtmExtractionRouteError(`Chat API connection not found: ${chatConnectionId}`, 400);
+    }
+    if (!conn) {
+      const defaultConn = await connections.getDefault();
+      conn = defaultConn ? await connections.getWithKey(defaultConn.id) : null;
+    }
+    if (!conn) throw new LtmExtractionRouteError("No API connection configured for LTM source extraction", 400);
+
+    return {
+      provider: createLLMProvider(
+        conn.provider,
+        resolveBaseUrl(conn),
+        conn.apiKey,
+        conn.maxContext,
+        conn.openrouterProvider,
+        conn.maxTokensOverride,
+        conn.claudeFastMode === "true",
+      ),
+      model: body.model ?? conn.model,
+    };
+  }
 
   app.get("/status", async () => {
     await storage.initializeLtmStore();
@@ -283,6 +420,63 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     if (!note) return reply.status(404).send({ error: "Long-term memory note not found" });
     return note;
   });
+
+  app.post<{ Params: { id: string }; Body: unknown }>(
+    "/notes/:id/extract",
+    { bodyLimit: DRAFT_BODY_LIMIT_BYTES },
+    async (req, reply) => {
+      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory source extraction" })) return;
+      const { id } = noteIdParamSchema.parse(req.params);
+      const body = extractSourceNoteBodySchema.parse(req.body ?? {});
+      const sourceNote = await storage.getNote(id);
+      if (!sourceNote) return reply.status(404).send({ error: "Long-term memory note not found" });
+      if (!isLtmSourceNote(sourceNote)) {
+        return reply.status(400).send({ error: "Long-term memory note is not a source note" });
+      }
+
+      const chat = body.chatId ? await chats.getById(body.chatId) : null;
+      if (body.chatId && !chat) return reply.status(404).send({ error: "Chat not found" });
+
+      try {
+        const { provider, model } = await resolveExtractionProvider(body, chat?.connectionId ?? null);
+        const result = await extractLongTermMemoryFromSourceNote({
+          noteId: id,
+          provider,
+          model,
+          scope: chat ? resolveChatLtmScope(chat) : sourceNote.scope,
+          modes: chat ? [ltmModeForChatMode(chat.mode)] : sourceNote.modes,
+          instruction: body.instruction,
+          includeExistingNotes: body.includeExistingNotes,
+        });
+        const applyResult =
+          body.applyLowRisk && result.draft
+            ? await applyLongTermMemoryDraft(result.draft.id, {
+                actor: "maintenance_api",
+                autoApplyLowRiskOnly: true,
+              })
+            : null;
+
+        return {
+          draft: applyResult?.draft ?? result.draft,
+          diagnostics: result.diagnostics,
+          response: result.response,
+          appliedMutationIds: applyResult?.appliedMutationIds ?? [],
+          skippedMutationIds: applyResult?.skippedMutationIds ?? [],
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to extract long-term memory from source note";
+        const status =
+          err instanceof LtmExtractionRouteError
+            ? err.statusCode
+            : message.includes("not found")
+              ? 404
+              : message.includes("configured")
+                ? 400
+                : 502;
+        return reply.status(status).send({ error: message });
+      }
+    },
+  );
 
   app.post<{ Body: unknown }>(
     "/notes",
@@ -433,11 +627,16 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     },
   );
 
-  app.post<{ Params: { id: string } }>("/drafts/:id/accept", async (req, reply) => {
+  app.post<{ Params: { id: string }; Body: unknown }>("/drafts/:id/accept", async (req, reply) => {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft acceptance" })) return;
     const { id } = draftIdParamSchema.parse(req.params);
+    const body = acceptDraftBodySchema.parse(req.body ?? {});
     try {
-      return await applyLongTermMemoryDraft(id, { actor: "maintenance_api" });
+      return await applyLongTermMemoryDraft(id, {
+        actor: "maintenance_api",
+        mutationIds: body.mutationIds,
+        autoApplyLowRiskOnly: body.lowRiskOnly,
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to apply long-term memory draft";
       const status = message.includes("not found") ? 404 : message.includes("not pending") ? 409 : 400;

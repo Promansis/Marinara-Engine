@@ -21,6 +21,7 @@ export type SummaryLtmChat = {
   metadata?: unknown;
 };
 
+const SOURCE_SUMMARY_LTM_TAG = "source_summary";
 const SUMMARY_LTM_TAG = "chat_summary";
 const MANUAL_SUMMARY_LTM_TAG = "summary_manual";
 const AGENT_SUMMARY_LTM_TAG = "summary_agent";
@@ -40,7 +41,6 @@ function sourceHashForEntry(entry: ChatSummaryEntry) {
       id: entry.id,
       content: entry.content,
       title: entry.title,
-      enabled: entry.enabled,
       ltmEnabled: entry.ltm?.enabled === true,
     }),
   );
@@ -90,7 +90,7 @@ function resolveChatScope(chat: SummaryLtmChat, meta: Record<string, unknown>): 
 }
 
 function tagsForEntry(entry: ChatSummaryEntry) {
-  const tags = [SUMMARY_LTM_TAG];
+  const tags = [SOURCE_SUMMARY_LTM_TAG, SUMMARY_LTM_TAG];
   tags.push(entry.origin === "automated" ? AGENT_SUMMARY_LTM_TAG : MANUAL_SUMMARY_LTM_TAG);
   return Array.from(new Set(tags));
 }
@@ -105,7 +105,7 @@ function buildSummaryNote(
   return {
     id: noteId,
     type: "scene",
-    status: "active",
+    status: "dormant",
     modes: [ltmModeForChatMode(chat.mode)],
     scope: resolveChatScope(chat, meta),
     tags: tagsForEntry(entry),
@@ -113,7 +113,7 @@ function buildSummaryNote(
     updatedAt: timestamp,
     links: [],
     sections: {
-      summary: {
+      source: {
         text: entry.content.trim(),
         updatedAt: timestamp,
         evidence: [`chat:${chat.id}`, `summary_entry:${entry.id}`],
@@ -155,7 +155,7 @@ export async function syncChatSummaryEntryToLongTermMemory(
   const meta = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
   const noteId = entry.ltm?.noteId || noteIdForSummaryEntry(chat, entry);
   const sourceHash = sourceHashForEntry(entry);
-  const enabled = entry.enabled === true && entry.ltm?.enabled === true;
+  const enabled = entry.ltm?.enabled === true;
   let mutated = false;
 
   try {
@@ -166,7 +166,7 @@ export async function syncChatSummaryEntryToLongTermMemory(
           await storage.archiveNote(entry.ltm.noteId, {
             actor: "summary_ltm_sync",
             cause: "summary_ltm_disabled",
-            summary: "Archived chat summary LTM note",
+            summary: "Archived chat summary source note",
           });
           mutated = true;
         }
@@ -184,29 +184,41 @@ export async function syncChatSummaryEntryToLongTermMemory(
     const nextNote = buildSummaryNote(chat, meta as Record<string, unknown>, entry, noteId);
     const existing = await storage.getNote(noteId);
     if (existing) {
+      const nextSourceSection = nextNote.sections.source;
+      if (!nextSourceSection) throw new Error(`Summary source note is missing source section: ${noteId}`);
+      const sourceHashChanged = entry.ltm?.sourceHash !== sourceHash;
+      const nextSections = sourceHashChanged
+        ? { ...existing.sections, source: nextSourceSection }
+        : existing.sections.source
+          ? existing.sections
+          : { ...existing.sections, source: nextSourceSection };
+      const sourceSectionNeedsUpdate =
+        !existing.sections.source ||
+        (sourceHashChanged &&
+          (existing.sections.source.text !== nextSourceSection.text ||
+            JSON.stringify(existing.sections.source.evidence ?? []) !==
+              JSON.stringify(nextSourceSection.evidence ?? [])));
       if (
-        existing.status !== "active" ||
+        existing.status !== "dormant" ||
         JSON.stringify(existing.modes) !== JSON.stringify(nextNote.modes) ||
         JSON.stringify(existing.scope) !== JSON.stringify(nextNote.scope) ||
         JSON.stringify(existing.tags) !== JSON.stringify(nextNote.tags) ||
-        existing.sections.summary?.text !== nextNote.sections.summary?.text ||
-        JSON.stringify(existing.sections.summary?.evidence ?? []) !==
-          JSON.stringify(nextNote.sections.summary?.evidence ?? [])
+        sourceSectionNeedsUpdate
       ) {
         await storage.updateNote(
           noteId,
           {
-            status: "active",
+            status: "dormant",
             modes: nextNote.modes,
             scope: nextNote.scope,
             tags: nextNote.tags,
             links: nextNote.links,
-            sections: nextNote.sections,
+            sections: nextSections,
           },
           {
             actor: "summary_ltm_sync",
             cause: "summary_ltm_updated",
-            summary: "Updated chat summary LTM note",
+            summary: "Updated chat summary source note",
           },
         );
         mutated = true;
@@ -215,7 +227,7 @@ export async function syncChatSummaryEntryToLongTermMemory(
       await storage.createNote(nextNote, {
         actor: "summary_ltm_sync",
         cause: "summary_ltm_created",
-        summary: "Created chat summary LTM note",
+        summary: "Created chat summary source note",
       });
       mutated = true;
     }

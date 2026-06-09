@@ -9,6 +9,7 @@ export interface ApplyLtmDraftOptions {
   actor?: string;
   rebuildIndexes?: boolean;
   autoApplyLowRiskOnly?: boolean;
+  mutationIds?: string[];
 }
 
 export interface ApplyLtmDraftResult {
@@ -177,12 +178,28 @@ export async function applyLongTermMemoryDraft(
   const storage = new LongTermMemoryStorage(options.root);
   const actor = options.actor ?? (options.autoApplyLowRiskOnly ? "auto_low_risk" : "maintenance_api");
   const appliedMutationIds: string[] = [];
+  const selectedMutationIds = options.mutationIds ? new Set(options.mutationIds) : null;
+  const unknownMutationIds = options.mutationIds?.filter(
+    (mutationId) => !draft.mutations.some((mutation) => mutation.id === mutationId),
+  );
+  if (unknownMutationIds?.length) {
+    throw new Error(`Long-term memory draft mutation not found: ${unknownMutationIds.join(", ")}`);
+  }
+  const mutationsToApply = draft.mutations.filter((mutation) => {
+    if (selectedMutationIds && !selectedMutationIds.has(mutation.id)) return false;
+    if (options.autoApplyLowRiskOnly && !isLowRiskAutoApplyMutation(mutation)) return false;
+    return true;
+  });
   const skippedMutationIds = draft.mutations
-    .filter((mutation) => options.autoApplyLowRiskOnly && !isLowRiskAutoApplyMutation(mutation))
+    .filter((mutation) => !mutationsToApply.some((candidate) => candidate.id === mutation.id))
     .map((mutation) => mutation.id);
-  const mutationsToApply = options.autoApplyLowRiskOnly
-    ? draft.mutations.filter(isLowRiskAutoApplyMutation)
-    : draft.mutations;
+
+  if (mutationsToApply.length === 0) {
+    if (options.autoApplyLowRiskOnly) {
+      return { draft, appliedMutationIds, skippedMutationIds };
+    }
+    throw new Error(`Long-term memory draft has no mutations selected for apply: ${draftId}`);
+  }
 
   await preflightDraftMutations(storage, draft, mutationsToApply);
 
@@ -191,9 +208,16 @@ export async function applyLongTermMemoryDraft(
     appliedMutationIds.push(mutation.id);
   }
 
-  const status = options.autoApplyLowRiskOnly ? "auto_applied" : "accepted";
+  const partialApply = skippedMutationIds.length > 0;
+  const status = options.autoApplyLowRiskOnly && !partialApply ? "auto_applied" : partialApply ? "pending" : "accepted";
+  const remainingMutations = partialApply
+    ? draft.mutations.filter((mutation) => skippedMutationIds.includes(mutation.id))
+    : draft.mutations;
   const updated = await store.updateDraftStatus(draft.id, status, {
     appliedAt: appliedMutationIds.length > 0 ? nowIso() : undefined,
+    mutations: remainingMutations,
+    appliedMutationIds: Array.from(new Set([...(draft.appliedMutationIds ?? []), ...appliedMutationIds])),
+    skippedMutationIds,
   });
   if (!updated) {
     throw new Error(`Long-term memory draft disappeared during apply: ${draftId}`);

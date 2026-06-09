@@ -34,6 +34,8 @@ export interface RetrieveLongTermMemoryInput extends MemoryRecallEmbeddingOption
   includeGates?: LtmGate[];
   includeArchived?: boolean;
   includeResolved?: boolean;
+  includeSourceNotes?: boolean;
+  debug?: boolean;
   maxChunks?: number;
   maxTokens?: number;
 }
@@ -133,6 +135,10 @@ function gateAllows(chunk: LtmMemoryChunk, includeGates: Set<LtmGate>) {
   return chunk.gates.length === 0 || chunk.gates.every((gate) => includeGates.has(gate));
 }
 
+function isSourceSummaryChunk(chunk: LtmMemoryChunk) {
+  return chunk.tags.includes("source_summary") || chunk.tags.includes("chat_summary");
+}
+
 function candidateAllowed(
   chunk: LtmMemoryChunk,
   input: RetrieveLongTermMemoryInput,
@@ -140,6 +146,7 @@ function candidateAllowed(
   characterIds: string[],
 ) {
   const includeGates = new Set([...(config.includeGates ?? []), ...(input.includeGates ?? [])]);
+  if (!input.includeSourceNotes && isSourceSummaryChunk(chunk)) return false;
   if (!input.includeArchived && chunk.status === "archived") return false;
   if (!input.includeResolved && chunk.status === "resolved" && chunk.noteType === "thread") return false;
   if (!gateAllows(chunk, includeGates)) return false;
@@ -244,6 +251,12 @@ export async function retrieveLongTermMemory(input: RetrieveLongTermMemoryInput 
   const signals = extractQuerySignals(input);
   const characterIds = uniqueSorted(signals.characterIds);
   const chunksById = new Map(Object.entries(metadata.chunks));
+  if (!input.includeSourceNotes && input.debug) {
+    const skippedSourceChunks = Object.values(metadata.chunks).filter(isSourceSummaryChunk).length;
+    if (skippedSourceChunks > 0) {
+      warnings.push(`Skipped ${skippedSourceChunks} source summary chunk(s); set includeSourceNotes to search source notes.`);
+    }
+  }
   const metadataMatches = getLtmMetadataMatches(metadata, {
     noteIds: signals.noteIds,
     tags: signals.tags,

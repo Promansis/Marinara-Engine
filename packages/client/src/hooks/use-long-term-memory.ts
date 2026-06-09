@@ -1,5 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { LtmDraftStatus, LtmExtractionDraft, LtmNote, LtmNoteType, LtmStatus } from "@marinara-engine/shared";
+import type {
+  LtmDraftStatus,
+  LtmExtractionDraft,
+  LtmExtractionResponse,
+  LtmGate,
+  LtmNote,
+  LtmNoteType,
+  LtmScope,
+  LtmStatus,
+} from "@marinara-engine/shared";
 import { api } from "../lib/api-client";
 
 export type LtmStatusResponse = {
@@ -63,6 +72,57 @@ export type LtmInteropPreview = {
   scanned: number;
   draftable: number;
   samples: Array<{ sourceId: string; title: string; mutationCount: number; summary: string }>;
+};
+
+export type LtmSearchInput = {
+  queryText?: string;
+  recentUserMessage?: string;
+  mentionedCharacterNames?: string[];
+  noteIds?: string[];
+  tags?: string[];
+  scope?: LtmScope;
+  characterIds?: string[];
+  includeGates?: LtmGate[];
+  includeArchived?: boolean;
+  includeResolved?: boolean;
+  includeSourceNotes?: boolean;
+  debug?: boolean;
+  maxChunks?: number;
+  maxTokens?: number;
+};
+
+export type LtmSearchResponse = {
+  chunks: unknown[];
+  usedTokens: number;
+  maxTokens: number;
+  embeddingsAvailable: boolean;
+  warnings: string[];
+};
+
+export type LtmExtractionDiagnostic = {
+  severity: "warning" | "error";
+  code: string;
+  mutationId?: string;
+  noteId?: string;
+  message: string;
+};
+
+export type ExtractLongTermMemorySourceInput = {
+  noteId: string;
+  chatId?: string;
+  connectionId?: string;
+  model?: string;
+  instruction?: string;
+  applyLowRisk?: boolean;
+  includeExistingNotes?: boolean;
+};
+
+export type ExtractLongTermMemorySourceResponse = {
+  draft: LtmExtractionDraft | null;
+  diagnostics: LtmExtractionDiagnostic[];
+  response: LtmExtractionResponse;
+  appliedMutationIds: string[];
+  skippedMutationIds: string[];
 };
 
 export const longTermMemoryKeys = {
@@ -189,6 +249,12 @@ export function useLongTermMemoryImportPreview(source: LtmInteropSource, limit: 
   });
 }
 
+export function useSearchLongTermMemory() {
+  return useMutation({
+    mutationFn: (input: LtmSearchInput) => api.post<LtmSearchResponse>("/long-term-memory/search", input),
+  });
+}
+
 export function useRebuildLongTermMemory() {
   const qc = useQueryClient();
   return useMutation({
@@ -227,7 +293,17 @@ export function useCreateLongTermMemoryImportDrafts() {
 export function useAcceptLongTermMemoryDraft() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api.post(`/long-term-memory/drafts/${id}/accept`, {}),
+    mutationFn: ({ id, mutationIds, lowRiskOnly }: { id: string; mutationIds?: string[]; lowRiskOnly?: boolean }) =>
+      api.post(`/long-term-memory/drafts/${id}/accept`, { mutationIds, lowRiskOnly }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
+  });
+}
+
+export function useExtractLongTermMemorySourceNote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ noteId, ...body }: ExtractLongTermMemorySourceInput) =>
+      api.post<ExtractLongTermMemorySourceResponse>(`/long-term-memory/notes/${noteId}/extract`, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
   });
 }

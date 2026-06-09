@@ -209,7 +209,7 @@ function DraftRow({ draft }: { draft: LtmExtractionDraft }) {
           <ToolButton
             onClick={() =>
               accept
-                .mutateAsync(draft.id)
+                .mutateAsync({ id: draft.id })
                 .then(() => toast.success("Draft accepted"))
                 .catch((err: Error) => toast.error(err.message))
             }

@@ -252,6 +252,9 @@ export const ltmDraftSourceSchema = z
     userMessageId: z.string().min(1).max(120).optional(),
     assistantMessageId: z.string().min(1).max(120).optional(),
     turn: z.number().int().min(0).optional(),
+    sourceNoteId: ltmNoteIdSchema.optional(),
+    summaryEntryId: z.string().min(1).max(120).optional(),
+    sourceHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   })
   .strict();
 
@@ -352,6 +355,8 @@ export const ltmExtractionDraftSchema = z
     mutations: z.array(ltmDraftMutationSchema).min(1).max(25),
     rejectedReason: z.string().max(1_000).optional(),
     appliedAt: ltmIsoTimestampSchema.optional(),
+    appliedMutationIds: z.array(z.string().uuid()).max(25).optional(),
+    skippedMutationIds: z.array(z.string().uuid()).max(25).optional(),
   })
   .strict();
 

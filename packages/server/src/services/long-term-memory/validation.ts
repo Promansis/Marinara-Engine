@@ -1,0 +1,153 @@
+import type { LtmDraftMutation, LtmExtractionResponse, LtmGate, LtmNote } from "@marinara-engine/shared";
+
+export type LtmExtractionDiagnostic = {
+  severity: "warning" | "error";
+  code: string;
+  mutationId?: string;
+  noteId?: string;
+  message: string;
+};
+
+const GATED_WORDS: Array<{ gate: LtmGate; pattern: RegExp }> = [
+  { gate: "spoiler", pattern: /\b(spoiler|twist|reveal|secret ending)\b/i },
+  { gate: "character_secret", pattern: /\b(secret|unknown to|hiding|concealed|private knowledge)\b/i },
+  { gate: "private", pattern: /\b(private|confidential|intimate)\b/i },
+  { gate: "nsfw", pattern: /\b(nsfw|explicit|sexual|sex)\b/i },
+];
+
+function tokenize(value: string) {
+  return new Set(
+    value
+      .toLowerCase()
+      .match(/[a-z0-9]{4,}/g)
+      ?.slice(0, 500) ?? [],
+  );
+}
+
+function lexicalOverlap(sourceText: string, proposedText: string) {
+  const sourceTokens = tokenize(sourceText);
+  const proposedTokens = tokenize(proposedText);
+  if (sourceTokens.size === 0 || proposedTokens.size === 0) return 0;
+  let shared = 0;
+  for (const token of proposedTokens) {
+    if (sourceTokens.has(token)) shared++;
+  }
+  return shared / proposedTokens.size;
+}
+
+function textForMutation(mutation: LtmDraftMutation) {
+  if (mutation.kind === "create_note") {
+    return Object.values(mutation.note.sections)
+      .map((section) => section.text)
+      .join("\n");
+  }
+  if (mutation.kind === "append_section") return mutation.text;
+  if (mutation.kind === "update_section") return mutation.section.text;
+  if (mutation.kind === "flag_conflict") return mutation.conflict.proposed;
+  return mutation.summary;
+}
+
+function noteIdForMutation(mutation: LtmDraftMutation) {
+  return mutation.kind === "create_note" ? mutation.note.id : mutation.noteId;
+}
+
+function sectionKeyForMutation(mutation: LtmDraftMutation) {
+  if (mutation.kind === "append_section" || mutation.kind === "update_section") return mutation.sectionKey;
+  return null;
+}
+
+function gatesForMutation(mutation: LtmDraftMutation) {
+  if (mutation.kind === "create_note") {
+    return Object.values(mutation.note.sections).flatMap((section) => section.gates ?? []);
+  }
+  if (mutation.kind === "append_section") return mutation.gates ?? [];
+  if (mutation.kind === "update_section") return mutation.section.gates ?? [];
+  return [];
+}
+
+export function validateLtmExtractionResponse({
+  response,
+  sourceText,
+  existingNotes,
+}: {
+  response: LtmExtractionResponse;
+  sourceText: string;
+  existingNotes: LtmNote[];
+}) {
+  const diagnostics: LtmExtractionDiagnostic[] = [];
+  const existingById = new Map(existingNotes.map((note) => [note.id, note]));
+
+  for (const mutation of response.mutations) {
+    const noteId = noteIdForMutation(mutation);
+    const text = textForMutation(mutation);
+    const existing = existingById.get(noteId);
+
+    if (mutation.evidence.length === 0) {
+      diagnostics.push({
+        severity: "error",
+        code: "missing_evidence",
+        mutationId: mutation.id,
+        noteId,
+        message: "Mutation has no evidence reference.",
+      });
+    }
+
+    if (lexicalOverlap(sourceText, text) < 0.08) {
+      diagnostics.push({
+        severity: "warning",
+        code: "low_lexical_evidence",
+        mutationId: mutation.id,
+        noteId,
+        message: "Proposed text has low lexical overlap with the source note.",
+      });
+    }
+
+    if (mutation.kind === "create_note" && existing) {
+      diagnostics.push({
+        severity: "error",
+        code: "duplicate_note",
+        mutationId: mutation.id,
+        noteId,
+        message: `Mutation creates an existing note: ${noteId}.`,
+      });
+    }
+
+    const sectionKey = sectionKeyForMutation(mutation);
+    if (sectionKey && existing?.sections[sectionKey]?.text.trim()) {
+      const existingText = existing.sections[sectionKey]!.text.trim();
+      if (mutation.kind === "update_section" && existingText !== mutation.section.text.trim()) {
+        diagnostics.push({
+          severity: "warning",
+          code: "section_conflict",
+          mutationId: mutation.id,
+          noteId,
+          message: `Mutation overwrites existing ${noteId}.${sectionKey}.`,
+        });
+      }
+      if (mutation.kind === "append_section" && existingText.includes(mutation.text.trim())) {
+        diagnostics.push({
+          severity: "warning",
+          code: "duplicate_section_text",
+          mutationId: mutation.id,
+          noteId,
+          message: `Mutation repeats existing ${noteId}.${sectionKey} text.`,
+        });
+      }
+    }
+
+    const gates = gatesForMutation(mutation);
+    for (const { gate, pattern } of GATED_WORDS) {
+      if (pattern.test(text) && !gates.includes(gate)) {
+        diagnostics.push({
+          severity: "warning",
+          code: "missing_gate",
+          mutationId: mutation.id,
+          noteId,
+          message: `Potential ${gate} content is not gated.`,
+        });
+      }
+    }
+  }
+
+  return diagnostics;
+}
