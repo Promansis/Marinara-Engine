@@ -682,9 +682,19 @@ export async function chatsRoutes(app: FastifyInstance) {
         nextEntries = entries.filter((entry) => entry.id !== body.entryId);
       } else if (body.operation === "toggle") {
         const now = new Date().toISOString();
-        nextEntries = entries.map((entry) =>
-          entry.id === body.entryId ? { ...entry, enabled: body.enabled, updatedAt: now } : entry,
-        );
+        nextEntries = entries.map((entry) => {
+          if (entry.id !== body.entryId) return entry;
+          const baseEntry = {
+            ...entry,
+            enabled: body.enabled,
+            updatedAt: now,
+          };
+          const nextEntry = body.enabled ? markSummaryEntryForLtmIfEnabled(freshMeta, baseEntry) : baseEntry;
+          if (entry.ltm?.noteId || entry.ltm?.enabled === true || nextEntry.ltm?.enabled === true) {
+            entryForLtmSync = nextEntry;
+          }
+          return nextEntry;
+        });
       } else if (body.operation === "toggle_ltm") {
         const now = new Date().toISOString();
         nextEntries = entries.map((entry) => {
@@ -735,7 +745,7 @@ export async function chatsRoutes(app: FastifyInstance) {
         legacySummary: typeof freshMeta.summary === "string" ? freshMeta.summary : null,
       }).map((entry) => ({
         ...entry,
-        ltm: { ...(entry.ltm ?? {}), enabled: true },
+        ltm: { ...(entry.ltm ?? {}), enabled: entry.enabled === true },
         updatedAt: now,
       }));
       entriesToSync = entries;

@@ -155,7 +155,7 @@ export async function syncChatSummaryEntryToLongTermMemory(
   const meta = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
   const noteId = entry.ltm?.noteId || noteIdForSummaryEntry(chat, entry);
   const sourceHash = sourceHashForEntry(entry);
-  const enabled = entry.ltm?.enabled === true;
+  const enabled = entry.enabled === true && entry.ltm?.enabled === true;
   let mutated = false;
 
   try {
