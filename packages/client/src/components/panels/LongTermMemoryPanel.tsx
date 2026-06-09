@@ -5,6 +5,7 @@ import {
   Archive,
   Check,
   DatabaseZap,
+  Eye,
   FileJson,
   Hammer,
   History,
@@ -18,7 +19,15 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import type { LtmDraftStatus, LtmExtractionDraft, LtmNote, LtmNoteType, LtmStatus } from "@marinara-engine/shared";
+import type {
+  LtmDraftMutation,
+  LtmDraftStatus,
+  LtmExtractionDraft,
+  LtmLink,
+  LtmNote,
+  LtmNoteType,
+  LtmStatus,
+} from "@marinara-engine/shared";
 import {
   useAcceptLongTermMemoryDraft,
   useArchiveLongTermMemoryNote,
@@ -137,12 +146,16 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 function NoteRow({
   note,
+  viewing,
   editing,
+  onView,
   onEdit,
   onArchive,
 }: {
   note: LtmNote;
+  viewing: boolean;
   editing: boolean;
+  onView: () => void;
   onEdit: () => void;
   onArchive: () => void;
 }) {
@@ -165,6 +178,18 @@ function NoteRow({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={onView}
+            className={cn(
+              "rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+              viewing && "bg-[var(--accent)] text-[var(--foreground)]",
+            )}
+            aria-label={`View ${note.id}`}
+            title="View note"
+          >
+            <Eye size="0.875rem" />
+          </button>
           <button
             type="button"
             onClick={onArchive}
@@ -191,6 +216,206 @@ function NoteRow({
         <div className="mt-2 truncate text-[0.625rem] text-[var(--muted-foreground)]">Tags: {note.tags.join(", ")}</div>
       )}
     </article>
+  );
+}
+
+function compactScope(note: LtmNote) {
+  const scopeEntries = Object.entries(note.scope).flatMap(([key, value]) => {
+    if (Array.isArray(value)) return value.length ? [[key, value.join(", ")]] : [];
+    return typeof value === "string" && value.trim() ? [[key, value]] : [];
+  });
+  return scopeEntries.length ? scopeEntries.map(([key, value]) => `${key}: ${value}`).join(" · ") : "Global";
+}
+
+function mutationTarget(mutation: LtmDraftMutation) {
+  if (mutation.kind === "create_note") return mutation.note.id;
+  if (mutation.kind === "add_link") return `${mutation.noteId} -> ${mutation.link.target}`;
+  return mutation.noteId;
+}
+
+function mutationText(mutation: LtmDraftMutation) {
+  switch (mutation.kind) {
+    case "create_note":
+      return Object.entries(mutation.note.sections)
+        .map(([key, section]) => `${key}: ${section.text}`)
+        .join("\n\n");
+    case "append_section":
+      return `${mutation.sectionKey}: ${mutation.text}`;
+    case "update_section":
+      return `${mutation.sectionKey}: ${mutation.section.text}`;
+    case "add_link":
+      return `${mutation.noteId} --${mutation.link.relation}-> ${mutation.link.target}`;
+    case "set_status":
+      return `Set ${mutation.noteId} to ${mutation.status}`;
+    case "flag_conflict":
+      return `${mutation.conflict.field}\nExisting: ${mutation.conflict.existing}\nProposed: ${mutation.conflict.proposed}`;
+  }
+}
+
+function MutationPreview({ mutation }: { mutation: LtmDraftMutation }) {
+  return (
+    <article className="rounded-lg bg-[var(--secondary)]/45 p-3 ring-1 ring-[var(--border)]">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <StatusPill label={mutation.kind} />
+        <StatusPill
+          label={mutation.risk}
+          tone={mutation.risk === "low" ? "good" : mutation.risk === "high" ? "bad" : "warn"}
+        />
+        <StatusPill label={`${Math.round(mutation.confidence * 100)}%`} />
+      </div>
+      <div className="mt-2 text-xs font-medium text-[var(--foreground)]">{mutation.summary}</div>
+      <div className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">Target: {mutationTarget(mutation)}</div>
+      <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-[var(--background)] p-2 text-[0.6875rem] leading-relaxed text-[var(--foreground)] ring-1 ring-[var(--border)]">
+        {mutationText(mutation)}
+      </pre>
+      {mutation.evidence.length > 0 && (
+        <div className="mt-2 text-[0.625rem] text-[var(--muted-foreground)]">
+          Evidence: {mutation.evidence.join(", ")}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function GraphLinks({ links }: { links: LtmLink[] }) {
+  if (links.length === 0) {
+    return (
+      <p className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-3 text-xs text-[var(--muted-foreground)]">
+        No graph links on this note yet.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {links.map((link, index) => (
+        <div
+          key={`${link.relation}-${link.target}-${index}`}
+          className="flex min-w-0 items-center gap-2 rounded-lg bg-[var(--secondary)]/45 px-3 py-2 text-xs ring-1 ring-[var(--border)]"
+        >
+          <span className="shrink-0 rounded-md bg-[var(--muted)]/50 px-1.5 py-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
+            {link.relation}
+          </span>
+          <span className="min-w-0 truncate font-mono text-[var(--foreground)]">{link.target}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function NoteViewModalContent({
+  note,
+  drafts,
+  draftsLoading,
+}: {
+  note: LtmNote;
+  drafts: LtmExtractionDraft[];
+  draftsLoading: boolean;
+}) {
+  const extractedDrafts = drafts.filter((draft) => draft.source.sourceNoteId === note.id);
+  const extractedMutations = extractedDrafts.flatMap((draft) => draft.mutations);
+  const extractedLinks = extractedMutations.flatMap((mutation) => {
+    if (mutation.kind === "create_note") return mutation.note.links;
+    if (mutation.kind === "add_link") return [mutation.link];
+    return [];
+  });
+
+  return (
+    <div className="grid gap-4">
+      <div className="rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
+        <div className="flex flex-wrap gap-1.5">
+          <StatusPill label={note.type} />
+          <StatusPill label={note.status} tone={note.status === "active" ? "good" : "neutral"} />
+          {note.modes.map((mode) => (
+            <StatusPill key={mode} label={mode} />
+          ))}
+        </div>
+        <div className="mt-2 text-[0.625rem] text-[var(--muted-foreground)]">
+          {compactScope(note)} · updated {new Date(note.updatedAt).toLocaleString()}
+        </div>
+      </div>
+
+      <section className="space-y-2">
+        <h3 className="text-xs font-semibold text-[var(--foreground)]">Note Body</h3>
+        {Object.entries(note.sections).map(([key, section]) => (
+          <article key={key} className="rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs font-semibold text-[var(--foreground)]">{key}</span>
+              {typeof section.salience === "number" && <StatusPill label={`salience ${section.salience}`} />}
+              {typeof section.confidence === "number" && <StatusPill label={`confidence ${section.confidence}`} />}
+              {(section.gates ?? []).map((gate) => (
+                <StatusPill key={gate} label={gate} tone="warn" />
+              ))}
+            </div>
+            <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-[var(--foreground)]">{section.text}</p>
+            {(section.evidence ?? []).length > 0 && (
+              <div className="mt-2 text-[0.625rem] text-[var(--muted-foreground)]">
+                Evidence: {section.evidence?.join(", ")}
+              </div>
+            )}
+          </article>
+        ))}
+      </section>
+
+      <section className="space-y-2">
+        <h3 className="text-xs font-semibold text-[var(--foreground)]">Graph Links</h3>
+        <GraphLinks links={note.links} />
+      </section>
+
+      <section className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-xs font-semibold text-[var(--foreground)]">Extracted For Graph</h3>
+          <StatusPill label={`${extractedMutations.length} mutations`} />
+        </div>
+        {draftsLoading ? (
+          <div className="flex items-center justify-center rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-3 text-xs text-[var(--muted-foreground)]">
+            <Loader2 className="mr-2 animate-spin" size="0.875rem" />
+            Loading extraction drafts...
+          </div>
+        ) : extractedDrafts.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-3 text-xs text-[var(--muted-foreground)]">
+            No extraction drafts were created from this source note.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {extractedDrafts.map((draft) => (
+              <article key={draft.id} className="rounded-lg bg-[var(--card)] p-3 ring-1 ring-[var(--border)]">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <StatusPill
+                    label={draft.status}
+                    tone={
+                      draft.status === "accepted" || draft.status === "auto_applied"
+                        ? "good"
+                        : draft.status === "pending"
+                          ? "warn"
+                          : "neutral"
+                    }
+                  />
+                  <StatusPill label={`${draft.mutations.length} mutations`} />
+                  {draft.appliedMutationIds?.length ? (
+                    <StatusPill label={`${draft.appliedMutationIds.length} applied`} tone="good" />
+                  ) : null}
+                </div>
+                {draft.summary && <p className="mt-2 text-xs text-[var(--foreground)]">{draft.summary}</p>}
+                <div className="mt-3 space-y-2">
+                  {draft.mutations.map((mutation) => (
+                    <MutationPreview key={mutation.id} mutation={mutation} />
+                  ))}
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+        {extractedLinks.length > 0 && (
+          <div className="space-y-2">
+            <div className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+              Links proposed by extraction
+            </div>
+            <GraphLinks links={extractedLinks} />
+          </div>
+        )}
+      </section>
+    </div>
   );
 }
 
@@ -411,6 +636,7 @@ export function LongTermMemoryPanel() {
   const [creatingNote, setCreatingNote] = useState(false);
   const [createNoteDraft, setCreateNoteDraft] = useState<CreateLongTermMemoryNoteDraft | null>(null);
   const [createNoteDirty, setCreateNoteDirty] = useState(false);
+  const [viewingNoteId, setViewingNoteId] = useState<string | null>(null);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editedNoteDirty, setEditedNoteDirty] = useState(false);
 
@@ -421,6 +647,7 @@ export function LongTermMemoryPanel() {
     status: noteStatus === "all" ? undefined : noteStatus,
   });
   const drafts = useLongTermMemoryDrafts({ status: draftStatus === "all" ? undefined : draftStatus });
+  const allDrafts = useLongTermMemoryDrafts({}, { enabled: Boolean(viewingNoteId) });
   const importPreview = useLongTermMemoryImportPreview(importSource, importLimit);
   const rebuild = useRebuildLongTermMemory();
   const replay = useReplayLongTermMemory();
@@ -446,12 +673,20 @@ export function LongTermMemoryPanel() {
     () => (editingNoteId ? ((notes.data ?? []).find((note) => note.id === editingNoteId) ?? null) : null),
     [editingNoteId, notes.data],
   );
+  const viewingNote = useMemo(
+    () => (viewingNoteId ? ((notes.data ?? []).find((note) => note.id === viewingNoteId) ?? null) : null),
+    [notes.data, viewingNoteId],
+  );
   const editedNoteFilteredOut = Boolean(editingNote && !filteredNotes.some((note) => note.id === editingNote.id));
   const editingNoteHiddenByFilters = Boolean(editedNoteFilteredOut && editingNote);
 
   const closeEditor = () => {
     setEditingNoteId(null);
     setEditedNoteDirty(false);
+  };
+
+  const closeViewer = () => {
+    setViewingNoteId(null);
   };
 
   const closeCreateForm = () => {
@@ -470,7 +705,16 @@ export function LongTermMemoryPanel() {
     if (editingNoteId && !confirmDiscardEditor()) return;
     if (creatingNote) closeCreateForm();
     if (editingNoteId) closeEditor();
+    if (viewingNoteId) closeViewer();
     setTab(nextTab);
+  };
+
+  const requestViewNote = (id: string) => {
+    if (viewingNoteId === id) {
+      closeViewer();
+      return;
+    }
+    setViewingNoteId(id);
   };
 
   const requestEditNote = (id: string) => {
@@ -480,6 +724,7 @@ export function LongTermMemoryPanel() {
     if (creatingNote && !confirmDiscardCreate()) return;
     if (!confirmDiscardEditor()) return;
     closeCreateForm();
+    closeViewer();
     setEditingNoteId(id);
     setEditedNoteDirty(false);
   };
@@ -489,6 +734,7 @@ export function LongTermMemoryPanel() {
     if (!confirmDiscardEditor()) return;
     setEditingNoteId(null);
     setEditedNoteDirty(false);
+    closeViewer();
     setCreatingNote(true);
   };
 
@@ -612,7 +858,9 @@ export function LongTermMemoryPanel() {
               <NoteRow
                 key={note.id}
                 note={note}
+                viewing={viewingNoteId === note.id}
                 editing={editingNoteId === note.id}
+                onView={() => requestViewNote(note.id)}
                 onEdit={() => requestEditNote(note.id)}
                 onArchive={() => archiveFromRow(note)}
               />
@@ -641,6 +889,20 @@ export function LongTermMemoryPanel() {
                 setEditedNoteDirty(false);
               }}
             />
+          </Modal>
+          <Modal
+            open={Boolean(viewingNote)}
+            onClose={closeViewer}
+            title={viewingNote?.id ?? "View Vault Note"}
+            width="max-w-4xl"
+          >
+            {viewingNote && (
+              <NoteViewModalContent
+                note={viewingNote}
+                drafts={allDrafts.data ?? []}
+                draftsLoading={allDrafts.isLoading}
+              />
+            )}
           </Modal>
           <Modal
             open={Boolean(editingNote)}

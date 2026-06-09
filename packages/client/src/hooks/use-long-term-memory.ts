@@ -147,10 +147,7 @@ export type LtmDraftFilter = {
   chatId?: string;
 };
 
-export type CreateLongTermMemoryNoteInput = Omit<
-  LtmNote,
-  "createdAt" | "updatedAt" | "version" | "previousHash"
-> &
+export type CreateLongTermMemoryNoteInput = Omit<LtmNote, "createdAt" | "updatedAt" | "version" | "previousHash"> &
   Partial<Pick<LtmNote, "createdAt" | "updatedAt" | "version" | "previousHash">>;
 
 export type UpdateLongTermMemoryNoteInput = Partial<
@@ -233,10 +230,11 @@ export function useArchiveLongTermMemoryNote() {
   });
 }
 
-export function useLongTermMemoryDrafts(filter: LtmDraftFilter = {}) {
+export function useLongTermMemoryDrafts(filter: LtmDraftFilter = {}, options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: longTermMemoryKeys.drafts(filter),
     queryFn: () => api.get<LtmExtractionDraft[]>(`/long-term-memory/drafts${qs(filter)}`),
+    enabled: options.enabled ?? true,
     staleTime: 30_000,
   });
 }
