@@ -5,6 +5,7 @@
 import {
   useState,
   useEffect,
+  useLayoutEffect,
   useRef,
   useCallback,
   useMemo,
@@ -183,6 +184,9 @@ export function SummaryPopover({
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [templateNameDraft, setTemplateNameDraft] = useState("");
   const [templatePromptDraft, setTemplatePromptDraft] = useState("");
+  const [scopeSettingsPosition, setScopeSettingsPosition] = useState<{ top: number; left: number; width: number } | null>(
+    null,
+  );
   const summaryPopoverSettings = useUIStore((s) => s.summaryPopoverSettings);
   const setSummaryPopoverSettings = useUIStore((s) => s.setSummaryPopoverSettings);
   const persistedContextSize = summaryPopoverSettings.contextSize ?? contextSize;
@@ -666,6 +670,17 @@ export function SummaryPopover({
 
   const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
 
+  useLayoutEffect(() => {
+    if (!scopeSettingsOpen || isMobile || !scopeSettingsButtonRef.current) return;
+    const rect = scopeSettingsButtonRef.current.getBoundingClientRect();
+    const width = Math.min(320, window.innerWidth - 24);
+    setScopeSettingsPosition({
+      top: Math.min(rect.bottom + 8, window.innerHeight - 80),
+      left: Math.max(12, Math.min(rect.right - width, window.innerWidth - width - 12)),
+      width,
+    });
+  }, [isMobile, scopeSettingsOpen]);
+
   const handlePanelMouseDown = useCallback(
     (event: ReactMouseEvent<HTMLDivElement>) => {
       if (scopeSettingsOpen) {
@@ -742,15 +757,45 @@ export function SummaryPopover({
         {scopeSettingsOpen && (
           <div
             ref={scopeSettingsRef}
-            className="absolute right-2 top-12 z-10 max-h-[min(34rem,calc(100vh-7rem))] w-[calc(100%-1rem)] max-w-80 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--background)] text-[var(--popover-foreground)] shadow-2xl shadow-black/50 ring-1 ring-white/5 backdrop-blur-xl"
+            className={cn(
+              "overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--background)] text-[var(--popover-foreground)] shadow-2xl shadow-black/50 ring-1 ring-white/5 backdrop-blur-xl",
+              isMobile
+                ? "fixed left-1/2 top-1/2 z-[10000] max-h-[calc(100dvh-3rem)] w-[calc(100vw-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2"
+                : "fixed z-[10000] max-h-[min(34rem,calc(100vh-7rem))]",
+            )}
+            style={
+              !isMobile
+                ? scopeSettingsPosition
+                  ? scopeSettingsPosition
+                  : { visibility: "hidden" }
+                : undefined
+            }
           >
             <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--card)]/80 px-3 py-2.5 backdrop-blur-sm">
               <div className="min-w-0">
                 <p className="text-xs font-semibold text-[var(--popover-foreground)]">Summary settings</p>
               </div>
+              {isMobile && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setScopeSettingsOpen(false);
+                    setTemplateSelectOpen(false);
+                  }}
+                  className="rounded-md p-1 text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                  aria-label="Close summary settings"
+                >
+                  <X size="0.75rem" />
+                </button>
+              )}
             </div>
 
-            <div className="max-h-[min(31rem,calc(100vh-10rem))] overflow-y-auto p-2.5">
+            <div
+              className={cn(
+                "overflow-y-auto p-2.5",
+                isMobile ? "max-h-[calc(100dvh-6rem)]" : "max-h-[min(31rem,calc(100vh-10rem))]",
+              )}
+            >
               <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2.5">
                 <p className="px-1 text-xs font-semibold text-[var(--popover-foreground)]">Summary Scope</p>
                 <div className="grid grid-cols-2 gap-1 rounded-lg bg-[var(--background)]/30 p-1">
