@@ -128,8 +128,8 @@ function readScopeValue(metadata: Record<string, unknown>, key: "universe" | "rp
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="border-b border-[var(--border)]/35 px-3 py-3 last:border-b-0">
-      <h3 className="mb-2.5 text-xs font-medium text-[var(--foreground)]">{title}</h3>
+    <section className="space-y-2">
+      <h3 className="px-1 text-[0.6875rem] font-semibold uppercase text-[var(--muted-foreground)]">{title}</h3>
       {children}
     </section>
   );
@@ -148,10 +148,16 @@ function NoteRow({
 }) {
   const sectionCount = Object.keys(note.sections).length;
   return (
-    <article className="rounded-lg bg-[var(--secondary)]/50 p-3 ring-1 ring-[var(--border)]">
+    <article
+      className={cn(
+        "group rounded-xl border border-rose-300/15 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-2.5 transition-all",
+        "hover:border-rose-300/30 hover:bg-[var(--sidebar-accent)]",
+        editing && "border-rose-300/40 bg-rose-300/10 ring-1 ring-rose-300/25",
+      )}
+    >
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="truncate text-xs font-medium text-[var(--foreground)]">{note.id}</div>
+          <div className="truncate text-xs font-semibold text-[var(--foreground)]">{note.id}</div>
           <div className="mt-1 flex flex-wrap gap-1.5">
             <StatusPill label={note.type} />
             <StatusPill label={note.status} tone={note.status === "active" ? "good" : "neutral"} />
@@ -163,7 +169,7 @@ function NoteRow({
             type="button"
             onClick={onArchive}
             disabled={note.status === "archived"}
-            className="rounded-md p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)] disabled:cursor-not-allowed disabled:opacity-45"
+            className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)] disabled:cursor-not-allowed disabled:opacity-45"
             aria-label={`Archive ${note.id}`}
           >
             <Archive size="0.875rem" />
@@ -172,7 +178,7 @@ function NoteRow({
             type="button"
             onClick={onEdit}
             className={cn(
-              "rounded-md p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+              "rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
               editing && "bg-[var(--accent)] text-[var(--foreground)]",
             )}
             aria-label={`Edit ${note.id}`}
@@ -194,12 +200,15 @@ function DraftRow({ draft }: { draft: LtmExtractionDraft }) {
   const pending = draft.status === "pending";
 
   return (
-    <article className="rounded-lg bg-[var(--secondary)]/50 p-3 ring-1 ring-[var(--border)]">
+    <article className="rounded-xl border border-rose-300/15 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-2.5 transition-all hover:border-rose-300/30 hover:bg-[var(--sidebar-accent)]">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="truncate text-xs font-medium text-[var(--foreground)]">{draft.summary || draft.id}</div>
+          <div className="truncate text-xs font-semibold text-[var(--foreground)]">{draft.summary || draft.id}</div>
           <div className="mt-1 flex flex-wrap gap-1.5">
-            <StatusPill label={draft.status} tone={pending ? "warn" : draft.status === "accepted" ? "good" : "neutral"} />
+            <StatusPill
+              label={draft.status}
+              tone={pending ? "warn" : draft.status === "accepted" ? "good" : "neutral"}
+            />
             <StatusPill label={`${draft.mutations.length} mutations`} />
           </div>
         </div>
@@ -305,10 +314,14 @@ function ChatMemorySettings() {
   };
 
   return (
-    <div className="space-y-3">
-      <SettingToggle label="Use memory in prompts" checked={enabled} onChange={(checked) => patch({ enableLongTermMemory: checked })} />
+    <div className="space-y-2">
+      <SettingToggle
+        label="Use memory in prompts"
+        checked={enabled}
+        onChange={(checked) => patch({ enableLongTermMemory: checked })}
+      />
 
-      <div className="grid gap-3 rounded-xl bg-[var(--secondary)]/50 p-3 ring-1 ring-[var(--border)]">
+      <div className="grid gap-3 rounded-xl border border-rose-300/15 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-3">
         <div className="grid gap-3 sm:grid-cols-2">
           <SettingField label="Universe">
             <input
@@ -357,7 +370,11 @@ function ChatMemorySettings() {
         </SettingField>
       </div>
 
-      <SettingToggle label="Debug retrieval logs" checked={debug} onChange={(checked) => patch({ longTermMemoryDebug: checked })} />
+      <SettingToggle
+        label="Debug retrieval logs"
+        checked={debug}
+        onChange={(checked) => patch({ longTermMemoryDebug: checked })}
+      />
       <SettingToggle
         label="Create drafts after replies"
         checked={autoExtract}
@@ -426,7 +443,7 @@ export function LongTermMemoryPanel() {
   const filteredDrafts = drafts.data ?? [];
   const statusTone = integrity.data?.ok ? "good" : integrity.data ? "bad" : "neutral";
   const editingNote = useMemo(
-    () => (editingNoteId ? (notes.data ?? []).find((note) => note.id === editingNoteId) ?? null : null),
+    () => (editingNoteId ? ((notes.data ?? []).find((note) => note.id === editingNoteId) ?? null) : null),
     [editingNoteId, notes.data],
   );
   const editedNoteFilteredOut = Boolean(editingNote && !filteredNotes.some((note) => note.id === editingNote.id));
@@ -487,35 +504,47 @@ export function LongTermMemoryPanel() {
   };
 
   return (
-    <div className="min-h-full bg-[var(--background)] text-[var(--foreground)]">
-      <Section title="Overview">
-        <div className="grid grid-cols-2 gap-2">
-          <div className="rounded-lg bg-[var(--secondary)]/50 p-3 ring-1 ring-[var(--border)]">
-            <div className="text-lg font-semibold tabular-nums">{status.data?.notes.total ?? 0}</div>
-            <div className="text-[0.625rem] text-[var(--muted-foreground)]">Notes</div>
+    <div className="flex min-h-full flex-col gap-2 p-3 text-[var(--foreground)]">
+      <section className="rounded-xl border border-rose-300/20 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-3">
+        <div className="grid grid-cols-[1fr_auto_auto] items-center gap-3">
+          <div className="min-w-0">
+            <div className="truncate text-xs font-semibold text-[var(--foreground)]">Long-Term Memory Vault</div>
+            <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]">
+              {status.data?.directory ?? "long-term-memory"}
+            </div>
           </div>
-          <div className="rounded-lg bg-[var(--secondary)]/50 p-3 ring-1 ring-[var(--border)]">
-            <div className="text-lg font-semibold tabular-nums">{status.data?.indexes.chunkCount ?? 0}</div>
-            <div className="text-[0.625rem] text-[var(--muted-foreground)]">Chunks</div>
+          <div className="text-right">
+            <div className="text-base font-semibold tabular-nums text-[var(--foreground)]">
+              {status.data?.notes.total ?? 0}
+            </div>
+            <div className="text-[0.5625rem] uppercase text-[var(--muted-foreground)]">Notes</div>
+          </div>
+          <div className="text-right">
+            <div className="text-base font-semibold tabular-nums text-[var(--foreground)]">
+              {status.data?.indexes.chunkCount ?? 0}
+            </div>
+            <div className="text-[0.5625rem] uppercase text-[var(--muted-foreground)]">Chunks</div>
           </div>
         </div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <StatusPill label={status.data?.directory ?? "long-term-memory"} />
+        <div className="mt-3 flex flex-wrap gap-1.5">
           <StatusPill label={integrity.data?.ok ? "Integrity OK" : "Needs check"} tone={statusTone} />
-          <StatusPill label={status.data?.indexes.embeddingsAvailable ? "Embeddings" : "Lexical fallback"} tone="neutral" />
+          <StatusPill
+            label={status.data?.indexes.embeddingsAvailable ? "Embeddings" : "Lexical fallback"}
+            tone="neutral"
+          />
         </div>
-      </Section>
+      </section>
 
-      <div className="sticky top-0 z-10 grid grid-cols-4 gap-1 border-b border-[var(--border)]/35 bg-[var(--background)]/95 px-3 py-2 backdrop-blur-sm">
+      <div className="sticky top-0 z-10 grid grid-cols-4 gap-1 rounded-xl bg-[var(--background)]/95 py-1 backdrop-blur-sm">
         {(["notes", "drafts", "tools", "import"] as TabId[]).map((id) => (
           <button
             key={id}
             onClick={() => setTabWithGuards(id)}
             className={cn(
-              "min-w-0 rounded-lg px-2 py-2 text-xs font-medium capitalize transition-all active:scale-[0.98]",
+              "min-w-0 rounded-lg px-2 py-1.5 text-xs font-medium capitalize transition-all active:scale-[0.98]",
               tab === id
-                ? "bg-[var(--accent)] text-[var(--foreground)] ring-1 ring-[var(--primary)]/35"
-                : "bg-[var(--card)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                ? "bg-rose-300/15 text-[var(--foreground)] ring-1 ring-rose-300/30"
+                : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
             )}
           >
             {id}
@@ -526,13 +555,13 @@ export function LongTermMemoryPanel() {
       {tab === "notes" && (
         <Section title="Vault Notes">
           <div className="mb-3 grid grid-cols-[1fr_auto] gap-2">
-            <div className="flex items-center gap-2 rounded-lg bg-[var(--secondary)] px-3 py-2 ring-1 ring-transparent transition-shadow focus-within:ring-[var(--primary)]">
+            <div className="flex items-center gap-2 rounded-xl bg-[var(--secondary)] px-3 py-2 ring-1 ring-[var(--border)] transition-shadow focus-within:ring-[var(--ring)]">
               <Search size="0.875rem" className="text-[var(--muted-foreground)]" />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search notes"
-                className="min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
+                className="min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]/60"
               />
             </div>
             <ToolButton onClick={requestCreateNote} disabled={creatingNote}>
@@ -567,13 +596,15 @@ export function LongTermMemoryPanel() {
           {editingNoteHiddenByFilters && (
             <div className="mb-3 rounded-lg bg-amber-500/10 p-3 ring-1 ring-amber-400/30">
               <div className="text-xs font-medium text-amber-100">Open note is hidden by filters</div>
-              <p className="mt-1 text-[0.6875rem] text-amber-100/80">The editor stays open so unsaved edits are not lost.</p>
+              <p className="mt-1 text-[0.6875rem] text-amber-100/80">
+                The editor stays open so unsaved edits are not lost.
+              </p>
             </div>
           )}
           <div className="space-y-2">
             {notes.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
             {!notes.isLoading && filteredNotes.length === 0 && (
-              <p className="rounded-lg bg-[var(--secondary)]/50 p-3 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+              <p className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]">
                 No matching notes.
               </p>
             )}
@@ -650,7 +681,7 @@ export function LongTermMemoryPanel() {
           </select>
           <div className="space-y-2">
             {filteredDrafts.length === 0 && (
-              <p className="rounded-lg bg-[var(--secondary)]/50 p-3 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+              <p className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]">
                 No drafts in this view.
               </p>
             )}
@@ -669,7 +700,12 @@ export function LongTermMemoryPanel() {
           <Section title="Rebuild, Replay, Repair">
             <div className="space-y-2">
               <ToolButton
-                onClick={() => rebuild.mutateAsync().then(() => toast.success("Indexes rebuilt")).catch((err: Error) => toast.error(err.message))}
+                onClick={() =>
+                  rebuild
+                    .mutateAsync()
+                    .then(() => toast.success("Indexes rebuilt"))
+                    .catch((err: Error) => toast.error(err.message))
+                }
                 disabled={rebuild.isPending}
                 tone="primary"
               >
@@ -709,7 +745,11 @@ export function LongTermMemoryPanel() {
                   className="rounded-lg bg-[var(--secondary)]/50 p-3 text-xs ring-1 ring-[var(--border)]"
                 >
                   <div className="flex items-center gap-2 font-medium">
-                    {issue.severity === "error" ? <AlertTriangle size="0.875rem" className="text-rose-300" /> : <ShieldCheck size="0.875rem" />}
+                    {issue.severity === "error" ? (
+                      <AlertTriangle size="0.875rem" className="text-rose-300" />
+                    ) : (
+                      <ShieldCheck size="0.875rem" />
+                    )}
                     {issue.code}
                   </div>
                   <p className="mt-1 text-xs text-[var(--muted-foreground)]">{issue.message}</p>
@@ -749,14 +789,19 @@ export function LongTermMemoryPanel() {
                 <div className="text-xs font-medium text-[var(--foreground)]">
                   {importPreview.data?.draftable ?? 0} draftable sources
                 </div>
-                <div className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">Imports create drafts only. Existing data is not changed.</div>
+                <div className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
+                  Imports create drafts only. Existing data is not changed.
+                </div>
               </div>
               {importPreview.isLoading ? <Loader2 className="animate-spin" size="1rem" /> : <FileJson size="1rem" />}
             </div>
           </div>
           <div className="mt-3 space-y-2">
             {(importPreview.data?.samples ?? []).map((sample) => (
-              <div key={sample.sourceId} className="rounded-lg bg-[var(--secondary)]/50 p-3 ring-1 ring-[var(--border)]">
+              <div
+                key={sample.sourceId}
+                className="rounded-lg bg-[var(--secondary)]/50 p-3 ring-1 ring-[var(--border)]"
+              >
                 <div className="truncate text-xs font-medium">{sample.title}</div>
                 <div className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">{sample.summary}</div>
               </div>
@@ -785,7 +830,7 @@ export function LongTermMemoryPanel() {
           <Loader2 size="1rem" className="animate-spin" />
         </div>
       )}
-      <div className="px-3 pb-4 text-[0.625rem] text-[var(--muted-foreground)]">
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--secondary)]/25 p-3 text-[0.625rem] text-[var(--muted-foreground)]">
         <div className="flex items-center gap-2">
           <DatabaseZap size="0.875rem" />
           Draft extraction only runs when enabled for the active chat.

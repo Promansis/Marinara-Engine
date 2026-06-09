@@ -184,9 +184,11 @@ export function SummaryPopover({
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [templateNameDraft, setTemplateNameDraft] = useState("");
   const [templatePromptDraft, setTemplatePromptDraft] = useState("");
-  const [scopeSettingsPosition, setScopeSettingsPosition] = useState<{ top: number; left: number; width: number } | null>(
-    null,
-  );
+  const [scopeSettingsPosition, setScopeSettingsPosition] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  } | null>(null);
   const summaryPopoverSettings = useUIStore((s) => s.summaryPopoverSettings);
   const setSummaryPopoverSettings = useUIStore((s) => s.setSummaryPopoverSettings);
   const persistedContextSize = summaryPopoverSettings.contextSize ?? contextSize;
@@ -230,7 +232,9 @@ export function SummaryPopover({
   // immediately close it on touch devices (Android / iPadOS).
   useEffect(() => {
     const handler = (e: globalThis.MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (scopeSettingsRef.current?.contains(target) || scopeSettingsButtonRef.current?.contains(target)) return;
+      if (panelRef.current && !panelRef.current.contains(target)) {
         onClose();
       }
     };
@@ -695,6 +699,250 @@ export function SummaryPopover({
     [scopeSettingsOpen],
   );
 
+  const settingsContent = scopeSettingsOpen ? (
+    <div
+      ref={scopeSettingsRef}
+      className={cn(
+        "overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--background)] text-[var(--popover-foreground)] shadow-2xl shadow-black/50 ring-1 ring-white/5 backdrop-blur-xl",
+        isMobile
+          ? "fixed left-1/2 top-1/2 z-[10000] max-h-[calc(100dvh-3rem)] w-[calc(100vw-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2"
+          : "fixed z-[10000] max-h-[min(34rem,calc(100vh-7rem))]",
+      )}
+      style={!isMobile ? (scopeSettingsPosition ? scopeSettingsPosition : { visibility: "hidden" }) : undefined}
+    >
+      <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--card)]/80 px-3 py-2.5 backdrop-blur-sm">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold text-[var(--popover-foreground)]">Summary settings</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setScopeSettingsOpen(false);
+            setTemplateSelectOpen(false);
+          }}
+          className={cn(
+            "rounded-md p-1 text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+            !isMobile && "md:hidden",
+          )}
+          aria-label="Close summary settings"
+        >
+          <X size="0.75rem" />
+        </button>
+      </div>
+
+      <div
+        className={cn(
+          "overflow-y-auto p-2.5",
+          isMobile ? "max-h-[calc(100dvh-6rem)]" : "max-h-[min(31rem,calc(100vh-10rem))]",
+        )}
+      >
+        <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2.5">
+          <p className="px-1 text-xs font-semibold text-[var(--popover-foreground)]">Summary Scope</p>
+          <div className="grid grid-cols-2 gap-1 rounded-lg bg-[var(--background)]/30 p-1">
+            {(["last", "range"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => handleSourceModeChange(mode)}
+                className={cn(
+                  "rounded-md px-2 py-1 text-xs font-semibold transition-colors",
+                  sourceMode === mode
+                    ? "bg-[var(--accent)] text-[var(--foreground)] ring-1 ring-[var(--border)]"
+                    : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                )}
+              >
+                {mode === "last" ? "Last" : "Range"}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-2 pt-2">
+          <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/35 p-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-[var(--popover-foreground)]">Summary Prompt</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setTemplateEditorOpen((open) => !open);
+                  if (templateEditorOpen) resetTemplateDraft();
+                }}
+                className={cn(
+                  "shrink-0 rounded-md px-2 py-1 text-xs transition-colors",
+                  templateEditorOpen
+                    ? "bg-[var(--accent)] text-[var(--foreground)] ring-1 ring-[var(--border)]"
+                    : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                )}
+              >
+                {templateEditorOpen ? "Done" : "Manage"}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-[1fr_auto] gap-1">
+              <div className="relative min-w-0">
+                <button
+                  type="button"
+                  onClick={() => setTemplateSelectOpen((open) => !open)}
+                  className="flex w-full min-w-0 items-center justify-between gap-2 rounded-md bg-[var(--card)] py-1 pl-2 pr-2 text-left text-xs font-semibold text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                  aria-haspopup="listbox"
+                  aria-expanded={templateSelectOpen}
+                  aria-label="Summary prompt template"
+                >
+                  <span className="min-w-0 truncate">{promptTemplateSummary}</span>
+                  <ChevronRight
+                    size="0.75rem"
+                    className={cn(
+                      "shrink-0 text-[var(--muted-foreground)] transition-transform",
+                      templateSelectOpen && "rotate-90",
+                    )}
+                  />
+                </button>
+                {templateSelectOpen && (
+                  <div
+                    role="listbox"
+                    className="absolute left-0 right-0 top-[calc(100%+0.25rem)] z-20 max-h-40 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--popover)] p-1 text-[var(--popover-foreground)] shadow-xl shadow-black/25"
+                  >
+                    <SummaryPromptSelectOption
+                      active={!activePromptTemplateId}
+                      label="Built-in default"
+                      onSelect={() => handleSelectPromptTemplate(null)}
+                    />
+                    {cleanedPromptTemplates.map((template) => (
+                      <SummaryPromptSelectOption
+                        key={template.id}
+                        active={activePromptTemplateId === template.id}
+                        label={template.name}
+                        onSelect={() => handleSelectPromptTemplate(template.id)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => handleDuplicatePromptTemplate(activePromptTemplate ?? null)}
+                className="rounded-md p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                title="Copy current prompt to a new template"
+                aria-label="Copy current prompt to a new template"
+              >
+                <Copy size="0.75rem" />
+              </button>
+            </div>
+
+            {templateEditorOpen && (
+              <div className="space-y-2 border-t border-[var(--border)] pt-2">
+                <div className="max-h-28 space-y-1 overflow-y-auto pr-0.5">
+                  <SummaryPromptTemplateRow
+                    active={!activePromptTemplateId}
+                    name="Built-in default"
+                    detail="App default"
+                    onSelect={() => persistPromptTemplates(cleanedPromptTemplates, null)}
+                    onCopy={() => handleDuplicatePromptTemplate(null)}
+                  />
+                  {cleanedPromptTemplates.map((template) => (
+                    <SummaryPromptTemplateRow
+                      key={template.id}
+                      active={activePromptTemplateId === template.id}
+                      name={template.name}
+                      detail={`${Math.ceil(template.prompt.length / 4)} tokens est.`}
+                      onSelect={() => persistPromptTemplates(cleanedPromptTemplates, template.id)}
+                      onCopy={() => handleDuplicatePromptTemplate(template)}
+                      onEdit={() => handleEditPromptTemplate(template)}
+                      onDelete={() => void handleDeletePromptTemplate(template.id)}
+                    />
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleNewPromptTemplate}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-[var(--border)] bg-[var(--accent)]/35 px-2 py-1.5 text-[0.625rem] font-semibold text-[var(--foreground)] transition-colors hover:bg-[var(--accent)]"
+                >
+                  <Plus size="0.6875rem" />
+                  New template
+                </button>
+
+                {(templateNameDraft || templatePromptDraft) && (
+                  <div className="space-y-1.5 rounded-lg bg-[var(--background)]/30 p-2 ring-1 ring-[var(--border)]">
+                    <input
+                      value={templateNameDraft}
+                      onChange={(event) => setTemplateNameDraft(event.target.value)}
+                      maxLength={80}
+                      placeholder="Template name"
+                      className="w-full rounded-md bg-[var(--card)] px-2 py-1 text-[0.6875rem] font-semibold text-[var(--foreground)] ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                    />
+                    <textarea
+                      value={templatePromptDraft}
+                      onChange={(event) => setTemplatePromptDraft(event.target.value)}
+                      rows={8}
+                      placeholder="Prompt instructions for manual summary generation..."
+                      className="max-h-48 w-full resize-y rounded-md bg-[var(--card)] px-2 py-1.5 font-mono text-[0.625rem] leading-relaxed text-[var(--foreground)] ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                    />
+                    <div className="flex justify-end gap-1">
+                      <button
+                        type="button"
+                        onClick={resetTemplateDraft}
+                        className="rounded-md px-2 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)]"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSavePromptTemplate}
+                        disabled={!hasTemplateDraft || updateMeta.isPending}
+                        className="flex items-center gap-1 rounded-md bg-[var(--secondary)] px-2 py-1 text-[0.625rem] font-semibold text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <Save size="0.625rem" />
+                        {isEditingExistingTemplate ? "Save" : "Add"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-1 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/25 p-2">
+            <p className="px-1 text-xs font-semibold text-[var(--popover-foreground)]">Display</p>
+            <SummarySettingsToggle
+              label="Hide summarised messages"
+              checked={summaryPopoverSettings.hideSummarisedMessages}
+              onChange={(checked) => setSummaryPopoverSettings({ hideSummarisedMessages: checked })}
+            />
+            <SummarySettingsToggle
+              label="Collapse hidden messages"
+              checked={summaryPopoverSettings.collapseHiddenMessages}
+              onChange={(checked) => setSummaryPopoverSettings({ collapseHiddenMessages: checked })}
+            />
+          </div>
+
+          <div className="space-y-1 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/25 p-2">
+            <p className="px-1 text-xs font-semibold text-[var(--popover-foreground)]">Long-Term Memory</p>
+            <SummarySettingsToggle
+              label="Add summaries to long-term memory"
+              checked={summaryLongTermMemoryEnabled}
+              disabled={updateMeta.isPending}
+              onChange={handleToggleSummaryLtm}
+            />
+            {hasPersistedEntries && (
+              <button
+                type="button"
+                onClick={() => void handleBackfillSummaryLtm()}
+                disabled={backfillSummaryEntriesToLtm.isPending}
+                className="flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[0.625rem] font-semibold text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {backfillSummaryEntriesToLtm.isPending && <Loader2 size="0.6875rem" className="animate-spin" />}
+                Send existing summaries to LTM
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   const content = (
     <div
       ref={panelRef}
@@ -754,254 +1002,7 @@ export function SummaryPopover({
           </div>
         </div>
 
-        {scopeSettingsOpen && (
-          <div
-            ref={scopeSettingsRef}
-            className={cn(
-              "overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--background)] text-[var(--popover-foreground)] shadow-2xl shadow-black/50 ring-1 ring-white/5 backdrop-blur-xl",
-              isMobile
-                ? "fixed left-1/2 top-1/2 z-[10000] max-h-[calc(100dvh-3rem)] w-[calc(100vw-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2"
-                : "fixed z-[10000] max-h-[min(34rem,calc(100vh-7rem))]",
-            )}
-            style={
-              !isMobile
-                ? scopeSettingsPosition
-                  ? scopeSettingsPosition
-                  : { visibility: "hidden" }
-                : undefined
-            }
-          >
-            <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--card)]/80 px-3 py-2.5 backdrop-blur-sm">
-              <div className="min-w-0">
-                <p className="text-xs font-semibold text-[var(--popover-foreground)]">Summary settings</p>
-              </div>
-              {isMobile && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setScopeSettingsOpen(false);
-                    setTemplateSelectOpen(false);
-                  }}
-                  className="rounded-md p-1 text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                  aria-label="Close summary settings"
-                >
-                  <X size="0.75rem" />
-                </button>
-              )}
-            </div>
-
-            <div
-              className={cn(
-                "overflow-y-auto p-2.5",
-                isMobile ? "max-h-[calc(100dvh-6rem)]" : "max-h-[min(31rem,calc(100vh-10rem))]",
-              )}
-            >
-              <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2.5">
-                <p className="px-1 text-xs font-semibold text-[var(--popover-foreground)]">Summary Scope</p>
-                <div className="grid grid-cols-2 gap-1 rounded-lg bg-[var(--background)]/30 p-1">
-                  {(["last", "range"] as const).map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => handleSourceModeChange(mode)}
-                      className={cn(
-                        "rounded-md px-2 py-1 text-xs font-semibold transition-colors",
-                        sourceMode === mode
-                          ? "bg-[var(--accent)] text-[var(--foreground)] ring-1 ring-[var(--border)]"
-                          : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                      )}
-                    >
-                      {mode === "last" ? "Last" : "Range"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-2 pt-2">
-                <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/35 p-2.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-[var(--popover-foreground)]">Summary Prompt</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTemplateEditorOpen((open) => !open);
-                        if (templateEditorOpen) resetTemplateDraft();
-                      }}
-                      className={cn(
-                        "shrink-0 rounded-md px-2 py-1 text-xs transition-colors",
-                        templateEditorOpen
-                          ? "bg-[var(--accent)] text-[var(--foreground)] ring-1 ring-[var(--border)]"
-                          : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                      )}
-                    >
-                      {templateEditorOpen ? "Done" : "Manage"}
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-[1fr_auto] gap-1">
-                    <div className="relative min-w-0">
-                      <button
-                        type="button"
-                        onClick={() => setTemplateSelectOpen((open) => !open)}
-                        className="flex w-full min-w-0 items-center justify-between gap-2 rounded-md bg-[var(--card)] py-1 pl-2 pr-2 text-left truncate text-xs font-semibold text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                        aria-haspopup="listbox"
-                        aria-expanded={templateSelectOpen}
-                        aria-label="Summary prompt template"
-                      >
-                        <span className="min-w-0 truncate">{promptTemplateSummary}</span>
-                        <ChevronRight
-                          size="0.75rem"
-                          className={cn(
-                            "shrink-0 text-[var(--muted-foreground)] transition-transform",
-                            templateSelectOpen && "rotate-90",
-                          )}
-                        />
-                      </button>
-                      {templateSelectOpen && (
-                        <div
-                          role="listbox"
-                          className="absolute left-0 right-0 top-[calc(100%+0.25rem)] z-20 max-h-40 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--popover)] p-1 text-[var(--popover-foreground)] shadow-xl shadow-black/25"
-                        >
-                          <SummaryPromptSelectOption
-                            active={!activePromptTemplateId}
-                            label="Built-in default"
-                            onSelect={() => handleSelectPromptTemplate(null)}
-                          />
-                          {cleanedPromptTemplates.map((template) => (
-                            <SummaryPromptSelectOption
-                              key={template.id}
-                              active={activePromptTemplateId === template.id}
-                              label={template.name}
-                              onSelect={() => handleSelectPromptTemplate(template.id)}
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleDuplicatePromptTemplate(activePromptTemplate ?? null)}
-                      className="rounded-md p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                      title="Copy current prompt to a new template"
-                      aria-label="Copy current prompt to a new template"
-                    >
-                      <Copy size="0.75rem" />
-                    </button>
-                  </div>
-
-                  {templateEditorOpen && (
-                    <div className="space-y-2 border-t border-[var(--border)] pt-2">
-                      <div className="max-h-28 space-y-1 overflow-y-auto pr-0.5">
-                        <SummaryPromptTemplateRow
-                          active={!activePromptTemplateId}
-                          name="Built-in default"
-                          detail="App default"
-                          onSelect={() => persistPromptTemplates(cleanedPromptTemplates, null)}
-                          onCopy={() => handleDuplicatePromptTemplate(null)}
-                        />
-                        {cleanedPromptTemplates.map((template) => (
-                          <SummaryPromptTemplateRow
-                            key={template.id}
-                            active={activePromptTemplateId === template.id}
-                            name={template.name}
-                            detail={`${Math.ceil(template.prompt.length / 4)} tokens est.`}
-                            onSelect={() => persistPromptTemplates(cleanedPromptTemplates, template.id)}
-                            onCopy={() => handleDuplicatePromptTemplate(template)}
-                            onEdit={() => handleEditPromptTemplate(template)}
-                            onDelete={() => void handleDeletePromptTemplate(template.id)}
-                          />
-                        ))}
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={handleNewPromptTemplate}
-                        className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-[var(--border)] bg-[var(--accent)]/35 px-2 py-1.5 text-[0.625rem] font-semibold text-[var(--foreground)] transition-colors hover:bg-[var(--accent)]"
-                      >
-                        <Plus size="0.6875rem" />
-                        New template
-                      </button>
-
-                      {(templateNameDraft || templatePromptDraft) && (
-                        <div className="space-y-1.5 rounded-lg bg-[var(--background)]/30 p-2 ring-1 ring-[var(--border)]">
-                          <input
-                            value={templateNameDraft}
-                            onChange={(event) => setTemplateNameDraft(event.target.value)}
-                            maxLength={80}
-                            placeholder="Template name"
-                            className="w-full rounded-md bg-[var(--card)] px-2 py-1 text-[0.6875rem] font-semibold text-[var(--foreground)] ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                          />
-                          <textarea
-                            value={templatePromptDraft}
-                            onChange={(event) => setTemplatePromptDraft(event.target.value)}
-                            rows={8}
-                            placeholder="Prompt instructions for manual summary generation..."
-                            className="max-h-48 w-full resize-y rounded-md bg-[var(--card)] px-2 py-1.5 font-mono text-[0.625rem] leading-relaxed text-[var(--foreground)] ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                          />
-                          <div className="flex justify-end gap-1">
-                            <button
-                              type="button"
-                              onClick={resetTemplateDraft}
-                              className="rounded-md px-2 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)]"
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="button"
-                              onClick={handleSavePromptTemplate}
-                              disabled={!hasTemplateDraft || updateMeta.isPending}
-                              className="flex items-center gap-1 rounded-md bg-[var(--secondary)] px-2 py-1 text-[0.625rem] font-semibold text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              <Save size="0.625rem" />
-                              {isEditingExistingTemplate ? "Save" : "Add"}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-1 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/25 p-2">
-                  <p className="px-1 text-xs font-semibold text-[var(--popover-foreground)]">Display</p>
-                  <SummarySettingsToggle
-                    label="Hide summarised messages"
-                    checked={summaryPopoverSettings.hideSummarisedMessages}
-                    onChange={(checked) => setSummaryPopoverSettings({ hideSummarisedMessages: checked })}
-                  />
-                  <SummarySettingsToggle
-                    label="Collapse hidden messages"
-                    checked={summaryPopoverSettings.collapseHiddenMessages}
-                    onChange={(checked) => setSummaryPopoverSettings({ collapseHiddenMessages: checked })}
-                  />
-                </div>
-
-                <div className="space-y-1 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/25 p-2">
-                  <p className="px-1 text-xs font-semibold text-[var(--popover-foreground)]">Long-Term Memory</p>
-                  <SummarySettingsToggle
-                    label="Add summaries to long-term memory"
-                    checked={summaryLongTermMemoryEnabled}
-                    disabled={updateMeta.isPending}
-                    onChange={handleToggleSummaryLtm}
-                  />
-                  {hasPersistedEntries && (
-                    <button
-                      type="button"
-                      onClick={() => void handleBackfillSummaryLtm()}
-                      disabled={backfillSummaryEntriesToLtm.isPending}
-                      className="flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[0.625rem] font-semibold text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {backfillSummaryEntriesToLtm.isPending && <Loader2 size="0.6875rem" className="animate-spin" />}
-                      Send existing summaries to LTM
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        {settingsContent && createPortal(settingsContent, document.body)}
 
         {/* Body */}
         <div className="max-h-[min(26rem,calc(100dvh-15rem))] overflow-y-auto p-2.5">
