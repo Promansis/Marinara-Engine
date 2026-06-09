@@ -21,6 +21,7 @@ import {
   LIMITS,
   coerceGameStateTextValue,
   appendChatSummaryEntryToMetadata,
+  compileChatSummaryEntries,
   applyQuestUpdatesToPlayerStats,
   buildQuestJournalData,
 } from "@marinara-engine/shared";
@@ -157,6 +158,10 @@ import { recordLongTermMemoryInjection } from "../services/long-term-memory/usag
 import { runLongTermMemoryExtraction, LongTermMemoryDraftStore } from "../services/long-term-memory/extraction.js";
 import { applyLongTermMemoryDraft, isLowRiskAutoApplyMutation } from "../services/long-term-memory/reconciliation.js";
 import { LongTermMemoryStorage } from "../services/long-term-memory/storage.js";
+import {
+  markSummaryEntryForLtmIfEnabled,
+  syncChatSummaryEntryToLongTermMemory,
+} from "../services/long-term-memory/summary-sync.js";
 import { postToDiscordWebhook } from "../services/discord-webhook.js";
 import {
   appendGenerationTailMessages,
@@ -292,7 +297,10 @@ function ltmModeForChatMode(mode: string): "conversation" | "roleplay" | "visual
   return "roleplay";
 }
 
-function resolveLtmScope(chat: { id: string; groupId?: string | null; characterIds?: string[] }, chatMeta: Record<string, unknown>) {
+function resolveLtmScope(
+  chat: { id: string; groupId?: string | null; characterIds?: string[] },
+  chatMeta: Record<string, unknown>,
+) {
   const configuredScope =
     chatMeta.longTermMemoryScope && typeof chatMeta.longTermMemoryScope === "object"
       ? (chatMeta.longTermMemoryScope as Record<string, unknown>)
@@ -301,7 +309,9 @@ function resolveLtmScope(chat: { id: string; groupId?: string | null; characterI
     chatId: chat.id,
     ...(chat.groupId ? { groupId: chat.groupId } : {}),
     ...(chat.characterIds?.length ? { characterIds: chat.characterIds } : {}),
-    ...(normalizeLtmIdentifier(configuredScope.universe) ? { universe: normalizeLtmIdentifier(configuredScope.universe) } : {}),
+    ...(normalizeLtmIdentifier(configuredScope.universe)
+      ? { universe: normalizeLtmIdentifier(configuredScope.universe) }
+      : {}),
     ...(normalizeLtmIdentifier(configuredScope.rpId) ? { rpId: normalizeLtmIdentifier(configuredScope.rpId) } : {}),
   };
 }
@@ -5290,9 +5300,15 @@ export async function generateRoutes(app: FastifyInstance) {
 
             if (retrieval.chunks.length > 0) {
               const ltmBlock = formatLongTermMemoryBlock(retrieval.chunks);
-              const firstUserIdx = finalMessages.findIndex((message) => message.role === "user" || message.role === "assistant");
+              const firstUserIdx = finalMessages.findIndex(
+                (message) => message.role === "user" || message.role === "assistant",
+              );
               const insertAt = firstUserIdx >= 0 ? firstUserIdx : finalMessages.length;
-              finalMessages.splice(insertAt, 0, { role: "system" as const, content: ltmBlock, contextKind: "injection" });
+              finalMessages.splice(insertAt, 0, {
+                role: "system" as const,
+                content: ltmBlock,
+                contextKind: "injection",
+              });
               try {
                 await recordLongTermMemoryInjection(retrieval.chunks);
               } catch (err) {
@@ -6270,6 +6286,7 @@ export async function generateRoutes(app: FastifyInstance) {
           return updatedMeta;
         };
         const baseToolExecutionContext = {
+          chat,
           gameState: gameState ? (gameState as unknown as Record<string, unknown>) : undefined,
           customTools: customToolDefs,
           spotify: spotifyCreds,
@@ -9561,10 +9578,32 @@ export async function generateRoutes(app: FastifyInstance) {
                       content: newText,
                       enabled: true,
                     });
+                    result.entry = markSummaryEntryForLtmIfEnabled(currentMeta, result.entry);
+                    result.entries = result.entries.map((entry) =>
+                      entry.id === result.entry.id ? result.entry : entry,
+                    );
+                    result.summary = compileChatSummaryEntries(result.entries);
                     createdEntry = result.entry;
                     summaryEntries = result.entries;
                     return { summary: result.summary, summaryEntries: result.entries };
                   });
+                  const createdEntryForSync = createdEntry as ChatSummaryEntry | null;
+                  if (createdEntryForSync?.ltm?.enabled === true) {
+                    try {
+                      await syncChatSummaryEntryToLongTermMemory(
+                        { ...chat, metadata: { ...chatMeta, ...updatedMeta } },
+                        createdEntryForSync,
+                        { updateMetadata: updateChatMetadataForTools },
+                      );
+                      summaryEntries = Array.isArray(chatMeta.summaryEntries)
+                        ? (chatMeta.summaryEntries as ChatSummaryEntry[])
+                        : summaryEntries;
+                      createdEntry =
+                        summaryEntries.find((entry) => entry.id === createdEntryForSync.id) ?? createdEntryForSync;
+                    } catch (error) {
+                      logger.warn(error, "[ltm] Summary note sync failed after chat-summary agent result");
+                    }
+                  }
                   const combined = typeof updatedMeta.summary === "string" ? updatedMeta.summary : newText;
                   reply.raw.write(
                     `data: ${JSON.stringify({ type: "chat_summary", data: { summary: combined, entry: createdEntry, entries: summaryEntries } })}\n\n`,

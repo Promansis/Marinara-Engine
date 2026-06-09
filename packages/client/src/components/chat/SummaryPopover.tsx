@@ -13,9 +13,11 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
+  useBackfillSummaryEntriesToLtm,
   useBulkSetMessagesHiddenFromAI,
   useDeleteSummaryEntry,
   useGenerateSummary,
+  useToggleSummaryEntryLtm,
   useToggleSummaryEntry,
   useUpdateChatMetadata,
   useUpdateSummaryEntry,
@@ -28,6 +30,7 @@ import {
   PenLine,
   Plus,
   Save,
+  BrainCircuit,
   ScrollText,
   Settings2,
   Sparkles,
@@ -53,6 +56,7 @@ interface SummaryPopoverProps {
   contextSize: number;
   promptTemplates?: ChatSummaryPromptTemplate[];
   activePromptTemplateId?: string | null;
+  summaryLongTermMemoryEnabled?: boolean;
   totalMessageCount: number;
   onClose: () => void;
 }
@@ -166,6 +170,7 @@ export function SummaryPopover({
   contextSize,
   promptTemplates = [],
   activePromptTemplateId = null,
+  summaryLongTermMemoryEnabled = false,
   totalMessageCount,
   onClose,
 }: SummaryPopoverProps) {
@@ -198,6 +203,8 @@ export function SummaryPopover({
   const updateSummaryEntry = useUpdateSummaryEntry();
   const deleteSummaryEntry = useDeleteSummaryEntry();
   const toggleSummaryEntry = useToggleSummaryEntry();
+  const toggleSummaryEntryLtm = useToggleSummaryEntryLtm();
+  const backfillSummaryEntriesToLtm = useBackfillSummaryEntriesToLtm();
   const entryTextareaRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const scopeSettingsButtonRef = useRef<HTMLButtonElement>(null);
@@ -336,7 +343,11 @@ export function SummaryPopover({
   const allEntriesDisabled = hasPersistedEntries && enabledEntryCount === 0;
   const tokenWarning = enabledTokenEstimate > SUMMARY_TOKEN_WARNING_THRESHOLD;
   const entryMutationPending =
-    updateSummaryEntry.isPending || deleteSummaryEntry.isPending || toggleSummaryEntry.isPending;
+    updateSummaryEntry.isPending ||
+    deleteSummaryEntry.isPending ||
+    toggleSummaryEntry.isPending ||
+    toggleSummaryEntryLtm.isPending ||
+    backfillSummaryEntriesToLtm.isPending;
 
   const handleSourceModeChange = useCallback(
     (mode: SummarySourceMode) => {
@@ -480,6 +491,38 @@ export function SummaryPopover({
     },
     [chatId, toggleSummaryEntry],
   );
+
+  const handleToggleSummaryLtm = useCallback(
+    (enabled: boolean) => {
+      updateMeta.mutate(
+        { id: chatId, summaryLongTermMemoryEnabled: enabled },
+        {
+          onError: () => toast.error("Could not update long-term memory setting."),
+        },
+      );
+    },
+    [chatId, updateMeta],
+  );
+
+  const handleToggleEntryLtm = useCallback(
+    async (entry: ChatSummaryEntry, enabled: boolean) => {
+      try {
+        await toggleSummaryEntryLtm.mutateAsync({ chatId, entryId: entry.id, enabled });
+      } catch {
+        toast.error("Could not sync summary to long-term memory.");
+      }
+    },
+    [chatId, toggleSummaryEntryLtm],
+  );
+
+  const handleBackfillSummaryLtm = useCallback(async () => {
+    try {
+      const result = await backfillSummaryEntriesToLtm.mutateAsync(chatId);
+      toast.success(`Sent ${result.synced} summaries to long-term memory.`);
+    } catch {
+      toast.error("Could not send summaries to long-term memory.");
+    }
+  }, [backfillSummaryEntriesToLtm, chatId]);
 
   const handleToggleAllEntries = useCallback(async () => {
     const nextEnabled = enabledEntryCount === 0;
@@ -889,6 +932,27 @@ export function SummaryPopover({
                     onChange={(checked) => setSummaryPopoverSettings({ collapseHiddenMessages: checked })}
                   />
                 </div>
+
+                <div className="space-y-1 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/25 p-2">
+                  <p className="px-1 text-xs font-semibold text-[var(--popover-foreground)]">Long-Term Memory</p>
+                  <SummarySettingsToggle
+                    label="Add summaries to long-term memory"
+                    checked={summaryLongTermMemoryEnabled}
+                    disabled={updateMeta.isPending}
+                    onChange={handleToggleSummaryLtm}
+                  />
+                  {hasPersistedEntries && (
+                    <button
+                      type="button"
+                      onClick={() => void handleBackfillSummaryLtm()}
+                      disabled={backfillSummaryEntriesToLtm.isPending}
+                      className="flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[0.625rem] font-semibold text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {backfillSummaryEntriesToLtm.isPending && <Loader2 size="0.6875rem" className="animate-spin" />}
+                      Send existing summaries to LTM
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -954,6 +1018,7 @@ export function SummaryPopover({
                   mutationPending={entryMutationPending}
                   onToggleExpanded={() => handleToggleExpanded(entry.id)}
                   onToggleEnabled={(enabled) => handleToggleEntry(entry, enabled)}
+                  onToggleLtm={(enabled) => handleToggleEntryLtm(entry, enabled)}
                   onStartEdit={() => handleStartEditEntry(entry)}
                   onDraftChange={setDraftEntry}
                   onCancelEdit={handleCancelEditEntry}
@@ -1124,16 +1189,23 @@ export function SummaryPopover({
 interface SummarySettingsToggleProps {
   label: string;
   checked: boolean;
+  disabled?: boolean;
   onChange: (checked: boolean) => void;
 }
 
-function SummarySettingsToggle({ label, checked, onChange }: SummarySettingsToggleProps) {
+function SummarySettingsToggle({ label, checked, disabled = false, onChange }: SummarySettingsToggleProps) {
   return (
-    <label className="flex cursor-pointer items-center justify-between gap-3 rounded-md px-1.5 py-1.5 text-[0.6875rem] text-[var(--popover-foreground)] transition-colors hover:bg-[var(--accent)]/50">
+    <label
+      className={cn(
+        "flex items-center justify-between gap-3 rounded-md px-1.5 py-1.5 text-[0.6875rem] text-[var(--popover-foreground)] transition-colors hover:bg-[var(--accent)]/50",
+        disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer",
+      )}
+    >
       <span className="min-w-0 truncate">{label}</span>
       <input
         type="checkbox"
         checked={checked}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.checked)}
         className="h-3.5 w-3.5 shrink-0 accent-[var(--muted-foreground)]"
       />
@@ -1150,6 +1222,7 @@ interface SummaryEntryRowProps {
   mutationPending: boolean;
   onToggleExpanded: () => void;
   onToggleEnabled: (enabled: boolean) => void;
+  onToggleLtm: (enabled: boolean) => void;
   onStartEdit: () => void;
   onDraftChange: (entry: ChatSummaryEntry | null) => void;
   onCancelEdit: () => void;
@@ -1166,6 +1239,7 @@ function SummaryEntryRow({
   mutationPending,
   onToggleExpanded,
   onToggleEnabled,
+  onToggleLtm,
   onStartEdit,
   onDraftChange,
   onCancelEdit,
@@ -1173,6 +1247,8 @@ function SummaryEntryRow({
   onDelete,
 }: SummaryEntryRowProps) {
   const metaLine = getSummaryEntryMetaLine(entry);
+  const ltmEnabled = entry.ltm?.enabled === true;
+  const ltmStatus = ltmEnabled ? (entry.ltm?.syncedAt ? "LTM synced" : "LTM pending") : "LTM off";
   return (
     <div
       className={cn(
@@ -1220,6 +1296,24 @@ function SummaryEntryRow({
         <div className="flex shrink-0 items-center gap-0.5 rounded-md px-0.5 py-0.5 max-md:opacity-100 md:opacity-55 md:transition-opacity md:group-hover:opacity-100 md:group-focus-within:opacity-100">
           <button
             type="button"
+            onClick={() => onToggleLtm(!ltmEnabled)}
+            disabled={mutationPending}
+            className={cn(
+              "rounded p-1 transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+              ltmEnabled
+                ? "bg-[var(--primary)]/15 text-[var(--primary)] ring-1 ring-[var(--primary)]/30"
+                : "text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+            )}
+            title={ltmStatus}
+            aria-label={
+              ltmEnabled ? "Disable long-term memory for summary entry" : "Use summary entry in long-term memory"
+            }
+            aria-pressed={ltmEnabled}
+          >
+            <BrainCircuit size="0.75rem" />
+          </button>
+          <button
+            type="button"
             onClick={onToggleExpanded}
             className={cn(
               "rounded p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] active:scale-90",
@@ -1254,6 +1348,10 @@ function SummaryEntryRow({
 
       {expanded && (
         <div className="border-t border-[var(--border)]/60 px-2.5 pb-2.5 pt-2">
+          <div className="mb-2 flex items-center justify-between gap-2 rounded-md bg-[var(--secondary)]/20 px-2 py-1 text-[0.625rem] text-[var(--muted-foreground)]">
+            <span>{ltmStatus}</span>
+            {entry.ltm?.noteId && <span className="min-w-0 truncate font-mono">{entry.ltm.noteId}</span>}
+          </div>
           {editing && draftEntry ? (
             <SummaryEntryEditor
               entry={draftEntry}

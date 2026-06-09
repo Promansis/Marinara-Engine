@@ -8,7 +8,16 @@ import { isCustomToolScriptEnabled, isWebhookLocalUrlsEnabled } from "../../conf
 import { safeFetch } from "../../utils/security.js";
 import { logger } from "../../lib/logger.js";
 import { normalizeSpotifySearchQuery } from "../spotify/spotify.service.js";
-import { appendChatSummaryEntryToMetadata } from "@marinara-engine/shared";
+import {
+  appendChatSummaryEntryToMetadata,
+  compileChatSummaryEntries,
+  type ChatSummaryEntry,
+} from "@marinara-engine/shared";
+import {
+  markSummaryEntryForLtmIfEnabled,
+  syncChatSummaryEntryToLongTermMemory,
+  type SummaryLtmChat,
+} from "../long-term-memory/summary-sync.js";
 
 export interface ToolExecutionResult {
   toolCallId: string;
@@ -122,6 +131,7 @@ const SPOTIFY_MOOD_EXPANSIONS: Array<[RegExp, string[]]> = [
 ];
 
 export interface ToolExecutionContext {
+  chat?: SummaryLtmChat;
   gameState?: Record<string, unknown>;
   chatMeta?: Record<string, unknown>;
   onUpdateMetadata?: (patch: MetadataPatchInput) => Promise<MetadataPatch>;
@@ -469,6 +479,7 @@ async function appendChatSummary(
     return { error: "Chat metadata updates are not available in this context" };
   }
 
+  let createdEntry: ChatSummaryEntry | null = null;
   const updated = await context.onUpdateMetadata((currentMeta) => {
     const existingSummary =
       typeof currentMeta.summary === "string" ? sanitizePersistedSummaryText(currentMeta.summary.trim()) : null;
@@ -482,8 +493,24 @@ async function appendChatSummary(
         enabled: true,
       },
     );
+    result.entry = markSummaryEntryForLtmIfEnabled(currentMeta, result.entry);
+    result.entries = result.entries.map((entry) => (entry.id === result.entry.id ? result.entry : entry));
+    result.summary = compileChatSummaryEntries(result.entries);
+    createdEntry = result.entry;
     return { summary: result.summary, summaryEntries: result.entries };
   });
+  const createdEntryForSync = createdEntry as ChatSummaryEntry | null;
+  if (context.chat && createdEntryForSync?.ltm?.enabled === true) {
+    try {
+      await syncChatSummaryEntryToLongTermMemory(
+        { ...context.chat, metadata: { ...(context.chatMeta ?? {}), ...updated } },
+        createdEntryForSync,
+        { updateMetadata: context.onUpdateMetadata },
+      );
+    } catch (error) {
+      logger.warn(error, "[ltm] Summary note sync failed after append_chat_summary");
+    }
+  }
   return { summary: typeof updated.summary === "string" ? updated.summary : sanitizedText };
 }
 

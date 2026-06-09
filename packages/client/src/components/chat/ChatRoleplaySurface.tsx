@@ -513,6 +513,7 @@ function SummaryButton({
   summaryContextSize,
   summaryPromptTemplates,
   activeSummaryPromptTemplateId,
+  summaryLongTermMemoryEnabled,
   totalMessageCount,
 }: {
   chatId: string | null;
@@ -521,6 +522,7 @@ function SummaryButton({
   summaryContextSize: number;
   summaryPromptTemplates?: ComponentProps<typeof SummaryPopover>["promptTemplates"];
   activeSummaryPromptTemplateId?: string | null;
+  summaryLongTermMemoryEnabled?: boolean;
   totalMessageCount: number;
 }) {
   const [open, setOpen] = useState(false);
@@ -554,6 +556,7 @@ function SummaryButton({
             contextSize={summaryContextSize}
             promptTemplates={summaryPromptTemplates}
             activePromptTemplateId={activeSummaryPromptTemplateId}
+            summaryLongTermMemoryEnabled={summaryLongTermMemoryEnabled}
             totalMessageCount={totalMessageCount}
             onClose={() => setOpen(false)}
           />
@@ -1034,6 +1037,7 @@ export function ChatRoleplaySurface({
                           ? chatMeta.activeSummaryPromptTemplateId
                           : null
                       }
+                      summaryLongTermMemoryEnabled={chatMeta.summaryLongTermMemoryEnabled === true}
                       totalMessageCount={totalMessageCount}
                     />
                     <ActiveContextLinksButton
@@ -1139,6 +1143,7 @@ export function ChatRoleplaySurface({
                               ? chatMeta.activeSummaryPromptTemplateId
                               : null
                           }
+                          summaryLongTermMemoryEnabled={chatMeta.summaryLongTermMemoryEnabled === true}
                           totalMessageCount={totalMessageCount}
                         />
                         <ActiveContextLinksButton
@@ -1214,6 +1219,7 @@ export function ChatRoleplaySurface({
                             ? chatMeta.activeSummaryPromptTemplateId
                             : null
                         }
+                        summaryLongTermMemoryEnabled={chatMeta.summaryLongTermMemoryEnabled === true}
                         totalMessageCount={totalMessageCount}
                       />
                       <ActiveContextLinksButton

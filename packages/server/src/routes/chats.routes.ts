@@ -70,6 +70,12 @@ import {
 } from "../services/memory-recall-embedding.js";
 import { applyRegexScriptsToPromptMessages } from "../services/regex/regex-application.js";
 import { sanitizeGameNpcAvatarUrls } from "../services/game/npc-avatar-utils.js";
+import {
+  createLtmMetadataUpdaterFromPatchMetadata,
+  markSummaryEntryForLtmIfEnabled,
+  syncChatSummaryEntriesToLongTermMemory,
+  syncChatSummaryEntryToLongTermMemory,
+} from "../services/long-term-memory/summary-sync.js";
 
 type TrackerWrapFormat = "xml" | "markdown" | "none";
 type EntryStateOverrides = Record<string, { ephemeral?: number | null; enabled?: boolean }>;
@@ -101,6 +107,15 @@ function parseChatMetadata(raw: unknown): Record<string, unknown> {
     }
   }
   return isRecord(raw) ? raw : {};
+}
+
+function parsePositiveIntegerInput(value: unknown): number | null {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 function isInternalProfessorMariChat(chat: { metadata?: unknown }) {
@@ -194,7 +209,8 @@ function sanitizeChatGameNpcAvatars<T extends { metadata?: unknown }>(chat: T): 
 type SummaryEntriesPatchBody =
   | { operation: "replace"; entry: Partial<ChatSummaryEntry> & { id: string; content: string } }
   | { operation: "delete"; entryId: string }
-  | { operation: "toggle"; entryId: string; enabled: boolean };
+  | { operation: "toggle"; entryId: string; enabled: boolean }
+  | { operation: "toggle_ltm"; entryId: string; enabled: boolean };
 
 async function loadLatestChatGameSnapshot(
   app: FastifyInstance,
@@ -620,7 +636,7 @@ export async function chatsRoutes(app: FastifyInstance) {
       if (typeof body.entryId !== "string" || !body.entryId.trim()) {
         return reply.status(400).send({ error: "delete requires entryId" });
       }
-    } else if (body.operation === "toggle") {
+    } else if (body.operation === "toggle" || body.operation === "toggle_ltm") {
       if (typeof body.entryId !== "string" || !body.entryId.trim() || typeof body.enabled !== "boolean") {
         return reply.status(400).send({ error: "toggle requires entryId and enabled" });
       }
@@ -628,6 +644,8 @@ export async function chatsRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: "Unsupported summary entry operation" });
     }
 
+    let entryForLtmSync: ChatSummaryEntry | null = null;
+    const existingChatForLtm = await storage.getById(req.params.id);
     const updated = await storage.patchMetadata(req.params.id, (freshMeta) => {
       const entries = normalizeChatSummaryEntries(freshMeta.summaryEntries, {
         legacySummary: typeof freshMeta.summary === "string" ? freshMeta.summary : null,
@@ -637,27 +655,48 @@ export async function chatsRoutes(app: FastifyInstance) {
       if (body.operation === "replace") {
         const now = new Date().toISOString();
         const existing = entries.find((entry) => entry.id === body.entry.id);
-        const replacement = createChatSummaryEntry(
-          {
-            ...existing,
-            ...body.entry,
-            id: body.entry.id,
-            content: body.entry.content,
-            updatedAt: now,
-            createdAt: existing?.createdAt ?? body.entry.createdAt ?? now,
-          },
-          { createId: newId, now },
+        const replacement = markSummaryEntryForLtmIfEnabled(
+          freshMeta,
+          createChatSummaryEntry(
+            {
+              ...existing,
+              ...body.entry,
+              id: body.entry.id,
+              content: body.entry.content,
+              updatedAt: now,
+              createdAt: existing?.createdAt ?? body.entry.createdAt ?? now,
+            },
+            { createId: newId, now },
+          ),
         );
+        entryForLtmSync = replacement.ltm?.enabled === true ? replacement : null;
         nextEntries = entries.some((entry) => entry.id === replacement.id)
           ? entries.map((entry) => (entry.id === replacement.id ? replacement : entry))
           : [...entries, replacement];
       } else if (body.operation === "delete") {
+        const deleted = entries.find((entry) => entry.id === body.entryId);
+        entryForLtmSync =
+          deleted?.ltm?.noteId || deleted?.ltm?.enabled === true
+            ? ({ ...deleted, ltm: { ...(deleted.ltm ?? {}), enabled: false } } as ChatSummaryEntry)
+            : null;
         nextEntries = entries.filter((entry) => entry.id !== body.entryId);
       } else if (body.operation === "toggle") {
         const now = new Date().toISOString();
         nextEntries = entries.map((entry) =>
           entry.id === body.entryId ? { ...entry, enabled: body.enabled, updatedAt: now } : entry,
         );
+      } else if (body.operation === "toggle_ltm") {
+        const now = new Date().toISOString();
+        nextEntries = entries.map((entry) => {
+          if (entry.id !== body.entryId) return entry;
+          const nextEntry = {
+            ...entry,
+            ltm: { ...(entry.ltm ?? {}), enabled: body.enabled },
+            updatedAt: now,
+          };
+          entryForLtmSync = nextEntry;
+          return nextEntry;
+        });
       } else {
         nextEntries = entries;
       }
@@ -669,7 +708,58 @@ export async function chatsRoutes(app: FastifyInstance) {
     });
 
     if (!updated) return reply.status(404).send({ error: "Chat not found" });
+    if (entryForLtmSync && existingChatForLtm) {
+      const syncChat = { ...existingChatForLtm, metadata: updated.metadata };
+      try {
+        await syncChatSummaryEntryToLongTermMemory(syncChat, entryForLtmSync, {
+          updateMetadata: createLtmMetadataUpdaterFromPatchMetadata((updater) =>
+            storage.patchMetadata(req.params.id, updater),
+          ),
+        });
+      } catch (error) {
+        return reply.status(500).send({ error: error instanceof Error ? error.message : "Failed to sync summary LTM" });
+      }
+      return storage.getById(req.params.id);
+    }
     return updated;
+  });
+
+  app.post<{ Params: { id: string } }>("/:id/summary-entries/backfill-ltm", async (req, reply) => {
+    const chat = await storage.getById(req.params.id);
+    if (!chat) return reply.status(404).send({ error: "Chat not found" });
+    const chatMeta = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
+    let entriesToSync: ChatSummaryEntry[] = [];
+    const updated = await storage.patchMetadata(req.params.id, (freshMeta) => {
+      const now = new Date().toISOString();
+      const entries = normalizeChatSummaryEntries(freshMeta.summaryEntries, {
+        legacySummary: typeof freshMeta.summary === "string" ? freshMeta.summary : null,
+      }).map((entry) => ({
+        ...entry,
+        ltm: { ...(entry.ltm ?? {}), enabled: true },
+        updatedAt: now,
+      }));
+      entriesToSync = entries;
+      return {
+        summaryLongTermMemoryEnabled: true,
+        summaryEntries: entries,
+        summary: compileChatSummaryEntries(entries),
+      };
+    });
+    if (!updated) return reply.status(404).send({ error: "Chat not found" });
+    const syncChat = {
+      ...chat,
+      metadata: {
+        ...chatMeta,
+        ...(typeof updated.metadata === "string" ? JSON.parse(updated.metadata) : updated.metadata),
+      },
+    };
+    await syncChatSummaryEntriesToLongTermMemory(syncChat, entriesToSync, {
+      updateMetadata: createLtmMetadataUpdaterFromPatchMetadata((updater) =>
+        storage.patchMetadata(req.params.id, updater),
+      ),
+    });
+    const finalChat = await storage.getById(req.params.id);
+    return { chat: finalChat, synced: entriesToSync.length };
   });
 
   // Generate any missing conversation day/week summaries on demand. This uses
@@ -2473,13 +2563,22 @@ export async function chatsRoutes(app: FastifyInstance) {
     );
     const requestedRangeStartMessageId = typeof body.rangeStartMessageId === "string" ? body.rangeStartMessageId : null;
     const requestedRangeEndMessageId = typeof body.rangeEndMessageId === "string" ? body.rangeEndMessageId : null;
-    const requestedRangeStartIndex =
-      typeof body.rangeStartIndex === "number" && Number.isInteger(body.rangeStartIndex) ? body.rangeStartIndex : null;
-    const requestedRangeEndIndex =
-      typeof body.rangeEndIndex === "number" && Number.isInteger(body.rangeEndIndex) ? body.rangeEndIndex : null;
+    const requestedRangeStartIndex = parsePositiveIntegerInput(body.rangeStartIndex);
+    const requestedRangeEndIndex = parsePositiveIntegerInput(body.rangeEndIndex);
+    const hasAnyRangeInput =
+      body.rangeStartMessageId !== undefined ||
+      body.rangeEndMessageId !== undefined ||
+      body.rangeStartIndex !== undefined ||
+      body.rangeEndIndex !== undefined;
     const hasRangeByMessageId = !!requestedRangeStartMessageId && !!requestedRangeEndMessageId;
     const hasRangeByIndex = requestedRangeStartIndex !== null && requestedRangeEndIndex !== null;
     const hasRange = hasRangeByMessageId || hasRangeByIndex;
+
+    if (hasAnyRangeInput && !hasRange) {
+      return reply
+        .status(400)
+        .send({ error: "Summary range requires both rangeStartIndex and rangeEndIndex, or both message ID anchors" });
+    }
 
     const chatConnId = chat.connectionId;
 
@@ -2538,11 +2637,12 @@ export async function chatsRoutes(app: FastifyInstance) {
     }
 
     // Build conversation context (use contextSize from popover, or a custom range).
-    // Hidden-from-AI messages are excluded from summary generation even when
-    // they fall inside the selected range.
+    // Manual ranges are explicit transcript selections, so include the full
+    // selected span. The "last N" path still excludes hidden-from-AI messages.
     const allMessages = await storage.listMessages(req.params.id);
     let selectedRangeStartIndex: number | undefined;
     let selectedRangeEndIndex: number | undefined;
+    let selectedSourceLabel = "";
     const selectedMessages = hasRange
       ? (() => {
           const startIndex = hasRangeByIndex
@@ -2565,9 +2665,15 @@ export async function chatsRoutes(app: FastifyInstance) {
           }
           selectedRangeStartIndex = from + 1;
           selectedRangeEndIndex = to + 1;
-          return allMessages.slice(from, to + 1).filter((message) => !isMessageHiddenFromAI(message));
+          selectedSourceLabel = `Messages ${selectedRangeStartIndex}-${selectedRangeEndIndex} (${count} selected)`;
+          return allMessages.slice(from, to + 1);
         })()
-      : allMessages.slice(-contextSize).filter((message) => !isMessageHiddenFromAI(message));
+      : (() => {
+          const visibleMessages = allMessages.filter((message) => !isMessageHiddenFromAI(message));
+          const selected = visibleMessages.slice(-contextSize);
+          selectedSourceLabel = `Last ${selected.length} non-hidden message${selected.length === 1 ? "" : "s"}`;
+          return selected;
+        })();
     if (selectedMessages && "error" in selectedMessages) {
       return reply.status(400).send({ error: selectedMessages.error });
     }
@@ -2606,7 +2712,8 @@ export async function chatsRoutes(app: FastifyInstance) {
       {
         role: "user",
         content:
-          (previousSummary ? `Previous summary:\n${previousSummary}\n\n` : "") + `Recent conversation:\n${chatLog}`,
+          (previousSummary ? `Previous summary:\n${previousSummary}\n\n` : "") +
+          `Selected summary range: ${selectedSourceLabel}\n\nRecent conversation:\n${chatLog}`,
       },
     ];
 
@@ -2660,6 +2767,9 @@ export async function chatsRoutes(app: FastifyInstance) {
         },
         { createId: newId, now },
       );
+      result.entry = markSummaryEntryForLtmIfEnabled(freshMeta, result.entry);
+      result.entries = result.entries.map((entry) => (entry.id === result.entry.id ? result.entry : entry));
+      result.summary = compileChatSummaryEntries(result.entries);
       combined = result.summary;
       createdEntry = result.entry;
       summaryEntries = result.entries;
@@ -2670,6 +2780,24 @@ export async function chatsRoutes(app: FastifyInstance) {
       };
     });
     if (!updatedChat) return reply.status(404).send({ error: "Chat not found" });
+    const createdEntryForSync = createdEntry as ChatSummaryEntry | null;
+    if (createdEntryForSync?.ltm?.enabled === true) {
+      try {
+        await syncChatSummaryEntryToLongTermMemory({ ...chat, metadata: updatedChat.metadata }, createdEntryForSync, {
+          updateMetadata: createLtmMetadataUpdaterFromPatchMetadata((updater) =>
+            storage.patchMetadata(req.params.id, updater),
+          ),
+        });
+        const finalChat = await storage.getById(req.params.id);
+        const finalMeta = finalChat ? parseChatMetadata(finalChat.metadata) : {};
+        summaryEntries = Array.isArray(finalMeta.summaryEntries)
+          ? (finalMeta.summaryEntries as ChatSummaryEntry[])
+          : summaryEntries;
+        createdEntry = summaryEntries.find((entry) => entry.id === createdEntryForSync.id) ?? createdEntryForSync;
+      } catch (error) {
+        logger.warn(error, "[ltm] Summary note sync failed after manual summary generation");
+      }
+    }
 
     return {
       summary: combined,

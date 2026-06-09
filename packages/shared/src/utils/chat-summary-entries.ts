@@ -96,6 +96,20 @@ function normalizeMessageIds(value: unknown) {
   return ids.length > 0 ? ids : undefined;
 }
 
+function normalizeSummaryEntryLtm(value: unknown): ChatSummaryEntry["ltm"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (typeof record.enabled !== "boolean") return undefined;
+  const ltm: NonNullable<ChatSummaryEntry["ltm"]> = { enabled: record.enabled };
+  const noteId = trimString(record.noteId);
+  if (noteId) ltm.noteId = noteId;
+  const syncedAt = trimString(record.syncedAt);
+  if (syncedAt && !Number.isNaN(Date.parse(syncedAt))) ltm.syncedAt = syncedAt;
+  const sourceHash = trimString(record.sourceHash);
+  if (sourceHash) ltm.sourceHash = sourceHash;
+  return ltm;
+}
+
 function sourceFromOrigin(origin: ChatSummaryEntryOrigin): ChatSummaryEntrySource {
   return origin === "automated" ? "agent" : "last";
 }
@@ -187,6 +201,8 @@ export function normalizeChatSummaryEntry(
   } else if (value.promptTemplateId === null) {
     base.promptTemplateId = null;
   }
+  const ltm = normalizeSummaryEntryLtm(value.ltm);
+  if (ltm) base.ltm = ltm;
 
   if (!base.title) base.title = generateChatSummaryEntryTitle(base);
   return base;
