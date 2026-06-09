@@ -108,11 +108,13 @@ export function Modal({ open, onClose, title, children, width = "max-w-md", cont
         {/* Pastel gradient title bar */}
         <div className="pastel-gradient h-[0.1875rem]" />
         {/* Header */}
-        <div className="shrink-0 flex items-center justify-between border-b border-[var(--border)]/30 px-5 py-3.5">
-          <h2 className="text-sm font-semibold text-[var(--foreground)]">{title}</h2>
+        <div className="shrink-0 flex items-center justify-between gap-3 border-b border-[var(--border)]/30 px-5 py-3.5">
+          <h2 className="min-w-0 truncate text-sm font-semibold text-[var(--foreground)]">{title}</h2>
           <button
+            type="button"
             onClick={onClose}
-            className="rounded-lg p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--primary)]"
+            className="shrink-0 rounded-lg p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--primary)]"
+            aria-label="Close modal"
           >
             <X size="1rem" />
           </button>
