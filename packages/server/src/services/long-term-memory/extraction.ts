@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, unlink } from "node:fs/promises";
 import {
   ltmExtractionDraftSchema,
   ltmExtractionResponseSchema,
@@ -219,5 +219,38 @@ export class LongTermMemoryDraftStore {
     await writeJsonAtomic(draftPathForId(id, this.root), next);
     return next;
   }
-}
 
+  async updateDraft(id: string, patch: Partial<Omit<LtmExtractionDraft, "id" | "createdAt" | "updatedAt">>) {
+    const draft = await this.getDraft(id);
+    if (!draft) return null;
+    if (patch.status === "pending" && draft.status !== "pending" && draft.status !== "rejected") {
+      throw new Error(`Long-term memory draft cannot be restored from ${draft.status}: ${id}`);
+    }
+    const next = ltmExtractionDraftSchema.parse({
+      ...draft,
+      ...patch,
+      id: draft.id,
+      createdAt: draft.createdAt,
+      updatedAt: nowIso(),
+      rejectedReason: patch.status === "pending" ? undefined : (patch.rejectedReason ?? draft.rejectedReason),
+      appliedAt: patch.status === "pending" ? undefined : (patch.appliedAt ?? draft.appliedAt),
+      appliedMutationIds:
+        patch.status === "pending" ? undefined : (patch.appliedMutationIds ?? draft.appliedMutationIds),
+      skippedMutationIds:
+        patch.status === "pending" ? undefined : (patch.skippedMutationIds ?? draft.skippedMutationIds),
+    });
+    await writeJsonAtomic(draftPathForId(id, this.root), next);
+    return next;
+  }
+
+  async deleteDraft(id: string) {
+    await this.initialize();
+    try {
+      await unlink(draftPathForId(id, this.root));
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw err;
+    }
+  }
+}

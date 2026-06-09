@@ -8,6 +8,7 @@ import {
   ltmConflictSchema,
   ltmDraftSourceSchema,
   ltmDraftStatusSchema,
+  ltmExtractionDraftSchema,
   ltmExtractionResponseSchema,
   ltmGateSchema,
   ltmIndexMetadataSchema,
@@ -162,6 +163,12 @@ const acceptDraftBodySchema = z
   })
   .strict()
   .default({});
+
+const updateDraftBodySchema = ltmExtractionDraftSchema
+  .omit({ id: true, createdAt: true, updatedAt: true })
+  .partial()
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, "Patch body must include at least one updatable field.");
 
 const extractSourceNoteBodySchema = z
   .object({
@@ -627,6 +634,24 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     },
   );
 
+  app.patch<{ Params: { id: string }; Body: unknown }>(
+    "/drafts/:id",
+    { bodyLimit: DRAFT_BODY_LIMIT_BYTES },
+    async (req, reply) => {
+      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft update" })) return;
+      const { id } = draftIdParamSchema.parse(req.params);
+      const patch = updateDraftBodySchema.parse(req.body);
+      try {
+        const draft = await draftStore.updateDraft(id, patch);
+        if (!draft) return reply.status(404).send({ error: "Long-term memory draft not found" });
+        return draft;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to update long-term memory draft";
+        return reply.status(message.includes("cannot be restored") ? 409 : 400).send({ error: message });
+      }
+    },
+  );
+
   app.post<{ Params: { id: string }; Body: unknown }>("/drafts/:id/accept", async (req, reply) => {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft acceptance" })) return;
     const { id } = draftIdParamSchema.parse(req.params);
@@ -660,4 +685,12 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
       }
     },
   );
+
+  app.delete<{ Params: { id: string } }>("/drafts/:id", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft deletion" })) return;
+    const { id } = draftIdParamSchema.parse(req.params);
+    const deleted = await draftStore.deleteDraft(id);
+    if (!deleted) return reply.status(404).send({ error: "Long-term memory draft not found" });
+    return { deleted: true, id };
+  });
 }

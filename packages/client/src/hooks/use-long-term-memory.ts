@@ -179,10 +179,11 @@ export function useLongTermMemoryIntegrity() {
   });
 }
 
-export function useLongTermMemoryNotes(filter: LtmNoteFilter = {}) {
+export function useLongTermMemoryNotes(filter: LtmNoteFilter = {}, options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: longTermMemoryKeys.notes(filter),
     queryFn: () => api.get<LtmNote[]>(`/long-term-memory/notes${qs(filter)}`),
+    enabled: options.enabled ?? true,
     staleTime: 30_000,
   });
 }
@@ -311,6 +312,25 @@ export function useRejectLongTermMemoryDraft() {
   return useMutation({
     mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
       api.post(`/long-term-memory/drafts/${id}/reject`, { reason }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
+  });
+}
+
+export type UpdateLongTermMemoryDraftInput = Partial<Omit<LtmExtractionDraft, "id" | "createdAt" | "updatedAt">>;
+
+export function useUpdateLongTermMemoryDraft() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: UpdateLongTermMemoryDraftInput }) =>
+      api.patch<LtmExtractionDraft>(`/long-term-memory/drafts/${id}`, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
+  });
+}
+
+export function useDeleteLongTermMemoryDraft() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete<{ deleted: true; id: string }>(`/long-term-memory/drafts/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
   });
 }

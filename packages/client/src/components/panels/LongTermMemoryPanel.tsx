@@ -14,14 +14,16 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
+  Save,
   Search,
   ShieldCheck,
   Sparkles,
+  Trash2,
   X,
 } from "lucide-react";
 import type {
   LtmDraftMutation,
-  LtmDraftStatus,
   LtmExtractionDraft,
   LtmLink,
   LtmNote,
@@ -32,6 +34,7 @@ import {
   useAcceptLongTermMemoryDraft,
   useArchiveLongTermMemoryNote,
   useCreateLongTermMemoryImportDrafts,
+  useDeleteLongTermMemoryDraft,
   useLongTermMemoryDrafts,
   useLongTermMemoryImportPreview,
   useLongTermMemoryIntegrity,
@@ -41,6 +44,9 @@ import {
   useRejectLongTermMemoryDraft,
   useRepairLongTermMemory,
   useReplayLongTermMemory,
+  useUpdateLongTermMemoryDraft,
+  useUpdateLongTermMemoryNote,
+  type UpdateLongTermMemoryDraftInput,
   type LtmInteropSource,
 } from "../../hooks/use-long-term-memory";
 import { useChatStore } from "../../stores/chat.store";
@@ -66,8 +72,7 @@ const NOTE_TYPES: Array<"all" | LtmNoteType> = [
   "voice",
   "tone",
 ];
-const NOTE_STATUSES: Array<"all" | LtmStatus> = ["all", "active", "dormant", "resolved", "archived"];
-const DRAFT_STATUSES: Array<"all" | LtmDraftStatus> = ["all", "pending", "accepted", "rejected", "auto_applied"];
+const NOTE_STATUSES: Array<"all" | Exclude<LtmStatus, "archived">> = ["all", "active", "dormant", "resolved"];
 const IMPORT_SOURCES: Array<{ id: LtmInteropSource; label: string }> = [
   { id: "characters", label: "Characters" },
   { id: "lorebooks", label: "Lorebooks" },
@@ -151,13 +156,15 @@ function NoteRow({
   onView,
   onEdit,
   onArchive,
+  onRestore,
 }: {
   note: LtmNote;
   viewing: boolean;
   editing: boolean;
   onView: () => void;
   onEdit: () => void;
-  onArchive: () => void;
+  onArchive?: () => void;
+  onRestore?: () => void;
 }) {
   const sectionCount = Object.keys(note.sections).length;
   return (
@@ -190,15 +197,28 @@ function NoteRow({
           >
             <Eye size="0.875rem" />
           </button>
-          <button
-            type="button"
-            onClick={onArchive}
-            disabled={note.status === "archived"}
-            className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)] disabled:cursor-not-allowed disabled:opacity-45"
-            aria-label={`Archive ${note.id}`}
-          >
-            <Archive size="0.875rem" />
-          </button>
+          {onRestore ? (
+            <button
+              type="button"
+              onClick={onRestore}
+              className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-emerald-500/10 hover:text-emerald-200"
+              aria-label={`Restore ${note.id}`}
+              title="Restore note"
+            >
+              <RotateCcw size="0.875rem" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onArchive}
+              disabled={note.status === "archived"}
+              className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)] disabled:cursor-not-allowed disabled:opacity-45"
+              aria-label={`Archive ${note.id}`}
+              title="Archive note"
+            >
+              <Archive size="0.875rem" />
+            </button>
+          )}
           <button
             type="button"
             onClick={onEdit}
@@ -471,6 +491,185 @@ function DraftRow({ draft }: { draft: LtmExtractionDraft }) {
   );
 }
 
+function draftStatusTone(statusId: LtmExtractionDraft["status"]) {
+  if (statusId === "pending") return "warn";
+  if (statusId === "accepted" || statusId === "auto_applied") return "good";
+  return "neutral";
+}
+
+function DraftDetails({ draft }: { draft: LtmExtractionDraft }) {
+  return (
+    <div className="grid gap-4">
+      <div className="rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
+        <div className="flex flex-wrap gap-1.5">
+          <StatusPill label={draft.status} tone={draftStatusTone(draft.status)} />
+          <StatusPill label={`${draft.mutations.length} mutations`} />
+          {draft.modes.map((mode) => (
+            <StatusPill key={mode} label={mode} />
+          ))}
+        </div>
+        <div className="mt-2 text-[0.625rem] text-[var(--muted-foreground)]">
+          Created {new Date(draft.createdAt).toLocaleString()} · updated {new Date(draft.updatedAt).toLocaleString()}
+        </div>
+        {draft.rejectedReason && (
+          <div className="mt-2 rounded-md bg-[var(--background)]/70 p-2 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+            {draft.rejectedReason}
+          </div>
+        )}
+      </div>
+
+      {draft.summary && <p className="text-xs leading-relaxed text-[var(--foreground)]">{draft.summary}</p>}
+
+      <section className="space-y-2">
+        <h3 className="text-xs font-semibold text-[var(--foreground)]">Mutations</h3>
+        {draft.mutations.map((mutation) => (
+          <MutationPreview key={mutation.id} mutation={mutation} />
+        ))}
+      </section>
+    </div>
+  );
+}
+
+function DraftJsonEditor({
+  draft,
+  onSaved,
+}: {
+  draft: LtmExtractionDraft;
+  onSaved?: (draft: LtmExtractionDraft) => void;
+}) {
+  const updateDraft = useUpdateLongTermMemoryDraft();
+  const [text, setText] = useState(() => JSON.stringify(draft, null, 2));
+
+  useEffect(() => {
+    setText(JSON.stringify(draft, null, 2));
+  }, [draft]);
+
+  const save = async () => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch (err) {
+      toast.error(`Draft JSON is invalid: ${(err as Error).message}`);
+      return;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      toast.error("Draft JSON must be an object.");
+      return;
+    }
+    const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...patch } = parsed as Record<string, unknown>;
+    try {
+      const saved = await updateDraft.mutateAsync({
+        id: draft.id,
+        patch: patch as UpdateLongTermMemoryDraftInput,
+      });
+      toast.success("Draft saved");
+      onSaved?.(saved);
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
+  return (
+    <div className="grid gap-3">
+      <p className="text-xs text-[var(--muted-foreground)]">
+        Edit the draft payload before restoring or keeping it archived.
+      </p>
+      <textarea
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        spellCheck={false}
+        className="min-h-[24rem] w-full resize-y rounded-lg bg-[var(--background)] p-3 font-mono text-[0.6875rem] leading-relaxed text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] focus:ring-[var(--primary)]"
+      />
+      <div className="flex justify-end">
+        <ToolButton onClick={save} disabled={updateDraft.isPending} tone="primary">
+          {updateDraft.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Save size="0.875rem" />}
+          Save Draft
+        </ToolButton>
+      </div>
+    </div>
+  );
+}
+
+function ArchivedDraftRow({
+  draft,
+  selected,
+  onView,
+  onEdit,
+  onRestore,
+  onDelete,
+}: {
+  draft: LtmExtractionDraft;
+  selected: boolean;
+  onView: () => void;
+  onEdit: () => void;
+  onRestore: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <article
+      className={cn(
+        "rounded-xl border border-rose-300/15 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-2.5 transition-all hover:border-rose-300/30 hover:bg-[var(--sidebar-accent)]",
+        selected && "border-rose-300/40 bg-rose-300/10 ring-1 ring-rose-300/25",
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-xs font-semibold text-[var(--foreground)]">{draft.summary || draft.id}</div>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            <StatusPill label={draft.status} tone={draftStatusTone(draft.status)} />
+            <StatusPill label={`${draft.mutations.length} mutations`} />
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={onView}
+            className={cn(
+              "rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+              selected && "bg-[var(--accent)] text-[var(--foreground)]",
+            )}
+            aria-label={`View draft ${draft.id}`}
+            title="View draft"
+          >
+            <Eye size="0.875rem" />
+          </button>
+          <button
+            type="button"
+            onClick={onEdit}
+            className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+            aria-label={`Edit draft ${draft.id}`}
+            title="Edit draft"
+          >
+            <Pencil size="0.875rem" />
+          </button>
+          <button
+            type="button"
+            onClick={onRestore}
+            disabled={draft.status !== "rejected"}
+            className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-emerald-500/10 hover:text-emerald-200 disabled:cursor-not-allowed disabled:opacity-45"
+            aria-label={`Restore draft ${draft.id}`}
+            title={draft.status === "rejected" ? "Restore draft" : "Accepted drafts cannot be restored"}
+          >
+            <RotateCcw size="0.875rem" />
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]"
+            aria-label={`Delete draft ${draft.id}`}
+            title="Delete draft"
+          >
+            <Trash2 size="0.875rem" />
+          </button>
+        </div>
+      </div>
+      <div className="mt-2 truncate text-[0.625rem] text-[var(--muted-foreground)]">
+        Updated {new Date(draft.updatedAt).toLocaleString()}
+      </div>
+    </article>
+  );
+}
+
 function ChatMemorySettings() {
   const activeChatId = useChatStore((s) => s.activeChatId);
   const cachedActiveChat = useChatStore((s) => s.activeChat);
@@ -628,17 +827,20 @@ function ChatMemorySettings() {
 export function LongTermMemoryPanel() {
   const [tab, setTab] = useState<TabId>("notes");
   const [noteType, setNoteType] = useState<"all" | LtmNoteType>("all");
-  const [noteStatus, setNoteStatus] = useState<"all" | LtmStatus>("all");
-  const [draftStatus, setDraftStatus] = useState<"all" | LtmDraftStatus>("pending");
+  const [noteStatus, setNoteStatus] = useState<"all" | Exclude<LtmStatus, "archived">>("all");
   const [query, setQuery] = useState("");
   const [importSource, setImportSource] = useState<LtmInteropSource>("characters");
   const [importLimit, setImportLimit] = useState(25);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [archiveTab, setArchiveTab] = useState<"notes" | "drafts">("notes");
   const [creatingNote, setCreatingNote] = useState(false);
   const [createNoteDraft, setCreateNoteDraft] = useState<CreateLongTermMemoryNoteDraft | null>(null);
   const [createNoteDirty, setCreateNoteDirty] = useState(false);
   const [viewingNoteId, setViewingNoteId] = useState<string | null>(null);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editedNoteDirty, setEditedNoteDirty] = useState(false);
+  const [viewingDraftId, setViewingDraftId] = useState<string | null>(null);
+  const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
 
   const status = useLongTermMemoryStatus();
   const integrity = useLongTermMemoryIntegrity();
@@ -646,17 +848,27 @@ export function LongTermMemoryPanel() {
     type: noteType === "all" ? undefined : noteType,
     status: noteStatus === "all" ? undefined : noteStatus,
   });
-  const drafts = useLongTermMemoryDrafts({ status: draftStatus === "all" ? undefined : draftStatus });
-  const allDrafts = useLongTermMemoryDrafts({}, { enabled: Boolean(viewingNoteId) });
+  const archivedNotes = useLongTermMemoryNotes(
+    { status: "archived" },
+    { enabled: archiveOpen || Boolean(viewingNoteId) || Boolean(editingNoteId) },
+  );
+  const drafts = useLongTermMemoryDrafts({ status: "pending" });
+  const allDrafts = useLongTermMemoryDrafts(
+    {},
+    { enabled: archiveOpen || Boolean(viewingNoteId) || Boolean(viewingDraftId) || Boolean(editingDraftId) },
+  );
   const importPreview = useLongTermMemoryImportPreview(importSource, importLimit);
   const rebuild = useRebuildLongTermMemory();
   const replay = useReplayLongTermMemory();
   const repair = useRepairLongTermMemory();
   const createImports = useCreateLongTermMemoryImportDrafts();
   const archiveNote = useArchiveLongTermMemoryNote();
+  const updateNote = useUpdateLongTermMemoryNote();
+  const updateDraft = useUpdateLongTermMemoryDraft();
+  const deleteDraft = useDeleteLongTermMemoryDraft();
 
   const filteredNotes = useMemo(() => {
-    const list = notes.data ?? [];
+    const list = (notes.data ?? []).filter((note) => note.status !== "archived");
     const needle = query.trim().toLowerCase();
     if (!needle) return list;
     return list.filter(
@@ -668,14 +880,32 @@ export function LongTermMemoryPanel() {
   }, [notes.data, query]);
 
   const filteredDrafts = drafts.data ?? [];
+  const archivedDrafts = useMemo(
+    () => (allDrafts.data ?? []).filter((draft) => draft.status !== "pending"),
+    [allDrafts.data],
+  );
+  const combinedNotes = useMemo(() => {
+    const byId = new Map<string, LtmNote>();
+    for (const note of notes.data ?? []) byId.set(note.id, note);
+    for (const note of archivedNotes.data ?? []) byId.set(note.id, note);
+    return [...byId.values()];
+  }, [archivedNotes.data, notes.data]);
   const statusTone = integrity.data?.ok ? "good" : integrity.data ? "bad" : "neutral";
   const editingNote = useMemo(
-    () => (editingNoteId ? ((notes.data ?? []).find((note) => note.id === editingNoteId) ?? null) : null),
-    [editingNoteId, notes.data],
+    () => (editingNoteId ? (combinedNotes.find((note) => note.id === editingNoteId) ?? null) : null),
+    [combinedNotes, editingNoteId],
   );
   const viewingNote = useMemo(
-    () => (viewingNoteId ? ((notes.data ?? []).find((note) => note.id === viewingNoteId) ?? null) : null),
-    [notes.data, viewingNoteId],
+    () => (viewingNoteId ? (combinedNotes.find((note) => note.id === viewingNoteId) ?? null) : null),
+    [combinedNotes, viewingNoteId],
+  );
+  const viewingDraft = useMemo(
+    () => (viewingDraftId ? ((allDrafts.data ?? []).find((draft) => draft.id === viewingDraftId) ?? null) : null),
+    [allDrafts.data, viewingDraftId],
+  );
+  const editingDraft = useMemo(
+    () => (editingDraftId ? ((allDrafts.data ?? []).find((draft) => draft.id === editingDraftId) ?? null) : null),
+    [allDrafts.data, editingDraftId],
   );
   const editedNoteFilteredOut = Boolean(editingNote && !filteredNotes.some((note) => note.id === editingNote.id));
   const editingNoteHiddenByFilters = Boolean(editedNoteFilteredOut && editingNote);
@@ -687,6 +917,14 @@ export function LongTermMemoryPanel() {
 
   const closeViewer = () => {
     setViewingNoteId(null);
+  };
+
+  const closeDraftViewer = () => {
+    setViewingDraftId(null);
+  };
+
+  const closeDraftEditor = () => {
+    setEditingDraftId(null);
   };
 
   const closeCreateForm = () => {
@@ -706,6 +944,8 @@ export function LongTermMemoryPanel() {
     if (creatingNote) closeCreateForm();
     if (editingNoteId) closeEditor();
     if (viewingNoteId) closeViewer();
+    if (viewingDraftId) closeDraftViewer();
+    if (editingDraftId) closeDraftEditor();
     setTab(nextTab);
   };
 
@@ -725,6 +965,8 @@ export function LongTermMemoryPanel() {
     if (!confirmDiscardEditor()) return;
     closeCreateForm();
     closeViewer();
+    closeDraftViewer();
+    closeDraftEditor();
     setEditingNoteId(id);
     setEditedNoteDirty(false);
   };
@@ -735,6 +977,8 @@ export function LongTermMemoryPanel() {
     setEditingNoteId(null);
     setEditedNoteDirty(false);
     closeViewer();
+    closeDraftViewer();
+    closeDraftEditor();
     setCreatingNote(true);
   };
 
@@ -745,6 +989,43 @@ export function LongTermMemoryPanel() {
       .then((result) => {
         toast.success("Vault note archived");
         if (editingNoteId === result.note.id) closeEditor();
+      })
+      .catch((err: Error) => toast.error(err.message));
+  };
+
+  const restoreNote = (note: LtmNote) => {
+    updateNote
+      .mutateAsync({ id: note.id, patch: { status: "active" } })
+      .then((saved) => {
+        toast.success("Vault note restored");
+        setArchiveOpen(false);
+        setViewingNoteId(null);
+        setEditingNoteId(saved.id);
+        setEditedNoteDirty(false);
+      })
+      .catch((err: Error) => toast.error(err.message));
+  };
+
+  const restoreDraft = (draft: LtmExtractionDraft) => {
+    if (draft.status !== "rejected") return;
+    updateDraft
+      .mutateAsync({ id: draft.id, patch: { status: "pending" } })
+      .then(() => {
+        toast.success("Draft restored");
+        setViewingDraftId(null);
+        setEditingDraftId(null);
+      })
+      .catch((err: Error) => toast.error(err.message));
+  };
+
+  const deleteArchivedDraft = (draft: LtmExtractionDraft) => {
+    if (!confirm(`Delete draft ${draft.id}? This cannot be undone.`)) return;
+    deleteDraft
+      .mutateAsync(draft.id)
+      .then(() => {
+        toast.success("Draft deleted");
+        if (viewingDraftId === draft.id) closeDraftViewer();
+        if (editingDraftId === draft.id) closeDraftEditor();
       })
       .catch((err: Error) => toast.error(err.message));
   };
@@ -778,6 +1059,14 @@ export function LongTermMemoryPanel() {
             label={status.data?.indexes.embeddingsAvailable ? "Embeddings" : "Lexical fallback"}
             tone="neutral"
           />
+          <button
+            type="button"
+            onClick={() => setArchiveOpen(true)}
+            className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--muted)]/40 px-1.5 py-0.5 text-[0.625rem] font-medium leading-tight text-[var(--muted-foreground)] transition-colors hover:border-rose-300/30 hover:bg-rose-300/10 hover:text-[var(--foreground)]"
+          >
+            <Archive size="0.75rem" />
+            Archive
+          </button>
         </div>
       </section>
 
@@ -829,7 +1118,7 @@ export function LongTermMemoryPanel() {
             </select>
             <select
               value={noteStatus}
-              onChange={(event) => setNoteStatus(event.target.value as "all" | LtmStatus)}
+              onChange={(event) => setNoteStatus(event.target.value as "all" | Exclude<LtmStatus, "archived">)}
               className="rounded-lg bg-[var(--secondary)] px-2.5 py-2 text-xs outline-none ring-1 ring-transparent focus:ring-[var(--primary)]"
             >
               {NOTE_STATUSES.map((statusId) => (
@@ -866,85 +1155,15 @@ export function LongTermMemoryPanel() {
               />
             ))}
           </div>
-          <Modal
-            open={creatingNote}
-            onClose={() => {
-              if (!confirmDiscardCreate()) return;
-              closeCreateForm();
-            }}
-            title="New Vault Note"
-            width="max-w-3xl"
-          >
-            <CreateLongTermMemoryNoteForm
-              initialDraft={createNoteDraft}
-              onCancel={() => {
-                if (!confirmDiscardCreate()) return;
-                closeCreateForm();
-              }}
-              onDirtyChange={setCreateNoteDirty}
-              onDraftChange={setCreateNoteDraft}
-              onCreated={(note) => {
-                closeCreateForm();
-                setEditingNoteId(note.id);
-                setEditedNoteDirty(false);
-              }}
-            />
-          </Modal>
-          <Modal
-            open={Boolean(viewingNote)}
-            onClose={closeViewer}
-            title={viewingNote?.id ?? "View Vault Note"}
-            width="max-w-4xl"
-          >
-            {viewingNote && (
-              <NoteViewModalContent
-                note={viewingNote}
-                drafts={allDrafts.data ?? []}
-                draftsLoading={allDrafts.isLoading}
-              />
-            )}
-          </Modal>
-          <Modal
-            open={Boolean(editingNote)}
-            onClose={() => {
-              if (!confirmDiscardEditor()) return;
-              closeEditor();
-            }}
-            title={editingNote ? `Edit ${editingNote.id}` : "Edit Vault Note"}
-            width="max-w-4xl"
-          >
-            {editingNote && (
-              <LongTermMemoryNoteEditor
-                note={editingNote}
-                onCancel={closeEditor}
-                onDirtyChange={setEditedNoteDirty}
-                onSaved={(saved) => {
-                  setEditedNoteDirty(false);
-                  setEditingNoteId(saved.id);
-                }}
-              />
-            )}
-          </Modal>
         </Section>
       )}
 
       {tab === "drafts" && (
-        <Section title="Draft Review">
-          <select
-            value={draftStatus}
-            onChange={(event) => setDraftStatus(event.target.value as "all" | LtmDraftStatus)}
-            className="mb-3 w-full rounded-lg bg-[var(--secondary)] px-2.5 py-2 text-xs outline-none ring-1 ring-transparent focus:ring-[var(--primary)]"
-          >
-            {DRAFT_STATUSES.map((statusId) => (
-              <option key={statusId} value={statusId}>
-                {statusId}
-              </option>
-            ))}
-          </select>
+        <Section title="Pending Drafts">
           <div className="space-y-2">
             {filteredDrafts.length === 0 && (
               <p className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]">
-                No drafts in this view.
+                No pending drafts.
               </p>
             )}
             {filteredDrafts.map((draft) => (
@@ -1086,6 +1305,171 @@ export function LongTermMemoryPanel() {
           </div>
         </Section>
       )}
+
+      <Modal
+        open={archiveOpen}
+        onClose={() => {
+          if (editingNoteId && !confirmDiscardEditor()) return;
+          setArchiveOpen(false);
+          setViewingDraftId(null);
+          setEditingDraftId(null);
+        }}
+        title="Archived Drafts And Notes"
+        width="max-w-5xl"
+      >
+        <div className="grid gap-3">
+          <div className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--background)]/95 p-1">
+            {(["notes", "drafts"] as const).map((id) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setArchiveTab(id)}
+                className={cn(
+                  "rounded-lg px-2 py-1.5 text-xs font-medium capitalize transition-all active:scale-[0.98]",
+                  archiveTab === id
+                    ? "bg-rose-300/15 text-[var(--foreground)] ring-1 ring-rose-300/30"
+                    : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                )}
+              >
+                {id}
+              </button>
+            ))}
+          </div>
+
+          {archiveTab === "notes" && (
+            <div className="space-y-2">
+              {archivedNotes.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
+              {!archivedNotes.isLoading && (archivedNotes.data ?? []).length === 0 && (
+                <p className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]">
+                  No archived notes.
+                </p>
+              )}
+              {(archivedNotes.data ?? []).map((note) => (
+                <NoteRow
+                  key={note.id}
+                  note={note}
+                  viewing={viewingNoteId === note.id}
+                  editing={editingNoteId === note.id}
+                  onView={() => requestViewNote(note.id)}
+                  onEdit={() => requestEditNote(note.id)}
+                  onRestore={() => restoreNote(note)}
+                />
+              ))}
+            </div>
+          )}
+
+          {archiveTab === "drafts" && (
+            <div className="space-y-2">
+              {allDrafts.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
+              {!allDrafts.isLoading && archivedDrafts.length === 0 && (
+                <p className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]">
+                  No archived drafts.
+                </p>
+              )}
+              {archivedDrafts.map((draft) => (
+                <ArchivedDraftRow
+                  key={draft.id}
+                  draft={draft}
+                  selected={viewingDraftId === draft.id || editingDraftId === draft.id}
+                  onView={() => {
+                    setEditingDraftId(null);
+                    setViewingDraftId(draft.id);
+                  }}
+                  onEdit={() => {
+                    setViewingDraftId(null);
+                    setEditingDraftId(draft.id);
+                  }}
+                  onRestore={() => restoreDraft(draft)}
+                  onDelete={() => deleteArchivedDraft(draft)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      <Modal
+        open={creatingNote}
+        onClose={() => {
+          if (!confirmDiscardCreate()) return;
+          closeCreateForm();
+        }}
+        title="New Vault Note"
+        width="max-w-3xl"
+      >
+        <CreateLongTermMemoryNoteForm
+          initialDraft={createNoteDraft}
+          onCancel={() => {
+            if (!confirmDiscardCreate()) return;
+            closeCreateForm();
+          }}
+          onDirtyChange={setCreateNoteDirty}
+          onDraftChange={setCreateNoteDraft}
+          onCreated={(note) => {
+            closeCreateForm();
+            setEditingNoteId(note.id);
+            setEditedNoteDirty(false);
+          }}
+        />
+      </Modal>
+
+      <Modal
+        open={Boolean(viewingNote)}
+        onClose={closeViewer}
+        title={viewingNote?.id ?? "View Vault Note"}
+        width="max-w-4xl"
+      >
+        {viewingNote && (
+          <NoteViewModalContent note={viewingNote} drafts={allDrafts.data ?? []} draftsLoading={allDrafts.isLoading} />
+        )}
+      </Modal>
+
+      <Modal
+        open={Boolean(editingNote)}
+        onClose={() => {
+          if (!confirmDiscardEditor()) return;
+          closeEditor();
+        }}
+        title={editingNote ? `Edit ${editingNote.id}` : "Edit Vault Note"}
+        width="max-w-4xl"
+      >
+        {editingNote && (
+          <LongTermMemoryNoteEditor
+            note={editingNote}
+            onCancel={closeEditor}
+            onDirtyChange={setEditedNoteDirty}
+            onSaved={(saved) => {
+              setEditedNoteDirty(false);
+              setEditingNoteId(saved.id);
+            }}
+          />
+        )}
+      </Modal>
+
+      <Modal
+        open={Boolean(viewingDraft)}
+        onClose={closeDraftViewer}
+        title={viewingDraft?.id ?? "View Draft"}
+        width="max-w-4xl"
+      >
+        {viewingDraft && <DraftDetails draft={viewingDraft} />}
+      </Modal>
+
+      <Modal
+        open={Boolean(editingDraft)}
+        onClose={closeDraftEditor}
+        title={editingDraft ? `Edit Draft ${editingDraft.id}` : "Edit Draft"}
+        width="max-w-4xl"
+      >
+        {editingDraft && (
+          <DraftJsonEditor
+            draft={editingDraft}
+            onSaved={(saved) => {
+              setEditingDraftId(saved.id);
+            }}
+          />
+        )}
+      </Modal>
 
       {(status.isLoading || integrity.isLoading) && (
         <div className="fixed bottom-3 right-3 rounded-full bg-[var(--card)] p-2 shadow-sm ring-1 ring-[var(--border)]">
