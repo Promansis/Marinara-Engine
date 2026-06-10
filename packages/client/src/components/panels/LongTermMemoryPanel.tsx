@@ -58,6 +58,15 @@ import {
   type CreateLongTermMemoryNoteDraft,
 } from "../long-term-memory/CreateLongTermMemoryNoteForm";
 import { LongTermMemoryNoteEditor } from "../long-term-memory/LongTermMemoryNoteEditor";
+import {
+  friendlyIdentifier,
+  friendlyMode,
+  friendlyNoteTitle,
+  friendlyNoteType,
+  friendlySectionKey,
+  friendlyStatus,
+  sentenceCaseIdentifier,
+} from "../long-term-memory/ltm-editor-utils";
 import { SettingField } from "../long-term-memory/LtmFields";
 import { StatusPill, ToolButton } from "../long-term-memory/LtmPills";
 import { Modal } from "../ui/Modal";
@@ -79,6 +88,13 @@ const IMPORT_SOURCES: Array<{ id: LtmInteropSource; label: string }> = [
   { id: "lorebooks", label: "Lorebooks" },
   { id: "chats", label: "Chat Summaries" },
 ];
+
+const TAB_LABELS: Record<TabId, string> = {
+  notes: "Memories",
+  drafts: "Suggestions",
+  tools: "Maintenance",
+  import: "Bring In",
+};
 
 type TabId = "notes" | "drafts" | "tools" | "import";
 type ImportPreviewRow = NonNullable<ReturnType<typeof useLongTermMemoryImportPreview>["data"]>["samples"][number];
@@ -173,6 +189,8 @@ function NoteRow({
   onRestore?: () => void;
 }) {
   const sectionCount = Object.keys(note.sections).length;
+  const primaryText =
+    note.sections.summary?.text.trim() || note.sections.core?.text.trim() || Object.values(note.sections)[0]?.text.trim() || "";
   return (
     <article
       className={cn(
@@ -183,12 +201,18 @@ function NoteRow({
     >
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="truncate text-xs font-semibold text-[var(--foreground)]">{note.id}</div>
+          <div className="truncate text-xs font-semibold text-[var(--foreground)]">{friendlyNoteTitle(note)}</div>
+          {primaryText && (
+            <div className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+              {primaryText}
+            </div>
+          )}
           <div className="mt-1 flex flex-wrap gap-1.5">
-            <StatusPill label={note.type} />
-            <StatusPill label={note.status} tone={note.status === "active" ? "good" : "neutral"} />
-            <StatusPill label={`${sectionCount} sections`} />
+            <StatusPill label={friendlyNoteType(note.type)} />
+            <StatusPill label={friendlyStatus(note.status)} tone={note.status === "active" ? "good" : "neutral"} />
+            <StatusPill label={`${sectionCount} detail${sectionCount === 1 ? "" : "s"}`} />
           </div>
+          <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]/80">Internal ID: {note.id}</div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <button
@@ -198,8 +222,8 @@ function NoteRow({
               "rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
               viewing && "bg-[var(--accent)] text-[var(--foreground)]",
             )}
-            aria-label={`View ${note.id}`}
-            title="View note"
+            aria-label={`View ${friendlyNoteTitle(note)}`}
+            title="View memory"
           >
             <Eye size="0.875rem" />
           </button>
@@ -208,8 +232,8 @@ function NoteRow({
               type="button"
               onClick={onRestore}
               className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-emerald-500/10 hover:text-emerald-200"
-              aria-label={`Restore ${note.id}`}
-              title="Restore note"
+              aria-label={`Restore ${friendlyNoteTitle(note)}`}
+              title="Restore memory"
             >
               <RotateCcw size="0.875rem" />
             </button>
@@ -219,8 +243,8 @@ function NoteRow({
               onClick={onArchive}
               disabled={note.status === "archived"}
               className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)] disabled:cursor-not-allowed disabled:opacity-45"
-              aria-label={`Archive ${note.id}`}
-              title="Archive note"
+              aria-label={`Archive ${friendlyNoteTitle(note)}`}
+              title="Archive memory"
             >
               <Archive size="0.875rem" />
             </button>
@@ -232,14 +256,17 @@ function NoteRow({
               "rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
               editing && "bg-[var(--accent)] text-[var(--foreground)]",
             )}
-            aria-label={`Edit ${note.id}`}
+            aria-label={`Edit ${friendlyNoteTitle(note)}`}
+            title="Edit memory"
           >
             <Pencil size="0.875rem" />
           </button>
         </div>
       </div>
       {note.tags.length > 0 && (
-        <div className="mt-2 truncate text-[0.625rem] text-[var(--muted-foreground)]">Tags: {note.tags.join(", ")}</div>
+        <div className="mt-2 truncate text-[0.625rem] text-[var(--muted-foreground)]">
+          Tags: {note.tags.map(friendlyIdentifier).join(", ")}
+        </div>
       )}
     </article>
   );
@@ -250,29 +277,58 @@ function compactScope(note: LtmNote) {
     if (Array.isArray(value)) return value.length ? [[key, value.join(", ")]] : [];
     return typeof value === "string" && value.trim() ? [[key, value]] : [];
   });
-  return scopeEntries.length ? scopeEntries.map(([key, value]) => `${key}: ${value}`).join(" · ") : "Global";
+  return scopeEntries.length
+    ? scopeEntries.map(([key, value]) => `${sentenceCaseIdentifier(key)}: ${friendlyIdentifier(value)}`).join(" · ")
+    : "Available everywhere";
 }
 
 function mutationTarget(mutation: LtmDraftMutation) {
-  if (mutation.kind === "create_note") return mutation.note.id;
-  if (mutation.kind === "add_link") return `${mutation.noteId} -> ${mutation.link.target}`;
-  return mutation.noteId;
+  if (mutation.kind === "create_note") return friendlyNoteTitle(mutation.note);
+  if (mutation.kind === "add_link") {
+    return `${friendlyIdentifier(mutation.noteId)} is related to ${friendlyIdentifier(mutation.link.target)}`;
+  }
+  return friendlyIdentifier(mutation.noteId);
+}
+
+function mutationKindLabel(kind: LtmDraftMutation["kind"]) {
+  switch (kind) {
+    case "create_note":
+      return "New memory";
+    case "append_section":
+      return "Add detail";
+    case "update_section":
+      return "Rewrite detail";
+    case "add_link":
+      return "Related memory";
+    case "set_status":
+      return "Status change";
+    case "flag_conflict":
+      return "Needs review";
+  }
+}
+
+function mutationRiskLabel(risk: LtmDraftMutation["risk"]) {
+  if (risk === "low") return "Low risk";
+  if (risk === "medium") return "Review";
+  return "Careful";
 }
 
 function mutationText(mutation: LtmDraftMutation) {
   switch (mutation.kind) {
     case "create_note":
       return Object.entries(mutation.note.sections)
-        .map(([key, section]) => `${key}: ${section.text}`)
+        .map(([key, section]) => `${friendlySectionKey(key)}: ${section.text}`)
         .join("\n\n");
     case "append_section":
-      return `${mutation.sectionKey}: ${mutation.text}`;
+      return `${friendlySectionKey(mutation.sectionKey)}: ${mutation.text}`;
     case "update_section":
-      return `${mutation.sectionKey}: ${mutation.section.text}`;
+      return `${friendlySectionKey(mutation.sectionKey)}: ${mutation.section.text}`;
     case "add_link":
-      return `${mutation.noteId} --${mutation.link.relation}-> ${mutation.link.target}`;
+      return `${friendlyIdentifier(mutation.noteId)} ${friendlyIdentifier(mutation.link.relation).toLowerCase()} ${friendlyIdentifier(
+        mutation.link.target,
+      )}`;
     case "set_status":
-      return `Set ${mutation.noteId} to ${mutation.status}`;
+      return `Mark ${friendlyIdentifier(mutation.noteId)} as ${friendlyStatus(mutation.status).toLowerCase()}`;
     case "flag_conflict":
       return `${mutation.conflict.field}\nExisting: ${mutation.conflict.existing}\nProposed: ${mutation.conflict.proposed}`;
   }
@@ -282,15 +338,15 @@ function MutationPreview({ mutation }: { mutation: LtmDraftMutation }) {
   return (
     <article className="rounded-lg bg-[var(--secondary)]/45 p-3 ring-1 ring-[var(--border)]">
       <div className="flex flex-wrap items-center gap-1.5">
-        <StatusPill label={mutation.kind} />
+        <StatusPill label={mutationKindLabel(mutation.kind)} />
         <StatusPill
-          label={mutation.risk}
+          label={mutationRiskLabel(mutation.risk)}
           tone={mutation.risk === "low" ? "good" : mutation.risk === "high" ? "bad" : "warn"}
         />
-        <StatusPill label={`${Math.round(mutation.confidence * 100)}%`} />
+        <StatusPill label={`AI certainty ${Math.round(mutation.confidence * 100)}%`} />
       </div>
       <div className="mt-2 text-xs font-medium text-[var(--foreground)]">{mutation.summary}</div>
-      <div className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">Target: {mutationTarget(mutation)}</div>
+      <div className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">Applies to: {mutationTarget(mutation)}</div>
       <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-[var(--background)] p-2 text-[0.6875rem] leading-relaxed text-[var(--foreground)] ring-1 ring-[var(--border)]">
         {mutationText(mutation)}
       </pre>
@@ -307,7 +363,7 @@ function GraphLinks({ links }: { links: LtmLink[] }) {
   if (links.length === 0) {
     return (
       <p className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-3 text-xs text-[var(--muted-foreground)]">
-        No graph links on this note yet.
+        No related memories yet.
       </p>
     );
   }
@@ -320,9 +376,10 @@ function GraphLinks({ links }: { links: LtmLink[] }) {
           className="flex min-w-0 items-center gap-2 rounded-lg bg-[var(--secondary)]/45 px-3 py-2 text-xs ring-1 ring-[var(--border)]"
         >
           <span className="shrink-0 rounded-md bg-[var(--muted)]/50 px-1.5 py-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
-            {link.relation}
+            {friendlyIdentifier(link.relation)}
           </span>
-          <span className="min-w-0 truncate font-mono text-[var(--foreground)]">{link.target}</span>
+          <span className="min-w-0 truncate text-[var(--foreground)]">{friendlyIdentifier(link.target)}</span>
+          <span className="truncate text-[0.625rem] text-[var(--muted-foreground)]">Internal ID: {link.target}</span>
         </div>
       ))}
     </div>
@@ -350,10 +407,10 @@ function NoteViewModalContent({
     <div className="grid gap-4">
       <div className="rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
         <div className="flex min-w-0 flex-wrap gap-1.5">
-          <StatusPill label={note.type} />
-          <StatusPill label={note.status} tone={note.status === "active" ? "good" : "neutral"} />
+          <StatusPill label={friendlyNoteType(note.type)} />
+          <StatusPill label={friendlyStatus(note.status)} tone={note.status === "active" ? "good" : "neutral"} />
           {note.modes.map((mode) => (
-            <StatusPill key={mode} label={mode} />
+            <StatusPill key={mode} label={friendlyMode(mode)} />
           ))}
         </div>
         <div className="mt-2 text-[0.625rem] text-[var(--muted-foreground)]">
@@ -362,15 +419,15 @@ function NoteViewModalContent({
       </div>
 
       <section className="space-y-2">
-        <h3 className="text-xs font-semibold text-[var(--foreground)]">Note Body</h3>
+        <h3 className="text-xs font-semibold text-[var(--foreground)]">Memory Details</h3>
         {Object.entries(note.sections).map(([key, section]) => (
           <article key={key} className="rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs font-semibold text-[var(--foreground)]">{key}</span>
-              {typeof section.salience === "number" && <StatusPill label={`salience ${section.salience}`} />}
-              {typeof section.confidence === "number" && <StatusPill label={`confidence ${section.confidence}`} />}
+              <span className="text-xs font-semibold text-[var(--foreground)]">{friendlySectionKey(key)}</span>
+              {typeof section.salience === "number" && <StatusPill label={`Importance ${section.salience}`} />}
+              {typeof section.confidence === "number" && <StatusPill label={`AI certainty ${section.confidence}`} />}
               {(section.gates ?? []).map((gate) => (
-                <StatusPill key={gate} label={gate} tone="warn" />
+                <StatusPill key={gate} label={sentenceCaseIdentifier(gate)} tone="warn" />
               ))}
             </div>
             <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-[var(--foreground)]">{section.text}</p>
@@ -384,42 +441,33 @@ function NoteViewModalContent({
       </section>
 
       <section className="space-y-2">
-        <h3 className="text-xs font-semibold text-[var(--foreground)]">Graph Links</h3>
+        <h3 className="text-xs font-semibold text-[var(--foreground)]">Related Memories</h3>
         <GraphLinks links={note.links} />
       </section>
 
       <section className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-xs font-semibold text-[var(--foreground)]">Extracted For Graph</h3>
-          <StatusPill label={`${extractedMutations.length} mutations`} />
+          <h3 className="text-xs font-semibold text-[var(--foreground)]">Suggestions From This Memory</h3>
+          <StatusPill label={`${extractedMutations.length} suggested change${extractedMutations.length === 1 ? "" : "s"}`} />
         </div>
         {draftsLoading ? (
           <div className="flex items-center justify-center rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-3 text-xs text-[var(--muted-foreground)]">
             <Loader2 className="mr-2 animate-spin" size="0.875rem" />
-            Loading extraction drafts...
+            Loading suggestions...
           </div>
         ) : extractedDrafts.length === 0 ? (
           <p className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-3 text-xs text-[var(--muted-foreground)]">
-            No extraction drafts were created from this source note.
+            No suggestions were created from this memory.
           </p>
         ) : (
           <div className="space-y-3">
             {extractedDrafts.map((draft) => (
               <article key={draft.id} className="rounded-lg bg-[var(--card)] p-3 ring-1 ring-[var(--border)]">
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <StatusPill
-                    label={draft.status}
-                    tone={
-                      draft.status === "accepted" || draft.status === "auto_applied"
-                        ? "good"
-                        : draft.status === "pending"
-                          ? "warn"
-                          : "neutral"
-                    }
-                  />
-                  <StatusPill label={`${draft.mutations.length} mutations`} />
+                  <StatusPill label={draftStatusLabel(draft.status)} tone={draftStatusTone(draft.status)} />
+                  <StatusPill label={`${draft.mutations.length} suggested change${draft.mutations.length === 1 ? "" : "s"}`} />
                   {draft.appliedMutationIds?.length ? (
-                    <StatusPill label={`${draft.appliedMutationIds.length} applied`} tone="good" />
+                    <StatusPill label={`${draft.appliedMutationIds.length} kept`} tone="good" />
                   ) : null}
                 </div>
                 {draft.summary && <p className="mt-2 text-xs text-[var(--foreground)]">{draft.summary}</p>}
@@ -435,7 +483,7 @@ function NoteViewModalContent({
         {extractedLinks.length > 0 && (
           <div className="space-y-2">
             <div className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-              Links proposed by extraction
+              Related memories proposed by suggestions
             </div>
             <GraphLinks links={extractedLinks} />
           </div>
@@ -456,12 +504,10 @@ function DraftRow({ draft }: { draft: LtmExtractionDraft }) {
         <div className="min-w-0">
           <div className="truncate text-xs font-semibold text-[var(--foreground)]">{draft.summary || draft.id}</div>
           <div className="mt-1 flex flex-wrap gap-1.5">
-            <StatusPill
-              label={draft.status}
-              tone={pending ? "warn" : draft.status === "accepted" ? "good" : "neutral"}
-            />
-            <StatusPill label={`${draft.mutations.length} mutations`} />
+            <StatusPill label={draftStatusLabel(draft.status)} tone={draftStatusTone(draft.status)} />
+            <StatusPill label={`${draft.mutations.length} suggested change${draft.mutations.length === 1 ? "" : "s"}`} />
           </div>
+          <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]/80">Internal ID: {draft.id}</div>
         </div>
       </div>
       {pending && (
@@ -470,26 +516,26 @@ function DraftRow({ draft }: { draft: LtmExtractionDraft }) {
             onClick={() =>
               accept
                 .mutateAsync({ id: draft.id })
-                .then(() => toast.success("Draft accepted"))
+                .then(() => toast.success("Suggestion kept"))
                 .catch((err: Error) => toast.error(err.message))
             }
             disabled={accept.isPending}
             tone="primary"
           >
             <Check size="0.875rem" />
-            Accept
+            Keep
           </ToolButton>
           <ToolButton
             onClick={() =>
               reject
                 .mutateAsync({ id: draft.id, reason: "Rejected from memory panel" })
-                .then(() => toast.success("Draft rejected"))
+                .then(() => toast.success("Suggestion skipped"))
                 .catch((err: Error) => toast.error(err.message))
             }
             disabled={reject.isPending}
           >
             <X size="0.875rem" />
-            Reject
+            Skip
           </ToolButton>
         </div>
       )}
@@ -503,15 +549,22 @@ function draftStatusTone(statusId: LtmExtractionDraft["status"]) {
   return "neutral";
 }
 
+function draftStatusLabel(statusId: LtmExtractionDraft["status"]) {
+  if (statusId === "pending") return "Needs review";
+  if (statusId === "accepted") return "Kept";
+  if (statusId === "auto_applied") return "Kept automatically";
+  return "Skipped";
+}
+
 function DraftDetails({ draft }: { draft: LtmExtractionDraft }) {
   return (
     <div className="grid gap-4">
       <div className="rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
         <div className="flex flex-wrap gap-1.5">
-          <StatusPill label={draft.status} tone={draftStatusTone(draft.status)} />
-          <StatusPill label={`${draft.mutations.length} mutations`} />
+          <StatusPill label={draftStatusLabel(draft.status)} tone={draftStatusTone(draft.status)} />
+          <StatusPill label={`${draft.mutations.length} suggested change${draft.mutations.length === 1 ? "" : "s"}`} />
           {draft.modes.map((mode) => (
-            <StatusPill key={mode} label={mode} />
+            <StatusPill key={mode} label={friendlyMode(mode)} />
           ))}
         </div>
         <div className="mt-2 text-[0.625rem] text-[var(--muted-foreground)]">
@@ -527,7 +580,7 @@ function DraftDetails({ draft }: { draft: LtmExtractionDraft }) {
       {draft.summary && <p className="text-xs leading-relaxed text-[var(--foreground)]">{draft.summary}</p>}
 
       <section className="space-y-2">
-        <h3 className="text-xs font-semibold text-[var(--foreground)]">Mutations</h3>
+        <h3 className="text-xs font-semibold text-[var(--foreground)]">Suggested Changes</h3>
         {draft.mutations.map((mutation) => (
           <MutationPreview key={mutation.id} mutation={mutation} />
         ))}
@@ -555,11 +608,11 @@ function DraftJsonEditor({
     try {
       parsed = JSON.parse(text);
     } catch (err) {
-      toast.error(`Draft JSON is invalid: ${(err as Error).message}`);
+      toast.error(`Suggestion JSON is invalid: ${(err as Error).message}`);
       return;
     }
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      toast.error("Draft JSON must be an object.");
+      toast.error("Suggestion JSON must be an object.");
       return;
     }
     const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...patch } = parsed as Record<string, unknown>;
@@ -568,7 +621,7 @@ function DraftJsonEditor({
         id: draft.id,
         patch: patch as UpdateLongTermMemoryDraftInput,
       });
-      toast.success("Draft saved");
+      toast.success("Suggestion saved");
       onSaved?.(saved);
     } catch (err) {
       toast.error((err as Error).message);
@@ -578,7 +631,7 @@ function DraftJsonEditor({
   return (
     <div className="grid gap-3">
       <p className="text-xs text-[var(--muted-foreground)]">
-        Edit the draft payload before restoring or keeping it archived.
+        Advanced: edit the raw suggestion payload before restoring or keeping it archived.
       </p>
       <textarea
         value={text}
@@ -589,7 +642,7 @@ function DraftJsonEditor({
       <div className="flex justify-end">
         <ToolButton onClick={save} disabled={updateDraft.isPending} tone="primary">
           {updateDraft.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Save size="0.875rem" />}
-          Save Draft
+          Save Suggestion
         </ToolButton>
       </div>
     </div>
@@ -622,9 +675,10 @@ function ArchivedDraftRow({
         <div className="min-w-0">
           <div className="truncate text-xs font-semibold text-[var(--foreground)]">{draft.summary || draft.id}</div>
           <div className="mt-1 flex flex-wrap gap-1.5">
-            <StatusPill label={draft.status} tone={draftStatusTone(draft.status)} />
-            <StatusPill label={`${draft.mutations.length} mutations`} />
+            <StatusPill label={draftStatusLabel(draft.status)} tone={draftStatusTone(draft.status)} />
+            <StatusPill label={`${draft.mutations.length} suggested change${draft.mutations.length === 1 ? "" : "s"}`} />
           </div>
+          <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]/80">Internal ID: {draft.id}</div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <button
@@ -634,8 +688,8 @@ function ArchivedDraftRow({
               "rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
               selected && "bg-[var(--accent)] text-[var(--foreground)]",
             )}
-            aria-label={`View draft ${draft.id}`}
-            title="View draft"
+            aria-label={`View suggestion ${draft.id}`}
+            title="View suggestion"
           >
             <Eye size="0.875rem" />
           </button>
@@ -643,8 +697,8 @@ function ArchivedDraftRow({
             type="button"
             onClick={onEdit}
             className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-            aria-label={`Edit draft ${draft.id}`}
-            title="Edit draft"
+            aria-label={`Edit suggestion ${draft.id}`}
+            title="Edit raw suggestion"
           >
             <Pencil size="0.875rem" />
           </button>
@@ -653,8 +707,8 @@ function ArchivedDraftRow({
             onClick={onRestore}
             disabled={draft.status !== "rejected"}
             className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-emerald-500/10 hover:text-emerald-200 disabled:cursor-not-allowed disabled:opacity-45"
-            aria-label={`Restore draft ${draft.id}`}
-            title={draft.status === "rejected" ? "Restore draft" : "Accepted drafts cannot be restored"}
+            aria-label={`Restore suggestion ${draft.id}`}
+            title={draft.status === "rejected" ? "Restore suggestion" : "Kept suggestions cannot be restored"}
           >
             <RotateCcw size="0.875rem" />
           </button>
@@ -662,8 +716,8 @@ function ArchivedDraftRow({
             type="button"
             onClick={onDelete}
             className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]"
-            aria-label={`Delete draft ${draft.id}`}
-            title="Delete draft"
+            aria-label={`Delete suggestion ${draft.id}`}
+            title="Delete suggestion"
           >
             <Trash2 size="0.875rem" />
           </button>
@@ -715,7 +769,7 @@ function ImportPreviewRowItem({
       <div className="min-w-0 self-center">
         <div className="truncate text-xs font-medium text-[var(--foreground)]">{sample.title}</div>
         <div className="mt-1 flex flex-wrap gap-1.5">
-          <StatusPill label={`${sample.mutationCount} mutation${sample.mutationCount === 1 ? "" : "s"}`} />
+          <StatusPill label={`${sample.mutationCount} suggested change${sample.mutationCount === 1 ? "" : "s"}`} />
         </div>
       </div>
       <div className="col-span-2 flex shrink-0 items-center justify-end gap-1.5 sm:col-span-1">
@@ -828,7 +882,7 @@ function ChatMemorySettings() {
               className="w-full rounded-lg bg-[var(--background)] px-3 py-2 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:ring-[var(--primary)]"
             />
           </SettingField>
-          <SettingField label="RP scope">
+          <SettingField label="Story line">
             <input
               value={scopeDraft.rpId}
               onChange={(event) => setScopeDraft((current) => ({ ...current, rpId: event.target.value }))}
@@ -839,7 +893,7 @@ function ChatMemorySettings() {
           </SettingField>
         </div>
 
-        <SettingField label="Token budget">
+        <SettingField label="Memory space used in replies">
           <div className="grid grid-cols-[1fr_5.5rem] items-center gap-3">
             <input
               type="range"
@@ -1029,9 +1083,9 @@ export function LongTermMemoryPanel() {
     setCreateNoteDraft(null);
   };
 
-  const confirmDiscardCreate = () => !createNoteDirty || confirm("Discard unsaved vault note draft?");
+  const confirmDiscardCreate = () => !createNoteDirty || confirm("Discard unsaved memory draft?");
 
-  const confirmDiscardEditor = () => !editedNoteDirty || confirm("Discard unsaved vault note changes?");
+  const confirmDiscardEditor = () => !editedNoteDirty || confirm("Discard unsaved memory changes?");
 
   const setTabWithGuards = (nextTab: TabId) => {
     if (nextTab === tab) return;
@@ -1079,11 +1133,11 @@ export function LongTermMemoryPanel() {
   };
 
   const archiveFromRow = (note: LtmNote) => {
-    if (!confirm(`Archive ${note.id}?`)) return;
+    if (!confirm(`Archive ${friendlyNoteTitle(note)}?`)) return;
     archiveNote
       .mutateAsync(note.id)
       .then((result) => {
-        toast.success("Vault note archived");
+        toast.success("Memory archived");
         if (editingNoteId === result.note.id) closeEditor();
       })
       .catch((err: Error) => toast.error(err.message));
@@ -1093,7 +1147,7 @@ export function LongTermMemoryPanel() {
     updateNote
       .mutateAsync({ id: note.id, patch: { status: "active" } })
       .then((saved) => {
-        toast.success("Vault note restored");
+        toast.success("Memory restored");
         setArchiveOpen(false);
         setViewingNoteId(null);
         setEditingNoteId(saved.id);
@@ -1107,7 +1161,7 @@ export function LongTermMemoryPanel() {
     updateDraft
       .mutateAsync({ id: draft.id, patch: { status: "pending" } })
       .then(() => {
-        toast.success("Draft restored");
+        toast.success("Suggestion restored");
         setViewingDraftId(null);
         setEditingDraftId(null);
       })
@@ -1115,11 +1169,11 @@ export function LongTermMemoryPanel() {
   };
 
   const deleteArchivedDraft = (draft: LtmExtractionDraft) => {
-    if (!confirm(`Delete draft ${draft.id}? This cannot be undone.`)) return;
+    if (!confirm(`Delete suggestion ${draft.id}? This cannot be undone.`)) return;
     deleteDraft
       .mutateAsync(draft.id)
       .then(() => {
-        toast.success("Draft deleted");
+        toast.success("Suggestion deleted");
         if (viewingDraftId === draft.id) closeDraftViewer();
         if (editingDraftId === draft.id) closeDraftEditor();
       })
@@ -1237,28 +1291,28 @@ export function LongTermMemoryPanel() {
       <section className="rounded-xl border border-rose-300/20 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-3">
         <div className="grid grid-cols-[1fr_auto_auto] items-center gap-3">
           <div className="min-w-0">
-            <div className="truncate text-xs font-semibold text-[var(--foreground)]">Long-Term Memory Vault</div>
+            <div className="truncate text-xs font-semibold text-[var(--foreground)]">Story Memory</div>
             <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]">
-              {status.data?.directory ?? "long-term-memory"}
+              Advanced folder: {status.data?.directory ?? "long-term-memory"}
             </div>
           </div>
           <div className="text-right">
             <div className="text-base font-semibold tabular-nums text-[var(--foreground)]">
               {status.data?.notes.total ?? 0}
             </div>
-            <div className="text-[0.5625rem] uppercase text-[var(--muted-foreground)]">Notes</div>
+            <div className="text-[0.5625rem] uppercase text-[var(--muted-foreground)]">Memories</div>
           </div>
           <div className="text-right">
             <div className="text-base font-semibold tabular-nums text-[var(--foreground)]">
               {status.data?.indexes.chunkCount ?? 0}
             </div>
-            <div className="text-[0.5625rem] uppercase text-[var(--muted-foreground)]">Chunks</div>
+            <div className="text-[0.5625rem] uppercase text-[var(--muted-foreground)]">Search bits</div>
           </div>
         </div>
         <div className="mt-3 flex flex-wrap gap-1.5">
-          <StatusPill label={integrity.data?.ok ? "Integrity OK" : "Needs check"} tone={statusTone} />
+          <StatusPill label={integrity.data?.ok ? "Healthy" : "Needs check"} tone={statusTone} />
           <StatusPill
-            label={status.data?.indexes.embeddingsAvailable ? "Embeddings" : "Lexical fallback"}
+            label={status.data?.indexes.embeddingsAvailable ? "Smart search" : "Basic search"}
             tone="neutral"
           />
           <button
@@ -1267,7 +1321,7 @@ export function LongTermMemoryPanel() {
             className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--muted)]/40 px-1.5 py-0.5 text-[0.625rem] font-medium leading-tight text-[var(--muted-foreground)] transition-colors hover:border-rose-300/30 hover:bg-rose-300/10 hover:text-[var(--foreground)]"
           >
             <Archive size="0.75rem" />
-            Archive
+            Archived
           </button>
         </div>
       </section>
@@ -1278,26 +1332,26 @@ export function LongTermMemoryPanel() {
             key={id}
             onClick={() => setTabWithGuards(id)}
             className={cn(
-              "min-w-0 rounded-lg px-2 py-1.5 text-xs font-medium capitalize transition-all active:scale-[0.98]",
+              "min-w-0 rounded-lg px-2 py-1.5 text-xs font-medium transition-all active:scale-[0.98]",
               tab === id
                 ? "bg-rose-300/15 text-[var(--foreground)] ring-1 ring-rose-300/30"
                 : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
             )}
           >
-            {id}
+            {TAB_LABELS[id]}
           </button>
         ))}
       </div>
 
       {tab === "notes" && (
-        <Section title="Vault Notes">
+        <Section title="Memories">
           <div className="mb-3 grid grid-cols-[1fr_auto] gap-2">
             <div className="flex items-center gap-2 rounded-xl bg-[var(--secondary)] px-3 py-2 ring-1 ring-[var(--border)] transition-shadow focus-within:ring-[var(--ring)]">
               <Search size="0.875rem" className="text-[var(--muted-foreground)]" />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search notes"
+                placeholder="Search memories"
                 className="min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]/60"
               />
             </div>
@@ -1314,7 +1368,7 @@ export function LongTermMemoryPanel() {
             >
               {NOTE_TYPES.map((type) => (
                 <option key={type} value={type}>
-                  {type}
+                  {type === "all" ? "All types" : friendlyNoteType(type)}
                 </option>
               ))}
             </select>
@@ -1325,7 +1379,7 @@ export function LongTermMemoryPanel() {
             >
               {NOTE_STATUSES.map((statusId) => (
                 <option key={statusId} value={statusId}>
-                  {statusId}
+                  {statusId === "all" ? "Any status" : friendlyStatus(statusId)}
                 </option>
               ))}
             </select>
@@ -1342,7 +1396,7 @@ export function LongTermMemoryPanel() {
             {notes.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
             {!notes.isLoading && filteredNotes.length === 0 && (
               <p className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]">
-                No matching notes.
+                No matching memories.
               </p>
             )}
             {filteredNotes.map((note) => (
@@ -1361,11 +1415,11 @@ export function LongTermMemoryPanel() {
       )}
 
       {tab === "drafts" && (
-        <Section title="Pending Drafts">
+        <Section title="Suggestions To Review">
           <div className="space-y-2">
             {filteredDrafts.length === 0 && (
               <p className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]">
-                No pending drafts.
+                No suggestions need review.
               </p>
             )}
             {filteredDrafts.map((draft) => (
@@ -1380,32 +1434,32 @@ export function LongTermMemoryPanel() {
           <Section title="Chat Settings">
             <ChatMemorySettings />
           </Section>
-          <Section title="Rebuild, Replay, Repair">
+          <Section title="Refresh And Repair">
             <div className="space-y-2">
               <ToolButton
                 onClick={() =>
                   rebuild
                     .mutateAsync()
-                    .then(() => toast.success("Indexes rebuilt"))
+                .then(() => toast.success("Memory search refreshed"))
                     .catch((err: Error) => toast.error(err.message))
                 }
                 disabled={rebuild.isPending}
                 tone="primary"
               >
                 <RefreshCw size="0.875rem" />
-                Rebuild Indexes
+                Refresh Memory Search
               </ToolButton>
               <ToolButton
                 onClick={() =>
                   replay
                     .mutateAsync()
-                    .then((result) => toast(result.replayable ? "Replay audit passed" : result.messages[0]))
+                    .then((result) => toast(result.replayable ? "Memory history looks healthy" : result.messages[0]))
                     .catch((err: Error) => toast.error(err.message))
                 }
                 disabled={replay.isPending}
               >
                 <History size="0.875rem" />
-                Replay Audit
+                Check Memory History
               </ToolButton>
               <ToolButton
                 onClick={() =>
@@ -1418,7 +1472,7 @@ export function LongTermMemoryPanel() {
                 tone="danger"
               >
                 <Hammer size="0.875rem" />
-                Quarantine And Rebuild
+                Repair Broken Memory Files
               </ToolButton>
             </div>
             <div className="mt-3 space-y-2">
@@ -1444,7 +1498,7 @@ export function LongTermMemoryPanel() {
       )}
 
       {tab === "import" && (
-        <Section title="Import To Vault">
+        <Section title="Bring Existing Stories In">
           <div className="grid grid-cols-[1fr_auto] gap-2">
             <select
               value={importSource}
@@ -1453,7 +1507,7 @@ export function LongTermMemoryPanel() {
             >
               {IMPORT_SOURCES.map((source) => (
                 <option key={source.id} value={source.id}>
-                  {source.label}
+                  {source.id === "chats" ? "Chat summaries" : source.label}
                 </option>
               ))}
             </select>
@@ -1470,7 +1524,7 @@ export function LongTermMemoryPanel() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-xs font-medium text-[var(--foreground)]">
-                  {importPreview.data?.draftable ?? 0} importable sources
+                  {importPreview.data?.draftable ?? 0} source{importPreview.data?.draftable === 1 ? "" : "s"} ready
                 </div>
               </div>
               {importPreview.isLoading ? <Loader2 className="animate-spin" size="1rem" /> : <FileJson size="1rem" />}
@@ -1498,7 +1552,7 @@ export function LongTermMemoryPanel() {
               ) : (
                 <Import size="0.875rem" />
               )}
-              Import selected
+              Bring in selected
             </ToolButton>
             <ToolButton
               onClick={() =>
@@ -1532,7 +1586,7 @@ export function LongTermMemoryPanel() {
             {importPreview.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
             {!importPreview.isLoading && visibleImportRows.length === 0 && (
               <p className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]">
-                {hiddenImportRowCount > 0 ? "All import rows are hidden." : "No importable rows."}
+                {hiddenImportRowCount > 0 ? "All sources are hidden." : "No sources are ready to bring in."}
               </p>
             )}
             {visibleImportRows.map((sample) => (
@@ -1564,7 +1618,7 @@ export function LongTermMemoryPanel() {
           setViewingDraftId(null);
           setEditingDraftId(null);
         }}
-        title="Archived Drafts And Notes"
+        title="Archived Memories And Suggestions"
         width="max-w-5xl"
       >
         <div className="grid gap-3">
@@ -1575,13 +1629,13 @@ export function LongTermMemoryPanel() {
                 type="button"
                 onClick={() => setArchiveTab(id)}
                 className={cn(
-                  "rounded-lg px-2 py-1.5 text-xs font-medium capitalize transition-all active:scale-[0.98]",
+                  "rounded-lg px-2 py-1.5 text-xs font-medium transition-all active:scale-[0.98]",
                   archiveTab === id
                     ? "bg-rose-300/15 text-[var(--foreground)] ring-1 ring-rose-300/30"
                     : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
                 )}
               >
-                {id}
+                {id === "notes" ? "Memories" : "Suggestions"}
               </button>
             ))}
           </div>
@@ -1591,7 +1645,7 @@ export function LongTermMemoryPanel() {
               {archivedNotes.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
               {!archivedNotes.isLoading && (archivedNotes.data ?? []).length === 0 && (
                 <p className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]">
-                  No archived notes.
+                  No archived memories.
                 </p>
               )}
               {(archivedNotes.data ?? []).map((note) => (
@@ -1613,7 +1667,7 @@ export function LongTermMemoryPanel() {
               {allDrafts.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
               {!allDrafts.isLoading && archivedDrafts.length === 0 && (
                 <p className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]">
-                  No archived drafts.
+                  No archived suggestions.
                 </p>
               )}
               {archivedDrafts.map((draft) => (
@@ -1644,7 +1698,7 @@ export function LongTermMemoryPanel() {
           if (!confirmDiscardCreate()) return;
           closeCreateForm();
         }}
-        title="New Vault Note"
+        title="New Memory"
         width="max-w-3xl"
       >
         <CreateLongTermMemoryNoteForm
@@ -1666,7 +1720,7 @@ export function LongTermMemoryPanel() {
       <Modal
         open={Boolean(viewingNote)}
         onClose={closeViewer}
-        title={viewingNote?.id ?? "View Vault Note"}
+        title={viewingNote ? friendlyNoteTitle(viewingNote) : "View Memory"}
         width="max-w-4xl"
       >
         {viewingNote && (
@@ -1684,7 +1738,7 @@ export function LongTermMemoryPanel() {
           if (!confirmDiscardEditor()) return;
           closeEditor();
         }}
-        title={editingNote ? `Edit ${editingNote.id}` : "Edit Vault Note"}
+        title={editingNote ? `Edit ${friendlyNoteTitle(editingNote)}` : "Edit Memory"}
         width="max-w-4xl"
       >
         {editingNote && (
@@ -1703,7 +1757,7 @@ export function LongTermMemoryPanel() {
       <Modal
         open={Boolean(viewingDraft)}
         onClose={closeDraftViewer}
-        title={viewingDraft?.id ?? "View Draft"}
+        title={viewingDraft?.summary || "View Suggestion"}
         width="max-w-4xl"
       >
         {viewingDraft && <DraftDetails draft={viewingDraft} />}
@@ -1712,7 +1766,7 @@ export function LongTermMemoryPanel() {
       <Modal
         open={Boolean(editingDraft)}
         onClose={closeDraftEditor}
-        title={editingDraft ? `Edit Draft ${editingDraft.id}` : "Edit Draft"}
+        title={editingDraft ? `Edit Suggestion ${editingDraft.id}` : "Edit Suggestion"}
         width="max-w-4xl"
       >
         {editingDraft && (
@@ -1733,11 +1787,11 @@ export function LongTermMemoryPanel() {
       <div className="rounded-xl border border-[var(--border)] bg-[var(--secondary)]/25 p-3 text-[0.625rem] text-[var(--muted-foreground)]">
         <div className="flex items-center gap-2">
           <DatabaseZap size="0.875rem" />
-          Draft extraction only runs when enabled for the active chat.
+          Suggestions only appear when memory extraction is enabled for the active chat.
         </div>
         <div className="mt-1 flex items-center gap-2">
           <Sparkles size="0.875rem" />
-          Accepted drafts rebuild indexes automatically.
+          Kept suggestions refresh memory search automatically.
         </div>
       </div>
     </div>

@@ -39,6 +39,111 @@ export const allowedIdPrefixesByType: Record<LtmNoteType, readonly string[]> = {
   tone: ["tone_"],
 };
 
+const NOTE_TYPE_LABELS: Record<LtmNoteType, string> = {
+  character: "Character",
+  relationship: "Relationship",
+  scene: "Scene",
+  thread: "Story thread",
+  callback: "Callback",
+  world: "World detail",
+  voice: "Voice",
+  tone: "Tone",
+};
+
+const STATUS_LABELS: Record<LtmStatus, string> = {
+  active: "Active",
+  dormant: "Quiet",
+  resolved: "Resolved",
+  archived: "Archived",
+};
+
+const MODE_LABELS: Record<LtmMode, string> = {
+  roleplay: "Roleplay",
+  conversation: "Conversation",
+  game: "Game",
+  visual_novel: "Visual novel",
+};
+
+const GATE_LABELS: Record<LtmGate, string> = {
+  spoiler: "Spoiler",
+  character_secret: "Character secret",
+  private: "Private",
+  nsfw: "Adult",
+};
+
+const KNOWN_ID_PREFIXES = [
+  "character_",
+  "char_",
+  "relationship_",
+  "rel_",
+  "scene_",
+  "thread_",
+  "callback_",
+  "cb_",
+  "world_",
+  "faction_",
+  "location_",
+  "rule_",
+  "voice_",
+  "tone_",
+  "scope_",
+  "universe_",
+  "rp_",
+  "section_",
+  "tag_",
+  "note_",
+  "relation_",
+];
+
+export function friendlyNoteType(type: LtmNoteType) {
+  return NOTE_TYPE_LABELS[type] ?? sentenceCaseIdentifier(type);
+}
+
+export function friendlyStatus(status: LtmStatus) {
+  return STATUS_LABELS[status] ?? sentenceCaseIdentifier(status);
+}
+
+export function friendlyMode(mode: LtmMode) {
+  return MODE_LABELS[mode] ?? sentenceCaseIdentifier(mode);
+}
+
+export function friendlyGate(gate: LtmGate) {
+  return GATE_LABELS[gate] ?? sentenceCaseIdentifier(gate);
+}
+
+export function sentenceCaseIdentifier(value: string) {
+  const text = friendlyIdentifier(value).toLowerCase();
+  return text ? text[0].toUpperCase() + text.slice(1) : value;
+}
+
+export function friendlyIdentifier(value: string) {
+  let text = value.trim();
+  for (const prefix of KNOWN_ID_PREFIXES) {
+    if (text.startsWith(prefix)) {
+      text = text.slice(prefix.length);
+      break;
+    }
+  }
+  text = text.replace(/_[a-f0-9]{8,}$/i, "");
+  text = text.replace(/[_-]+/g, " ").trim();
+  if (!text) return value;
+  return text.replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+export function friendlyNoteTitle(note: Pick<LtmNote, "id" | "type">) {
+  return `${friendlyNoteType(note.type)}: ${friendlyIdentifier(note.id)}`;
+}
+
+export function friendlySectionKey(key: string) {
+  if (key === "core") return "Core memory";
+  if (key === "summary") return "Summary";
+  return sentenceCaseIdentifier(key);
+}
+
+export function friendlyInternalIdHelp(prefixes: readonly string[]) {
+  return `Advanced: saved as an internal ID starting with ${prefixes.join(" or ")}.`;
+}
+
 export function normalizeIdentifier(value: string, fallbackPrefix = "item") {
   const normalized = value
     .trim()

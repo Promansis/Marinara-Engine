@@ -15,6 +15,11 @@ import {
   defaultModeFromChatMode,
   defaultSectionKeyForType,
   emptyScopeFromDraft,
+  friendlyInternalIdHelp,
+  friendlyMode,
+  friendlyNoteType,
+  friendlySectionKey,
+  friendlyStatus,
   isAllowedNoteId,
   modeOptions,
   normalizeIdentifier,
@@ -188,7 +193,7 @@ export function CreateLongTermMemoryNoteForm({
           sectionText,
         }),
       );
-      toast.success("Vault note created");
+      toast.success("Memory created");
       onCreated?.(note);
     } catch (err) {
       toast.error((err as Error).message);
@@ -198,7 +203,7 @@ export function CreateLongTermMemoryNoteForm({
   return (
     <div className="mb-3 rounded-lg bg-[var(--card)] p-3 ring-1 ring-[var(--primary)]/35">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h3 className="text-xs font-semibold text-[var(--foreground)]">New Vault Note</h3>
+        <h3 className="text-xs font-semibold text-[var(--foreground)]">New Memory</h3>
         <button
           type="button"
           onClick={onCancel}
@@ -215,7 +220,7 @@ export function CreateLongTermMemoryNoteForm({
             <select value={type} onChange={(event) => changeType(event.target.value as LtmNoteType)} className={compactInputClassName}>
               {noteTypeOptions.map((option) => (
                 <option key={option} value={option}>
-                  {option}
+                  {friendlyNoteType(option)}
                 </option>
               ))}
             </select>
@@ -228,19 +233,27 @@ export function CreateLongTermMemoryNoteForm({
             >
               {statusOptions.map((option) => (
                 <option key={option} value={option}>
-                  {option}
+                  {friendlyStatus(option)}
                 </option>
               ))}
             </select>
           </SettingField>
         </div>
 
-        <SettingField label={`ID (${prefixes.join(" or ")})`}>
-          <input value={id} onChange={(event) => setDraft((current) => ({ ...current, id: event.target.value }))} className={compactInputClassName} />
+        <SettingField label="Memory title">
+          <div className="space-y-1">
+            <input
+              value={id}
+              onChange={(event) => setDraft((current) => ({ ...current, id: event.target.value }))}
+              placeholder="poppy chapel promise"
+              className={compactInputClassName}
+            />
+            <p className="text-[0.625rem] text-[var(--muted-foreground)]">{friendlyInternalIdHelp(prefixes)}</p>
+          </div>
         </SettingField>
 
         <fieldset className="rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
-          <legend className="px-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Modes</legend>
+          <legend className="px-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Use In</legend>
           <div className="grid gap-1 sm:grid-cols-2">
             {modeOptions.map((mode) => (
               <label key={mode} className="flex items-center gap-2 rounded-md px-2 py-1 text-xs hover:bg-[var(--secondary)]">
@@ -255,7 +268,7 @@ export function CreateLongTermMemoryNoteForm({
                   }
                   className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
                 />
-                {mode}
+                {friendlyMode(mode)}
               </label>
             ))}
           </div>
@@ -267,14 +280,14 @@ export function CreateLongTermMemoryNoteForm({
 
         <div className="grid gap-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
           <div className="flex items-center justify-between gap-2">
-            <div className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Scope</div>
+            <div className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Where this applies</div>
             <button
               type="button"
               onClick={useCurrentChatScope}
               disabled={!activeChat}
               className="rounded-md px-2 py-1 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--secondary)] disabled:opacity-50"
             >
-              Use Current Chat
+              Use this chat
             </button>
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
@@ -283,25 +296,25 @@ export function CreateLongTermMemoryNoteForm({
               onChange={(event) =>
                 setDraft((current) => ({ ...current, scopeDraft: { ...current.scopeDraft, universe: event.target.value } }))
               }
-              placeholder="universe"
+              placeholder="shared world"
               className={compactInputClassName}
             />
             <input
               value={scopeDraft.rpId}
               onChange={(event) => setDraft((current) => ({ ...current, scopeDraft: { ...current.scopeDraft, rpId: event.target.value } }))}
-              placeholder="rp scope"
+              placeholder="story line"
               className={compactInputClassName}
             />
             <input
               value={scopeDraft.chatId}
               onChange={(event) => setDraft((current) => ({ ...current, scopeDraft: { ...current.scopeDraft, chatId: event.target.value } }))}
-              placeholder="chat id"
+              placeholder="chat"
               className={compactInputClassName}
             />
             <input
               value={scopeDraft.groupId}
               onChange={(event) => setDraft((current) => ({ ...current, scopeDraft: { ...current.scopeDraft, groupId: event.target.value } }))}
-              placeholder="group id"
+              placeholder="group"
               className={compactInputClassName}
             />
           </div>
@@ -310,16 +323,17 @@ export function CreateLongTermMemoryNoteForm({
             onChange={(event) =>
               setDraft((current) => ({ ...current, scopeDraft: { ...current.scopeDraft, characterIdsText: event.target.value } }))
             }
-            placeholder="character ids"
+            placeholder="character IDs"
             className={compactInputClassName}
           />
         </div>
 
         <div className="grid gap-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
-          <SettingField label="Section key">
+          <SettingField label="Detail label">
             <input
               value={sectionKey}
               onChange={(event) => setDraft((current) => ({ ...current, sectionKey: event.target.value }))}
+              placeholder={friendlySectionKey(sectionKey)}
               className={compactInputClassName}
             />
           </SettingField>
@@ -330,15 +344,15 @@ export function CreateLongTermMemoryNoteForm({
           >
             <span className="mb-2 inline-flex items-center gap-1.5 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
               <Pencil size="0.75rem" />
-              Edit summary
+              Edit memory text
             </span>
             <span className={cn("line-clamp-4 whitespace-pre-wrap", !sectionText.trim() && "text-[var(--muted-foreground)]/70")}>
-              {sectionText.trim() || "No summary text yet."}
+              {sectionText.trim() || "No memory text yet."}
             </span>
           </button>
           <FloatingMessageEditor
             open={summaryEditorOpen}
-            title="Edit vault summary"
+            title="Edit memory text"
             initialContent={sectionText}
             fontSize={13}
             showFormatting
@@ -353,7 +367,7 @@ export function CreateLongTermMemoryNoteForm({
         <div className="flex flex-wrap gap-2 border-t border-[var(--border)]/35 pt-3">
           <ToolButton onClick={submit} disabled={createNote.isPending || modes.length === 0} tone="primary">
             {createNote.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Plus size="0.875rem" />}
-            Create
+            Save Memory
           </ToolButton>
           <ToolButton onClick={onCancel} disabled={createNote.isPending}>
             Cancel

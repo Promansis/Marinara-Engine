@@ -14,6 +14,12 @@ import { ToolButton } from "./LtmPills";
 import {
   editablePatchFromDraft,
   emptySection,
+  friendlyGate,
+  friendlyIdentifier,
+  friendlyMode,
+  friendlyNoteTitle,
+  friendlySectionKey,
+  friendlyStatus,
   gateOptions,
   joinIdentifierList,
   modeOptions,
@@ -99,7 +105,7 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
     }
     try {
       const saved = await updateNote.mutateAsync({ id: draft.id, patch: editablePatchFromDraft(draft) });
-      toast.success("Vault note saved");
+      toast.success("Memory saved");
       setSavedBaseline(saved);
       setDraft(saved);
       onDirtyChange?.(false);
@@ -107,7 +113,7 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
       if (rebuildAfter) {
         try {
           await rebuild.mutateAsync();
-          toast.success("Indexes rebuilt");
+          toast.success("Memory search refreshed");
         } catch (err) {
           toast.error(`Saved, but rebuild failed: ${(err as Error).message}`);
         }
@@ -118,15 +124,15 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
   };
 
   const cancel = () => {
-    if (dirty && !confirm("Discard unsaved vault note changes?")) return;
+    if (dirty && !confirm("Discard unsaved memory changes?")) return;
     onCancel();
   };
 
   const archive = async () => {
-    if (!confirm(`Archive ${draft.id}?`)) return;
+    if (!confirm(`Archive ${friendlyNoteTitle(draft)}?`)) return;
     try {
       const result = await archiveNote.mutateAsync(draft.id);
-      toast.success("Vault note archived");
+      toast.success("Memory archived");
       setSavedBaseline(result.note);
       setDraft(result.note);
       onDirtyChange?.(false);
@@ -198,10 +204,11 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
     <div className="mt-3 rounded-lg bg-[var(--card)] p-3 ring-1 ring-[var(--border)]">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="truncate text-xs font-semibold text-[var(--foreground)]">{draft.id}</div>
+          <div className="truncate text-xs font-semibold text-[var(--foreground)]">{friendlyNoteTitle(draft)}</div>
           <div className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-            {draft.type} · version {draft.version} · updated {new Date(draft.updatedAt).toLocaleString()}
+            {friendlyStatus(draft.status)} · version {draft.version} · updated {new Date(draft.updatedAt).toLocaleString()}
           </div>
+          <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]/80">Internal ID: {draft.id}</div>
         </div>
         {dirty && <span className="rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[0.625rem] text-amber-200">Unsaved</span>}
       </div>
@@ -216,7 +223,7 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
             >
               {statusOptions.map((status) => (
                 <option key={status} value={status}>
-                  {status}
+                  {friendlyStatus(status)}
                 </option>
               ))}
             </select>
@@ -232,7 +239,7 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
         </div>
 
         <fieldset className="rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
-          <legend className="px-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Modes</legend>
+          <legend className="px-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Use In</legend>
           <div className="grid gap-1 sm:grid-cols-2">
             {modeOptions.map((mode) => (
               <label key={mode} className="flex items-center gap-2 rounded-md px-2 py-1 text-xs hover:bg-[var(--secondary)]">
@@ -249,14 +256,14 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
                   }
                   className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
                 />
-                {mode}
+                {friendlyMode(mode)}
               </label>
             ))}
           </div>
         </fieldset>
 
         <div className="grid gap-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
-          <div className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Scope</div>
+          <div className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Where this applies</div>
           <div className="grid gap-2 sm:grid-cols-2">
             <input
               value={draft.scope.universe ?? ""}
@@ -269,7 +276,7 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
                   scope: { ...current.scope, universe: normalizeIdentifier(event.target.value, "universe") || undefined },
                 }))
               }
-              placeholder="universe"
+              placeholder="shared world"
               className={compactInputClassName}
             />
             <input
@@ -283,13 +290,13 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
                   scope: { ...current.scope, rpId: normalizeIdentifier(event.target.value, "rp") || undefined },
                 }))
               }
-              placeholder="rp scope"
+              placeholder="story line"
               className={compactInputClassName}
             />
             <input
               value={draft.scope.chatId ?? ""}
               onChange={(event) => setDraft((current) => ({ ...current, scope: { ...current.scope, chatId: event.target.value || undefined } }))}
-              placeholder="chat id"
+              placeholder="chat"
               className={compactInputClassName}
             />
             <input
@@ -297,7 +304,7 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
               onChange={(event) =>
                 setDraft((current) => ({ ...current, scope: { ...current.scope, groupId: event.target.value || undefined } }))
               }
-              placeholder="group id"
+              placeholder="group"
               className={compactInputClassName}
             />
           </div>
@@ -313,14 +320,14 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
                 },
               }))
             }
-            placeholder="character ids"
+            placeholder="character IDs"
             className={compactInputClassName}
           />
         </div>
 
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <h4 className="text-xs font-medium text-[var(--foreground)]">Sections</h4>
+            <h4 className="text-xs font-medium text-[var(--foreground)]">Memory Details</h4>
             <ToolButton onClick={addSection}>
               <Plus size="0.875rem" />
               Add
@@ -329,12 +336,17 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
           {Object.entries(draft.sections).map(([key, section]) => (
             <section key={key} className="rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
               <div className="mb-2 grid grid-cols-[1fr_auto] gap-2">
-                <input defaultValue={key} onBlur={(event) => renameSection(key, event.target.value)} className={compactInputClassName} />
+                <input
+                  defaultValue={key}
+                  onBlur={(event) => renameSection(key, event.target.value)}
+                  className={compactInputClassName}
+                  aria-label={`Rename ${friendlySectionKey(key)}`}
+                />
                 <button
                   type="button"
                   onClick={() => removeSection(key)}
                   className="rounded-md px-2 text-[var(--destructive)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--destructive)]/10 active:scale-95"
-                  aria-label={`Remove ${key}`}
+                    aria-label={`Remove ${friendlySectionKey(key)}`}
                 >
                   <Trash2 size="0.875rem" />
                 </button>
@@ -346,10 +358,10 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
               >
                 <span className="mb-2 inline-flex items-center gap-1.5 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
                   <Pencil size="0.75rem" />
-                  Edit summary
+                  Edit memory text
                 </span>
                 <span className={cn("line-clamp-4 whitespace-pre-wrap", !section.text.trim() && "text-[var(--muted-foreground)]/70")}>
-                  {section.text.trim() || "No summary text yet."}
+                  {section.text.trim() || "No memory text yet."}
                 </span>
               </button>
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
@@ -360,7 +372,7 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
                   step={0.05}
                   value={section.salience ?? ""}
                   onChange={(event) => setSection(key, (current) => ({ ...current, salience: numberOrUndefined(event.target.value) }))}
-                  placeholder="salience"
+                  placeholder="importance"
                   className={compactInputClassName}
                 />
                 <input
@@ -370,7 +382,7 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
                   step={0.05}
                   value={section.confidence ?? ""}
                   onChange={(event) => setSection(key, (current) => ({ ...current, confidence: numberOrUndefined(event.target.value) }))}
-                  placeholder="confidence"
+                  placeholder="ai certainty"
                   className={compactInputClassName}
                 />
               </div>
@@ -385,7 +397,7 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
                       .filter(Boolean),
                   }))
                 }
-                placeholder="Evidence, one item per line"
+                placeholder="Why this matters, one item per line"
                 className={cn(textareaClassName, "mt-2 min-h-16")}
               />
               <div className="mt-2 flex flex-wrap gap-2">
@@ -407,7 +419,7 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
                       }
                       className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
                     />
-                    {gate}
+                    {friendlyGate(gate)}
                   </label>
                 ))}
               </div>
@@ -416,7 +428,7 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
           {floatingSectionKey && floatingSection && (
             <FloatingMessageEditor
               open
-              title={`Edit ${floatingSectionKey}`}
+              title={`Edit ${friendlySectionKey(floatingSectionKey)}`}
               initialContent={floatingSection.text}
               fontSize={13}
               showFormatting
@@ -433,11 +445,11 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
         </div>
 
         <div className="space-y-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
-          <h4 className="text-xs font-medium text-[var(--foreground)]">Links</h4>
+          <h4 className="text-xs font-medium text-[var(--foreground)]">Related Memories</h4>
           {draft.links.map((link, index) => (
             <div key={`${link.target}-${link.relation}-${index}`} className="grid grid-cols-[1fr_auto] items-center gap-2 text-xs">
               <div className="truncate text-[var(--muted-foreground)]">
-                {link.relation} → {link.target}
+                {friendlyIdentifier(link.relation)} &gt; {friendlyIdentifier(link.target)}
               </div>
               <button
                 type="button"
@@ -445,7 +457,7 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
                   setDraft((current) => ({ ...current, links: current.links.filter((_, linkIndex) => linkIndex !== index) }))
                 }
                 className="rounded-md p-1 text-[var(--destructive)] hover:bg-[var(--destructive)]/10"
-                aria-label={`Remove link ${link.relation}`}
+                aria-label={`Remove relation ${friendlyIdentifier(link.relation)}`}
               >
                 <X size="0.875rem" />
               </button>
@@ -455,18 +467,18 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
             <input
               value={linkDraft.target}
               onChange={(event) => setLinkDraft((current) => ({ ...current, target: event.target.value }))}
-              placeholder="target note id"
+              placeholder="related memory"
               className={compactInputClassName}
             />
             <input
               value={linkDraft.relation}
               onChange={(event) => setLinkDraft((current) => ({ ...current, relation: event.target.value }))}
-              placeholder="relation"
+              placeholder="relationship"
               className={compactInputClassName}
             />
             <ToolButton onClick={addLink}>
               <Plus size="0.875rem" />
-              Link
+              Add Relation
             </ToolButton>
           </div>
         </div>
@@ -478,11 +490,11 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
           </ToolButton>
           <ToolButton onClick={() => save({ rebuildAfter: true })} disabled={!dirty || busy}>
             {rebuild.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <RefreshCw size="0.875rem" />}
-            Save And Rebuild
+            Save And Refresh Search
           </ToolButton>
           <ToolButton onClick={archive} disabled={busy || draft.status === "archived"} tone="danger">
             <Archive size="0.875rem" />
-            Archive
+            Archive Memory
           </ToolButton>
           <ToolButton onClick={cancel} disabled={busy}>
             <X size="0.875rem" />
