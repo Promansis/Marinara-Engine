@@ -36,6 +36,7 @@ type LtmEventContext = {
 };
 
 const noteWriteLocks = new Map<string, Promise<void>>();
+const initLocks = new Map<string, Promise<void>>();
 
 export type LtmListNotesFilter = {
   type?: LtmNoteType;
@@ -109,6 +110,22 @@ export class LongTermMemoryStorage {
   }
 
   async initializeLtmStore() {
+    const existingLock = initLocks.get(this.root);
+    if (existingLock) {
+      await existingLock;
+      return;
+    }
+
+    const lock = this.initializeLtmStoreUnlocked().finally(() => {
+      if (initLocks.get(this.root) === lock) {
+        initLocks.delete(this.root);
+      }
+    });
+    initLocks.set(this.root, lock);
+    await lock;
+  }
+
+  private async initializeLtmStoreUnlocked() {
     const dirs = this.dirs;
     await Promise.all([
       mkdir(dirs.events, { recursive: true }),
@@ -128,8 +145,8 @@ export class LongTermMemoryStorage {
       await readJsonFile(retrievalPath, DEFAULT_LTM_RETRIEVAL_CONFIG),
     );
 
-    await writeJsonAtomic(policiesPath, existingPolicies);
-    await writeJsonAtomic(retrievalPath, existingRetrieval);
+    await writeJsonIfChanged(policiesPath, existingPolicies);
+    await writeJsonIfChanged(retrievalPath, existingRetrieval);
     logger.debug("[ltm] Initialized inert long-term memory store at %s", this.root);
   }
 
@@ -267,6 +284,17 @@ export class LongTermMemoryStorage {
       return next;
     });
   }
+}
+
+async function writeJsonIfChanged(path: string, value: unknown) {
+  const next = `${JSON.stringify(value, null, 2)}\n`;
+  try {
+    const current = await readFile(path, "utf8");
+    if (current === next) return;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  await writeJsonAtomic(path, value);
 }
 
 export async function initializeLtmStore(root?: string) {

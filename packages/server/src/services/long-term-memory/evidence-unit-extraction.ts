@@ -70,6 +70,26 @@ function extractJsonObject(text: string) {
   return start >= 0 && end > start ? trimmed.slice(start, end + 1) : trimmed;
 }
 
+function normalizeEvidenceUnitResponse(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const parsed = raw as Record<string, unknown>;
+  const units = Array.isArray(parsed.units) ? parsed.units : [];
+  return {
+    ...parsed,
+    units: units.map((unit) => {
+      if (!unit || typeof unit !== "object" || Array.isArray(unit)) return unit;
+      const record = unit as Record<string, unknown>;
+      const id = typeof record.id === "string" && record.id.trim().length > 0 ? record.id.trim() : randomUUID();
+      return {
+        ...record,
+        id: /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+          ? id
+          : randomUUID(),
+      };
+    }),
+  };
+}
+
 function formatExistingNotes(notes: LtmNote[]) {
   let used = 0;
   const blocks: string[] = [];
@@ -117,7 +137,7 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
           summary: "short summary of extracted evidence units",
           units: [
             {
-              id: "uuid",
+              id: "550e8400-e29b-41d4-a716-446655440000",
               bucket:
                 "character_fact|character_state|relationship_event|relationship_state|relationship_arc|relationship_conflict|world_fact|thread|callback|current_scene|voice|tone|anchor|boundary|preference",
               subjectId: "lowercase_snake_case_scope_id",
@@ -182,7 +202,7 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
 
   const content = result.content?.trim() ?? "";
   if (!content) return ltmEvidenceUnitExtractionResponseSchema.parse({ summary: "", units: [] });
-  return ltmEvidenceUnitExtractionResponseSchema.parse(JSON.parse(extractJsonObject(content)));
+  return ltmEvidenceUnitExtractionResponseSchema.parse(normalizeEvidenceUnitResponse(JSON.parse(extractJsonObject(content))));
 }
 
 export function compileEvidenceUnitExtraction(options: {

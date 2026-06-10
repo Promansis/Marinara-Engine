@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -20,6 +20,7 @@ import {
 } from "../reconciliation.js";
 import { retrieveLongTermMemory } from "../retrieval.js";
 import { LongTermMemoryStorage } from "../storage.js";
+import { runLongTermMemoryEvidenceUnitExtraction } from "../evidence-unit-extraction.js";
 
 const timestamp = "2026-06-10T00:00:00.000Z";
 const sourceHash = "a".repeat(64);
@@ -162,6 +163,100 @@ test("integrity reports malformed event log rows instead of throwing", async () 
     assert(result.issues.every((issue) => issue.path === "events/log.jsonl"));
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("initializeLtmStore is idempotent across concurrent calls", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-init-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await Promise.all(Array.from({ length: 8 }, () => storage.initializeLtmStore()));
+
+    const dirs = getLongTermMemoryDirectories(root);
+    const policiesBefore = await readFile(join(dirs.config, "policies.json"), "utf8");
+    await Promise.all(Array.from({ length: 8 }, () => storage.initializeLtmStore()));
+    const policiesAfter = await readFile(join(dirs.config, "policies.json"), "utf8");
+
+    assert.equal(policiesAfter, policiesBefore);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("evidence unit extraction normalizes non-uuid model ids", async () => {
+  const sourceNote: LtmNote = {
+    id: "scene_source_test",
+    type: "scene",
+    status: "dormant",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["source_summary"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      source: {
+        text: "Mara keeps old promises and notices the lantern hum.",
+        updatedAt: timestamp,
+        evidence: ["chat:chat_test"],
+      },
+    },
+    version: 1,
+  };
+
+  const provider = {
+    maxTokensOverrideValue: undefined,
+    chatComplete: async () => ({
+      content: JSON.stringify({
+        summary: "Two compact units",
+        units: [
+          {
+            id: "uuid",
+            bucket: "character_fact",
+            subjectId: "mara",
+            sectionKey: "facts",
+            text: "Mara keeps old promises.",
+            evidence: ["source_note:scene_source_test"],
+            confidence: 0.9,
+            salience: 0.7,
+            status: "active",
+            gates: [],
+            links: [],
+            sourceHash,
+          },
+          {
+            id: "",
+            bucket: "callback",
+            subjectId: "lantern_hum",
+            sectionKey: "setup",
+            text: "Lantern hum should pay off later.",
+            evidence: ["source_note:scene_source_test"],
+            confidence: 0.88,
+            salience: 0.66,
+            status: "active",
+            gates: [],
+            links: [],
+            sourceHash,
+          },
+        ],
+      }),
+    }),
+  } as any;
+
+  const result = await runLongTermMemoryEvidenceUnitExtraction({
+    sourceNote,
+    sourceText: sourceNote.sections.source!.text,
+    existingNotes: [],
+    provider,
+    model: "test-model",
+    scope: {},
+    modes: ["roleplay"],
+    sourceHash,
+  });
+
+  assert.equal(result.units.length, 2);
+  for (const unit of result.units) {
+    assert.match(unit.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
   }
 });
 
