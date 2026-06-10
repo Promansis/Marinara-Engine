@@ -239,7 +239,6 @@ export async function extractLongTermMemoryFromSourceNote(
       temperature: 0,
       maxTokens: options.provider.maxTokensOverrideValue ?? SOURCE_EXTRACTION_MAX_TOKENS,
       stream: false,
-      responseFormat: { type: "json_object" },
       signal: options.signal,
     },
   );

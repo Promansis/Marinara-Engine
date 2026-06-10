@@ -138,7 +138,6 @@ export async function runLongTermMemoryExtraction(options: RunLtmExtractionOptio
     temperature: 0,
     maxTokens: options.provider.maxTokensOverrideValue ?? EXTRACTION_MAX_TOKENS,
     stream: false,
-    responseFormat: { type: "json_object" },
     signal: options.signal,
   });
 
