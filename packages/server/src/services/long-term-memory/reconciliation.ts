@@ -1,4 +1,4 @@
-import type { LtmDraftMutation, LtmExtractionDraft, LtmLink, LtmSection } from "@marinara-engine/shared";
+import type { LtmDraftMutation, LtmExtractionDraft, LtmLink, LtmNote, LtmSection } from "@marinara-engine/shared";
 import { logger } from "../../lib/logger.js";
 import { rebuildLongTermMemoryIndexes } from "./rebuild.js";
 import { LongTermMemoryDraftStore } from "./extraction.js";
@@ -67,6 +67,16 @@ function withSourceLink(noteId: string, links: LtmLink[], draft: LtmExtractionDr
   return uniqueLinks([...links, sourceLink]);
 }
 
+function isCurrentSceneTypedNote(note: Pick<LtmNote, "type" | "tags">) {
+  return (
+    note.type === "scene" &&
+    note.tags.includes("typed_memory") &&
+    note.tags.includes("current_scene") &&
+    !note.tags.includes("source_summary") &&
+    !note.tags.includes("chat_summary")
+  );
+}
+
 async function preflightDraftMutations(
   storage: LongTermMemoryStorage,
   draft: LtmExtractionDraft,
@@ -80,9 +90,9 @@ async function preflightDraftMutations(
     if (mutation.kind === "create_note") {
       if (
         sourceExtractionDraft &&
-        (mutation.note.type === "scene" ||
-          mutation.note.tags.includes("source_summary") ||
-          mutation.note.tags.includes("chat_summary"))
+        (mutation.note.tags.includes("source_summary") ||
+          mutation.note.tags.includes("chat_summary") ||
+          (mutation.note.type === "scene" && !isCurrentSceneTypedNote(mutation.note)))
       ) {
         throw new Error(
           `Long-term memory source extraction draft cannot create scene/source notes: ${mutation.note.id}`,
@@ -95,7 +105,10 @@ async function preflightDraftMutations(
       continue;
     }
     if (sourceExtractionDraft && mutation.noteId.startsWith("scene_")) {
-      throw new Error(`Long-term memory source extraction draft cannot mutate scene/source notes: ${mutation.noteId}`);
+      const existing = await storage.getNote(mutation.noteId);
+      if (!existing || !isCurrentSceneTypedNote(existing)) {
+        throw new Error(`Long-term memory source extraction draft cannot mutate scene/source notes: ${mutation.noteId}`);
+      }
     }
     requiredNoteIds.add(mutation.noteId);
   }

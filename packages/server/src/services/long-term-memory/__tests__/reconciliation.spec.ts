@@ -373,6 +373,147 @@ test("current scene evidence units replace current state instead of appending", 
   }
 });
 
+test("source extraction drafts can apply typed current scene updates", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-current-scene-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "scene_source_test",
+        type: "scene",
+        status: "dormant",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Mara and Jules stand inside the tower archive.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "scene_current_chat",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory", "current_scene"],
+        links: [],
+        sections: {
+          current_state: {
+            text: "Mara waits outside the tower.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_old"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const response = compileLtmEvidenceUnits({
+      units: [
+        evidenceUnit("current_scene", {
+          subjectId: "current_chat",
+          sectionKey: "current_state",
+          text: "Mara and Jules stand inside the tower archive.",
+        }),
+      ],
+      existingNotes: [(await storage.getNote("scene_current_chat"))!],
+      scope: {},
+      modes: ["roleplay"],
+      createdAt: timestamp,
+    });
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      userMessage: "Mara and Jules stand inside the tower archive.",
+      assistantReply: "",
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_source_test", sourceHash },
+      response,
+    });
+
+    const result = await applyLongTermMemoryDraft(draft.id, {
+      root,
+      actor: "test",
+      rebuildIndexes: false,
+    });
+
+    assert.deepEqual(result.appliedMutationIds, response.mutations.map((mutation) => mutation.id));
+    const updated = await storage.getNote("scene_current_chat");
+    assert.equal(updated?.sections.current_state?.text, "Mara and Jules stand inside the tower archive.");
+    assert(updated?.links.some((link) => link.target === "scene_source_test" && link.relation === "extracted_from"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source extraction drafts can create typed current scene notes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-current-scene-create-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "scene_source_test",
+        type: "scene",
+        status: "dormant",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Mara and Jules stand inside the tower archive.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const response = compileLtmEvidenceUnits({
+      units: [
+        evidenceUnit("current_scene", {
+          subjectId: "current_chat",
+          sectionKey: "current_state",
+          text: "Mara and Jules stand inside the tower archive.",
+        }),
+      ],
+      existingNotes: [],
+      scope: {},
+      modes: ["roleplay"],
+      createdAt: timestamp,
+    });
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      userMessage: "Mara and Jules stand inside the tower archive.",
+      assistantReply: "",
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_source_test", sourceHash },
+      response,
+    });
+
+    await applyLongTermMemoryDraft(draft.id, {
+      root,
+      actor: "test",
+      rebuildIndexes: false,
+    });
+
+    const created = await storage.getNote("scene_current_chat");
+    assert.equal(created?.type, "scene");
+    assert.deepEqual(created?.tags, ["typed_memory", "current_scene"]);
+    assert.equal(created?.sections.current_state?.text, "Mara and Jules stand inside the tower archive.");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("retrieval excludes source notes by default and prioritizes relationship state before history", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-retrieval-"));
   try {
