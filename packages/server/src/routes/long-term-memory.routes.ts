@@ -44,6 +44,7 @@ import {
   auditLongTermMemoryReplay,
   checkLongTermMemoryIntegrity,
   createLongTermMemoryInteropDrafts,
+  createLongTermMemoryInteropSourceNotes,
   previewLongTermMemoryInterop,
   repairLongTermMemory,
   type LtmInteropSource,
@@ -126,6 +127,20 @@ const interopBodySchema = z
     source: interopSourceSchema,
     limit: z.number().int().min(1).max(100).default(25),
     scope: ltmScopeSchema.optional(),
+  })
+  .strict();
+
+const interopImportBodySchema = z
+  .object({
+    source: interopSourceSchema,
+    sourceIds: z.array(z.string().min(1).max(120)).min(1).max(100),
+    limit: z.number().int().min(1).max(100).default(25),
+    scope: ltmScopeSchema.optional(),
+    connectionId: z.string().min(1).max(120).optional(),
+    model: z.string().min(1).max(240).optional(),
+    instruction: z.string().max(2_000).optional(),
+    applyLowRisk: z.boolean().optional(),
+    includeExistingNotes: z.boolean().optional(),
   })
   .strict();
 
@@ -587,6 +602,74 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
         limit: body.limit,
         scope: body.scope,
       });
+    },
+  );
+
+  app.post<{ Body: unknown }>(
+    "/import/source-notes",
+    { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES },
+    async (req, reply) => {
+      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory source import" })) return;
+      const body = interopImportBodySchema.parse(req.body);
+      const imported = await createLongTermMemoryInteropSourceNotes(app.db, body.source as LtmInteropSource, {
+        sourceIds: body.sourceIds,
+        limit: body.limit,
+        scope: body.scope,
+      });
+      const results = [];
+
+      for (const item of imported.imported) {
+        try {
+          const { provider, model } = await resolveExtractionProvider(body);
+          const result = await extractLongTermMemoryFromSourceNote({
+            noteId: item.note.id,
+            provider,
+            model,
+            scope: item.note.scope,
+            modes: item.note.modes,
+            instruction: body.instruction,
+            includeExistingNotes: body.includeExistingNotes,
+          });
+          const applyResult =
+            body.applyLowRisk && result.draft
+              ? await applyLongTermMemoryDraft(result.draft.id, {
+                  actor: "maintenance_api",
+                  autoApplyLowRiskOnly: true,
+                })
+              : null;
+
+          results.push({
+            sourceId: item.sourceId,
+            title: item.title,
+            note: item.note,
+            created: item.created,
+            draft: applyResult?.draft ?? result.draft,
+            diagnostics: result.diagnostics,
+            appliedMutationIds: applyResult?.appliedMutationIds ?? [],
+            skippedMutationIds: applyResult?.skippedMutationIds ?? [],
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Failed to extract imported source";
+          results.push({
+            sourceId: item.sourceId,
+            title: item.title,
+            note: item.note,
+            created: item.created,
+            draft: null,
+            diagnostics: [{ severity: "error", code: "extract_failed", message }],
+            appliedMutationIds: [],
+            skippedMutationIds: [],
+          });
+        }
+      }
+
+      return {
+        source: imported.source,
+        imported: results,
+        missingSourceIds: body.sourceIds.filter(
+          (sourceId) => !imported.imported.some((item) => item.sourceId === sourceId),
+        ),
+      };
     },
   );
 

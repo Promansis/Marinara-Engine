@@ -6,6 +6,7 @@ import {
   Check,
   DatabaseZap,
   Eye,
+  EyeOff,
   FileJson,
   Hammer,
   History,
@@ -33,7 +34,7 @@ import type {
 import {
   useAcceptLongTermMemoryDraft,
   useArchiveLongTermMemoryNote,
-  useCreateLongTermMemoryImportDrafts,
+  useImportLongTermMemorySourceNotes,
   useDeleteLongTermMemoryDraft,
   useLongTermMemoryDrafts,
   useLongTermMemoryImportPreview,
@@ -80,6 +81,11 @@ const IMPORT_SOURCES: Array<{ id: LtmInteropSource; label: string }> = [
 ];
 
 type TabId = "notes" | "drafts" | "tools" | "import";
+type ImportPreviewRow = NonNullable<ReturnType<typeof useLongTermMemoryImportPreview>["data"]>["samples"][number];
+
+function importRowKey(source: LtmInteropSource, sourceId: string) {
+  return `${source}:${sourceId}`;
+}
 
 function parseMetadata(raw: unknown): Record<string, unknown> {
   if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw as Record<string, unknown>;
@@ -683,6 +689,72 @@ function ArchivedDraftRow({
   );
 }
 
+function ImportPreviewRowItem({
+  sample,
+  selected,
+  disabled,
+  importing,
+  hidden,
+  onSelect,
+  onImport,
+  onToggleHidden,
+}: {
+  sample: ImportPreviewRow;
+  selected: boolean;
+  disabled?: boolean;
+  importing?: boolean;
+  hidden?: boolean;
+  onSelect: (selected: boolean) => void;
+  onImport: () => void;
+  onToggleHidden: () => void;
+}) {
+  return (
+    <article
+      className={cn(
+        "grid grid-cols-[auto_minmax(0,1fr)] gap-3 rounded-lg bg-[var(--secondary)]/50 p-3 ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/45 sm:grid-cols-[auto_minmax(0,1fr)_auto]",
+        selected && "bg-rose-300/10 ring-rose-300/35",
+      )}
+    >
+      <label className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--background)]/55 ring-1 ring-[var(--border)]">
+        <input
+          type="checkbox"
+          checked={selected}
+          disabled={disabled}
+          onChange={(event) => onSelect(event.target.checked)}
+          className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+          aria-label={`Select ${sample.title}`}
+        />
+      </label>
+      <div className="min-w-0 self-center">
+        <div className="truncate text-xs font-medium text-[var(--foreground)]">{sample.title}</div>
+        <div className="mt-1 flex flex-wrap gap-1.5">
+          <StatusPill label={`${sample.mutationCount} mutation${sample.mutationCount === 1 ? "" : "s"}`} />
+        </div>
+      </div>
+      <div className="col-span-2 flex shrink-0 items-center justify-end gap-1.5 sm:col-span-1">
+        <button
+          type="button"
+          onClick={onImport}
+          disabled={disabled || importing}
+          className="inline-flex min-h-8 items-center justify-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-1.5 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {importing ? <Loader2 size="0.875rem" className="animate-spin" /> : <Import size="0.875rem" />}
+          Import
+        </button>
+        <button
+          type="button"
+          onClick={onToggleHidden}
+          disabled={disabled}
+          className="inline-flex min-h-8 items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {hidden ? <Eye size="0.875rem" /> : <EyeOff size="0.875rem" />}
+          {hidden ? "Unhide" : "Hide"}
+        </button>
+      </div>
+    </article>
+  );
+}
+
 function ChatMemorySettings() {
   const activeChatId = useChatStore((s) => s.activeChatId);
   const cachedActiveChat = useChatStore((s) => s.activeChat);
@@ -844,6 +916,10 @@ export function LongTermMemoryPanel() {
   const [query, setQuery] = useState("");
   const [importSource, setImportSource] = useState<LtmInteropSource>("characters");
   const [importLimit, setImportLimit] = useState(25);
+  const [hiddenImportRows, setHiddenImportRows] = useState<Set<string>>(() => new Set());
+  const [selectedImportRows, setSelectedImportRows] = useState<Set<string>>(() => new Set());
+  const [showHiddenImportRows, setShowHiddenImportRows] = useState(false);
+  const [activeImportIds, setActiveImportIds] = useState<Set<string>>(() => new Set());
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiveTab, setArchiveTab] = useState<"notes" | "drafts">("notes");
   const [creatingNote, setCreatingNote] = useState(false);
@@ -874,7 +950,7 @@ export function LongTermMemoryPanel() {
   const rebuild = useRebuildLongTermMemory();
   const replay = useReplayLongTermMemory();
   const repair = useRepairLongTermMemory();
-  const createImports = useCreateLongTermMemoryImportDrafts();
+  const importSourceNotes = useImportLongTermMemorySourceNotes();
   const archiveNote = useArchiveLongTermMemoryNote();
   const updateNote = useUpdateLongTermMemoryNote();
   const updateDraft = useUpdateLongTermMemoryDraft();
@@ -897,6 +973,26 @@ export function LongTermMemoryPanel() {
     () => (allDrafts.data ?? []).filter((draft) => draft.status !== "pending"),
     [allDrafts.data],
   );
+  const importRows = useMemo(() => importPreview.data?.samples ?? [], [importPreview.data?.samples]);
+  const visibleImportRows = useMemo(
+    () =>
+      importRows.filter((sample) => {
+        const key = importRowKey(importSource, sample.sourceId);
+        return showHiddenImportRows ? hiddenImportRows.has(key) : !hiddenImportRows.has(key);
+      }),
+    [hiddenImportRows, importRows, importSource, showHiddenImportRows],
+  );
+  const selectedVisibleImportRows = useMemo(
+    () =>
+      visibleImportRows.filter((sample) => selectedImportRows.has(importRowKey(importSource, sample.sourceId))),
+    [importSource, selectedImportRows, visibleImportRows],
+  );
+  const hiddenImportRowCount = importRows.filter((sample) =>
+    hiddenImportRows.has(importRowKey(importSource, sample.sourceId)),
+  ).length;
+  const allVisibleImportRowsSelected =
+    visibleImportRows.length > 0 &&
+    visibleImportRows.every((sample) => selectedImportRows.has(importRowKey(importSource, sample.sourceId)));
   const combinedNotes = useMemo(() => {
     const byId = new Map<string, LtmNote>();
     for (const note of notes.data ?? []) byId.set(note.id, note);
@@ -1041,6 +1137,112 @@ export function LongTermMemoryPanel() {
         if (editingDraftId === draft.id) closeDraftEditor();
       })
       .catch((err: Error) => toast.error(err.message));
+  };
+
+  const setImportRowSelected = (sourceId: string, selected: boolean) => {
+    const key = importRowKey(importSource, sourceId);
+    setSelectedImportRows((current) => {
+      const next = new Set(current);
+      if (selected) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  };
+
+  const setAllVisibleImportRowsSelected = (selected: boolean) => {
+    setSelectedImportRows((current) => {
+      const next = new Set(current);
+      for (const row of visibleImportRows) {
+        const key = importRowKey(importSource, row.sourceId);
+        if (selected) next.add(key);
+        else next.delete(key);
+      }
+      return next;
+    });
+  };
+
+  const hideImportRows = (sourceIds: string[]) => {
+    setHiddenImportRows((current) => {
+      const next = new Set(current);
+      for (const sourceId of sourceIds) next.add(importRowKey(importSource, sourceId));
+      return next;
+    });
+    setSelectedImportRows((current) => {
+      const next = new Set(current);
+      for (const sourceId of sourceIds) next.delete(importRowKey(importSource, sourceId));
+      return next;
+    });
+  };
+
+  const unhideImportRows = (sourceIds: string[]) => {
+    setHiddenImportRows((current) => {
+      const next = new Set(current);
+      for (const sourceId of sourceIds) next.delete(importRowKey(importSource, sourceId));
+      return next;
+    });
+    setSelectedImportRows((current) => {
+      const next = new Set(current);
+      for (const sourceId of sourceIds) next.delete(importRowKey(importSource, sourceId));
+      return next;
+    });
+  };
+
+  const restoreHiddenImportRows = () => {
+    setHiddenImportRows((current) => {
+      const next = new Set(current);
+      for (const row of importRows) next.delete(importRowKey(importSource, row.sourceId));
+      return next;
+    });
+  };
+
+  const importRowsToVault = async (sourceIds: string[]) => {
+    if (sourceIds.length === 0) return;
+    setActiveImportIds((current) => {
+      const next = new Set(current);
+      for (const sourceId of sourceIds) next.add(importRowKey(importSource, sourceId));
+      return next;
+    });
+    try {
+      const result = await importSourceNotes.mutateAsync({
+        source: importSource,
+        sourceIds,
+        limit: Math.max(importLimit, sourceIds.length),
+      });
+      const errorCount = result.imported.filter((item) =>
+        item.diagnostics.some((diagnostic) => diagnostic.severity === "error"),
+      ).length;
+      const draftCount = result.imported.filter((item) => item.draft).length;
+      const missingCount = result.missingSourceIds.length;
+      if (errorCount || missingCount) {
+        const firstError = result.imported
+          .flatMap((item) => item.diagnostics)
+          .find((diagnostic) => diagnostic.severity === "error");
+        const issueDetails = [
+          firstError?.message,
+          missingCount ? `Missing: ${result.missingSourceIds.slice(0, 3).join(", ")}` : null,
+        ].filter(Boolean);
+        toast.error(
+          `Imported ${result.imported.length} source note(s), ${draftCount} extraction draft(s), ${errorCount + missingCount} issue(s)${
+            issueDetails.length ? `: ${issueDetails.join("; ")}` : ""
+          }`,
+        );
+      } else {
+        toast.success(`Imported ${result.imported.length} source note(s), created ${draftCount} extraction draft(s)`);
+      }
+      setSelectedImportRows((current) => {
+        const next = new Set(current);
+        for (const sourceId of sourceIds) next.delete(importRowKey(importSource, sourceId));
+        return next;
+      });
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setActiveImportIds((current) => {
+        const next = new Set(current);
+        for (const sourceId of sourceIds) next.delete(importRowKey(importSource, sourceId));
+        return next;
+      });
+    }
   };
 
   return (
@@ -1255,7 +1457,7 @@ export function LongTermMemoryPanel() {
       )}
 
       {tab === "import" && (
-        <Section title="Import As Drafts">
+        <Section title="Import To Vault">
           <div className="grid grid-cols-[1fr_auto] gap-2">
             <select
               value={importSource}
@@ -1281,40 +1483,88 @@ export function LongTermMemoryPanel() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-xs font-medium text-[var(--foreground)]">
-                  {importPreview.data?.draftable ?? 0} draftable sources
-                </div>
-                <div className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-                  Imports create drafts only. Existing data is not changed.
+                  {importPreview.data?.draftable ?? 0} importable sources
                 </div>
               </div>
               {importPreview.isLoading ? <Loader2 className="animate-spin" size="1rem" /> : <FileJson size="1rem" />}
             </div>
           </div>
-          <div className="mt-3 space-y-2">
-            {(importPreview.data?.samples ?? []).map((sample) => (
-              <div
-                key={sample.sourceId}
-                className="rounded-lg bg-[var(--secondary)]/50 p-3 ring-1 ring-[var(--border)]"
-              >
-                <div className="truncate text-xs font-medium">{sample.title}</div>
-                <div className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">{sample.summary}</div>
-              </div>
-            ))}
-          </div>
-          <div className="mt-3">
+
+          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
+            <label className="flex min-h-8 items-center gap-2 rounded-lg px-2 text-xs text-[var(--foreground)]">
+              <input
+                type="checkbox"
+                checked={allVisibleImportRowsSelected}
+                disabled={visibleImportRows.length === 0}
+                onChange={(event) => setAllVisibleImportRowsSelected(event.target.checked)}
+                className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+              />
+              Select visible
+            </label>
             <ToolButton
-              onClick={() =>
-                createImports
-                  .mutateAsync({ source: importSource, limit: importLimit })
-                  .then((result) => toast.success(`Created ${result.created.length} draft(s)`))
-                  .catch((err: Error) => toast.error(err.message))
-              }
-              disabled={createImports.isPending || (importPreview.data?.draftable ?? 0) === 0}
+              onClick={() => importRowsToVault(selectedVisibleImportRows.map((row) => row.sourceId))}
+              disabled={selectedVisibleImportRows.length === 0 || importSourceNotes.isPending}
               tone="primary"
             >
-              <Import size="0.875rem" />
-              Create Drafts
+              {importSourceNotes.isPending ? (
+                <Loader2 size="0.875rem" className="animate-spin" />
+              ) : (
+                <Import size="0.875rem" />
+              )}
+              Import selected
             </ToolButton>
+            <ToolButton
+              onClick={() =>
+                showHiddenImportRows
+                  ? unhideImportRows(selectedVisibleImportRows.map((row) => row.sourceId))
+                  : hideImportRows(selectedVisibleImportRows.map((row) => row.sourceId))
+              }
+              disabled={selectedVisibleImportRows.length === 0}
+            >
+              {showHiddenImportRows ? <Eye size="0.875rem" /> : <EyeOff size="0.875rem" />}
+              {showHiddenImportRows ? "Unhide selected" : "Hide selected"}
+            </ToolButton>
+            <button
+              type="button"
+              onClick={() => setShowHiddenImportRows((open) => !open)}
+              disabled={!showHiddenImportRows && hiddenImportRowCount === 0}
+              className="inline-flex min-h-8 items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Eye size="0.875rem" />
+              {showHiddenImportRows ? "Show active" : `Show hidden (${hiddenImportRowCount})`}
+            </button>
+            {showHiddenImportRows && hiddenImportRowCount > 0 && (
+              <ToolButton onClick={restoreHiddenImportRows}>
+                <RotateCcw size="0.875rem" />
+                Restore hidden
+              </ToolButton>
+            )}
+          </div>
+
+          <div className="mt-3 space-y-2">
+            {importPreview.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
+            {!importPreview.isLoading && visibleImportRows.length === 0 && (
+              <p className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]">
+                {hiddenImportRowCount > 0 ? "All import rows are hidden." : "No importable rows."}
+              </p>
+            )}
+            {visibleImportRows.map((sample) => (
+              <ImportPreviewRowItem
+                key={sample.sourceId}
+                sample={sample}
+                selected={selectedImportRows.has(importRowKey(importSource, sample.sourceId))}
+                disabled={importSourceNotes.isPending}
+                importing={activeImportIds.has(importRowKey(importSource, sample.sourceId))}
+                hidden={hiddenImportRows.has(importRowKey(importSource, sample.sourceId))}
+                onSelect={(selected) => setImportRowSelected(sample.sourceId, selected)}
+                onImport={() => importRowsToVault([sample.sourceId])}
+                onToggleHidden={() =>
+                  hiddenImportRows.has(importRowKey(importSource, sample.sourceId))
+                    ? unhideImportRows([sample.sourceId])
+                    : hideImportRows([sample.sourceId])
+                }
+              />
+            ))}
           </div>
         </Section>
       )}

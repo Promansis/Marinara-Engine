@@ -43,6 +43,10 @@ export type LtmInteropSource = "characters" | "lorebooks" | "chats";
 type DraftSeed = {
   title: string;
   sourceId: string;
+  sourceText: string;
+  sourceNoteId: string;
+  sourceTag: string;
+  evidence: string[];
   source?: LtmExtractionDraft["source"];
   scope?: LtmScope;
   modes: LtmMode[];
@@ -79,6 +83,13 @@ export interface LtmInteropPreview {
   scanned: number;
   draftable: number;
   samples: Array<{ sourceId: string; title: string; mutationCount: number; summary: string }>;
+}
+
+export interface LtmInteropSourceNoteImport {
+  sourceId: string;
+  title: string;
+  note: LtmNote;
+  created: boolean;
 }
 
 function nowIso() {
@@ -370,9 +381,10 @@ export async function repairLongTermMemory(actions: LtmRepairAction[], root = ge
   };
 }
 
-async function characterDrafts(db: DB, limit: number): Promise<DraftSeed[]> {
+async function characterDrafts(db: DB, limit: number, sourceIds?: Set<string>): Promise<DraftSeed[]> {
   const characters = await createCharactersStorage(db).list();
-  return characters.slice(0, limit).flatMap((row) => {
+  const rows = sourceIds ? characters.filter((row) => sourceIds.has(row.id)) : characters.slice(0, limit);
+  return rows.flatMap((row) => {
     const data = readJsonObject(row.data);
     const name = typeof data.name === "string" ? data.name : "Character";
     const body = compactLines([
@@ -384,8 +396,10 @@ async function characterDrafts(db: DB, limit: number): Promise<DraftSeed[]> {
     ]);
     if (!body) return [];
     const noteId = `char_${normalizeIdentifier(name, "character")}_${hashShort(row.id)}`;
+    const sourceNoteId = `scene_import_character_${normalizeIdentifier(name, "character")}_${hashShort(row.id)}`;
+    const evidence = [`character:${row.id}`];
     const mutation: LtmDraftMutation = {
-      ...mutationBase(`Import character card for ${name}`, [`character:${row.id}`]),
+      ...mutationBase(`Import character card for ${name}`, evidence),
       kind: "create_note",
       note: {
         id: noteId,
@@ -395,18 +409,33 @@ async function characterDrafts(db: DB, limit: number): Promise<DraftSeed[]> {
         scope: { characterIds: [row.id] },
         tags: readJsonArray(data.tags).map((tag) => normalizeIdentifier(tag, "tag")).slice(0, 12),
         links: [],
-        sections: { profile: textSection(body, [`character:${row.id}`]) },
+        sections: { profile: textSection(body, evidence) },
       },
     };
-    return [{ title: name, sourceId: row.id, modes: mutation.note.modes, response: makeDraftResponse([mutation], `Import ${name}`) }];
+    return [
+      {
+        title: name,
+        sourceId: row.id,
+        sourceText: body,
+        sourceNoteId,
+        sourceTag: "imported_character",
+        evidence,
+        modes: mutation.note.modes,
+        scope: mutation.note.scope,
+        response: makeDraftResponse([mutation], `Import ${name}`),
+      },
+    ];
   });
 }
 
-async function lorebookDrafts(db: DB, limit: number): Promise<DraftSeed[]> {
+async function lorebookDrafts(db: DB, limit: number, sourceIds?: Set<string>): Promise<DraftSeed[]> {
   const storage = createLorebooksStorage(db);
   const books = (await storage.list()) as Array<Record<string, unknown>>;
+  const selectedBooks = sourceIds
+    ? books.filter((book) => typeof book.id === "string" && sourceIds.has(book.id))
+    : books.slice(0, limit);
   const drafts: DraftSeed[] = [];
-  for (const book of books.slice(0, limit)) {
+  for (const book of selectedBooks) {
     const id = typeof book.id === "string" ? book.id : "";
     const name = typeof book.name === "string" && book.name.trim() ? book.name : "Lorebook";
     if (!id) continue;
@@ -427,9 +456,11 @@ async function lorebookDrafts(db: DB, limit: number): Promise<DraftSeed[]> {
     const type: LtmNoteType = category === "character" || category === "npc" ? "character" : "world";
     const prefix = type === "character" ? "char" : "world";
     const noteId = `${prefix}_${normalizeIdentifier(name, "lorebook")}_${hashShort(id)}`;
+    const sourceNoteId = `scene_import_lorebook_${normalizeIdentifier(name, "lorebook")}_${hashShort(id)}`;
+    const evidence = [`lorebook:${id}`];
     const modes: LtmMode[] = ["conversation", "roleplay", "game"];
     const mutation: LtmDraftMutation = {
-      ...mutationBase(`Import lorebook ${name}`, [`lorebook:${id}`]),
+      ...mutationBase(`Import lorebook ${name}`, evidence),
       kind: "create_note",
       note: {
         id: noteId,
@@ -444,24 +475,37 @@ async function lorebookDrafts(db: DB, limit: number): Promise<DraftSeed[]> {
         },
         tags: Array.isArray(book.tags) ? book.tags.map((tag) => normalizeIdentifier(String(tag), "tag")).slice(0, 12) : [],
         links: [],
-        sections: { lore: textSection(text, [`lorebook:${id}`]) },
+        sections: { lore: textSection(text, evidence) },
       },
     };
-    drafts.push({ title: name, sourceId: id, modes, response: makeDraftResponse([mutation], `Import ${name}`) });
+    drafts.push({
+      title: name,
+      sourceId: id,
+      sourceText: text,
+      sourceNoteId,
+      sourceTag: "imported_lorebook",
+      evidence,
+      modes,
+      scope: mutation.note.scope,
+      response: makeDraftResponse([mutation], `Import ${name}`),
+    });
   }
   return drafts;
 }
 
-async function chatDrafts(db: DB, limit: number): Promise<DraftSeed[]> {
+async function chatDrafts(db: DB, limit: number, sourceIds?: Set<string>): Promise<DraftSeed[]> {
   const chats = await createChatsStorage(db).list();
-  return chats.slice(0, limit).flatMap((chat) => {
+  const rows = sourceIds ? chats.filter((chat) => sourceIds.has(chat.id)) : chats.slice(0, limit);
+  return rows.flatMap((chat) => {
     const metadata = readJsonObject(chat.metadata);
     const summary = typeof metadata.summary === "string" ? metadata.summary.trim() : "";
     if (!summary) return [];
     const mode = chat.mode === "visual_novel" ? "visual_novel" : (chat.mode as LtmMode);
     const noteId = `scene_${normalizeIdentifier(chat.name, "chat")}_${hashShort(chat.id)}`;
+    const sourceNoteId = `scene_import_chat_${normalizeIdentifier(chat.name, "chat")}_${hashShort(chat.id)}`;
+    const evidence = [`chat:${chat.id}`];
     const mutation: LtmDraftMutation = {
-      ...mutationBase(`Import chat summary for ${chat.name}`, [`chat:${chat.id}`], "low"),
+      ...mutationBase(`Import chat summary for ${chat.name}`, evidence, "low"),
       kind: "create_note",
       note: {
         id: noteId,
@@ -471,20 +515,41 @@ async function chatDrafts(db: DB, limit: number): Promise<DraftSeed[]> {
         scope: { chatId: chat.id, groupId: chat.groupId ?? undefined, characterIds: readJsonArray(chat.characterIds) },
         tags: ["imported_chat_summary"],
         links: [],
-        sections: { summary: textSection(summary, [`chat:${chat.id}`]) },
+        sections: { summary: textSection(summary, evidence) },
       },
     };
-    return [{ title: chat.name, sourceId: chat.id, modes: mutation.note.modes, source: { chatId: chat.id }, response: makeDraftResponse([mutation], `Import ${chat.name}`) }];
+    return [
+      {
+        title: chat.name,
+        sourceId: chat.id,
+        sourceText: summary,
+        sourceNoteId,
+        sourceTag: "imported_chat",
+        evidence,
+        modes: mutation.note.modes,
+        source: { chatId: chat.id },
+        scope: mutation.note.scope,
+        response: makeDraftResponse([mutation], `Import ${chat.name}`),
+      },
+    ];
   });
 }
 
+async function interopDraftSeeds(db: DB, source: LtmInteropSource, limit: number, sourceIds?: Set<string>) {
+  return source === "characters"
+    ? characterDrafts(db, limit, sourceIds)
+    : source === "lorebooks"
+      ? lorebookDrafts(db, limit, sourceIds)
+      : chatDrafts(db, limit, sourceIds);
+}
+
 export async function previewLongTermMemoryInterop(db: DB, source: LtmInteropSource, limit = 25): Promise<LtmInteropPreview> {
-  const drafts = source === "characters" ? await characterDrafts(db, limit) : source === "lorebooks" ? await lorebookDrafts(db, limit) : await chatDrafts(db, limit);
+  const drafts = await interopDraftSeeds(db, source, limit);
   return {
     source,
     scanned: limit,
     draftable: drafts.length,
-    samples: drafts.slice(0, 8).map((draft) => ({
+    samples: drafts.map((draft) => ({
       sourceId: draft.sourceId,
       title: draft.title,
       mutationCount: draft.response.mutations.length,
@@ -500,7 +565,7 @@ export async function createLongTermMemoryInteropDrafts(
 ): Promise<{ source: LtmInteropSource; created: LtmExtractionDraft[] }> {
   const limit = options.limit ?? 25;
   const store = new LongTermMemoryDraftStore();
-  const drafts = source === "characters" ? await characterDrafts(db, limit) : source === "lorebooks" ? await lorebookDrafts(db, limit) : await chatDrafts(db, limit);
+  const drafts = await interopDraftSeeds(db, source, limit);
   const created: LtmExtractionDraft[] = [];
   for (const draft of drafts) {
     created.push(
@@ -516,4 +581,65 @@ export async function createLongTermMemoryInteropDrafts(
     );
   }
   return { source, created };
+}
+
+export async function createLongTermMemoryInteropSourceNotes(
+  db: DB,
+  source: LtmInteropSource,
+  options: { sourceIds: string[]; limit?: number; scope?: LtmScope } = { sourceIds: [] },
+  root = getLongTermMemoryRoot(),
+): Promise<{ source: LtmInteropSource; imported: LtmInteropSourceNoteImport[] }> {
+  const selected = new Set(options.sourceIds);
+  const limit = Math.max(options.limit ?? options.sourceIds.length, options.sourceIds.length, 1);
+  const storage = new LongTermMemoryStorage(root);
+  const drafts = (await interopDraftSeeds(db, source, limit, selected)).filter((draft) => selected.has(draft.sourceId));
+  const imported: LtmInteropSourceNoteImport[] = [];
+
+  for (const draft of drafts) {
+    const now = nowIso();
+    const noteInput = {
+      id: draft.sourceNoteId,
+      type: "scene" as const,
+      status: "active" as const,
+      modes: draft.modes,
+      scope: { ...(draft.scope ?? {}), ...(options.scope ?? {}) },
+      tags: ["source_summary", draft.sourceTag],
+      links: [],
+      sections: {
+        source: {
+          ...textSection(draft.sourceText, draft.evidence),
+          updatedAt: now,
+        },
+      },
+    };
+    const existing = await storage.getNote(noteInput.id);
+    if (existing) {
+      const note = await storage.updateNote(
+        existing.id,
+        {
+          status: "active",
+          modes: noteInput.modes,
+          scope: noteInput.scope,
+          tags: Array.from(new Set([...existing.tags, ...noteInput.tags])),
+          sections: { ...existing.sections, ...noteInput.sections },
+        },
+        {
+          actor: "maintenance_api",
+          cause: "interop.source_import",
+          summary: `Refreshed ${source} import source ${draft.title}`,
+        },
+      );
+      imported.push({ sourceId: draft.sourceId, title: draft.title, note, created: false });
+      continue;
+    }
+
+    const note = await storage.createNote(noteInput, {
+      actor: "maintenance_api",
+      cause: "interop.source_import",
+      summary: `Imported ${source} source ${draft.title}`,
+    });
+    imported.push({ sourceId: draft.sourceId, title: draft.title, note, created: true });
+  }
+
+  return { source, imported };
 }

@@ -125,6 +125,21 @@ export type ExtractLongTermMemorySourceResponse = {
   skippedMutationIds: string[];
 };
 
+export type ImportLongTermMemorySourceNotesResponse = {
+  source: LtmInteropSource;
+  imported: Array<{
+    sourceId: string;
+    title: string;
+    note: LtmNote;
+    created: boolean;
+    draft: LtmExtractionDraft | null;
+    diagnostics: LtmExtractionDiagnostic[];
+    appliedMutationIds: string[];
+    skippedMutationIds: string[];
+  }>;
+  missingSourceIds: string[];
+};
+
 export const longTermMemoryKeys = {
   all: ["long-term-memory"] as const,
   status: () => [...longTermMemoryKeys.all, "status"] as const,
@@ -283,6 +298,27 @@ export function useCreateLongTermMemoryImportDrafts() {
     mutationFn: ({ source, limit }: { source: LtmInteropSource; limit: number }) =>
       api.post<{ source: LtmInteropSource; created: LtmExtractionDraft[] }>("/long-term-memory/import/drafts", {
         source,
+        limit,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
+  });
+}
+
+export function useImportLongTermMemorySourceNotes() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      source,
+      sourceIds,
+      limit,
+    }: {
+      source: LtmInteropSource;
+      sourceIds: string[];
+      limit: number;
+    }) =>
+      api.post<ImportLongTermMemorySourceNotesResponse>("/long-term-memory/import/source-notes", {
+        source,
+        sourceIds,
         limit,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
