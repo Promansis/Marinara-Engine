@@ -16,6 +16,32 @@ export const ltmNoteTypeSchema = z.enum([
 
 export const ltmStatusSchema = z.enum(["active", "resolved", "archived", "dormant"]);
 
+export const ltmEvidenceUnitStatusSchema = z.enum([
+  "active",
+  "resolved",
+  "archived",
+  "dormant",
+  "developing",
+]);
+
+export const ltmEvidenceUnitBucketSchema = z.enum([
+  "character_fact",
+  "character_state",
+  "relationship_event",
+  "relationship_state",
+  "relationship_arc",
+  "relationship_conflict",
+  "world_fact",
+  "thread",
+  "callback",
+  "current_scene",
+  "voice",
+  "tone",
+  "anchor",
+  "boundary",
+  "preference",
+]);
+
 export const ltmModeSchema = z.enum(["roleplay", "conversation", "game", "visual_novel"]);
 
 export const ltmGateSchema = z.enum(["spoiler", "character_secret", "private", "nsfw"]);
@@ -98,6 +124,24 @@ export const ltmLinkSchema = z
   .object({
     target: ltmNoteIdSchema,
     relation: ltmIdentifierSchema,
+  })
+  .strict();
+
+export const ltmEvidenceUnitSchema = z
+  .object({
+    id: z.string().uuid(),
+    bucket: ltmEvidenceUnitBucketSchema,
+    subjectId: ltmIdentifierSchema,
+    sectionKey: ltmSectionKeySchema,
+    text: z.string().min(1).max(2_000),
+    evidence: z.array(z.string().min(1).max(240)).min(1).max(20),
+    confidence: z.number().finite().min(0).max(1),
+    salience: z.number().finite().min(0).max(1),
+    status: ltmEvidenceUnitStatusSchema,
+    gates: z.array(ltmGateSchema).max(8).default([]),
+    links: z.array(ltmLinkSchema).max(50).default([]),
+    mergeHint: z.string().min(1).max(240).optional(),
+    sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
   })
   .strict();
 
@@ -367,8 +411,17 @@ export const ltmExtractionResponseSchema = z
   })
   .strict();
 
+export const ltmEvidenceUnitExtractionResponseSchema = z
+  .object({
+    summary: z.string().max(2_000).default(""),
+    units: z.array(ltmEvidenceUnitSchema).max(40).default([]),
+  })
+  .strict();
+
 export type LtmNoteType = z.infer<typeof ltmNoteTypeSchema>;
 export type LtmStatus = z.infer<typeof ltmStatusSchema>;
+export type LtmEvidenceUnitStatus = z.infer<typeof ltmEvidenceUnitStatusSchema>;
+export type LtmEvidenceUnitBucket = z.infer<typeof ltmEvidenceUnitBucketSchema>;
 export type LtmMode = z.infer<typeof ltmModeSchema>;
 export type LtmGate = z.infer<typeof ltmGateSchema>;
 export type LtmScope = z.infer<typeof ltmScopeSchema>;
@@ -388,3 +441,5 @@ export type LtmDraftNoteInput = z.infer<typeof ltmDraftNoteInputSchema>;
 export type LtmDraftMutation = z.infer<typeof ltmDraftMutationSchema>;
 export type LtmExtractionDraft = z.infer<typeof ltmExtractionDraftSchema>;
 export type LtmExtractionResponse = z.infer<typeof ltmExtractionResponseSchema>;
+export type LtmEvidenceUnit = z.infer<typeof ltmEvidenceUnitSchema>;
+export type LtmEvidenceUnitExtractionResponse = z.infer<typeof ltmEvidenceUnitExtractionResponseSchema>;

@@ -30,6 +30,7 @@ export interface LtmRebuildResult {
   generatedAt: string;
   noteCount: number;
   chunkCount: number;
+  sourceChunkCount: number;
   embeddedChunkCount: number;
   embeddingsAvailable: boolean;
   manifest: LtmIndexMetadata;
@@ -38,6 +39,7 @@ export interface LtmRebuildResult {
 export interface LtmRebuildOptions extends MemoryRecallEmbeddingOptions {
   root?: string;
   generatedAt?: string;
+  includeSourceNotes?: boolean;
 }
 
 async function listFiles(root: string): Promise<string[]> {
@@ -111,11 +113,16 @@ export async function rebuildLongTermMemoryIndexes(options: LtmRebuildOptions = 
   await storage.initializeLtmStore();
 
   const notes = await storage.listNotes();
-  const chunks = chunkNotes(notes);
+  const chunks = chunkNotes(notes, { includeSourceNotes: options.includeSourceNotes === true });
+  const sourceChunks = chunkNotes(notes, { sourceNotesOnly: true });
   const embeddings = await buildEmbeddingIndex(chunks, options);
+  const sourceEmbeddings = await buildEmbeddingIndex(sourceChunks, options);
   const bm25 = buildLtmBm25Index(chunks);
+  const sourceBm25 = buildLtmBm25Index(sourceChunks);
   const graph = buildLtmGraphIndex(notes, chunks);
+  const sourceGraph = buildLtmGraphIndex(notes, sourceChunks);
   const metadata = buildLtmMetadataIndex(chunks);
+  const sourceMetadata = buildLtmMetadataIndex(sourceChunks);
   const sourceFiles = await hashSourceFiles(root);
   const sourceHash = stableJsonHash(sourceFiles);
   const manifest: LtmIndexMetadata = {
@@ -132,12 +139,17 @@ export async function rebuildLongTermMemoryIndexes(options: LtmRebuildOptions = 
   await writeJsonAtomic(safeJoin(dirs.indexes, "bm25.json"), bm25 satisfies LtmBm25Index);
   await writeJsonAtomic(safeJoin(dirs.indexes, "graph.json"), graph satisfies LtmGraphIndex);
   await writeJsonAtomic(safeJoin(dirs.indexes, "metadata.json"), metadata satisfies LtmMetadataIndex);
+  await writeJsonAtomic(safeJoin(dirs.indexes, "source-embeddings.json"), sourceEmbeddings);
+  await writeJsonAtomic(safeJoin(dirs.indexes, "source-bm25.json"), sourceBm25 satisfies LtmBm25Index);
+  await writeJsonAtomic(safeJoin(dirs.indexes, "source-graph.json"), sourceGraph satisfies LtmGraphIndex);
+  await writeJsonAtomic(safeJoin(dirs.indexes, "source-metadata.json"), sourceMetadata satisfies LtmMetadataIndex);
   await writeJsonAtomic(safeJoin(dirs.indexes, "manifest.json"), manifest);
 
   logger.info(
-    "[ltm] Rebuilt long-term memory indexes: %d note(s), %d chunk(s), %d embedded chunk(s)",
+    "[ltm] Rebuilt long-term memory indexes: %d note(s), %d typed chunk(s), %d source chunk(s), %d embedded typed chunk(s)",
     notes.length,
     chunks.length,
+    sourceChunks.length,
     embeddings.embeddedChunkCount,
   );
 
@@ -146,6 +158,7 @@ export async function rebuildLongTermMemoryIndexes(options: LtmRebuildOptions = 
     generatedAt,
     noteCount: notes.length,
     chunkCount: chunks.length,
+    sourceChunkCount: sourceChunks.length,
     embeddedChunkCount: embeddings.embeddedChunkCount,
     embeddingsAvailable: embeddings.embeddedChunkCount > 0,
     manifest,

@@ -1,6 +1,10 @@
 export type {
   LtmConflict,
   LtmEvent,
+  LtmEvidenceUnit,
+  LtmEvidenceUnitBucket,
+  LtmEvidenceUnitExtractionResponse,
+  LtmEvidenceUnitStatus,
   LtmExtractionDraft,
   LtmExtractionResponse,
   LtmGate,

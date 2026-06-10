@@ -175,12 +175,39 @@ function alwaysLane(metadata: LtmMetadataIndex, policies: LtmPoliciesConfig, inp
   }
 
   for (const chunk of Object.values(metadata.chunks)) {
-    if ((chunk.noteType === "tone" || chunk.noteType === "voice") && candidateAllowed(chunk, input, config, characterIds)) {
+    if (
+      ((chunk.noteType === "tone" || chunk.noteType === "voice") ||
+        (chunk.noteType === "scene" && chunk.tags.includes("current_scene"))) &&
+      candidateAllowed(chunk, input, config, characterIds)
+    ) {
       items.push({ chunkId: chunk.id, reason: `always:${chunk.noteType}`, rawScore: 0.8 });
     }
   }
 
   return items.sort((a, b) => b.rawScore - a.rawScore || a.chunkId.localeCompare(b.chunkId));
+}
+
+function typedPriorityLane(
+  metadata: LtmMetadataIndex,
+  input: RetrieveLongTermMemoryInput,
+  config: LtmRetrievalConfig,
+  characterIds: string[],
+) {
+  return Object.values(metadata.chunks)
+    .flatMap((chunk) => {
+      if (!candidateAllowed(chunk, input, config, characterIds)) return [];
+      if (chunk.noteType === "relationship" && chunk.sectionKey === "state") {
+        return [{ chunkId: chunk.id, reason: "priority:relationship_state", rawScore: 0.95 }];
+      }
+      if (chunk.noteType === "relationship" && chunk.sectionKey === "arc") {
+        return [{ chunkId: chunk.id, reason: "priority:relationship_arc", rawScore: 0.9 }];
+      }
+      if (chunk.noteType === "scene" && chunk.tags.includes("current_scene")) {
+        return [{ chunkId: chunk.id, reason: "priority:current_scene", rawScore: 0.9 }];
+      }
+      return [];
+    })
+    .sort((a, b) => b.rawScore - a.rawScore || a.chunkId.localeCompare(b.chunkId));
 }
 
 async function vectorLane(
@@ -225,11 +252,12 @@ export async function retrieveLongTermMemory(input: RetrieveLongTermMemoryInput 
   const root = input.root ?? getLongTermMemoryRoot();
   const dirs = getLongTermMemoryDirectories(root);
   const warnings: string[] = [];
+  const indexPrefix = input.includeSourceNotes ? "source-" : "";
   const [metadata, bm25, graph, embeddings, config, policies] = await Promise.all([
-    readIndexFile<LtmMetadataIndex>(safeJoin(dirs.indexes, "metadata.json"), warnings),
-    readIndexFile<LtmBm25Index>(safeJoin(dirs.indexes, "bm25.json"), warnings),
-    readIndexFile<LtmGraphIndex>(safeJoin(dirs.indexes, "graph.json"), warnings),
-    readIndexFile<LtmEmbeddingIndex>(safeJoin(dirs.indexes, "embeddings.json"), warnings),
+    readIndexFile<LtmMetadataIndex>(safeJoin(dirs.indexes, `${indexPrefix}metadata.json`), warnings),
+    readIndexFile<LtmBm25Index>(safeJoin(dirs.indexes, `${indexPrefix}bm25.json`), warnings),
+    readIndexFile<LtmGraphIndex>(safeJoin(dirs.indexes, `${indexPrefix}graph.json`), warnings),
+    readIndexFile<LtmEmbeddingIndex>(safeJoin(dirs.indexes, `${indexPrefix}embeddings.json`), warnings),
     readConfig(safeJoin(dirs.config, "retrieval.json"), DEFAULT_LTM_RETRIEVAL_CONFIG, (value) =>
       ltmRetrievalConfigSchema.parse(value),
     ),
@@ -254,8 +282,12 @@ export async function retrieveLongTermMemory(input: RetrieveLongTermMemoryInput 
   if (!input.includeSourceNotes && input.debug) {
     const skippedSourceChunks = Object.values(metadata.chunks).filter(isSourceSummaryChunk).length;
     if (skippedSourceChunks > 0) {
-      warnings.push(`Skipped ${skippedSourceChunks} source summary chunk(s); set includeSourceNotes to search source notes.`);
+      warnings.push(
+        `Skipped ${skippedSourceChunks} source summary chunk(s); set includeSourceNotes to search source audit indexes.`,
+      );
     }
+  } else if (input.includeSourceNotes && input.debug) {
+    warnings.push("Searching source audit indexes; normal typed-memory indexes are not included.");
   }
   const metadataMatches = getLtmMetadataMatches(metadata, {
     noteIds: signals.noteIds,
@@ -287,6 +319,11 @@ export async function retrieveLongTermMemory(input: RetrieveLongTermMemoryInput 
         reason: match.reasons.join(","),
         rawScore: match.score,
       })),
+    },
+    {
+      name: "typed_priority",
+      weight: 1.5,
+      items: typedPriorityLane(metadata, input, config, characterIds),
     },
   ];
 

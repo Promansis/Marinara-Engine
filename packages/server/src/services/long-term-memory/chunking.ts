@@ -17,6 +17,11 @@ export interface LtmMemoryChunk {
   sourceHash: string;
 }
 
+export interface ChunkLtmNotesOptions {
+  includeSourceNotes?: boolean;
+  sourceNotesOnly?: boolean;
+}
+
 export function stableJsonHash(value: unknown) {
   return createHash("sha256").update(stableStringify(value)).digest("hex");
 }
@@ -43,6 +48,10 @@ function compactLabels(note: LtmNote, sectionKey: string) {
   if (note.scope.groupId) labels.push(`group:${note.scope.groupId}`);
   if (note.scope.characterIds?.length) labels.push(`characters:${note.scope.characterIds.join(",")}`);
   return labels.join(" ");
+}
+
+export function isLtmSourceSummaryNote(note: Pick<LtmNote, "type" | "tags">) {
+  return note.type === "scene" && (note.tags.includes("source_summary") || note.tags.includes("chat_summary"));
 }
 
 export function chunkNoteSections(note: LtmNote): LtmMemoryChunk[] {
@@ -76,9 +85,14 @@ export function chunkNoteSections(note: LtmNote): LtmMemoryChunk[] {
     });
 }
 
-export function chunkNotes(notes: LtmNote[]) {
+export function chunkNotes(notes: LtmNote[], options: ChunkLtmNotesOptions = {}) {
   return notes
     .slice()
+    .filter((note) => {
+      const isSource = isLtmSourceSummaryNote(note);
+      if (options.sourceNotesOnly) return isSource;
+      return options.includeSourceNotes === true || !isSource;
+    })
     .sort((a, b) => a.id.localeCompare(b.id))
     .flatMap((note) => chunkNoteSections(note));
 }

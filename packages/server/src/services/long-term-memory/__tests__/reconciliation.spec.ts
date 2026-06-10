@@ -4,18 +4,25 @@ import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import type { LtmDraftMutation } from "@marinara-engine/shared";
+import type { LtmDraftMutation, LtmEvidenceUnit, LtmNote } from "@marinara-engine/shared";
+import { ltmEvidenceUnitSchema } from "../../../../../shared/src/schemas/long-term-memory.schema.js";
+import { chunkNotes } from "../chunking.js";
+import { compileLtmEvidenceUnits } from "../evidence-unit-compiler.js";
+import { reduceRelationshipEvidenceUnits } from "../relationship-reducer.js";
 import { LongTermMemoryDraftStore } from "../extraction.js";
 import { checkLongTermMemoryIntegrity } from "../maintenance.js";
 import { getLongTermMemoryDirectories } from "../paths.js";
+import { rebuildLongTermMemoryIndexes } from "../rebuild.js";
 import {
   applyLongTermMemoryDraft,
   isLowRiskSourceExtractionMutation,
   isLowRiskTurnMutation,
 } from "../reconciliation.js";
+import { retrieveLongTermMemory } from "../retrieval.js";
 import { LongTermMemoryStorage } from "../storage.js";
 
 const timestamp = "2026-06-10T00:00:00.000Z";
+const sourceHash = "a".repeat(64);
 
 function sceneAppendMutation(): Extract<LtmDraftMutation, { kind: "append_section" }> {
   return {
@@ -153,6 +160,301 @@ test("integrity reports malformed event log rows instead of throwing", async () 
       ["malformed_event", "malformed_event"],
     );
     assert(result.issues.every((issue) => issue.path === "events/log.jsonl"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+function evidenceUnit(bucket: LtmEvidenceUnit["bucket"], patch: Partial<LtmEvidenceUnit> = {}): LtmEvidenceUnit {
+  return ltmEvidenceUnitSchema.parse({
+    id: randomUUID(),
+    bucket,
+    subjectId: "mara",
+    sectionKey: "facts",
+    text: "Mara senses magic as a hum under her skin.",
+    evidence: ["source_note:scene_source_test"],
+    confidence: 0.9,
+    salience: 0.7,
+    status: "active",
+    gates: [],
+    links: [],
+    sourceHash,
+    ...patch,
+  });
+}
+
+test("evidence unit schema rejects invalid bucket and empty evidence", () => {
+  assert.equal(
+    ltmEvidenceUnitSchema.safeParse({
+      id: randomUUID(),
+      bucket: "raw_summary",
+      subjectId: "mara",
+      sectionKey: "facts",
+      text: "Mara senses magic.",
+      evidence: ["source_note:scene_source_test"],
+      confidence: 0.9,
+      salience: 0.7,
+      status: "active",
+      gates: [],
+      links: [],
+      sourceHash,
+    }).success,
+    false,
+  );
+  assert.equal(
+    ltmEvidenceUnitSchema.safeParse({
+      id: randomUUID(),
+      bucket: "character_fact",
+      subjectId: "mara",
+      sectionKey: "facts",
+      text: "Mara senses magic.",
+      evidence: [],
+      confidence: 0.9,
+      salience: 0.7,
+      status: "active",
+      gates: [],
+      links: [],
+      sourceHash,
+    }).success,
+    false,
+  );
+});
+
+test("source notes are excluded from normal chunks and kept for source audit chunks", () => {
+  const sourceNote: LtmNote = {
+    id: "scene_source_test",
+    type: "scene",
+    status: "dormant",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["source_summary", "chat_summary"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      source: {
+        text: "Transcript-like source summary that should not enter normal recall.",
+        updatedAt: timestamp,
+        evidence: ["chat:chat_test"],
+      },
+    },
+    version: 1,
+  };
+  const typedNote: LtmNote = {
+    id: "char_mara",
+    type: "character",
+    status: "active",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["typed_memory"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      facts: {
+        text: "Mara senses magic as a hum under her skin.",
+        updatedAt: timestamp,
+        evidence: ["source_note:scene_source_test"],
+      },
+    },
+    version: 1,
+  };
+
+  assert.deepEqual(
+    chunkNotes([sourceNote, typedNote]).map((chunk) => chunk.noteId),
+    ["char_mara"],
+  );
+  assert.deepEqual(
+    chunkNotes([sourceNote, typedNote], { sourceNotesOnly: true }).map((chunk) => chunk.noteId),
+    ["scene_source_test"],
+  );
+});
+
+test("evidence unit compiler maps buckets to typed memory draft mutations", () => {
+  const cases: Array<[LtmEvidenceUnit["bucket"], string, string]> = [
+    ["character_fact", "char_mara", "character"],
+    ["character_state", "char_mara", "character"],
+    ["relationship_event", "rel_mara_jules", "relationship"],
+    ["relationship_state", "rel_mara_jules", "relationship"],
+    ["relationship_arc", "rel_mara_jules", "relationship"],
+    ["world_fact", "world_veil", "world"],
+    ["thread", "thread_missing_key", "thread"],
+    ["callback", "cb_lantern", "callback"],
+    ["current_scene", "scene_current_chat", "scene"],
+    ["voice", "voice_mara", "voice"],
+    ["tone", "tone_chat", "tone"],
+    ["anchor", "world_red_thread", "world"],
+    ["boundary", "tone_chat", "tone"],
+    ["preference", "tone_chat", "tone"],
+  ];
+
+  for (const [bucket, expectedNoteId, expectedType] of cases) {
+    const unit = evidenceUnit(bucket, {
+      subjectId: expectedNoteId.replace(/^(char|rel|world|thread|cb|scene|voice|tone)_/, ""),
+      sectionKey: bucket === "anchor" ? "world_anchor" : "facts",
+    });
+    const response = compileLtmEvidenceUnits({
+      units: [unit],
+      existingNotes: [],
+      scope: {},
+      modes: ["roleplay"],
+      createdAt: timestamp,
+    });
+    const mutation = response.mutations[0];
+    assert.equal(mutation?.kind, "create_note");
+    if (mutation?.kind === "create_note") {
+      assert.equal(mutation.note.id, expectedNoteId);
+      assert.equal(mutation.note.type, expectedType);
+    }
+  }
+});
+
+test("relationship reducer accumulates events into qualitative current state", () => {
+  const reduction = reduceRelationshipEvidenceUnits([
+    evidenceUnit("relationship_event", {
+      subjectId: "mara_jules",
+      sectionKey: "event_001",
+      text: "Mara chooses to trust Jules with the hidden key.",
+    }),
+    evidenceUnit("relationship_event", {
+      subjectId: "mara_jules",
+      sectionKey: "event_002",
+      text: "Jules protects Mara during a tense argument.",
+    }),
+  ]);
+
+  assert.equal(reduction.facets.trust, "medium");
+  assert.equal(reduction.facets.protectiveness, "medium");
+  assert.equal(reduction.trajectory, "warming_trust_with_remaining_secrets");
+  assert.deepEqual(reduction.supportingEvents, [
+    "event_001:source_note:scene_source_test",
+    "event_002:source_note:scene_source_test",
+  ]);
+});
+
+test("current scene evidence units replace current state instead of appending", () => {
+  const existing: LtmNote = {
+    id: "scene_current_chat",
+    type: "scene",
+    status: "active",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["typed_memory", "current_scene"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      current_state: {
+        text: "Mara waits outside the tower.",
+        updatedAt: timestamp,
+        evidence: ["source_note:scene_old"],
+      },
+    },
+    version: 1,
+  };
+  const response = compileLtmEvidenceUnits({
+    units: [
+      evidenceUnit("current_scene", {
+        subjectId: "current_chat",
+        sectionKey: "current_state",
+        text: "Mara and Jules stand inside the tower archive.",
+      }),
+    ],
+    existingNotes: [existing],
+    scope: {},
+    modes: ["roleplay"],
+    createdAt: timestamp,
+  });
+
+  assert.equal(response.mutations.length, 1);
+  assert.equal(response.mutations[0]?.kind, "update_section");
+  if (response.mutations[0]?.kind === "update_section") {
+    assert.equal(response.mutations[0].section.text, "Mara and Jules stand inside the tower archive.");
+  }
+});
+
+test("retrieval excludes source notes by default and prioritizes relationship state before history", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-retrieval-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "scene_source_test",
+        type: "scene",
+        status: "dormant",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Raw transcript says Mara trusts Jules at the tower archive.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "rel_mara_jules",
+        type: "relationship",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory", "relationship_memory"],
+        links: [],
+        sections: {
+          history: {
+            text: "- Mara trusted Jules with the key at the tower archive.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_test"],
+          },
+          state: {
+            text: "Current relationship state: trust: medium; tension: low. Trajectory: warming_trust_with_remaining_secrets.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_test"],
+          },
+          arc: {
+            text: "Their relationship is warming through repeated acts of trust.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    await rebuildLongTermMemoryIndexes({
+      root,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+
+    const normal = await retrieveLongTermMemory({
+      root,
+      queryText: "Mara trusts Jules tower archive",
+      maxChunks: 4,
+      maxTokens: 1000,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+    assert.deepEqual(
+      normal.chunks.map((chunk) => chunk.chunk.id),
+      ["rel_mara_jules::state", "rel_mara_jules::arc", "rel_mara_jules::history"],
+    );
+
+    const audit = await retrieveLongTermMemory({
+      root,
+      queryText: "Mara trusts Jules tower archive",
+      includeSourceNotes: true,
+      maxChunks: 4,
+      maxTokens: 1000,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+    assert.deepEqual(
+      audit.chunks.map((chunk) => chunk.chunk.noteId),
+      ["scene_source_test"],
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

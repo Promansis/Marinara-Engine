@@ -318,6 +318,7 @@ function publicRebuildResult(result: Awaited<ReturnType<typeof rebuildLongTermMe
     generatedAt: result.generatedAt,
     noteCount: result.noteCount,
     chunkCount: result.chunkCount,
+    sourceChunkCount: result.sourceChunkCount,
     embeddedChunkCount: result.embeddedChunkCount,
     embeddingsAvailable: result.embeddingsAvailable,
     manifest: result.manifest,
