@@ -56,6 +56,16 @@ function uniqueLinks(links: LtmLink[]) {
   });
 }
 
+function sourceLinkFromDraft(draft: LtmExtractionDraft): LtmLink | null {
+  return draft.source.sourceNoteId ? { target: draft.source.sourceNoteId, relation: "extracted_from" } : null;
+}
+
+function withSourceLink(noteId: string, links: LtmLink[], draft: LtmExtractionDraft) {
+  const sourceLink = sourceLinkFromDraft(draft);
+  if (!sourceLink || sourceLink.target === noteId) return uniqueLinks(links);
+  return uniqueLinks([...links, sourceLink]);
+}
+
 async function preflightDraftMutations(
   storage: LongTermMemoryStorage,
   draft: LtmExtractionDraft,
@@ -63,14 +73,28 @@ async function preflightDraftMutations(
 ) {
   const createIds = new Set<string>();
   const requiredNoteIds = new Set<string>();
+  const sourceExtractionDraft = Boolean(draft.source.sourceNoteId);
 
   for (const mutation of mutations) {
     if (mutation.kind === "create_note") {
+      if (
+        sourceExtractionDraft &&
+        (mutation.note.type === "scene" ||
+          mutation.note.tags.includes("source_summary") ||
+          mutation.note.tags.includes("chat_summary"))
+      ) {
+        throw new Error(
+          `Long-term memory source extraction draft cannot create scene/source notes: ${mutation.note.id}`,
+        );
+      }
       if (createIds.has(mutation.note.id)) {
         throw new Error(`Long-term memory draft creates the same note more than once: ${mutation.note.id}`);
       }
       createIds.add(mutation.note.id);
       continue;
+    }
+    if (sourceExtractionDraft && mutation.noteId.startsWith("scene_")) {
+      throw new Error(`Long-term memory source extraction draft cannot mutate scene/source notes: ${mutation.noteId}`);
     }
     requiredNoteIds.add(mutation.noteId);
   }
@@ -127,7 +151,13 @@ async function applyMutation(
   };
 
   if (mutation.kind === "create_note") {
-    await storage.createNote(mutation.note, eventContext);
+    await storage.createNote(
+      {
+        ...mutation.note,
+        links: withSourceLink(mutation.note.id, mutation.note.links, draft),
+      },
+      eventContext,
+    );
     return;
   }
 
@@ -158,6 +188,11 @@ async function applyMutation(
   } else {
     patch = { conflicts: [...(existing.conflicts ?? []), mutation.conflict] };
   }
+
+  patch = {
+    ...patch,
+    links: withSourceLink(existing.id, patch.links ?? existing.links, draft),
+  };
 
   await storage.updateNote(existing.id, patch, eventContext);
 }

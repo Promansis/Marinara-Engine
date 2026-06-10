@@ -112,17 +112,22 @@ function extractionMessages({
         "You extract typed long-term memory draft mutations from editable source notes.",
         "Return only strict JSON matching the supplied shape. Do not explain.",
         "Source notes are evidence, not active memory. Never copy or summarize the full source into a typed note.",
+        "Do not create, append, or update scene/source notes from this source. The source note already preserves the scene record.",
+        "Create or update smaller typed notes instead: relationships, threads, callbacks, character state, world facts, voice, and tone.",
+        "Each typed note section should be compact and recall-ready: one relationship state, one thread, one callback, one character fact, or one world fact.",
         "Extract only durable continuity useful for future generation.",
         "Use lowercase snake_case section keys accepted by the schema.",
         "Prefer updating existing typed notes over creating duplicates.",
+        "When memories are connected, include links between typed notes; application will add the source evidence link.",
         "Separate current state, character facts, relationships, threads, callbacks, world, voice, and tone.",
         "Callbacks are planted setups with expected payoff. Threads are unresolved situations, questions, goals, or tensions.",
+        "Treat Events, Timeline, and Scenes as source evidence only. Do not make them active recall notes unless they become a typed thread, callback, character, relationship, or world fact.",
         "Mark spoilers, character secrets, private knowledge, and NSFW content with gates.",
         "Every mutation must include evidence references from the supplied evidence list.",
         "Allowed mutation kinds: create_note, append_section, update_section, add_link, set_status, flag_conflict.",
         "Each mutation kind has different required fields. Follow requiredMutationShapes exactly.",
         "Do not emit placeholders or omit required fields. If you cannot fill every required field for a mutation kind, omit that mutation.",
-        "Low risk is only a non-conflicting scene append, neutral link, or high-confidence callback setup. Stable facts and secrets are medium/high risk.",
+        "Low risk is only a neutral typed-note link or high-confidence callback setup. Stable facts, scene/source edits, and secrets are medium/high risk or invalid.",
       ].join("\n"),
     },
     {
@@ -150,8 +155,8 @@ function extractionMessages({
             summary: "what changes",
             evidence: evidenceFromSourceNote(sourceNote),
             note: {
-              id: "char_name|rel_name_name|scene_name|thread_name|cb_name|world_name|voice_name|tone_name",
-              type: "character|relationship|scene|thread|callback|world|voice|tone",
+              id: "char_name|rel_name_name|thread_name|cb_name|world_name|voice_name|tone_name",
+              type: "character|relationship|thread|callback|world|voice|tone",
               status: "active|resolved|archived|dormant",
               modes,
               scope,
@@ -246,7 +251,6 @@ function extractionMessages({
           WORLD: ["facts", "rules", "places", "objects"],
           VOICE: ["style", "phrases", "mannerisms"],
           TONE: ["current", "durable"],
-          SCENE_SOURCE: ["source"],
         },
         sourceNote: {
           id: sourceNote.id,
@@ -346,7 +350,7 @@ export async function extractLongTermMemoryFromSourceNote(
   const response = content
     ? ltmExtractionResponseSchema.parse(JSON.parse(extractJsonObject(content)))
     : ltmExtractionResponseSchema.parse({ summary: "", mutations: [] });
-  const diagnostics = validateLtmExtractionResponse({ response, sourceText, existingNotes });
+  const diagnostics = validateLtmExtractionResponse({ response, sourceText, existingNotes, sourceNote });
   const hasBlockingDiagnostic = diagnostics.some((diagnostic) => diagnostic.severity === "error");
   const draft =
     response.mutations.length > 0 && !hasBlockingDiagnostic

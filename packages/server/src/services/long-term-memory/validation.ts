@@ -65,17 +65,36 @@ function gatesForMutation(mutation: LtmDraftMutation) {
   return [];
 }
 
+function targetsSceneOrSourceNote(mutation: LtmDraftMutation, existing: LtmNote | undefined) {
+  if (mutation.kind === "create_note") {
+    return (
+      mutation.note.type === "scene" ||
+      mutation.note.tags.includes("source_summary") ||
+      mutation.note.tags.includes("chat_summary")
+    );
+  }
+  return (
+    mutation.noteId.startsWith("scene_") ||
+    existing?.type === "scene" ||
+    existing?.tags.includes("source_summary") === true ||
+    existing?.tags.includes("chat_summary") === true
+  );
+}
+
 export function validateLtmExtractionResponse({
   response,
   sourceText,
   existingNotes,
+  sourceNote,
 }: {
   response: LtmExtractionResponse;
   sourceText: string;
   existingNotes: LtmNote[];
+  sourceNote?: LtmNote;
 }) {
   const diagnostics: LtmExtractionDiagnostic[] = [];
   const existingById = new Map(existingNotes.map((note) => [note.id, note]));
+  const sourceEvidence = sourceNote ? `source_note:${sourceNote.id}` : null;
 
   for (const mutation of response.mutations) {
     const noteId = noteIdForMutation(mutation);
@@ -89,6 +108,36 @@ export function validateLtmExtractionResponse({
         mutationId: mutation.id,
         noteId,
         message: "Mutation has no evidence reference.",
+      });
+    }
+
+    if (sourceNote && noteId === sourceNote.id) {
+      diagnostics.push({
+        severity: "error",
+        code: "source_note_mutation",
+        mutationId: mutation.id,
+        noteId,
+        message: "Source extraction cannot mutate the source note; create or update typed memory notes instead.",
+      });
+    }
+
+    if (sourceNote && targetsSceneOrSourceNote(mutation, existing)) {
+      diagnostics.push({
+        severity: "error",
+        code: "scene_or_source_note_from_source",
+        mutationId: mutation.id,
+        noteId,
+        message: "Source extraction cannot create or update scene/source notes; scene content stays in the dormant source note.",
+      });
+    }
+
+    if (sourceEvidence && !mutation.evidence.includes(sourceEvidence)) {
+      diagnostics.push({
+        severity: "warning",
+        code: "missing_source_note_evidence",
+        mutationId: mutation.id,
+        noteId,
+        message: "Mutation does not reference the source note evidence.",
       });
     }
 
