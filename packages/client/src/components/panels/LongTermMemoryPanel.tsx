@@ -392,12 +392,10 @@ function NoteViewModalContent({
   note,
   drafts,
   draftsLoading,
-  chatId,
 }: {
   note: LtmNote;
   drafts: LtmExtractionDraft[];
   draftsLoading: boolean;
-  chatId?: string | null;
 }) {
   const extractSourceNote = useExtractLongTermMemorySourceNote();
   const isSourceNote = note.type === "scene" && (note.tags.includes("source_summary") || note.tags.includes("chat_summary"));
@@ -460,7 +458,7 @@ function NoteViewModalContent({
               <ToolButton
                 onClick={() =>
                   extractSourceNote
-                    .mutateAsync({ noteId: note.id, ...(chatId ? { chatId } : {}) })
+                    .mutateAsync({ noteId: note.id })
                     .then((result) => {
                       const count = result.draft?.mutations.length ?? 0;
                       toast.success(
@@ -985,7 +983,6 @@ function ChatMemorySettings() {
 }
 
 export function LongTermMemoryPanel() {
-  const activeChatId = useChatStore((s) => s.activeChatId);
   const [tab, setTab] = useState<TabId>("notes");
   const [noteType, setNoteType] = useState<"all" | LtmNoteType>("all");
   const [noteStatus, setNoteStatus] = useState<"all" | Exclude<LtmStatus, "archived">>("all");
@@ -1763,7 +1760,6 @@ export function LongTermMemoryPanel() {
             note={viewingNote}
             drafts={allDrafts.data ?? []}
             draftsLoading={allDrafts.isLoading}
-            chatId={activeChatId}
           />
         )}
       </Modal>

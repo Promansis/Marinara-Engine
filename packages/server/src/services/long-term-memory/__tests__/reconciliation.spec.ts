@@ -30,6 +30,36 @@ function sceneAppendMutation(): Extract<LtmDraftMutation, { kind: "append_sectio
   };
 }
 
+function callbackCreateMutation(
+  text = "When the lantern is found, remember the old promise.",
+): Extract<LtmDraftMutation, { kind: "create_note" }> {
+  return {
+    id: randomUUID(),
+    kind: "create_note",
+    risk: "low",
+    confidence: 0.95,
+    summary: "Create callback",
+    evidence: ["source_note:scene_source_test"],
+    note: {
+      id: "cb_lantern_promise",
+      type: "callback",
+      status: "active",
+      modes: ["roleplay"],
+      scope: {},
+      tags: [],
+      links: [],
+      sections: {
+        setup: {
+          text,
+          updatedAt: timestamp,
+          confidence: 0.95,
+          evidence: ["source_note:scene_source_test"],
+        },
+      },
+    },
+  };
+}
+
 test("source extraction low-risk policy blocks scene append auto-apply", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-reconciliation-"));
   try {
@@ -92,4 +122,14 @@ test("source extraction low-risk policy blocks scene append auto-apply", async (
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("source extraction low-risk policy blocks secret callback auto-apply", () => {
+  assert.equal(isLowRiskSourceExtractionMutation(callbackCreateMutation()), true);
+  assert.equal(
+    isLowRiskSourceExtractionMutation(
+      callbackCreateMutation("When the lantern is found, reveal Mira's private secret."),
+    ),
+    false,
+  );
 });

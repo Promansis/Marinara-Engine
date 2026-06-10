@@ -142,6 +142,30 @@ function mutationHasGates(mutation: LtmDraftMutation) {
   return false;
 }
 
+const GATED_CONTENT_PATTERNS = [
+  /\b(spoiler|twist|reveal|secret ending)\b/i,
+  /\b(secret|unknown to|hiding|concealed|private knowledge)\b/i,
+  /\b(private|confidential|intimate)\b/i,
+  /\b(nsfw|explicit|sexual|sex)\b/i,
+];
+
+function mutationText(mutation: LtmDraftMutation) {
+  if (mutation.kind === "create_note") {
+    return Object.values(mutation.note.sections)
+      .map((section) => section.text)
+      .join("\n");
+  }
+  if (mutation.kind === "append_section") return mutation.text;
+  if (mutation.kind === "update_section") return mutation.section.text;
+  if (mutation.kind === "flag_conflict") return mutation.conflict.proposed;
+  return "";
+}
+
+function mutationHasPotentialGatedContent(mutation: LtmDraftMutation) {
+  const text = mutationText(mutation);
+  return text.length > 0 && GATED_CONTENT_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 export function isLowRiskTurnMutation(mutation: LtmDraftMutation) {
   if (mutation.risk !== "low") return false;
   if (mutation.kind === "append_section") {
@@ -159,14 +183,10 @@ export function isLowRiskTurnMutation(mutation: LtmDraftMutation) {
 export function isLowRiskSourceExtractionMutation(mutation: LtmDraftMutation) {
   if (mutation.risk !== "low") return false;
   if (mutationTouchesSceneId(mutation) || mutationHasSourceSummaryTag(mutation)) return false;
+  if (mutationHasGates(mutation) || mutationHasPotentialGatedContent(mutation)) return false;
   if (mutation.kind === "append_section") return false;
   if (mutation.kind === "create_note") {
-    return (
-      mutation.note.type === "callback" &&
-      mutation.confidence >= 0.85 &&
-      !mutation.note.conflicts?.length &&
-      !mutationHasGates(mutation)
-    );
+    return mutation.note.type === "callback" && mutation.confidence >= 0.85 && !mutation.note.conflicts?.length;
   }
   if (mutation.kind === "add_link") {
     return mutation.confidence >= 0.75;
