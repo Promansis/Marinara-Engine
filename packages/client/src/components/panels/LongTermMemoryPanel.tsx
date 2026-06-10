@@ -333,12 +333,10 @@ function NoteViewModalContent({
   note,
   drafts,
   draftsLoading,
-  onClose,
 }: {
   note: LtmNote;
   drafts: LtmExtractionDraft[];
   draftsLoading: boolean;
-  onClose: () => void;
 }) {
   const extractedDrafts = drafts.filter((draft) => draft.source.sourceNoteId === note.id);
   const extractedMutations = extractedDrafts.flatMap((draft) => draft.mutations);
@@ -351,23 +349,12 @@ function NoteViewModalContent({
   return (
     <div className="grid gap-4">
       <div className="rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex min-w-0 flex-wrap gap-1.5">
-            <StatusPill label={note.type} />
-            <StatusPill label={note.status} tone={note.status === "active" ? "good" : "neutral"} />
-            {note.modes.map((mode) => (
-              <StatusPill key={mode} label={mode} />
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="inline-flex min-h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-95"
-            aria-label="Close vault note view"
-          >
-            <X size="0.875rem" />
-            <span className="max-[22rem]:sr-only">Close</span>
-          </button>
+        <div className="flex min-w-0 flex-wrap gap-1.5">
+          <StatusPill label={note.type} />
+          <StatusPill label={note.status} tone={note.status === "active" ? "good" : "neutral"} />
+          {note.modes.map((mode) => (
+            <StatusPill key={mode} label={mode} />
+          ))}
         </div>
         <div className="mt-2 text-[0.625rem] text-[var(--muted-foreground)]">
           {compactScope(note)} · updated {new Date(note.updatedAt).toLocaleString()}
@@ -1687,7 +1674,6 @@ export function LongTermMemoryPanel() {
             note={viewingNote}
             drafts={allDrafts.data ?? []}
             draftsLoading={allDrafts.isLoading}
-            onClose={closeViewer}
           />
         )}
       </Modal>
