@@ -87,6 +87,8 @@ const NOTE_TYPES: Array<"all" | LtmNoteType> = [
   "tone",
 ];
 const NOTE_STATUSES: Array<"all" | Exclude<LtmStatus, "archived">> = ["all", "active", "dormant", "resolved"];
+const NOTE_TYPE_ORDER = new Map<LtmNoteType, number>(NOTE_TYPES.filter((type) => type !== "all").map((type, index) => [type, index]));
+const NOTE_STATUS_ORDER = new Map<LtmStatus, number>(["active", "dormant", "resolved", "archived"].map((status, index) => [status as LtmStatus, index]));
 const IMPORT_SOURCES: Array<{ id: LtmInteropSource; label: string }> = [
   { id: "characters", label: "Characters" },
   { id: "lorebooks", label: "Lorebooks" },
@@ -342,6 +344,33 @@ function isSourceSummaryNote(note: LtmNote) {
   return note.type === "scene" && note.tags.some((tag) => tag.includes("source_summary") || tag.includes("chat_summary"));
 }
 
+function isDerivedFromSource(note: LtmNote, sourceNoteId: string) {
+  return note.links.some((link) => link.relation === "extracted_from" && link.target === sourceNoteId);
+}
+
+function derivedSourceGroups(notes: LtmNote[]) {
+  const groups = new Map<string, { type: LtmNoteType; status: LtmStatus; notes: LtmNote[] }>();
+  for (const note of notes) {
+    const key = `${note.type}:${note.status}`;
+    const group = groups.get(key) ?? { type: note.type, status: note.status, notes: [] };
+    group.notes.push(note);
+    groups.set(key, group);
+  }
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      notes: group.notes.sort((left, right) => friendlyNoteTitle(left).localeCompare(friendlyNoteTitle(right))),
+    }))
+    .sort(
+      (left, right) =>
+        (NOTE_TYPE_ORDER.get(left.type) ?? Number.MAX_SAFE_INTEGER) -
+          (NOTE_TYPE_ORDER.get(right.type) ?? Number.MAX_SAFE_INTEGER) ||
+        (NOTE_STATUS_ORDER.get(left.status) ?? Number.MAX_SAFE_INTEGER) -
+          (NOTE_STATUS_ORDER.get(right.status) ?? Number.MAX_SAFE_INTEGER) ||
+        friendlyNoteType(left.type).localeCompare(friendlyNoteType(right.type)),
+    );
+}
+
 function mutationText(mutation: LtmDraftMutation) {
   switch (mutation.kind) {
     case "create_note":
@@ -492,8 +521,86 @@ function GraphLinks({ links }: { links: LtmLink[] }) {
   );
 }
 
+function DerivedActiveMemories({
+  sourceNote,
+  activeNotes,
+  loading,
+  onOpenNote,
+}: {
+  sourceNote: LtmNote;
+  activeNotes: LtmNote[];
+  loading: boolean;
+  onOpenNote?: (noteId: string) => void;
+}) {
+  const derivedNotes = useMemo(
+    () =>
+      activeNotes.filter(
+        (candidate) =>
+          candidate.id !== sourceNote.id && candidate.status === "active" && !isSourceSummaryNote(candidate) && isDerivedFromSource(candidate, sourceNote.id),
+      ),
+    [activeNotes, sourceNote.id],
+  );
+  const groups = useMemo(() => derivedSourceGroups(derivedNotes), [derivedNotes]);
+  const derivedCount = derivedNotes.length;
+
+  return (
+    <section className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-xs font-semibold text-[var(--foreground)]">Derived Active Memories</h3>
+        <StatusPill label={`${derivedCount} active memor${derivedCount === 1 ? "y" : "ies"}`} tone={derivedCount ? "good" : "neutral"} />
+      </div>
+      {loading ? (
+        <div className="flex items-center justify-center rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-3 text-xs text-[var(--muted-foreground)]">
+          <Loader2 className="mr-2 animate-spin" size="0.875rem" />
+          Loading derived memories...
+        </div>
+      ) : groups.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-3 text-xs text-[var(--muted-foreground)]">
+          No active typed memories link back to this source yet.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {groups.map((group) => (
+            <div key={`${group.type}:${group.status}`} className="space-y-2">
+              <div className="flex flex-wrap items-center gap-1.5 px-1">
+                <StatusPill label={friendlyNoteType(group.type)} />
+                <StatusPill label={friendlyStatus(group.status)} tone={group.status === "active" ? "good" : "neutral"} />
+                <StatusPill label={`${group.notes.length} memor${group.notes.length === 1 ? "y" : "ies"}`} />
+              </div>
+              <div className="space-y-2">
+                {group.notes.map((derivedNote) => (
+                  <button
+                    key={derivedNote.id}
+                    type="button"
+                    onClick={() => onOpenNote?.(derivedNote.id)}
+                    disabled={!onOpenNote}
+                    className="w-full rounded-lg bg-[var(--card)] p-3 text-left ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] disabled:cursor-default disabled:hover:bg-[var(--card)]"
+                  >
+                    <div className="truncate text-xs font-medium text-[var(--foreground)]">{friendlyNoteTitle(derivedNote)}</div>
+                    <p className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                      {derivedNote.sections.summary?.text.trim() ||
+                        derivedNote.sections.core?.text.trim() ||
+                        Object.values(derivedNote.sections)[0]?.text.trim() ||
+                        "No summary text."}
+                    </p>
+                    <div className="mt-2 truncate text-[0.625rem] text-[var(--muted-foreground)]/80">
+                      Internal ID: {derivedNote.id}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function NoteViewModalContent({
   note,
+  activeNotes,
+  activeNotesLoading,
   drafts,
   draftsLoading,
   diagnostics,
@@ -501,6 +608,8 @@ function NoteViewModalContent({
   onOpenSourceNote,
 }: {
   note: LtmNote;
+  activeNotes: LtmNote[];
+  activeNotesLoading: boolean;
   drafts: LtmExtractionDraft[];
   draftsLoading: boolean;
   diagnostics: LtmExtractionDiagnostic[];
@@ -560,6 +669,15 @@ function NoteViewModalContent({
         <h3 className="text-xs font-semibold text-[var(--foreground)]">Related Memories</h3>
         <GraphLinks links={note.links} />
       </section>
+
+      {isSourceNote && (
+        <DerivedActiveMemories
+          sourceNote={note}
+          activeNotes={activeNotes}
+          loading={activeNotesLoading}
+          onOpenNote={onOpenSourceNote}
+        />
+      )}
 
       <section className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1191,6 +1309,7 @@ export function LongTermMemoryPanel() {
     type: noteType === "all" ? undefined : noteType,
     status: noteStatus === "all" ? undefined : noteStatus,
   });
+  const activeNotes = useLongTermMemoryNotes({ status: "active" }, { enabled: Boolean(viewingNoteId) });
   const archivedNotes = useLongTermMemoryNotes(
     { status: "archived" },
     { enabled: archiveOpen || Boolean(viewingNoteId) || Boolean(editingNoteId) },
@@ -1959,6 +2078,8 @@ export function LongTermMemoryPanel() {
         {viewingNote && (
           <NoteViewModalContent
             note={viewingNote}
+            activeNotes={activeNotes.data ?? []}
+            activeNotesLoading={activeNotes.isLoading}
             drafts={allDrafts.data ?? []}
             draftsLoading={allDrafts.isLoading}
             diagnostics={sourceExtractionDiagnostics[viewingNote.id] ?? []}
