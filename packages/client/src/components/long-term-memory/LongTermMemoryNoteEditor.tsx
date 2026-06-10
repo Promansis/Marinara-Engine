@@ -201,7 +201,7 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
   const floatingSection = floatingSectionKey ? draft.sections[floatingSectionKey] : null;
 
   return (
-    <div className="mt-3 rounded-lg bg-[var(--card)] p-3 ring-1 ring-[var(--border)]">
+    <div className="grid gap-3">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="truncate text-xs font-semibold text-[var(--foreground)]">{friendlyNoteTitle(draft)}</div>

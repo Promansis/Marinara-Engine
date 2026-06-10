@@ -99,11 +99,17 @@ const TAB_LABELS: Record<TabId, string> = {
   notes: "Memories",
   drafts: "Suggestions",
   tools: "Maintenance",
-  import: "Bring In",
+  import: "Import",
 };
 
 type TabId = "notes" | "drafts" | "tools" | "import";
 type ImportPreviewRow = NonNullable<ReturnType<typeof useLongTermMemoryImportPreview>["data"]>["samples"][number];
+
+const rowActionPillClassName =
+  "absolute right-2 top-1/2 flex shrink-0 -translate-y-1/2 items-center gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-[var(--border)] transition-opacity group-hover:opacity-100 max-md:opacity-100";
+
+const rowActionButtonClassName =
+  "inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] active:scale-90 disabled:cursor-not-allowed disabled:opacity-45";
 
 function importRowKey(source: LtmInteropSource, sourceId: string) {
   return `${source}:${sourceId}`;
@@ -200,14 +206,15 @@ function NoteRow({
   return (
     <article
       className={cn(
-        "group rounded-xl border border-rose-300/15 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-2.5 transition-all",
+        "group relative rounded-xl border border-rose-300/15 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-2.5 transition-all",
         "hover:border-rose-300/30 hover:bg-[var(--sidebar-accent)]",
         editing && "border-rose-300/40 bg-rose-300/10 ring-1 ring-rose-300/25",
       )}
     >
-      <div className="flex min-w-0 items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-xs font-semibold text-[var(--foreground)]">{friendlyNoteTitle(note)}</div>
+      <div className="min-w-0 transition-[padding] group-hover:pr-28 max-md:pr-28">
+          <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={friendlyNoteTitle(note)}>
+            {friendlyNoteTitle(note)}
+          </div>
           {primaryText && (
             <div className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
               {primaryText}
@@ -219,13 +226,13 @@ function NoteRow({
             <StatusPill label={`${sectionCount} detail${sectionCount === 1 ? "" : "s"}`} />
           </div>
           <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]/80">Internal ID: {note.id}</div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
+      </div>
+      <div className={rowActionPillClassName}>
           <button
             type="button"
             onClick={onView}
             className={cn(
-              "rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+              rowActionButtonClassName,
               viewing && "bg-[var(--accent)] text-[var(--foreground)]",
             )}
             aria-label={`View ${friendlyNoteTitle(note)}`}
@@ -237,7 +244,7 @@ function NoteRow({
             <button
               type="button"
               onClick={onRestore}
-              className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-emerald-500/10 hover:text-emerald-200"
+              className={cn(rowActionButtonClassName, "hover:bg-emerald-500/10 hover:text-emerald-200")}
               aria-label={`Restore ${friendlyNoteTitle(note)}`}
               title="Restore memory"
             >
@@ -248,7 +255,7 @@ function NoteRow({
               type="button"
               onClick={onArchive}
               disabled={note.status === "archived"}
-              className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)] disabled:cursor-not-allowed disabled:opacity-45"
+              className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
               aria-label={`Archive ${friendlyNoteTitle(note)}`}
               title="Archive memory"
             >
@@ -259,7 +266,7 @@ function NoteRow({
             type="button"
             onClick={onEdit}
             className={cn(
-              "rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+              rowActionButtonClassName,
               editing && "bg-[var(--accent)] text-[var(--foreground)]",
             )}
             aria-label={`Edit ${friendlyNoteTitle(note)}`}
@@ -267,7 +274,6 @@ function NoteRow({
           >
             <Pencil size="0.875rem" />
           </button>
-        </div>
       </div>
       {note.tags.length > 0 && (
         <div className="mt-2 truncate text-[0.625rem] text-[var(--muted-foreground)]">
@@ -434,13 +440,13 @@ function SourceNoteReference({
         type="button"
         onClick={() => onOpenSourceNote(sourceNoteId)}
         className="min-w-0 truncate rounded-md bg-[var(--muted)]/40 px-1.5 py-0.5 text-left text-[0.625rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-        title={`Open source note ${sourceNoteId}`}
+        title={`Open source memory ${sourceNoteId}`}
       >
-        Source note: {sourceNoteId}
+        Source memory: {sourceNoteId}
       </button>
     );
   }
-  return <StatusPill label={`Source note ${sourceNoteId}`} />;
+  return <StatusPill label={`Source memory ${sourceNoteId}`} />;
 }
 
 function DraftMetadataPills({
@@ -795,21 +801,22 @@ function DraftRow({
   const pending = draft.status === "pending";
 
   return (
-    <article className="rounded-xl border border-rose-300/15 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-2.5 transition-all hover:border-rose-300/30 hover:bg-[var(--sidebar-accent)]">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-xs font-semibold text-[var(--foreground)]">{draft.summary || draft.id}</div>
+    <article className="group relative rounded-xl border border-rose-300/15 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-2.5 transition-all hover:border-rose-300/30 hover:bg-[var(--sidebar-accent)]">
+      <div className={cn("min-w-0", pending && "transition-[padding] group-hover:pr-20 max-md:pr-20")}>
+          <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={draft.summary || draft.id}>
+            {draft.summary || draft.id}
+          </div>
           <div className="mt-1 flex flex-wrap gap-1.5">
             <StatusPill label={draftStatusLabel(draft.status)} tone={draftStatusTone(draft.status)} />
             <StatusPill label={`${draft.mutations.length} suggested change${draft.mutations.length === 1 ? "" : "s"}`} />
           </div>
           <DraftMetadataPills draft={draft} onOpenSourceNote={onOpenSourceNote} />
           <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]/80">Internal ID: {draft.id}</div>
-        </div>
       </div>
       {pending && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          <ToolButton
+        <div className={rowActionPillClassName}>
+          <button
+            type="button"
             onClick={() =>
               accept
                 .mutateAsync({ id: draft.id })
@@ -817,12 +824,14 @@ function DraftRow({
                 .catch((err: Error) => toast.error(err.message))
             }
             disabled={accept.isPending}
-            tone="primary"
+            className={cn(rowActionButtonClassName, "bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary)]/85")}
+            aria-label={`Keep suggestion ${draft.id}`}
+            title="Keep suggestion"
           >
             <Check size="0.875rem" />
-            Keep
-          </ToolButton>
-          <ToolButton
+          </button>
+          <button
+            type="button"
             onClick={() =>
               reject
                 .mutateAsync({ id: draft.id, reason: "Rejected from memory panel" })
@@ -830,10 +839,12 @@ function DraftRow({
                 .catch((err: Error) => toast.error(err.message))
             }
             disabled={reject.isPending}
+            className={rowActionButtonClassName}
+            aria-label={`Skip suggestion ${draft.id}`}
+            title="Skip suggestion"
           >
             <X size="0.875rem" />
-            Skip
-          </ToolButton>
+          </button>
         </div>
       )}
     </article>
@@ -994,26 +1005,27 @@ function ArchivedDraftRow({
   return (
     <article
       className={cn(
-        "rounded-xl border border-rose-300/15 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-2.5 transition-all hover:border-rose-300/30 hover:bg-[var(--sidebar-accent)]",
+        "group relative rounded-xl border border-rose-300/15 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-2.5 transition-all hover:border-rose-300/30 hover:bg-[var(--sidebar-accent)]",
         selected && "border-rose-300/40 bg-rose-300/10 ring-1 ring-rose-300/25",
       )}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-xs font-semibold text-[var(--foreground)]">{draft.summary || draft.id}</div>
+      <div className="min-w-0 transition-[padding] group-hover:pr-36 max-md:pr-36">
+          <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={draft.summary || draft.id}>
+            {draft.summary || draft.id}
+          </div>
           <div className="mt-1 flex flex-wrap gap-1.5">
             <StatusPill label={draftStatusLabel(draft.status)} tone={draftStatusTone(draft.status)} />
             <StatusPill label={`${draft.mutations.length} suggested change${draft.mutations.length === 1 ? "" : "s"}`} />
           </div>
           <DraftMetadataPills draft={draft} onOpenSourceNote={onOpenSourceNote} />
           <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]/80">Internal ID: {draft.id}</div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
+      </div>
+      <div className={rowActionPillClassName}>
           <button
             type="button"
             onClick={onView}
             className={cn(
-              "rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+              rowActionButtonClassName,
               selected && "bg-[var(--accent)] text-[var(--foreground)]",
             )}
             aria-label={`View suggestion ${draft.id}`}
@@ -1024,7 +1036,7 @@ function ArchivedDraftRow({
           <button
             type="button"
             onClick={onEdit}
-            className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+            className={rowActionButtonClassName}
             aria-label={`Edit suggestion ${draft.id}`}
             title="Edit raw suggestion"
           >
@@ -1034,7 +1046,7 @@ function ArchivedDraftRow({
             type="button"
             onClick={onRestore}
             disabled={draft.status !== "rejected"}
-            className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-emerald-500/10 hover:text-emerald-200 disabled:cursor-not-allowed disabled:opacity-45"
+            className={cn(rowActionButtonClassName, "hover:bg-emerald-500/10 hover:text-emerald-200")}
             aria-label={`Restore suggestion ${draft.id}`}
             title={draft.status === "rejected" ? "Restore suggestion" : "Kept suggestions cannot be restored"}
           >
@@ -1043,13 +1055,12 @@ function ArchivedDraftRow({
           <button
             type="button"
             onClick={onDelete}
-            className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]"
+            className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
             aria-label={`Delete suggestion ${draft.id}`}
             title="Delete suggestion"
           >
             <Trash2 size="0.875rem" />
           </button>
-        </div>
       </div>
       <div className="mt-2 truncate text-[0.625rem] text-[var(--muted-foreground)]">
         Updated {new Date(draft.updatedAt).toLocaleString()}
@@ -1080,7 +1091,7 @@ function ImportPreviewRowItem({
   return (
     <article
       className={cn(
-        "grid grid-cols-[auto_minmax(0,1fr)] gap-3 rounded-lg bg-[var(--secondary)]/50 p-3 ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/45 sm:grid-cols-[auto_minmax(0,1fr)_auto]",
+        "group relative grid grid-cols-[auto_minmax(0,1fr)] gap-3 rounded-lg bg-[var(--secondary)]/50 p-3 ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/45",
         selected && "bg-rose-300/10 ring-rose-300/35",
       )}
     >
@@ -1094,30 +1105,34 @@ function ImportPreviewRowItem({
           aria-label={`Select ${sample.title}`}
         />
       </label>
-      <div className="min-w-0 self-center">
-        <div className="truncate text-xs font-medium text-[var(--foreground)]">{sample.title}</div>
+      <div className="min-w-0 self-center transition-[padding] group-hover:pr-20 max-md:pr-20">
+        <div className="truncate text-xs font-medium text-[var(--foreground)]" title={sample.title}>
+          {sample.title}
+        </div>
         <div className="mt-1 flex flex-wrap gap-1.5">
           <StatusPill label={`${sample.mutationCount} suggested change${sample.mutationCount === 1 ? "" : "s"}`} />
         </div>
       </div>
-      <div className="col-span-2 flex shrink-0 items-center justify-end gap-1.5 sm:col-span-1">
+      <div className={rowActionPillClassName}>
         <button
           type="button"
           onClick={onImport}
           disabled={disabled || importing}
-          className="inline-flex min-h-8 items-center justify-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-1.5 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+          className={cn(rowActionButtonClassName, "bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary)]/85")}
+          aria-label={`Import ${sample.title}`}
+          title="Import"
         >
           {importing ? <Loader2 size="0.875rem" className="animate-spin" /> : <Import size="0.875rem" />}
-          Import
         </button>
         <button
           type="button"
           onClick={onToggleHidden}
           disabled={disabled}
-          className="inline-flex min-h-8 items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+          className={rowActionButtonClassName}
+          aria-label={hidden ? `Show ${sample.title}` : `Hide ${sample.title}`}
+          title={hidden ? "Show source" : "Hide source"}
         >
           {hidden ? <Eye size="0.875rem" /> : <EyeOff size="0.875rem" />}
-          {hidden ? "Unhide" : "Hide"}
         </button>
       </div>
     </article>
@@ -1254,7 +1269,7 @@ function ChatMemorySettings() {
         onChange={(checked) => patch({ longTermMemoryDebug: checked })}
       />
       <SettingToggle
-        label="Create drafts after replies"
+        label="Create suggestions after replies"
         checked={autoExtract}
         onChange={(checked) =>
           patch({
@@ -1264,7 +1279,7 @@ function ChatMemorySettings() {
         }
       />
       <SettingToggle
-        label="Auto-apply low-risk drafts"
+        label="Auto-apply low-risk suggestions"
         checked={autoExtract && autoApplyLowRisk}
         disabled={!autoExtract}
         onChange={(checked) =>
@@ -1614,12 +1629,12 @@ export function LongTermMemoryPanel() {
           missingCount ? `Missing: ${result.missingSourceIds.slice(0, 3).join(", ")}` : null,
         ].filter(Boolean);
         toast.error(
-          `Imported ${result.imported.length} source note(s), ${draftCount} extraction draft(s), ${errorCount + missingCount} issue(s)${
+          `Imported ${result.imported.length} memory source(s), ${draftCount} suggestion(s), ${errorCount + missingCount} issue(s)${
             issueDetails.length ? `: ${issueDetails.join("; ")}` : ""
           }`,
         );
       } else {
-        toast.success(`Imported ${result.imported.length} source note(s), created ${draftCount} extraction draft(s)`);
+        toast.success(`Imported ${result.imported.length} memory source(s), created ${draftCount} suggestion(s)`);
       }
       setSelectedImportRows((current) => {
         const next = new Set(current);
@@ -1672,7 +1687,7 @@ export function LongTermMemoryPanel() {
             className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--muted)]/40 px-1.5 py-0.5 text-[0.625rem] font-medium leading-tight text-[var(--muted-foreground)] transition-colors hover:border-rose-300/30 hover:bg-rose-300/10 hover:text-[var(--foreground)]"
           >
             <Archive size="0.75rem" />
-            Archived
+            Archive
           </button>
         </div>
       </section>
@@ -1766,7 +1781,7 @@ export function LongTermMemoryPanel() {
       )}
 
       {tab === "drafts" && (
-        <Section title="Suggestions To Review">
+        <Section title="Suggestions">
           <div className="space-y-2">
             {filteredDrafts.length === 0 && (
               <p className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]">
@@ -1849,7 +1864,7 @@ export function LongTermMemoryPanel() {
       )}
 
       {tab === "import" && (
-        <Section title="Bring Existing Stories In">
+        <Section title="Import">
           <div className="grid grid-cols-[1fr_auto] gap-2">
             <select
               value={importSource}
@@ -1903,7 +1918,7 @@ export function LongTermMemoryPanel() {
               ) : (
                 <Import size="0.875rem" />
               )}
-              Bring in selected
+              Import selected
             </ToolButton>
             <ToolButton
               onClick={() =>
@@ -1969,7 +1984,7 @@ export function LongTermMemoryPanel() {
           setViewingDraftId(null);
           setEditingDraftId(null);
         }}
-        title="Archived Memories And Suggestions"
+        title="Archive"
         width="max-w-5xl"
       >
         <div className="grid gap-3">

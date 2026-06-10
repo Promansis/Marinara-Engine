@@ -201,7 +201,7 @@ export function CreateLongTermMemoryNoteForm({
   };
 
   return (
-    <div className="mb-3 rounded-lg bg-[var(--card)] p-3 ring-1 ring-[var(--primary)]/35">
+    <div className="grid gap-3">
       <div className="mb-3 flex items-center justify-between gap-3">
         <h3 className="text-xs font-semibold text-[var(--foreground)]">New Memory</h3>
         <button

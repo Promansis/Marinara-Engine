@@ -43,7 +43,7 @@ export function ToolButton({
       disabled={disabled}
       className={cn(
         "inline-flex min-h-8 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-50",
-        tone === "primary" && "bg-[var(--primary)] text-white hover:opacity-90",
+        tone === "primary" && "bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90",
         tone === "secondary" &&
           "bg-[var(--secondary)] text-[var(--foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
         tone === "danger" &&

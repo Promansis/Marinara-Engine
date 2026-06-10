@@ -9,7 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import { Check, Eye, GripHorizontal, ListChecks, List, Pencil, X } from "lucide-react";
+import { Check, Eye, GripHorizontal, ListChecks, List, Maximize2, Minimize2, Pencil, X } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { applyInlineMarkdown, renderMarkdownBlocks } from "../../lib/markdown";
 
@@ -31,8 +31,8 @@ interface PanelLayout {
   height: number;
 }
 
-const DEFAULT_WIDTH = 560;
-const DEFAULT_HEIGHT = 420;
+const DEFAULT_WIDTH = 720;
+const DEFAULT_HEIGHT = 560;
 const MIN_WIDTH = 280;
 const MIN_HEIGHT = 260;
 const VIEWPORT_MARGIN = 12;
@@ -100,6 +100,7 @@ export const FloatingMessageEditor = memo(function FloatingMessageEditor({
   const [layout, setLayout] = useState<PanelLayout>(() => getDefaultLayout());
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(false);
   const [previewMode, setPreviewMode] = useState(false);
   const [editorContent, setEditorContent] = useState(initialContent);
 
@@ -108,6 +109,7 @@ export const FloatingMessageEditor = memo(function FloatingMessageEditor({
     const nextContent = normalizeQuotes ? quoteNormalized(initialContent) : initialContent;
     setPreviewMode(false);
     setEditorContent(nextContent);
+    setIsMaximized(false);
     setLayout((current) => constrainLayout(current));
     requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }));
   }, [initialContent, normalizeQuotes, open]);
@@ -121,13 +123,13 @@ export const FloatingMessageEditor = memo(function FloatingMessageEditor({
 
   const panelStyle = useMemo<CSSProperties>(
     () => ({
-      left: layout.x,
-      top: layout.y,
-      width: layout.width,
-      height: layout.height,
+      left: isMaximized ? VIEWPORT_MARGIN : layout.x,
+      top: isMaximized ? VIEWPORT_MARGIN : layout.y,
+      width: isMaximized ? `calc(100vw - ${VIEWPORT_MARGIN * 2}px)` : layout.width,
+      height: isMaximized ? `calc(100dvh - ${VIEWPORT_MARGIN * 2}px)` : layout.height,
       borderColor: "var(--border)",
     }),
-    [layout],
+    [isMaximized, layout],
   );
 
   const headerStyle = useMemo<CSSProperties>(
@@ -179,6 +181,7 @@ export const FloatingMessageEditor = memo(function FloatingMessageEditor({
 
   const startDrag = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
+      if (isMaximized) return;
       if (event.button !== 0) return;
       const target = event.target as HTMLElement;
       if (target.closest("button, textarea")) return;
@@ -186,7 +189,7 @@ export const FloatingMessageEditor = memo(function FloatingMessageEditor({
       dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, layout };
       setIsDragging(true);
     },
-    [layout],
+    [isMaximized, layout],
   );
 
   const moveDrag = useCallback((event: ReactPointerEvent<HTMLElement>) => {
@@ -210,13 +213,14 @@ export const FloatingMessageEditor = memo(function FloatingMessageEditor({
 
   const startResize = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (isMaximized) return;
       event.preventDefault();
       event.stopPropagation();
       event.currentTarget.setPointerCapture(event.pointerId);
       resizeRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, layout };
       setIsResizing(true);
     },
-    [layout],
+    [isMaximized, layout],
   );
 
   const moveResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
@@ -241,7 +245,7 @@ export const FloatingMessageEditor = memo(function FloatingMessageEditor({
   if (!open) return null;
 
   return createPortal(
-    <div className="pointer-events-none fixed inset-0 z-[9998]" data-no-message-quick-edit>
+    <div className="pointer-events-none fixed inset-0 z-[11000]" data-no-message-quick-edit>
       <section
         aria-label={title}
         className={cn(
@@ -275,6 +279,15 @@ export const FloatingMessageEditor = memo(function FloatingMessageEditor({
             <GripHorizontal size="0.95rem" className="shrink-0 text-[var(--primary)]/80" aria-hidden="true" />
             <span className="truncate">{title}</span>
           </div>
+          <button
+            type="button"
+            onClick={() => setIsMaximized((current) => !current)}
+            aria-label={isMaximized ? "Restore editor size" : "Maximize editor"}
+            title={isMaximized ? "Restore size" : "Maximize"}
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--secondary)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]/45"
+          >
+            {isMaximized ? <Minimize2 size="0.95rem" /> : <Maximize2 size="0.95rem" />}
+          </button>
           <button
             type="button"
             onClick={handleSave}
@@ -350,7 +363,10 @@ export const FloatingMessageEditor = memo(function FloatingMessageEditor({
         <div
           aria-hidden="true"
           title="Resize editor"
-          className="absolute bottom-0 right-0 z-20 h-5 w-5 cursor-nwse-resize opacity-70 transition-opacity hover:opacity-100"
+          className={cn(
+            "absolute bottom-0 right-0 z-20 h-5 w-5 cursor-nwse-resize opacity-70 transition-opacity hover:opacity-100",
+            isMaximized && "hidden",
+          )}
           onPointerDown={startResize}
           onPointerMove={moveResize}
           onPointerUp={endResize}
