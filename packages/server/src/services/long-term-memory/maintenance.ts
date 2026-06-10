@@ -600,7 +600,7 @@ export async function createLongTermMemoryInteropSourceNotes(
     const noteInput = {
       id: draft.sourceNoteId,
       type: "scene" as const,
-      status: "active" as const,
+      status: "dormant" as const,
       modes: draft.modes,
       scope: { ...(draft.scope ?? {}), ...(options.scope ?? {}) },
       tags: ["source_summary", draft.sourceTag],
@@ -617,7 +617,7 @@ export async function createLongTermMemoryInteropSourceNotes(
       const note = await storage.updateNote(
         existing.id,
         {
-          status: "active",
+          status: "dormant",
           modes: noteInput.modes,
           scope: noteInput.scope,
           tags: Array.from(new Set([...existing.tags, ...noteInput.tags])),

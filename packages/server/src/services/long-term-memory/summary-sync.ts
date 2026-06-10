@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { type ChatMode, type ChatSummaryEntry, type LtmMode, type LtmNote } from "@marinara-engine/shared";
 import { logger } from "../../lib/logger.js";
+import type { BaseLLMProvider } from "../llm/base-provider.js";
+import { applyLongTermMemoryDraft } from "./reconciliation.js";
 import { rebuildLongTermMemoryIndexes } from "./rebuild.js";
+import { extractLongTermMemoryFromSourceNote } from "./source-extraction.js";
 import { LongTermMemoryStorage } from "./storage.js";
 
 export type SummaryLtmMetadataUpdater = (
@@ -11,6 +14,15 @@ export type SummaryLtmMetadataUpdater = (
 export type SummaryLtmSyncOptions = {
   rebuildIndexes?: boolean;
   updateMetadata?: SummaryLtmMetadataUpdater;
+  extraction?: {
+    provider: BaseLLMProvider;
+    model: string;
+    enabled?: boolean;
+    applyLowRisk?: boolean;
+    includeExistingNotes?: boolean;
+    instruction?: string;
+    signal?: AbortSignal;
+  };
 };
 
 export type SummaryLtmChat = {
@@ -157,6 +169,7 @@ export async function syncChatSummaryEntryToLongTermMemory(
   const sourceHash = sourceHashForEntry(entry);
   const enabled = entry.ltm?.enabled === true;
   let mutated = false;
+  let nextLtm: NonNullable<ChatSummaryEntry["ltm"]> | null = null;
 
   try {
     if (!enabled) {
@@ -233,13 +246,51 @@ export async function syncChatSummaryEntryToLongTermMemory(
     }
 
     const ltm = {
+      ...(entry.ltm ?? {}),
       enabled: true,
       noteId,
       syncedAt: new Date().toISOString(),
       sourceHash,
     };
-    await persistEntryLtmState(options.updateMetadata, entry.id, ltm);
+    nextLtm = ltm;
+    await persistEntryLtmState(options.updateMetadata, entry.id, nextLtm);
     if (mutated && shouldRebuild) await rebuildLongTermMemoryIndexes();
+    if (
+      options.extraction?.enabled === true &&
+      nextLtm.extractedSourceHash !== sourceHash &&
+      options.extraction.provider
+    ) {
+      try {
+        const result = await extractLongTermMemoryFromSourceNote({
+          noteId,
+          provider: options.extraction.provider,
+          model: options.extraction.model,
+          scope: nextNote.scope,
+          modes: nextNote.modes,
+          instruction: options.extraction.instruction,
+          includeExistingNotes: options.extraction.includeExistingNotes,
+          signal: options.extraction.signal,
+        });
+        const applyResult =
+          options.extraction.applyLowRisk && result.draft
+            ? await applyLongTermMemoryDraft(result.draft.id, {
+                actor: "summary_ltm_sync",
+                autoApplyLowRiskOnly: true,
+              })
+            : null;
+        nextLtm = {
+          ...nextLtm,
+          extractedAt: new Date().toISOString(),
+          extractedSourceHash: sourceHash,
+          ...(result.draft ? { extractionDraftId: result.draft.id } : {}),
+          appliedMutationIds: applyResult?.appliedMutationIds ?? [],
+          skippedMutationIds: applyResult?.skippedMutationIds ?? [],
+        };
+        await persistEntryLtmState(options.updateMetadata, entry.id, nextLtm);
+      } catch (err) {
+        logger.warn(err, "[ltm] Failed to extract summary source note %s", noteId);
+      }
+    }
     return { noteId, synced: true, mutated };
   } catch (err) {
     logger.warn(err, "[ltm] Failed to sync chat summary entry %s", entry.id);

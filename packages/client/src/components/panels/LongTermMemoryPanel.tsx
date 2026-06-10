@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import {
   AlertTriangle,
   Archive,
+  BrainCircuit,
   Check,
   DatabaseZap,
   Eye,
@@ -34,6 +35,7 @@ import type {
 import {
   useAcceptLongTermMemoryDraft,
   useArchiveLongTermMemoryNote,
+  useExtractLongTermMemorySourceNote,
   useImportLongTermMemorySourceNotes,
   useDeleteLongTermMemoryDraft,
   useLongTermMemoryDrafts,
@@ -390,11 +392,15 @@ function NoteViewModalContent({
   note,
   drafts,
   draftsLoading,
+  chatId,
 }: {
   note: LtmNote;
   drafts: LtmExtractionDraft[];
   draftsLoading: boolean;
+  chatId?: string | null;
 }) {
+  const extractSourceNote = useExtractLongTermMemorySourceNote();
+  const isSourceNote = note.type === "scene" && (note.tags.includes("source_summary") || note.tags.includes("chat_summary"));
   const extractedDrafts = drafts.filter((draft) => draft.source.sourceNoteId === note.id);
   const extractedMutations = extractedDrafts.flatMap((draft) => draft.mutations);
   const extractedLinks = extractedMutations.flatMap((mutation) => {
@@ -448,7 +454,35 @@ function NoteViewModalContent({
       <section className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-xs font-semibold text-[var(--foreground)]">Suggestions From This Memory</h3>
-          <StatusPill label={`${extractedMutations.length} suggested change${extractedMutations.length === 1 ? "" : "s"}`} />
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusPill label={`${extractedMutations.length} suggested change${extractedMutations.length === 1 ? "" : "s"}`} />
+            {isSourceNote && (
+              <ToolButton
+                onClick={() =>
+                  extractSourceNote
+                    .mutateAsync({ noteId: note.id, ...(chatId ? { chatId } : {}) })
+                    .then((result) => {
+                      const count = result.draft?.mutations.length ?? 0;
+                      toast.success(
+                        count
+                          ? `Created ${count} typed memor${count === 1 ? "y suggestion" : "y suggestions"}`
+                          : "No typed memory suggestions found",
+                      );
+                    })
+                    .catch((err: Error) => toast.error(err.message))
+                }
+                disabled={extractSourceNote.isPending}
+                tone="primary"
+              >
+                {extractSourceNote.isPending ? (
+                  <Loader2 size="0.875rem" className="animate-spin" />
+                ) : (
+                  <BrainCircuit size="0.875rem" />
+                )}
+                Extract typed memories
+              </ToolButton>
+            )}
+          </div>
         </div>
         {draftsLoading ? (
           <div className="flex items-center justify-center rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-3 text-xs text-[var(--muted-foreground)]">
@@ -951,6 +985,7 @@ function ChatMemorySettings() {
 }
 
 export function LongTermMemoryPanel() {
+  const activeChatId = useChatStore((s) => s.activeChatId);
   const [tab, setTab] = useState<TabId>("notes");
   const [noteType, setNoteType] = useState<"all" | LtmNoteType>("all");
   const [noteStatus, setNoteStatus] = useState<"all" | Exclude<LtmStatus, "archived">>("all");
@@ -1728,6 +1763,7 @@ export function LongTermMemoryPanel() {
             note={viewingNote}
             drafts={allDrafts.data ?? []}
             draftsLoading={allDrafts.isLoading}
+            chatId={activeChatId}
           />
         )}
       </Modal>

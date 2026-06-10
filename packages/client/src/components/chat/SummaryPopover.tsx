@@ -58,6 +58,8 @@ interface SummaryPopoverProps {
   promptTemplates?: ChatSummaryPromptTemplate[];
   activePromptTemplateId?: string | null;
   summaryLongTermMemoryEnabled?: boolean;
+  summaryLongTermMemoryAutoExtract?: boolean;
+  summaryLongTermMemoryAutoApplyLowRisk?: boolean;
   totalMessageCount: number;
   onClose: () => void;
 }
@@ -172,6 +174,8 @@ export function SummaryPopover({
   promptTemplates = [],
   activePromptTemplateId = null,
   summaryLongTermMemoryEnabled = false,
+  summaryLongTermMemoryAutoExtract = false,
+  summaryLongTermMemoryAutoApplyLowRisk = false,
   totalMessageCount,
   onClose,
 }: SummaryPopoverProps) {
@@ -503,9 +507,47 @@ export function SummaryPopover({
   const handleToggleSummaryLtm = useCallback(
     (enabled: boolean) => {
       updateMeta.mutate(
-        { id: chatId, summaryLongTermMemoryEnabled: enabled },
+        {
+          id: chatId,
+          summaryLongTermMemoryEnabled: enabled,
+          ...(enabled ? {} : { summaryLongTermMemoryAutoExtract: false, summaryLongTermMemoryAutoApplyLowRisk: false }),
+        },
         {
           onError: () => toast.error("Could not update long-term memory setting."),
+        },
+      );
+    },
+    [chatId, updateMeta],
+  );
+
+  const handleToggleSummaryExtraction = useCallback(
+    (enabled: boolean) => {
+      updateMeta.mutate(
+        {
+          id: chatId,
+          summaryLongTermMemoryEnabled: true,
+          summaryLongTermMemoryAutoExtract: enabled,
+          ...(enabled ? {} : { summaryLongTermMemoryAutoApplyLowRisk: false }),
+        },
+        {
+          onError: () => toast.error("Could not update long-term memory extraction setting."),
+        },
+      );
+    },
+    [chatId, updateMeta],
+  );
+
+  const handleToggleSummaryExtractionApply = useCallback(
+    (enabled: boolean) => {
+      updateMeta.mutate(
+        {
+          id: chatId,
+          summaryLongTermMemoryEnabled: true,
+          summaryLongTermMemoryAutoExtract: true,
+          summaryLongTermMemoryAutoApplyLowRisk: enabled,
+        },
+        {
+          onError: () => toast.error("Could not update long-term memory extraction setting."),
         },
       );
     },
@@ -925,6 +967,22 @@ export function SummaryPopover({
               checked={summaryLongTermMemoryEnabled}
               disabled={updateMeta.isPending}
               onChange={handleToggleSummaryLtm}
+            />
+            <SummarySettingsToggle
+              label="Extract typed memories from summaries"
+              checked={summaryLongTermMemoryEnabled && summaryLongTermMemoryAutoExtract}
+              disabled={updateMeta.isPending || !summaryLongTermMemoryEnabled}
+              onChange={handleToggleSummaryExtraction}
+            />
+            <SummarySettingsToggle
+              label="Auto-keep low-risk extracted memories"
+              checked={
+                summaryLongTermMemoryEnabled &&
+                summaryLongTermMemoryAutoExtract &&
+                summaryLongTermMemoryAutoApplyLowRisk
+              }
+              disabled={updateMeta.isPending || !summaryLongTermMemoryEnabled || !summaryLongTermMemoryAutoExtract}
+              onChange={handleToggleSummaryExtractionApply}
             />
             {hasPersistedEntries && (
               <button

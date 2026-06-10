@@ -514,6 +514,8 @@ function SummaryButton({
   summaryPromptTemplates,
   activeSummaryPromptTemplateId,
   summaryLongTermMemoryEnabled,
+  summaryLongTermMemoryAutoExtract,
+  summaryLongTermMemoryAutoApplyLowRisk,
   totalMessageCount,
 }: {
   chatId: string | null;
@@ -523,6 +525,8 @@ function SummaryButton({
   summaryPromptTemplates?: ComponentProps<typeof SummaryPopover>["promptTemplates"];
   activeSummaryPromptTemplateId?: string | null;
   summaryLongTermMemoryEnabled?: boolean;
+  summaryLongTermMemoryAutoExtract?: boolean;
+  summaryLongTermMemoryAutoApplyLowRisk?: boolean;
   totalMessageCount: number;
 }) {
   const [open, setOpen] = useState(false);
@@ -557,6 +561,8 @@ function SummaryButton({
             promptTemplates={summaryPromptTemplates}
             activePromptTemplateId={activeSummaryPromptTemplateId}
             summaryLongTermMemoryEnabled={summaryLongTermMemoryEnabled}
+            summaryLongTermMemoryAutoExtract={summaryLongTermMemoryAutoExtract}
+            summaryLongTermMemoryAutoApplyLowRisk={summaryLongTermMemoryAutoApplyLowRisk}
             totalMessageCount={totalMessageCount}
             onClose={() => setOpen(false)}
           />
@@ -1038,6 +1044,8 @@ export function ChatRoleplaySurface({
                           : null
                       }
                       summaryLongTermMemoryEnabled={chatMeta.summaryLongTermMemoryEnabled === true}
+                      summaryLongTermMemoryAutoExtract={chatMeta.summaryLongTermMemoryAutoExtract === true}
+                      summaryLongTermMemoryAutoApplyLowRisk={chatMeta.summaryLongTermMemoryAutoApplyLowRisk === true}
                       totalMessageCount={totalMessageCount}
                     />
                     <ActiveContextLinksButton
@@ -1144,6 +1152,8 @@ export function ChatRoleplaySurface({
                               : null
                           }
                           summaryLongTermMemoryEnabled={chatMeta.summaryLongTermMemoryEnabled === true}
+                          summaryLongTermMemoryAutoExtract={chatMeta.summaryLongTermMemoryAutoExtract === true}
+                          summaryLongTermMemoryAutoApplyLowRisk={chatMeta.summaryLongTermMemoryAutoApplyLowRisk === true}
                           totalMessageCount={totalMessageCount}
                         />
                         <ActiveContextLinksButton
@@ -1220,6 +1230,8 @@ export function ChatRoleplaySurface({
                             : null
                         }
                         summaryLongTermMemoryEnabled={chatMeta.summaryLongTermMemoryEnabled === true}
+                        summaryLongTermMemoryAutoExtract={chatMeta.summaryLongTermMemoryAutoExtract === true}
+                        summaryLongTermMemoryAutoApplyLowRisk={chatMeta.summaryLongTermMemoryAutoApplyLowRisk === true}
                         totalMessageCount={totalMessageCount}
                       />
                       <ActiveContextLinksButton

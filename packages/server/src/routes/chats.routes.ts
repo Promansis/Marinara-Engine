@@ -37,6 +37,7 @@ import { createCharactersStorage } from "../services/storage/characters.storage.
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { createGameStateStorage, type GameStateVisibleAnchor } from "../services/storage/game-state.storage.js";
 import { createRegexScriptsStorage } from "../services/storage/regex-scripts.storage.js";
+import type { BaseLLMProvider } from "../services/llm/base-provider.js";
 import { getLocalSidecarProvider, LOCAL_SIDECAR_MODEL } from "../services/llm/local-sidecar.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
 import { generateMissingConversationSummaries } from "../services/conversation/auto-summary.service.js";
@@ -56,6 +57,7 @@ import {
   isManualTrackerCharacterId,
   parseExtra,
   isMessageHiddenFromAI,
+  resolveBaseUrl,
   resolveActiveCharacterIds,
   resolveVisibleGameStateAnchor,
   shouldEnableAgentsForGeneration,
@@ -402,6 +404,64 @@ function resolveEntryStateOverrides(value: unknown): EntryStateOverrides | undef
 export async function chatsRoutes(app: FastifyInstance) {
   const storage = createChatsStorage(app.db);
 
+  const resolveSummaryExtractionOptions = async (
+    chat: { connectionId?: string | null; metadata?: unknown },
+    meta: Record<string, unknown>,
+    fallback?: { provider: BaseLLMProvider; model: string },
+  ) => {
+    if (meta.summaryLongTermMemoryAutoExtract !== true) return undefined;
+    const applyLowRisk = meta.summaryLongTermMemoryAutoApplyLowRisk === true;
+    if (fallback) {
+      return {
+        enabled: true,
+        applyLowRisk,
+        provider: fallback.provider,
+        model: fallback.model,
+      };
+    }
+
+    try {
+      const connections = createConnectionsStorage(app.db);
+      const { createAgentsStorage } = await import("../services/storage/agents.storage.js");
+      const agentsStore = createAgentsStorage(app.db);
+      const summaryAgentCfg = await agentsStore.getByType("chat-summary");
+      const defaultAgentConn = await connections.getDefaultForAgents();
+      let connId = summaryAgentCfg?.connectionId ?? defaultAgentConn?.id ?? chat.connectionId ?? null;
+      if (connId === "random") {
+        const pool = await connections.listRandomPool();
+        connId = pool[Math.floor(Math.random() * pool.length)]?.id ?? null;
+      }
+      if (connId === LOCAL_SIDECAR_CONNECTION_ID) {
+        return {
+          enabled: true,
+          applyLowRisk,
+          provider: getLocalSidecarProvider(),
+          model: LOCAL_SIDECAR_MODEL,
+        };
+      }
+      const defaultConn = connId ? null : await connections.getDefault();
+      const conn = connId ? await connections.getWithKey(connId) : defaultConn ? await connections.getWithKey(defaultConn.id) : null;
+      if (!conn) return undefined;
+      return {
+        enabled: true,
+        applyLowRisk,
+        provider: createLLMProvider(
+          conn.provider,
+          resolveBaseUrl(conn),
+          conn.apiKey,
+          conn.maxContext,
+          conn.openrouterProvider,
+          conn.maxTokensOverride,
+          conn.claudeFastMode === "true",
+        ),
+        model: conn.model,
+      };
+    } catch (err) {
+      logger.warn(err, "[ltm] Summary source extraction provider resolution failed");
+      return undefined;
+    }
+  };
+
   const clearConversationScheduleState = async (chat: Awaited<ReturnType<typeof storage.getById>>) => {
     if (!chat) return;
     const characterIds: string[] =
@@ -720,11 +780,13 @@ export async function chatsRoutes(app: FastifyInstance) {
     if (!updated) return reply.status(404).send({ error: "Chat not found" });
     if (entryForLtmSync && existingChatForLtm) {
       const syncChat = { ...existingChatForLtm, metadata: updated.metadata };
+      const syncMeta = parseChatMetadata(syncChat.metadata);
       try {
         await syncChatSummaryEntryToLongTermMemory(syncChat, entryForLtmSync, {
           updateMetadata: createLtmMetadataUpdaterFromPatchMetadata((updater) =>
             storage.patchMetadata(req.params.id, updater),
           ),
+          extraction: await resolveSummaryExtractionOptions(syncChat, syncMeta),
         });
       } catch (error) {
         return reply.status(500).send({ error: error instanceof Error ? error.message : "Failed to sync summary LTM" });
@@ -767,6 +829,7 @@ export async function chatsRoutes(app: FastifyInstance) {
       updateMetadata: createLtmMetadataUpdaterFromPatchMetadata((updater) =>
         storage.patchMetadata(req.params.id, updater),
       ),
+      extraction: await resolveSummaryExtractionOptions(syncChat, parseChatMetadata(syncChat.metadata)),
     });
     const finalChat = await storage.getById(req.params.id);
     return { chat: finalChat, synced: entriesToSync.length };
@@ -2797,6 +2860,11 @@ export async function chatsRoutes(app: FastifyInstance) {
         await syncChatSummaryEntryToLongTermMemory({ ...chat, metadata: updatedChat.metadata }, createdEntryForSync, {
           updateMetadata: createLtmMetadataUpdaterFromPatchMetadata((updater) =>
             storage.patchMetadata(req.params.id, updater),
+          ),
+          extraction: await resolveSummaryExtractionOptions(
+            { ...chat, metadata: updatedChat.metadata },
+            parseChatMetadata(updatedChat.metadata),
+            { provider, model },
           ),
         });
         const finalChat = await storage.getById(req.params.id);

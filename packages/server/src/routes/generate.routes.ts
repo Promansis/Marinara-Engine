@@ -9593,7 +9593,18 @@ export async function generateRoutes(app: FastifyInstance) {
                       await syncChatSummaryEntryToLongTermMemory(
                         { ...chat, metadata: { ...chatMeta, ...updatedMeta } },
                         createdEntryForSync,
-                        { updateMetadata: updateChatMetadataForTools },
+                        {
+                          updateMetadata: updateChatMetadataForTools,
+                          extraction:
+                            chatMeta.summaryLongTermMemoryAutoExtract === true
+                              ? {
+                                  enabled: true,
+                                  applyLowRisk: chatMeta.summaryLongTermMemoryAutoApplyLowRisk === true,
+                                  provider,
+                                  model: conn.model,
+                                }
+                              : undefined,
+                        },
                       );
                       summaryEntries = Array.isArray(chatMeta.summaryEntries)
                         ? (chatMeta.summaryEntries as ChatSummaryEntry[])
