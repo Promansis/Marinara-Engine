@@ -475,6 +475,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
             ? await applyLongTermMemoryDraft(result.draft.id, {
                 actor: "maintenance_api",
                 autoApplyLowRiskOnly: true,
+                autoApplyPolicy: "source_extraction",
               })
             : null;
 
@@ -635,6 +636,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
               ? await applyLongTermMemoryDraft(result.draft.id, {
                   actor: "maintenance_api",
                   autoApplyLowRiskOnly: true,
+                  autoApplyPolicy: "source_extraction",
                 })
               : null;
 

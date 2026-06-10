@@ -156,7 +156,7 @@ import { retrieveLongTermMemory } from "../services/long-term-memory/retrieval.j
 import type { LtmBudgetedChunk } from "../services/long-term-memory/budget.js";
 import { recordLongTermMemoryInjection } from "../services/long-term-memory/usage.js";
 import { runLongTermMemoryExtraction, LongTermMemoryDraftStore } from "../services/long-term-memory/extraction.js";
-import { applyLongTermMemoryDraft, isLowRiskAutoApplyMutation } from "../services/long-term-memory/reconciliation.js";
+import { applyLongTermMemoryDraft, isLowRiskTurnMutation } from "../services/long-term-memory/reconciliation.js";
 import { LongTermMemoryStorage } from "../services/long-term-memory/storage.js";
 import {
   markSummaryEntryForLtmIfEnabled,
@@ -8187,7 +8187,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   });
                   if (extraction.mutations.length === 0) return;
                   const canAutoApplyDraft =
-                    shouldAutoApplyLowRisk && extraction.mutations.every(isLowRiskAutoApplyMutation);
+                    shouldAutoApplyLowRisk && extraction.mutations.every(isLowRiskTurnMutation);
                   const draft = await new LongTermMemoryDraftStore().createDraft({
                     userMessage: input.userMessage ?? "",
                     assistantReply: fullResponse,
@@ -8200,6 +8200,7 @@ export async function generateRoutes(app: FastifyInstance) {
                     await applyLongTermMemoryDraft(draft.id, {
                       actor: "auto_low_risk",
                       autoApplyLowRiskOnly: true,
+                      autoApplyPolicy: "turn",
                     });
                   }
                 } catch (err) {

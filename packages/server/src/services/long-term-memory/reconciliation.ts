@@ -9,6 +9,7 @@ export interface ApplyLtmDraftOptions {
   actor?: string;
   rebuildIndexes?: boolean;
   autoApplyLowRiskOnly?: boolean;
+  autoApplyPolicy?: "turn" | "source_extraction";
   mutationIds?: string[];
 }
 
@@ -117,7 +118,31 @@ async function preflightDraftMutations(
   }
 }
 
-export function isLowRiskAutoApplyMutation(mutation: LtmDraftMutation) {
+function mutationTouchesSceneId(mutation: LtmDraftMutation) {
+  if (mutation.kind === "create_note") return mutation.note.id.startsWith("scene_");
+  return (
+    mutation.noteId.startsWith("scene_") ||
+    (mutation.kind === "add_link" && mutation.link.target.startsWith("scene_"))
+  );
+}
+
+function mutationHasSourceSummaryTag(mutation: LtmDraftMutation) {
+  return (
+    mutation.kind === "create_note" &&
+    (mutation.note.tags.includes("source_summary") || mutation.note.tags.includes("chat_summary"))
+  );
+}
+
+function mutationHasGates(mutation: LtmDraftMutation) {
+  if (mutation.kind === "create_note") {
+    return Object.values(mutation.note.sections).some((section) => (section.gates?.length ?? 0) > 0);
+  }
+  if (mutation.kind === "append_section") return (mutation.gates?.length ?? 0) > 0;
+  if (mutation.kind === "update_section") return (mutation.section.gates?.length ?? 0) > 0;
+  return false;
+}
+
+export function isLowRiskTurnMutation(mutation: LtmDraftMutation) {
   if (mutation.risk !== "low") return false;
   if (mutation.kind === "append_section") {
     return mutation.noteId.startsWith("scene_") && mutation.confidence >= 0.7;
@@ -129,6 +154,39 @@ export function isLowRiskAutoApplyMutation(mutation: LtmDraftMutation) {
     return mutation.note.type === "callback" && mutation.confidence >= 0.85 && !mutation.note.conflicts?.length;
   }
   return false;
+}
+
+export function isLowRiskSourceExtractionMutation(mutation: LtmDraftMutation) {
+  if (mutation.risk !== "low") return false;
+  if (mutationTouchesSceneId(mutation) || mutationHasSourceSummaryTag(mutation)) return false;
+  if (mutation.kind === "append_section") return false;
+  if (mutation.kind === "create_note") {
+    return (
+      mutation.note.type === "callback" &&
+      mutation.confidence >= 0.85 &&
+      !mutation.note.conflicts?.length &&
+      !mutationHasGates(mutation)
+    );
+  }
+  if (mutation.kind === "add_link") {
+    return mutation.confidence >= 0.75;
+  }
+  if (mutation.kind === "set_status") {
+    return (
+      mutation.status === "resolved" &&
+      mutation.confidence >= 0.85 &&
+      (mutation.noteId.startsWith("cb_") || mutation.noteId.startsWith("thread_"))
+    );
+  }
+  return false;
+}
+
+export const isLowRiskAutoApplyMutation = isLowRiskTurnMutation;
+
+function isLowRiskMutationForPolicy(mutation: LtmDraftMutation, policy: ApplyLtmDraftOptions["autoApplyPolicy"]) {
+  return policy === "source_extraction"
+    ? isLowRiskSourceExtractionMutation(mutation)
+    : isLowRiskTurnMutation(mutation);
 }
 
 async function applyMutation(
@@ -220,9 +278,10 @@ export async function applyLongTermMemoryDraft(
   if (unknownMutationIds?.length) {
     throw new Error(`Long-term memory draft mutation not found: ${unknownMutationIds.join(", ")}`);
   }
+  const autoApplyPolicy = options.autoApplyPolicy ?? (draft.source.sourceNoteId ? "source_extraction" : "turn");
   const mutationsToApply = draft.mutations.filter((mutation) => {
     if (selectedMutationIds && !selectedMutationIds.has(mutation.id)) return false;
-    if (options.autoApplyLowRiskOnly && !isLowRiskAutoApplyMutation(mutation)) return false;
+    if (options.autoApplyLowRiskOnly && !isLowRiskMutationForPolicy(mutation, autoApplyPolicy)) return false;
     return true;
   });
   const skippedMutationIds = draft.mutations
