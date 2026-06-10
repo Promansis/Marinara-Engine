@@ -3,6 +3,7 @@ import { mkdir, readdir, readFile, rename, rm } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import {
   ltmExtractionResponseSchema,
+  ltmEventSchema,
   ltmNoteSchema,
   type LtmDraftMutation,
   type LtmExtractionDraft,
@@ -184,6 +185,41 @@ async function listVaultFiles(root: string) {
   return files;
 }
 
+async function checkEventLogIntegrity(root: string, issues: IntegrityIssue[]) {
+  const dirs = getLongTermMemoryDirectories(root);
+  const publicPath = relative(root, dirs.eventLog).split(/[\\/]+/).join("/");
+  let content = "";
+  try {
+    content = await readFile(dirs.eventLog, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    issues.push({
+      severity: "error",
+      code: "event_log_unreadable",
+      path: publicPath,
+      message: err instanceof Error ? err.message : "Event log could not be read.",
+    });
+    return 0;
+  }
+
+  let eventCount = 0;
+  for (const [index, line] of content.split("\n").entries()) {
+    if (!line.trim()) continue;
+    try {
+      ltmEventSchema.parse(JSON.parse(line));
+      eventCount += 1;
+    } catch (err) {
+      issues.push({
+        severity: "error",
+        code: "malformed_event",
+        path: publicPath,
+        message: err instanceof Error ? `Line ${index + 1}: ${err.message}` : `Line ${index + 1}: Event failed validation.`,
+      });
+    }
+  }
+  return eventCount;
+}
+
 async function writeReplayNoteExact(root: string, note: LtmNote) {
   const parsed = ltmNoteSchema.parse(note);
   await writeJsonAtomic(notePathForId(parsed.id, parsed.type, root), parsed);
@@ -251,12 +287,12 @@ export async function checkLongTermMemoryIntegrity(root = getLongTermMemoryRoot(
     }
   }
 
-  const events = await storage.readEvents();
+  const eventCount = await checkEventLogIntegrity(root, issues);
   return {
     ok: !issues.some((issue) => issue.severity === "error"),
     checkedAt: nowIso(),
     noteCount: notesById.size,
-    eventCount: events.length,
+    eventCount,
     issues,
   };
 }

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -6,6 +6,8 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import type { LtmDraftMutation } from "@marinara-engine/shared";
 import { LongTermMemoryDraftStore } from "../extraction.js";
+import { checkLongTermMemoryIntegrity } from "../maintenance.js";
+import { getLongTermMemoryDirectories } from "../paths.js";
 import {
   applyLongTermMemoryDraft,
   isLowRiskSourceExtractionMutation,
@@ -132,4 +134,26 @@ test("source extraction low-risk policy blocks secret callback auto-apply", () =
     ),
     false,
   );
+});
+
+test("integrity reports malformed event log rows instead of throwing", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-integrity-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.initializeLtmStore();
+    const dirs = getLongTermMemoryDirectories(root);
+    await writeFile(dirs.eventLog, '{"id":"not-enough-fields"}\nnot json\n', "utf8");
+
+    const result = await checkLongTermMemoryIntegrity(root);
+
+    assert.equal(result.ok, false);
+    assert.equal(result.eventCount, 0);
+    assert.deepEqual(
+      result.issues.map((issue) => issue.code),
+      ["malformed_event", "malformed_event"],
+    );
+    assert(result.issues.every((issue) => issue.path === "events/log.jsonl"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
