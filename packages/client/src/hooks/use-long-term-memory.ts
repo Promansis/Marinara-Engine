@@ -6,9 +6,11 @@ import type {
   LtmDebugStatus,
   LtmExtractionDraft,
   LtmExtractionResponse,
+  LtmExtractionSettings as SharedLtmExtractionSettings,
   LtmGate,
   LtmNote,
   LtmNoteType,
+  LtmResolvedExtractionSettings as SharedLtmResolvedExtractionSettings,
   LtmScope,
   LtmStatus,
 } from "@marinara-engine/shared";
@@ -61,6 +63,9 @@ export type LtmReplayResponse = {
   unsupportedEventCount: number;
   messages: string[];
 };
+
+export type LtmExtractionSettings = SharedLtmExtractionSettings;
+export type LtmResolvedExtractionSettings = SharedLtmResolvedExtractionSettings;
 
 export type LtmRepairResponse = {
   repairedAt: string;
@@ -165,6 +170,7 @@ export const longTermMemoryKeys = {
   drafts: (filter?: LtmDraftFilter) => [...longTermMemoryKeys.all, "drafts", filter ?? {}] as const,
   importPreview: (source: LtmInteropSource, limit: number) =>
     [...longTermMemoryKeys.all, "import-preview", source, limit] as const,
+  extractionSettings: () => [...longTermMemoryKeys.all, "extraction-settings"] as const,
   debugLogs: () => [...longTermMemoryKeys.all, "debug-log"] as const,
   debugLog: (filter?: LtmDebugLogFilter) => [...longTermMemoryKeys.all, "debug-log", filter ?? {}] as const,
 };
@@ -278,6 +284,27 @@ export function useLongTermMemoryImportPreview(source: LtmInteropSource, limit: 
     queryKey: longTermMemoryKeys.importPreview(source, limit),
     queryFn: () => api.post<LtmInteropPreview>("/long-term-memory/import/preview", { source, limit }),
     staleTime: 30_000,
+  });
+}
+
+export function useLongTermMemoryExtractionSettings(options: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: longTermMemoryKeys.extractionSettings(),
+    queryFn: () => api.get<LtmResolvedExtractionSettings>("/long-term-memory/extraction-settings"),
+    enabled: options.enabled ?? true,
+    staleTime: 30_000,
+  });
+}
+
+export function useUpdateLongTermMemoryExtractionSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: LtmExtractionSettings) =>
+      api.put<LtmResolvedExtractionSettings>("/long-term-memory/extraction-settings", data),
+    onSuccess: (settings) => {
+      qc.setQueryData(longTermMemoryKeys.extractionSettings(), settings);
+      qc.invalidateQueries({ queryKey: longTermMemoryKeys.extractionSettings() });
+    },
   });
 }
 

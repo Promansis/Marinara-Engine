@@ -19,6 +19,7 @@ import {
   RotateCcw,
   Save,
   Search,
+  SlidersHorizontal,
   ShieldCheck,
   Sparkles,
   Trash2,
@@ -62,6 +63,7 @@ import {
   type CreateLongTermMemoryNoteDraft,
 } from "../long-term-memory/CreateLongTermMemoryNoteForm";
 import { LongTermMemoryDebugLogModal } from "../long-term-memory/LongTermMemoryDebugLogModal";
+import { LongTermMemoryExtractionSettingsModal } from "../long-term-memory/LongTermMemoryExtractionSettingsModal";
 import { LongTermMemoryNoteEditor } from "../long-term-memory/LongTermMemoryNoteEditor";
 import {
   friendlyIdentifier,
@@ -1181,7 +1183,7 @@ function ImportPreviewRowItem({
   );
 }
 
-function ChatMemorySettings() {
+function ChatMemorySettings({ onOpenExtractionSettings }: { onOpenExtractionSettings: () => void }) {
   const activeChatId = useChatStore((s) => s.activeChatId);
   const cachedActiveChat = useChatStore((s) => s.activeChat);
   const activeChatQuery = useChat(activeChatId);
@@ -1215,15 +1217,13 @@ function ChatMemorySettings() {
     setBudgetDraft(String(budgetValue));
   }, [activeChat?.id, budgetValue, scopeRpId, scopeUniverse]);
 
-  if (!activeChat) {
-    return <p className="text-xs text-[var(--muted-foreground)]">Open a chat to edit its long-term memory settings.</p>;
-  }
-
-  const patch = (next: Record<string, unknown>) =>
-    updateMeta
+  const patch = (next: Record<string, unknown>) => {
+    if (!activeChat) return Promise.resolve();
+    return updateMeta
       .mutateAsync({ id: activeChat.id, ...next })
       .then(() => toast.success("Chat memory settings updated"))
       .catch((err: Error) => toast.error(err.message));
+  };
 
   const commitScope = (draft = scopeDraft) => {
     const universe = normalizeScopeIdentifier(draft.universe);
@@ -1250,87 +1250,100 @@ function ChatMemorySettings() {
 
   return (
     <div className="space-y-2">
-      <SettingToggle
-        label="Use memory in prompts"
-        checked={enabled}
-        onChange={(checked) => patch({ enableLongTermMemory: checked })}
-      />
+      <ToolButton onClick={onOpenExtractionSettings}>
+        <SlidersHorizontal size="0.875rem" />
+        Extraction settings
+      </ToolButton>
 
-      <div className="grid gap-3 rounded-xl border border-rose-300/15 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-3">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <SettingField label="Universe">
-            <input
-              value={scopeDraft.universe}
-              onChange={(event) => setScopeDraft((current) => ({ ...current, universe: event.target.value }))}
-              onBlur={() => commitScope()}
-              placeholder="shared_realm"
-              className="w-full rounded-lg bg-[var(--background)] px-3 py-2 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:ring-[var(--primary)]"
-            />
-          </SettingField>
-          <SettingField label="Story line">
-            <input
-              value={scopeDraft.rpId}
-              onChange={(event) => setScopeDraft((current) => ({ ...current, rpId: event.target.value }))}
-              onBlur={() => commitScope()}
-              placeholder="main_story"
-              className="w-full rounded-lg bg-[var(--background)] px-3 py-2 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:ring-[var(--primary)]"
-            />
-          </SettingField>
-        </div>
+      {!activeChat && (
+        <p className="text-xs text-[var(--muted-foreground)]">Open a chat to edit its long-term memory settings.</p>
+      )}
 
-        <SettingField label="Memory space used in replies">
-          <div className="grid grid-cols-[1fr_5.5rem] items-center gap-3">
-            <input
-              type="range"
-              min={128}
-              max={16384}
-              step={128}
-              value={sliderBudget}
-              onChange={(event) => setBudgetDraft(event.target.value)}
-              onPointerUp={(event) => commitBudget((event.target as HTMLInputElement).value)}
-              onBlur={(event) => commitBudget(event.target.value)}
-              className="min-w-0 accent-[var(--primary)]"
-            />
-            <input
-              type="number"
-              min={128}
-              max={16384}
-              step={128}
-              value={budgetDraft}
-              onChange={(event) => setBudgetDraft(event.target.value)}
-              onBlur={(event) => commitBudget(event.target.value)}
-              className="w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-2 py-1.5 text-xs outline-none focus:border-[var(--primary)]"
-            />
+      {activeChat && (
+        <>
+          <SettingToggle
+            label="Use memory in prompts"
+            checked={enabled}
+            onChange={(checked) => patch({ enableLongTermMemory: checked })}
+          />
+
+          <div className="grid gap-3 rounded-xl border border-rose-300/15 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <SettingField label="Universe">
+                <input
+                  value={scopeDraft.universe}
+                  onChange={(event) => setScopeDraft((current) => ({ ...current, universe: event.target.value }))}
+                  onBlur={() => commitScope()}
+                  placeholder="shared_realm"
+                  className="w-full rounded-lg bg-[var(--background)] px-3 py-2 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:ring-[var(--primary)]"
+                />
+              </SettingField>
+              <SettingField label="Story line">
+                <input
+                  value={scopeDraft.rpId}
+                  onChange={(event) => setScopeDraft((current) => ({ ...current, rpId: event.target.value }))}
+                  onBlur={() => commitScope()}
+                  placeholder="main_story"
+                  className="w-full rounded-lg bg-[var(--background)] px-3 py-2 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:ring-[var(--primary)]"
+                />
+              </SettingField>
+            </div>
+
+            <SettingField label="Memory space used in replies">
+              <div className="grid grid-cols-[1fr_5.5rem] items-center gap-3">
+                <input
+                  type="range"
+                  min={128}
+                  max={16384}
+                  step={128}
+                  value={sliderBudget}
+                  onChange={(event) => setBudgetDraft(event.target.value)}
+                  onPointerUp={(event) => commitBudget((event.target as HTMLInputElement).value)}
+                  onBlur={(event) => commitBudget(event.target.value)}
+                  className="min-w-0 accent-[var(--primary)]"
+                />
+                <input
+                  type="number"
+                  min={128}
+                  max={16384}
+                  step={128}
+                  value={budgetDraft}
+                  onChange={(event) => setBudgetDraft(event.target.value)}
+                  onBlur={(event) => commitBudget(event.target.value)}
+                  className="w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-2 py-1.5 text-xs outline-none focus:border-[var(--primary)]"
+                />
+              </div>
+            </SettingField>
           </div>
-        </SettingField>
-      </div>
 
-      <SettingToggle
-        label="Debug retrieval logs"
-        checked={debug}
-        onChange={(checked) => patch({ longTermMemoryDebug: checked })}
-      />
-      <SettingToggle
-        label="Create suggestions after replies"
-        checked={autoExtract}
-        onChange={(checked) =>
-          patch({
-            longTermMemoryAutoExtract: checked,
-            ...(checked ? {} : { longTermMemoryAutoApplyLowRisk: false }),
-          })
-        }
-      />
-      <SettingToggle
-        label="Auto-apply low-risk suggestions"
-        checked={autoExtract && autoApplyLowRisk}
-        disabled={!autoExtract}
-        onChange={(checked) =>
-          patch({
-            longTermMemoryAutoExtract: true,
-            longTermMemoryAutoApplyLowRisk: checked,
-          })
-        }
-      />
+          <SettingToggle
+            label="Debug retrieval logs"
+            checked={debug}
+            onChange={(checked) => patch({ longTermMemoryDebug: checked })}
+          />
+          <SettingToggle
+            label="Create suggestions after replies"
+            checked={autoExtract}
+            onChange={(checked) =>
+              patch({
+                longTermMemoryAutoExtract: checked,
+                ...(checked ? {} : { longTermMemoryAutoApplyLowRisk: false }),
+              })
+            }
+          />
+          <SettingToggle
+            label="Auto-apply low-risk suggestions"
+            checked={autoExtract && autoApplyLowRisk}
+            disabled={!autoExtract}
+            onChange={(checked) =>
+              patch({
+                longTermMemoryAutoExtract: true,
+                longTermMemoryAutoApplyLowRisk: checked,
+              })
+            }
+          />
+        </>
+      )}
     </div>
   );
 }
@@ -1348,6 +1361,7 @@ export function LongTermMemoryPanel() {
   const [activeImportIds, setActiveImportIds] = useState<Set<string>>(() => new Set());
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [debugLogOpen, setDebugLogOpen] = useState(false);
+  const [extractionSettingsOpen, setExtractionSettingsOpen] = useState(false);
   const [archiveTab, setArchiveTab] = useState<"notes" | "drafts">("notes");
   const [creatingNote, setCreatingNote] = useState(false);
   const [createNoteDraft, setCreateNoteDraft] = useState<CreateLongTermMemoryNoteDraft | null>(null);
@@ -1879,7 +1893,7 @@ export function LongTermMemoryPanel() {
       {tab === "tools" && (
         <>
           <Section title="Chat Settings">
-            <ChatMemorySettings />
+            <ChatMemorySettings onOpenExtractionSettings={() => setExtractionSettingsOpen(true)} />
           </Section>
           <Section title="Refresh And Repair">
             <div className="space-y-2">
@@ -2232,6 +2246,10 @@ export function LongTermMemoryPanel() {
         )}
       </Modal>
       <LongTermMemoryDebugLogModal open={debugLogOpen} onClose={() => setDebugLogOpen(false)} />
+      <LongTermMemoryExtractionSettingsModal
+        open={extractionSettingsOpen}
+        onClose={() => setExtractionSettingsOpen(false)}
+      />
 
       {(status.isLoading || integrity.isLoading) && (
         <div className="fixed bottom-3 right-3 rounded-full bg-[var(--card)] p-2 shadow-sm ring-1 ring-[var(--border)]">
