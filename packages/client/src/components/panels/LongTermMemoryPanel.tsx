@@ -61,6 +61,7 @@ import {
   CreateLongTermMemoryNoteForm,
   type CreateLongTermMemoryNoteDraft,
 } from "../long-term-memory/CreateLongTermMemoryNoteForm";
+import { LongTermMemoryDebugLogModal } from "../long-term-memory/LongTermMemoryDebugLogModal";
 import { LongTermMemoryNoteEditor } from "../long-term-memory/LongTermMemoryNoteEditor";
 import {
   friendlyIdentifier,
@@ -87,8 +88,12 @@ const NOTE_TYPES: Array<"all" | LtmNoteType> = [
   "tone",
 ];
 const NOTE_STATUSES: Array<"all" | Exclude<LtmStatus, "archived">> = ["all", "active", "dormant", "resolved"];
-const NOTE_TYPE_ORDER = new Map<LtmNoteType, number>(NOTE_TYPES.filter((type) => type !== "all").map((type, index) => [type, index]));
-const NOTE_STATUS_ORDER = new Map<LtmStatus, number>(["active", "dormant", "resolved", "archived"].map((status, index) => [status as LtmStatus, index]));
+const NOTE_TYPE_ORDER = new Map<LtmNoteType, number>(
+  NOTE_TYPES.filter((type) => type !== "all").map((type, index) => [type, index]),
+);
+const NOTE_STATUS_ORDER = new Map<LtmStatus, number>(
+  ["active", "dormant", "resolved", "archived"].map((status, index) => [status as LtmStatus, index]),
+);
 const IMPORT_SOURCES: Array<{ id: LtmInteropSource; label: string }> = [
   { id: "characters", label: "Characters" },
   { id: "lorebooks", label: "Lorebooks" },
@@ -202,7 +207,10 @@ function NoteRow({
 }) {
   const sectionCount = Object.keys(note.sections).length;
   const primaryText =
-    note.sections.summary?.text.trim() || note.sections.core?.text.trim() || Object.values(note.sections)[0]?.text.trim() || "";
+    note.sections.summary?.text.trim() ||
+    note.sections.core?.text.trim() ||
+    Object.values(note.sections)[0]?.text.trim() ||
+    "";
   return (
     <article
       className={cn(
@@ -212,68 +220,62 @@ function NoteRow({
       )}
     >
       <div className="min-w-0 transition-[padding] group-hover:pr-28 max-md:pr-28">
-          <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={friendlyNoteTitle(note)}>
-            {friendlyNoteTitle(note)}
+        <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={friendlyNoteTitle(note)}>
+          {friendlyNoteTitle(note)}
+        </div>
+        {primaryText && (
+          <div className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+            {primaryText}
           </div>
-          {primaryText && (
-            <div className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-              {primaryText}
-            </div>
-          )}
-          <div className="mt-1 flex flex-wrap gap-1.5">
-            <StatusPill label={friendlyNoteType(note.type)} />
-            <StatusPill label={friendlyStatus(note.status)} tone={note.status === "active" ? "good" : "neutral"} />
-            <StatusPill label={`${sectionCount} detail${sectionCount === 1 ? "" : "s"}`} />
-          </div>
-          <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]/80">Internal ID: {note.id}</div>
+        )}
+        <div className="mt-1 flex flex-wrap gap-1.5">
+          <StatusPill label={friendlyNoteType(note.type)} />
+          <StatusPill label={friendlyStatus(note.status)} tone={note.status === "active" ? "good" : "neutral"} />
+          <StatusPill label={`${sectionCount} detail${sectionCount === 1 ? "" : "s"}`} />
+        </div>
+        <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]/80">Internal ID: {note.id}</div>
       </div>
       <div className={rowActionPillClassName}>
+        <button
+          type="button"
+          onClick={onView}
+          className={cn(rowActionButtonClassName, viewing && "bg-[var(--accent)] text-[var(--foreground)]")}
+          aria-label={`View ${friendlyNoteTitle(note)}`}
+          title="View memory"
+        >
+          <Eye size="0.875rem" />
+        </button>
+        {onRestore ? (
           <button
             type="button"
-            onClick={onView}
-            className={cn(
-              rowActionButtonClassName,
-              viewing && "bg-[var(--accent)] text-[var(--foreground)]",
-            )}
-            aria-label={`View ${friendlyNoteTitle(note)}`}
-            title="View memory"
+            onClick={onRestore}
+            className={cn(rowActionButtonClassName, "hover:bg-emerald-500/10 hover:text-emerald-200")}
+            aria-label={`Restore ${friendlyNoteTitle(note)}`}
+            title="Restore memory"
           >
-            <Eye size="0.875rem" />
+            <RotateCcw size="0.875rem" />
           </button>
-          {onRestore ? (
-            <button
-              type="button"
-              onClick={onRestore}
-              className={cn(rowActionButtonClassName, "hover:bg-emerald-500/10 hover:text-emerald-200")}
-              aria-label={`Restore ${friendlyNoteTitle(note)}`}
-              title="Restore memory"
-            >
-              <RotateCcw size="0.875rem" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={onArchive}
-              disabled={note.status === "archived"}
-              className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
-              aria-label={`Archive ${friendlyNoteTitle(note)}`}
-              title="Archive memory"
-            >
-              <Archive size="0.875rem" />
-            </button>
-          )}
+        ) : (
           <button
             type="button"
-            onClick={onEdit}
-            className={cn(
-              rowActionButtonClassName,
-              editing && "bg-[var(--accent)] text-[var(--foreground)]",
-            )}
-            aria-label={`Edit ${friendlyNoteTitle(note)}`}
-            title="Edit memory"
+            onClick={onArchive}
+            disabled={note.status === "archived"}
+            className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
+            aria-label={`Archive ${friendlyNoteTitle(note)}`}
+            title="Archive memory"
           >
-            <Pencil size="0.875rem" />
+            <Archive size="0.875rem" />
           </button>
+        )}
+        <button
+          type="button"
+          onClick={onEdit}
+          className={cn(rowActionButtonClassName, editing && "bg-[var(--accent)] text-[var(--foreground)]")}
+          aria-label={`Edit ${friendlyNoteTitle(note)}`}
+          title="Edit memory"
+        >
+          <Pencil size="0.875rem" />
+        </button>
       </div>
       {note.tags.length > 0 && (
         <div className="mt-2 truncate text-[0.625rem] text-[var(--muted-foreground)]">
@@ -347,7 +349,9 @@ function draftRiskSummary(draft: LtmExtractionDraft) {
 }
 
 function isSourceSummaryNote(note: LtmNote) {
-  return note.type === "scene" && note.tags.some((tag) => tag.includes("source_summary") || tag.includes("chat_summary"));
+  return (
+    note.type === "scene" && note.tags.some((tag) => tag.includes("source_summary") || tag.includes("chat_summary"))
+  );
 }
 
 function isDerivedFromSource(note: LtmNote, sourceNoteId: string) {
@@ -542,7 +546,10 @@ function DerivedActiveMemories({
     () =>
       activeNotes.filter(
         (candidate) =>
-          candidate.id !== sourceNote.id && candidate.status === "active" && !isSourceSummaryNote(candidate) && isDerivedFromSource(candidate, sourceNote.id),
+          candidate.id !== sourceNote.id &&
+          candidate.status === "active" &&
+          !isSourceSummaryNote(candidate) &&
+          isDerivedFromSource(candidate, sourceNote.id),
       ),
     [activeNotes, sourceNote.id],
   );
@@ -553,7 +560,10 @@ function DerivedActiveMemories({
     <section className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-xs font-semibold text-[var(--foreground)]">Derived Active Memories</h3>
-        <StatusPill label={`${derivedCount} active memor${derivedCount === 1 ? "y" : "ies"}`} tone={derivedCount ? "good" : "neutral"} />
+        <StatusPill
+          label={`${derivedCount} active memor${derivedCount === 1 ? "y" : "ies"}`}
+          tone={derivedCount ? "good" : "neutral"}
+        />
       </div>
       {loading ? (
         <div className="flex items-center justify-center rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-3 text-xs text-[var(--muted-foreground)]">
@@ -570,7 +580,10 @@ function DerivedActiveMemories({
             <div key={`${group.type}:${group.status}`} className="space-y-2">
               <div className="flex flex-wrap items-center gap-1.5 px-1">
                 <StatusPill label={friendlyNoteType(group.type)} />
-                <StatusPill label={friendlyStatus(group.status)} tone={group.status === "active" ? "good" : "neutral"} />
+                <StatusPill
+                  label={friendlyStatus(group.status)}
+                  tone={group.status === "active" ? "good" : "neutral"}
+                />
                 <StatusPill label={`${group.notes.length} memor${group.notes.length === 1 ? "y" : "ies"}`} />
               </div>
               <div className="space-y-2">
@@ -582,7 +595,9 @@ function DerivedActiveMemories({
                     disabled={!onOpenNote}
                     className="w-full rounded-lg bg-[var(--card)] p-3 text-left ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] disabled:cursor-default disabled:hover:bg-[var(--card)]"
                   >
-                    <div className="truncate text-xs font-medium text-[var(--foreground)]">{friendlyNoteTitle(derivedNote)}</div>
+                    <div className="truncate text-xs font-medium text-[var(--foreground)]">
+                      {friendlyNoteTitle(derivedNote)}
+                    </div>
                     <p className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
                       {derivedNote.sections.summary?.text.trim() ||
                         derivedNote.sections.core?.text.trim() ||
@@ -689,7 +704,9 @@ function NoteViewModalContent({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-xs font-semibold text-[var(--foreground)]">Suggestions From This Memory</h3>
           <div className="flex flex-wrap items-center gap-2">
-            <StatusPill label={`${extractedMutations.length} suggested change${extractedMutations.length === 1 ? "" : "s"}`} />
+            <StatusPill
+              label={`${extractedMutations.length} suggested change${extractedMutations.length === 1 ? "" : "s"}`}
+            />
             {isSourceNote && (
               <ToolButton
                 onClick={() =>
@@ -760,7 +777,9 @@ function NoteViewModalContent({
               <article key={draft.id} className="rounded-lg bg-[var(--card)] p-3 ring-1 ring-[var(--border)]">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <StatusPill label={draftStatusLabel(draft.status)} tone={draftStatusTone(draft.status)} />
-                  <StatusPill label={`${draft.mutations.length} suggested change${draft.mutations.length === 1 ? "" : "s"}`} />
+                  <StatusPill
+                    label={`${draft.mutations.length} suggested change${draft.mutations.length === 1 ? "" : "s"}`}
+                  />
                   {draft.appliedMutationIds?.length ? (
                     <StatusPill label={`${draft.appliedMutationIds.length} kept`} tone="good" />
                   ) : null}
@@ -803,15 +822,15 @@ function DraftRow({
   return (
     <article className="group relative rounded-xl border border-rose-300/15 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-2.5 transition-all hover:border-rose-300/30 hover:bg-[var(--sidebar-accent)]">
       <div className={cn("min-w-0", pending && "transition-[padding] group-hover:pr-20 max-md:pr-20")}>
-          <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={draft.summary || draft.id}>
-            {draft.summary || draft.id}
-          </div>
-          <div className="mt-1 flex flex-wrap gap-1.5">
-            <StatusPill label={draftStatusLabel(draft.status)} tone={draftStatusTone(draft.status)} />
-            <StatusPill label={`${draft.mutations.length} suggested change${draft.mutations.length === 1 ? "" : "s"}`} />
-          </div>
-          <DraftMetadataPills draft={draft} onOpenSourceNote={onOpenSourceNote} />
-          <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]/80">Internal ID: {draft.id}</div>
+        <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={draft.summary || draft.id}>
+          {draft.summary || draft.id}
+        </div>
+        <div className="mt-1 flex flex-wrap gap-1.5">
+          <StatusPill label={draftStatusLabel(draft.status)} tone={draftStatusTone(draft.status)} />
+          <StatusPill label={`${draft.mutations.length} suggested change${draft.mutations.length === 1 ? "" : "s"}`} />
+        </div>
+        <DraftMetadataPills draft={draft} onOpenSourceNote={onOpenSourceNote} />
+        <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]/80">Internal ID: {draft.id}</div>
       </div>
       {pending && (
         <div className={rowActionPillClassName}>
@@ -824,7 +843,10 @@ function DraftRow({
                 .catch((err: Error) => toast.error(err.message))
             }
             disabled={accept.isPending}
-            className={cn(rowActionButtonClassName, "bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary)]/85")}
+            className={cn(
+              rowActionButtonClassName,
+              "bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary)]/85",
+            )}
             aria-label={`Keep suggestion ${draft.id}`}
             title="Keep suggestion"
           >
@@ -1010,57 +1032,54 @@ function ArchivedDraftRow({
       )}
     >
       <div className="min-w-0 transition-[padding] group-hover:pr-36 max-md:pr-36">
-          <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={draft.summary || draft.id}>
-            {draft.summary || draft.id}
-          </div>
-          <div className="mt-1 flex flex-wrap gap-1.5">
-            <StatusPill label={draftStatusLabel(draft.status)} tone={draftStatusTone(draft.status)} />
-            <StatusPill label={`${draft.mutations.length} suggested change${draft.mutations.length === 1 ? "" : "s"}`} />
-          </div>
-          <DraftMetadataPills draft={draft} onOpenSourceNote={onOpenSourceNote} />
-          <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]/80">Internal ID: {draft.id}</div>
+        <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={draft.summary || draft.id}>
+          {draft.summary || draft.id}
+        </div>
+        <div className="mt-1 flex flex-wrap gap-1.5">
+          <StatusPill label={draftStatusLabel(draft.status)} tone={draftStatusTone(draft.status)} />
+          <StatusPill label={`${draft.mutations.length} suggested change${draft.mutations.length === 1 ? "" : "s"}`} />
+        </div>
+        <DraftMetadataPills draft={draft} onOpenSourceNote={onOpenSourceNote} />
+        <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]/80">Internal ID: {draft.id}</div>
       </div>
       <div className={rowActionPillClassName}>
-          <button
-            type="button"
-            onClick={onView}
-            className={cn(
-              rowActionButtonClassName,
-              selected && "bg-[var(--accent)] text-[var(--foreground)]",
-            )}
-            aria-label={`View suggestion ${draft.id}`}
-            title="View suggestion"
-          >
-            <Eye size="0.875rem" />
-          </button>
-          <button
-            type="button"
-            onClick={onEdit}
-            className={rowActionButtonClassName}
-            aria-label={`Edit suggestion ${draft.id}`}
-            title="Edit raw suggestion"
-          >
-            <Pencil size="0.875rem" />
-          </button>
-          <button
-            type="button"
-            onClick={onRestore}
-            disabled={draft.status !== "rejected"}
-            className={cn(rowActionButtonClassName, "hover:bg-emerald-500/10 hover:text-emerald-200")}
-            aria-label={`Restore suggestion ${draft.id}`}
-            title={draft.status === "rejected" ? "Restore suggestion" : "Kept suggestions cannot be restored"}
-          >
-            <RotateCcw size="0.875rem" />
-          </button>
-          <button
-            type="button"
-            onClick={onDelete}
-            className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
-            aria-label={`Delete suggestion ${draft.id}`}
-            title="Delete suggestion"
-          >
-            <Trash2 size="0.875rem" />
-          </button>
+        <button
+          type="button"
+          onClick={onView}
+          className={cn(rowActionButtonClassName, selected && "bg-[var(--accent)] text-[var(--foreground)]")}
+          aria-label={`View suggestion ${draft.id}`}
+          title="View suggestion"
+        >
+          <Eye size="0.875rem" />
+        </button>
+        <button
+          type="button"
+          onClick={onEdit}
+          className={rowActionButtonClassName}
+          aria-label={`Edit suggestion ${draft.id}`}
+          title="Edit raw suggestion"
+        >
+          <Pencil size="0.875rem" />
+        </button>
+        <button
+          type="button"
+          onClick={onRestore}
+          disabled={draft.status !== "rejected"}
+          className={cn(rowActionButtonClassName, "hover:bg-emerald-500/10 hover:text-emerald-200")}
+          aria-label={`Restore suggestion ${draft.id}`}
+          title={draft.status === "rejected" ? "Restore suggestion" : "Kept suggestions cannot be restored"}
+        >
+          <RotateCcw size="0.875rem" />
+        </button>
+        <button
+          type="button"
+          onClick={onDelete}
+          className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
+          aria-label={`Delete suggestion ${draft.id}`}
+          title="Delete suggestion"
+        >
+          <Trash2 size="0.875rem" />
+        </button>
       </div>
       <div className="mt-2 truncate text-[0.625rem] text-[var(--muted-foreground)]">
         Updated {new Date(draft.updatedAt).toLocaleString()}
@@ -1118,7 +1137,10 @@ function ImportPreviewRowItem({
           type="button"
           onClick={onImport}
           disabled={disabled || importing}
-          className={cn(rowActionButtonClassName, "bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary)]/85")}
+          className={cn(
+            rowActionButtonClassName,
+            "bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary)]/85",
+          )}
           aria-label={`Import ${sample.title}`}
           title="Import"
         >
@@ -1305,6 +1327,7 @@ export function LongTermMemoryPanel() {
   const [showHiddenImportRows, setShowHiddenImportRows] = useState(false);
   const [activeImportIds, setActiveImportIds] = useState<Set<string>>(() => new Set());
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [debugLogOpen, setDebugLogOpen] = useState(false);
   const [archiveTab, setArchiveTab] = useState<"notes" | "drafts">("notes");
   const [creatingNote, setCreatingNote] = useState(false);
   const [createNoteDraft, setCreateNoteDraft] = useState<CreateLongTermMemoryNoteDraft | null>(null);
@@ -1372,8 +1395,7 @@ export function LongTermMemoryPanel() {
     [hiddenImportRows, importRows, importSource, showHiddenImportRows],
   );
   const selectedVisibleImportRows = useMemo(
-    () =>
-      visibleImportRows.filter((sample) => selectedImportRows.has(importRowKey(importSource, sample.sourceId))),
+    () => visibleImportRows.filter((sample) => selectedImportRows.has(importRowKey(importSource, sample.sourceId))),
     [importSource, selectedImportRows, visibleImportRows],
   );
   const hiddenImportRowCount = importRows.filter((sample) =>
@@ -1689,6 +1711,14 @@ export function LongTermMemoryPanel() {
             <Archive size="0.75rem" />
             Archive
           </button>
+          <button
+            type="button"
+            onClick={() => setDebugLogOpen(true)}
+            className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--muted)]/40 px-1.5 py-0.5 text-[0.625rem] font-medium leading-tight text-[var(--muted-foreground)] transition-colors hover:border-rose-300/30 hover:bg-rose-300/10 hover:text-[var(--foreground)]"
+          >
+            <History size="0.75rem" />
+            Debug Log
+          </button>
         </div>
       </section>
 
@@ -1806,7 +1836,7 @@ export function LongTermMemoryPanel() {
                 onClick={() =>
                   rebuild
                     .mutateAsync()
-                .then(() => toast.success("Memory search refreshed"))
+                    .then(() => toast.success("Memory search refreshed"))
                     .catch((err: Error) => toast.error(err.message))
                 }
                 disabled={rebuild.isPending}
@@ -2150,6 +2180,7 @@ export function LongTermMemoryPanel() {
           />
         )}
       </Modal>
+      <LongTermMemoryDebugLogModal open={debugLogOpen} onClose={() => setDebugLogOpen(false)} />
 
       {(status.isLoading || integrity.isLoading) && (
         <div className="fixed bottom-3 right-3 rounded-full bg-[var(--card)] p-2 shadow-sm ring-1 ring-[var(--border)]">

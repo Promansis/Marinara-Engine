@@ -1,6 +1,7 @@
 // ──────────────────────────────────────────────
 // Routes: Long-Term Memory Maintenance
 // ──────────────────────────────────────────────
+import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import type { FastifyInstance } from "fastify";
 import {
@@ -8,6 +9,8 @@ import {
   ltmConflictSchema,
   ltmDraftSourceSchema,
   ltmDraftStatusSchema,
+  ltmDebugPhaseSchema,
+  ltmDebugStatusSchema,
   ltmExtractionDraftSchema,
   ltmExtractionResponseSchema,
   ltmGateSchema,
@@ -39,6 +42,12 @@ import {
   LTM_DIR_NAME,
   safeJoin,
 } from "../services/long-term-memory/paths.js";
+import {
+  clearLtmDebugLog,
+  exportLtmDebugLog,
+  readLtmDebugLog,
+  recordLtmDebugEvent,
+} from "../services/long-term-memory/debug-log.js";
 import { LongTermMemoryDraftStore } from "../services/long-term-memory/extraction.js";
 import {
   auditLongTermMemoryReplay,
@@ -93,7 +102,10 @@ const createNoteBodySchema = z
     sections: z.record(ltmSectionKeySchema, ltmSectionSchema),
     conflicts: z.array(ltmConflictSchema).max(250).optional(),
     version: z.number().int().min(1).optional(),
-    previousHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    previousHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
   })
   .strict();
 
@@ -219,15 +231,26 @@ const searchBodySchema = z
     (value) =>
       Boolean(
         value.queryText?.trim() ||
-          value.recentUserMessage?.trim() ||
-          value.mentionedCharacterNames?.length ||
-          value.noteIds?.length ||
-          value.tags?.length ||
-          value.characterIds?.length ||
-          value.scope,
+        value.recentUserMessage?.trim() ||
+        value.mentionedCharacterNames?.length ||
+        value.noteIds?.length ||
+        value.tags?.length ||
+        value.characterIds?.length ||
+        value.scope,
       ),
     "Search body must include query text, ids, tags, scope, or character signals.",
   );
+
+const debugLogQuerySchema = z
+  .object({
+    limit: z.coerce.number().int().min(1).max(1_000).default(200),
+    operationId: z.string().uuid().optional(),
+    sourceNoteId: ltmNoteIdSchema.optional(),
+    draftId: z.string().uuid().optional(),
+    status: ltmDebugStatusSchema.optional(),
+    phase: ltmDebugPhaseSchema.optional(),
+  })
+  .strict();
 
 function countBy<T extends string>(values: T[]) {
   return values.reduce<Record<string, number>>((counts, value) => {
@@ -295,7 +318,12 @@ function ltmModeForChatMode(mode: unknown): LtmMode {
   return ltmModeSchema.catch("roleplay").parse(mode);
 }
 
-function resolveChatLtmScope(chat: { id: string; groupId?: string | null; characterIds?: unknown; metadata?: unknown }) {
+function resolveChatLtmScope(chat: {
+  id: string;
+  groupId?: string | null;
+  characterIds?: unknown;
+  metadata?: unknown;
+}) {
   const meta = parseMetadata(chat.metadata);
   const configuredScope =
     meta.longTermMemoryScope && typeof meta.longTermMemoryScope === "object" && !Array.isArray(meta.longTermMemoryScope)
@@ -367,7 +395,8 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
       };
     }
 
-    let conn = connId === defaultAgentConn?.id ? defaultAgentConn : connId ? await connections.getWithKey(connId) : null;
+    let conn =
+      connId === defaultAgentConn?.id ? defaultAgentConn : connId ? await connections.getWithKey(connId) : null;
     if (body.connectionId && !conn) {
       throw new LtmExtractionRouteError(`API connection not found: ${body.connectionId}`, 400);
     }
@@ -432,6 +461,24 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     };
   });
 
+  app.get<{ Querystring: unknown }>("/debug-log", async (req) => {
+    const query = debugLogQuerySchema.parse(req.query);
+    return { events: await readLtmDebugLog(query) };
+  });
+
+  app.get("/debug-log/export", async (_req, reply) => {
+    const content = await exportLtmDebugLog();
+    return reply
+      .header("content-type", "application/x-ndjson; charset=utf-8")
+      .header("content-disposition", `attachment; filename="ltm-debug-log-${Date.now()}.jsonl"`)
+      .send(content);
+  });
+
+  app.delete("/debug-log", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory debug log clearing" })) return;
+    return clearLtmDebugLog();
+  });
+
   app.get<{ Querystring: unknown }>("/notes", async (req) => {
     const query = listNotesQuerySchema.parse(req.query);
     return storage.listNotes(query);
@@ -460,8 +507,18 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
       const chat = body.chatId ? await chats.getById(body.chatId) : null;
       if (body.chatId && !chat) return reply.status(404).send({ error: "Chat not found" });
 
+      const operationId = randomUUID();
       try {
         const { provider, model } = await resolveExtractionProvider(body, chat?.connectionId ?? null);
+        await recordLtmDebugEvent({
+          operationId,
+          phase: "extraction",
+          action: "provider_resolved",
+          status: "ok",
+          sourceNoteId: id,
+          provider: provider.constructor.name,
+          model,
+        });
         const result = await extractLongTermMemoryFromSourceNote({
           noteId: id,
           provider,
@@ -470,6 +527,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
           modes: chat ? [ltmModeForChatMode(chat.mode)] : sourceNote.modes,
           instruction: body.instruction,
           includeExistingNotes: body.includeExistingNotes,
+          operationId,
         });
         const applyResult =
           body.applyLowRisk && result.draft
@@ -477,6 +535,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
                 actor: "maintenance_api",
                 autoApplyLowRiskOnly: true,
                 autoApplyPolicy: "source_extraction",
+                operationId,
               })
             : null;
 
@@ -488,6 +547,14 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
           skippedMutationIds: applyResult?.skippedMutationIds ?? [],
         };
       } catch (err) {
+        await recordLtmDebugEvent({
+          operationId,
+          phase: "extraction",
+          action: "extract_source_note_route",
+          status: "error",
+          sourceNoteId: id,
+          error: err,
+        });
         const message = err instanceof Error ? err.message : "Failed to extract long-term memory from source note";
         const status =
           err instanceof LtmExtractionRouteError
@@ -502,23 +569,19 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     },
   );
 
-  app.post<{ Body: unknown }>(
-    "/notes",
-    { bodyLimit: NOTE_BODY_LIMIT_BYTES },
-    async (req, reply) => {
-      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory note creation" })) return;
-      const body = createNoteBodySchema.parse(req.body);
-      const existing = await storage.getNote(body.id);
-      if (existing) return reply.status(409).send({ error: `Long-term memory note already exists: ${body.id}` });
+  app.post<{ Body: unknown }>("/notes", { bodyLimit: NOTE_BODY_LIMIT_BYTES }, async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory note creation" })) return;
+    const body = createNoteBodySchema.parse(req.body);
+    const existing = await storage.getNote(body.id);
+    if (existing) return reply.status(409).send({ error: `Long-term memory note already exists: ${body.id}` });
 
-      const note = await storage.createNote(body, {
-        actor: "maintenance_api",
-        cause: "api.create",
-        summary: "Created via long-term memory maintenance API",
-      });
-      return reply.status(201).send(note);
-    },
-  );
+    const note = await storage.createNote(body, {
+      actor: "maintenance_api",
+      cause: "api.create",
+      summary: "Created via long-term memory maintenance API",
+    });
+    return reply.status(201).send(note);
+  });
 
   app.patch<{ Params: { id: string }; Body: unknown }>(
     "/notes/:id",
@@ -552,60 +615,73 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     return { archived: true, note };
   });
 
-  app.post<{ Body: unknown }>(
-    "/rebuild",
-    { bodyLimit: REBUILD_BODY_LIMIT_BYTES },
-    async (req, reply) => {
-      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory index rebuild" })) return;
-      rebuildBodySchema.parse(req.body ?? {});
+  app.post<{ Body: unknown }>("/rebuild", { bodyLimit: REBUILD_BODY_LIMIT_BYTES }, async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory index rebuild" })) return;
+    rebuildBodySchema.parse(req.body ?? {});
+    const operationId = randomUUID();
+    await recordLtmDebugEvent({
+      operationId,
+      phase: "rebuild",
+      action: "manual_rebuild",
+      status: "started",
+    });
+    const started = Date.now();
+    try {
       const result = await rebuildLongTermMemoryIndexes();
+      await recordLtmDebugEvent({
+        operationId,
+        phase: "rebuild",
+        action: "manual_rebuild",
+        status: "ok",
+        durationMs: Date.now() - started,
+        counts: {
+          notes: result.noteCount,
+          chunks: result.chunkCount,
+          sourceChunks: result.sourceChunkCount,
+          embeddedChunks: result.embeddedChunkCount,
+        },
+      });
       return publicRebuildResult(result);
-    },
-  );
+    } catch (err) {
+      await recordLtmDebugEvent({
+        operationId,
+        phase: "rebuild",
+        action: "manual_rebuild",
+        status: "error",
+        durationMs: Date.now() - started,
+        error: err,
+      });
+      throw err;
+    }
+  });
 
   app.get("/integrity", async () => checkLongTermMemoryIntegrity());
 
-  app.post(
-    "/replay",
-    { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES },
-    async (req, reply) => {
-      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory replay audit" })) return;
-      rebuildBodySchema.parse(req.body ?? {});
-      return auditLongTermMemoryReplay();
-    },
-  );
+  app.post("/replay", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory replay audit" })) return;
+    rebuildBodySchema.parse(req.body ?? {});
+    return auditLongTermMemoryReplay();
+  });
 
-  app.post<{ Body: unknown }>(
-    "/repair",
-    { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES },
-    async (req, reply) => {
-      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory repair" })) return;
-      const body = repairBodySchema.parse(req.body);
-      return repairLongTermMemory(body.actions as LtmRepairAction[]);
-    },
-  );
+  app.post<{ Body: unknown }>("/repair", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory repair" })) return;
+    const body = repairBodySchema.parse(req.body);
+    return repairLongTermMemory(body.actions as LtmRepairAction[]);
+  });
 
-  app.post<{ Body: unknown }>(
-    "/import/preview",
-    { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES },
-    async (req) => {
-      const body = interopBodySchema.parse(req.body);
-      return previewLongTermMemoryInterop(app.db, body.source as LtmInteropSource, body.limit);
-    },
-  );
+  app.post<{ Body: unknown }>("/import/preview", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req) => {
+    const body = interopBodySchema.parse(req.body);
+    return previewLongTermMemoryInterop(app.db, body.source as LtmInteropSource, body.limit);
+  });
 
-  app.post<{ Body: unknown }>(
-    "/import/drafts",
-    { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES },
-    async (req, reply) => {
-      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory import draft creation" })) return;
-      const body = interopBodySchema.parse(req.body);
-      return createLongTermMemoryInteropDrafts(app.db, body.source as LtmInteropSource, {
-        limit: body.limit,
-        scope: body.scope,
-      });
-    },
-  );
+  app.post<{ Body: unknown }>("/import/drafts", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory import draft creation" })) return;
+    const body = interopBodySchema.parse(req.body);
+    return createLongTermMemoryInteropDrafts(app.db, body.source as LtmInteropSource, {
+      limit: body.limit,
+      scope: body.scope,
+    });
+  });
 
   app.post<{ Body: unknown }>(
     "/import/source-notes",
@@ -613,16 +689,29 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     async (req, reply) => {
       if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory source import" })) return;
       const body = interopImportBodySchema.parse(req.body);
+      const operationId = randomUUID();
       const imported = await createLongTermMemoryInteropSourceNotes(app.db, body.source as LtmInteropSource, {
         sourceIds: body.sourceIds,
         limit: body.limit,
         scope: body.scope,
+        operationId,
       });
       const results = [];
 
       for (const item of imported.imported) {
         try {
           const { provider, model } = await resolveExtractionProvider(body);
+          await recordLtmDebugEvent({
+            operationId,
+            phase: "extraction",
+            action: "provider_resolved",
+            status: "ok",
+            source: imported.source,
+            sourceId: item.sourceId,
+            sourceNoteId: item.note.id,
+            provider: provider.constructor.name,
+            model,
+          });
           const result = await extractLongTermMemoryFromSourceNote({
             noteId: item.note.id,
             provider,
@@ -631,6 +720,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
             modes: item.note.modes,
             instruction: body.instruction,
             includeExistingNotes: body.includeExistingNotes,
+            operationId,
           });
           const applyResult =
             body.applyLowRisk && result.draft
@@ -638,6 +728,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
                   actor: "maintenance_api",
                   autoApplyLowRiskOnly: true,
                   autoApplyPolicy: "source_extraction",
+                  operationId,
                 })
               : null;
 
@@ -653,6 +744,16 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : "Failed to extract imported source";
+          await recordLtmDebugEvent({
+            operationId,
+            phase: "extraction",
+            action: "imported_source_extract",
+            status: "error",
+            source: imported.source,
+            sourceId: item.sourceId,
+            sourceNoteId: item.note.id,
+            error: err,
+          });
           results.push({
             sourceId: item.sourceId,
             title: item.title,
@@ -676,18 +777,14 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     },
   );
 
-  app.post<{ Body: unknown }>(
-    "/search",
-    { bodyLimit: SEARCH_BODY_LIMIT_BYTES },
-    async (req) => {
-      const body = searchBodySchema.parse(req.body);
-      const result = await retrieveLongTermMemory(body);
-      return {
-        ...result,
-        warnings: result.warnings.map(sanitizeStorageText),
-      };
-    },
-  );
+  app.post<{ Body: unknown }>("/search", { bodyLimit: SEARCH_BODY_LIMIT_BYTES }, async (req) => {
+    const body = searchBodySchema.parse(req.body);
+    const result = await retrieveLongTermMemory(body);
+    return {
+      ...result,
+      warnings: result.warnings.map(sanitizeStorageText),
+    };
+  });
 
   app.get<{ Querystring: unknown }>("/drafts", async (req) => {
     const query = listDraftsQuerySchema.parse(req.query);
@@ -701,24 +798,20 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     return draft;
   });
 
-  app.post<{ Body: unknown }>(
-    "/drafts",
-    { bodyLimit: DRAFT_BODY_LIMIT_BYTES },
-    async (req, reply) => {
-      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft creation" })) return;
-      const body = createDraftBodySchema.parse(req.body);
-      const draft = await draftStore.createDraft({
-        source: body.source,
-        scope: body.scope,
-        modes: body.modes,
-        summary: body.summary,
-        response: body.response,
-        userMessage: "",
-        assistantReply: "",
-      });
-      return reply.status(201).send(draft);
-    },
-  );
+  app.post<{ Body: unknown }>("/drafts", { bodyLimit: DRAFT_BODY_LIMIT_BYTES }, async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft creation" })) return;
+    const body = createDraftBodySchema.parse(req.body);
+    const draft = await draftStore.createDraft({
+      source: body.source,
+      scope: body.scope,
+      modes: body.modes,
+      summary: body.summary,
+      response: body.response,
+      userMessage: "",
+      assistantReply: "",
+    });
+    return reply.status(201).send(draft);
+  });
 
   app.patch<{ Params: { id: string }; Body: unknown }>(
     "/drafts/:id",
@@ -747,6 +840,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
         actor: "maintenance_api",
         mutationIds: body.mutationIds,
         autoApplyLowRiskOnly: body.lowRiskOnly,
+        operationId: randomUUID(),
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to apply long-term memory draft";
@@ -763,7 +857,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
       const { id } = draftIdParamSchema.parse(req.params);
       const body = rejectDraftBodySchema.parse(req.body ?? {});
       try {
-        return await rejectLongTermMemoryDraft(id, { reason: body.reason });
+        return await rejectLongTermMemoryDraft(id, { reason: body.reason, operationId: randomUUID() });
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to reject long-term memory draft";
         const status = message.includes("not found") ? 404 : message.includes("not pending") ? 409 : 400;

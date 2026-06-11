@@ -1,5 +1,6 @@
 import type { LtmDraftMutation, LtmExtractionDraft, LtmLink, LtmNote, LtmSection } from "@marinara-engine/shared";
 import { logger } from "../../lib/logger.js";
+import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import { rebuildLongTermMemoryIndexes } from "./rebuild.js";
 import { LongTermMemoryDraftStore } from "./extraction.js";
 import { LongTermMemoryStorage, type UpdateLtmNotePatch } from "./storage.js";
@@ -11,6 +12,7 @@ export interface ApplyLtmDraftOptions {
   autoApplyLowRiskOnly?: boolean;
   autoApplyPolicy?: "turn" | "source_extraction";
   mutationIds?: string[];
+  operationId?: string;
 }
 
 export interface ApplyLtmDraftResult {
@@ -30,11 +32,12 @@ function withEvidence(section: LtmSection, evidence: string[]) {
   } satisfies LtmSection;
 }
 
-function appendSection(existing: LtmSection | undefined, mutation: Extract<LtmDraftMutation, { kind: "append_section" }>) {
+function appendSection(
+  existing: LtmSection | undefined,
+  mutation: Extract<LtmDraftMutation, { kind: "append_section" }>,
+) {
   const timestamp = nowIso();
-  const nextText = existing?.text
-    ? `${existing.text.trim()}\n\n${mutation.text.trim()}`.trim()
-    : mutation.text.trim();
+  const nextText = existing?.text ? `${existing.text.trim()}\n\n${mutation.text.trim()}`.trim() : mutation.text.trim();
   return withEvidence(
     {
       text: nextText,
@@ -107,7 +110,9 @@ async function preflightDraftMutations(
     if (sourceExtractionDraft && mutation.noteId.startsWith("scene_")) {
       const existing = await storage.getNote(mutation.noteId);
       if (!existing || !isCurrentSceneTypedNote(existing)) {
-        throw new Error(`Long-term memory source extraction draft cannot mutate scene/source notes: ${mutation.noteId}`);
+        throw new Error(
+          `Long-term memory source extraction draft cannot mutate scene/source notes: ${mutation.noteId}`,
+        );
       }
     }
     requiredNoteIds.add(mutation.noteId);
@@ -134,8 +139,7 @@ async function preflightDraftMutations(
 function mutationTouchesSceneId(mutation: LtmDraftMutation) {
   if (mutation.kind === "create_note") return mutation.note.id.startsWith("scene_");
   return (
-    mutation.noteId.startsWith("scene_") ||
-    (mutation.kind === "add_link" && mutation.link.target.startsWith("scene_"))
+    mutation.noteId.startsWith("scene_") || (mutation.kind === "add_link" && mutation.link.target.startsWith("scene_"))
   );
 }
 
@@ -217,9 +221,7 @@ export function isLowRiskSourceExtractionMutation(mutation: LtmDraftMutation) {
 export const isLowRiskAutoApplyMutation = isLowRiskTurnMutation;
 
 function isLowRiskMutationForPolicy(mutation: LtmDraftMutation, policy: ApplyLtmDraftOptions["autoApplyPolicy"]) {
-  return policy === "source_extraction"
-    ? isLowRiskSourceExtractionMutation(mutation)
-    : isLowRiskTurnMutation(mutation);
+  return policy === "source_extraction" ? isLowRiskSourceExtractionMutation(mutation) : isLowRiskTurnMutation(mutation);
 }
 
 async function applyMutation(
@@ -292,6 +294,28 @@ export async function applyLongTermMemoryDraft(
   draftId: string,
   options: ApplyLtmDraftOptions = {},
 ): Promise<ApplyLtmDraftResult> {
+  return withLtmDebugOperation(
+    {
+      root: options.root,
+      operationId: options.operationId,
+      phase: "apply",
+      action: "apply_draft",
+      draftId,
+      details: {
+        actor: options.actor,
+        mutationIds: options.mutationIds,
+        autoApplyLowRiskOnly: options.autoApplyLowRiskOnly,
+        autoApplyPolicy: options.autoApplyPolicy,
+      },
+    },
+    async (operationId) => applyLongTermMemoryDraftInner(draftId, { ...options, operationId }),
+  );
+}
+
+async function applyLongTermMemoryDraftInner(
+  draftId: string,
+  options: ApplyLtmDraftOptions & { operationId: string },
+): Promise<ApplyLtmDraftResult> {
   const store = new LongTermMemoryDraftStore(options.root);
   const draft = await store.getDraft(draftId);
   if (!draft) {
@@ -320,6 +344,28 @@ export async function applyLongTermMemoryDraft(
   const skippedMutationIds = draft.mutations
     .filter((mutation) => !mutationsToApply.some((candidate) => candidate.id === mutation.id))
     .map((mutation) => mutation.id);
+  await recordLtmDebugEvent({
+    root: options.root,
+    operationId: options.operationId,
+    phase: "apply",
+    action: "mutations_selected",
+    status: mutationsToApply.length > 0 ? "ok" : options.autoApplyLowRiskOnly ? "skipped" : "warning",
+    draftId,
+    sourceNoteId: draft.source.sourceNoteId,
+    mutationIds: mutationsToApply.map((mutation) => mutation.id),
+    counts: {
+      totalMutations: draft.mutations.length,
+      selectedMutations: mutationsToApply.length,
+      skippedMutations: skippedMutationIds.length,
+    },
+    details: {
+      skippedMutationIds,
+      selectedKinds: mutationsToApply.reduce<Record<string, number>>((counts, mutation) => {
+        counts[mutation.kind] = (counts[mutation.kind] ?? 0) + 1;
+        return counts;
+      }, {}),
+    },
+  });
 
   if (mutationsToApply.length === 0) {
     if (options.autoApplyLowRiskOnly) {
@@ -352,6 +398,15 @@ export async function applyLongTermMemoryDraft(
 
   if (appliedMutationIds.length > 0 && options.rebuildIndexes !== false) {
     await rebuildLongTermMemoryIndexes({ root: options.root });
+    await recordLtmDebugEvent({
+      root: options.root,
+      operationId: options.operationId,
+      phase: "rebuild",
+      action: "apply_rebuild_indexes",
+      status: "ok",
+      draftId,
+      counts: { appliedMutations: appliedMutationIds.length },
+    });
   }
 
   logger.info(
@@ -366,8 +421,22 @@ export async function applyLongTermMemoryDraft(
 
 export async function rejectLongTermMemoryDraft(
   draftId: string,
-  options: { root?: string; reason?: string } = {},
+  options: { root?: string; reason?: string; operationId?: string } = {},
 ) {
+  return withLtmDebugOperation(
+    {
+      root: options.root,
+      operationId: options.operationId,
+      phase: "draft",
+      action: "reject_draft",
+      draftId,
+      details: { reason: options.reason },
+    },
+    async () => rejectLongTermMemoryDraftInner(draftId, options),
+  );
+}
+
+async function rejectLongTermMemoryDraftInner(draftId: string, options: { root?: string; reason?: string } = {}) {
   const store = new LongTermMemoryDraftStore(options.root);
   const draft = await store.getDraft(draftId);
   if (!draft) {

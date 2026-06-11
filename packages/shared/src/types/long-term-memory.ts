@@ -1,5 +1,9 @@
 export type {
   LtmConflict,
+  LtmDebugError,
+  LtmDebugEvent,
+  LtmDebugPhase,
+  LtmDebugStatus,
   LtmEvent,
   LtmEvidenceUnit,
   LtmEvidenceUnitBucket,

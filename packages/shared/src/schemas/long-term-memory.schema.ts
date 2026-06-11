@@ -16,13 +16,7 @@ export const ltmNoteTypeSchema = z.enum([
 
 export const ltmStatusSchema = z.enum(["active", "resolved", "archived", "dormant"]);
 
-export const ltmEvidenceUnitStatusSchema = z.enum([
-  "active",
-  "resolved",
-  "archived",
-  "dormant",
-  "developing",
-]);
+export const ltmEvidenceUnitStatusSchema = z.enum(["active", "resolved", "archived", "dormant", "developing"]);
 
 export const ltmEvidenceUnitBucketSchema = z.enum([
   "character_fact",
@@ -181,7 +175,10 @@ export const ltmNoteSchema = z
     sections: z.record(ltmSectionKeySchema, ltmSectionSchema),
     conflicts: z.array(ltmConflictSchema).max(250).optional(),
     version: z.number().int().min(1),
-    previousHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    previousHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
   })
   .strict()
   .superRefine((note, ctx) => {
@@ -232,6 +229,58 @@ export const ltmEventSchema = z
     cause: z.string().min(1).max(240).optional(),
     summary: z.string().max(2_000).optional(),
     payload: z.record(z.unknown()).default({}),
+  })
+  .strict();
+
+export const ltmDebugStatusSchema = z.enum(["started", "ok", "skipped", "warning", "error"]);
+
+export const ltmDebugPhaseSchema = z.enum([
+  "import",
+  "source_note",
+  "extraction",
+  "llm",
+  "compiler",
+  "draft",
+  "apply",
+  "retrieval",
+  "summary_sync",
+  "rebuild",
+  "repair",
+  "replay",
+  "diagnostic",
+]);
+
+export const ltmDebugErrorSchema = z
+  .object({
+    name: z.string().max(120).optional(),
+    message: z.string().max(2_000),
+    stack: z.string().max(6_000).optional(),
+    code: z.string().max(120).optional(),
+  })
+  .strict();
+
+export const ltmDebugEventSchema = z
+  .object({
+    id: z.string().uuid(),
+    ts: ltmIsoTimestampSchema,
+    operationId: z.string().uuid(),
+    phase: ltmDebugPhaseSchema,
+    action: z.string().min(1).max(120),
+    status: ltmDebugStatusSchema,
+    message: z.string().max(2_000).optional(),
+    durationMs: z.number().int().min(0).max(86_400_000).optional(),
+    source: z.string().max(120).optional(),
+    sourceId: z.string().max(240).optional(),
+    sourceNoteId: ltmNoteIdSchema.optional(),
+    draftId: z.string().uuid().optional(),
+    noteId: ltmNoteIdSchema.optional(),
+    mutationIds: z.array(z.string().uuid()).max(100).optional(),
+    counts: z.record(z.number().int().min(0)).optional(),
+    diagnostics: z.array(z.record(z.unknown())).max(80).optional(),
+    provider: z.string().max(120).optional(),
+    model: z.string().max(240).optional(),
+    error: ltmDebugErrorSchema.optional(),
+    details: z.record(z.unknown()).optional(),
   })
   .strict();
 
@@ -298,7 +347,10 @@ export const ltmDraftSourceSchema = z
     turn: z.number().int().min(0).optional(),
     sourceNoteId: ltmNoteIdSchema.optional(),
     summaryEntryId: z.string().min(1).max(120).optional(),
-    sourceHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    sourceHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
   })
   .strict();
 
@@ -316,7 +368,10 @@ export const ltmDraftNoteInputSchema = z
     sections: z.record(ltmSectionKeySchema, ltmSectionSchema),
     conflicts: z.array(ltmConflictSchema).max(250).optional(),
     version: z.number().int().min(1).optional(),
-    previousHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    previousHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
   })
   .strict()
   .superRefine((note, ctx) => {
@@ -430,6 +485,10 @@ export type LtmSection = z.infer<typeof ltmSectionSchema>;
 export type LtmConflict = z.infer<typeof ltmConflictSchema>;
 export type LtmNote = z.infer<typeof ltmNoteSchema>;
 export type LtmEvent = z.infer<typeof ltmEventSchema>;
+export type LtmDebugStatus = z.infer<typeof ltmDebugStatusSchema>;
+export type LtmDebugPhase = z.infer<typeof ltmDebugPhaseSchema>;
+export type LtmDebugError = z.infer<typeof ltmDebugErrorSchema>;
+export type LtmDebugEvent = z.infer<typeof ltmDebugEventSchema>;
 export type LtmPolicy = z.infer<typeof ltmPolicySchema>;
 export type LtmPoliciesConfig = z.infer<typeof ltmPoliciesConfigSchema>;
 export type LtmRetrievalConfig = z.infer<typeof ltmRetrievalConfigSchema>;

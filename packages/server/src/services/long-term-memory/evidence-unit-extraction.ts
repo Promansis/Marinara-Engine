@@ -14,6 +14,7 @@ import type { BaseLLMProvider, ChatMessage } from "../llm/base-provider.js";
 import { logger } from "../../lib/logger.js";
 import { readJsonFile, writeJsonAtomic } from "./atomic-json.js";
 import { stableJsonHash } from "./chunking.js";
+import { recordLtmDebugEvent } from "./debug-log.js";
 import { compileLtmEvidenceUnits } from "./evidence-unit-compiler.js";
 import { validateLtmEvidenceUnits } from "./evidence-unit-validation.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
@@ -34,6 +35,7 @@ export interface RunLongTermMemoryEvidenceUnitExtractionOptions {
   sourceHash: string;
   instruction?: string;
   signal?: AbortSignal;
+  operationId?: string;
 }
 
 export interface LtmEvidenceUnitDraftArtifact {
@@ -53,6 +55,13 @@ export interface CompileEvidenceUnitExtractionResult {
   compiledResponse: LtmExtractionResponse;
   diagnostics: LtmExtractionDiagnostic[];
   artifact: LtmEvidenceUnitDraftArtifact;
+}
+
+function countBy<T extends string>(values: T[]) {
+  return values.reduce<Record<string, number>>((counts, value) => {
+    counts[value] = (counts[value] ?? 0) + 1;
+    return counts;
+  }, {});
 }
 
 function evidenceFromSourceNote(note: LtmNote) {
@@ -82,9 +91,7 @@ function normalizeEvidenceUnitResponse(raw: unknown): unknown {
       const id = typeof record.id === "string" && record.id.trim().length > 0 ? record.id.trim() : randomUUID();
       return {
         ...record,
-        id: /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
-          ? id
-          : randomUUID(),
+        id: /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) ? id : randomUUID(),
       };
     }),
   };
@@ -192,17 +199,95 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
 export async function runLongTermMemoryEvidenceUnitExtraction(
   options: RunLongTermMemoryEvidenceUnitExtractionOptions,
 ): Promise<LtmEvidenceUnitExtractionResponse> {
-  const result = await options.provider.chatComplete(evidenceUnitMessages(options), {
+  const messages = evidenceUnitMessages(options);
+  const promptChars = messages.reduce((total, message) => total + message.content.length, 0);
+  const started = Date.now();
+  await recordLtmDebugEvent({
+    operationId: options.operationId,
+    phase: "llm",
+    action: "evidence_unit_request",
+    status: "started",
+    sourceNoteId: options.sourceNote.id,
+    provider: options.provider.constructor.name,
     model: options.model,
-    temperature: 0,
-    maxTokens: options.provider.maxTokensOverrideValue ?? EVIDENCE_UNIT_EXTRACTION_MAX_TOKENS,
-    stream: false,
-    signal: options.signal,
+    counts: {
+      messages: messages.length,
+      promptChars,
+      sourceChars: options.sourceText.length,
+      existingNotes: options.existingNotes.length,
+    },
   });
+  try {
+    const result = await options.provider.chatComplete(messages, {
+      model: options.model,
+      temperature: 0,
+      maxTokens: options.provider.maxTokensOverrideValue ?? EVIDENCE_UNIT_EXTRACTION_MAX_TOKENS,
+      stream: false,
+      signal: options.signal,
+    });
 
-  const content = result.content?.trim() ?? "";
-  if (!content) return ltmEvidenceUnitExtractionResponseSchema.parse({ summary: "", units: [] });
-  return ltmEvidenceUnitExtractionResponseSchema.parse(normalizeEvidenceUnitResponse(JSON.parse(extractJsonObject(content))));
+    const content = result.content?.trim() ?? "";
+    await recordLtmDebugEvent({
+      operationId: options.operationId,
+      phase: "llm",
+      action: "evidence_unit_response",
+      status: content ? "ok" : "skipped",
+      sourceNoteId: options.sourceNote.id,
+      provider: options.provider.constructor.name,
+      model: options.model,
+      durationMs: Date.now() - started,
+      counts: {
+        responseChars: content.length,
+        promptTokens: result.usage?.promptTokens ?? 0,
+        completionTokens: result.usage?.completionTokens ?? 0,
+        totalTokens: result.usage?.totalTokens ?? 0,
+      },
+      details: {
+        finishReason: result.finishReason,
+        responseSnippet: content.slice(0, 1_500),
+      },
+    });
+    if (!content) return ltmEvidenceUnitExtractionResponseSchema.parse({ summary: "", units: [] });
+    try {
+      const parsed = ltmEvidenceUnitExtractionResponseSchema.parse(
+        normalizeEvidenceUnitResponse(JSON.parse(extractJsonObject(content))),
+      );
+      await recordLtmDebugEvent({
+        operationId: options.operationId,
+        phase: "llm",
+        action: "evidence_unit_json_parse",
+        status: "ok",
+        sourceNoteId: options.sourceNote.id,
+        counts: { units: parsed.units.length, responseChars: content.length },
+      });
+      return parsed;
+    } catch (err) {
+      await recordLtmDebugEvent({
+        operationId: options.operationId,
+        phase: "llm",
+        action: "evidence_unit_json_parse",
+        status: "error",
+        sourceNoteId: options.sourceNote.id,
+        counts: { responseChars: content.length },
+        error: err,
+        details: { responseSnippet: content.slice(0, 1_500) },
+      });
+      throw err;
+    }
+  } catch (err) {
+    await recordLtmDebugEvent({
+      operationId: options.operationId,
+      phase: "llm",
+      action: "evidence_unit_request",
+      status: "error",
+      sourceNoteId: options.sourceNote.id,
+      provider: options.provider.constructor.name,
+      model: options.model,
+      durationMs: Date.now() - started,
+      error: err,
+    });
+    throw err;
+  }
 }
 
 export function compileEvidenceUnitExtraction(options: {
@@ -249,6 +334,23 @@ export function compileEvidenceUnitExtraction(options: {
   };
 }
 
+export function summarizeCompiledEvidenceUnitExtraction(result: CompileEvidenceUnitExtractionResult) {
+  const targetNoteIds = result.compiledResponse.mutations.flatMap((mutation) =>
+    mutation.kind === "create_note" ? [mutation.note.id] : [mutation.noteId],
+  );
+  return {
+    counts: {
+      units: result.unitResponse.units.length,
+      diagnostics: result.diagnostics.length,
+      blockingDiagnostics: result.diagnostics.filter((diagnostic) => diagnostic.severity === "error").length,
+      mutations: result.compiledResponse.mutations.length,
+      targetNotes: new Set(targetNoteIds).size,
+    },
+    mutationKinds: countBy(result.compiledResponse.mutations.map((mutation) => mutation.kind)),
+    targetNoteIds: Array.from(new Set(targetNoteIds)).slice(0, 80),
+  };
+}
+
 export class LongTermMemoryEvidenceUnitDraftStore {
   readonly root: string;
 
@@ -262,11 +364,7 @@ export class LongTermMemoryEvidenceUnitDraftStore {
 
   async createArtifact(artifact: LtmEvidenceUnitDraftArtifact) {
     await writeJsonAtomic(safeJoin(this.dirs.evidenceUnitDrafts, `${artifact.id}.json`), artifact);
-    logger.info(
-      "[ltm] Stored evidence unit draft %s with %d unit(s)",
-      artifact.id,
-      artifact.units.length,
-    );
+    logger.info("[ltm] Stored evidence unit draft %s with %d unit(s)", artifact.id, artifact.units.length);
     return artifact;
   }
 

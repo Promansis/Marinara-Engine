@@ -1,7 +1,8 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { type ChatMode, type ChatSummaryEntry, type LtmMode, type LtmNote } from "@marinara-engine/shared";
 import { logger } from "../../lib/logger.js";
 import type { BaseLLMProvider } from "../llm/base-provider.js";
+import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import { applyLongTermMemoryDraft } from "./reconciliation.js";
 import { rebuildLongTermMemoryIndexes } from "./rebuild.js";
 import { extractLongTermMemoryFromSourceNote } from "./source-extraction.js";
@@ -23,6 +24,7 @@ export type SummaryLtmSyncOptions = {
     instruction?: string;
     signal?: AbortSignal;
   };
+  operationId?: string;
 };
 
 export type SummaryLtmChat = {
@@ -162,6 +164,25 @@ export async function syncChatSummaryEntryToLongTermMemory(
   entry: ChatSummaryEntry,
   options: SummaryLtmSyncOptions = {},
 ) {
+  return withLtmDebugOperation(
+    {
+      operationId: options.operationId,
+      phase: "summary_sync",
+      action: "sync_summary_entry",
+      source: "chat_summary",
+      sourceId: entry.id,
+      message: "Sync chat summary entry to long-term memory source note",
+      details: { chatId: chat.id, enabled: entry.ltm?.enabled === true },
+    },
+    async (operationId) => syncChatSummaryEntryToLongTermMemoryInner(chat, entry, { ...options, operationId }),
+  );
+}
+
+async function syncChatSummaryEntryToLongTermMemoryInner(
+  chat: SummaryLtmChat,
+  entry: ChatSummaryEntry,
+  options: SummaryLtmSyncOptions & { operationId: string },
+) {
   const shouldRebuild = options.rebuildIndexes !== false;
   const storage = new LongTermMemoryStorage();
   const meta = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
@@ -181,6 +202,15 @@ export async function syncChatSummaryEntryToLongTermMemory(
             cause: "summary_ltm_disabled",
             summary: "Archived chat summary source note",
           });
+          await recordLtmDebugEvent({
+            operationId: options.operationId,
+            phase: "source_note",
+            action: "summary_source_note_archived",
+            status: "ok",
+            source: "chat_summary",
+            sourceId: entry.id,
+            sourceNoteId: entry.ltm.noteId,
+          });
           mutated = true;
         }
       }
@@ -190,7 +220,18 @@ export async function syncChatSummaryEntryToLongTermMemory(
         syncedAt: new Date().toISOString(),
         sourceHash,
       });
-      if (mutated && shouldRebuild) await rebuildLongTermMemoryIndexes();
+      if (mutated && shouldRebuild) {
+        const result = await rebuildLongTermMemoryIndexes();
+        await recordLtmDebugEvent({
+          operationId: options.operationId,
+          phase: "rebuild",
+          action: "summary_sync_rebuild",
+          status: "ok",
+          source: "chat_summary",
+          sourceId: entry.id,
+          counts: { notes: result.noteCount, chunks: result.chunkCount },
+        });
+      }
       return { noteId, synced: false, mutated };
     }
 
@@ -234,6 +275,16 @@ export async function syncChatSummaryEntryToLongTermMemory(
             summary: "Updated chat summary source note",
           },
         );
+        await recordLtmDebugEvent({
+          operationId: options.operationId,
+          phase: "source_note",
+          action: "summary_source_note_updated",
+          status: "ok",
+          source: "chat_summary",
+          sourceId: entry.id,
+          sourceNoteId: noteId,
+          counts: { sourceChars: entry.content.trim().length },
+        });
         mutated = true;
       }
     } else {
@@ -241,6 +292,16 @@ export async function syncChatSummaryEntryToLongTermMemory(
         actor: "summary_ltm_sync",
         cause: "summary_ltm_created",
         summary: "Created chat summary source note",
+      });
+      await recordLtmDebugEvent({
+        operationId: options.operationId,
+        phase: "source_note",
+        action: "summary_source_note_created",
+        status: "ok",
+        source: "chat_summary",
+        sourceId: entry.id,
+        sourceNoteId: noteId,
+        counts: { sourceChars: entry.content.trim().length },
       });
       mutated = true;
     }
@@ -254,13 +315,36 @@ export async function syncChatSummaryEntryToLongTermMemory(
     };
     nextLtm = ltm;
     await persistEntryLtmState(options.updateMetadata, entry.id, nextLtm);
-    if (mutated && shouldRebuild) await rebuildLongTermMemoryIndexes();
+    if (mutated && shouldRebuild) {
+      const result = await rebuildLongTermMemoryIndexes();
+      await recordLtmDebugEvent({
+        operationId: options.operationId,
+        phase: "rebuild",
+        action: "summary_sync_rebuild",
+        status: "ok",
+        source: "chat_summary",
+        sourceId: entry.id,
+        sourceNoteId: noteId,
+        counts: { notes: result.noteCount, chunks: result.chunkCount },
+      });
+    }
     if (
       options.extraction?.enabled === true &&
       nextLtm.extractedSourceHash !== sourceHash &&
       options.extraction.provider
     ) {
       try {
+        const extractionOperationId = randomUUID();
+        await recordLtmDebugEvent({
+          operationId: options.operationId,
+          phase: "extraction",
+          action: "summary_auto_extraction_started",
+          status: "started",
+          source: "chat_summary",
+          sourceId: entry.id,
+          sourceNoteId: noteId,
+          details: { extractionOperationId },
+        });
         const result = await extractLongTermMemoryFromSourceNote({
           noteId,
           provider: options.extraction.provider,
@@ -270,6 +354,7 @@ export async function syncChatSummaryEntryToLongTermMemory(
           instruction: options.extraction.instruction,
           includeExistingNotes: options.extraction.includeExistingNotes,
           signal: options.extraction.signal,
+          operationId: extractionOperationId,
         });
         const applyResult =
           options.extraction.applyLowRisk && result.draft
@@ -277,6 +362,7 @@ export async function syncChatSummaryEntryToLongTermMemory(
                 actor: "summary_ltm_sync",
                 autoApplyLowRiskOnly: true,
                 autoApplyPolicy: "source_extraction",
+                operationId: extractionOperationId,
               })
             : null;
         nextLtm = {
@@ -288,8 +374,34 @@ export async function syncChatSummaryEntryToLongTermMemory(
           skippedMutationIds: applyResult?.skippedMutationIds ?? [],
         };
         await persistEntryLtmState(options.updateMetadata, entry.id, nextLtm);
+        await recordLtmDebugEvent({
+          operationId: options.operationId,
+          phase: "extraction",
+          action: "summary_auto_extraction_finished",
+          status: "ok",
+          source: "chat_summary",
+          sourceId: entry.id,
+          sourceNoteId: noteId,
+          draftId: result.draft?.id,
+          counts: {
+            diagnostics: result.diagnostics.length,
+            mutations: result.response.mutations.length,
+            appliedMutations: applyResult?.appliedMutationIds.length ?? 0,
+            skippedMutations: applyResult?.skippedMutationIds.length ?? 0,
+          },
+        });
       } catch (err) {
         logger.warn(err, "[ltm] Failed to extract summary source note %s", noteId);
+        await recordLtmDebugEvent({
+          operationId: options.operationId,
+          phase: "extraction",
+          action: "summary_auto_extraction_failed",
+          status: "error",
+          source: "chat_summary",
+          sourceId: entry.id,
+          sourceNoteId: noteId,
+          error: err,
+        });
       }
     }
     return { noteId, synced: true, mutated };

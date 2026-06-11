@@ -4,9 +4,11 @@ import {
   compileEvidenceUnitExtraction,
   LongTermMemoryEvidenceUnitDraftStore,
   runLongTermMemoryEvidenceUnitExtraction,
+  summarizeCompiledEvidenceUnitExtraction,
   sourceHashForEvidenceUnitExtraction,
   sourceMetadataForEvidenceUnitDraft,
 } from "./evidence-unit-extraction.js";
+import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import { LongTermMemoryDraftStore } from "./extraction.js";
 import { retrieveLongTermMemory, type RetrieveLongTermMemoryInput } from "./retrieval.js";
 import { LongTermMemoryStorage } from "./storage.js";
@@ -23,6 +25,7 @@ export type ExtractLongTermMemoryFromSourceNoteOptions = {
   includeExistingNotes?: boolean;
   signal?: AbortSignal;
   embeddingSource?: RetrieveLongTermMemoryInput["embeddingSource"];
+  operationId?: string;
 };
 
 export type ExtractLongTermMemoryFromSourceNoteResult = {
@@ -68,6 +71,23 @@ async function getExistingTypedNotes(options: {
 export async function extractLongTermMemoryFromSourceNote(
   options: ExtractLongTermMemoryFromSourceNoteOptions,
 ): Promise<ExtractLongTermMemoryFromSourceNoteResult> {
+  return withLtmDebugOperation(
+    {
+      operationId: options.operationId,
+      root: options.root,
+      phase: "extraction",
+      action: "extract_source_note",
+      sourceNoteId: options.noteId,
+      model: options.model,
+      message: "Extract typed long-term memory from source note",
+    },
+    async (operationId) => extractLongTermMemoryFromSourceNoteInner({ ...options, operationId }),
+  );
+}
+
+async function extractLongTermMemoryFromSourceNoteInner(
+  options: ExtractLongTermMemoryFromSourceNoteOptions & { operationId: string },
+): Promise<ExtractLongTermMemoryFromSourceNoteResult> {
   const storage = new LongTermMemoryStorage(options.root);
   const sourceNote = await storage.getNote(options.noteId);
   if (!sourceNote) throw new Error(`Long-term memory note not found: ${options.noteId}`);
@@ -78,6 +98,23 @@ export async function extractLongTermMemoryFromSourceNote(
 
   const scope = options.scope ?? sourceNote.scope;
   const modes = options.modes?.length ? options.modes : sourceNote.modes;
+  await recordLtmDebugEvent({
+    operationId: options.operationId,
+    root: options.root,
+    phase: "source_note",
+    action: "source_note_loaded",
+    status: "ok",
+    sourceNoteId: sourceNote.id,
+    counts: {
+      sourceChars: sourceText.length,
+      sections: Object.keys(sourceNote.sections).length,
+      modes: modes.length,
+    },
+    details: {
+      scope,
+      tags: sourceNote.tags,
+    },
+  });
   const existingNotes = await getExistingTypedNotes({
     storage,
     sourceText,
@@ -85,7 +122,30 @@ export async function extractLongTermMemoryFromSourceNote(
     includeExistingNotes: options.includeExistingNotes !== false,
     embeddingSource: options.embeddingSource,
   });
+  await recordLtmDebugEvent({
+    operationId: options.operationId,
+    root: options.root,
+    phase: "retrieval",
+    action: "existing_notes_loaded",
+    status: options.includeExistingNotes === false ? "skipped" : "ok",
+    sourceNoteId: sourceNote.id,
+    counts: {
+      existingNotes: existingNotes.length,
+    },
+    details: {
+      noteIds: existingNotes.map((note) => note.id).slice(0, 80),
+    },
+  });
   const sourceHash = sourceHashForEvidenceUnitExtraction(sourceNote);
+  await recordLtmDebugEvent({
+    operationId: options.operationId,
+    root: options.root,
+    phase: "extraction",
+    action: "source_hash_ready",
+    status: "ok",
+    sourceNoteId: sourceNote.id,
+    details: { sourceHash },
+  });
 
   const unitResponse = await runLongTermMemoryEvidenceUnitExtraction({
     sourceNote,
@@ -98,6 +158,7 @@ export async function extractLongTermMemoryFromSourceNote(
     sourceHash,
     instruction: options.instruction,
     signal: options.signal,
+    operationId: options.operationId,
   });
   const compiled = compileEvidenceUnitExtraction({
     unitResponse,
@@ -108,6 +169,22 @@ export async function extractLongTermMemoryFromSourceNote(
     modes,
     model: options.model,
     sourceHash,
+  });
+  const compiledSummary = summarizeCompiledEvidenceUnitExtraction(compiled);
+  await recordLtmDebugEvent({
+    operationId: options.operationId,
+    root: options.root,
+    phase: "compiler",
+    action: "evidence_units_compiled",
+    status: compiledSummary.counts.blockingDiagnostics > 0 ? "warning" : "ok",
+    sourceNoteId: sourceNote.id,
+    counts: compiledSummary.counts,
+    diagnostics: compiled.diagnostics.map((diagnostic) => ({ ...diagnostic })),
+    details: {
+      mutationKinds: compiledSummary.mutationKinds,
+      targetNoteIds: compiledSummary.targetNoteIds,
+      summary: compiled.compiledResponse.summary,
+    },
   });
 
   const artifactStore = new LongTermMemoryEvidenceUnitDraftStore(options.root);
@@ -126,5 +203,24 @@ export async function extractLongTermMemoryFromSourceNote(
       : null;
 
   if (draft) await artifactStore.updateArtifact(artifact.id, { compiledDraftId: draft.id });
+  await recordLtmDebugEvent({
+    operationId: options.operationId,
+    root: options.root,
+    phase: "draft",
+    action: draft ? "draft_created" : "draft_skipped",
+    status: draft ? "ok" : hasBlockingDiagnostic ? "warning" : "skipped",
+    sourceNoteId: sourceNote.id,
+    draftId: draft?.id,
+    counts: {
+      mutations: compiled.compiledResponse.mutations.length,
+      diagnostics: compiled.diagnostics.length,
+      blockingDiagnostics: compiled.diagnostics.filter((diagnostic) => diagnostic.severity === "error").length,
+    },
+    diagnostics: compiled.diagnostics.map((diagnostic) => ({ ...diagnostic })),
+    details: {
+      artifactId: artifact.id,
+      reason: draft ? "created" : hasBlockingDiagnostic ? "blocking_diagnostics" : "no_mutations",
+    },
+  });
   return { sourceNote, response: compiled.compiledResponse, draft, diagnostics: compiled.diagnostics };
 }

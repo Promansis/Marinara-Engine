@@ -1,6 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   LtmDraftStatus,
+  LtmDebugEvent,
+  LtmDebugPhase,
+  LtmDebugStatus,
   LtmExtractionDraft,
   LtmExtractionResponse,
   LtmGate,
@@ -99,6 +102,19 @@ export type LtmSearchResponse = {
   warnings: string[];
 };
 
+export type LtmDebugLogFilter = {
+  limit?: number;
+  operationId?: string;
+  sourceNoteId?: string;
+  draftId?: string;
+  status?: LtmDebugStatus;
+  phase?: LtmDebugPhase;
+};
+
+export type LtmDebugLogResponse = {
+  events: LtmDebugEvent[];
+};
+
 export type LtmExtractionDiagnostic = {
   severity: "warning" | "error";
   code: string;
@@ -149,6 +165,8 @@ export const longTermMemoryKeys = {
   drafts: (filter?: LtmDraftFilter) => [...longTermMemoryKeys.all, "drafts", filter ?? {}] as const,
   importPreview: (source: LtmInteropSource, limit: number) =>
     [...longTermMemoryKeys.all, "import-preview", source, limit] as const,
+  debugLogs: () => [...longTermMemoryKeys.all, "debug-log"] as const,
+  debugLog: (filter?: LtmDebugLogFilter) => [...longTermMemoryKeys.all, "debug-log", filter ?? {}] as const,
 };
 
 export type LtmNoteFilter = {
@@ -269,6 +287,39 @@ export function useSearchLongTermMemory() {
   });
 }
 
+export function useLongTermMemoryDebugLog(filter: LtmDebugLogFilter = {}, options: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: longTermMemoryKeys.debugLog(filter),
+    queryFn: () =>
+      api.get<LtmDebugLogResponse>(
+        `/long-term-memory/debug-log${qs({
+          limit: filter.limit ? String(filter.limit) : undefined,
+          operationId: filter.operationId,
+          sourceNoteId: filter.sourceNoteId,
+          draftId: filter.draftId,
+          status: filter.status,
+          phase: filter.phase,
+        })}`,
+      ),
+    enabled: options.enabled ?? true,
+    staleTime: 10_000,
+  });
+}
+
+export function useClearLongTermMemoryDebugLog() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.delete<{ cleared: true }>("/long-term-memory/debug-log"),
+    onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.debugLogs() }),
+  });
+}
+
+export function useExportLongTermMemoryDebugLog() {
+  return useMutation({
+    mutationFn: () => api.download("/long-term-memory/debug-log/export", "ltm-debug-log.jsonl"),
+  });
+}
+
 export function useRebuildLongTermMemory() {
   const qc = useQueryClient();
   return useMutation({
@@ -307,15 +358,7 @@ export function useCreateLongTermMemoryImportDrafts() {
 export function useImportLongTermMemorySourceNotes() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({
-      source,
-      sourceIds,
-      limit,
-    }: {
-      source: LtmInteropSource;
-      sourceIds: string[];
-      limit: number;
-    }) =>
+    mutationFn: ({ source, sourceIds, limit }: { source: LtmInteropSource; sourceIds: string[]; limit: number }) =>
       api.post<ImportLongTermMemorySourceNotesResponse>("/long-term-memory/import/source-notes", {
         source,
         sourceIds,

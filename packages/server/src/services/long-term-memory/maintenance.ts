@@ -17,6 +17,7 @@ import { createCharactersStorage } from "../storage/characters.storage.js";
 import { createChatsStorage } from "../storage/chats.storage.js";
 import { createLorebooksStorage } from "../storage/lorebooks.storage.js";
 import { LongTermMemoryDraftStore } from "./extraction.js";
+import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import {
   getLongTermMemoryDirectories,
   getLongTermMemoryRoot,
@@ -132,7 +133,8 @@ function readJsonObject(raw: unknown): Record<string, unknown> {
 }
 
 function readJsonArray(raw: unknown): string[] {
-  if (Array.isArray(raw)) return raw.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  if (Array.isArray(raw))
+    return raw.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
   if (typeof raw !== "string" || !raw.trim()) return [];
   try {
     const parsed = JSON.parse(raw);
@@ -179,7 +181,8 @@ async function listVaultFiles(root: string) {
       throw err;
     });
     for (const entry of entries) {
-      if (entry.isFile() && entry.name.endsWith(".json")) files.push({ folder, path: safeJoin(folderPath, entry.name) });
+      if (entry.isFile() && entry.name.endsWith(".json"))
+        files.push({ folder, path: safeJoin(folderPath, entry.name) });
     }
   }
   return files;
@@ -187,7 +190,9 @@ async function listVaultFiles(root: string) {
 
 async function checkEventLogIntegrity(root: string, issues: IntegrityIssue[]) {
   const dirs = getLongTermMemoryDirectories(root);
-  const publicPath = relative(root, dirs.eventLog).split(/[\\/]+/).join("/");
+  const publicPath = relative(root, dirs.eventLog)
+    .split(/[\\/]+/)
+    .join("/");
   let content = "";
   try {
     content = await readFile(dirs.eventLog, "utf8");
@@ -213,7 +218,8 @@ async function checkEventLogIntegrity(root: string, issues: IntegrityIssue[]) {
         severity: "error",
         code: "malformed_event",
         path: publicPath,
-        message: err instanceof Error ? `Line ${index + 1}: ${err.message}` : `Line ${index + 1}: Event failed validation.`,
+        message:
+          err instanceof Error ? `Line ${index + 1}: ${err.message}` : `Line ${index + 1}: Event failed validation.`,
       });
     }
   }
@@ -232,7 +238,9 @@ export async function checkLongTermMemoryIntegrity(root = getLongTermMemoryRoot(
   const notesById = new Map<string, LtmNote>();
 
   for (const file of await listVaultFiles(root)) {
-    const publicPath = relative(root, file.path).split(/[\\/]+/).join("/");
+    const publicPath = relative(root, file.path)
+      .split(/[\\/]+/)
+      .join("/");
     try {
       const note = ltmNoteSchema.parse(JSON.parse(await readFile(file.path, "utf8")));
       notesById.set(note.id, note);
@@ -298,76 +306,105 @@ export async function checkLongTermMemoryIntegrity(root = getLongTermMemoryRoot(
 }
 
 export async function auditLongTermMemoryReplay(root = getLongTermMemoryRoot()): Promise<LtmReplayAuditResult> {
-  const storage = new LongTermMemoryStorage(root);
-  const events = await storage.readEvents();
-  const replayRoot = join(dirname(root), `${basename(root)}-replay-${Date.now()}`);
-  const replayStorage = new LongTermMemoryStorage(replayRoot);
-  try {
-    await replayStorage.initializeLtmStore();
-    const unsupported = [];
-    let replayedEventCount = 0;
-
-    for (const event of events) {
-      const payload = event.payload ?? {};
+  return withLtmDebugOperation(
+    {
+      root,
+      phase: "replay",
+      action: "audit_replay",
+      message: "Audit long-term memory replay log",
+    },
+    async (operationId) => {
+      const storage = new LongTermMemoryStorage(root);
+      const events = await storage.readEvents();
+      const replayRoot = join(dirname(root), `${basename(root)}-replay-${Date.now()}`);
+      const replayStorage = new LongTermMemoryStorage(replayRoot);
       try {
-        if (payload.note) {
-          const note = ltmNoteSchema.parse(payload.note);
-          if (event.type.endsWith(".created")) {
-            await replayStorage.createNote(note, {
-              actor: "replay",
-              cause: event.id,
-              summary: event.summary,
-              payload: { sourceEventId: event.id },
-              suppressEvent: true,
-            });
-          } else {
-            await writeReplayNoteExact(replayRoot, note);
-          }
-          replayedEventCount += 1;
-          continue;
-        }
-        if (typeof event.target === "string" && payload.patch && typeof payload.patch === "object" && !Array.isArray(payload.patch)) {
-          await replayStorage.updateNote(event.target, payload.patch, {
-            actor: "replay",
-            cause: event.id,
-            summary: event.summary,
-            payload: { sourceEventId: event.id },
-            suppressEvent: true,
-          });
-          replayedEventCount += 1;
-          continue;
-        }
-        unsupported.push(event);
-      } catch {
-        unsupported.push(event);
-      }
-    }
+        await replayStorage.initializeLtmStore();
+        const unsupported = [];
+        let replayedEventCount = 0;
 
-    const driftCount =
-      unsupported.length === 0
-        ? await compareVaults(storage, replayStorage)
-        : null;
-    return {
-      replayable: unsupported.length === 0,
-      checkedAt: nowIso(),
-      replayRoot: relative(dirname(root), replayRoot).split(/[\\/]+/).join("/"),
-      eventCount: events.length,
-      unsupportedEventCount: unsupported.length,
-      replayedEventCount,
-      driftCount,
-      messages:
-        unsupported.length > 0
-          ? [
-              "Event log is mutation history, but existing events do not include enough note payload data for full vault replay.",
-              "Use integrity check plus rebuild for current recovery; future event writers should include note or patch payloads for deterministic replay.",
-            ]
-          : driftCount === 0
-            ? ["Replay finished and matched the current vault."]
-            : [`Replay finished with ${driftCount} note difference(s).`],
-    };
-  } finally {
-    await rm(replayRoot, { recursive: true, force: true });
-  }
+        for (const event of events) {
+          const payload = event.payload ?? {};
+          try {
+            if (payload.note) {
+              const note = ltmNoteSchema.parse(payload.note);
+              if (event.type.endsWith(".created")) {
+                await replayStorage.createNote(note, {
+                  actor: "replay",
+                  cause: event.id,
+                  summary: event.summary,
+                  payload: { sourceEventId: event.id },
+                  suppressEvent: true,
+                });
+              } else {
+                await writeReplayNoteExact(replayRoot, note);
+              }
+              replayedEventCount += 1;
+              continue;
+            }
+            if (
+              typeof event.target === "string" &&
+              payload.patch &&
+              typeof payload.patch === "object" &&
+              !Array.isArray(payload.patch)
+            ) {
+              await replayStorage.updateNote(event.target, payload.patch, {
+                actor: "replay",
+                cause: event.id,
+                summary: event.summary,
+                payload: { sourceEventId: event.id },
+                suppressEvent: true,
+              });
+              replayedEventCount += 1;
+              continue;
+            }
+            unsupported.push(event);
+          } catch {
+            unsupported.push(event);
+          }
+        }
+
+        const driftCount = unsupported.length === 0 ? await compareVaults(storage, replayStorage) : null;
+        const result = {
+          replayable: unsupported.length === 0,
+          checkedAt: nowIso(),
+          replayRoot: relative(dirname(root), replayRoot)
+            .split(/[\\/]+/)
+            .join("/"),
+          eventCount: events.length,
+          unsupportedEventCount: unsupported.length,
+          replayedEventCount,
+          driftCount,
+          messages:
+            unsupported.length > 0
+              ? [
+                  "Event log is mutation history, but existing events do not include enough note payload data for full vault replay.",
+                  "Use integrity check plus rebuild for current recovery; future event writers should include note or patch payloads for deterministic replay.",
+                ]
+              : driftCount === 0
+                ? ["Replay finished and matched the current vault."]
+                : [`Replay finished with ${driftCount} note difference(s).`],
+        };
+        await recordLtmDebugEvent({
+          root,
+          operationId,
+          phase: "replay",
+          action: "audit_replay_result",
+          status: result.replayable ? "ok" : "warning",
+          counts: {
+            events: result.eventCount,
+            unsupportedEvents: result.unsupportedEventCount,
+            replayedEvents: result.replayedEventCount,
+            drift: result.driftCount ?? 0,
+          },
+          details: { messages: result.messages },
+        });
+        return result;
+      } finally {
+        await rm(replayRoot, { recursive: true, force: true });
+      }
+    },
+  );
 }
 
 async function compareVaults(left: LongTermMemoryStorage, right: LongTermMemoryStorage) {
@@ -385,36 +422,71 @@ function stableNote(note: LtmNote) {
   return JSON.stringify(note);
 }
 
-export async function repairLongTermMemory(actions: LtmRepairAction[], root = getLongTermMemoryRoot()): Promise<LtmRepairResult> {
-  const results: LtmRepairResult["actions"] = [];
-  const dirs = getLongTermMemoryDirectories(root);
+export async function repairLongTermMemory(
+  actions: LtmRepairAction[],
+  root = getLongTermMemoryRoot(),
+): Promise<LtmRepairResult> {
+  return withLtmDebugOperation(
+    {
+      root,
+      phase: "repair",
+      action: "repair",
+      message: "Repair long-term memory store",
+      details: { actions },
+    },
+    async (operationId) => {
+      const results: LtmRepairResult["actions"] = [];
+      const dirs = getLongTermMemoryDirectories(root);
 
-  for (const action of actions) {
-    if (action === "rebuild_indexes") {
-      const result = await rebuildLongTermMemoryIndexes({ root });
-      results.push({ action, result: "rebuilt", count: result.chunkCount });
-      continue;
-    }
+      for (const action of actions) {
+        if (action === "rebuild_indexes") {
+          const result = await rebuildLongTermMemoryIndexes({ root });
+          results.push({ action, result: "rebuilt", count: result.chunkCount });
+          await recordLtmDebugEvent({
+            root,
+            operationId,
+            phase: "rebuild",
+            action: "repair_rebuild_indexes",
+            status: "ok",
+            counts: { chunks: result.chunkCount, notes: result.noteCount },
+          });
+          continue;
+        }
 
-    const quarantineDir = join(dirs.root, "quarantine", `malformed-${Date.now()}`);
-    let moved = 0;
-    for (const file of await listVaultFiles(root)) {
-      try {
-        ltmNoteSchema.parse(JSON.parse(await readFile(file.path, "utf8")));
-      } catch {
-        await mkdir(join(quarantineDir, file.folder), { recursive: true });
-        await rename(file.path, join(quarantineDir, file.folder, basename(file.path)));
-        moved += 1;
+        const quarantineDir = join(dirs.root, "quarantine", `malformed-${Date.now()}`);
+        let moved = 0;
+        for (const file of await listVaultFiles(root)) {
+          try {
+            ltmNoteSchema.parse(JSON.parse(await readFile(file.path, "utf8")));
+          } catch {
+            await mkdir(join(quarantineDir, file.folder), { recursive: true });
+            await rename(file.path, join(quarantineDir, file.folder, basename(file.path)));
+            moved += 1;
+          }
+        }
+        results.push({ action, result: moved > 0 ? "quarantined" : "no_malformed_notes", count: moved });
       }
-    }
-    results.push({ action, result: moved > 0 ? "quarantined" : "no_malformed_notes", count: moved });
-  }
 
-  return {
-    repairedAt: nowIso(),
-    actions: results,
-    integrity: await checkLongTermMemoryIntegrity(root),
-  };
+      const result = {
+        repairedAt: nowIso(),
+        actions: results,
+        integrity: await checkLongTermMemoryIntegrity(root),
+      };
+      await recordLtmDebugEvent({
+        root,
+        operationId,
+        phase: "repair",
+        action: "repair_result",
+        status: result.integrity.ok ? "ok" : "warning",
+        counts: {
+          actions: results.length,
+          issues: result.integrity.issues.length,
+        },
+        details: { actions: results },
+      });
+      return result;
+    },
+  );
 }
 
 async function characterDrafts(db: DB, limit: number, sourceIds?: Set<string>): Promise<DraftSeed[]> {
@@ -443,7 +515,9 @@ async function characterDrafts(db: DB, limit: number, sourceIds?: Set<string>): 
         status: "active",
         modes: ["conversation", "roleplay", "game"],
         scope: { characterIds: [row.id] },
-        tags: readJsonArray(data.tags).map((tag) => normalizeIdentifier(tag, "tag")).slice(0, 12),
+        tags: readJsonArray(data.tags)
+          .map((tag) => normalizeIdentifier(tag, "tag"))
+          .slice(0, 12),
         links: [],
         sections: { profile: textSection(body, evidence) },
       },
@@ -509,7 +583,9 @@ async function lorebookDrafts(db: DB, limit: number, sourceIds?: Set<string>): P
             ? book.characterIds.filter((value): value is string => typeof value === "string")
             : undefined,
         },
-        tags: Array.isArray(book.tags) ? book.tags.map((tag) => normalizeIdentifier(String(tag), "tag")).slice(0, 12) : [],
+        tags: Array.isArray(book.tags)
+          ? book.tags.map((tag) => normalizeIdentifier(String(tag), "tag")).slice(0, 12)
+          : [],
         links: [],
         sections: { lore: textSection(text, evidence) },
       },
@@ -579,7 +655,11 @@ async function interopDraftSeeds(db: DB, source: LtmInteropSource, limit: number
       : chatDrafts(db, limit, sourceIds);
 }
 
-export async function previewLongTermMemoryInterop(db: DB, source: LtmInteropSource, limit = 25): Promise<LtmInteropPreview> {
+export async function previewLongTermMemoryInterop(
+  db: DB,
+  source: LtmInteropSource,
+  limit = 25,
+): Promise<LtmInteropPreview> {
   const drafts = await interopDraftSeeds(db, source, limit);
   return {
     source,
@@ -622,60 +702,118 @@ export async function createLongTermMemoryInteropDrafts(
 export async function createLongTermMemoryInteropSourceNotes(
   db: DB,
   source: LtmInteropSource,
-  options: { sourceIds: string[]; limit?: number; scope?: LtmScope } = { sourceIds: [] },
+  options: { sourceIds: string[]; limit?: number; scope?: LtmScope; operationId?: string } = { sourceIds: [] },
   root = getLongTermMemoryRoot(),
 ): Promise<{ source: LtmInteropSource; imported: LtmInteropSourceNoteImport[] }> {
-  const selected = new Set(options.sourceIds);
-  const limit = Math.max(options.limit ?? options.sourceIds.length, options.sourceIds.length, 1);
-  const storage = new LongTermMemoryStorage(root);
-  const drafts = (await interopDraftSeeds(db, source, limit, selected)).filter((draft) => selected.has(draft.sourceId));
-  const imported: LtmInteropSourceNoteImport[] = [];
+  return withLtmDebugOperation(
+    {
+      operationId: options.operationId,
+      root,
+      phase: "import",
+      action: "import_source_notes",
+      source,
+      counts: { selectedSources: options.sourceIds.length },
+      details: { sourceIds: options.sourceIds, scope: options.scope },
+    },
+    async (operationId) => {
+      const selected = new Set(options.sourceIds);
+      const limit = Math.max(options.limit ?? options.sourceIds.length, options.sourceIds.length, 1);
+      const storage = new LongTermMemoryStorage(root);
+      const drafts = (await interopDraftSeeds(db, source, limit, selected)).filter((draft) =>
+        selected.has(draft.sourceId),
+      );
+      const imported: LtmInteropSourceNoteImport[] = [];
+      await recordLtmDebugEvent({
+        root,
+        operationId,
+        phase: "import",
+        action: "source_candidates_resolved",
+        status: drafts.length ? "ok" : "skipped",
+        source,
+        counts: {
+          selectedSources: options.sourceIds.length,
+          resolvedSources: drafts.length,
+          missingSources: Math.max(0, options.sourceIds.length - drafts.length),
+        },
+        details: {
+          resolvedSourceIds: drafts.map((draft) => draft.sourceId),
+          missingSourceIds: options.sourceIds.filter(
+            (sourceId) => !drafts.some((draft) => draft.sourceId === sourceId),
+          ),
+        },
+      });
 
-  for (const draft of drafts) {
-    const now = nowIso();
-    const noteInput = {
-      id: draft.sourceNoteId,
-      type: "scene" as const,
-      status: "dormant" as const,
-      modes: draft.modes,
-      scope: { ...(draft.scope ?? {}), ...(options.scope ?? {}) },
-      tags: ["source_summary", draft.sourceTag],
-      links: [],
-      sections: {
-        source: {
-          ...textSection(draft.sourceText, draft.evidence),
-          updatedAt: now,
-        },
-      },
-    };
-    const existing = await storage.getNote(noteInput.id);
-    if (existing) {
-      const note = await storage.updateNote(
-        existing.id,
-        {
-          status: "dormant",
-          modes: noteInput.modes,
-          scope: noteInput.scope,
-          tags: Array.from(new Set([...existing.tags, ...noteInput.tags])),
-          sections: { ...existing.sections, ...noteInput.sections },
-        },
-        {
+      for (const draft of drafts) {
+        const now = nowIso();
+        const noteInput = {
+          id: draft.sourceNoteId,
+          type: "scene" as const,
+          status: "dormant" as const,
+          modes: draft.modes,
+          scope: { ...(draft.scope ?? {}), ...(options.scope ?? {}) },
+          tags: ["source_summary", draft.sourceTag],
+          links: [],
+          sections: {
+            source: {
+              ...textSection(draft.sourceText, draft.evidence),
+              updatedAt: now,
+            },
+          },
+        };
+        const existing = await storage.getNote(noteInput.id);
+        if (existing) {
+          const note = await storage.updateNote(
+            existing.id,
+            {
+              status: "dormant",
+              modes: noteInput.modes,
+              scope: noteInput.scope,
+              tags: Array.from(new Set([...existing.tags, ...noteInput.tags])),
+              sections: { ...existing.sections, ...noteInput.sections },
+            },
+            {
+              actor: "maintenance_api",
+              cause: "interop.source_import",
+              summary: `Refreshed ${source} import source ${draft.title}`,
+            },
+          );
+          imported.push({ sourceId: draft.sourceId, title: draft.title, note, created: false });
+          await recordLtmDebugEvent({
+            root,
+            operationId,
+            phase: "source_note",
+            action: "source_note_refreshed",
+            status: "ok",
+            source,
+            sourceId: draft.sourceId,
+            sourceNoteId: note.id,
+            counts: { sourceChars: draft.sourceText.length },
+            message: `Refreshed ${draft.title}`,
+          });
+          continue;
+        }
+
+        const note = await storage.createNote(noteInput, {
           actor: "maintenance_api",
           cause: "interop.source_import",
-          summary: `Refreshed ${source} import source ${draft.title}`,
-        },
-      );
-      imported.push({ sourceId: draft.sourceId, title: draft.title, note, created: false });
-      continue;
-    }
+          summary: `Imported ${source} source ${draft.title}`,
+        });
+        imported.push({ sourceId: draft.sourceId, title: draft.title, note, created: true });
+        await recordLtmDebugEvent({
+          root,
+          operationId,
+          phase: "source_note",
+          action: "source_note_created",
+          status: "ok",
+          source,
+          sourceId: draft.sourceId,
+          sourceNoteId: note.id,
+          counts: { sourceChars: draft.sourceText.length },
+          message: `Created ${draft.title}`,
+        });
+      }
 
-    const note = await storage.createNote(noteInput, {
-      actor: "maintenance_api",
-      cause: "interop.source_import",
-      summary: `Imported ${source} source ${draft.title}`,
-    });
-    imported.push({ sourceId: draft.sourceId, title: draft.title, note, created: true });
-  }
-
-  return { source, imported };
+      return { source, imported };
+    },
+  );
 }
