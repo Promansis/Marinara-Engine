@@ -632,6 +632,20 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     return { archived: true, note };
   });
 
+  app.delete<{ Params: { id: string } }>("/notes/:id/permanent", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory note deletion" })) return;
+    const id = ltmNoteIdSchema.parse(req.params.id);
+    const existing = await storage.getNote(id);
+    if (!existing) return reply.status(404).send({ error: "Long-term memory note not found" });
+
+    const note = await storage.deleteNote(id, {
+      actor: "maintenance_api",
+      cause: "api.delete",
+      summary: "Deleted via long-term memory maintenance API",
+    });
+    return { deleted: true, id: note.id };
+  });
+
   app.post<{ Body: unknown }>("/rebuild", { bodyLimit: REBUILD_BODY_LIMIT_BYTES }, async (req, reply) => {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory index rebuild" })) return;
     rebuildBodySchema.parse(req.body ?? {});

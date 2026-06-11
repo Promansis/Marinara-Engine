@@ -36,6 +36,7 @@ import type {
 import {
   useAcceptLongTermMemoryDraft,
   useArchiveLongTermMemoryNote,
+  useDeleteLongTermMemoryNote,
   useExtractLongTermMemorySourceNote,
   useImportLongTermMemorySourceNotes,
   useDeleteLongTermMemoryDraft,
@@ -200,6 +201,9 @@ function NoteRow({
   onEdit,
   onArchive,
   onRestore,
+  onDelete,
+  bulkSelected,
+  onSelect,
 }: {
   note: LtmNote;
   viewing: boolean;
@@ -208,6 +212,9 @@ function NoteRow({
   onEdit: () => void;
   onArchive?: () => void;
   onRestore?: () => void;
+  onDelete?: () => void;
+  bulkSelected?: boolean;
+  onSelect?: (selected: boolean) => void;
 }) {
   const sectionCount = Object.keys(note.sections).length;
   const primaryText =
@@ -220,10 +227,27 @@ function NoteRow({
       className={cn(
         "group relative rounded-xl border border-rose-300/15 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-2.5 transition-all",
         "hover:border-rose-300/30 hover:bg-[var(--sidebar-accent)]",
-        editing && "border-rose-300/40 bg-rose-300/10 ring-1 ring-rose-300/25",
+        (editing || bulkSelected) && "border-rose-300/40 bg-rose-300/10 ring-1 ring-rose-300/25",
       )}
     >
-      <div className="min-w-0 transition-[padding] group-hover:pr-28 max-md:pr-28">
+      {onSelect && (
+        <label className="absolute left-2 top-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--background)]/55 ring-1 ring-[var(--border)]">
+          <input
+            type="checkbox"
+            checked={bulkSelected ?? false}
+            onChange={(event) => onSelect(event.target.checked)}
+            className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+            aria-label={`Select ${friendlyNoteTitle(note)}`}
+          />
+        </label>
+      )}
+      <div
+        className={cn(
+          "min-w-0 transition-[padding] group-hover:pr-28 max-md:pr-28",
+          onDelete && "group-hover:pr-36 max-md:pr-36",
+          onSelect && "pl-10",
+        )}
+      >
         <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={friendlyNoteTitle(note)}>
           {friendlyNoteTitle(note)}
         </div>
@@ -269,6 +293,17 @@ function NoteRow({
             title="Archive memory"
           >
             <Archive size="0.875rem" />
+          </button>
+        )}
+        {onDelete && (
+          <button
+            type="button"
+            onClick={onDelete}
+            className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
+            aria-label={`Delete ${friendlyNoteTitle(note)}`}
+            title="Delete memory"
+          >
+            <Trash2 size="0.875rem" />
           </button>
         )}
         <button
@@ -1032,28 +1067,43 @@ function DraftJsonEditor({
 function ArchivedDraftRow({
   draft,
   selected,
+  bulkSelected,
   onView,
   onEdit,
   onRestore,
   onDelete,
+  onSelect,
   onOpenSourceNote,
 }: {
   draft: LtmExtractionDraft;
   selected: boolean;
+  bulkSelected?: boolean;
   onView: () => void;
   onEdit: () => void;
   onRestore: () => void;
   onDelete: () => void;
+  onSelect?: (selected: boolean) => void;
   onOpenSourceNote?: (noteId: string) => void;
 }) {
   return (
     <article
       className={cn(
         "group relative rounded-xl border border-rose-300/15 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-2.5 transition-all hover:border-rose-300/30 hover:bg-[var(--sidebar-accent)]",
-        selected && "border-rose-300/40 bg-rose-300/10 ring-1 ring-rose-300/25",
+        (selected || bulkSelected) && "border-rose-300/40 bg-rose-300/10 ring-1 ring-rose-300/25",
       )}
     >
-      <div className="min-w-0 transition-[padding] group-hover:pr-36 max-md:pr-36">
+      {onSelect && (
+        <label className="absolute left-2 top-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--background)]/55 ring-1 ring-[var(--border)]">
+          <input
+            type="checkbox"
+            checked={bulkSelected ?? false}
+            onChange={(event) => onSelect(event.target.checked)}
+            className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+            aria-label={`Select suggestion ${draft.id}`}
+          />
+        </label>
+      )}
+      <div className={cn("min-w-0 transition-[padding] group-hover:pr-36 max-md:pr-36", onSelect && "pl-10")}>
         <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={draft.summary || draft.id}>
           {draft.summary || draft.id}
         </div>
@@ -1363,6 +1413,8 @@ export function LongTermMemoryPanel() {
   const [debugLogOpen, setDebugLogOpen] = useState(false);
   const [extractionSettingsOpen, setExtractionSettingsOpen] = useState(false);
   const [archiveTab, setArchiveTab] = useState<"notes" | "drafts">("notes");
+  const [selectedArchivedNoteIds, setSelectedArchivedNoteIds] = useState<Set<string>>(() => new Set());
+  const [selectedArchivedDraftIds, setSelectedArchivedDraftIds] = useState<Set<string>>(() => new Set());
   const [creatingNote, setCreatingNote] = useState(false);
   const [createNoteDraft, setCreateNoteDraft] = useState<CreateLongTermMemoryNoteDraft | null>(null);
   const [createNoteDirty, setCreateNoteDirty] = useState(false);
@@ -1398,6 +1450,7 @@ export function LongTermMemoryPanel() {
   const repair = useRepairLongTermMemory();
   const importSourceNotes = useImportLongTermMemorySourceNotes();
   const archiveNote = useArchiveLongTermMemoryNote();
+  const deleteNote = useDeleteLongTermMemoryNote();
   const updateNote = useUpdateLongTermMemoryNote();
   const updateDraft = useUpdateLongTermMemoryDraft();
   const deleteDraft = useDeleteLongTermMemoryDraft();
@@ -1419,6 +1472,21 @@ export function LongTermMemoryPanel() {
     () => (allDrafts.data ?? []).filter((draft) => draft.status !== "pending"),
     [allDrafts.data],
   );
+  const archivedMemoryNotes = useMemo(() => archivedNotes.data ?? [], [archivedNotes.data]);
+  const archivedNoteIds = useMemo(() => archivedMemoryNotes.map((note) => note.id), [archivedMemoryNotes]);
+  const archivedDraftIds = useMemo(() => archivedDrafts.map((draft) => draft.id), [archivedDrafts]);
+  const selectedArchivedNotes = useMemo(
+    () => archivedMemoryNotes.filter((note) => selectedArchivedNoteIds.has(note.id)),
+    [archivedMemoryNotes, selectedArchivedNoteIds],
+  );
+  const selectedArchivedDrafts = useMemo(
+    () => archivedDrafts.filter((draft) => selectedArchivedDraftIds.has(draft.id)),
+    [archivedDrafts, selectedArchivedDraftIds],
+  );
+  const allArchivedNotesSelected =
+    archivedNoteIds.length > 0 && archivedNoteIds.every((id) => selectedArchivedNoteIds.has(id));
+  const allArchivedDraftsSelected =
+    archivedDraftIds.length > 0 && archivedDraftIds.every((id) => selectedArchivedDraftIds.has(id));
   const combinedDrafts = useMemo(() => {
     const byId = new Map<string, LtmExtractionDraft>();
     for (const draft of drafts.data ?? []) byId.set(draft.id, draft);
@@ -1586,6 +1654,11 @@ export function LongTermMemoryPanel() {
       .mutateAsync({ id: note.id, patch: { status: "active" } })
       .then((saved) => {
         toast.success("Memory restored");
+        setSelectedArchivedNoteIds((current) => {
+          const next = new Set(current);
+          next.delete(saved.id);
+          return next;
+        });
         setArchiveOpen(false);
         setViewingNoteId(null);
         setEditingNoteId(saved.id);
@@ -1594,12 +1667,90 @@ export function LongTermMemoryPanel() {
       .catch((err: Error) => toast.error(err.message));
   };
 
+  const deleteArchivedNote = (note: LtmNote) => {
+    if (!confirm(`Delete ${friendlyNoteTitle(note)}? This cannot be undone.`)) return;
+    deleteNote
+      .mutateAsync(note.id)
+      .then(() => {
+        toast.success("Memory deleted");
+        setSelectedArchivedNoteIds((current) => {
+          const next = new Set(current);
+          next.delete(note.id);
+          return next;
+        });
+        if (viewingNoteId === note.id) closeViewer();
+        if (editingNoteId === note.id) closeEditor();
+      })
+      .catch((err: Error) => toast.error(err.message));
+  };
+
+  const setArchivedNotesSelected = (ids: string[], selected: boolean) => {
+    setSelectedArchivedNoteIds((current) => {
+      const next = new Set(current);
+      for (const id of ids) {
+        if (selected) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  };
+
+  const setArchivedDraftsSelected = (ids: string[], selected: boolean) => {
+    setSelectedArchivedDraftIds((current) => {
+      const next = new Set(current);
+      for (const id of ids) {
+        if (selected) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  };
+
+  const restoreSelectedArchivedNotes = async () => {
+    if (selectedArchivedNotes.length === 0) return;
+    try {
+      await Promise.all(selectedArchivedNotes.map((note) => updateNote.mutateAsync({ id: note.id, patch: { status: "active" } })));
+      toast.success(`Restored ${selectedArchivedNotes.length} memor${selectedArchivedNotes.length === 1 ? "y" : "ies"}`);
+      setSelectedArchivedNoteIds(new Set());
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
+  const deleteSelectedArchivedNotes = async () => {
+    if (selectedArchivedNotes.length === 0) return;
+    if (
+      !confirm(
+        `Delete ${selectedArchivedNotes.length} archived memor${
+          selectedArchivedNotes.length === 1 ? "y" : "ies"
+        }? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await Promise.all(selectedArchivedNotes.map((note) => deleteNote.mutateAsync(note.id)));
+      toast.success(`Deleted ${selectedArchivedNotes.length} memor${selectedArchivedNotes.length === 1 ? "y" : "ies"}`);
+      const deletedIds = new Set(selectedArchivedNotes.map((note) => note.id));
+      setSelectedArchivedNoteIds(new Set());
+      if (viewingNoteId && deletedIds.has(viewingNoteId)) closeViewer();
+      if (editingNoteId && deletedIds.has(editingNoteId)) closeEditor();
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
   const restoreDraft = (draft: LtmExtractionDraft) => {
     if (draft.status !== "rejected") return;
     updateDraft
       .mutateAsync({ id: draft.id, patch: { status: "pending" } })
       .then(() => {
         toast.success("Suggestion restored");
+        setSelectedArchivedDraftIds((current) => {
+          const next = new Set(current);
+          next.delete(draft.id);
+          return next;
+        });
         setViewingDraftId(null);
         setEditingDraftId(null);
       })
@@ -1612,10 +1763,54 @@ export function LongTermMemoryPanel() {
       .mutateAsync(draft.id)
       .then(() => {
         toast.success("Suggestion deleted");
+        setSelectedArchivedDraftIds((current) => {
+          const next = new Set(current);
+          next.delete(draft.id);
+          return next;
+        });
         if (viewingDraftId === draft.id) closeDraftViewer();
         if (editingDraftId === draft.id) closeDraftEditor();
       })
       .catch((err: Error) => toast.error(err.message));
+  };
+
+  const restoreSelectedArchivedDrafts = async () => {
+    const restorableDrafts = selectedArchivedDrafts.filter((draft) => draft.status === "rejected");
+    if (restorableDrafts.length === 0) return;
+    try {
+      await Promise.all(restorableDrafts.map((draft) => updateDraft.mutateAsync({ id: draft.id, patch: { status: "pending" } })));
+      toast.success(`Restored ${restorableDrafts.length} suggestion${restorableDrafts.length === 1 ? "" : "s"}`);
+      setSelectedArchivedDraftIds((current) => {
+        const next = new Set(current);
+        for (const draft of restorableDrafts) next.delete(draft.id);
+        return next;
+      });
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
+  const deleteSelectedArchivedDrafts = async () => {
+    if (selectedArchivedDrafts.length === 0) return;
+    if (
+      !confirm(
+        `Delete ${selectedArchivedDrafts.length} archived suggestion${
+          selectedArchivedDrafts.length === 1 ? "" : "s"
+        }? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await Promise.all(selectedArchivedDrafts.map((draft) => deleteDraft.mutateAsync(draft.id)));
+      toast.success(`Deleted ${selectedArchivedDrafts.length} suggestion${selectedArchivedDrafts.length === 1 ? "" : "s"}`);
+      const deletedIds = new Set(selectedArchivedDrafts.map((draft) => draft.id));
+      setSelectedArchivedDraftIds(new Set());
+      if (viewingDraftId && deletedIds.has(viewingDraftId)) closeDraftViewer();
+      if (editingDraftId && deletedIds.has(editingDraftId)) closeDraftEditor();
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
   };
 
   const setImportRowSelected = (sourceId: string, selected: boolean) => {
@@ -2103,21 +2298,54 @@ export function LongTermMemoryPanel() {
 
           {archiveTab === "notes" && (
             <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
+                <label className="flex min-h-8 items-center gap-2 rounded-lg px-2 text-xs text-[var(--foreground)]">
+                  <input
+                    type="checkbox"
+                    checked={allArchivedNotesSelected}
+                    disabled={archivedNoteIds.length === 0 || deleteNote.isPending || updateNote.isPending}
+                    onChange={(event) => setArchivedNotesSelected(archivedNoteIds, event.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+                  />
+                  Select visible
+                </label>
+                <span className="text-[0.6875rem] text-[var(--muted-foreground)]">
+                  {selectedArchivedNotes.length} selected
+                </span>
+                <ToolButton
+                  onClick={() => void restoreSelectedArchivedNotes()}
+                  disabled={selectedArchivedNotes.length === 0 || updateNote.isPending || deleteNote.isPending}
+                >
+                  {updateNote.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <RotateCcw size="0.875rem" />}
+                  Restore selected
+                </ToolButton>
+                <ToolButton
+                  onClick={() => void deleteSelectedArchivedNotes()}
+                  disabled={selectedArchivedNotes.length === 0 || deleteNote.isPending}
+                  tone="danger"
+                >
+                  {deleteNote.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Trash2 size="0.875rem" />}
+                  Delete selected
+                </ToolButton>
+              </div>
               {archivedNotes.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
-              {!archivedNotes.isLoading && (archivedNotes.data ?? []).length === 0 && (
+              {!archivedNotes.isLoading && archivedMemoryNotes.length === 0 && (
                 <p className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]">
                   No archived memories.
                 </p>
               )}
-              {(archivedNotes.data ?? []).map((note) => (
+              {archivedMemoryNotes.map((note) => (
                 <NoteRow
                   key={note.id}
                   note={note}
                   viewing={viewingNoteId === note.id}
                   editing={editingNoteId === note.id}
+                  bulkSelected={selectedArchivedNoteIds.has(note.id)}
+                  onSelect={(selected) => setArchivedNotesSelected([note.id], selected)}
                   onView={() => requestViewNote(note.id)}
                   onEdit={() => requestEditNote(note.id)}
                   onRestore={() => restoreNote(note)}
+                  onDelete={() => deleteArchivedNote(note)}
                 />
               ))}
             </div>
@@ -2125,6 +2353,40 @@ export function LongTermMemoryPanel() {
 
           {archiveTab === "drafts" && (
             <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
+                <label className="flex min-h-8 items-center gap-2 rounded-lg px-2 text-xs text-[var(--foreground)]">
+                  <input
+                    type="checkbox"
+                    checked={allArchivedDraftsSelected}
+                    disabled={archivedDraftIds.length === 0 || deleteDraft.isPending || updateDraft.isPending}
+                    onChange={(event) => setArchivedDraftsSelected(archivedDraftIds, event.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+                  />
+                  Select visible
+                </label>
+                <span className="text-[0.6875rem] text-[var(--muted-foreground)]">
+                  {selectedArchivedDrafts.length} selected
+                </span>
+                <ToolButton
+                  onClick={() => void restoreSelectedArchivedDrafts()}
+                  disabled={
+                    selectedArchivedDrafts.every((draft) => draft.status !== "rejected") ||
+                    updateDraft.isPending ||
+                    deleteDraft.isPending
+                  }
+                >
+                  {updateDraft.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <RotateCcw size="0.875rem" />}
+                  Restore selected
+                </ToolButton>
+                <ToolButton
+                  onClick={() => void deleteSelectedArchivedDrafts()}
+                  disabled={selectedArchivedDrafts.length === 0 || deleteDraft.isPending}
+                  tone="danger"
+                >
+                  {deleteDraft.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Trash2 size="0.875rem" />}
+                  Delete selected
+                </ToolButton>
+              </div>
               {allDrafts.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
               {!allDrafts.isLoading && archivedDrafts.length === 0 && (
                 <p className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]">
@@ -2136,6 +2398,8 @@ export function LongTermMemoryPanel() {
                   key={draft.id}
                   draft={draft}
                   selected={viewingDraftId === draft.id || editingDraftId === draft.id}
+                  bulkSelected={selectedArchivedDraftIds.has(draft.id)}
+                  onSelect={(selected) => setArchivedDraftsSelected([draft.id], selected)}
                   onView={() => {
                     setEditingDraftId(null);
                     setViewingDraftId(draft.id);

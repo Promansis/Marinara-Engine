@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, unlink } from "node:fs/promises";
 import {
   ltmEventSchema,
   ltmNoteSchema,
@@ -211,6 +211,20 @@ export class LongTermMemoryStorage {
     await this.initializeLtmStore();
     const existing = await this.getRequiredNote(id);
     return this.writeNotePatch(existing, { status: "archived" }, `${existing.type}.archived`, eventContext);
+  }
+
+  async deleteNote(id: string, eventContext: LtmEventContext = {}) {
+    await this.initializeLtmStore();
+    const existing = await this.getRequiredNote(id);
+    const path = notePathForId(existing.id, existing.type, this.root);
+    return withNoteWriteLock(path, async () => {
+      const current = await this.getRequiredNote(id);
+      if (!eventContext.suppressEvent) {
+        await this.appendEvent(eventFor(`${current.type}.deleted`, current.id, eventContext, { note: current }));
+      }
+      await unlink(path);
+      return current;
+    });
   }
 
   async appendEvent(event: LtmEvent) {
