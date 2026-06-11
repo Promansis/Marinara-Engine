@@ -812,9 +812,13 @@ function NoteViewModalContent({
 
 function DraftRow({
   draft,
+  selected,
+  onView,
   onOpenSourceNote,
 }: {
   draft: LtmExtractionDraft;
+  selected: boolean;
+  onView: () => void;
   onOpenSourceNote?: (noteId: string) => void;
 }) {
   const accept = useAcceptLongTermMemoryDraft();
@@ -822,8 +826,13 @@ function DraftRow({
   const pending = draft.status === "pending";
 
   return (
-    <article className="group relative rounded-xl border border-rose-300/15 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-2.5 transition-all hover:border-rose-300/30 hover:bg-[var(--sidebar-accent)]">
-      <div className={cn("min-w-0", pending && "transition-[padding] group-hover:pr-20 max-md:pr-20")}>
+    <article
+      className={cn(
+        "group relative rounded-xl border border-rose-300/15 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-2.5 transition-all hover:border-rose-300/30 hover:bg-[var(--sidebar-accent)]",
+        selected && "border-rose-300/40 bg-rose-300/10 ring-1 ring-rose-300/25",
+      )}
+    >
+      <div className={cn("min-w-0", pending && "transition-[padding] group-hover:pr-32 max-md:pr-32")}>
         <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={draft.summary || draft.id}>
           {draft.summary || draft.id}
         </div>
@@ -836,6 +845,15 @@ function DraftRow({
       </div>
       {pending && (
         <div className={rowActionPillClassName}>
+          <button
+            type="button"
+            onClick={onView}
+            className={cn(rowActionButtonClassName, selected && "bg-[var(--accent)] text-[var(--foreground)]")}
+            aria-label={`View suggestion ${draft.id}`}
+            title="View suggestion"
+          >
+            <Eye size="0.875rem" />
+          </button>
           <button
             type="button"
             onClick={() =>
@@ -1387,6 +1405,12 @@ export function LongTermMemoryPanel() {
     () => (allDrafts.data ?? []).filter((draft) => draft.status !== "pending"),
     [allDrafts.data],
   );
+  const combinedDrafts = useMemo(() => {
+    const byId = new Map<string, LtmExtractionDraft>();
+    for (const draft of drafts.data ?? []) byId.set(draft.id, draft);
+    for (const draft of allDrafts.data ?? []) byId.set(draft.id, draft);
+    return [...byId.values()];
+  }, [allDrafts.data, drafts.data]);
   const importRows = useMemo(() => importPreview.data?.samples ?? [], [importPreview.data?.samples]);
   const visibleImportRows = useMemo(
     () =>
@@ -1426,12 +1450,12 @@ export function LongTermMemoryPanel() {
     [combinedNotes, exactViewingNote.data, viewingNoteId],
   );
   const viewingDraft = useMemo(
-    () => (viewingDraftId ? ((allDrafts.data ?? []).find((draft) => draft.id === viewingDraftId) ?? null) : null),
-    [allDrafts.data, viewingDraftId],
+    () => (viewingDraftId ? (combinedDrafts.find((draft) => draft.id === viewingDraftId) ?? null) : null),
+    [combinedDrafts, viewingDraftId],
   );
   const editingDraft = useMemo(
-    () => (editingDraftId ? ((allDrafts.data ?? []).find((draft) => draft.id === editingDraftId) ?? null) : null),
-    [allDrafts.data, editingDraftId],
+    () => (editingDraftId ? (combinedDrafts.find((draft) => draft.id === editingDraftId) ?? null) : null),
+    [combinedDrafts, editingDraftId],
   );
   const editedNoteFilteredOut = Boolean(editingNote && !filteredNotes.some((note) => note.id === editingNote.id));
   const editingNoteHiddenByFilters = Boolean(editedNoteFilteredOut && editingNote);
@@ -1481,6 +1505,16 @@ export function LongTermMemoryPanel() {
       return;
     }
     setViewingNoteId(id);
+  };
+
+  const requestViewDraft = (id: string) => {
+    if (viewingDraftId === id) {
+      closeDraftViewer();
+      return;
+    }
+    setViewingNoteId(null);
+    setEditingDraftId(null);
+    setViewingDraftId(id);
   };
 
   const openSourceNote = (id: string) => {
@@ -1830,7 +1864,13 @@ export function LongTermMemoryPanel() {
               </p>
             )}
             {filteredDrafts.map((draft) => (
-              <DraftRow key={draft.id} draft={draft} onOpenSourceNote={openSourceNote} />
+              <DraftRow
+                key={draft.id}
+                draft={draft}
+                selected={viewingDraftId === draft.id}
+                onView={() => requestViewDraft(draft.id)}
+                onOpenSourceNote={openSourceNote}
+              />
             ))}
           </div>
         </Section>
