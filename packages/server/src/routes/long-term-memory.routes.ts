@@ -461,12 +461,14 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     };
   });
 
-  app.get<{ Querystring: unknown }>("/debug-log", async (req) => {
+  app.get<{ Querystring: unknown }>("/debug-log", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory debug log access" })) return;
     const query = debugLogQuerySchema.parse(req.query);
     return { events: await readLtmDebugLog(query) };
   });
 
-  app.get("/debug-log/export", async (_req, reply) => {
+  app.get("/debug-log/export", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory debug log export" })) return;
     const content = await exportLtmDebugLog();
     return reply
       .header("content-type", "application/x-ndjson; charset=utf-8")

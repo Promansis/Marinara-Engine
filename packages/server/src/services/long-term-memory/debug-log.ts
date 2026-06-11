@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFile, mkdir, readFile, rename, stat, truncate, unlink } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   ltmDebugEventSchema,
@@ -206,7 +206,7 @@ export async function readLtmDebugLog(filter: LtmDebugLogFilter = {}, root = get
 export async function clearLtmDebugLog(root = getLongTermMemoryRoot()) {
   const path = getLongTermMemoryDirectories(root).debugLog;
   await mkdir(dirname(path), { recursive: true });
-  await truncate(path, 0);
+  await writeFile(path, "", "utf8");
   return { cleared: true };
 }
 
