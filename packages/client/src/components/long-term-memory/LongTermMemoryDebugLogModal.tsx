@@ -19,6 +19,7 @@ const PHASE_FILTERS: Array<"all" | LtmDebugPhase | "errors"> = [
   "compiler",
   "draft",
   "apply",
+  "injection",
   "rebuild",
   "errors",
 ];

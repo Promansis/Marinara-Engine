@@ -1,6 +1,7 @@
 // ──────────────────────────────────────────────
 // Routes: Generation (SSE Streaming with Tool Use + Agent Pipeline)
 // ──────────────────────────────────────────────
+import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import {
   generateRequestSchema,
@@ -154,6 +155,7 @@ import { chunkAndEmbedMessages, embedMemoryRecallTexts, recallMemories } from ".
 import { resolveMemoryRecallEmbeddingSource } from "../services/memory-recall-embedding.js";
 import { retrieveLongTermMemory } from "../services/long-term-memory/retrieval.js";
 import type { LtmBudgetedChunk } from "../services/long-term-memory/budget.js";
+import { recordLtmDebugEvent } from "../services/long-term-memory/debug-log.js";
 import { recordLongTermMemoryInjection } from "../services/long-term-memory/usage.js";
 import { runLongTermMemoryExtraction, LongTermMemoryDraftStore } from "../services/long-term-memory/extraction.js";
 import { applyLongTermMemoryDraft, isLowRiskTurnMutation } from "../services/long-term-memory/reconciliation.js";
@@ -5263,6 +5265,25 @@ export async function generateRoutes(app: FastifyInstance) {
         // ── Long-term memory: opt-in local retrieval before final context fitting ──
         if (chatMeta.enableLongTermMemory === true) {
           const _tLtm = Date.now();
+          const ltmInjectionOperationId = randomUUID();
+          await recordLtmDebugEvent({
+            operationId: ltmInjectionOperationId,
+            phase: "injection",
+            action: "prompt_injection",
+            status: "started",
+            source: "chat",
+            sourceId: input.chatId,
+            counts: {
+              promptCharacters: finalMessages.reduce((total, message) => total + message.content.length, 0),
+              promptMessages: finalMessages.length,
+            },
+            details: {
+              chatMode,
+              characterIds: promptCharacterIds,
+              budgetTokens: parseLongTermMemoryBudgetTokens(chatMeta.longTermMemoryBudgetTokens) ?? null,
+              scope: resolveLtmScope({ id: input.chatId, groupId: chat.groupId, characterIds: promptCharacterIds }, chatMeta),
+            },
+          });
           try {
             const lastUserMsg = [...currentInputMessages()].reverse().find((message) => message.role === "user");
             const generationGuideText =
@@ -5309,6 +5330,34 @@ export async function generateRoutes(app: FastifyInstance) {
                 content: ltmBlock,
                 contextKind: "injection",
               });
+              await recordLtmDebugEvent({
+                operationId: ltmInjectionOperationId,
+                phase: "injection",
+                action: "prompt_injection",
+                status: "ok",
+                durationMs: Date.now() - _tLtm,
+                source: "chat",
+                sourceId: input.chatId,
+                counts: {
+                  chunks: retrieval.chunks.length,
+                  usedTokens: retrieval.usedTokens,
+                  maxTokens: retrieval.maxTokens,
+                  warnings: retrieval.warnings.length,
+                  insertedAt: insertAt,
+                  blockCharacters: ltmBlock.length,
+                },
+                details: {
+                  insertedBeforeRole: finalMessages[insertAt + 1]?.role ?? null,
+                  warnings: retrieval.warnings,
+                  chunks: retrieval.chunks.map((chunk) => ({
+                    noteId: chunk.chunk.noteId,
+                    sectionKey: chunk.chunk.sectionKey,
+                    tier: chunk.tier,
+                    estimatedTokens: chunk.estimatedTokens,
+                    reasons: chunk.reasons,
+                  })),
+                },
+              });
               try {
                 await recordLongTermMemoryInjection(retrieval.chunks);
               } catch (err) {
@@ -5321,14 +5370,46 @@ export async function generateRoutes(app: FastifyInstance) {
                 retrieval.maxTokens,
                 input.chatId,
               );
-            } else if (chatMeta.longTermMemoryDebug === true || requestDebug) {
-              logger.debug(
-                "[ltm] No long-term memory chunks injected for chat %s%s",
-                input.chatId,
-                retrieval.warnings.length > 0 ? `; warnings: ${retrieval.warnings.join("; ")}` : "",
-              );
+            } else {
+              await recordLtmDebugEvent({
+                operationId: ltmInjectionOperationId,
+                phase: "injection",
+                action: "prompt_injection",
+                status: "skipped",
+                durationMs: Date.now() - _tLtm,
+                source: "chat",
+                sourceId: input.chatId,
+                message: "No long-term memory chunks matched this generation.",
+                counts: {
+                  usedTokens: retrieval.usedTokens,
+                  maxTokens: retrieval.maxTokens,
+                  warnings: retrieval.warnings.length,
+                },
+                details: {
+                  warnings: retrieval.warnings,
+                  queryCharacters: ltmQueryText.length,
+                },
+              });
+              if (chatMeta.longTermMemoryDebug === true || requestDebug) {
+                logger.debug(
+                  "[ltm] No long-term memory chunks injected for chat %s%s",
+                  input.chatId,
+                  retrieval.warnings.length > 0 ? `; warnings: ${retrieval.warnings.join("; ")}` : "",
+                );
+              }
             }
           } catch (err) {
+            await recordLtmDebugEvent({
+              operationId: ltmInjectionOperationId,
+              phase: "injection",
+              action: "prompt_injection",
+              status: "error",
+              durationMs: Date.now() - _tLtm,
+              source: "chat",
+              sourceId: input.chatId,
+              message: "Long-term memory retrieval failed during generation; injection was skipped.",
+              error: err,
+            });
             logger.warn(err, "[ltm] Retrieval failed during generation; skipping long-term memory injection");
           }
           logger.debug("[timing] Long-term memory retrieval: %dms", Date.now() - _tLtm);

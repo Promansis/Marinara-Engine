@@ -280,6 +280,7 @@ export const ltmDebugPhaseSchema = z.enum([
   "compiler",
   "draft",
   "apply",
+  "injection",
   "retrieval",
   "summary_sync",
   "rebuild",
