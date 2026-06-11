@@ -13,7 +13,7 @@ import {
   type LtmNote,
   type LtmScope,
 } from "@marinara-engine/shared";
-import type { BaseLLMProvider, ChatMessage } from "../llm/base-provider.js";
+import type { BaseLLMProvider, ChatMessage, ChatOptions } from "../llm/base-provider.js";
 import { logger } from "../../lib/logger.js";
 import { readJsonFile, writeJsonAtomic } from "./atomic-json.js";
 import { stableJsonHash } from "./chunking.js";
@@ -23,9 +23,50 @@ import { validateLtmEvidenceUnits } from "./evidence-unit-validation.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
 import type { LtmExtractionDiagnostic } from "./validation.js";
 
-const EVIDENCE_UNIT_EXTRACTION_MAX_TOKENS = 3200;
+export const DEFAULT_LTM_EXTRACTION_PROMPT = [
+  "You extract structured long-term memory evidence units from a dormant source note.",
+  "Return strict JSON only. Do not explain.",
+  "Source notes are audit evidence, not active recall memory.",
+  "Do not output source summaries, transcript summaries, or final write operations.",
+  "Extract every distinct durable memory unit supported by the source.",
+  "Emit zero or more units per bucket. Do not stop after the first valid unit.",
+  "Prefer several compact units over one blended paragraph.",
+  "Scan bucket groups explicitly: relationships (relationship_event, relationship_state, relationship_arc, relationship_conflict); scene state (current_scene); open loops (thread, callback); character and world facts (character_fact, character_state, world_fact); style and boundaries (voice, tone, anchor, boundary, preference).",
+  "Each unit must be compact, typed, and useful for future continuity.",
+  "Every unit must include at least one supplied evidence string, including source_note:<id>.",
+  "Use real lowercase snake_case subjectId and sectionKey values derived from the source.",
+  "Never output placeholder values such as lowercase_snake_case_scope_id, lowercase_snake_case, target_note_id, or copied schema/example text.",
+  "Do not copy schema/example placeholder values.",
+  "Omit optional fields unless they are real and evidence-backed.",
+  "Use sourceHash exactly as supplied.",
+  "Set confidence and salience from 0 to 1.",
+  "Mark spoilers, character secrets, private knowledge, and NSFW content with gates.",
+  "For voice/tone quotes, quote only exact text present in the source.",
+  "Use current_scene only for the current transient scene state, not the source note.",
+  "For enum fields, choose exactly one string from the allowed arrays. Do not join multiple values with |.",
+].join("\n");
+export const DEFAULT_LTM_EXTRACTION_REASONING_EFFORT = "low" satisfies NonNullable<ChatOptions["reasoningEffort"]>;
+export const DEFAULT_LTM_EXTRACTION_VERBOSITY = "low" satisfies NonNullable<ChatOptions["verbosity"]>;
+export const DEFAULT_LTM_EXTRACTION_MAX_TOKENS = 3200;
 const MAX_SOURCE_CHARS = 24_000;
 const MAX_CONTEXT_NOTE_CHARS = 12_000;
+const LTM_EXTRACTION_BUCKET_SCAN_ORDER = [
+  "relationship_event",
+  "relationship_state",
+  "relationship_arc",
+  "relationship_conflict",
+  "current_scene",
+  "thread",
+  "callback",
+  "character_fact",
+  "character_state",
+  "world_fact",
+  "voice",
+  "tone",
+  "anchor",
+  "boundary",
+  "preference",
+] as const;
 
 export interface RunLongTermMemoryEvidenceUnitExtractionOptions {
   sourceNote: LtmNote;
@@ -125,48 +166,34 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
   return [
     {
       role: "system",
-      content: [
-        "You extract structured long-term memory evidence units from a dormant source note.",
-        "Return only strict JSON matching outputShape. Do not explain.",
-        "Source notes are audit evidence, not active recall memory.",
-        "Do not output source summaries, transcript summaries, or final write operations.",
-        "Each unit must be compact, typed, and useful for future continuity.",
-        "Every unit must include at least one supplied evidence string, including source_note:<id>.",
-        "Use lowercase snake_case subjectId and sectionKey.",
-        "Use sourceHash exactly as supplied.",
-        "Set confidence and salience from 0 to 1.",
-        "Mark spoilers, character secrets, private knowledge, and NSFW content with gates.",
-        "For voice/tone quotes, quote only exact text present in the source.",
-        "Use current_scene only for the current transient scene state, not the source note.",
-        "For enum fields, choose exactly one string from the allowed arrays. Do not join multiple values with |.",
-      ].join("\n"),
+      content: DEFAULT_LTM_EXTRACTION_PROMPT,
     },
     {
       role: "user",
       content: JSON.stringify({
-        outputShape: {
-          summary: "short summary of extracted evidence units",
-          units: [
-            {
-              id: "550e8400-e29b-41d4-a716-446655440000",
-              bucket: "relationship_event",
-              subjectId: "lowercase_snake_case_scope_id",
-              sectionKey: "lowercase_snake_case",
-              text: "compact typed memory text",
-              evidence: evidenceFromSourceNote(options.sourceNote),
-              confidence: 0.8,
-              salience: 0.6,
-              status: "active",
-              gates: ["private"],
-              links: [{ target: "target_note_id", relation: "lowercase_snake_case" }],
-              mergeHint: "optional note for deterministic compiler",
-              sourceHash: options.sourceHash,
-            },
-          ],
+        responseContract: {
+          summary: "string, short",
+          units: "array of 0..40 evidence unit objects",
+        },
+        unitFields: {
+          id: "uuid",
+          bucket: "one allowedBuckets value",
+          subjectId: "real lowercase_snake_case subject",
+          sectionKey: "real lowercase_snake_case section",
+          text: "compact memory text, not transcript summary",
+          evidence: "array containing supplied source_note evidence",
+          confidence: "0..1",
+          salience: "0..1",
+          status: "one allowedStatuses value",
+          gates: "allowed gates when needed, otherwise []",
+          links: "real links only, otherwise []",
+          mergeHint: "optional evidence-backed compiler note only",
+          sourceHash: "exact supplied sourceHash",
         },
         allowedBuckets: ltmEvidenceUnitBucketSchema.options,
         allowedStatuses: ltmEvidenceUnitStatusSchema.options,
         allowedGates: ltmGateSchema.options,
+        bucketScanOrder: LTM_EXTRACTION_BUCKET_SCAN_ORDER,
         buckets: {
           character_fact: "stable character fact",
           character_state: "current character condition, aim, mood, capability, or position",
@@ -192,6 +219,7 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
           evidence: evidenceFromSourceNote(options.sourceNote),
           sourceHash: options.sourceHash,
         },
+        requiredEvidence: evidenceFromSourceNote(options.sourceNote),
         scope: options.scope,
         modes: options.modes,
         userInstruction: options.instruction?.trim() || undefined,
@@ -227,7 +255,9 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
     const result = await options.provider.chatComplete(messages, {
       model: options.model,
       temperature: 0,
-      maxTokens: options.provider.maxTokensOverrideValue ?? EVIDENCE_UNIT_EXTRACTION_MAX_TOKENS,
+      maxTokens: options.provider.maxTokensOverrideValue ?? DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
+      reasoningEffort: DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
+      verbosity: DEFAULT_LTM_EXTRACTION_VERBOSITY,
       stream: false,
       signal: options.signal,
     });
@@ -246,6 +276,7 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
         responseChars: content.length,
         promptTokens: result.usage?.promptTokens ?? 0,
         completionTokens: result.usage?.completionTokens ?? 0,
+        completionReasoningTokens: result.usage?.completionReasoningTokens ?? 0,
         totalTokens: result.usage?.totalTokens ?? 0,
       },
       details: {

@@ -13,6 +13,8 @@ const GATED_WORDS: Array<{ gate: LtmGate; pattern: RegExp }> = [
   { gate: "private", pattern: /\b(private|confidential|intimate)\b/i },
   { gate: "nsfw", pattern: /\b(nsfw|explicit|sexual|sex)\b/i },
 ];
+const PLACEHOLDER_UUID = "550e8400-e29b-41d4-a716-446655440000";
+const PLACEHOLDER_MERGE_HINT = "optional note for deterministic compiler";
 
 function tokenize(value: string) {
   return new Set(
@@ -92,6 +94,10 @@ export function validateLtmEvidenceUnits({
 
   for (const unit of units) {
     const noteId = noteIdForEvidenceUnit(unit);
+    for (const diagnostic of placeholderDiagnostics(unit, noteId)) {
+      diagnostics.push(diagnostic);
+    }
+
     if (unit.evidence.length === 0) {
       diagnostics.push({
         severity: "error",
@@ -184,6 +190,65 @@ export function validateLtmEvidenceUnits({
           message: `Potential ${gate} content is not gated.`,
         });
       }
+    }
+  }
+
+  return diagnostics;
+}
+
+function placeholderDiagnostics(unit: LtmEvidenceUnit, noteId: string): LtmExtractionDiagnostic[] {
+  const diagnostics: LtmExtractionDiagnostic[] = [];
+  const hasPlaceholderIdentifier = (value: string) => value.toLowerCase().includes("lowercase_snake_case");
+
+  if (unit.id.toLowerCase() === PLACEHOLDER_UUID) {
+    diagnostics.push({
+      severity: "error",
+      code: "placeholder_evidence_unit_id",
+      mutationId: unit.id,
+      noteId,
+      message: "Evidence unit uses a copied placeholder UUID.",
+    });
+  }
+
+  if (hasPlaceholderIdentifier(unit.subjectId)) {
+    diagnostics.push({
+      severity: "error",
+      code: "placeholder_subject_id",
+      mutationId: unit.id,
+      noteId,
+      message: "Evidence unit subjectId uses a copied placeholder identifier.",
+    });
+  }
+
+  if (hasPlaceholderIdentifier(unit.sectionKey)) {
+    diagnostics.push({
+      severity: "error",
+      code: "placeholder_section_key",
+      mutationId: unit.id,
+      noteId,
+      message: "Evidence unit sectionKey uses a copied placeholder identifier.",
+    });
+  }
+
+  if (unit.mergeHint?.trim().toLowerCase() === PLACEHOLDER_MERGE_HINT) {
+    diagnostics.push({
+      severity: "error",
+      code: "placeholder_merge_hint",
+      mutationId: unit.id,
+      noteId,
+      message: "Evidence unit mergeHint uses copied schema/example text.",
+    });
+  }
+
+  for (const link of unit.links) {
+    if (link.target === "target_note_id") {
+      diagnostics.push({
+        severity: "error",
+        code: "placeholder_link_target",
+        mutationId: unit.id,
+        noteId,
+        message: "Evidence unit link target uses a copied placeholder note id.",
+      });
     }
   }
 

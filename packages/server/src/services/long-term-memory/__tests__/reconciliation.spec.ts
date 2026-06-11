@@ -20,7 +20,10 @@ import {
 } from "../reconciliation.js";
 import { retrieveLongTermMemory } from "../retrieval.js";
 import { LongTermMemoryStorage } from "../storage.js";
-import { runLongTermMemoryEvidenceUnitExtraction } from "../evidence-unit-extraction.js";
+import {
+  compileEvidenceUnitExtraction,
+  runLongTermMemoryEvidenceUnitExtraction,
+} from "../evidence-unit-extraction.js";
 
 const timestamp = "2026-06-10T00:00:00.000Z";
 const sourceHash = "a".repeat(64);
@@ -260,7 +263,7 @@ test("evidence unit extraction normalizes non-uuid model ids", async () => {
   }
 });
 
-test("evidence unit extraction prompt uses single enum examples instead of pipe-joined bucket values", async () => {
+test("evidence unit extraction prompt uses a non-copyable response contract", async () => {
   const sourceNote: LtmNote = {
     id: "scene_source_test",
     type: "scene",
@@ -282,10 +285,12 @@ test("evidence unit extraction prompt uses single enum examples instead of pipe-
   };
 
   let userPayload: any;
+  let chatOptions: any;
   const provider = {
     maxTokensOverrideValue: undefined,
-    chatComplete: async (messages: Array<{ role: string; content: string }>) => {
+    chatComplete: async (messages: Array<{ role: string; content: string }>, options: any) => {
       userPayload = JSON.parse(messages.find((message) => message.role === "user")!.content);
+      chatOptions = options;
       return {
         content: JSON.stringify({
           summary: "One compact unit",
@@ -321,9 +326,20 @@ test("evidence unit extraction prompt uses single enum examples instead of pipe-
     sourceHash,
   });
 
-  assert.equal(userPayload.outputShape.units[0].bucket, "relationship_event");
-  assert.equal(userPayload.outputShape.units[0].status, "active");
-  assert.deepEqual(userPayload.outputShape.units[0].gates, ["private"]);
+  assert.equal(userPayload.outputShape, undefined);
+  assert.deepEqual(userPayload.responseContract, {
+    summary: "string, short",
+    units: "array of 0..40 evidence unit objects",
+  });
+  assert.equal(userPayload.unitFields.bucket, "one allowedBuckets value");
+  assert.equal(userPayload.unitFields.links, "real links only, otherwise []");
+  assert.deepEqual(userPayload.bucketScanOrder.slice(0, 4), [
+    "relationship_event",
+    "relationship_state",
+    "relationship_arc",
+    "relationship_conflict",
+  ]);
+  assert.deepEqual(userPayload.requiredEvidence, ["source_note:scene_source_test", "chat:chat_test"]);
   assert.deepEqual(userPayload.allowedBuckets, [
     "character_fact",
     "character_state",
@@ -341,9 +357,194 @@ test("evidence unit extraction prompt uses single enum examples instead of pipe-
     "boundary",
     "preference",
   ]);
-  assert(!userPayload.outputShape.units[0].bucket.includes("|"));
-  assert(!userPayload.outputShape.units[0].status.includes("|"));
-  assert(userPayload.outputShape.units[0].gates.every((gate: string) => !gate.includes("|")));
+  const payloadJson = JSON.stringify(userPayload);
+  assert(!payloadJson.includes("550e8400-e29b-41d4-a716-446655440000"));
+  assert(!payloadJson.includes("lowercase_snake_case_scope_id"));
+  assert(!payloadJson.includes("target_note_id"));
+  assert(!payloadJson.includes("optional note for deterministic compiler"));
+  assert.equal(chatOptions.maxTokens, 3200);
+  assert.equal(chatOptions.reasoningEffort, "low");
+  assert.equal(chatOptions.verbosity, "low");
+  assert.equal(chatOptions.stream, false);
+});
+
+test("evidence unit extraction accepts and compiles multiple typed buckets", async () => {
+  const sourceNote: LtmNote = {
+    id: "scene_source_test",
+    type: "scene",
+    status: "dormant",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["source_summary"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      source: {
+        text: [
+          "Mara trusts Jules with the tower key.",
+          "The lantern hum should pay off later.",
+          "Arken forbids skyglass inside the city walls.",
+        ].join(" "),
+        updatedAt: timestamp,
+        evidence: ["chat:chat_test"],
+      },
+    },
+    version: 1,
+  };
+
+  const provider = {
+    maxTokensOverrideValue: undefined,
+    chatComplete: async () => ({
+      content: JSON.stringify({
+        summary: "Three compact units across relationship, callback, and world buckets",
+        units: [
+          {
+            id: randomUUID(),
+            bucket: "relationship_event",
+            subjectId: "mara_jules",
+            sectionKey: "history",
+            text: "Mara trusts Jules with the tower key.",
+            evidence: ["source_note:scene_source_test"],
+            confidence: 0.92,
+            salience: 0.75,
+            status: "active",
+            gates: [],
+            links: [],
+            sourceHash,
+          },
+          {
+            id: randomUUID(),
+            bucket: "callback",
+            subjectId: "lantern_hum",
+            sectionKey: "setup",
+            text: "The lantern hum should pay off later.",
+            evidence: ["source_note:scene_source_test"],
+            confidence: 0.86,
+            salience: 0.7,
+            status: "active",
+            gates: [],
+            links: [],
+            sourceHash,
+          },
+          {
+            id: randomUUID(),
+            bucket: "world_fact",
+            subjectId: "arken",
+            sectionKey: "laws",
+            text: "Arken forbids skyglass inside the city walls.",
+            evidence: ["source_note:scene_source_test"],
+            confidence: 0.9,
+            salience: 0.65,
+            status: "active",
+            gates: [],
+            links: [],
+            sourceHash,
+          },
+        ],
+      }),
+    }),
+  } as any;
+
+  const unitResponse = await runLongTermMemoryEvidenceUnitExtraction({
+    sourceNote,
+    sourceText: sourceNote.sections.source!.text,
+    existingNotes: [],
+    provider,
+    model: "test-model",
+    scope: {},
+    modes: ["roleplay"],
+    sourceHash,
+  });
+
+  assert.equal(unitResponse.units.length, 3);
+  for (const unit of unitResponse.units) {
+    assert.equal(ltmEvidenceUnitSchema.safeParse(unit).success, true);
+  }
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse,
+    sourceText: sourceNote.sections.source!.text,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    model: "test-model",
+    sourceHash,
+  });
+  assert.deepEqual(compiled.diagnostics.filter((diagnostic) => diagnostic.severity === "error"), []);
+
+  const createdTypes = compiled.compiledResponse.mutations.flatMap((mutation) =>
+    mutation.kind === "create_note" ? [mutation.note.type] : [],
+  );
+  assert.deepEqual(new Set(createdTypes), new Set(["relationship", "callback", "world"]));
+});
+
+test("evidence unit extraction validation rejects copied placeholder values", () => {
+  const sourceNote: LtmNote = {
+    id: "scene_source_test",
+    type: "scene",
+    status: "dormant",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["source_summary"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      source: {
+        text: "Mara keeps old promises.",
+        updatedAt: timestamp,
+        evidence: ["chat:chat_test"],
+      },
+    },
+    version: 1,
+  };
+  const unitResponse = {
+    summary: "Placeholder leak",
+    units: [
+      ltmEvidenceUnitSchema.parse({
+        id: "550e8400-e29b-41d4-a716-446655440000",
+        bucket: "character_fact",
+        subjectId: "lowercase_snake_case_scope_id",
+        sectionKey: "lowercase_snake_case",
+        text: "Mara keeps old promises.",
+        evidence: ["source_note:scene_source_test"],
+        confidence: 0.9,
+        salience: 0.7,
+        status: "active",
+        gates: [],
+        links: [{ target: "target_note_id", relation: "related_to" }],
+        mergeHint: "optional note for deterministic compiler",
+        sourceHash,
+      }),
+    ],
+  };
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse,
+    sourceText: sourceNote.sections.source!.text,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    model: "test-model",
+    sourceHash,
+  });
+
+  assert.equal(compiled.compiledResponse.mutations.length, 0);
+  assert.deepEqual(
+    compiled.diagnostics
+      .filter((diagnostic) => diagnostic.severity === "error")
+      .map((diagnostic) => diagnostic.code),
+    [
+      "placeholder_evidence_unit_id",
+      "placeholder_subject_id",
+      "placeholder_section_key",
+      "placeholder_merge_hint",
+      "placeholder_link_target",
+    ],
+  );
 });
 
 function evidenceUnit(bucket: LtmEvidenceUnit["bucket"], patch: Partial<LtmEvidenceUnit> = {}): LtmEvidenceUnit {
