@@ -1,4 +1,4 @@
-import type { LtmScope } from "@marinara-engine/shared";
+import { getLtmScopeChatIds, type LtmScope } from "@marinara-engine/shared";
 import type { LtmMemoryChunk } from "./chunking.js";
 
 export interface LtmMetadataIndex {
@@ -57,7 +57,9 @@ export function buildLtmMetadataIndex(chunks: LtmMemoryChunk[]): LtmMetadataInde
     for (const tag of chunk.tags) addToBucket(index.byTag, tag, chunk.id);
     addToBucket(index.byScope.universe, chunk.scope.universe, chunk.id);
     addToBucket(index.byScope.rpId, chunk.scope.rpId, chunk.id);
-    addToBucket(index.byScope.chatId, chunk.scope.chatId, chunk.id);
+    for (const chatId of getLtmScopeChatIds(chunk.scope)) {
+      addToBucket(index.byScope.chatId, chatId, chunk.id);
+    }
     addToBucket(index.byScope.groupId, chunk.scope.groupId, chunk.id);
     for (const characterId of chunk.scope.characterIds ?? []) {
       addToBucket(index.byScope.characterId, characterId, chunk.id);
@@ -102,8 +104,8 @@ export function getLtmMetadataMatches(
   }
 
   const scope = query.scope;
-  if (scope?.chatId) {
-    for (const chunkId of index.byScope.chatId[scope.chatId] ?? []) add(chunkId, 1, `chat:${scope.chatId}`);
+  for (const chatId of getLtmScopeChatIds(scope)) {
+    for (const chunkId of index.byScope.chatId[chatId] ?? []) add(chunkId, 1, `chat:${chatId}`);
   }
   if (scope?.groupId) {
     for (const chunkId of index.byScope.groupId[scope.groupId] ?? []) add(chunkId, 0.8, `group:${scope.groupId}`);
@@ -115,7 +117,8 @@ export function getLtmMetadataMatches(
     for (const chunkId of index.byScope.rpId[scope.rpId] ?? []) add(chunkId, 0.45, `rp:${scope.rpId}`);
   }
   if (scope?.universe) {
-    for (const chunkId of index.byScope.universe[scope.universe] ?? []) add(chunkId, 0.35, `universe:${scope.universe}`);
+    for (const chunkId of index.byScope.universe[scope.universe] ?? [])
+      add(chunkId, 0.35, `universe:${scope.universe}`);
   }
 
   return Array.from(scores.entries())

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import {
   ltmPoliciesConfigSchema,
   ltmRetrievalConfigSchema,
+  getLtmScopeChatIds,
   type LtmGate,
   type LtmPoliciesConfig,
   type LtmRetrievalConfig,
@@ -100,29 +101,37 @@ function extractQuerySignals(input: RetrieveLongTermMemoryInput) {
   const queryText = queryParts.join("\n");
   const noteIds = uniqueSorted([
     ...(input.noteIds ?? []),
-    ...Array.from(queryText.matchAll(/\b(?:char|rel|scene|thread|cb|world|faction|location|rule|voice|tone)_[a-z0-9_]+\b/g), (match) => match[0]),
+    ...Array.from(
+      queryText.matchAll(/\b(?:char|rel|scene|thread|cb|world|faction|location|rule|voice|tone)_[a-z0-9_]+\b/g),
+      (match) => match[0],
+    ),
   ]);
-  const tags = uniqueSorted([...(input.tags ?? []), ...Array.from(queryText.matchAll(/#([a-z][a-z0-9_]+)/g), (match) => match[1]!)]);
+  const tags = uniqueSorted([
+    ...(input.tags ?? []),
+    ...Array.from(queryText.matchAll(/#([a-z][a-z0-9_]+)/g), (match) => match[1]!),
+  ]);
   const characterIds = uniqueSorted([...(input.characterIds ?? []), ...(input.scope?.characterIds ?? [])]);
   return { queryText, noteIds, tags, characterIds };
 }
 
 function scopeMatches(chunk: LtmMemoryChunk, scope: LtmScope | undefined, characterIds: string[]) {
   const activeCharacters = new Set(characterIds);
+  const activeChatIds = new Set(getLtmScopeChatIds(scope));
+  const chunkChatIds = getLtmScopeChatIds(chunk.scope);
   const hasCallerScope =
-    Boolean(scope?.chatId || scope?.groupId || scope?.rpId || scope?.universe || scope?.characterIds?.length) ||
+    Boolean(activeChatIds.size || scope?.groupId || scope?.rpId || scope?.universe || scope?.characterIds?.length) ||
     activeCharacters.size > 0;
   const chunkHasScope = Boolean(
-    chunk.scope.chatId ||
-      chunk.scope.groupId ||
-      chunk.scope.rpId ||
-      chunk.scope.universe ||
-      chunk.scope.characterIds?.length,
+    chunkChatIds.length ||
+    chunk.scope.groupId ||
+    chunk.scope.rpId ||
+    chunk.scope.universe ||
+    chunk.scope.characterIds?.length,
   );
 
   if (!hasCallerScope) return !chunkHasScope;
 
-  if (chunk.scope.chatId) return chunk.scope.chatId === scope?.chatId;
+  if (chunkChatIds.length) return chunkChatIds.some((chatId) => activeChatIds.has(chatId));
   if (chunk.scope.groupId) return chunk.scope.groupId === scope?.groupId;
   if (chunk.scope.characterIds?.length) return chunk.scope.characterIds.some((id) => activeCharacters.has(id));
   if (chunk.noteType === "character" && activeCharacters.has(chunk.noteId)) return true;
@@ -153,7 +162,13 @@ function candidateAllowed(
   return scopeMatches(chunk, input.scope, characterIds);
 }
 
-function alwaysLane(metadata: LtmMetadataIndex, policies: LtmPoliciesConfig, input: RetrieveLongTermMemoryInput, config: LtmRetrievalConfig, characterIds: string[]) {
+function alwaysLane(
+  metadata: LtmMetadataIndex,
+  policies: LtmPoliciesConfig,
+  input: RetrieveLongTermMemoryInput,
+  config: LtmRetrievalConfig,
+  characterIds: string[],
+) {
   const items = [];
   const activeCharacters = new Set(characterIds);
   for (const policy of policies.policies) {
@@ -176,7 +191,8 @@ function alwaysLane(metadata: LtmMetadataIndex, policies: LtmPoliciesConfig, inp
 
   for (const chunk of Object.values(metadata.chunks)) {
     if (
-      ((chunk.noteType === "tone" || chunk.noteType === "voice") ||
+      (chunk.noteType === "tone" ||
+        chunk.noteType === "voice" ||
         (chunk.noteType === "scene" && chunk.tags.includes("current_scene"))) &&
       candidateAllowed(chunk, input, config, characterIds)
     ) {
@@ -248,7 +264,9 @@ async function vectorLane(
   return { items, available: items.length > 0 };
 }
 
-export async function retrieveLongTermMemory(input: RetrieveLongTermMemoryInput = {}): Promise<RetrieveLongTermMemoryResult> {
+export async function retrieveLongTermMemory(
+  input: RetrieveLongTermMemoryInput = {},
+): Promise<RetrieveLongTermMemoryResult> {
   const root = input.root ?? getLongTermMemoryRoot();
   const dirs = getLongTermMemoryDirectories(root);
   const warnings: string[] = [];

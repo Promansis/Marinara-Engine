@@ -25,6 +25,7 @@ import {
   ltmSectionKeySchema,
   ltmSectionSchema,
   ltmStatusSchema,
+  withMergedLtmScopeLinks,
   type LtmIndexMetadata,
   type LtmMode,
   type LtmNote,
@@ -67,11 +68,9 @@ import {
   extractLongTermMemoryFromSourceNote,
   isLtmSourceNote,
 } from "../services/long-term-memory/source-extraction.js";
-import {
-  getLtmExtractionConfig,
-  updateLtmExtractionConfig,
-} from "../services/long-term-memory/extraction-config.js";
+import { getLtmExtractionConfig, updateLtmExtractionConfig } from "../services/long-term-memory/extraction-config.js";
 import { LongTermMemoryStorage } from "../services/long-term-memory/storage.js";
+import { applyLtmScopeLinksToDerivedNotes } from "../services/long-term-memory/scope-links.js";
 
 const NOTE_BODY_LIMIT_BYTES = 512 * 1024;
 const DRAFT_BODY_LIMIT_BYTES = 512 * 1024;
@@ -214,6 +213,16 @@ const extractSourceNoteBodySchema = z
   .strict()
   .default({});
 
+const applyScopeToDerivedBodySchema = z
+  .object({
+    chatIds: z.array(z.string().min(1).max(120)).max(100).optional(),
+    characterIds: z.array(z.string().min(1).max(120)).max(100).optional(),
+  })
+  .strict()
+  .refine((value) => Boolean(value.chatIds?.length || value.characterIds?.length), {
+    message: "Provide at least one chat or character link to apply.",
+  });
+
 const searchBodySchema = z
   .object({
     queryText: z.string().max(20_000).optional(),
@@ -337,13 +346,16 @@ function resolveChatLtmScope(chat: {
   const universe = normalizeLtmIdentifier(configuredScope.universe);
   const rpId = normalizeLtmIdentifier(configuredScope.rpId);
   const characterIds = normalizeCharacterIds(chat.characterIds);
-  return {
-    chatId: chat.id,
-    ...(chat.groupId ? { groupId: chat.groupId } : {}),
-    ...(characterIds.length ? { characterIds } : {}),
-    ...(universe ? { universe } : {}),
-    ...(rpId ? { rpId } : {}),
-  } satisfies LtmScope;
+  return withMergedLtmScopeLinks(
+    {
+      chatId: chat.id,
+      ...(chat.groupId ? { groupId: chat.groupId } : {}),
+      ...(characterIds.length ? { characterIds } : {}),
+      ...(universe ? { universe } : {}),
+      ...(rpId ? { rpId } : {}),
+    },
+    { chatIds: [chat.id] },
+  ) satisfies LtmScope;
 }
 
 function publicRebuildResult(result: Awaited<ReturnType<typeof rebuildLongTermMemoryIndexes>>) {
@@ -491,10 +503,14 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     return getLtmExtractionConfig();
   });
 
-  app.put<{ Body: unknown }>("/extraction-settings", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req, reply) => {
-    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory extraction settings" })) return;
-    return updateLtmExtractionConfig(ltmExtractionSettingsSchema.parse(req.body ?? {}));
-  });
+  app.put<{ Body: unknown }>(
+    "/extraction-settings",
+    { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES },
+    async (req, reply) => {
+      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory extraction settings" })) return;
+      return updateLtmExtractionConfig(ltmExtractionSettingsSchema.parse(req.body ?? {}));
+    },
+  );
 
   app.get<{ Querystring: unknown }>("/notes", async (req) => {
     const query = listNotesQuerySchema.parse(req.query);
@@ -615,6 +631,27 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
         cause: "api.patch",
         summary: "Updated via long-term memory maintenance API",
       });
+    },
+  );
+
+  app.post<{ Params: { id: string }; Body: unknown }>(
+    "/notes/:id/scope/apply-to-derived",
+    { bodyLimit: REBUILD_BODY_LIMIT_BYTES },
+    async (req, reply) => {
+      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory derived scope update" })) return;
+      const id = ltmNoteIdSchema.parse(req.params.id);
+      const body = applyScopeToDerivedBodySchema.parse(req.body ?? {});
+      const result = await applyLtmScopeLinksToDerivedNotes(id, {
+        chatIds: body.chatIds,
+        characterIds: body.characterIds,
+      });
+      if (!result) return reply.status(404).send({ error: "Long-term memory note not found" });
+      return {
+        sourceNoteId: result.sourceNoteId,
+        count: result.count,
+        affectedNoteIds: result.affectedNoteIds,
+        rebuild: result.rebuild ? publicRebuildResult(result.rebuild) : null,
+      };
     },
   );
 

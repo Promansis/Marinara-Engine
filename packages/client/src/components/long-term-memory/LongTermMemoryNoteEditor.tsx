@@ -1,15 +1,27 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Archive, Loader2, Pencil, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
-import type { LtmGate, LtmLink, LtmMode, LtmNote, LtmSection } from "@marinara-engine/shared";
 import {
+  getLtmScopeChatIds,
+  withMergedLtmScopeLinks,
+  type LtmGate,
+  type LtmLink,
+  type LtmMode,
+  type LtmNote,
+  type LtmSection,
+} from "@marinara-engine/shared";
+import {
+  useApplyLongTermMemoryScopeToDerived,
   useArchiveLongTermMemoryNote,
   useRebuildLongTermMemory,
   useUpdateLongTermMemoryNote,
 } from "../../hooks/use-long-term-memory";
+import { useChat } from "../../hooks/use-chats";
 import { cn } from "../../lib/utils";
+import { useChatStore } from "../../stores/chat.store";
 import { FloatingMessageEditor } from "../chat/FloatingMessageEditor";
 import { compactInputClassName, SettingField, textareaClassName } from "./LtmFields";
+import { LtmScopePicker } from "./LtmScopePicker";
 import { ToolButton } from "./LtmPills";
 import {
   editablePatchFromDraft,
@@ -21,10 +33,8 @@ import {
   friendlySectionKey,
   friendlyStatus,
   gateOptions,
-  joinIdentifierList,
   modeOptions,
   normalizeIdentifier,
-  parseTextList,
   normalizeTagsInput,
   statusOptions,
 } from "./ltm-editor-utils";
@@ -50,26 +60,45 @@ function sectionHasContent(section: LtmSection) {
   return section.text.trim().length > 0;
 }
 
+function readChatCharacterIds(value: unknown) {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  if (typeof value !== "string" || !value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function isSourceMemory(note: LtmNote) {
+  return note.type === "scene" && note.tags.some((tag) => tag === "source_summary" || tag === "chat_summary");
+}
+
 export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSaved }: LongTermMemoryNoteEditorProps) {
+  const activeChatId = useChatStore((state) => state.activeChatId);
+  const cachedActiveChat = useChatStore((state) => state.activeChat);
+  const activeChatQuery = useChat(activeChatId);
+  const activeChat = activeChatQuery.data ?? cachedActiveChat;
   const [savedBaseline, setSavedBaseline] = useState(note);
   const [draft, setDraft] = useState(note);
   const [tagsText, setTagsText] = useState(note.tags.join(", "));
-  const [characterIdsText, setCharacterIdsText] = useState(joinIdentifierList(note.scope.characterIds));
   const [linkDraft, setLinkDraft] = useState<LtmLink>({ target: "", relation: "" });
   const [floatingSectionKey, setFloatingSectionKey] = useState<string | null>(null);
   const updateNote = useUpdateLongTermMemoryNote();
   const archiveNote = useArchiveLongTermMemoryNote();
+  const applyScopeToDerived = useApplyLongTermMemoryScopeToDerived();
   const rebuild = useRebuildLongTermMemory();
 
   useEffect(() => {
     setSavedBaseline(note);
     setDraft(note);
     setTagsText(note.tags.join(", "));
-    setCharacterIdsText(joinIdentifierList(note.scope.characterIds));
   }, [note]);
 
   const dirty = useMemo(() => serializedEditable(draft) !== serializedEditable(savedBaseline), [draft, savedBaseline]);
-  const busy = updateNote.isPending || archiveNote.isPending || rebuild.isPending;
+  const busy = updateNote.isPending || archiveNote.isPending || rebuild.isPending || applyScopeToDerived.isPending;
+  const sourceMemory = isSourceMemory(draft);
 
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -198,6 +227,49 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
     setLinkDraft({ target: "", relation: "" });
   };
 
+  const setLinkedScope = (next: { chatIds: string[]; characterIds: string[] }) => {
+    setDraft((current) => {
+      const { chatId: _chatId, chatIds: _chatIds, characterIds: _characterIds, ...restScope } = current.scope;
+      return { ...current, scope: withMergedLtmScopeLinks(restScope, next) };
+    });
+  };
+
+  const useCurrentChatScope = () => {
+    if (!activeChat) return;
+    setDraft((current) => {
+      const { chatId: _chatId, chatIds: _chatIds, characterIds: _characterIds, ...restScope } = current.scope;
+      return {
+        ...current,
+        scope: withMergedLtmScopeLinks(
+          {
+            ...restScope,
+            groupId: activeChat.groupId ?? undefined,
+          },
+          { chatIds: [activeChat.id], characterIds: readChatCharacterIds(activeChat.characterIds) },
+        ),
+      };
+    });
+  };
+
+  const applyToDerived = async () => {
+    const chatIds = getLtmScopeChatIds(draft.scope);
+    const characterIds = draft.scope.characterIds ?? [];
+    if (!chatIds.length && !characterIds.length) {
+      toast.error("Add chat or character links first");
+      return;
+    }
+    try {
+      const result = await applyScopeToDerived.mutateAsync({ noteId: draft.id, chatIds, characterIds });
+      toast.success(
+        result.count === 1
+          ? "Applied links to 1 extracted memory"
+          : `Applied links to ${result.count} extracted memories`,
+      );
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
   const floatingSection = floatingSectionKey ? draft.sections[floatingSectionKey] : null;
 
   return (
@@ -205,10 +277,13 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-[0.625rem] text-[var(--muted-foreground)]">
-            {friendlyStatus(draft.status)} · version {draft.version} · updated {new Date(draft.updatedAt).toLocaleString()}
+            {friendlyStatus(draft.status)} · version {draft.version} · updated{" "}
+            {new Date(draft.updatedAt).toLocaleString()}
           </div>
         </div>
-        {dirty && <span className="rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[0.625rem] text-amber-200">Unsaved</span>}
+        {dirty && (
+          <span className="rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[0.625rem] text-amber-200">Unsaved</span>
+        )}
       </div>
 
       <div className="grid gap-3">
@@ -216,7 +291,9 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
           <SettingField label="Status">
             <select
               value={draft.status}
-              onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value as LtmNote["status"] }))}
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, status: event.target.value as LtmNote["status"] }))
+              }
               className={compactInputClassName}
             >
               {statusOptions.map((status) => (
@@ -240,7 +317,10 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
           <legend className="px-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Use In</legend>
           <div className="grid gap-1 sm:grid-cols-2">
             {modeOptions.map((mode) => (
-              <label key={mode} className="flex items-center gap-2 rounded-md px-2 py-1 text-xs hover:bg-[var(--secondary)]">
+              <label
+                key={mode}
+                className="flex items-center gap-2 rounded-md px-2 py-1 text-xs hover:bg-[var(--secondary)]"
+              >
                 <input
                   type="checkbox"
                   checked={draft.modes.includes(mode)}
@@ -261,17 +341,37 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
         </fieldset>
 
         <div className="grid gap-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
-          <div className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Where this applies</div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Where this applies</div>
+            <button
+              type="button"
+              onClick={useCurrentChatScope}
+              disabled={!activeChat}
+              className="rounded-md px-2 py-1 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--secondary)] disabled:opacity-50"
+            >
+              Use this chat
+            </button>
+          </div>
+          <LtmScopePicker
+            value={{ chatIds: getLtmScopeChatIds(draft.scope), characterIds: draft.scope.characterIds ?? [] }}
+            onChange={setLinkedScope}
+          />
           <div className="grid gap-2 sm:grid-cols-2">
             <input
               value={draft.scope.universe ?? ""}
               onChange={(event) =>
-                setDraft((current) => ({ ...current, scope: { ...current.scope, universe: event.target.value || undefined } }))
+                setDraft((current) => ({
+                  ...current,
+                  scope: { ...current.scope, universe: event.target.value || undefined },
+                }))
               }
               onBlur={(event) =>
                 setDraft((current) => ({
                   ...current,
-                  scope: { ...current.scope, universe: normalizeIdentifier(event.target.value, "universe") || undefined },
+                  scope: {
+                    ...current.scope,
+                    universe: normalizeIdentifier(event.target.value, "universe") || undefined,
+                  },
                 }))
               }
               placeholder="shared world"
@@ -280,7 +380,10 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
             <input
               value={draft.scope.rpId ?? ""}
               onChange={(event) =>
-                setDraft((current) => ({ ...current, scope: { ...current.scope, rpId: event.target.value || undefined } }))
+                setDraft((current) => ({
+                  ...current,
+                  scope: { ...current.scope, rpId: event.target.value || undefined },
+                }))
               }
               onBlur={(event) =>
                 setDraft((current) => ({
@@ -292,35 +395,32 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
               className={compactInputClassName}
             />
             <input
-              value={draft.scope.chatId ?? ""}
-              onChange={(event) => setDraft((current) => ({ ...current, scope: { ...current.scope, chatId: event.target.value || undefined } }))}
-              placeholder="chat"
-              className={compactInputClassName}
-            />
-            <input
               value={draft.scope.groupId ?? ""}
               onChange={(event) =>
-                setDraft((current) => ({ ...current, scope: { ...current.scope, groupId: event.target.value || undefined } }))
+                setDraft((current) => ({
+                  ...current,
+                  scope: { ...current.scope, groupId: event.target.value || undefined },
+                }))
               }
               placeholder="group"
               className={compactInputClassName}
             />
           </div>
-          <input
-            value={characterIdsText}
-            onChange={(event) => setCharacterIdsText(event.target.value)}
-            onBlur={() =>
-              setDraft((current) => ({
-                ...current,
-                scope: {
-                  ...current.scope,
-                  characterIds: parseTextList(characterIdsText),
-                },
-              }))
-            }
-            placeholder="character IDs"
-            className={compactInputClassName}
-          />
+          {sourceMemory && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-[var(--background)] p-2 ring-1 ring-[var(--border)]">
+              <span className="text-[0.6875rem] text-[var(--muted-foreground)]">
+                Push these chat and character links to extracted memories.
+              </span>
+              <ToolButton onClick={applyToDerived} disabled={busy}>
+                {applyScopeToDerived.isPending ? (
+                  <Loader2 size="0.875rem" className="animate-spin" />
+                ) : (
+                  <RefreshCw size="0.875rem" />
+                )}
+                Apply To Extracted Memories
+              </ToolButton>
+            </div>
+          )}
         </div>
 
         <div className="space-y-2">
@@ -344,7 +444,7 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
                   type="button"
                   onClick={() => removeSection(key)}
                   className="rounded-md px-2 text-[var(--destructive)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--destructive)]/10 active:scale-95"
-                    aria-label={`Remove ${friendlySectionKey(key)}`}
+                  aria-label={`Remove ${friendlySectionKey(key)}`}
                 >
                   <Trash2 size="0.875rem" />
                 </button>
@@ -358,7 +458,12 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
                   <Pencil size="0.75rem" />
                   Edit memory text
                 </span>
-                <span className={cn("line-clamp-4 whitespace-pre-wrap", !section.text.trim() && "text-[var(--muted-foreground)]/70")}>
+                <span
+                  className={cn(
+                    "line-clamp-4 whitespace-pre-wrap",
+                    !section.text.trim() && "text-[var(--muted-foreground)]/70",
+                  )}
+                >
                   {section.text.trim() || "No memory text yet."}
                 </span>
               </button>
@@ -369,7 +474,9 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
                   max={1}
                   step={0.05}
                   value={section.salience ?? ""}
-                  onChange={(event) => setSection(key, (current) => ({ ...current, salience: numberOrUndefined(event.target.value) }))}
+                  onChange={(event) =>
+                    setSection(key, (current) => ({ ...current, salience: numberOrUndefined(event.target.value) }))
+                  }
                   placeholder="importance"
                   className={compactInputClassName}
                 />
@@ -379,7 +486,9 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
                   max={1}
                   step={0.05}
                   value={section.confidence ?? ""}
-                  onChange={(event) => setSection(key, (current) => ({ ...current, confidence: numberOrUndefined(event.target.value) }))}
+                  onChange={(event) =>
+                    setSection(key, (current) => ({ ...current, confidence: numberOrUndefined(event.target.value) }))
+                  }
                   placeholder="ai certainty"
                   className={compactInputClassName}
                 />
@@ -400,7 +509,10 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
               />
               <div className="mt-2 flex flex-wrap gap-2">
                 {gateOptions.map((gate) => (
-                  <label key={gate} className="flex items-center gap-1.5 text-[0.6875rem] text-[var(--muted-foreground)]">
+                  <label
+                    key={gate}
+                    className="flex items-center gap-1.5 text-[0.6875rem] text-[var(--muted-foreground)]"
+                  >
                     <input
                       type="checkbox"
                       checked={(section.gates ?? []).includes(gate)}
@@ -445,14 +557,20 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
         <div className="space-y-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
           <h4 className="text-xs font-medium text-[var(--foreground)]">Related Memories</h4>
           {draft.links.map((link, index) => (
-            <div key={`${link.target}-${link.relation}-${index}`} className="grid grid-cols-[1fr_auto] items-center gap-2 text-xs">
+            <div
+              key={`${link.target}-${link.relation}-${index}`}
+              className="grid grid-cols-[1fr_auto] items-center gap-2 text-xs"
+            >
               <div className="truncate text-[var(--muted-foreground)]">
                 {friendlyIdentifier(link.relation)} &gt; {friendlyIdentifier(link.target)}
               </div>
               <button
                 type="button"
                 onClick={() =>
-                  setDraft((current) => ({ ...current, links: current.links.filter((_, linkIndex) => linkIndex !== index) }))
+                  setDraft((current) => ({
+                    ...current,
+                    links: current.links.filter((_, linkIndex) => linkIndex !== index),
+                  }))
                 }
                 className="rounded-md p-1 text-[var(--destructive)] hover:bg-[var(--destructive)]/10"
                 aria-label={`Remove relation ${friendlyIdentifier(link.relation)}`}

@@ -1,17 +1,15 @@
-import type {
-  ChatMode,
-  LtmGate,
-  LtmMode,
-  LtmNote,
-  LtmNoteType,
-  LtmScope,
-  LtmSection,
-  LtmStatus,
+import {
+  withMergedLtmScopeLinks,
+  type ChatMode,
+  type LtmGate,
+  type LtmMode,
+  type LtmNote,
+  type LtmNoteType,
+  type LtmScope,
+  type LtmSection,
+  type LtmStatus,
 } from "@marinara-engine/shared";
-import type {
-  CreateLongTermMemoryNoteInput,
-  UpdateLongTermMemoryNoteInput,
-} from "../../hooks/use-long-term-memory";
+import type { CreateLongTermMemoryNoteInput, UpdateLongTermMemoryNoteInput } from "../../hooks/use-long-term-memory";
 
 export const noteTypeOptions: LtmNoteType[] = [
   "character",
@@ -171,18 +169,6 @@ export function normalizeIdentifierList(value: string, fallbackPrefix = "item") 
     .filter((item, index, list) => list.indexOf(item) === index);
 }
 
-export function parseTextList(value: string) {
-  return value
-    .split(/[,\n]+/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .filter((item, index, list) => list.indexOf(item) === index);
-}
-
-export function joinIdentifierList(values: string[] | undefined) {
-  return values?.join(", ") ?? "";
-}
-
 export function defaultSectionKeyForType(type: LtmNoteType) {
   return type === "scene" ? "summary" : "core";
 }
@@ -202,19 +188,20 @@ export function defaultModeFromChatMode(mode?: ChatMode): LtmMode {
 export function emptyScopeFromDraft(draft: {
   universe?: string;
   rpId?: string;
-  chatId?: string;
+  chatIds?: string[];
   groupId?: string;
-  characterIdsText?: string;
+  characterIds?: string[];
 }): LtmScope {
-  const scope: LtmScope = {};
+  let scope: LtmScope = {};
   const universe = normalizeIdentifier(draft.universe ?? "", "universe");
   const rpId = normalizeIdentifier(draft.rpId ?? "", "rp");
-  const characterIds = parseTextList(draft.characterIdsText ?? "");
   if (universe) scope.universe = universe;
   if (rpId) scope.rpId = rpId;
-  if (draft.chatId?.trim()) scope.chatId = draft.chatId.trim();
   if (draft.groupId?.trim()) scope.groupId = draft.groupId.trim();
-  if (characterIds.length > 0) scope.characterIds = characterIds;
+  scope = withMergedLtmScopeLinks(scope, {
+    chatIds: draft.chatIds ?? [],
+    characterIds: draft.characterIds ?? [],
+  });
   return scope;
 }
 

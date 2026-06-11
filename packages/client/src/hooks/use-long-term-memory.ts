@@ -146,6 +146,19 @@ export type ExtractLongTermMemorySourceResponse = {
   skippedMutationIds: string[];
 };
 
+export type ApplyLongTermMemoryScopeToDerivedInput = {
+  noteId: string;
+  chatIds?: string[];
+  characterIds?: string[];
+};
+
+export type ApplyLongTermMemoryScopeToDerivedResponse = {
+  sourceNoteId: string;
+  count: number;
+  affectedNoteIds: string[];
+  rebuild: unknown | null;
+};
+
 export type ImportLongTermMemorySourceNotesResponse = {
   source: LtmInteropSource;
   imported: Array<{
@@ -273,8 +286,7 @@ export function useArchiveLongTermMemoryNote() {
 export function useDeleteLongTermMemoryNote() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) =>
-      api.delete<{ deleted: true; id: string }>(`/long-term-memory/notes/${id}/permanent`),
+    mutationFn: (id: string) => api.delete<{ deleted: true; id: string }>(`/long-term-memory/notes/${id}/permanent`),
     onSuccess: (_, id) => {
       qc.removeQueries({ queryKey: longTermMemoryKeys.note(id) });
       qc.invalidateQueries({ queryKey: longTermMemoryKeys.all });
@@ -421,6 +433,18 @@ export function useExtractLongTermMemorySourceNote() {
   return useMutation({
     mutationFn: ({ noteId, ...body }: ExtractLongTermMemorySourceInput) =>
       api.post<ExtractLongTermMemorySourceResponse>(`/long-term-memory/notes/${noteId}/extract`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
+  });
+}
+
+export function useApplyLongTermMemoryScopeToDerived() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ noteId, chatIds, characterIds }: ApplyLongTermMemoryScopeToDerivedInput) =>
+      api.post<ApplyLongTermMemoryScopeToDerivedResponse>(`/long-term-memory/notes/${noteId}/scope/apply-to-derived`, {
+        chatIds,
+        characterIds,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
   });
 }

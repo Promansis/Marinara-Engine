@@ -5,17 +5,14 @@ import {
   ltmNoteSchema,
   ltmPoliciesConfigSchema,
   ltmRetrievalConfigSchema,
+  withMergedLtmScopeLinks,
+  type LtmScope,
   type LtmEvent,
   type LtmNote,
   type LtmNoteType,
 } from "@marinara-engine/shared";
 import { logger } from "../../lib/logger.js";
-import {
-  appendJsonLineAtomic,
-  createJsonFileExclusive,
-  readJsonFile,
-  writeJsonAtomic,
-} from "./atomic-json.js";
+import { appendJsonLineAtomic, createJsonFileExclusive, readJsonFile, writeJsonAtomic } from "./atomic-json.js";
 import { DEFAULT_LTM_POLICIES, DEFAULT_LTM_RETRIEVAL_CONFIG } from "./default-config.js";
 import {
   getLongTermMemoryDirectories,
@@ -59,6 +56,10 @@ function hashNote(note: LtmNote) {
   return createHash("sha256").update(JSON.stringify(note)).digest("hex");
 }
 
+function normalizeStoredScope(scope: LtmScope) {
+  return withMergedLtmScopeLinks(scope, {});
+}
+
 function eventFor(
   type: string,
   target: string | undefined,
@@ -84,7 +85,10 @@ async function withNoteWriteLock<T>(path: string, operation: () => Promise<T>): 
   const current = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const tail = previous.then(() => current, () => current);
+  const tail = previous.then(
+    () => current,
+    () => current,
+  );
   noteWriteLocks.set(path, tail);
 
   try {
@@ -138,9 +142,7 @@ export class LongTermMemoryStorage {
 
     const policiesPath = safeJoin(dirs.config, "policies.json");
     const retrievalPath = safeJoin(dirs.config, "retrieval.json");
-    const existingPolicies = ltmPoliciesConfigSchema.parse(
-      await readJsonFile(policiesPath, DEFAULT_LTM_POLICIES),
-    );
+    const existingPolicies = ltmPoliciesConfigSchema.parse(await readJsonFile(policiesPath, DEFAULT_LTM_POLICIES));
     const existingRetrieval = ltmRetrievalConfigSchema.parse(
       await readJsonFile(retrievalPath, DEFAULT_LTM_RETRIEVAL_CONFIG),
     );
@@ -182,6 +184,7 @@ export class LongTermMemoryStorage {
     const timestamp = nowIso();
     const note = ltmNoteSchema.parse({
       ...input,
+      scope: normalizeStoredScope(input.scope),
       createdAt: input.createdAt ?? timestamp,
       updatedAt: input.updatedAt ?? timestamp,
       version: input.version ?? 1,
@@ -282,7 +285,7 @@ export class LongTermMemoryStorage {
       const next = ltmNoteSchema.parse({
         ...current,
         ...patch,
-        scope: patch.scope ?? current.scope,
+        scope: normalizeStoredScope(patch.scope ?? current.scope),
         links: patch.links ?? current.links,
         sections: patch.sections ?? current.sections,
         conflicts: patch.conflicts ?? current.conflicts,

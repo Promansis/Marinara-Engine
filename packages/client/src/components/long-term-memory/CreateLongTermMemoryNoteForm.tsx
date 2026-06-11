@@ -8,6 +8,7 @@ import { useChatStore } from "../../stores/chat.store";
 import { cn } from "../../lib/utils";
 import { FloatingMessageEditor } from "../chat/FloatingMessageEditor";
 import { compactInputClassName, SettingField } from "./LtmFields";
+import { LtmScopePicker } from "./LtmScopePicker";
 import { ToolButton } from "./LtmPills";
 import {
   allowedIdPrefixesByType,
@@ -45,9 +46,9 @@ export type CreateLongTermMemoryNoteDraft = {
   scopeDraft: {
     universe: string;
     rpId: string;
-    chatId: string;
+    chatIds: string[];
     groupId: string;
-    characterIdsText: string;
+    characterIds: string[];
   };
   sectionKey: string;
   sectionText: string;
@@ -97,9 +98,9 @@ function createDefaultDraft({
     scopeDraft: {
       universe: metadataScope.universe ?? "",
       rpId: metadataScope.rpId ?? "",
-      chatId: activeChat?.id ?? "",
+      chatIds: activeChat?.id ? [activeChat.id] : [],
       groupId: activeChat?.groupId ?? "",
-      characterIdsText: readChatCharacterIds(activeChat).join(", "),
+      characterIds: readChatCharacterIds(activeChat),
     },
     sectionKey: defaultSectionKeyForType("scene"),
     sectionText: "",
@@ -130,7 +131,10 @@ export function CreateLongTermMemoryNoteForm({
   );
   const [draft, setDraft] = useState<CreateLongTermMemoryNoteDraft>(initialDraft ?? defaultDraft);
   const [summaryEditorOpen, setSummaryEditorOpen] = useState(false);
-  const dirty = useMemo(() => serializedCreateDraft(draft) !== serializedCreateDraft(defaultDraft), [defaultDraft, draft]);
+  const dirty = useMemo(
+    () => serializedCreateDraft(draft) !== serializedCreateDraft(defaultDraft),
+    [defaultDraft, draft],
+  );
   const { type, id, status, modes, tagsText, scopeDraft, sectionKey, sectionText } = draft;
 
   useEffect(() => {
@@ -216,7 +220,11 @@ export function CreateLongTermMemoryNoteForm({
       <div className="grid gap-3">
         <div className="grid gap-2 sm:grid-cols-2">
           <SettingField label="Type">
-            <select value={type} onChange={(event) => changeType(event.target.value as LtmNoteType)} className={compactInputClassName}>
+            <select
+              value={type}
+              onChange={(event) => changeType(event.target.value as LtmNoteType)}
+              className={compactInputClassName}
+            >
               {noteTypeOptions.map((option) => (
                 <option key={option} value={option}>
                   {friendlyNoteType(option)}
@@ -227,7 +235,9 @@ export function CreateLongTermMemoryNoteForm({
           <SettingField label="Status">
             <select
               value={status}
-              onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value as LtmNote["status"] }))}
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, status: event.target.value as LtmNote["status"] }))
+              }
               className={compactInputClassName}
             >
               {statusOptions.map((option) => (
@@ -255,14 +265,19 @@ export function CreateLongTermMemoryNoteForm({
           <legend className="px-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Use In</legend>
           <div className="grid gap-1 sm:grid-cols-2">
             {modeOptions.map((mode) => (
-              <label key={mode} className="flex items-center gap-2 rounded-md px-2 py-1 text-xs hover:bg-[var(--secondary)]">
+              <label
+                key={mode}
+                className="flex items-center gap-2 rounded-md px-2 py-1 text-xs hover:bg-[var(--secondary)]"
+              >
                 <input
                   type="checkbox"
                   checked={modes.includes(mode)}
                   onChange={(event) =>
                     setDraft((current) => ({
                       ...current,
-                      modes: event.target.checked ? [...current.modes, mode] : current.modes.filter((item) => item !== mode),
+                      modes: event.target.checked
+                        ? [...current.modes, mode]
+                        : current.modes.filter((item) => item !== mode),
                     }))
                   }
                   className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
@@ -274,7 +289,11 @@ export function CreateLongTermMemoryNoteForm({
         </fieldset>
 
         <SettingField label="Tags">
-          <input value={tagsText} onChange={(event) => setDraft((current) => ({ ...current, tagsText: event.target.value }))} className={compactInputClassName} />
+          <input
+            value={tagsText}
+            onChange={(event) => setDraft((current) => ({ ...current, tagsText: event.target.value }))}
+            className={compactInputClassName}
+          />
         </SettingField>
 
         <div className="grid gap-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
@@ -289,42 +308,47 @@ export function CreateLongTermMemoryNoteForm({
               Use this chat
             </button>
           </div>
+          <LtmScopePicker
+            value={{ chatIds: scopeDraft.chatIds, characterIds: scopeDraft.characterIds }}
+            onChange={(next) =>
+              setDraft((current) => ({
+                ...current,
+                scopeDraft: { ...current.scopeDraft, chatIds: next.chatIds, characterIds: next.characterIds },
+              }))
+            }
+          />
           <div className="grid gap-2 sm:grid-cols-2">
             <input
               value={scopeDraft.universe}
               onChange={(event) =>
-                setDraft((current) => ({ ...current, scopeDraft: { ...current.scopeDraft, universe: event.target.value } }))
+                setDraft((current) => ({
+                  ...current,
+                  scopeDraft: { ...current.scopeDraft, universe: event.target.value },
+                }))
               }
               placeholder="shared world"
               className={compactInputClassName}
             />
             <input
               value={scopeDraft.rpId}
-              onChange={(event) => setDraft((current) => ({ ...current, scopeDraft: { ...current.scopeDraft, rpId: event.target.value } }))}
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, scopeDraft: { ...current.scopeDraft, rpId: event.target.value } }))
+              }
               placeholder="story line"
               className={compactInputClassName}
             />
             <input
-              value={scopeDraft.chatId}
-              onChange={(event) => setDraft((current) => ({ ...current, scopeDraft: { ...current.scopeDraft, chatId: event.target.value } }))}
-              placeholder="chat"
-              className={compactInputClassName}
-            />
-            <input
               value={scopeDraft.groupId}
-              onChange={(event) => setDraft((current) => ({ ...current, scopeDraft: { ...current.scopeDraft, groupId: event.target.value } }))}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  scopeDraft: { ...current.scopeDraft, groupId: event.target.value },
+                }))
+              }
               placeholder="group"
               className={compactInputClassName}
             />
           </div>
-          <input
-            value={scopeDraft.characterIdsText}
-            onChange={(event) =>
-              setDraft((current) => ({ ...current, scopeDraft: { ...current.scopeDraft, characterIdsText: event.target.value } }))
-            }
-            placeholder="character IDs"
-            className={compactInputClassName}
-          />
         </div>
 
         <div className="grid gap-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
@@ -345,7 +369,12 @@ export function CreateLongTermMemoryNoteForm({
               <Pencil size="0.75rem" />
               Edit memory text
             </span>
-            <span className={cn("line-clamp-4 whitespace-pre-wrap", !sectionText.trim() && "text-[var(--muted-foreground)]/70")}>
+            <span
+              className={cn(
+                "line-clamp-4 whitespace-pre-wrap",
+                !sectionText.trim() && "text-[var(--muted-foreground)]/70",
+              )}
+            >
               {sectionText.trim() || "No memory text yet."}
             </span>
           </button>

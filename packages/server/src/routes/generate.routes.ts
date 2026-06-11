@@ -25,6 +25,7 @@ import {
   compileChatSummaryEntries,
   applyQuestUpdatesToPlayerStats,
   buildQuestJournalData,
+  withMergedLtmScopeLinks,
 } from "@marinara-engine/shared";
 import type {
   AgentContext,
@@ -307,15 +308,18 @@ function resolveLtmScope(
     chatMeta.longTermMemoryScope && typeof chatMeta.longTermMemoryScope === "object"
       ? (chatMeta.longTermMemoryScope as Record<string, unknown>)
       : {};
-  return {
-    chatId: chat.id,
-    ...(chat.groupId ? { groupId: chat.groupId } : {}),
-    ...(chat.characterIds?.length ? { characterIds: chat.characterIds } : {}),
-    ...(normalizeLtmIdentifier(configuredScope.universe)
-      ? { universe: normalizeLtmIdentifier(configuredScope.universe) }
-      : {}),
-    ...(normalizeLtmIdentifier(configuredScope.rpId) ? { rpId: normalizeLtmIdentifier(configuredScope.rpId) } : {}),
-  };
+  return withMergedLtmScopeLinks(
+    {
+      chatId: chat.id,
+      ...(chat.groupId ? { groupId: chat.groupId } : {}),
+      ...(chat.characterIds?.length ? { characterIds: chat.characterIds } : {}),
+      ...(normalizeLtmIdentifier(configuredScope.universe)
+        ? { universe: normalizeLtmIdentifier(configuredScope.universe) }
+        : {}),
+      ...(normalizeLtmIdentifier(configuredScope.rpId) ? { rpId: normalizeLtmIdentifier(configuredScope.rpId) } : {}),
+    },
+    { chatIds: [chat.id] },
+  );
 }
 
 function parseLongTermMemoryBudgetTokens(value: unknown) {
@@ -5281,7 +5285,10 @@ export async function generateRoutes(app: FastifyInstance) {
               chatMode,
               characterIds: promptCharacterIds,
               budgetTokens: parseLongTermMemoryBudgetTokens(chatMeta.longTermMemoryBudgetTokens) ?? null,
-              scope: resolveLtmScope({ id: input.chatId, groupId: chat.groupId, characterIds: promptCharacterIds }, chatMeta),
+              scope: resolveLtmScope(
+                { id: input.chatId, groupId: chat.groupId, characterIds: promptCharacterIds },
+                chatMeta,
+              ),
             },
           });
           try {
@@ -8267,8 +8274,7 @@ export async function generateRoutes(app: FastifyInstance) {
                     signal: abortController.signal,
                   });
                   if (extraction.mutations.length === 0) return;
-                  const canAutoApplyDraft =
-                    shouldAutoApplyLowRisk && extraction.mutations.every(isLowRiskTurnMutation);
+                  const canAutoApplyDraft = shouldAutoApplyLowRisk && extraction.mutations.every(isLowRiskTurnMutation);
                   const draft = await new LongTermMemoryDraftStore().createDraft({
                     userMessage: input.userMessage ?? "",
                     assistantReply: fullResponse,

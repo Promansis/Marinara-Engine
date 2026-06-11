@@ -5,8 +5,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import type { LtmDraftMutation, LtmEvidenceUnit, LtmNote } from "@marinara-engine/shared";
-import { ltmEvidenceUnitSchema } from "../../../../../shared/src/schemas/long-term-memory.schema.js";
+import { ltmEvidenceUnitSchema, ltmScopeSchema } from "../../../../../shared/src/schemas/long-term-memory.schema.js";
 import { chunkNotes } from "../chunking.js";
+import { buildLtmMetadataIndex } from "../metadata-index.js";
 import { compileLtmEvidenceUnits } from "../evidence-unit-compiler.js";
 import { reduceRelationshipEvidenceUnits } from "../relationship-reducer.js";
 import { LongTermMemoryDraftStore } from "../extraction.js";
@@ -20,12 +21,10 @@ import {
 } from "../reconciliation.js";
 import { retrieveLongTermMemory } from "../retrieval.js";
 import { LongTermMemoryStorage } from "../storage.js";
-import {
-  compileEvidenceUnitExtraction,
-  runLongTermMemoryEvidenceUnitExtraction,
-} from "../evidence-unit-extraction.js";
+import { compileEvidenceUnitExtraction, runLongTermMemoryEvidenceUnitExtraction } from "../evidence-unit-extraction.js";
 import { getLtmExtractionConfig, updateLtmExtractionConfig } from "../extraction-config.js";
 import { extractLongTermMemoryFromSourceNote } from "../source-extraction.js";
+import { applyLtmScopeLinksToDerivedNotes } from "../scope-links.js";
 
 const timestamp = "2026-06-10T00:00:00.000Z";
 const sourceHash = "a".repeat(64);
@@ -188,6 +187,184 @@ test("initializeLtmStore is idempotent across concurrent calls", async () => {
   }
 });
 
+test("ltm scope accepts legacy chatId and multiple chatIds", () => {
+  assert.deepEqual(ltmScopeSchema.parse({ chatId: "chat_legacy" }), { chatId: "chat_legacy" });
+  assert.deepEqual(ltmScopeSchema.parse({ chatIds: ["chat_a", "chat_b"] }), {
+    chatIds: ["chat_a", "chat_b"],
+  });
+});
+
+test("ltm metadata index buckets legacy chatId and every chatIds entry", () => {
+  const chunks = chunkNotes([
+    {
+      id: "scene_scope_index",
+      type: "scene",
+      status: "active",
+      modes: ["roleplay"],
+      scope: { chatId: "chat_legacy", chatIds: ["chat_a", "chat_b"], characterIds: ["char_mara"] },
+      tags: [],
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      links: [],
+      sections: {
+        summary: {
+          text: "Mara remembers the sapphire clue.",
+          updatedAt: timestamp,
+        },
+      },
+      version: 1,
+    },
+  ]);
+  const index = buildLtmMetadataIndex(chunks);
+
+  assert.deepEqual(index.byScope.chatId.chat_legacy, ["scene_scope_index::summary"]);
+  assert.deepEqual(index.byScope.chatId.chat_a, ["scene_scope_index::summary"]);
+  assert.deepEqual(index.byScope.chatId.chat_b, ["scene_scope_index::summary"]);
+  assert.deepEqual(index.byScope.characterId.char_mara, ["scene_scope_index::summary"]);
+});
+
+test("ltm retrieval matches any overlapping chatIds entry and keeps legacy chatId working", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-chatids-retrieval-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "scene_sapphire_clue",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_legacy", chatIds: ["chat_a", "chat_b"] },
+        tags: [],
+        links: [],
+        sections: {
+          summary: {
+            text: "The sapphire clue belongs to this shared conversation.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    await rebuildLongTermMemoryIndexes({ root, localEmbedder: async () => [] });
+
+    const fromArrayScope = await retrieveLongTermMemory({
+      root,
+      queryText: "sapphire clue",
+      scope: { chatIds: ["chat_b"] },
+      maxChunks: 5,
+      localEmbedder: async () => [],
+    });
+    assert.deepEqual(
+      fromArrayScope.chunks.map((item) => item.chunk.noteId),
+      ["scene_sapphire_clue"],
+    );
+
+    const fromLegacyScope = await retrieveLongTermMemory({
+      root,
+      queryText: "sapphire clue",
+      scope: { chatId: "chat_legacy" },
+      maxChunks: 5,
+      localEmbedder: async () => [],
+    });
+    assert.deepEqual(
+      fromLegacyScope.chunks.map((item) => item.chunk.noteId),
+      ["scene_sapphire_clue"],
+    );
+
+    const fromWrongChat = await retrieveLongTermMemory({
+      root,
+      queryText: "sapphire clue",
+      scope: { chatIds: ["chat_other"] },
+      maxChunks: 5,
+      localEmbedder: async () => [],
+    });
+    assert.deepEqual(fromWrongChat.chunks, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("derived scope apply merges only extracted_from children", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-derived-scope-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "scene_source_links",
+        type: "scene",
+        status: "dormant",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_source" },
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Source summary.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "cb_derived_scope",
+        type: "callback",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_old", characterIds: ["char_old"] },
+        tags: [],
+        links: [{ target: "scene_source_links", relation: "extracted_from" }],
+        sections: {
+          setup: {
+            text: "Derived callback.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "cb_unrelated_scope",
+        type: "callback",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_old" },
+        tags: [],
+        links: [{ target: "scene_source_links", relation: "mentioned_in" }],
+        sections: {
+          setup: {
+            text: "Unrelated callback.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const result = await applyLtmScopeLinksToDerivedNotes(
+      "scene_source_links",
+      { chatIds: ["chat_new"], characterIds: ["char_new"] },
+      { root, rebuildIndexes: false },
+    );
+    assert.deepEqual(result?.affectedNoteIds, ["cb_derived_scope"]);
+    assert.equal(result?.count, 1);
+
+    const derived = await storage.getNote("cb_derived_scope");
+    assert.equal(derived?.scope.chatId, "chat_old");
+    assert.deepEqual(derived?.scope.chatIds, ["chat_old", "chat_new"]);
+    assert.deepEqual(derived?.scope.characterIds, ["char_old", "char_new"]);
+
+    const unrelated = await storage.getNote("cb_unrelated_scope");
+    assert.deepEqual(unrelated?.scope.chatIds, ["chat_old"]);
+    assert.deepEqual(unrelated?.scope.characterIds, undefined);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("ltm extraction config reads defaults, writes overrides, and resets", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-extraction-config-"));
   try {
@@ -300,7 +477,10 @@ test("source note extraction applies saved extraction config to llm request", as
     });
 
     const userPayload = JSON.parse(messages.find((message) => message.role === "user")!.content);
-    assert.equal(messages.find((message) => message.role === "system")!.content, "Return JSON with compact test units only.");
+    assert.equal(
+      messages.find((message) => message.role === "system")!.content,
+      "Return JSON with compact test units only.",
+    );
     assert.equal(userPayload.extraInstruction, "Treat lantern hum as a callback.");
     assert.equal(userPayload.sourceText, sourceText.slice(0, 1000));
     assert.equal(chatOptions.maxTokens, 1024);
@@ -598,7 +778,10 @@ test("evidence unit extraction accepts and compiles multiple typed buckets", asy
     model: "test-model",
     sourceHash,
   });
-  assert.deepEqual(compiled.diagnostics.filter((diagnostic) => diagnostic.severity === "error"), []);
+  assert.deepEqual(
+    compiled.diagnostics.filter((diagnostic) => diagnostic.severity === "error"),
+    [],
+  );
 
   const createdTypes = compiled.compiledResponse.mutations.flatMap((mutation) =>
     mutation.kind === "create_note" ? [mutation.note.type] : [],
@@ -660,9 +843,7 @@ test("evidence unit extraction validation rejects copied placeholder values", ()
 
   assert.equal(compiled.compiledResponse.mutations.length, 0);
   assert.deepEqual(
-    compiled.diagnostics
-      .filter((diagnostic) => diagnostic.severity === "error")
-      .map((diagnostic) => diagnostic.code),
+    compiled.diagnostics.filter((diagnostic) => diagnostic.severity === "error").map((diagnostic) => diagnostic.code),
     [
       "placeholder_evidence_unit_id",
       "placeholder_subject_id",
@@ -952,7 +1133,10 @@ test("source extraction drafts can apply typed current scene updates", async () 
       rebuildIndexes: false,
     });
 
-    assert.deepEqual(result.appliedMutationIds, response.mutations.map((mutation) => mutation.id));
+    assert.deepEqual(
+      result.appliedMutationIds,
+      response.mutations.map((mutation) => mutation.id),
+    );
     const updated = await storage.getNote("scene_current_chat");
     assert.equal(updated?.sections.current_state?.text, "Mara and Jules stand inside the tower archive.");
     assert(updated?.links.some((link) => link.target === "scene_source_test" && link.relation === "extracted_from"));

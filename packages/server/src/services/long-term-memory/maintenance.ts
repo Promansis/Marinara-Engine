@@ -5,6 +5,7 @@ import {
   ltmExtractionResponseSchema,
   ltmEventSchema,
   ltmNoteSchema,
+  withMergedLtmScopeLinks,
   type LtmDraftMutation,
   type LtmExtractionDraft,
   type LtmMode,
@@ -577,12 +578,15 @@ async function lorebookDrafts(db: DB, limit: number, sourceIds?: Set<string>): P
         type,
         status: "active",
         modes,
-        scope: {
-          chatId: typeof book.chatId === "string" ? book.chatId : undefined,
-          characterIds: Array.isArray(book.characterIds)
-            ? book.characterIds.filter((value): value is string => typeof value === "string")
-            : undefined,
-        },
+        scope: withMergedLtmScopeLinks(
+          {
+            chatId: typeof book.chatId === "string" ? book.chatId : undefined,
+            characterIds: Array.isArray(book.characterIds)
+              ? book.characterIds.filter((value): value is string => typeof value === "string")
+              : undefined,
+          },
+          { chatIds: typeof book.chatId === "string" ? [book.chatId] : [] },
+        ),
         tags: Array.isArray(book.tags)
           ? book.tags.map((tag) => normalizeIdentifier(String(tag), "tag")).slice(0, 12)
           : [],
@@ -624,7 +628,10 @@ async function chatDrafts(db: DB, limit: number, sourceIds?: Set<string>): Promi
         type: "scene",
         status: "active",
         modes: [mode],
-        scope: { chatId: chat.id, groupId: chat.groupId ?? undefined, characterIds: readJsonArray(chat.characterIds) },
+        scope: withMergedLtmScopeLinks(
+          { chatId: chat.id, groupId: chat.groupId ?? undefined, characterIds: readJsonArray(chat.characterIds) },
+          { chatIds: [chat.id] },
+        ),
         tags: ["imported_chat_summary"],
         links: [],
         sections: { summary: textSection(summary, evidence) },

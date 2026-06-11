@@ -1,5 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import { type ChatMode, type ChatSummaryEntry, type LtmMode, type LtmNote } from "@marinara-engine/shared";
+import {
+  withMergedLtmScopeLinks,
+  type ChatMode,
+  type ChatSummaryEntry,
+  type LtmMode,
+  type LtmNote,
+} from "@marinara-engine/shared";
 import { logger } from "../../lib/logger.js";
 import type { BaseLLMProvider } from "../llm/base-provider.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
@@ -94,13 +100,16 @@ function resolveChatScope(chat: SummaryLtmChat, meta: Record<string, unknown>): 
     typeof configured.universe === "string" && isLtmIdentifier(configured.universe) ? configured.universe : undefined;
   const rpId = typeof configured.rpId === "string" && isLtmIdentifier(configured.rpId) ? configured.rpId : undefined;
   const characterIds = normalizeCharacterIds(chat.characterIds);
-  return {
-    ...(universe ? { universe } : {}),
-    ...(rpId ? { rpId } : {}),
-    chatId: chat.id,
-    ...(chat.groupId ? { groupId: chat.groupId } : {}),
-    ...(characterIds.length > 0 ? { characterIds } : {}),
-  };
+  return withMergedLtmScopeLinks(
+    {
+      ...(universe ? { universe } : {}),
+      ...(rpId ? { rpId } : {}),
+      chatId: chat.id,
+      ...(chat.groupId ? { groupId: chat.groupId } : {}),
+      ...(characterIds.length > 0 ? { characterIds } : {}),
+    },
+    { chatIds: [chat.id] },
+  );
 }
 
 function tagsForEntry(entry: ChatSummaryEntry) {

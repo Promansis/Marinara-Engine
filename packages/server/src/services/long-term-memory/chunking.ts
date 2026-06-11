@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
-import type { LtmGate, LtmNote, LtmNoteType, LtmScope, LtmStatus } from "@marinara-engine/shared";
+import {
+  getLtmScopeChatIds,
+  type LtmGate,
+  type LtmNote,
+  type LtmNoteType,
+  type LtmScope,
+  type LtmStatus,
+} from "@marinara-engine/shared";
 
 export interface LtmMemoryChunk {
   id: string;
@@ -44,7 +51,8 @@ function compactLabels(note: LtmNote, sectionKey: string) {
   if (note.tags.length > 0) labels.push(`tags:${note.tags.join(",")}`);
   if (note.scope.universe) labels.push(`universe:${note.scope.universe}`);
   if (note.scope.rpId) labels.push(`rp:${note.scope.rpId}`);
-  if (note.scope.chatId) labels.push(`chat:${note.scope.chatId}`);
+  const chatIds = getLtmScopeChatIds(note.scope);
+  if (chatIds.length) labels.push(`chat:${chatIds.join(",")}`);
   if (note.scope.groupId) labels.push(`group:${note.scope.groupId}`);
   if (note.scope.characterIds?.length) labels.push(`characters:${note.scope.characterIds.join(",")}`);
   return labels.join(" ");
