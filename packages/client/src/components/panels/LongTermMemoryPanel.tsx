@@ -105,8 +105,8 @@ const IMPORT_SOURCES: Array<{ id: LtmInteropSource; label: string }> = [
 
 const TAB_LABELS: Record<TabId, string> = {
   notes: "Memories",
-  drafts: "Suggestions",
-  tools: "Maintenance",
+  drafts: "Drafts",
+  tools: "Tools",
   import: "Import",
 };
 
@@ -186,8 +186,10 @@ function readScopeValue(metadata: Record<string, unknown>, key: "universe" | "rp
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="space-y-2">
-      <h3 className="px-1 text-[0.6875rem] font-semibold uppercase text-[var(--muted-foreground)]">{title}</h3>
+    <section className="space-y-3">
+      <h3 className="border-b border-[var(--border)]/70 px-1 pb-1.5 text-[0.6875rem] font-semibold uppercase text-[var(--muted-foreground)]">
+        {title}
+      </h3>
       {children}
     </section>
   );
@@ -1709,8 +1711,12 @@ export function LongTermMemoryPanel() {
   const restoreSelectedArchivedNotes = async () => {
     if (selectedArchivedNotes.length === 0) return;
     try {
-      await Promise.all(selectedArchivedNotes.map((note) => updateNote.mutateAsync({ id: note.id, patch: { status: "active" } })));
-      toast.success(`Restored ${selectedArchivedNotes.length} memor${selectedArchivedNotes.length === 1 ? "y" : "ies"}`);
+      await Promise.all(
+        selectedArchivedNotes.map((note) => updateNote.mutateAsync({ id: note.id, patch: { status: "active" } })),
+      );
+      toast.success(
+        `Restored ${selectedArchivedNotes.length} memor${selectedArchivedNotes.length === 1 ? "y" : "ies"}`,
+      );
       setSelectedArchivedNoteIds(new Set());
     } catch (err) {
       toast.error((err as Error).message);
@@ -1778,7 +1784,9 @@ export function LongTermMemoryPanel() {
     const restorableDrafts = selectedArchivedDrafts.filter((draft) => draft.status === "rejected");
     if (restorableDrafts.length === 0) return;
     try {
-      await Promise.all(restorableDrafts.map((draft) => updateDraft.mutateAsync({ id: draft.id, patch: { status: "pending" } })));
+      await Promise.all(
+        restorableDrafts.map((draft) => updateDraft.mutateAsync({ id: draft.id, patch: { status: "pending" } })),
+      );
       toast.success(`Restored ${restorableDrafts.length} suggestion${restorableDrafts.length === 1 ? "" : "s"}`);
       setSelectedArchivedDraftIds((current) => {
         const next = new Set(current);
@@ -1803,7 +1811,9 @@ export function LongTermMemoryPanel() {
     }
     try {
       await Promise.all(selectedArchivedDrafts.map((draft) => deleteDraft.mutateAsync(draft.id)));
-      toast.success(`Deleted ${selectedArchivedDrafts.length} suggestion${selectedArchivedDrafts.length === 1 ? "" : "s"}`);
+      toast.success(
+        `Deleted ${selectedArchivedDrafts.length} suggestion${selectedArchivedDrafts.length === 1 ? "" : "s"}`,
+      );
       const deletedIds = new Set(selectedArchivedDrafts.map((draft) => draft.id));
       setSelectedArchivedDraftIds(new Set());
       if (viewingDraftId && deletedIds.has(viewingDraftId)) closeDraftViewer();
@@ -1929,29 +1939,31 @@ export function LongTermMemoryPanel() {
   };
 
   return (
-    <div className="flex min-h-full flex-col gap-2 p-3 text-[var(--foreground)]">
-      <section className="rounded-xl border border-rose-300/20 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-3">
-        <div className="grid grid-cols-[1fr_auto_auto] items-center gap-3">
+    <div className="flex min-h-full flex-col gap-3 p-3 text-[var(--foreground)]">
+      <section className="space-y-3 border-b border-[var(--border)]/70 pb-3">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
           <div className="min-w-0">
-            <div className="truncate text-xs font-semibold text-[var(--foreground)]">Story Memory</div>
-            <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]">
+            <div className="truncate text-sm font-semibold leading-tight text-[var(--foreground)]">Story Memory</div>
+            <div className="mt-1 truncate text-[0.6875rem] text-[var(--muted-foreground)]">
               Advanced folder: {status.data?.directory ?? "long-term-memory"}
             </div>
           </div>
-          <div className="text-right">
-            <div className="text-base font-semibold tabular-nums text-[var(--foreground)]">
-              {status.data?.notes.total ?? 0}
+          <div className="grid grid-cols-2 gap-1.5 text-right">
+            <div className="rounded-lg bg-[var(--secondary)]/45 px-2.5 py-1.5 ring-1 ring-[var(--border)]/80">
+              <div className="text-base font-semibold leading-none tabular-nums text-[var(--foreground)]">
+                {status.data?.notes.total ?? 0}
+              </div>
+              <div className="mt-1 text-[0.5625rem] uppercase text-[var(--muted-foreground)]">Memories</div>
             </div>
-            <div className="text-[0.5625rem] uppercase text-[var(--muted-foreground)]">Memories</div>
-          </div>
-          <div className="text-right">
-            <div className="text-base font-semibold tabular-nums text-[var(--foreground)]">
-              {status.data?.indexes.chunkCount ?? 0}
+            <div className="rounded-lg bg-[var(--secondary)]/45 px-2.5 py-1.5 ring-1 ring-[var(--border)]/80">
+              <div className="text-base font-semibold leading-none tabular-nums text-[var(--foreground)]">
+                {status.data?.indexes.chunkCount ?? 0}
+              </div>
+              <div className="mt-1 text-[0.5625rem] uppercase text-[var(--muted-foreground)]">Search bits</div>
             </div>
-            <div className="text-[0.5625rem] uppercase text-[var(--muted-foreground)]">Search bits</div>
           </div>
         </div>
-        <div className="mt-3 flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-1.5">
           <StatusPill label={integrity.data?.ok ? "Healthy" : "Needs check"} tone={statusTone} />
           <StatusPill
             label={status.data?.indexes.embeddingsAvailable ? "Smart search" : "Basic search"}
@@ -1976,21 +1988,23 @@ export function LongTermMemoryPanel() {
         </div>
       </section>
 
-      <div className="sticky top-0 z-10 grid grid-cols-4 gap-1 rounded-xl bg-[var(--background)]/95 py-1 backdrop-blur-sm">
-        {(["notes", "drafts", "tools", "import"] as TabId[]).map((id) => (
-          <button
-            key={id}
-            onClick={() => setTabWithGuards(id)}
-            className={cn(
-              "min-w-0 rounded-lg px-2 py-1.5 text-xs font-medium transition-all active:scale-[0.98]",
-              tab === id
-                ? "bg-rose-300/15 text-[var(--foreground)] ring-1 ring-rose-300/30"
-                : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-            )}
-          >
-            {TAB_LABELS[id]}
-          </button>
-        ))}
+      <div className="sticky top-0 z-10 -mx-3 bg-[var(--background)]/95 px-3 py-2 backdrop-blur-sm">
+        <div className="grid grid-cols-4 gap-1 rounded-lg bg-[var(--secondary)]/45 p-1 ring-1 ring-[var(--border)]/80">
+          {(["notes", "drafts", "tools", "import"] as TabId[]).map((id) => (
+            <button
+              key={id}
+              onClick={() => setTabWithGuards(id)}
+              className={cn(
+                "min-w-0 rounded-md px-2 py-1.5 text-xs font-medium transition-all active:scale-[0.98]",
+                tab === id
+                  ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm ring-1 ring-rose-300/25"
+                  : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+              )}
+            >
+              {TAB_LABELS[id]}
+            </button>
+          ))}
+        </div>
       </div>
 
       {tab === "notes" && (
@@ -2065,7 +2079,7 @@ export function LongTermMemoryPanel() {
       )}
 
       {tab === "drafts" && (
-        <Section title="Suggestions">
+        <Section title="Drafts">
           <div className="space-y-2">
             {filteredDrafts.length === 0 && (
               <p className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]">
@@ -2090,7 +2104,7 @@ export function LongTermMemoryPanel() {
           <Section title="Chat Settings">
             <ChatMemorySettings onOpenExtractionSettings={() => setExtractionSettingsOpen(true)} />
           </Section>
-          <Section title="Refresh And Repair">
+          <Section title="Tools">
             <div className="space-y-2">
               <ToolButton
                 onClick={() =>
@@ -2291,7 +2305,7 @@ export function LongTermMemoryPanel() {
                     : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
                 )}
               >
-                {id === "notes" ? "Memories" : "Suggestions"}
+                {id === "notes" ? "Memories" : "Drafts"}
               </button>
             ))}
           </div>
@@ -2316,7 +2330,11 @@ export function LongTermMemoryPanel() {
                   onClick={() => void restoreSelectedArchivedNotes()}
                   disabled={selectedArchivedNotes.length === 0 || updateNote.isPending || deleteNote.isPending}
                 >
-                  {updateNote.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <RotateCcw size="0.875rem" />}
+                  {updateNote.isPending ? (
+                    <Loader2 size="0.875rem" className="animate-spin" />
+                  ) : (
+                    <RotateCcw size="0.875rem" />
+                  )}
                   Restore selected
                 </ToolButton>
                 <ToolButton
@@ -2324,7 +2342,11 @@ export function LongTermMemoryPanel() {
                   disabled={selectedArchivedNotes.length === 0 || deleteNote.isPending}
                   tone="danger"
                 >
-                  {deleteNote.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Trash2 size="0.875rem" />}
+                  {deleteNote.isPending ? (
+                    <Loader2 size="0.875rem" className="animate-spin" />
+                  ) : (
+                    <Trash2 size="0.875rem" />
+                  )}
                   Delete selected
                 </ToolButton>
               </div>
@@ -2375,7 +2397,11 @@ export function LongTermMemoryPanel() {
                     deleteDraft.isPending
                   }
                 >
-                  {updateDraft.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <RotateCcw size="0.875rem" />}
+                  {updateDraft.isPending ? (
+                    <Loader2 size="0.875rem" className="animate-spin" />
+                  ) : (
+                    <RotateCcw size="0.875rem" />
+                  )}
                   Restore selected
                 </ToolButton>
                 <ToolButton
@@ -2383,7 +2409,11 @@ export function LongTermMemoryPanel() {
                   disabled={selectedArchivedDrafts.length === 0 || deleteDraft.isPending}
                   tone="danger"
                 >
-                  {deleteDraft.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Trash2 size="0.875rem" />}
+                  {deleteDraft.isPending ? (
+                    <Loader2 size="0.875rem" className="animate-spin" />
+                  ) : (
+                    <Trash2 size="0.875rem" />
+                  )}
                   Delete selected
                 </ToolButton>
               </div>
