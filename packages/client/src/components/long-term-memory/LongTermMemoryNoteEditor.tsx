@@ -204,11 +204,9 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
     <div className="grid gap-3">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="truncate text-xs font-semibold text-[var(--foreground)]">{friendlyNoteTitle(draft)}</div>
-          <div className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
+          <div className="text-[0.625rem] text-[var(--muted-foreground)]">
             {friendlyStatus(draft.status)} · version {draft.version} · updated {new Date(draft.updatedAt).toLocaleString()}
           </div>
-          <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]/80">Internal ID: {draft.id}</div>
         </div>
         {dirty && <span className="rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[0.625rem] text-amber-200">Unsaved</span>}
       </div>

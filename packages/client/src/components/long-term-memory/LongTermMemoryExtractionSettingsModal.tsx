@@ -255,7 +255,7 @@ export function LongTermMemoryExtractionSettingsModal({ open, onClose }: { open:
           <Loader2 size="1.25rem" className="animate-spin" />
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <BrainCircuit size="1rem" className="text-rose-200" />
@@ -273,7 +273,7 @@ export function LongTermMemoryExtractionSettingsModal({ open, onClose }: { open:
             </button>
           </div>
 
-          <section className="space-y-3 rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
+          <section className="space-y-3 border-t border-[var(--border)] pt-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-xs font-semibold text-[var(--foreground)]">
                 <SlidersHorizontal size="0.875rem" />
@@ -306,7 +306,7 @@ export function LongTermMemoryExtractionSettingsModal({ open, onClose }: { open:
             </SettingField>
           </section>
 
-          <section className="space-y-3 rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
+          <section className="space-y-3 border-t border-[var(--border)] pt-3">
             <div className="text-xs font-semibold text-[var(--foreground)]">Model Behavior</div>
             <div className="grid gap-3 sm:grid-cols-2">
               <LevelSelect<LtmExtractionReasoningEffort>
@@ -338,7 +338,7 @@ export function LongTermMemoryExtractionSettingsModal({ open, onClose }: { open:
             </div>
           </section>
 
-          <section className="space-y-3 rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
+          <section className="space-y-3 border-t border-[var(--border)] pt-3">
             <div className="text-xs font-semibold text-[var(--foreground)]">Extraction Shape</div>
             <div className="grid gap-3 sm:grid-cols-2">
               <NumberField
@@ -374,7 +374,7 @@ export function LongTermMemoryExtractionSettingsModal({ open, onClose }: { open:
                 onChange={(value) => set("existingNoteMaxTokens", value)}
               />
             </div>
-            <label className="flex min-h-9 items-center justify-between gap-3 rounded-lg bg-[var(--background)]/55 px-3 py-2 ring-1 ring-[var(--border)]">
+            <label className="flex min-h-9 items-center justify-between gap-3 rounded-lg bg-[var(--secondary)]/35 px-3 py-2 ring-1 ring-[var(--border)]">
               <span className="text-xs font-medium text-[var(--foreground)]">Treat placeholder output as an error</span>
               <input
                 type="checkbox"

@@ -7,7 +7,6 @@ import {
   useExportLongTermMemoryDebugLog,
   useLongTermMemoryDebugLog,
 } from "../../hooks/use-long-term-memory";
-import { cn } from "../../lib/utils";
 import { Modal } from "../ui/Modal";
 import { StatusPill, ToolButton } from "./LtmPills";
 
@@ -180,47 +179,43 @@ export function LongTermMemoryDebugLogModal({ open, onClose }: { open: boolean; 
   return (
     <Modal open={open} onClose={onClose} title="LTM Debug Log" width="max-w-5xl">
       <div className="space-y-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <ToolButton onClick={() => log.refetch()} disabled={log.isFetching}>
-            {log.isFetching ? <Loader2 size="0.875rem" className="animate-spin" /> : <RefreshCw size="0.875rem" />}
-            Refresh
-          </ToolButton>
-          <ToolButton onClick={copyVisible} disabled={events.length === 0}>
-            <Clipboard size="0.875rem" />
-            Copy
-          </ToolButton>
-          <ToolButton
-            onClick={() => exportLog.mutate(undefined, { onError: (err) => toast.error((err as Error).message) })}
-            disabled={exportLog.isPending}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <select
+            value={phase}
+            onChange={(event) => setPhase(event.target.value as (typeof PHASE_FILTERS)[number])}
+            className="min-h-8 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] focus:ring-[var(--primary)]"
+            aria-label="Filter debug log phase"
           >
-            {exportLog.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Download size="0.875rem" />}
-            Export
-          </ToolButton>
-          <ToolButton onClick={clearVisible} disabled={clearLog.isPending} tone="danger">
-            {clearLog.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Trash2 size="0.875rem" />}
-            Clear
-          </ToolButton>
-        </div>
-
-        <div className="flex flex-wrap gap-1.5">
-          {PHASE_FILTERS.map((item) => (
-            <button
-              key={item}
-              type="button"
-              onClick={() => setPhase(item)}
-              className={cn(
-                "rounded-md border px-2 py-1 text-[0.6875rem] font-medium transition-colors",
-                phase === item
-                  ? "border-rose-300/35 bg-rose-300/15 text-[var(--foreground)]"
-                  : "border-[var(--border)] bg-[var(--secondary)]/40 text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-              )}
+            {PHASE_FILTERS.map((item) => (
+              <option key={item} value={item}>
+                {item === "all" ? "All events" : item === "errors" ? "Errors only" : phaseLabel(item)}
+              </option>
+            ))}
+          </select>
+          <div className="flex flex-wrap items-center gap-2">
+            <ToolButton onClick={() => log.refetch()} disabled={log.isFetching}>
+              {log.isFetching ? <Loader2 size="0.875rem" className="animate-spin" /> : <RefreshCw size="0.875rem" />}
+              Refresh
+            </ToolButton>
+            <ToolButton onClick={copyVisible} disabled={events.length === 0}>
+              <Clipboard size="0.875rem" />
+              Copy
+            </ToolButton>
+            <ToolButton
+              onClick={() => exportLog.mutate(undefined, { onError: (err) => toast.error((err as Error).message) })}
+              disabled={exportLog.isPending}
             >
-              {item === "all" ? "All" : item === "errors" ? "Errors" : phaseLabel(item)}
-            </button>
-          ))}
+              {exportLog.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Download size="0.875rem" />}
+              Export
+            </ToolButton>
+            <ToolButton onClick={clearVisible} disabled={clearLog.isPending} tone="danger">
+              {clearLog.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Trash2 size="0.875rem" />}
+              Clear
+            </ToolButton>
+          </div>
         </div>
 
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/25 p-2">
+        <div className="rounded-lg bg-[var(--secondary)]/25 p-2 ring-1 ring-[var(--border)]">
           {log.isLoading ? (
             <div className="space-y-2">
               {[0, 1, 2, 3].map((item) => (

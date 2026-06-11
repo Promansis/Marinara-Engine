@@ -202,8 +202,7 @@ export function CreateLongTermMemoryNoteForm({
 
   return (
     <div className="grid gap-3">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <h3 className="text-xs font-semibold text-[var(--foreground)]">New Memory</h3>
+      <div className="flex items-center justify-end">
         <button
           type="button"
           onClick={onCancel}

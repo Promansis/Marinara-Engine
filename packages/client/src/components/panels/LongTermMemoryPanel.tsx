@@ -5,7 +5,6 @@ import {
   Archive,
   BrainCircuit,
   Check,
-  DatabaseZap,
   Eye,
   EyeOff,
   FileJson,
@@ -21,7 +20,6 @@ import {
   Search,
   SlidersHorizontal,
   ShieldCheck,
-  Sparkles,
   Trash2,
   X,
 } from "lucide-react";
@@ -187,7 +185,7 @@ function readScopeValue(metadata: Record<string, unknown>, key: "universe" | "rp
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="space-y-3">
-      <h3 className="border-b border-[var(--border)]/70 px-1 pb-1.5 text-[0.6875rem] font-semibold uppercase text-[var(--muted-foreground)]">
+      <h3 className="px-1 text-[0.6875rem] font-semibold uppercase text-[var(--muted-foreground)]">
         {title}
       </h3>
       {children}
@@ -227,9 +225,9 @@ function NoteRow({
   return (
     <article
       className={cn(
-        "group relative rounded-xl border border-rose-300/15 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-2.5 transition-all",
-        "hover:border-rose-300/30 hover:bg-[var(--sidebar-accent)]",
-        (editing || bulkSelected) && "border-rose-300/40 bg-rose-300/10 ring-1 ring-rose-300/25",
+        "group relative rounded-lg bg-[var(--secondary)]/45 p-2.5 ring-1 ring-[var(--border)] transition-colors",
+        "hover:bg-[var(--accent)]/45 hover:ring-rose-300/25",
+        (editing || bulkSelected) && "bg-rose-300/10 ring-rose-300/35",
       )}
     >
       {onSelect && (
@@ -261,9 +259,8 @@ function NoteRow({
         <div className="mt-1 flex flex-wrap gap-1.5">
           <StatusPill label={friendlyNoteType(note.type)} />
           <StatusPill label={friendlyStatus(note.status)} tone={note.status === "active" ? "good" : "neutral"} />
-          <StatusPill label={`${sectionCount} detail${sectionCount === 1 ? "" : "s"}`} />
+          {sectionCount > 1 && <StatusPill label={`${sectionCount} details`} />}
         </div>
-        <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]/80">Internal ID: {note.id}</div>
       </div>
       <div className={rowActionPillClassName}>
         <button
@@ -319,8 +316,8 @@ function NoteRow({
         </button>
       </div>
       {note.tags.length > 0 && (
-        <div className="mt-2 truncate text-[0.625rem] text-[var(--muted-foreground)]">
-          Tags: {note.tags.map(friendlyIdentifier).join(", ")}
+        <div className="mt-2 truncate text-[0.625rem] text-[var(--muted-foreground)]" title={note.id}>
+          {note.tags.map(friendlyIdentifier).join(", ")}
         </div>
       )}
     </article>
@@ -867,8 +864,8 @@ function DraftRow({
   return (
     <article
       className={cn(
-        "group relative rounded-xl border border-rose-300/15 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-2.5 transition-all hover:border-rose-300/30 hover:bg-[var(--sidebar-accent)]",
-        selected && "border-rose-300/40 bg-rose-300/10 ring-1 ring-rose-300/25",
+        "group relative rounded-lg bg-[var(--secondary)]/45 p-2.5 ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/45 hover:ring-rose-300/25",
+        selected && "bg-rose-300/10 ring-rose-300/35",
       )}
     >
       <div className={cn("min-w-0", pending && "transition-[padding] group-hover:pr-32 max-md:pr-32")}>
@@ -880,7 +877,6 @@ function DraftRow({
           <StatusPill label={`${draft.mutations.length} suggested change${draft.mutations.length === 1 ? "" : "s"}`} />
         </div>
         <DraftMetadataPills draft={draft} onOpenSourceNote={onOpenSourceNote} />
-        <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]/80">Internal ID: {draft.id}</div>
       </div>
       {pending && (
         <div className={rowActionPillClassName}>
@@ -955,7 +951,7 @@ function DraftDetails({
   const { highestRisk, averageConfidence, evidenceCount } = draftRiskSummary(draft);
   return (
     <div className="grid gap-4">
-      <div className="rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
+      <div className="space-y-3 rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
         <div className="flex flex-wrap gap-1.5">
           <StatusPill label={draftStatusLabel(draft.status)} tone={draftStatusTone(draft.status)} />
           <StatusPill label={`${draft.mutations.length} suggested change${draft.mutations.length === 1 ? "" : "s"}`} />
@@ -963,28 +959,17 @@ function DraftDetails({
             <StatusPill key={mode} label={friendlyMode(mode)} />
           ))}
         </div>
-        <div className="mt-2 grid gap-2 sm:grid-cols-3">
-          <div className="rounded-md bg-[var(--background)]/65 p-2 ring-1 ring-[var(--border)]">
-            <div className="text-[0.625rem] text-[var(--muted-foreground)]">Mutation risk</div>
-            <div className="mt-1 text-xs font-semibold text-[var(--foreground)]">{mutationRiskLabel(highestRisk)}</div>
-          </div>
-          <div className="rounded-md bg-[var(--background)]/65 p-2 ring-1 ring-[var(--border)]">
-            <div className="text-[0.625rem] text-[var(--muted-foreground)]">Confidence</div>
-            <div className="mt-1 text-xs font-semibold text-[var(--foreground)]">
-              {Math.round(averageConfidence * 100)}%
-            </div>
-          </div>
-          <div className="rounded-md bg-[var(--background)]/65 p-2 ring-1 ring-[var(--border)]">
-            <div className="text-[0.625rem] text-[var(--muted-foreground)]">Evidence</div>
-            <div className="mt-1 text-xs font-semibold text-[var(--foreground)]">{evidenceCount} reference(s)</div>
-          </div>
+        <div className="flex flex-wrap gap-1.5">
+          <StatusPill label={`Risk ${mutationRiskLabel(highestRisk)}`} tone={mutationRiskTone(highestRisk)} />
+          <StatusPill label={`Confidence ${Math.round(averageConfidence * 100)}%`} />
+          <StatusPill label={`${evidenceCount} reference${evidenceCount === 1 ? "" : "s"}`} />
         </div>
         {draft.source.sourceNoteId && (
           <div className="mt-2">
             <SourceNoteReference sourceNoteId={draft.source.sourceNoteId} onOpenSourceNote={onOpenSourceNote} />
           </div>
         )}
-        <div className="mt-2 text-[0.625rem] text-[var(--muted-foreground)]">
+        <div className="text-[0.625rem] text-[var(--muted-foreground)]">
           Created {new Date(draft.createdAt).toLocaleString()} · updated {new Date(draft.updatedAt).toLocaleString()}
         </div>
         {draft.rejectedReason && (
@@ -1184,7 +1169,7 @@ function ImportPreviewRowItem({
   return (
     <article
       className={cn(
-        "group relative grid grid-cols-[auto_minmax(0,1fr)] gap-3 rounded-lg bg-[var(--secondary)]/50 p-3 ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/45",
+        "group relative grid grid-cols-[auto_minmax(0,1fr)] gap-3 rounded-lg bg-[var(--secondary)]/45 p-3 ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/45",
         selected && "bg-rose-300/10 ring-rose-300/35",
       )}
     >
@@ -1319,7 +1304,7 @@ function ChatMemorySettings({ onOpenExtractionSettings }: { onOpenExtractionSett
             onChange={(checked) => patch({ enableLongTermMemory: checked })}
           />
 
-          <div className="grid gap-3 rounded-xl border border-rose-300/15 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-3">
+          <div className="grid gap-3 rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
             <div className="grid gap-3 sm:grid-cols-2">
               <SettingField label="Universe">
                 <input
@@ -1940,50 +1925,37 @@ export function LongTermMemoryPanel() {
 
   return (
     <div className="flex min-h-full flex-col gap-3 p-3 text-[var(--foreground)]">
-      <section className="space-y-3 border-b border-[var(--border)]/70 pb-3">
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
+      <section className="space-y-2 border-b border-[var(--border)]/70 pb-3">
+        <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold leading-tight text-[var(--foreground)]">Story Memory</div>
-            <div className="mt-1 truncate text-[0.6875rem] text-[var(--muted-foreground)]">
-              Advanced folder: {status.data?.directory ?? "long-term-memory"}
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              <StatusPill label={`${status.data?.notes.total ?? 0} memories`} />
+              <StatusPill label={`${status.data?.indexes.chunkCount ?? 0} search chunks`} />
+              <StatusPill label={integrity.data?.ok ? "Healthy" : "Needs check"} tone={statusTone} />
+              <StatusPill
+                label={status.data?.indexes.embeddingsAvailable ? "Smart search" : "Basic search"}
+                tone="neutral"
+              />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-1.5 text-right">
-            <div className="rounded-lg bg-[var(--secondary)]/45 px-2.5 py-1.5 ring-1 ring-[var(--border)]/80">
-              <div className="text-base font-semibold leading-none tabular-nums text-[var(--foreground)]">
-                {status.data?.notes.total ?? 0}
-              </div>
-              <div className="mt-1 text-[0.5625rem] uppercase text-[var(--muted-foreground)]">Memories</div>
-            </div>
-            <div className="rounded-lg bg-[var(--secondary)]/45 px-2.5 py-1.5 ring-1 ring-[var(--border)]/80">
-              <div className="text-base font-semibold leading-none tabular-nums text-[var(--foreground)]">
-                {status.data?.indexes.chunkCount ?? 0}
-              </div>
-              <div className="mt-1 text-[0.5625rem] uppercase text-[var(--muted-foreground)]">Search bits</div>
-            </div>
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          <StatusPill label={integrity.data?.ok ? "Healthy" : "Needs check"} tone={statusTone} />
-          <StatusPill
-            label={status.data?.indexes.embeddingsAvailable ? "Smart search" : "Basic search"}
-            tone="neutral"
-          />
           <button
             type="button"
             onClick={() => setArchiveOpen(true)}
-            className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--muted)]/40 px-1.5 py-0.5 text-[0.625rem] font-medium leading-tight text-[var(--muted-foreground)] transition-colors hover:border-rose-300/30 hover:bg-rose-300/10 hover:text-[var(--foreground)]"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+            aria-label="Open memory archive"
+            title="Archive"
           >
             <Archive size="0.75rem" />
-            Archive
           </button>
           <button
             type="button"
             onClick={() => setDebugLogOpen(true)}
-            className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--muted)]/40 px-1.5 py-0.5 text-[0.625rem] font-medium leading-tight text-[var(--muted-foreground)] transition-colors hover:border-rose-300/30 hover:bg-rose-300/10 hover:text-[var(--foreground)]"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+            aria-label="Open memory debug log"
+            title="Debug log"
           >
             <History size="0.75rem" />
-            Debug Log
           </button>
         </div>
       </section>
@@ -2550,16 +2522,6 @@ export function LongTermMemoryPanel() {
           <Loader2 size="1rem" className="animate-spin" />
         </div>
       )}
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--secondary)]/25 p-3 text-[0.625rem] text-[var(--muted-foreground)]">
-        <div className="flex items-center gap-2">
-          <DatabaseZap size="0.875rem" />
-          Suggestions only appear when memory extraction is enabled for the active chat.
-        </div>
-        <div className="mt-1 flex items-center gap-2">
-          <Sparkles size="0.875rem" />
-          Kept suggestions refresh memory search automatically.
-        </div>
-      </div>
     </div>
   );
 }
