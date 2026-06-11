@@ -260,6 +260,92 @@ test("evidence unit extraction normalizes non-uuid model ids", async () => {
   }
 });
 
+test("evidence unit extraction prompt uses single enum examples instead of pipe-joined bucket values", async () => {
+  const sourceNote: LtmNote = {
+    id: "scene_source_test",
+    type: "scene",
+    status: "dormant",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["source_summary"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      source: {
+        text: "Rika and Damo study together in the library.",
+        updatedAt: timestamp,
+        evidence: ["chat:chat_test"],
+      },
+    },
+    version: 1,
+  };
+
+  let userPayload: any;
+  const provider = {
+    maxTokensOverrideValue: undefined,
+    chatComplete: async (messages: Array<{ role: string; content: string }>) => {
+      userPayload = JSON.parse(messages.find((message) => message.role === "user")!.content);
+      return {
+        content: JSON.stringify({
+          summary: "One compact unit",
+          units: [
+            {
+              id: randomUUID(),
+              bucket: "relationship_event",
+              subjectId: "rika_damo",
+              sectionKey: "history",
+              text: "Rika and Damo study together in the library.",
+              evidence: ["source_note:scene_source_test"],
+              confidence: 0.9,
+              salience: 0.7,
+              status: "active",
+              gates: [],
+              links: [],
+              sourceHash,
+            },
+          ],
+        }),
+      };
+    },
+  } as any;
+
+  await runLongTermMemoryEvidenceUnitExtraction({
+    sourceNote,
+    sourceText: sourceNote.sections.source!.text,
+    existingNotes: [],
+    provider,
+    model: "test-model",
+    scope: {},
+    modes: ["roleplay"],
+    sourceHash,
+  });
+
+  assert.equal(userPayload.outputShape.units[0].bucket, "relationship_event");
+  assert.equal(userPayload.outputShape.units[0].status, "active");
+  assert.deepEqual(userPayload.outputShape.units[0].gates, ["private"]);
+  assert.deepEqual(userPayload.allowedBuckets, [
+    "character_fact",
+    "character_state",
+    "relationship_event",
+    "relationship_state",
+    "relationship_arc",
+    "relationship_conflict",
+    "world_fact",
+    "thread",
+    "callback",
+    "current_scene",
+    "voice",
+    "tone",
+    "anchor",
+    "boundary",
+    "preference",
+  ]);
+  assert(!userPayload.outputShape.units[0].bucket.includes("|"));
+  assert(!userPayload.outputShape.units[0].status.includes("|"));
+  assert(userPayload.outputShape.units[0].gates.every((gate: string) => !gate.includes("|")));
+});
+
 function evidenceUnit(bucket: LtmEvidenceUnit["bucket"], patch: Partial<LtmEvidenceUnit> = {}): LtmEvidenceUnit {
   return ltmEvidenceUnitSchema.parse({
     id: randomUUID(),

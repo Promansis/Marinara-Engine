@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import {
+  ltmEvidenceUnitBucketSchema,
   ltmEvidenceUnitExtractionResponseSchema,
+  ltmEvidenceUnitStatusSchema,
+  ltmGateSchema,
   type LtmEvidenceUnit,
   type LtmEvidenceUnitExtractionResponse,
   type LtmExtractionDraft,
@@ -135,6 +138,7 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
         "Mark spoilers, character secrets, private knowledge, and NSFW content with gates.",
         "For voice/tone quotes, quote only exact text present in the source.",
         "Use current_scene only for the current transient scene state, not the source note.",
+        "For enum fields, choose exactly one string from the allowed arrays. Do not join multiple values with |.",
       ].join("\n"),
     },
     {
@@ -145,22 +149,24 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
           units: [
             {
               id: "550e8400-e29b-41d4-a716-446655440000",
-              bucket:
-                "character_fact|character_state|relationship_event|relationship_state|relationship_arc|relationship_conflict|world_fact|thread|callback|current_scene|voice|tone|anchor|boundary|preference",
+              bucket: "relationship_event",
               subjectId: "lowercase_snake_case_scope_id",
               sectionKey: "lowercase_snake_case",
               text: "compact typed memory text",
               evidence: evidenceFromSourceNote(options.sourceNote),
               confidence: 0.8,
               salience: 0.6,
-              status: "active|resolved|archived|dormant|developing",
-              gates: ["spoiler|character_secret|private|nsfw"],
+              status: "active",
+              gates: ["private"],
               links: [{ target: "target_note_id", relation: "lowercase_snake_case" }],
               mergeHint: "optional note for deterministic compiler",
               sourceHash: options.sourceHash,
             },
           ],
         },
+        allowedBuckets: ltmEvidenceUnitBucketSchema.options,
+        allowedStatuses: ltmEvidenceUnitStatusSchema.options,
+        allowedGates: ltmGateSchema.options,
         buckets: {
           character_fact: "stable character fact",
           character_state: "current character condition, aim, mood, capability, or position",
