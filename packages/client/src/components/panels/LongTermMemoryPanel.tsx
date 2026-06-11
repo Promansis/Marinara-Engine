@@ -95,9 +95,9 @@ const NOTE_STATUS_ORDER = new Map<LtmStatus, number>(
   ["active", "dormant", "resolved", "archived"].map((status, index) => [status as LtmStatus, index]),
 );
 const IMPORT_SOURCES: Array<{ id: LtmInteropSource; label: string }> = [
+  { id: "chats", label: "Chat summaries" },
   { id: "characters", label: "Characters" },
   { id: "lorebooks", label: "Lorebooks" },
-  { id: "chats", label: "Chat Summaries" },
 ];
 
 const TAB_LABELS: Record<TabId, string> = {
@@ -115,6 +115,8 @@ const rowActionPillClassName =
 
 const rowActionButtonClassName =
   "inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] active:scale-90 disabled:cursor-not-allowed disabled:opacity-45";
+
+const hiddenImportRowCache = new Set<string>();
 
 function importRowKey(source: LtmInteropSource, sourceId: string) {
   return `${source}:${sourceId}`;
@@ -1320,9 +1322,9 @@ export function LongTermMemoryPanel() {
   const [noteType, setNoteType] = useState<"all" | LtmNoteType>("all");
   const [noteStatus, setNoteStatus] = useState<"all" | Exclude<LtmStatus, "archived">>("all");
   const [query, setQuery] = useState("");
-  const [importSource, setImportSource] = useState<LtmInteropSource>("characters");
+  const [importSource, setImportSource] = useState<LtmInteropSource>("chats");
   const [importLimit, setImportLimit] = useState(25);
-  const [hiddenImportRows, setHiddenImportRows] = useState<Set<string>>(() => new Set());
+  const [hiddenImportRows, setHiddenImportRows] = useState<Set<string>>(() => new Set(hiddenImportRowCache));
   const [selectedImportRows, setSelectedImportRows] = useState<Set<string>>(() => new Set());
   const [showHiddenImportRows, setShowHiddenImportRows] = useState(false);
   const [activeImportIds, setActiveImportIds] = useState<Set<string>>(() => new Set());
@@ -1590,8 +1592,17 @@ export function LongTermMemoryPanel() {
     });
   };
 
-  const hideImportRows = (sourceIds: string[]) => {
+  const updateHiddenImportRows = (updater: (current: Set<string>) => Set<string>) => {
     setHiddenImportRows((current) => {
+      const next = updater(current);
+      hiddenImportRowCache.clear();
+      for (const key of next) hiddenImportRowCache.add(key);
+      return next;
+    });
+  };
+
+  const hideImportRows = (sourceIds: string[]) => {
+    updateHiddenImportRows((current) => {
       const next = new Set(current);
       for (const sourceId of sourceIds) next.add(importRowKey(importSource, sourceId));
       return next;
@@ -1604,7 +1615,7 @@ export function LongTermMemoryPanel() {
   };
 
   const unhideImportRows = (sourceIds: string[]) => {
-    setHiddenImportRows((current) => {
+    updateHiddenImportRows((current) => {
       const next = new Set(current);
       for (const sourceId of sourceIds) next.delete(importRowKey(importSource, sourceId));
       return next;
@@ -1617,7 +1628,7 @@ export function LongTermMemoryPanel() {
   };
 
   const restoreHiddenImportRows = () => {
-    setHiddenImportRows((current) => {
+    updateHiddenImportRows((current) => {
       const next = new Set(current);
       for (const row of importRows) next.delete(importRowKey(importSource, row.sourceId));
       return next;
