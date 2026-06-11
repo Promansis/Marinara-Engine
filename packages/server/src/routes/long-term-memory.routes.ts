@@ -11,6 +11,7 @@ import {
   ltmDraftStatusSchema,
   ltmDebugPhaseSchema,
   ltmDebugStatusSchema,
+  ltmExtractionSettingsSchema,
   ltmExtractionDraftSchema,
   ltmExtractionResponseSchema,
   ltmGateSchema,
@@ -66,6 +67,10 @@ import {
   extractLongTermMemoryFromSourceNote,
   isLtmSourceNote,
 } from "../services/long-term-memory/source-extraction.js";
+import {
+  getLtmExtractionConfig,
+  updateLtmExtractionConfig,
+} from "../services/long-term-memory/extraction-config.js";
 import { LongTermMemoryStorage } from "../services/long-term-memory/storage.js";
 
 const NOTE_BODY_LIMIT_BYTES = 512 * 1024;
@@ -479,6 +484,16 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
   app.delete("/debug-log", async (req, reply) => {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory debug log clearing" })) return;
     return clearLtmDebugLog();
+  });
+
+  app.get("/extraction-settings", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory extraction settings" })) return;
+    return getLtmExtractionConfig();
+  });
+
+  app.put<{ Body: unknown }>("/extraction-settings", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory extraction settings" })) return;
+    return updateLtmExtractionConfig(ltmExtractionSettingsSchema.parse(req.body ?? {}));
   });
 
   app.get<{ Querystring: unknown }>("/notes", async (req) => {

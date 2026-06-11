@@ -2,12 +2,14 @@ import type { LtmExtractionDraft, LtmExtractionResponse, LtmMode, LtmNote, LtmSc
 import type { BaseLLMProvider } from "../llm/base-provider.js";
 import {
   compileEvidenceUnitExtraction,
+  DEFAULT_LTM_EXTRACTION_PROMPT,
   LongTermMemoryEvidenceUnitDraftStore,
   runLongTermMemoryEvidenceUnitExtraction,
   summarizeCompiledEvidenceUnitExtraction,
   sourceHashForEvidenceUnitExtraction,
   sourceMetadataForEvidenceUnitDraft,
 } from "./evidence-unit-extraction.js";
+import { getLtmExtractionConfig } from "./extraction-config.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import { LongTermMemoryDraftStore } from "./extraction.js";
 import { retrieveLongTermMemory, type RetrieveLongTermMemoryInput } from "./retrieval.js";
@@ -48,6 +50,8 @@ async function getExistingTypedNotes(options: {
   sourceText: string;
   scope: LtmScope;
   includeExistingNotes: boolean;
+  maxChunks: number;
+  maxTokens: number;
   embeddingSource?: RetrieveLongTermMemoryInput["embeddingSource"];
 }) {
   if (!options.includeExistingNotes) return [];
@@ -56,8 +60,8 @@ async function getExistingTypedNotes(options: {
     scope: options.scope,
     characterIds: options.scope.characterIds,
     includeSourceNotes: false,
-    maxChunks: 12,
-    maxTokens: 2400,
+    maxChunks: options.maxChunks,
+    maxTokens: options.maxTokens,
     embeddingSource: options.embeddingSource,
   });
   const noteIds = Array.from(new Set(retrieval.chunks.map((chunk) => chunk.chunk.noteId)));
@@ -98,6 +102,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
 
   const scope = options.scope ?? sourceNote.scope;
   const modes = options.modes?.length ? options.modes : sourceNote.modes;
+  const extractionConfig = await getLtmExtractionConfig(options.root);
   await recordLtmDebugEvent({
     operationId: options.operationId,
     root: options.root,
@@ -113,6 +118,19 @@ async function extractLongTermMemoryFromSourceNoteInner(
     details: {
       scope,
       tags: sourceNote.tags,
+      extractionSettings: {
+        reasoningEffort: extractionConfig.reasoningEffort,
+        verbosity: extractionConfig.verbosity,
+        maxOutputTokens: extractionConfig.maxOutputTokens,
+        temperature: extractionConfig.temperature,
+        maxSourceChars: extractionConfig.maxSourceChars,
+        maxExistingNoteChars: extractionConfig.maxExistingNoteChars,
+        existingNoteMaxChunks: extractionConfig.existingNoteMaxChunks,
+        existingNoteMaxTokens: extractionConfig.existingNoteMaxTokens,
+        rejectPlaceholderOutput: extractionConfig.rejectPlaceholderOutput,
+        hasPromptOverride: extractionConfig.systemPrompt !== DEFAULT_LTM_EXTRACTION_PROMPT,
+        hasExtraInstruction: extractionConfig.extraInstruction.length > 0,
+      },
     },
   });
   const existingNotes = await getExistingTypedNotes({
@@ -120,6 +138,8 @@ async function extractLongTermMemoryFromSourceNoteInner(
     sourceText,
     scope,
     includeExistingNotes: options.includeExistingNotes !== false,
+    maxChunks: extractionConfig.existingNoteMaxChunks,
+    maxTokens: extractionConfig.existingNoteMaxTokens,
     embeddingSource: options.embeddingSource,
   });
   await recordLtmDebugEvent({
@@ -157,6 +177,14 @@ async function extractLongTermMemoryFromSourceNoteInner(
     modes,
     sourceHash,
     instruction: options.instruction,
+    extraInstruction: extractionConfig.extraInstruction,
+    systemPrompt: extractionConfig.systemPrompt,
+    reasoningEffort: extractionConfig.reasoningEffort,
+    verbosity: extractionConfig.verbosity,
+    maxOutputTokens: extractionConfig.maxOutputTokens,
+    temperature: extractionConfig.temperature,
+    maxSourceChars: extractionConfig.maxSourceChars,
+    maxExistingNoteChars: extractionConfig.maxExistingNoteChars,
     signal: options.signal,
     operationId: options.operationId,
   });
@@ -169,6 +197,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
     modes,
     model: options.model,
     sourceHash,
+    rejectPlaceholderOutput: extractionConfig.rejectPlaceholderOutput,
   });
   const compiledSummary = summarizeCompiledEvidenceUnitExtraction(compiled);
   await recordLtmDebugEvent({

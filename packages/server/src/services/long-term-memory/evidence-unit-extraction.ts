@@ -48,8 +48,8 @@ export const DEFAULT_LTM_EXTRACTION_PROMPT = [
 export const DEFAULT_LTM_EXTRACTION_REASONING_EFFORT = "low" satisfies NonNullable<ChatOptions["reasoningEffort"]>;
 export const DEFAULT_LTM_EXTRACTION_VERBOSITY = "low" satisfies NonNullable<ChatOptions["verbosity"]>;
 export const DEFAULT_LTM_EXTRACTION_MAX_TOKENS = 3200;
-const MAX_SOURCE_CHARS = 24_000;
-const MAX_CONTEXT_NOTE_CHARS = 12_000;
+export const DEFAULT_LTM_EXTRACTION_MAX_SOURCE_CHARS = 24_000;
+export const DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS = 12_000;
 const LTM_EXTRACTION_BUCKET_SCAN_ORDER = [
   "relationship_event",
   "relationship_state",
@@ -78,6 +78,14 @@ export interface RunLongTermMemoryEvidenceUnitExtractionOptions {
   modes: LtmMode[];
   sourceHash: string;
   instruction?: string;
+  extraInstruction?: string;
+  systemPrompt?: string;
+  reasoningEffort?: NonNullable<ChatOptions["reasoningEffort"]>;
+  verbosity?: NonNullable<ChatOptions["verbosity"]>;
+  maxOutputTokens?: number;
+  temperature?: number;
+  maxSourceChars?: number;
+  maxExistingNoteChars?: number;
   signal?: AbortSignal;
   operationId?: string;
 }
@@ -141,7 +149,7 @@ function normalizeEvidenceUnitResponse(raw: unknown): unknown {
   };
 }
 
-function formatExistingNotes(notes: LtmNote[]) {
+function formatExistingNotes(notes: LtmNote[], maxChars = DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS) {
   let used = 0;
   const blocks: string[] = [];
   for (const note of notes) {
@@ -155,7 +163,7 @@ function formatExistingNotes(notes: LtmNote[]) {
       `tags: ${note.tags.join(", ") || "(none)"}`,
       `sections:\n${sections}`,
     ].join("\n");
-    if (used + block.length > MAX_CONTEXT_NOTE_CHARS) break;
+    if (used + block.length > maxChars) break;
     used += block.length;
     blocks.push(block);
   }
@@ -166,7 +174,7 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
   return [
     {
       role: "system",
-      content: DEFAULT_LTM_EXTRACTION_PROMPT,
+      content: options.systemPrompt?.trim() || DEFAULT_LTM_EXTRACTION_PROMPT,
     },
     {
       role: "user",
@@ -223,8 +231,9 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
         scope: options.scope,
         modes: options.modes,
         userInstruction: options.instruction?.trim() || undefined,
-        existingTypedNotes: formatExistingNotes(options.existingNotes),
-        sourceText: options.sourceText.slice(0, MAX_SOURCE_CHARS),
+        extraInstruction: options.extraInstruction?.trim() || undefined,
+        existingTypedNotes: formatExistingNotes(options.existingNotes, options.maxExistingNoteChars),
+        sourceText: options.sourceText.slice(0, options.maxSourceChars ?? DEFAULT_LTM_EXTRACTION_MAX_SOURCE_CHARS),
       }),
     },
   ];
@@ -244,20 +253,28 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
     sourceNoteId: options.sourceNote.id,
     provider: options.provider.constructor.name,
     model: options.model,
-    counts: {
-      messages: messages.length,
-      promptChars,
-      sourceChars: options.sourceText.length,
-      existingNotes: options.existingNotes.length,
-    },
-  });
+      counts: {
+        messages: messages.length,
+        promptChars,
+        sourceChars: options.sourceText.length,
+        existingNotes: options.existingNotes.length,
+        maxSourceChars: options.maxSourceChars ?? DEFAULT_LTM_EXTRACTION_MAX_SOURCE_CHARS,
+        maxExistingNoteChars: options.maxExistingNoteChars ?? DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS,
+      },
+      details: {
+        reasoningEffort: options.reasoningEffort ?? DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
+        verbosity: options.verbosity ?? DEFAULT_LTM_EXTRACTION_VERBOSITY,
+        maxOutputTokens: options.maxOutputTokens ?? options.provider.maxTokensOverrideValue ?? DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
+        temperature: options.temperature ?? 0,
+      },
+    });
   try {
     const result = await options.provider.chatComplete(messages, {
       model: options.model,
-      temperature: 0,
-      maxTokens: options.provider.maxTokensOverrideValue ?? DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
-      reasoningEffort: DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
-      verbosity: DEFAULT_LTM_EXTRACTION_VERBOSITY,
+      temperature: options.temperature ?? 0,
+      maxTokens: options.maxOutputTokens ?? options.provider.maxTokensOverrideValue ?? DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
+      reasoningEffort: options.reasoningEffort ?? DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
+      verbosity: options.verbosity ?? DEFAULT_LTM_EXTRACTION_VERBOSITY,
       stream: false,
       signal: options.signal,
     });
@@ -336,6 +353,7 @@ export function compileEvidenceUnitExtraction(options: {
   modes: LtmMode[];
   model: string;
   sourceHash: string;
+  rejectPlaceholderOutput?: boolean;
 }): CompileEvidenceUnitExtractionResult {
   const diagnostics = validateLtmEvidenceUnits({
     units: options.unitResponse.units,
@@ -343,6 +361,7 @@ export function compileEvidenceUnitExtraction(options: {
     sourceNote: options.sourceNote,
     existingNotes: options.existingNotes,
     expectedSourceHash: options.sourceHash,
+    rejectPlaceholderOutput: options.rejectPlaceholderOutput,
   });
   const hasBlockingDiagnostic = diagnostics.some((diagnostic) => diagnostic.severity === "error");
   const compiledResponse = hasBlockingDiagnostic

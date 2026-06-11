@@ -24,6 +24,8 @@ import {
   compileEvidenceUnitExtraction,
   runLongTermMemoryEvidenceUnitExtraction,
 } from "../evidence-unit-extraction.js";
+import { getLtmExtractionConfig, updateLtmExtractionConfig } from "../extraction-config.js";
+import { extractLongTermMemoryFromSourceNote } from "../source-extraction.js";
 
 const timestamp = "2026-06-10T00:00:00.000Z";
 const sourceHash = "a".repeat(64);
@@ -181,6 +183,130 @@ test("initializeLtmStore is idempotent across concurrent calls", async () => {
     const policiesAfter = await readFile(join(dirs.config, "policies.json"), "utf8");
 
     assert.equal(policiesAfter, policiesBefore);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ltm extraction config reads defaults, writes overrides, and resets", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-extraction-config-"));
+  try {
+    const defaults = await getLtmExtractionConfig(root);
+    assert.equal(defaults.version, 1);
+    assert.equal(defaults.reasoningEffort, "low");
+    assert.equal(defaults.verbosity, "low");
+    assert.equal(defaults.maxOutputTokens, 3200);
+    assert.equal(defaults.maxSourceChars, 24_000);
+    assert.equal(defaults.rejectPlaceholderOutput, true);
+
+    const updated = await updateLtmExtractionConfig(
+      {
+        extraInstruction: "Prefer callbacks when source text sets up later payoff.",
+        reasoningEffort: "medium",
+        verbosity: "high",
+        maxOutputTokens: 4096,
+        temperature: 0.25,
+        maxSourceChars: 12_000,
+        existingNoteMaxChunks: 8,
+        existingNoteMaxTokens: 1600,
+        rejectPlaceholderOutput: false,
+      },
+      root,
+    );
+    assert.equal(updated.extraInstruction, "Prefer callbacks when source text sets up later payoff.");
+    assert.equal(updated.reasoningEffort, "medium");
+    assert.equal(updated.verbosity, "high");
+    assert.equal(updated.maxOutputTokens, 4096);
+    assert.equal(updated.temperature, 0.25);
+    assert.equal(updated.maxSourceChars, 12_000);
+    assert.equal(updated.existingNoteMaxChunks, 8);
+    assert.equal(updated.existingNoteMaxTokens, 1600);
+    assert.equal(updated.rejectPlaceholderOutput, false);
+
+    const dirs = getLongTermMemoryDirectories(root);
+    const persisted = JSON.parse(await readFile(join(dirs.config, "extraction.json"), "utf8"));
+    assert.equal(persisted.systemPrompt, undefined);
+    assert.equal(persisted.extraInstruction, "Prefer callbacks when source text sets up later payoff.");
+
+    const reset = await updateLtmExtractionConfig({}, root);
+    assert.equal(reset.reasoningEffort, "low");
+    assert.equal(reset.verbosity, "low");
+    assert.equal(reset.maxOutputTokens, 3200);
+    assert.equal(reset.extraInstruction, "");
+    assert.equal(reset.rejectPlaceholderOutput, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source note extraction applies saved extraction config to llm request", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-extraction-config-wire-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    const sourceText = "Mara hears the lantern hum again while Jules hides the tower key for later payoff. ".repeat(20);
+    await storage.createNote(
+      {
+        id: "scene_source_test",
+        type: "scene",
+        status: "dormant",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: sourceText,
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await updateLtmExtractionConfig(
+      {
+        systemPrompt: "Return JSON with compact test units only.",
+        extraInstruction: "Treat lantern hum as a callback.",
+        reasoningEffort: "high",
+        verbosity: "medium",
+        maxOutputTokens: 1024,
+        temperature: 0.5,
+        maxSourceChars: 1000,
+        maxExistingNoteChars: 1000,
+      },
+      root,
+    );
+
+    let messages: Array<{ role: string; content: string }> = [];
+    let chatOptions: any;
+    const provider = {
+      maxTokensOverrideValue: 9999,
+      chatComplete: async (nextMessages: Array<{ role: string; content: string }>, options: any) => {
+        messages = nextMessages;
+        chatOptions = options;
+        return {
+          content: JSON.stringify({ summary: "No units", units: [] }),
+        };
+      },
+    } as any;
+
+    await extractLongTermMemoryFromSourceNote({
+      noteId: "scene_source_test",
+      provider,
+      model: "test-model",
+      root,
+      includeExistingNotes: false,
+      operationId: randomUUID(),
+    });
+
+    const userPayload = JSON.parse(messages.find((message) => message.role === "user")!.content);
+    assert.equal(messages.find((message) => message.role === "system")!.content, "Return JSON with compact test units only.");
+    assert.equal(userPayload.extraInstruction, "Treat lantern hum as a callback.");
+    assert.equal(userPayload.sourceText, sourceText.slice(0, 1000));
+    assert.equal(chatOptions.maxTokens, 1024);
+    assert.equal(chatOptions.temperature, 0.5);
+    assert.equal(chatOptions.reasoningEffort, "high");
+    assert.equal(chatOptions.verbosity, "medium");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

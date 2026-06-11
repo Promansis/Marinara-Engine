@@ -73,12 +73,14 @@ export function validateLtmEvidenceUnits({
   sourceNote,
   existingNotes,
   expectedSourceHash,
+  rejectPlaceholderOutput = true,
 }: {
   units: LtmEvidenceUnit[];
   sourceText: string;
   sourceNote?: LtmNote;
   existingNotes: LtmNote[];
   expectedSourceHash?: string;
+  rejectPlaceholderOutput?: boolean;
 }) {
   const diagnostics: LtmExtractionDiagnostic[] = [];
   const sourceEvidence = sourceNote ? `source_note:${sourceNote.id}` : null;
@@ -94,8 +96,10 @@ export function validateLtmEvidenceUnits({
 
   for (const unit of units) {
     const noteId = noteIdForEvidenceUnit(unit);
-    for (const diagnostic of placeholderDiagnostics(unit, noteId)) {
-      diagnostics.push(diagnostic);
+    if (rejectPlaceholderOutput) {
+      for (const diagnostic of placeholderDiagnostics(unit, noteId)) {
+        diagnostics.push(diagnostic);
+      }
     }
 
     if (unit.evidence.length === 0) {

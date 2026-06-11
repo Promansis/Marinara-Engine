@@ -40,6 +40,44 @@ export const ltmModeSchema = z.enum(["roleplay", "conversation", "game", "visual
 
 export const ltmGateSchema = z.enum(["spoiler", "character_secret", "private", "nsfw"]);
 
+export const ltmExtractionReasoningEffortSchema = z.enum(["low", "medium", "high"]);
+
+export const ltmExtractionVerbositySchema = z.enum(["low", "medium", "high"]);
+
+export const ltmExtractionSettingsSchema = z
+  .object({
+    version: z.literal(1).default(1),
+    systemPrompt: z.string().min(1).max(20_000).optional(),
+    extraInstruction: z.string().max(4_000).optional(),
+    reasoningEffort: ltmExtractionReasoningEffortSchema.optional(),
+    verbosity: ltmExtractionVerbositySchema.optional(),
+    maxOutputTokens: z.number().int().min(512).max(32_768).optional(),
+    temperature: z.number().finite().min(0).max(2).optional(),
+    maxSourceChars: z.number().int().min(1_000).max(200_000).optional(),
+    maxExistingNoteChars: z.number().int().min(1_000).max(100_000).optional(),
+    existingNoteMaxChunks: z.number().int().min(1).max(100).optional(),
+    existingNoteMaxTokens: z.number().int().min(128).max(16_384).optional(),
+    rejectPlaceholderOutput: z.boolean().optional(),
+  })
+  .strict();
+
+export const ltmResolvedExtractionSettingsSchema = z
+  .object({
+    version: z.literal(1),
+    systemPrompt: z.string().min(1).max(20_000),
+    extraInstruction: z.string().max(4_000),
+    reasoningEffort: ltmExtractionReasoningEffortSchema,
+    verbosity: ltmExtractionVerbositySchema,
+    maxOutputTokens: z.number().int().min(512).max(32_768),
+    temperature: z.number().finite().min(0).max(2),
+    maxSourceChars: z.number().int().min(1_000).max(200_000),
+    maxExistingNoteChars: z.number().int().min(1_000).max(100_000),
+    existingNoteMaxChunks: z.number().int().min(1).max(100),
+    existingNoteMaxTokens: z.number().int().min(128).max(16_384),
+    rejectPlaceholderOutput: z.boolean(),
+  })
+  .strict();
+
 export const ltmVaultFolderSchema = z.enum([
   "characters",
   "relationships",
@@ -477,6 +515,10 @@ export type LtmNoteType = z.infer<typeof ltmNoteTypeSchema>;
 export type LtmStatus = z.infer<typeof ltmStatusSchema>;
 export type LtmEvidenceUnitStatus = z.infer<typeof ltmEvidenceUnitStatusSchema>;
 export type LtmEvidenceUnitBucket = z.infer<typeof ltmEvidenceUnitBucketSchema>;
+export type LtmExtractionReasoningEffort = z.infer<typeof ltmExtractionReasoningEffortSchema>;
+export type LtmExtractionVerbosity = z.infer<typeof ltmExtractionVerbositySchema>;
+export type LtmExtractionSettings = z.infer<typeof ltmExtractionSettingsSchema>;
+export type LtmResolvedExtractionSettings = z.infer<typeof ltmResolvedExtractionSettingsSchema>;
 export type LtmMode = z.infer<typeof ltmModeSchema>;
 export type LtmGate = z.infer<typeof ltmGateSchema>;
 export type LtmScope = z.infer<typeof ltmScopeSchema>;

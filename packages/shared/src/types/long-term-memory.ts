@@ -9,8 +9,11 @@ export type {
   LtmEvidenceUnitBucket,
   LtmEvidenceUnitExtractionResponse,
   LtmEvidenceUnitStatus,
+  LtmExtractionReasoningEffort,
   LtmExtractionDraft,
   LtmExtractionResponse,
+  LtmExtractionSettings,
+  LtmExtractionVerbosity,
   LtmGate,
   LtmIndexMetadata,
   LtmLink,
@@ -28,4 +31,5 @@ export type {
   LtmDraftRisk,
   LtmDraftSource,
   LtmDraftStatus,
+  LtmResolvedExtractionSettings,
 } from "../schemas/long-term-memory.schema.js";
