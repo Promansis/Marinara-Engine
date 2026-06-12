@@ -19,7 +19,7 @@ import {
 } from "../../hooks/use-long-term-memory";
 import { Modal } from "../ui/Modal";
 import { StatusPill, ToolButton } from "./LtmPills";
-import { labelLtmLane, labelLtmTier, labelRejectionReason } from "./ltm-debug-utils";
+import { labelLtmTier, labelRejectionReason, summarizeLtmCandidateSignals } from "./ltm-debug-utils";
 
 const PHASE_FILTERS: Array<"all" | LtmDebugPhase | "errors"> = [
   "all",
@@ -300,34 +300,31 @@ function CandidateRow({ item, rejected = false }: { item: unknown; rejected?: bo
   const noteId = getString(item, "noteId") ?? getString(item, "chunkId") ?? "unknown";
   const sectionKey = getString(item, "sectionKey") ?? "section";
   const score = getNumber(item, "score");
+  const signalSummary = summarizeLtmCandidateSignals(lanes, reasons);
+  const detailBits = [
+    getNumber(item, "estimatedTokens") !== undefined ? `${getNumber(item, "estimatedTokens")} tokens` : null,
+    score !== undefined ? `score ${score.toFixed(3)}` : null,
+    rejected ? labelRejectionReason(getString(item, "rejectionReason")).toLowerCase() : null,
+  ].filter(Boolean);
   return (
     <div className="rounded-lg bg-[var(--background)] px-3 py-2 ring-1 ring-[var(--border)]/70">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="font-mono text-xs font-semibold text-[var(--foreground)]">{noteId}</span>
-        <StatusPill label={sectionKey} />
-        <StatusPill label={labelLtmTier(getNumber(item, "tier"))} tone={getNumber(item, "tier") === 1 ? "good" : "neutral"} />
-        {getNumber(item, "estimatedTokens") !== undefined && (
-          <StatusPill label={`${getNumber(item, "estimatedTokens")} tokens`} />
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className="font-mono text-xs font-semibold text-[var(--foreground)]">
+          {noteId}
+          <span className="font-sans font-medium text-[var(--muted-foreground)]">/{sectionKey}</span>
+        </span>
+        <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+          {labelLtmTier(getNumber(item, "tier"))}
+        </span>
+        {detailBits.length > 0 && (
+          <span className={cn("text-[0.6875rem]", rejected ? "text-amber-200" : "text-[var(--muted-foreground)]")}>
+            {detailBits.join(" · ")}
+          </span>
         )}
-        {score !== undefined && <StatusPill label={`Score ${score.toFixed(3)}`} />}
-        {rejected && <StatusPill label={labelRejectionReason(getString(item, "rejectionReason"))} tone="warn" />}
       </div>
-      {lanes.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {lanes.map((lane) => (
-            <span
-              key={lane}
-              title={lane}
-              className="rounded-md bg-[var(--secondary)] px-1.5 py-0.5 text-[0.625rem] text-[var(--muted-foreground)]"
-            >
-              {labelLtmLane(lane)}
-            </span>
-          ))}
-        </div>
-      )}
-      {reasons.length > 0 && (
-        <div className="mt-2 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-          {reasons.join(" · ")}
+      {signalSummary && (
+        <div className="mt-1.5 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+          Why: {signalSummary}.
         </div>
       )}
     </div>

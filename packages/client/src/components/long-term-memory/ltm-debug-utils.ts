@@ -20,6 +20,31 @@ export function labelLtmLane(value: string) {
   }
 }
 
+export function summarizeLtmCandidateSignals(lanes: string[], reasons: string[]) {
+  const signals: string[] = [];
+  const reasonText = reasons.join(" ");
+
+  if (lanes.includes("always")) signals.push("policy include");
+
+  if (lanes.includes("metadata")) {
+    signals.push(/(?:^|\s|,)chat:|(?:^|\s|,)group:/.test(reasonText) ? "active chat/group scope" : "metadata match");
+  }
+
+  if (lanes.includes("typed_priority")) {
+    signals.push(reasonText.includes("priority:current_scene") ? "current scene priority" : "memory type priority");
+  }
+
+  const contextSignals = [
+    lanes.includes("vector") ? "meaning" : null,
+    lanes.includes("bm25") ? "words" : null,
+    lanes.includes("graph") ? "linked memory" : null,
+  ].filter((item): item is string => Boolean(item));
+
+  if (contextSignals.length > 0) signals.push(`context match (${contextSignals.join(", ")})`);
+
+  return [...new Set(signals)].join(", ");
+}
+
 export function labelLtmTier(value: number | string | undefined) {
   const tier = typeof value === "string" ? Number.parseInt(value, 10) : value;
   switch (tier) {
