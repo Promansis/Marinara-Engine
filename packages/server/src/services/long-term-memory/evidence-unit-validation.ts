@@ -53,7 +53,10 @@ function hasRelationshipSupport(unit: LtmEvidenceUnit, units: LtmEvidenceUnit[],
 }
 
 function isSourceNote(note: LtmNote) {
-  return note.type === "scene" && (note.tags.includes("source_summary") || note.tags.includes("chat_summary"));
+  return (
+    note.type === "source" ||
+    (note.type === "scene" && (note.tags.includes("source_summary") || note.tags.includes("chat_summary")))
+  );
 }
 
 export function riskForEvidenceUnit(unit: LtmEvidenceUnit): "low" | "medium" | "high" {

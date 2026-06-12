@@ -68,13 +68,16 @@ function gatesForMutation(mutation: LtmDraftMutation) {
 function targetsSceneOrSourceNote(mutation: LtmDraftMutation, existing: LtmNote | undefined) {
   if (mutation.kind === "create_note") {
     return (
+      mutation.note.type === "source" ||
       mutation.note.type === "scene" ||
       mutation.note.tags.includes("source_summary") ||
       mutation.note.tags.includes("chat_summary")
     );
   }
   return (
+    mutation.noteId.startsWith("source_") ||
     mutation.noteId.startsWith("scene_") ||
+    existing?.type === "source" ||
     existing?.type === "scene" ||
     existing?.tags.includes("source_summary") === true ||
     existing?.tags.includes("chat_summary") === true

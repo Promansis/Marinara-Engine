@@ -72,7 +72,10 @@ function readChatCharacterIds(value: unknown) {
 }
 
 function isSourceMemory(note: LtmNote) {
-  return note.type === "scene" && note.tags.some((tag) => tag === "source_summary" || tag === "chat_summary");
+  return (
+    note.type === "source" ||
+    (note.type === "scene" && note.tags.some((tag) => tag === "source_summary" || tag === "chat_summary"))
+  );
 }
 
 export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSaved }: LongTermMemoryNoteEditorProps) {

@@ -48,6 +48,7 @@ type DraftSeed = {
   sourceId: string;
   sourceText: string;
   sourceNoteId: string;
+  legacySourceNoteIds?: string[];
   sourceTag: string;
   evidence: string[];
   source?: LtmExtractionDraft["source"];
@@ -505,7 +506,7 @@ async function characterDrafts(db: DB, limit: number, sourceIds?: Set<string>): 
     ]);
     if (!body) return [];
     const noteId = `char_${normalizeIdentifier(name, "character")}_${hashShort(row.id)}`;
-    const sourceNoteId = `scene_import_character_${normalizeIdentifier(name, "character")}_${hashShort(row.id)}`;
+    const sourceNoteId = `source_import_character_${normalizeIdentifier(name, "character")}_${hashShort(row.id)}`;
     const evidence = [`character:${row.id}`];
     const mutation: LtmDraftMutation = {
       ...mutationBase(`Import character card for ${name}`, evidence),
@@ -529,6 +530,7 @@ async function characterDrafts(db: DB, limit: number, sourceIds?: Set<string>): 
         sourceId: row.id,
         sourceText: body,
         sourceNoteId,
+        legacySourceNoteIds: [`scene_import_character_${normalizeIdentifier(name, "character")}_${hashShort(row.id)}`],
         sourceTag: "imported_character",
         evidence,
         modes: mutation.note.modes,
@@ -567,7 +569,7 @@ async function lorebookDrafts(db: DB, limit: number, sourceIds?: Set<string>): P
     const type: LtmNoteType = category === "character" || category === "npc" ? "character" : "world";
     const prefix = type === "character" ? "char" : "world";
     const noteId = `${prefix}_${normalizeIdentifier(name, "lorebook")}_${hashShort(id)}`;
-    const sourceNoteId = `scene_import_lorebook_${normalizeIdentifier(name, "lorebook")}_${hashShort(id)}`;
+    const sourceNoteId = `source_import_lorebook_${normalizeIdentifier(name, "lorebook")}_${hashShort(id)}`;
     const evidence = [`lorebook:${id}`];
     const modes: LtmMode[] = ["conversation", "roleplay", "game"];
     const mutation: LtmDraftMutation = {
@@ -599,6 +601,7 @@ async function lorebookDrafts(db: DB, limit: number, sourceIds?: Set<string>): P
       sourceId: id,
       sourceText: text,
       sourceNoteId,
+      legacySourceNoteIds: [`scene_import_lorebook_${normalizeIdentifier(name, "lorebook")}_${hashShort(id)}`],
       sourceTag: "imported_lorebook",
       evidence,
       modes,
@@ -618,7 +621,7 @@ async function chatDrafts(db: DB, limit: number, sourceIds?: Set<string>): Promi
     if (!summary) return [];
     const mode = chat.mode === "visual_novel" ? "visual_novel" : (chat.mode as LtmMode);
     const noteId = `scene_${normalizeIdentifier(chat.name, "chat")}_${hashShort(chat.id)}`;
-    const sourceNoteId = `scene_import_chat_${normalizeIdentifier(chat.name, "chat")}_${hashShort(chat.id)}`;
+    const sourceNoteId = `source_import_chat_${normalizeIdentifier(chat.name, "chat")}_${hashShort(chat.id)}`;
     const evidence = [`chat:${chat.id}`];
     const mutation: LtmDraftMutation = {
       ...mutationBase(`Import chat summary for ${chat.name}`, evidence, "low"),
@@ -643,6 +646,7 @@ async function chatDrafts(db: DB, limit: number, sourceIds?: Set<string>): Promi
         sourceId: chat.id,
         sourceText: summary,
         sourceNoteId,
+        legacySourceNoteIds: [`scene_import_chat_${normalizeIdentifier(chat.name, "chat")}_${hashShort(chat.id)}`],
         sourceTag: "imported_chat",
         evidence,
         modes: mutation.note.modes,
@@ -754,7 +758,7 @@ export async function createLongTermMemoryInteropSourceNotes(
         const now = nowIso();
         const noteInput = {
           id: draft.sourceNoteId,
-          type: "scene" as const,
+          type: "source" as const,
           status: "dormant" as const,
           modes: draft.modes,
           scope: { ...(draft.scope ?? {}), ...(options.scope ?? {}) },
@@ -767,7 +771,10 @@ export async function createLongTermMemoryInteropSourceNotes(
             },
           },
         };
-        const existing = await storage.getNote(noteInput.id);
+        const noteIds = [...(draft.legacySourceNoteIds ?? []), draft.sourceNoteId];
+        const existing = (await Promise.all(noteIds.map((noteId) => storage.getNote(noteId)))).find(
+          (note): note is LtmNote => note !== null,
+        );
         if (existing) {
           const note = await storage.updateNote(
             existing.id,

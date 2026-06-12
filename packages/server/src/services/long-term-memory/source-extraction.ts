@@ -38,7 +38,10 @@ export type ExtractLongTermMemoryFromSourceNoteResult = {
 };
 
 export function isLtmSourceNote(note: LtmNote) {
-  return note.type === "scene" && (note.tags.includes("source_summary") || note.tags.includes("chat_summary"));
+  return (
+    note.type === "source" ||
+    (note.type === "scene" && (note.tags.includes("source_summary") || note.tags.includes("chat_summary")))
+  );
 }
 
 export function getLtmSourceNoteText(note: LtmNote) {

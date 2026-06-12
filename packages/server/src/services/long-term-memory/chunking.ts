@@ -46,7 +46,10 @@ export function stableStringify(value: unknown): string {
 }
 
 export function isLtmSourceSummaryNote(note: Pick<LtmNote, "type" | "tags">) {
-  return note.type === "scene" && (note.tags.includes("source_summary") || note.tags.includes("chat_summary"));
+  return (
+    note.type === "source" ||
+    (note.type === "scene" && (note.tags.includes("source_summary") || note.tags.includes("chat_summary")))
+  );
 }
 
 export function chunkNoteSections(note: LtmNote): LtmMemoryChunk[] {

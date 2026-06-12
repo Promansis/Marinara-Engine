@@ -20,6 +20,7 @@ export const LTM_EVENT_LOG = "log.jsonl";
 export const LTM_DEBUG_LOG = "log.jsonl";
 
 export const LTM_VAULT_FOLDERS = [
+  "sources",
   "characters",
   "relationships",
   "scenes",

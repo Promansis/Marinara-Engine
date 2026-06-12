@@ -102,7 +102,9 @@ function extractQuerySignals(input: RetrieveLongTermMemoryInput) {
   const noteIds = uniqueSorted([
     ...(input.noteIds ?? []),
     ...Array.from(
-      queryText.matchAll(/\b(?:char|rel|scene|thread|cb|world|faction|location|rule|voice|tone)_[a-z0-9_]+\b/g),
+      queryText.matchAll(
+        /\b(?:source|char|rel|scene|thread|cb|world|faction|location|rule|voice|tone)_[a-z0-9_]+\b/g,
+      ),
       (match) => match[0],
     ),
   ]);

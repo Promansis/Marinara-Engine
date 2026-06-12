@@ -95,6 +95,7 @@ async function preflightDraftMutations(
         sourceExtractionDraft &&
         (mutation.note.tags.includes("source_summary") ||
           mutation.note.tags.includes("chat_summary") ||
+          mutation.note.type === "source" ||
           (mutation.note.type === "scene" && !isCurrentSceneTypedNote(mutation.note)))
       ) {
         throw new Error(
@@ -107,9 +108,9 @@ async function preflightDraftMutations(
       createIds.add(mutation.note.id);
       continue;
     }
-    if (sourceExtractionDraft && mutation.noteId.startsWith("scene_")) {
+    if (sourceExtractionDraft && (mutation.noteId.startsWith("source_") || mutation.noteId.startsWith("scene_"))) {
       const existing = await storage.getNote(mutation.noteId);
-      if (!existing || !isCurrentSceneTypedNote(existing)) {
+      if (!existing || existing.type === "source" || !isCurrentSceneTypedNote(existing)) {
         throw new Error(
           `Long-term memory source extraction draft cannot mutate scene/source notes: ${mutation.noteId}`,
         );

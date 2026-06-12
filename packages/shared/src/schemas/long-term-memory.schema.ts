@@ -4,6 +4,7 @@
 import { z } from "zod";
 
 export const ltmNoteTypeSchema = z.enum([
+  "source",
   "character",
   "relationship",
   "scene",
@@ -79,6 +80,7 @@ export const ltmResolvedExtractionSettingsSchema = z
   .strict();
 
 export const ltmVaultFolderSchema = z.enum([
+  "sources",
   "characters",
   "relationships",
   "scenes",
@@ -90,6 +92,7 @@ export const ltmVaultFolderSchema = z.enum([
 ]);
 
 export const LTM_NOTE_TYPE_TO_VAULT_FOLDER = {
+  source: "sources",
   character: "characters",
   relationship: "relationships",
   scene: "scenes",
@@ -101,6 +104,7 @@ export const LTM_NOTE_TYPE_TO_VAULT_FOLDER = {
 } as const satisfies Record<z.infer<typeof ltmNoteTypeSchema>, z.infer<typeof ltmVaultFolderSchema>>;
 
 const idPrefixesByType = {
+  source: ["source_", "scene_summary_"],
   character: ["char_"],
   relationship: ["rel_"],
   scene: ["scene_"],

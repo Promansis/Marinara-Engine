@@ -12,6 +12,7 @@ import {
 import type { CreateLongTermMemoryNoteInput, UpdateLongTermMemoryNoteInput } from "../../hooks/use-long-term-memory";
 
 export const noteTypeOptions: LtmNoteType[] = [
+  "source",
   "character",
   "relationship",
   "scene",
@@ -27,6 +28,7 @@ export const modeOptions: LtmMode[] = ["roleplay", "conversation", "game", "visu
 export const gateOptions: LtmGate[] = ["spoiler", "character_secret", "private", "nsfw"];
 
 export const allowedIdPrefixesByType: Record<LtmNoteType, readonly string[]> = {
+  source: ["source_", "scene_summary_"],
   character: ["char_"],
   relationship: ["rel_"],
   scene: ["scene_"],
@@ -38,6 +40,7 @@ export const allowedIdPrefixesByType: Record<LtmNoteType, readonly string[]> = {
 };
 
 const NOTE_TYPE_LABELS: Record<LtmNoteType, string> = {
+  source: "Source",
   character: "Character",
   relationship: "Relationship",
   scene: "Scene",
@@ -74,6 +77,7 @@ const KNOWN_ID_PREFIXES = [
   "char_",
   "relationship_",
   "rel_",
+  "source_",
   "scene_",
   "thread_",
   "callback_",
@@ -170,6 +174,7 @@ export function normalizeIdentifierList(value: string, fallbackPrefix = "item") 
 }
 
 export function defaultSectionKeyForType(type: LtmNoteType) {
+  if (type === "source") return "source";
   return type === "scene" ? "summary" : "core";
 }
 

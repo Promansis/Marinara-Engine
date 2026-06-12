@@ -35,6 +35,7 @@ export type SummaryLtmSyncOptions = {
 
 export type SummaryLtmChat = {
   id: string;
+  name?: string;
   mode: ChatMode;
   characterIds?: unknown;
   groupId?: string | null;
@@ -67,7 +68,7 @@ function sourceHashForEntry(entry: ChatSummaryEntry) {
 }
 
 function noteIdForSummaryEntry(chat: SummaryLtmChat, entry: ChatSummaryEntry) {
-  return `scene_summary_${safeIdentifierPart(chat.id)}_${safeIdentifierPart(entry.id)}`;
+  return `source_summary_${safeIdentifierPart(chat.id)}_${safeIdentifierPart(entry.id)}`;
 }
 
 function ltmModeForChatMode(mode: ChatMode): LtmMode {
@@ -118,6 +119,29 @@ function tagsForEntry(entry: ChatSummaryEntry) {
   return Array.from(new Set(tags));
 }
 
+function evidenceSafeValue(value: string) {
+  return value.trim().replace(/\s+/g, " ").slice(0, 200);
+}
+
+function summaryMessageRange(entry: ChatSummaryEntry) {
+  if (entry.sourceMode === "range" && entry.rangeStartIndex && entry.rangeEndIndex) {
+    return `${entry.rangeStartIndex}-${entry.rangeEndIndex}`;
+  }
+  if (entry.rangeStartIndex && entry.rangeEndIndex) return `${entry.rangeStartIndex}-${entry.rangeEndIndex}`;
+  if (entry.messageCount) return `last ${entry.messageCount}`;
+  if (entry.sourceMode === "agent") return "agent summary";
+  return "last messages";
+}
+
+function evidenceForEntry(chat: SummaryLtmChat, entry: ChatSummaryEntry) {
+  return [
+    `chat:${chat.id}`,
+    ...(chat.name?.trim() ? [`chat_name:${evidenceSafeValue(chat.name)}`] : []),
+    `summary_entry:${entry.id}`,
+    `message_range:${summaryMessageRange(entry)}`,
+  ];
+}
+
 function buildSummaryNote(
   chat: SummaryLtmChat,
   meta: Record<string, unknown>,
@@ -127,7 +151,7 @@ function buildSummaryNote(
   const timestamp = new Date().toISOString();
   return {
     id: noteId,
-    type: "scene",
+    type: "source",
     status: "dormant",
     modes: [ltmModeForChatMode(chat.mode)],
     scope: resolveChatScope(chat, meta),
@@ -139,7 +163,7 @@ function buildSummaryNote(
       source: {
         text: entry.content.trim(),
         updatedAt: timestamp,
-        evidence: [`chat:${chat.id}`, `summary_entry:${entry.id}`],
+        evidence: evidenceForEntry(chat, entry),
       },
     },
     version: 1,
@@ -249,45 +273,32 @@ async function syncChatSummaryEntryToLongTermMemoryInner(
     if (existing) {
       const nextSourceSection = nextNote.sections.source;
       if (!nextSourceSection) throw new Error(`Summary source note is missing source section: ${noteId}`);
-      const sourceHashChanged = entry.ltm?.sourceHash !== sourceHash;
-      const nextSections = sourceHashChanged
-        ? { ...existing.sections, source: nextSourceSection }
-        : existing.sections.source
-          ? existing.sections
-          : { ...existing.sections, source: nextSourceSection };
-      const sourceSectionNeedsUpdate =
-        !existing.sections.source ||
-        (sourceHashChanged &&
-          (existing.sections.source.text !== nextSourceSection.text ||
-            JSON.stringify(existing.sections.source.evidence ?? []) !==
-              JSON.stringify(nextSourceSection.evidence ?? [])));
       if (
-        existing.status !== "dormant" ||
-        JSON.stringify(existing.modes) !== JSON.stringify(nextNote.modes) ||
-        JSON.stringify(existing.scope) !== JSON.stringify(nextNote.scope) ||
-        JSON.stringify(existing.tags) !== JSON.stringify(nextNote.tags) ||
-        sourceSectionNeedsUpdate
+        existing.type !== "source" &&
+        existing.tags.some((tag) => tag === SOURCE_SUMMARY_LTM_TAG || tag === SUMMARY_LTM_TAG)
       ) {
-        await storage.updateNote(
-          noteId,
+        await storage.deleteNote(noteId, {
+          actor: "summary_ltm_sync",
+          cause: "summary_ltm_source_type_migrated",
+          summary: "Migrated chat summary source note to source type",
+          suppressEvent: true,
+        });
+        await storage.createNote(
           {
-            status: "dormant",
-            modes: nextNote.modes,
-            scope: nextNote.scope,
-            tags: nextNote.tags,
-            links: nextNote.links,
-            sections: nextSections,
+            ...nextNote,
+            createdAt: existing.createdAt,
+            sections: { ...existing.sections, source: nextSourceSection },
           },
           {
             actor: "summary_ltm_sync",
-            cause: "summary_ltm_updated",
-            summary: "Updated chat summary source note",
+            cause: "summary_ltm_source_type_migrated",
+            summary: "Migrated chat summary source note to source type",
           },
         );
         await recordLtmDebugEvent({
           operationId: options.operationId,
           phase: "source_note",
-          action: "summary_source_note_updated",
+          action: "summary_source_note_type_migrated",
           status: "ok",
           source: "chat_summary",
           sourceId: entry.id,
@@ -295,6 +306,49 @@ async function syncChatSummaryEntryToLongTermMemoryInner(
           counts: { sourceChars: entry.content.trim().length },
         });
         mutated = true;
+      } else {
+        const sourceSectionNeedsUpdate =
+          !existing.sections.source ||
+          existing.sections.source.text !== nextSourceSection.text ||
+          JSON.stringify(existing.sections.source.evidence ?? []) !== JSON.stringify(nextSourceSection.evidence ?? []);
+        const nextSections = sourceSectionNeedsUpdate
+          ? { ...existing.sections, source: nextSourceSection }
+          : existing.sections;
+        if (
+          existing.status !== "dormant" ||
+          JSON.stringify(existing.modes) !== JSON.stringify(nextNote.modes) ||
+          JSON.stringify(existing.scope) !== JSON.stringify(nextNote.scope) ||
+          JSON.stringify(existing.tags) !== JSON.stringify(nextNote.tags) ||
+          sourceSectionNeedsUpdate
+        ) {
+          await storage.updateNote(
+            noteId,
+            {
+              status: "dormant",
+              modes: nextNote.modes,
+              scope: nextNote.scope,
+              tags: nextNote.tags,
+              links: nextNote.links,
+              sections: nextSections,
+            },
+            {
+              actor: "summary_ltm_sync",
+              cause: "summary_ltm_updated",
+              summary: "Updated chat summary source note",
+            },
+          );
+          await recordLtmDebugEvent({
+            operationId: options.operationId,
+            phase: "source_note",
+            action: "summary_source_note_updated",
+            status: "ok",
+            source: "chat_summary",
+            sourceId: entry.id,
+            sourceNoteId: noteId,
+            counts: { sourceChars: entry.content.trim().length },
+          });
+          mutated = true;
+        }
       }
     } else {
       await storage.createNote(nextNote, {

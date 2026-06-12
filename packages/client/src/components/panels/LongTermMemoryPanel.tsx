@@ -4,6 +4,8 @@ import {
   AlertTriangle,
   Archive,
   BrainCircuit,
+  ChevronDown,
+  ChevronRight,
   Check,
   Eye,
   EyeOff,
@@ -79,6 +81,7 @@ import { Modal } from "../ui/Modal";
 
 const NOTE_TYPES: Array<"all" | LtmNoteType> = [
   "all",
+  "source",
   "character",
   "relationship",
   "scene",
@@ -110,6 +113,11 @@ const TAB_LABELS: Record<TabId, string> = {
 
 type TabId = "notes" | "drafts" | "tools" | "import";
 type ImportPreviewRow = NonNullable<ReturnType<typeof useLongTermMemoryImportPreview>["data"]>["samples"][number];
+type SourceSummaryGroup = {
+  source: LtmNote;
+  derived: LtmNote[];
+  orphaned: boolean;
+};
 
 const rowActionPillClassName =
   "absolute right-2 top-1/2 flex shrink-0 -translate-y-1/2 items-center gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-[var(--border)] transition-opacity group-hover:opacity-100 max-md:opacity-100";
@@ -204,6 +212,10 @@ function NoteRow({
   onDelete,
   bulkSelected,
   onSelect,
+  title,
+  primaryLabel,
+  hideTags,
+  children,
 }: {
   note: LtmNote;
   viewing: boolean;
@@ -215,6 +227,10 @@ function NoteRow({
   onDelete?: () => void;
   bulkSelected?: boolean;
   onSelect?: (selected: boolean) => void;
+  title?: string;
+  primaryLabel?: string;
+  hideTags?: boolean;
+  children?: ReactNode;
 }) {
   const sectionCount = Object.keys(note.sections).length;
   const primaryText =
@@ -222,6 +238,8 @@ function NoteRow({
     note.sections.core?.text.trim() ||
     Object.values(note.sections)[0]?.text.trim() ||
     "";
+  const displayTitle = title ?? friendlyNoteTitle(note);
+  const showSourceSummary = isSourceSummaryNote(note);
   return (
     <article
       className={cn(
@@ -237,7 +255,7 @@ function NoteRow({
             checked={bulkSelected ?? false}
             onChange={(event) => onSelect(event.target.checked)}
             className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-            aria-label={`Select ${friendlyNoteTitle(note)}`}
+            aria-label={`Select ${displayTitle}`}
           />
         </label>
       )}
@@ -248,8 +266,8 @@ function NoteRow({
           onSelect && "pl-10",
         )}
       >
-        <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={friendlyNoteTitle(note)}>
-          {friendlyNoteTitle(note)}
+        <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={displayTitle}>
+          {displayTitle}
         </div>
         {primaryText && (
           <div className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
@@ -257,17 +275,18 @@ function NoteRow({
           </div>
         )}
         <div className="mt-1 flex flex-wrap gap-1.5">
-          <StatusPill label={friendlyNoteType(note.type)} />
+          <StatusPill label={primaryLabel ?? (showSourceSummary ? "Source summary" : friendlyNoteType(note.type))} />
           <StatusPill label={friendlyStatus(note.status)} tone={note.status === "active" ? "good" : "neutral"} />
           {sectionCount > 1 && <StatusPill label={`${sectionCount} details`} />}
         </div>
+        {children}
       </div>
       <div className={rowActionPillClassName}>
         <button
           type="button"
           onClick={onView}
           className={cn(rowActionButtonClassName, viewing && "bg-[var(--accent)] text-[var(--foreground)]")}
-          aria-label={`View ${friendlyNoteTitle(note)}`}
+          aria-label={`View ${displayTitle}`}
           title="View memory"
         >
           <Eye size="0.875rem" />
@@ -277,7 +296,7 @@ function NoteRow({
             type="button"
             onClick={onRestore}
             className={cn(rowActionButtonClassName, "hover:bg-emerald-500/10 hover:text-emerald-200")}
-            aria-label={`Restore ${friendlyNoteTitle(note)}`}
+            aria-label={`Restore ${displayTitle}`}
             title="Restore memory"
           >
             <RotateCcw size="0.875rem" />
@@ -288,7 +307,7 @@ function NoteRow({
             onClick={onArchive}
             disabled={note.status === "archived"}
             className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
-            aria-label={`Archive ${friendlyNoteTitle(note)}`}
+            aria-label={`Archive ${displayTitle}`}
             title="Archive memory"
           >
             <Archive size="0.875rem" />
@@ -299,7 +318,7 @@ function NoteRow({
             type="button"
             onClick={onDelete}
             className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
-            aria-label={`Delete ${friendlyNoteTitle(note)}`}
+            aria-label={`Delete ${displayTitle}`}
             title="Delete memory"
           >
             <Trash2 size="0.875rem" />
@@ -309,13 +328,13 @@ function NoteRow({
           type="button"
           onClick={onEdit}
           className={cn(rowActionButtonClassName, editing && "bg-[var(--accent)] text-[var(--foreground)]")}
-          aria-label={`Edit ${friendlyNoteTitle(note)}`}
+          aria-label={`Edit ${displayTitle}`}
           title="Edit memory"
         >
           <Pencil size="0.875rem" />
         </button>
       </div>
-      {note.tags.length > 0 && (
+      {!hideTags && note.tags.length > 0 && (
         <div className="mt-2 truncate text-[0.625rem] text-[var(--muted-foreground)]" title={note.id}>
           {note.tags.map(friendlyIdentifier).join(", ")}
         </div>
@@ -386,14 +405,247 @@ function draftRiskSummary(draft: LtmExtractionDraft) {
   return { highestRisk, averageConfidence, evidenceCount };
 }
 
+function sourceSummaryEvidence(note: LtmNote) {
+  return note.sections.source?.evidence ?? [];
+}
+
+function sourceSummaryEvidenceValue(note: LtmNote, prefix: string) {
+  const item = sourceSummaryEvidence(note).find((entry) => entry.startsWith(prefix));
+  return item?.slice(prefix.length).trim();
+}
+
+function sourceSummaryChatName(note: LtmNote) {
+  return sourceSummaryEvidenceValue(note, "chat_name:") || friendlyIdentifier(note.scope.chatId ?? note.id);
+}
+
+function sourceSummaryMessageRange(note: LtmNote) {
+  const evidenceRange = sourceSummaryEvidenceValue(note, "message_range:");
+  if (evidenceRange) return evidenceRange;
+  const idFallback = friendlyIdentifier(note.id).replace(/^Summary\s+/i, "").trim();
+  return idFallback ? `unknown (${idFallback})` : "unknown";
+}
+
+function isChatSummarySourceNote(note: LtmNote) {
+  if (note.type === "source") {
+    return (
+      note.tags.includes("imported_chat") ||
+      sourceSummaryEvidence(note).some((entry) => entry.startsWith("chat_name:") || entry.startsWith("message_range:"))
+    );
+  }
+  return note.type === "scene" && note.tags.some((tag) => tag.includes("source_summary") || tag.includes("chat_summary"));
+}
+
 function isSourceSummaryNote(note: LtmNote) {
-  return (
-    note.type === "scene" && note.tags.some((tag) => tag.includes("source_summary") || tag.includes("chat_summary"))
-  );
+  return note.type === "source" || isChatSummarySourceNote(note);
+}
+
+function sourceSummaryTitle(note: LtmNote) {
+  return `Source: Summary ${sourceSummaryChatName(note)} Messages: ${sourceSummaryMessageRange(note)}`;
+}
+
+function sourceNoteTitle(note: LtmNote) {
+  return isChatSummarySourceNote(note) ? sourceSummaryTitle(note) : friendlyNoteTitle(note);
 }
 
 function isDerivedFromSource(note: LtmNote, sourceNoteId: string) {
   return note.links.some((link) => link.relation === "extracted_from" && link.target === sourceNoteId);
+}
+
+function sourceSummaryGroups(notes: LtmNote[]): SourceSummaryGroup[] {
+  const sourceNotes = notes.filter(isSourceSummaryNote);
+  const sourceIds = new Set(sourceNotes.map((note) => note.id));
+  const groups = new Map<string, SourceSummaryGroup>();
+  const rows: SourceSummaryGroup[] = [];
+  for (const source of sourceNotes) {
+    const group = { source, derived: [], orphaned: false };
+    groups.set(source.id, group);
+    rows.push(group);
+  }
+  for (const note of notes) {
+    if (isSourceSummaryNote(note)) continue;
+    const sourceLink = note.links.find((link) => link.relation === "extracted_from" && sourceIds.has(link.target));
+    if (sourceLink) groups.get(sourceLink.target)?.derived.push(note);
+    else rows.push({ source: note, derived: [], orphaned: true });
+  }
+  return rows
+    .map((group) => ({
+      ...group,
+      derived: group.derived.sort((left, right) => friendlyNoteTitle(left).localeCompare(friendlyNoteTitle(right))),
+    }))
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.source.updatedAt);
+      const rightTime = Date.parse(right.source.updatedAt);
+      if (!Number.isNaN(leftTime) && !Number.isNaN(rightTime) && leftTime !== rightTime) return rightTime - leftTime;
+      return (left.orphaned ? friendlyNoteTitle(left.source) : sourceNoteTitle(left.source)).localeCompare(
+        right.orphaned ? friendlyNoteTitle(right.source) : sourceNoteTitle(right.source),
+      );
+    });
+}
+
+function SourceSummaryGroupRow({
+  group,
+  expanded,
+  viewingNoteId,
+  editingNoteId,
+  onToggle,
+  onView,
+  onEdit,
+  onArchive,
+}: {
+  group: SourceSummaryGroup;
+  expanded: boolean;
+  viewingNoteId: string | null;
+  editingNoteId: string | null;
+  onToggle: () => void;
+  onView: (id: string) => void;
+  onEdit: (id: string) => void;
+  onArchive: (note: LtmNote) => void;
+}) {
+  const sourceTitle = group.orphaned ? friendlyNoteTitle(group.source) : sourceNoteTitle(group.source);
+  const sourceText =
+    group.source.sections.summary?.text.trim() ||
+    group.source.sections.core?.text.trim() ||
+    group.source.sections.source?.text.trim() ||
+    Object.values(group.source.sections)[0]?.text.trim() ||
+    "";
+
+  if (group.orphaned) {
+    return (
+      <NoteRow
+        note={group.source}
+        viewing={viewingNoteId === group.source.id}
+        editing={editingNoteId === group.source.id}
+        onView={() => onView(group.source.id)}
+        onEdit={() => onEdit(group.source.id)}
+        onArchive={() => onArchive(group.source)}
+      />
+    );
+  }
+
+  return (
+    <article className="group rounded-lg bg-[var(--secondary)]/45 p-2.5 ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/35 hover:ring-rose-300/25">
+      <div className="flex items-start gap-2">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+          aria-label={expanded ? "Hide derived memories" : "Show derived memories"}
+          aria-expanded={expanded}
+        >
+          {expanded ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
+        </button>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={sourceTitle}>
+            {sourceTitle}
+          </div>
+          {sourceText && (
+            <p className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+              {sourceText}
+            </p>
+          )}
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            <StatusPill label={isChatSummarySourceNote(group.source) ? "Source summary" : "Source note"} />
+            <StatusPill label={friendlyStatus(group.source.status)} tone="neutral" />
+            <StatusPill label={`${group.derived.length} typed memor${group.derived.length === 1 ? "y" : "ies"}`} />
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 shadow-sm ring-1 ring-[var(--border)]">
+          <button
+            type="button"
+            onClick={() => onView(group.source.id)}
+            className={cn(rowActionButtonClassName, viewingNoteId === group.source.id && "bg-[var(--accent)] text-[var(--foreground)]")}
+            aria-label={`View ${sourceTitle}`}
+            title="View source summary"
+          >
+            <Eye size="0.875rem" />
+          </button>
+          <button
+            type="button"
+            onClick={() => onArchive(group.source)}
+            disabled={group.source.status === "archived"}
+            className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
+            aria-label={`Archive ${sourceTitle}`}
+            title="Archive source summary"
+          >
+            <Archive size="0.875rem" />
+          </button>
+          <button
+            type="button"
+            onClick={() => onEdit(group.source.id)}
+            className={cn(rowActionButtonClassName, editingNoteId === group.source.id && "bg-[var(--accent)] text-[var(--foreground)]")}
+            aria-label={`Edit ${sourceTitle}`}
+            title="Edit source summary"
+          >
+            <Pencil size="0.875rem" />
+          </button>
+        </div>
+      </div>
+      {expanded && (
+        <div className="mt-3 space-y-1.5 border-t border-[var(--border)]/70 pt-2">
+          {group.derived.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--background)]/35 p-3 text-xs text-[var(--muted-foreground)]">
+              No typed memories have been extracted from this source yet.
+            </p>
+          ) : (
+            group.derived.map((derivedNote) => (
+              <div
+                key={derivedNote.id}
+                className="flex min-w-0 items-start gap-2 rounded-lg bg-[var(--background)]/35 p-2 ring-1 ring-[var(--border)]/70"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-xs font-medium text-[var(--foreground)]">
+                    {friendlyNoteTitle(derivedNote)}
+                  </div>
+                  <p className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                    {derivedNote.sections.summary?.text.trim() ||
+                      derivedNote.sections.core?.text.trim() ||
+                      Object.values(derivedNote.sections)[0]?.text.trim() ||
+                      "No summary text."}
+                  </p>
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    <StatusPill label={friendlyNoteType(derivedNote.type)} />
+                    <StatusPill
+                      label={friendlyStatus(derivedNote.status)}
+                      tone={derivedNote.status === "active" ? "good" : "neutral"}
+                    />
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => onView(derivedNote.id)}
+                    className={cn(rowActionButtonClassName, viewingNoteId === derivedNote.id && "bg-[var(--accent)] text-[var(--foreground)]")}
+                    aria-label={`View ${friendlyNoteTitle(derivedNote)}`}
+                    title="View memory"
+                  >
+                    <Eye size="0.875rem" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onArchive(derivedNote)}
+                    className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
+                    aria-label={`Archive ${friendlyNoteTitle(derivedNote)}`}
+                    title="Archive memory"
+                  >
+                    <Archive size="0.875rem" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onEdit(derivedNote.id)}
+                    className={cn(rowActionButtonClassName, editingNoteId === derivedNote.id && "bg-[var(--accent)] text-[var(--foreground)]")}
+                    aria-label={`Edit ${friendlyNoteTitle(derivedNote)}`}
+                    title="Edit memory"
+                  >
+                    <Pencil size="0.875rem" />
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </article>
+  );
 }
 
 function derivedSourceGroups(notes: LtmNote[]) {
@@ -1408,6 +1660,7 @@ export function LongTermMemoryPanel() {
   const [viewingNoteId, setViewingNoteId] = useState<string | null>(null);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editedNoteDirty, setEditedNoteDirty] = useState(false);
+  const [expandedSourceIds, setExpandedSourceIds] = useState<Set<string>>(() => new Set());
   const [viewingDraftId, setViewingDraftId] = useState<string | null>(null);
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
   const [sourceExtractionDiagnostics, setSourceExtractionDiagnostics] = useState<
@@ -1449,10 +1702,15 @@ export function LongTermMemoryPanel() {
     return list.filter(
       (note) =>
         note.id.toLowerCase().includes(needle) ||
+        (isSourceSummaryNote(note) && sourceNoteTitle(note).toLowerCase().includes(needle)) ||
         note.tags.some((tag) => tag.toLowerCase().includes(needle)) ||
         Object.values(note.sections).some((section) => section.text.toLowerCase().includes(needle)),
     );
   }, [notes.data, query]);
+  const groupedFilteredNotes = useMemo(
+    () => (noteType === "all" ? sourceSummaryGroups(filteredNotes) : []),
+    [filteredNotes, noteType],
+  );
 
   const filteredDrafts = drafts.data ?? [];
   const archivedDrafts = useMemo(
@@ -1594,6 +1852,15 @@ export function LongTermMemoryPanel() {
     setEditingNoteId(null);
     setEditedNoteDirty(false);
     setViewingNoteId(id);
+  };
+
+  const toggleExpandedSource = (id: string) => {
+    setExpandedSourceIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   const storeSourceDiagnostics = (noteId: string, diagnostics: LtmExtractionDiagnostic[]) => {
@@ -2035,17 +2302,33 @@ export function LongTermMemoryPanel() {
                 No matching memories.
               </p>
             )}
-            {filteredNotes.map((note) => (
-              <NoteRow
-                key={note.id}
-                note={note}
-                viewing={viewingNoteId === note.id}
-                editing={editingNoteId === note.id}
-                onView={() => requestViewNote(note.id)}
-                onEdit={() => requestEditNote(note.id)}
-                onArchive={() => archiveFromRow(note)}
-              />
-            ))}
+            {noteType === "all"
+              ? groupedFilteredNotes.map((group) => (
+                  <SourceSummaryGroupRow
+                    key={group.orphaned ? `orphan:${group.source.id}` : `source:${group.source.id}`}
+                    group={group}
+                    expanded={expandedSourceIds.has(group.source.id)}
+                    viewingNoteId={viewingNoteId}
+                    editingNoteId={editingNoteId}
+                    onToggle={() => toggleExpandedSource(group.source.id)}
+                    onView={requestViewNote}
+                    onEdit={requestEditNote}
+                    onArchive={archiveFromRow}
+                  />
+                ))
+              : filteredNotes.map((note) => (
+                  <NoteRow
+                    key={note.id}
+                    note={note}
+                    title={isSourceSummaryNote(note) ? sourceNoteTitle(note) : undefined}
+                    hideTags={isChatSummarySourceNote(note)}
+                    viewing={viewingNoteId === note.id}
+                    editing={editingNoteId === note.id}
+                    onView={() => requestViewNote(note.id)}
+                    onEdit={() => requestEditNote(note.id)}
+                    onArchive={() => archiveFromRow(note)}
+                  />
+                ))}
           </div>
         </Section>
       )}
@@ -2332,6 +2615,8 @@ export function LongTermMemoryPanel() {
                 <NoteRow
                   key={note.id}
                   note={note}
+                  title={isSourceSummaryNote(note) ? sourceNoteTitle(note) : undefined}
+                  hideTags={isChatSummarySourceNote(note)}
                   viewing={viewingNoteId === note.id}
                   editing={editingNoteId === note.id}
                   bulkSelected={selectedArchivedNoteIds.has(note.id)}
