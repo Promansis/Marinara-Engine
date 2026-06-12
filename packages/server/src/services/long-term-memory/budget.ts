@@ -6,6 +6,8 @@ export interface LtmBudgetedChunk {
   score: number;
   reasons: string[];
   lanes: string[];
+  laneScores?: Record<string, number>;
+  rawLaneScores?: Record<string, number>;
   tier: 1 | 2 | 3;
   estimatedTokens: number;
 }
@@ -13,6 +15,21 @@ export interface LtmBudgetedChunk {
 export interface LtmBudgetOptions {
   maxChunks: number;
   maxTokens: number;
+  explain?: boolean;
+  rejectedLimit?: number;
+}
+
+export interface LtmBudgetRejectedCandidate {
+  chunkId: string;
+  noteId?: string;
+  sectionKey?: string;
+  score: number;
+  reasons: string[];
+  lanes: string[];
+  laneScores?: Record<string, number>;
+  rawLaneScores?: Record<string, number>;
+  estimatedTokens?: number;
+  rejectionReason: "budget" | "lower_rank" | "missing_chunk";
 }
 
 function estimateTokens(text: string) {
@@ -42,31 +59,105 @@ export function applyLtmBudget(
   options: LtmBudgetOptions,
 ) {
   const selected: LtmBudgetedChunk[] = [];
+  const selectedIds = new Set<string>();
+  const rejected: LtmBudgetRejectedCandidate[] = [];
+  const rejectedLimit = Math.max(0, options.rejectedLimit ?? 20);
   let usedTokens = 0;
 
   for (const candidate of candidates) {
-    if (selected.length >= options.maxChunks) break;
+    if (selected.length >= options.maxChunks) {
+      if (options.explain && rejected.length < rejectedLimit) {
+        const chunk = chunksById.get(candidate.chunkId);
+        rejected.push({
+          chunkId: candidate.chunkId,
+          noteId: chunk?.noteId,
+          sectionKey: chunk?.sectionKey,
+          score: candidate.score,
+          reasons: candidate.reasons,
+          lanes: candidate.lanes,
+          laneScores: candidate.laneScores,
+          rawLaneScores: candidate.rawLaneScores,
+          estimatedTokens: chunk ? estimateTokens(cleanLongTermMemoryChunkText(chunk.text)) : undefined,
+          rejectionReason: chunk ? "lower_rank" : "missing_chunk",
+        });
+      }
+      continue;
+    }
 
     const chunk = chunksById.get(candidate.chunkId);
-    if (!chunk) continue;
+    if (!chunk) {
+      if (options.explain && rejected.length < rejectedLimit) {
+        rejected.push({
+          chunkId: candidate.chunkId,
+          score: candidate.score,
+          reasons: candidate.reasons,
+          lanes: candidate.lanes,
+          laneScores: candidate.laneScores,
+          rawLaneScores: candidate.rawLaneScores,
+          rejectionReason: "missing_chunk",
+        });
+      }
+      continue;
+    }
 
     const estimatedTokens = estimateTokens(cleanLongTermMemoryChunkText(chunk.text));
-    if (usedTokens + estimatedTokens > options.maxTokens) continue;
+    if (usedTokens + estimatedTokens > options.maxTokens) {
+      if (options.explain && rejected.length < rejectedLimit) {
+        rejected.push({
+          chunkId: candidate.chunkId,
+          noteId: chunk.noteId,
+          sectionKey: chunk.sectionKey,
+          score: candidate.score,
+          reasons: candidate.reasons,
+          lanes: candidate.lanes,
+          laneScores: candidate.laneScores,
+          rawLaneScores: candidate.rawLaneScores,
+          estimatedTokens,
+          rejectionReason: "budget",
+        });
+      }
+      continue;
+    }
 
     selected.push({
       chunk,
       score: candidate.score,
       reasons: candidate.reasons,
       lanes: candidate.lanes,
+      laneScores: candidate.laneScores,
+      rawLaneScores: candidate.rawLaneScores,
       tier: tierFor(chunk, candidate),
       estimatedTokens,
     });
+    selectedIds.add(candidate.chunkId);
     usedTokens += estimatedTokens;
+  }
+
+  if (options.explain && rejected.length < rejectedLimit) {
+    for (const candidate of candidates) {
+      if (rejected.length >= rejectedLimit) break;
+      if (selectedIds.has(candidate.chunkId)) continue;
+      if (rejected.some((item) => item.chunkId === candidate.chunkId)) continue;
+      const chunk = chunksById.get(candidate.chunkId);
+      rejected.push({
+        chunkId: candidate.chunkId,
+        noteId: chunk?.noteId,
+        sectionKey: chunk?.sectionKey,
+        score: candidate.score,
+        reasons: candidate.reasons,
+        lanes: candidate.lanes,
+        laneScores: candidate.laneScores,
+        rawLaneScores: candidate.rawLaneScores,
+        estimatedTokens: chunk ? estimateTokens(cleanLongTermMemoryChunkText(chunk.text)) : undefined,
+        rejectionReason: chunk ? "lower_rank" : "missing_chunk",
+      });
+    }
   }
 
   return {
     chunks: selected.sort((a, b) => a.tier - b.tier || b.score - a.score || a.chunk.id.localeCompare(b.chunk.id)),
     usedTokens,
     maxTokens: options.maxTokens,
+    rejected,
   };
 }

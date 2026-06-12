@@ -20,7 +20,7 @@ import type { LtmEmbeddingIndex } from "./rebuild.js";
 import type { LtmMetadataIndex } from "./metadata-index.js";
 import { getLtmMetadataMatches } from "./metadata-index.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
-import { applyLtmBudget, type LtmBudgetedChunk } from "./budget.js";
+import { applyLtmBudget, type LtmBudgetedChunk, type LtmBudgetRejectedCandidate } from "./budget.js";
 import { reciprocalRankFuse, type LtmRankLane } from "./ranking.js";
 
 export interface RetrieveLongTermMemoryInput extends MemoryRecallEmbeddingOptions {
@@ -37,8 +37,47 @@ export interface RetrieveLongTermMemoryInput extends MemoryRecallEmbeddingOption
   includeResolved?: boolean;
   includeSourceNotes?: boolean;
   debug?: boolean;
+  explain?: boolean;
   maxChunks?: number;
   maxTokens?: number;
+}
+
+export interface LtmRetrievalDebugCandidate {
+  chunkId: string;
+  noteId?: string;
+  sectionKey?: string;
+  noteType?: string;
+  status?: string;
+  score: number;
+  lanes: string[];
+  reasons: string[];
+  laneScores?: Record<string, number>;
+  rawLaneScores?: Record<string, number>;
+  tier?: 1 | 2 | 3;
+  estimatedTokens?: number;
+  budgetIncluded?: boolean;
+  rejectionReason?: string;
+}
+
+export interface LtmRetrievalDebugInfo {
+  querySummary: {
+    queryCharacters: number;
+    recentUserMessageCharacters: number;
+    mentionedCharacterCount: number;
+    noteIdCount: number;
+    tagCount: number;
+    characterIdCount: number;
+    scopeKeys: string[];
+  };
+  embeddingsAvailable: boolean;
+  weights: {
+    semantic: number;
+    lexical: number;
+    graph: number;
+  };
+  funnel: Record<string, number>;
+  selected: LtmRetrievalDebugCandidate[];
+  rejected: LtmRetrievalDebugCandidate[];
 }
 
 export interface RetrieveLongTermMemoryResult {
@@ -47,6 +86,7 @@ export interface RetrieveLongTermMemoryResult {
   maxTokens: number;
   embeddingsAvailable: boolean;
   warnings: string[];
+  debug?: LtmRetrievalDebugInfo;
 }
 
 function cosineSimilarity(a: number[], b: number[]) {
@@ -150,6 +190,46 @@ function isSourceSummaryChunk(chunk: LtmMemoryChunk) {
   return chunk.tags.includes("source_summary") || chunk.tags.includes("chat_summary");
 }
 
+function summarizeCandidateFilters(
+  chunks: LtmMemoryChunk[],
+  input: RetrieveLongTermMemoryInput,
+  config: LtmRetrievalConfig,
+  characterIds: string[],
+) {
+  const includeGates = new Set([...(config.includeGates ?? []), ...(input.includeGates ?? [])]);
+  const counts = {
+    sourceSummariesSkipped: 0,
+    archivedFiltered: 0,
+    resolvedFiltered: 0,
+    gateFiltered: 0,
+    scopeFiltered: 0,
+  };
+
+  for (const chunk of chunks) {
+    if (!input.includeSourceNotes && isSourceSummaryChunk(chunk)) {
+      counts.sourceSummariesSkipped++;
+      continue;
+    }
+    if (!input.includeArchived && chunk.status === "archived") {
+      counts.archivedFiltered++;
+      continue;
+    }
+    if (!input.includeResolved && chunk.status === "resolved" && chunk.noteType === "thread") {
+      counts.resolvedFiltered++;
+      continue;
+    }
+    if (!gateAllows(chunk, includeGates)) {
+      counts.gateFiltered++;
+      continue;
+    }
+    if (!scopeMatches(chunk, input.scope, characterIds)) {
+      counts.scopeFiltered++;
+    }
+  }
+
+  return counts;
+}
+
 function candidateAllowed(
   chunk: LtmMemoryChunk,
   input: RetrieveLongTermMemoryInput,
@@ -162,6 +242,51 @@ function candidateAllowed(
   if (!input.includeResolved && chunk.status === "resolved" && chunk.noteType === "thread") return false;
   if (!gateAllows(chunk, includeGates)) return false;
   return scopeMatches(chunk, input.scope, characterIds);
+}
+
+function compactScoreMap(scores: Record<string, number> | undefined) {
+  if (!scores) return undefined;
+  return Object.fromEntries(Object.entries(scores).map(([key, value]) => [key, Number(value.toFixed(6))]));
+}
+
+function formatSelectedCandidate(candidate: LtmBudgetedChunk): LtmRetrievalDebugCandidate {
+  return {
+    chunkId: candidate.chunk.id,
+    noteId: candidate.chunk.noteId,
+    sectionKey: candidate.chunk.sectionKey,
+    noteType: candidate.chunk.noteType,
+    status: candidate.chunk.status,
+    score: Number(candidate.score.toFixed(6)),
+    lanes: candidate.lanes,
+    reasons: candidate.reasons,
+    laneScores: compactScoreMap(candidate.laneScores),
+    rawLaneScores: compactScoreMap(candidate.rawLaneScores),
+    tier: candidate.tier,
+    estimatedTokens: candidate.estimatedTokens,
+    budgetIncluded: true,
+  };
+}
+
+function formatRejectedCandidate(
+  candidate: LtmBudgetRejectedCandidate,
+  chunksById: Map<string, LtmMemoryChunk>,
+): LtmRetrievalDebugCandidate {
+  const chunk = chunksById.get(candidate.chunkId);
+  return {
+    chunkId: candidate.chunkId,
+    noteId: candidate.noteId ?? chunk?.noteId,
+    sectionKey: candidate.sectionKey ?? chunk?.sectionKey,
+    noteType: chunk?.noteType,
+    status: chunk?.status,
+    score: Number(candidate.score.toFixed(6)),
+    lanes: candidate.lanes,
+    reasons: candidate.reasons,
+    laneScores: compactScoreMap(candidate.laneScores),
+    rawLaneScores: compactScoreMap(candidate.rawLaneScores),
+    estimatedTokens: candidate.estimatedTokens,
+    budgetIncluded: false,
+    rejectionReason: candidate.rejectionReason,
+  };
 }
 
 function alwaysLane(
@@ -272,6 +397,7 @@ export async function retrieveLongTermMemory(
   const root = input.root ?? getLongTermMemoryRoot();
   const dirs = getLongTermMemoryDirectories(root);
   const warnings: string[] = [];
+  const includeDebug = input.debug === true || input.explain === true;
   const indexPrefix = input.includeSourceNotes ? "source-" : "";
   const [metadata, bm25, graph, embeddings, config, policies] = await Promise.all([
     readIndexFile<LtmMetadataIndex>(safeJoin(dirs.indexes, `${indexPrefix}metadata.json`), warnings),
@@ -287,20 +413,62 @@ export async function retrieveLongTermMemory(
   ]);
 
   if (!metadata) {
+    const maxTokens = input.maxTokens ?? config.maxTokens;
     return {
       chunks: [],
       usedTokens: 0,
-      maxTokens: input.maxTokens ?? config.maxTokens,
+      maxTokens,
       embeddingsAvailable: false,
       warnings,
+      ...(includeDebug
+        ? {
+            debug: {
+              querySummary: {
+                queryCharacters: (input.queryText ?? "").length,
+                recentUserMessageCharacters: (input.recentUserMessage ?? "").length,
+                mentionedCharacterCount: input.mentionedCharacterNames?.length ?? 0,
+                noteIdCount: input.noteIds?.length ?? 0,
+                tagCount: input.tags?.length ?? 0,
+                characterIdCount: input.characterIds?.length ?? 0,
+                scopeKeys: Object.keys(input.scope ?? {}).sort(),
+              },
+              embeddingsAvailable: false,
+              weights: {
+                semantic: config.semanticWeight,
+                lexical: config.lexicalWeight,
+                graph: config.graphWeight,
+              },
+              funnel: {
+                totalChunks: 0,
+                sourceSummariesSkipped: 0,
+                scopeFiltered: 0,
+                gateFiltered: 0,
+                statusFiltered: 0,
+                alwaysCandidates: 0,
+                metadataCandidates: 0,
+                typedPriorityCandidates: 0,
+                vectorCandidates: 0,
+                bm25Candidates: 0,
+                graphCandidates: 0,
+                rankedCandidates: 0,
+                selectedCandidates: 0,
+                tokenBudgetSkippedCandidates: 0,
+              },
+              selected: [],
+              rejected: [],
+            },
+          }
+        : {}),
     };
   }
 
   const signals = extractQuerySignals(input);
   const characterIds = uniqueSorted(signals.characterIds);
   const chunksById = new Map(Object.entries(metadata.chunks));
+  const allChunks = Object.values(metadata.chunks);
+  const filterCounts = includeDebug ? summarizeCandidateFilters(allChunks, input, config, characterIds) : null;
   if (!input.includeSourceNotes && input.debug) {
-    const skippedSourceChunks = Object.values(metadata.chunks).filter(isSourceSummaryChunk).length;
+    const skippedSourceChunks = filterCounts?.sourceSummariesSkipped ?? allChunks.filter(isSourceSummaryChunk).length;
     if (skippedSourceChunks > 0) {
       warnings.push(
         `Skipped ${skippedSourceChunks} source summary chunk(s); set includeSourceNotes to search source audit indexes.`,
@@ -381,7 +549,48 @@ export async function retrieveLongTermMemory(
   const budgeted = applyLtmBudget(ranked, chunksById, {
     maxChunks: input.maxChunks ?? config.maxChunks,
     maxTokens: input.maxTokens ?? config.maxTokens,
+    explain: includeDebug,
+    rejectedLimit: 20,
   });
+  const laneCount = (name: string) => lanes.find((lane) => lane.name === name)?.items.length ?? 0;
+  const debug: LtmRetrievalDebugInfo | undefined = includeDebug
+    ? {
+        querySummary: {
+          queryCharacters: signals.queryText.length,
+          recentUserMessageCharacters: (input.recentUserMessage ?? "").length,
+          mentionedCharacterCount: input.mentionedCharacterNames?.length ?? 0,
+          noteIdCount: signals.noteIds.length,
+          tagCount: signals.tags.length,
+          characterIdCount: characterIds.length,
+          scopeKeys: Object.keys(input.scope ?? {}).sort(),
+        },
+        embeddingsAvailable: vector.available,
+        weights: {
+          semantic: config.semanticWeight,
+          lexical: config.lexicalWeight,
+          graph: config.graphWeight,
+        },
+        funnel: {
+          totalChunks: allChunks.length,
+          sourceSummariesSkipped: filterCounts?.sourceSummariesSkipped ?? 0,
+          scopeFiltered: filterCounts?.scopeFiltered ?? 0,
+          gateFiltered: filterCounts?.gateFiltered ?? 0,
+          statusFiltered: (filterCounts?.archivedFiltered ?? 0) + (filterCounts?.resolvedFiltered ?? 0),
+          alwaysCandidates: laneCount("always"),
+          metadataCandidates: laneCount("metadata"),
+          typedPriorityCandidates: laneCount("typed_priority"),
+          vectorCandidates: laneCount("vector"),
+          bm25Candidates: laneCount("bm25"),
+          graphCandidates: laneCount("graph"),
+          rankedCandidates: ranked.length,
+          selectedCandidates: budgeted.chunks.length,
+          tokenBudgetSkippedCandidates: budgeted.rejected.filter((candidate) => candidate.rejectionReason === "budget")
+            .length,
+        },
+        selected: budgeted.chunks.map(formatSelectedCandidate),
+        rejected: budgeted.rejected.map((candidate) => formatRejectedCandidate(candidate, chunksById)),
+      }
+    : undefined;
 
   return {
     chunks: budgeted.chunks,
@@ -389,5 +598,6 @@ export async function retrieveLongTermMemory(
     maxTokens: budgeted.maxTokens,
     embeddingsAvailable: vector.available,
     warnings,
+    ...(debug ? { debug } : {}),
   };
 }

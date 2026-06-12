@@ -5252,6 +5252,11 @@ export async function generateRoutes(app: FastifyInstance) {
         if (chatMeta.enableLongTermMemory === true) {
           const _tLtm = Date.now();
           const ltmInjectionOperationId = randomUUID();
+          const ltmBudgetTokens = parseLongTermMemoryBudgetTokens(chatMeta.longTermMemoryBudgetTokens);
+          const ltmScope = resolveLtmScope(
+            { id: input.chatId, groupId: chat.groupId, characterIds: promptCharacterIds },
+            chatMeta,
+          );
           await recordLtmDebugEvent({
             operationId: ltmInjectionOperationId,
             phase: "injection",
@@ -5266,11 +5271,8 @@ export async function generateRoutes(app: FastifyInstance) {
             details: {
               chatMode,
               characterIds: promptCharacterIds,
-              budgetTokens: parseLongTermMemoryBudgetTokens(chatMeta.longTermMemoryBudgetTokens) ?? null,
-              scope: resolveLtmScope(
-                { id: input.chatId, groupId: chat.groupId, characterIds: promptCharacterIds },
-                chatMeta,
-              ),
+              budgetTokens: ltmBudgetTokens ?? null,
+              scope: ltmScope,
             },
           });
           try {
@@ -5299,14 +5301,34 @@ export async function generateRoutes(app: FastifyInstance) {
                 ...charInfo.map((character) => character.name),
                 ...((input.mentionedCharacterNames as string[] | undefined) ?? []),
               ],
-              scope: resolveLtmScope(
-                { id: input.chatId, groupId: chat.groupId, characterIds: promptCharacterIds },
-                chatMeta,
-              ),
+              scope: ltmScope,
               characterIds: promptCharacterIds,
-              maxTokens: parseLongTermMemoryBudgetTokens(chatMeta.longTermMemoryBudgetTokens),
+              maxTokens: ltmBudgetTokens,
               embeddingSource: memoryRecallEmbeddingSource ?? undefined,
+              debug: true,
+              explain: true,
             });
+            const baseDecisionDetails = {
+              outcome: retrieval.chunks.length > 0 ? "injected" : "skipped",
+              querySummary: {
+                queryCharacters: ltmQueryText.length,
+                recentUserMessageCharacters: (lastUserMsg?.content ?? input.userMessage ?? "").length,
+                activeCharacters: charInfo.map((character) => character.name).slice(0, 20),
+                generationTriggerCount: lorebookGenerationTriggers.length,
+                hasGenerationGuide: Boolean(generationGuideText),
+                hasGameState: Boolean(gameStateQuery),
+              },
+              embeddingsAvailable: retrieval.embeddingsAvailable,
+              weights: retrieval.debug?.weights,
+              funnel: retrieval.debug?.funnel,
+              selectedChunks: retrieval.debug?.selected,
+              rejectedCandidates: retrieval.debug?.rejected,
+              warnings: retrieval.warnings,
+              budget: {
+                usedTokens: retrieval.usedTokens,
+                maxTokens: retrieval.maxTokens,
+              },
+            };
 
             if (retrieval.chunks.length > 0) {
               const ltmBlock = formatLongTermMemoryBlock(retrieval.chunks);
@@ -5336,6 +5358,15 @@ export async function generateRoutes(app: FastifyInstance) {
                   blockCharacters: ltmBlock.length,
                 },
                 details: {
+                  decision: {
+                    ...baseDecisionDetails,
+                    promptInsertion: {
+                      insertedAt: insertAt,
+                      insertedBeforeRole: finalMessages[insertAt + 1]?.role ?? null,
+                      blockCharacters: ltmBlock.length,
+                      contextKind: "injection",
+                    },
+                  },
                   insertedBeforeRole: finalMessages[insertAt + 1]?.role ?? null,
                   warnings: retrieval.warnings,
                   chunks: retrieval.chunks.map((chunk) => ({
@@ -5344,6 +5375,8 @@ export async function generateRoutes(app: FastifyInstance) {
                     tier: chunk.tier,
                     estimatedTokens: chunk.estimatedTokens,
                     reasons: chunk.reasons,
+                    lanes: chunk.lanes,
+                    score: chunk.score,
                   })),
                 },
               });
@@ -5375,6 +5408,15 @@ export async function generateRoutes(app: FastifyInstance) {
                   warnings: retrieval.warnings.length,
                 },
                 details: {
+                  decision: {
+                    ...baseDecisionDetails,
+                    promptInsertion: {
+                      insertedAt: null,
+                      insertedBeforeRole: null,
+                      blockCharacters: 0,
+                      contextKind: "injection",
+                    },
+                  },
                   warnings: retrieval.warnings,
                   queryCharacters: ltmQueryText.length,
                 },

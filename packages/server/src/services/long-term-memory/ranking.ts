@@ -3,6 +3,8 @@ export interface LtmRankedCandidate {
   score: number;
   reasons: string[];
   lanes: string[];
+  laneScores?: Record<string, number>;
+  rawLaneScores?: Record<string, number>;
 }
 
 export interface LtmRankLaneItem {
@@ -26,9 +28,24 @@ export function reciprocalRankFuse(lanes: LtmRankLane[]) {
     lane.items.forEach((item, index) => {
       const rank = index + 1;
       const score = lane.weight * (1 / (RRF_K + rank));
+      const rawScoreBoost = (item.rawScore ?? 0) * 0.001 * lane.weight;
       const candidate =
-        candidates.get(item.chunkId) ?? ({ chunkId: item.chunkId, score: 0, reasons: [], lanes: [] } satisfies LtmRankedCandidate);
-      candidate.score += score + (item.rawScore ?? 0) * 0.001 * lane.weight;
+        candidates.get(item.chunkId) ??
+        ({
+          chunkId: item.chunkId,
+          score: 0,
+          reasons: [],
+          lanes: [],
+          laneScores: {},
+          rawLaneScores: {},
+        } satisfies LtmRankedCandidate);
+      candidate.score += score + rawScoreBoost;
+      candidate.laneScores ??= {};
+      candidate.rawLaneScores ??= {};
+      candidate.laneScores[lane.name] = (candidate.laneScores[lane.name] ?? 0) + score + rawScoreBoost;
+      if (typeof item.rawScore === "number") {
+        candidate.rawLaneScores[lane.name] = Math.max(candidate.rawLaneScores[lane.name] ?? 0, item.rawScore);
+      }
       candidate.reasons.push(item.reason);
       if (!candidate.lanes.includes(lane.name)) candidate.lanes.push(lane.name);
       candidates.set(item.chunkId, candidate);
