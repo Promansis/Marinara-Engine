@@ -661,12 +661,12 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     const existing = await storage.getNote(id);
     if (!existing) return reply.status(404).send({ error: "Long-term memory note not found" });
 
-    const note = await storage.archiveNote(id, {
+    const archivedNotes = await storage.archiveSourceNoteWithDerived(id, {
       actor: "maintenance_api",
       cause: "api.archive",
       summary: "Archived via long-term memory maintenance API",
     });
-    return { archived: true, note };
+    return { archived: true, note: archivedNotes[0], notes: archivedNotes };
   });
 
   app.delete<{ Params: { id: string } }>("/notes/:id/permanent", async (req, reply) => {

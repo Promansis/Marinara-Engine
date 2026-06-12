@@ -275,9 +275,11 @@ export function useUpdateLongTermMemoryNote() {
 export function useArchiveLongTermMemoryNote() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api.delete<{ archived: true; note: LtmNote }>(`/long-term-memory/notes/${id}`),
+    mutationFn: (id: string) => api.delete<{ archived: true; note: LtmNote; notes?: LtmNote[] }>(`/long-term-memory/notes/${id}`),
     onSuccess: (result) => {
-      qc.setQueryData(longTermMemoryKeys.note(result.note.id), result.note);
+      for (const note of result.notes ?? [result.note]) {
+        qc.setQueryData(longTermMemoryKeys.note(note.id), note);
+      }
       qc.invalidateQueries({ queryKey: longTermMemoryKeys.all });
     },
   });

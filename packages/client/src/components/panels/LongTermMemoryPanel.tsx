@@ -646,6 +646,201 @@ function SourceSummaryGroupRow({
   );
 }
 
+function sourceGroupNoteIds(group: SourceSummaryGroup) {
+  return [group.source.id, ...group.derived.map((note) => note.id)];
+}
+
+function ArchivedSourceSummaryGroupRow({
+  group,
+  viewingNoteId,
+  editingNoteId,
+  selectedNoteIds,
+  onSelect,
+  onView,
+  onEdit,
+  onRestore,
+  onDelete,
+}: {
+  group: SourceSummaryGroup;
+  viewingNoteId: string | null;
+  editingNoteId: string | null;
+  selectedNoteIds: Set<string>;
+  onSelect: (ids: string[], selected: boolean) => void;
+  onView: (id: string) => void;
+  onEdit: (id: string) => void;
+  onRestore: (note: LtmNote) => void;
+  onDelete: (note: LtmNote) => void;
+}) {
+  const groupIds = sourceGroupNoteIds(group);
+  const allSelected = groupIds.every((id) => selectedNoteIds.has(id));
+
+  if (group.orphaned) {
+    return (
+      <NoteRow
+        note={group.source}
+        viewing={viewingNoteId === group.source.id}
+        editing={editingNoteId === group.source.id}
+        bulkSelected={selectedNoteIds.has(group.source.id)}
+        onSelect={(selected) => onSelect([group.source.id], selected)}
+        onView={() => onView(group.source.id)}
+        onEdit={() => onEdit(group.source.id)}
+        onRestore={() => onRestore(group.source)}
+        onDelete={() => onDelete(group.source)}
+      />
+    );
+  }
+
+  const sourceTitle = sourceNoteTitle(group.source);
+  const sourceText =
+    group.source.sections.summary?.text.trim() ||
+    group.source.sections.core?.text.trim() ||
+    group.source.sections.source?.text.trim() ||
+    Object.values(group.source.sections)[0]?.text.trim() ||
+    "";
+
+  return (
+    <article className="rounded-lg bg-[var(--secondary)]/45 p-2.5 ring-1 ring-[var(--border)]">
+      <div className="flex items-start gap-2">
+        <label className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--background)]/55 ring-1 ring-[var(--border)]">
+          <input
+            type="checkbox"
+            checked={allSelected}
+            onChange={(event) => onSelect(groupIds, event.target.checked)}
+            className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+            aria-label={`Select ${sourceTitle} group`}
+          />
+        </label>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={sourceTitle}>
+            {sourceTitle}
+          </div>
+          {sourceText && (
+            <p className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+              {sourceText}
+            </p>
+          )}
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            <StatusPill label={isChatSummarySourceNote(group.source) ? "Source summary" : "Source note"} />
+            <StatusPill label={friendlyStatus(group.source.status)} tone="neutral" />
+            <StatusPill label={`${group.derived.length} typed memor${group.derived.length === 1 ? "y" : "ies"}`} />
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 shadow-sm ring-1 ring-[var(--border)]">
+          <button
+            type="button"
+            onClick={() => onView(group.source.id)}
+            className={cn(rowActionButtonClassName, viewingNoteId === group.source.id && "bg-[var(--accent)] text-[var(--foreground)]")}
+            aria-label={`View ${sourceTitle}`}
+            title="View source memory"
+          >
+            <Eye size="0.875rem" />
+          </button>
+          <button
+            type="button"
+            onClick={() => onRestore(group.source)}
+            className={cn(rowActionButtonClassName, "hover:bg-emerald-500/10 hover:text-emerald-200")}
+            aria-label={`Restore ${sourceTitle}`}
+            title="Restore source memory"
+          >
+            <RotateCcw size="0.875rem" />
+          </button>
+          <button
+            type="button"
+            onClick={() => onDelete(group.source)}
+            className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
+            aria-label={`Delete ${sourceTitle}`}
+            title="Delete source memory"
+          >
+            <Trash2 size="0.875rem" />
+          </button>
+          <button
+            type="button"
+            onClick={() => onEdit(group.source.id)}
+            className={cn(rowActionButtonClassName, editingNoteId === group.source.id && "bg-[var(--accent)] text-[var(--foreground)]")}
+            aria-label={`Edit ${sourceTitle}`}
+            title="Edit source memory"
+          >
+            <Pencil size="0.875rem" />
+          </button>
+        </div>
+      </div>
+      {group.derived.length > 0 && (
+        <div className="mt-3 space-y-1.5 border-t border-[var(--border)]/70 pt-2">
+          {group.derived.map((derivedNote) => (
+            <div
+              key={derivedNote.id}
+              className="flex min-w-0 items-start gap-2 rounded-lg bg-[var(--background)]/35 p-2 ring-1 ring-[var(--border)]/70"
+            >
+              <label className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[var(--secondary)]/55 ring-1 ring-[var(--border)]">
+                <input
+                  type="checkbox"
+                  checked={selectedNoteIds.has(derivedNote.id)}
+                  onChange={(event) => onSelect([derivedNote.id], event.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+                  aria-label={`Select ${friendlyNoteTitle(derivedNote)}`}
+                />
+              </label>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-xs font-medium text-[var(--foreground)]">
+                  {friendlyNoteTitle(derivedNote)}
+                </div>
+                <p className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                  {derivedNote.sections.summary?.text.trim() ||
+                    derivedNote.sections.core?.text.trim() ||
+                    Object.values(derivedNote.sections)[0]?.text.trim() ||
+                    "No summary text."}
+                </p>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  <StatusPill label={friendlyNoteType(derivedNote.type)} />
+                  <StatusPill label={friendlyStatus(derivedNote.status)} tone="neutral" />
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => onView(derivedNote.id)}
+                  className={cn(rowActionButtonClassName, viewingNoteId === derivedNote.id && "bg-[var(--accent)] text-[var(--foreground)]")}
+                  aria-label={`View ${friendlyNoteTitle(derivedNote)}`}
+                  title="View memory"
+                >
+                  <Eye size="0.875rem" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onRestore(derivedNote)}
+                  className={cn(rowActionButtonClassName, "hover:bg-emerald-500/10 hover:text-emerald-200")}
+                  aria-label={`Restore ${friendlyNoteTitle(derivedNote)}`}
+                  title="Restore memory"
+                >
+                  <RotateCcw size="0.875rem" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDelete(derivedNote)}
+                  className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
+                  aria-label={`Delete ${friendlyNoteTitle(derivedNote)}`}
+                  title="Delete memory"
+                >
+                  <Trash2 size="0.875rem" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onEdit(derivedNote.id)}
+                  className={cn(rowActionButtonClassName, editingNoteId === derivedNote.id && "bg-[var(--accent)] text-[var(--foreground)]")}
+                  aria-label={`Edit ${friendlyNoteTitle(derivedNote)}`}
+                  title="Edit memory"
+                >
+                  <Pencil size="0.875rem" />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </article>
+  );
+}
+
 function derivedSourceGroups(notes: LtmNote[]) {
   const groups = new Map<string, { type: LtmNoteType; status: LtmStatus; notes: LtmNote[] }>();
   for (const note of notes) {
@@ -1557,6 +1752,7 @@ export function LongTermMemoryPanel() {
     [allDrafts.data],
   );
   const archivedMemoryNotes = useMemo(() => archivedNotes.data ?? [], [archivedNotes.data]);
+  const groupedArchivedMemoryNotes = useMemo(() => sourceSummaryGroups(archivedMemoryNotes), [archivedMemoryNotes]);
   const archivedNoteIds = useMemo(() => archivedMemoryNotes.map((note) => note.id), [archivedMemoryNotes]);
   const archivedDraftIds = useMemo(() => archivedDrafts.map((draft) => draft.id), [archivedDrafts]);
   const selectedArchivedNotes = useMemo(
@@ -1732,8 +1928,15 @@ export function LongTermMemoryPanel() {
     archiveNote
       .mutateAsync(note.id)
       .then((result) => {
-        toast.success("Memory archived");
-        if (editingNoteId === result.note.id) closeEditor();
+        const archivedCount = result.notes?.length ?? 1;
+        toast.success(
+          archivedCount > 1
+            ? `Archived source and ${archivedCount - 1} typed memor${archivedCount === 2 ? "y" : "ies"}`
+            : "Memory archived",
+        );
+        const archivedIds = new Set((result.notes ?? [result.note]).map((archivedNote) => archivedNote.id));
+        if (editingNoteId && archivedIds.has(editingNoteId)) closeEditor();
+        if (viewingNoteId && archivedIds.has(viewingNoteId)) closeViewer();
       })
       .catch((err: Error) => toast.error(err.message));
   };
@@ -2446,20 +2649,18 @@ export function LongTermMemoryPanel() {
                   No archived memories.
                 </p>
               )}
-              {archivedMemoryNotes.map((note) => (
-                <NoteRow
-                  key={note.id}
-                  note={note}
-                  title={isSourceSummaryNote(note) ? sourceNoteTitle(note) : undefined}
-                  hideTags={isChatSummarySourceNote(note)}
-                  viewing={viewingNoteId === note.id}
-                  editing={editingNoteId === note.id}
-                  bulkSelected={selectedArchivedNoteIds.has(note.id)}
-                  onSelect={(selected) => setArchivedNotesSelected([note.id], selected)}
-                  onView={() => requestViewNote(note.id)}
-                  onEdit={() => requestEditNote(note.id)}
-                  onRestore={() => restoreNote(note)}
-                  onDelete={() => deleteArchivedNote(note)}
+              {groupedArchivedMemoryNotes.map((group) => (
+                <ArchivedSourceSummaryGroupRow
+                  key={`${group.source.id}:${group.derived.map((note) => note.id).join(":")}`}
+                  group={group}
+                  viewingNoteId={viewingNoteId}
+                  editingNoteId={editingNoteId}
+                  selectedNoteIds={selectedArchivedNoteIds}
+                  onSelect={setArchivedNotesSelected}
+                  onView={requestViewNote}
+                  onEdit={requestEditNote}
+                  onRestore={restoreNote}
+                  onDelete={deleteArchivedNote}
                 />
               ))}
             </div>

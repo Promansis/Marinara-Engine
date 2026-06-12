@@ -60,6 +60,13 @@ function normalizeStoredScope(scope: LtmScope) {
   return withMergedLtmScopeLinks(scope, {});
 }
 
+function isSourceLikeNote(note: LtmNote) {
+  return (
+    note.type === "source" ||
+    (note.type === "scene" && (note.tags.includes("source_summary") || note.tags.includes("chat_summary")))
+  );
+}
+
 function eventFor(
   type: string,
   target: string | undefined,
@@ -214,6 +221,33 @@ export class LongTermMemoryStorage {
     await this.initializeLtmStore();
     const existing = await this.getRequiredNote(id);
     return this.writeNotePatch(existing, { status: "archived" }, `${existing.type}.archived`, eventContext);
+  }
+
+  async archiveSourceNoteWithDerived(id: string, eventContext: LtmEventContext = {}) {
+    await this.initializeLtmStore();
+    const existing = await this.getRequiredNote(id);
+    const relatedNotes = isSourceLikeNote(existing) ? await this.listNotes() : [];
+    const derived = relatedNotes.filter(
+      (note) =>
+        note.id !== id &&
+        note.status !== "archived" &&
+        note.links.some((link) => link.relation === "extracted_from" && link.target === id),
+    );
+    const archived: LtmNote[] = [];
+    const archiveContext = {
+      ...eventContext,
+      payload: {
+        ...(eventContext.payload ?? {}),
+        cascadeFromSourceNoteId: id,
+      },
+    };
+
+    archived.push(await this.writeNotePatch(existing, { status: "archived" }, `${existing.type}.archived`, eventContext));
+    for (const note of derived) {
+      archived.push(await this.writeNotePatch(note, { status: "archived" }, `${note.type}.archived`, archiveContext));
+    }
+
+    return archived;
   }
 
   async deleteNote(id: string, eventContext: LtmEventContext = {}) {
