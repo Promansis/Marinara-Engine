@@ -1,4 +1,4 @@
-import type { LtmMemoryChunk } from "./chunking.js";
+import { cleanLongTermMemoryChunkText, type LtmMemoryChunk } from "./chunking.js";
 import type { LtmRankedCandidate } from "./ranking.js";
 
 export interface LtmBudgetedChunk {
@@ -50,7 +50,7 @@ export function applyLtmBudget(
     const chunk = chunksById.get(candidate.chunkId);
     if (!chunk) continue;
 
-    const estimatedTokens = estimateTokens(chunk.text);
+    const estimatedTokens = estimateTokens(cleanLongTermMemoryChunkText(chunk.text));
     if (usedTokens + estimatedTokens > options.maxTokens) continue;
 
     selected.push({

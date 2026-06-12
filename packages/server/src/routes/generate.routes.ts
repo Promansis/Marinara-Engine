@@ -155,7 +155,7 @@ import { PROFESSOR_MARI_ID } from "@marinara-engine/shared";
 import { chunkAndEmbedMessages, embedMemoryRecallTexts, recallMemories } from "../services/memory-recall.js";
 import { resolveMemoryRecallEmbeddingSource } from "../services/memory-recall-embedding.js";
 import { retrieveLongTermMemory } from "../services/long-term-memory/retrieval.js";
-import type { LtmBudgetedChunk } from "../services/long-term-memory/budget.js";
+import { formatLongTermMemoryBlock } from "../services/long-term-memory/prompt.js";
 import { recordLtmDebugEvent } from "../services/long-term-memory/debug-log.js";
 import { recordLongTermMemoryInjection } from "../services/long-term-memory/usage.js";
 import { runLongTermMemoryExtraction, LongTermMemoryDraftStore } from "../services/long-term-memory/extraction.js";
@@ -325,24 +325,6 @@ function resolveLtmScope(
 function parseLongTermMemoryBudgetTokens(value: unknown) {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   return Math.max(128, Math.min(16_384, Math.floor(value)));
-}
-
-function formatLongTermMemoryBlock(chunks: LtmBudgetedChunk[]) {
-  const lines = [
-    "<long_term_memory>",
-    "Use these local memory notes for continuity. Treat them as private context unless the scene makes disclosure natural.",
-  ];
-
-  chunks.forEach((item, index) => {
-    const reasonText = item.reasons.length > 0 ? ` reasons:${item.reasons.join(",")}` : "";
-    lines.push(
-      `--- Memory ${index + 1} | tier:${item.tier} | note:${item.chunk.noteId} | section:${item.chunk.sectionKey}${reasonText} ---`,
-      item.chunk.text.trim(),
-    );
-  });
-
-  lines.push("</long_term_memory>");
-  return lines.join("\n");
 }
 
 function parsePromptPresetChoices(value: unknown): Record<string, string | string[]> | null {

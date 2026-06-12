@@ -1,12 +1,5 @@
 import { createHash } from "node:crypto";
-import {
-  getLtmScopeChatIds,
-  type LtmGate,
-  type LtmNote,
-  type LtmNoteType,
-  type LtmScope,
-  type LtmStatus,
-} from "@marinara-engine/shared";
+import { type LtmGate, type LtmNote, type LtmNoteType, type LtmScope, type LtmStatus } from "@marinara-engine/shared";
 
 export interface LtmMemoryChunk {
   id: string;
@@ -29,6 +22,12 @@ export interface ChunkLtmNotesOptions {
   sourceNotesOnly?: boolean;
 }
 
+const LEGACY_LABEL_SUFFIX_PATTERN = /\n{2,}\[note:[^\n]*\]\s*$/;
+
+export function cleanLongTermMemoryChunkText(text: string) {
+  return text.trim().replace(LEGACY_LABEL_SUFFIX_PATTERN, "").trim();
+}
+
 export function stableJsonHash(value: unknown) {
   return createHash("sha256").update(stableStringify(value)).digest("hex");
 }
@@ -46,18 +45,6 @@ export function stableStringify(value: unknown): string {
   return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(",")}}`;
 }
 
-function compactLabels(note: LtmNote, sectionKey: string) {
-  const labels = [`note:${note.id}`, `type:${note.type}`, `section:${sectionKey}`, `status:${note.status}`];
-  if (note.tags.length > 0) labels.push(`tags:${note.tags.join(",")}`);
-  if (note.scope.universe) labels.push(`universe:${note.scope.universe}`);
-  if (note.scope.rpId) labels.push(`rp:${note.scope.rpId}`);
-  const chatIds = getLtmScopeChatIds(note.scope);
-  if (chatIds.length) labels.push(`chat:${chatIds.join(",")}`);
-  if (note.scope.groupId) labels.push(`group:${note.scope.groupId}`);
-  if (note.scope.characterIds?.length) labels.push(`characters:${note.scope.characterIds.join(",")}`);
-  return labels.join(" ");
-}
-
 export function isLtmSourceSummaryNote(note: Pick<LtmNote, "type" | "tags">) {
   return note.type === "scene" && (note.tags.includes("source_summary") || note.tags.includes("chat_summary"));
 }
@@ -66,7 +53,7 @@ export function chunkNoteSections(note: LtmNote): LtmMemoryChunk[] {
   return Object.entries(note.sections)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([sectionKey, section]) => {
-      const text = `${section.text.trim()}\n\n[${compactLabels(note, sectionKey)}]`;
+      const text = cleanLongTermMemoryChunkText(section.text);
       return {
         id: `${note.id}::${sectionKey}`,
         noteId: note.id,

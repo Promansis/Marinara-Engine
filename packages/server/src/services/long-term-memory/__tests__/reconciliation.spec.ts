@@ -9,10 +9,12 @@ import { ltmEvidenceUnitSchema, ltmScopeSchema } from "../../../../../shared/src
 import { chunkNotes } from "../chunking.js";
 import { buildLtmMetadataIndex } from "../metadata-index.js";
 import { compileLtmEvidenceUnits } from "../evidence-unit-compiler.js";
+import { applyLtmBudget } from "../budget.js";
 import { reduceRelationshipEvidenceUnits } from "../relationship-reducer.js";
 import { LongTermMemoryDraftStore } from "../extraction.js";
 import { checkLongTermMemoryIntegrity } from "../maintenance.js";
 import { getLongTermMemoryDirectories } from "../paths.js";
+import { formatLongTermMemoryBlock } from "../prompt.js";
 import { rebuildLongTermMemoryIndexes } from "../rebuild.js";
 import {
   applyLongTermMemoryDraft,
@@ -25,9 +27,94 @@ import { compileEvidenceUnitExtraction, runLongTermMemoryEvidenceUnitExtraction 
 import { getLtmExtractionConfig, updateLtmExtractionConfig } from "../extraction-config.js";
 import { extractLongTermMemoryFromSourceNote } from "../source-extraction.js";
 import { applyLtmScopeLinksToDerivedNotes } from "../scope-links.js";
+import type { LtmBudgetedChunk } from "../budget.js";
 
 const timestamp = "2026-06-10T00:00:00.000Z";
 const sourceHash = "a".repeat(64);
+
+test("long-term memory chunks keep prompt text free of index labels", () => {
+  const chunks = chunkNotes([
+    {
+      id: "sample_memory_note",
+      type: "tone",
+      status: "active",
+      modes: ["conversation"],
+      scope: {
+        chatId: "sample_chat",
+        groupId: "sample_group",
+        characterIds: ["sample_character"],
+      },
+      tags: ["typed_memory"],
+      links: [],
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      version: 1,
+      sections: {
+        social_habits: {
+          text: "A sample instruction remains available for later retrieval.",
+          updatedAt: timestamp,
+        },
+      },
+    },
+  ]);
+
+  assert.equal(chunks[0]?.text, "A sample instruction remains available for later retrieval.");
+  assert.doesNotMatch(chunks[0]?.text ?? "", /note:|type:|section:|status:|chat:|group:|characters:/);
+});
+
+test("long-term memory prompt injection contains prose only", () => {
+  const block = formatLongTermMemoryBlock([
+    {
+      chunk: {
+        id: "sample_memory_note::social_habits",
+        noteId: "sample_memory_note",
+        sectionKey: "social_habits",
+        text: "A sample instruction remains available for later retrieval.\n\n[note:sample_memory_note type:tone section:social_habits status:active tags:typed_memory chat:sample_chat group:sample_group characters:sample_character]",
+        noteType: "tone",
+        status: "active",
+        scope: {},
+        tags: ["typed_memory"],
+        gates: [],
+        updatedAt: timestamp,
+        sourceHash,
+      },
+      score: 1,
+      reasons: ["always:tone", "vector", "bm25", "graph:sample_memory_note:2"],
+      lanes: ["always", "vector", "bm25", "graph"],
+      tier: 1,
+      estimatedTokens: 42,
+    } satisfies LtmBudgetedChunk,
+  ]);
+
+  assert.equal(block, "A sample instruction remains available for later retrieval.");
+  assert.doesNotMatch(block, /<long_term_memory>|tier:|reasons:|note:|section:|chat:|group:|characters:|graph:/);
+});
+
+test("long-term memory budget uses prompt-clean text for legacy chunks", () => {
+  const chunk = {
+    id: "sample_memory_note::social_habits",
+    noteId: "sample_memory_note",
+    sectionKey: "social_habits",
+    text: `Sample memory.\n\n[note:sample_memory_note type:tone section:social_habits status:active tags:${"typed_memory,".repeat(80)} chat:sample_chat group:sample_group characters:sample_character]`,
+    noteType: "tone",
+    status: "active",
+    scope: {},
+    tags: ["typed_memory"],
+    gates: [],
+    updatedAt: timestamp,
+    sourceHash,
+  } satisfies LtmBudgetedChunk["chunk"];
+
+  const result = applyLtmBudget(
+    [{ chunkId: chunk.id, score: 1, reasons: ["always:tone"], lanes: ["always"] }],
+    new Map([[chunk.id, chunk]]),
+    { maxChunks: 1, maxTokens: 8 },
+  );
+
+  assert.equal(result.chunks.length, 1);
+  assert.equal(result.usedTokens, 4);
+  assert.equal(result.chunks[0]?.estimatedTokens, 4);
+});
 
 function sceneAppendMutation(): Extract<LtmDraftMutation, { kind: "append_section" }> {
   return {
@@ -582,7 +669,7 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
     links: [],
     sections: {
       source: {
-        text: "Rika and Damo study together in the library.",
+        text: "Alex and Casey study together in the library.",
         updatedAt: timestamp,
         evidence: ["chat:chat_test"],
       },
@@ -606,7 +693,7 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
               bucket: "relationship_event",
               subjectId: "rika_damo",
               sectionKey: "history",
-              text: "Rika and Damo study together in the library.",
+              text: "Alex and Casey study together in the library.",
               evidence: ["source_note:scene_source_test"],
               confidence: 0.9,
               salience: 0.7,
