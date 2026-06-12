@@ -1,6 +1,7 @@
 import {
   withMergedLtmScopeLinks,
   type ChatMode,
+  type LtmExtractionDraft,
   type LtmGate,
   type LtmMode,
   type LtmNote,
@@ -141,6 +142,17 @@ export function friendlySectionKey(key: string) {
   if (key === "summary") return "Summary";
   return sentenceCaseIdentifier(key);
 }
+
+export const isSourceMemoryDraft = (draft: LtmExtractionDraft) =>
+  draft.mutations.every(
+    (mutation) =>
+      mutation.kind === "create_note" &&
+      mutation.note.type === "scene" &&
+      mutation.note.tags.some((tag) => tag === "source_summary" || tag === "chat_summary"),
+  );
+
+export const isTypedSuggestionDraft = (draft: LtmExtractionDraft) =>
+  Boolean(draft.source.sourceNoteId) && !isSourceMemoryDraft(draft);
 
 export function friendlyInternalIdHelp(prefixes: readonly string[]) {
   return `Advanced: saved as an internal ID starting with ${prefixes.join(" or ")}.`;

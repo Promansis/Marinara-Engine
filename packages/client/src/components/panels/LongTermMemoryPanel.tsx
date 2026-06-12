@@ -3,7 +3,6 @@ import { toast } from "sonner";
 import {
   AlertTriangle,
   Archive,
-  BrainCircuit,
   ChevronDown,
   ChevronRight,
   Check,
@@ -37,7 +36,6 @@ import {
   useAcceptLongTermMemoryDraft,
   useArchiveLongTermMemoryNote,
   useDeleteLongTermMemoryNote,
-  useExtractLongTermMemorySourceNote,
   useImportLongTermMemorySourceNotes,
   useDeleteLongTermMemoryDraft,
   useLongTermMemoryDrafts,
@@ -52,7 +50,6 @@ import {
   useReplayLongTermMemory,
   useUpdateLongTermMemoryDraft,
   useUpdateLongTermMemoryNote,
-  type LtmExtractionDiagnostic,
   type UpdateLongTermMemoryDraftInput,
   type LtmInteropSource,
 } from "../../hooks/use-long-term-memory";
@@ -73,6 +70,7 @@ import {
   friendlyNoteType,
   friendlySectionKey,
   friendlyStatus,
+  isSourceMemoryDraft,
   sentenceCaseIdentifier,
 } from "../long-term-memory/ltm-editor-utils";
 import { SettingField } from "../long-term-memory/LtmFields";
@@ -761,39 +759,6 @@ function DraftMetadataPills({
   );
 }
 
-function ExtractionDiagnosticsList({ diagnostics }: { diagnostics: LtmExtractionDiagnostic[] }) {
-  if (diagnostics.length === 0) return null;
-  return (
-    <div className="space-y-2">
-      <div className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Last extraction diagnostics</div>
-      {diagnostics.map((diagnostic, index) => (
-        <div
-          key={`${diagnostic.severity}-${diagnostic.code}-${diagnostic.mutationId ?? diagnostic.noteId ?? index}`}
-          className={cn(
-            "rounded-lg p-3 text-xs ring-1",
-            diagnostic.severity === "error"
-              ? "bg-rose-500/10 text-rose-100 ring-rose-400/30"
-              : "bg-amber-500/10 text-amber-100 ring-amber-400/30",
-          )}
-        >
-          <div className="flex flex-wrap items-center gap-1.5 font-medium">
-            <StatusPill
-              label={diagnostic.severity === "error" ? "Error" : "Warning"}
-              tone={diagnostic.severity === "error" ? "bad" : "warn"}
-            />
-            <span>{diagnostic.code}</span>
-            {diagnostic.mutationId && (
-              <span className="text-[0.625rem] opacity-80">Mutation {diagnostic.mutationId}</span>
-            )}
-            {diagnostic.noteId && <span className="text-[0.625rem] opacity-80">Note {diagnostic.noteId}</span>}
-          </div>
-          <p className="mt-1 leading-relaxed opacity-90">{diagnostic.message}</p>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function GraphLinks({ links }: { links: LtmLink[] }) {
   if (links.length === 0) {
     return (
@@ -912,32 +877,14 @@ function NoteViewModalContent({
   note,
   activeNotes,
   activeNotesLoading,
-  drafts,
-  draftsLoading,
-  diagnostics,
-  onDiagnostics,
   onOpenSourceNote,
 }: {
   note: LtmNote;
   activeNotes: LtmNote[];
   activeNotesLoading: boolean;
-  drafts: LtmExtractionDraft[];
-  draftsLoading: boolean;
-  diagnostics: LtmExtractionDiagnostic[];
-  onDiagnostics: (noteId: string, diagnostics: LtmExtractionDiagnostic[]) => void;
   onOpenSourceNote?: (noteId: string) => void;
 }) {
-  const extractSourceNote = useExtractLongTermMemorySourceNote();
-  const [includeExistingNotes, setIncludeExistingNotes] = useState(true);
-  const [autoApplySafeChanges, setAutoApplySafeChanges] = useState(false);
   const isSourceNote = isSourceSummaryNote(note);
-  const extractedDrafts = drafts.filter((draft) => draft.source.sourceNoteId === note.id);
-  const extractedMutations = extractedDrafts.flatMap((draft) => draft.mutations);
-  const extractedLinks = extractedMutations.flatMap((mutation) => {
-    if (mutation.kind === "create_note") return mutation.note.links;
-    if (mutation.kind === "add_link") return [mutation.link];
-    return [];
-  });
 
   return (
     <div className="grid gap-4">
@@ -989,111 +936,6 @@ function NoteViewModalContent({
           onOpenNote={onOpenSourceNote}
         />
       )}
-
-      <section className="space-y-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-xs font-semibold text-[var(--foreground)]">Suggestions From This Memory</h3>
-          <div className="flex flex-wrap items-center gap-2">
-            <StatusPill
-              label={`${extractedMutations.length} suggested change${extractedMutations.length === 1 ? "" : "s"}`}
-            />
-            {isSourceNote && (
-              <ToolButton
-                onClick={() =>
-                  extractSourceNote
-                    .mutateAsync({
-                      noteId: note.id,
-                      includeExistingNotes,
-                      applyLowRisk: autoApplySafeChanges,
-                    })
-                    .then((result) => {
-                      onDiagnostics(note.id, result.diagnostics);
-                      const count = result.draft?.mutations.length ?? 0;
-                      const issueCount = result.diagnostics.length;
-                      toast.success(
-                        count
-                          ? `Created ${count} typed memory suggestion${count === 1 ? "" : "s"}${
-                              issueCount ? ` with ${issueCount} diagnostic${issueCount === 1 ? "" : "s"}` : ""
-                            }`
-                          : issueCount
-                            ? `No typed memories extracted, ${issueCount} diagnostic${issueCount === 1 ? "" : "s"}`
-                            : "No typed memories extracted",
-                      );
-                    })
-                    .catch((err: Error) => toast.error(err.message))
-                }
-                disabled={extractSourceNote.isPending}
-                tone="primary"
-              >
-                {extractSourceNote.isPending ? (
-                  <Loader2 size="0.875rem" className="animate-spin" />
-                ) : (
-                  <BrainCircuit size="0.875rem" />
-                )}
-                Extract typed memories
-              </ToolButton>
-            )}
-          </div>
-        </div>
-        {isSourceNote && (
-          <div className="grid gap-2 rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)] sm:grid-cols-2">
-            <SettingToggle
-              label="Include existing notes"
-              checked={includeExistingNotes}
-              disabled={extractSourceNote.isPending}
-              onChange={setIncludeExistingNotes}
-            />
-            <SettingToggle
-              label="Auto-apply safe changes"
-              checked={autoApplySafeChanges}
-              disabled={extractSourceNote.isPending}
-              onChange={setAutoApplySafeChanges}
-            />
-          </div>
-        )}
-        <ExtractionDiagnosticsList diagnostics={diagnostics} />
-        {draftsLoading ? (
-          <div className="flex items-center justify-center rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-3 text-xs text-[var(--muted-foreground)]">
-            <Loader2 className="mr-2 animate-spin" size="0.875rem" />
-            Loading suggestions...
-          </div>
-        ) : extractedDrafts.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-3 text-xs text-[var(--muted-foreground)]">
-            No typed memories extracted yet.
-          </p>
-        ) : (
-          <div className="space-y-3">
-            {extractedDrafts.map((draft) => (
-              <article key={draft.id} className="rounded-lg bg-[var(--card)] p-3 ring-1 ring-[var(--border)]">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <StatusPill label={draftStatusLabel(draft.status)} tone={draftStatusTone(draft.status)} />
-                  <StatusPill
-                    label={`${draft.mutations.length} suggested change${draft.mutations.length === 1 ? "" : "s"}`}
-                  />
-                  {draft.appliedMutationIds?.length ? (
-                    <StatusPill label={`${draft.appliedMutationIds.length} kept`} tone="good" />
-                  ) : null}
-                </div>
-                <DraftMetadataPills draft={draft} onOpenSourceNote={onOpenSourceNote} />
-                {draft.summary && <p className="mt-2 text-xs text-[var(--foreground)]">{draft.summary}</p>}
-                <div className="mt-3 space-y-2">
-                  {draft.mutations.map((mutation) => (
-                    <MutationPreview key={mutation.id} mutation={mutation} />
-                  ))}
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
-        {extractedLinks.length > 0 && (
-          <div className="space-y-2">
-            <div className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-              Related memories proposed by suggestions
-            </div>
-            <GraphLinks links={extractedLinks} />
-          </div>
-        )}
-      </section>
     </div>
   );
 }
@@ -1663,9 +1505,6 @@ export function LongTermMemoryPanel() {
   const [expandedSourceIds, setExpandedSourceIds] = useState<Set<string>>(() => new Set());
   const [viewingDraftId, setViewingDraftId] = useState<string | null>(null);
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
-  const [sourceExtractionDiagnostics, setSourceExtractionDiagnostics] = useState<
-    Record<string, LtmExtractionDiagnostic[]>
-  >({});
 
   const status = useLongTermMemoryStatus();
   const integrity = useLongTermMemoryIntegrity();
@@ -1712,7 +1551,7 @@ export function LongTermMemoryPanel() {
     [filteredNotes, noteType],
   );
 
-  const filteredDrafts = drafts.data ?? [];
+  const filteredDrafts = useMemo(() => (drafts.data ?? []).filter(isSourceMemoryDraft), [drafts.data]);
   const archivedDrafts = useMemo(
     () => (allDrafts.data ?? []).filter((draft) => draft.status !== "pending"),
     [allDrafts.data],
@@ -1861,10 +1700,6 @@ export function LongTermMemoryPanel() {
       else next.add(id);
       return next;
     });
-  };
-
-  const storeSourceDiagnostics = (noteId: string, diagnostics: LtmExtractionDiagnostic[]) => {
-    setSourceExtractionDiagnostics((current) => ({ ...current, [noteId]: diagnostics }));
   };
 
   const requestEditNote = (id: string) => {
@@ -2741,10 +2576,6 @@ export function LongTermMemoryPanel() {
             note={viewingNote}
             activeNotes={activeNotes.data ?? []}
             activeNotesLoading={activeNotes.isLoading}
-            drafts={allDrafts.data ?? []}
-            draftsLoading={allDrafts.isLoading}
-            diagnostics={sourceExtractionDiagnostics[viewingNote.id] ?? []}
-            onDiagnostics={storeSourceDiagnostics}
             onOpenSourceNote={openSourceNote}
           />
         )}

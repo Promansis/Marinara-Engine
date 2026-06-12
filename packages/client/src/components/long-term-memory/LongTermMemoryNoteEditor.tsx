@@ -22,6 +22,7 @@ import { useChatStore } from "../../stores/chat.store";
 import { FloatingMessageEditor } from "../chat/FloatingMessageEditor";
 import { compactInputClassName, SettingField, textareaClassName } from "./LtmFields";
 import { LtmScopePicker } from "./LtmScopePicker";
+import { LongTermMemorySuggestionsTab } from "./LongTermMemorySuggestionsTab";
 import { ToolButton } from "./LtmPills";
 import {
   editablePatchFromDraft,
@@ -88,6 +89,7 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
   const [tagsText, setTagsText] = useState(note.tags.join(", "));
   const [linkDraft, setLinkDraft] = useState<LtmLink>({ target: "", relation: "" });
   const [floatingSectionKey, setFloatingSectionKey] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"details" | "suggestions">("details");
   const updateNote = useUpdateLongTermMemoryNote();
   const archiveNote = useArchiveLongTermMemoryNote();
   const applyScopeToDerived = useApplyLongTermMemoryScopeToDerived();
@@ -289,6 +291,31 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
         )}
       </div>
 
+      <div className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--background)]/95 p-1">
+        {(["details", "suggestions"] as const).map((tab) => {
+          const disabled = tab === "suggestions" && !sourceMemory;
+          return (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => !disabled && setActiveTab(tab)}
+              disabled={disabled}
+              className={cn(
+                "rounded-lg px-2 py-1.5 text-xs font-medium transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45",
+                activeTab === tab
+                  ? "bg-rose-300/15 text-[var(--foreground)] ring-1 ring-rose-300/30"
+                  : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+              )}
+            >
+              {tab === "details" ? "Details" : "Suggestions"}
+            </button>
+          );
+        })}
+      </div>
+
+      {activeTab === "suggestions" && <LongTermMemorySuggestionsTab note={savedBaseline} />}
+
+      {activeTab === "details" && (
       <div className="grid gap-3">
         <div className="grid gap-2 sm:grid-cols-2">
           <SettingField label="Status">
@@ -621,6 +648,7 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
           </ToolButton>
         </div>
       </div>
+      )}
     </div>
   );
 }
