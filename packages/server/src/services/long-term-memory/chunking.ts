@@ -20,6 +20,7 @@ export interface LtmMemoryChunk {
 export interface ChunkLtmNotesOptions {
   includeSourceNotes?: boolean;
   sourceNotesOnly?: boolean;
+  includeArchived?: boolean;
 }
 
 const LEGACY_LABEL_SUFFIX_PATTERN = /\n{2,}\[note:[^\n]*\]\s*$/;
@@ -87,6 +88,7 @@ export function chunkNotes(notes: LtmNote[], options: ChunkLtmNotesOptions = {})
   return notes
     .slice()
     .filter((note) => {
+      if (!options.includeArchived && note.status === "archived") return false;
       const isSource = isLtmSourceSummaryNote(note);
       if (options.sourceNotesOnly) return isSource;
       return options.includeSourceNotes === true || !isSource;

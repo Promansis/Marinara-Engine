@@ -50,6 +50,7 @@ export function getLtmSourceNoteText(note: LtmNote) {
 
 async function getExistingTypedNotes(options: {
   storage: LongTermMemoryStorage;
+  sourceNoteId: string;
   sourceText: string;
   scope: LtmScope;
   includeExistingNotes: boolean;
@@ -71,7 +72,9 @@ async function getExistingTypedNotes(options: {
   const notes = await Promise.all(noteIds.map((noteId) => options.storage.getNote(noteId)));
   return notes.filter((note): note is LtmNote => {
     if (!note) return false;
-    return !isLtmSourceNote(note);
+    if (note.status === "archived") return false;
+    if (isLtmSourceNote(note)) return false;
+    return note.links.some((link) => link.relation === "extracted_from" && link.target === options.sourceNoteId);
   });
 }
 
@@ -138,6 +141,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
   });
   const existingNotes = await getExistingTypedNotes({
     storage,
+    sourceNoteId: sourceNote.id,
     sourceText,
     scope,
     includeExistingNotes: options.includeExistingNotes !== false,

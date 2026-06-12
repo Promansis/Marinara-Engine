@@ -579,6 +579,101 @@ test("source note extraction applies saved extraction config to llm request", as
   }
 });
 
+test("source note extraction ignores typed notes derived from another source reimport", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-source-reimport-filter-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    const sourceText = "Kiseki Academy floats above the old city and keeps moonlit archives.";
+    await storage.createNote(
+      {
+        id: "scene_source_original",
+        type: "scene",
+        status: "dormant",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: sourceText,
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "scene_source_reimport",
+        type: "scene",
+        status: "dormant",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: sourceText,
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "world_kiseki_academy",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [{ target: "scene_source_original", relation: "extracted_from" }],
+        sections: {
+          facts: {
+            text: "Kiseki Academy is a floating school with moonlit archives.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_original"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await rebuildLongTermMemoryIndexes({
+      root,
+      localEmbedder: async (texts) => texts.map(() => [1]),
+    });
+
+    let messages: Array<{ role: string; content: string }> = [];
+    const provider = {
+      maxTokensOverrideValue: undefined,
+      chatComplete: async (nextMessages: Array<{ role: string; content: string }>) => {
+        messages = nextMessages;
+        return { content: JSON.stringify({ summary: "No units", units: [] }) };
+      },
+    } as any;
+
+    await extractLongTermMemoryFromSourceNote({
+      noteId: "scene_source_reimport",
+      provider,
+      model: "test-model",
+      root,
+      operationId: randomUUID(),
+      embeddingSource: {
+        label: "test",
+        embed: async (texts) => texts.map(() => [1]),
+      },
+    });
+
+    const userPayload = JSON.parse(messages.find((message) => message.role === "user")!.content);
+    assert.equal(userPayload.existingTypedNotes, "(no relevant typed notes)");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("evidence unit extraction normalizes non-uuid model ids", async () => {
   const sourceNote: LtmNote = {
     id: "scene_source_test",
@@ -1046,6 +1141,34 @@ test("source notes are excluded from normal chunks and kept for source audit chu
   );
 });
 
+test("archived notes are excluded from long-term memory chunks", () => {
+  const archivedNote: LtmNote = {
+    id: "world_kiseki_academy",
+    type: "world",
+    status: "archived",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["typed_memory"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      facts: {
+        text: "Archived academy lore should not be recalled.",
+        updatedAt: timestamp,
+        evidence: ["source_note:scene_old"],
+      },
+    },
+    version: 1,
+  };
+
+  assert.deepEqual(chunkNotes([archivedNote]), []);
+  assert.deepEqual(
+    chunkNotes([archivedNote], { includeArchived: true }).map((chunk) => chunk.noteId),
+    ["world_kiseki_academy"],
+  );
+});
+
 test("evidence unit compiler maps buckets to typed memory draft mutations", () => {
   const cases: Array<[LtmEvidenceUnit["bucket"], string, string]> = [
     ["character_fact", "char_mara", "character"],
@@ -1288,6 +1411,86 @@ test("source extraction drafts can create typed current scene notes", async () =
     assert.equal(created?.type, "scene");
     assert.deepEqual(created?.tags, ["typed_memory", "current_scene"]);
     assert.equal(created?.sections.current_state?.text, "Mara and Jules stand inside the tower archive.");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source extraction drafts replace archived typed notes with matching ids", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-archived-replace-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "scene_source_test",
+        type: "scene",
+        status: "dormant",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Kiseki Academy is a floating school above the old city.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "world_kiseki_academy",
+        type: "world",
+        status: "archived",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: {
+            text: "Old archived academy lore.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_old"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const response = compileLtmEvidenceUnits({
+      units: [
+        evidenceUnit("world_fact", {
+          subjectId: "kiseki_academy",
+          sectionKey: "facts",
+          text: "Kiseki Academy is a floating school above the old city.",
+        }),
+      ],
+      existingNotes: [],
+      scope: {},
+      modes: ["roleplay"],
+      createdAt: timestamp,
+    });
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      userMessage: "Kiseki Academy is a floating school above the old city.",
+      assistantReply: "",
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_source_test", sourceHash },
+      response,
+    });
+
+    await applyLongTermMemoryDraft(draft.id, {
+      root,
+      actor: "test",
+      rebuildIndexes: false,
+    });
+
+    const replaced = await storage.getNote("world_kiseki_academy");
+    assert.equal(replaced?.status, "active");
+    assert.equal(replaced?.sections.facts?.text, "Kiseki Academy is a floating school above the old city.");
+    assert(replaced?.links.some((link) => link.target === "scene_source_test" && link.relation === "extracted_from"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
