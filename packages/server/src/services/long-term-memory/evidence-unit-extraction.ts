@@ -131,7 +131,7 @@ function extractJsonObject(text: string) {
   return start >= 0 && end > start ? trimmed.slice(start, end + 1) : trimmed;
 }
 
-function normalizeEvidenceUnitResponse(raw: unknown): unknown {
+function normalizeEvidenceUnitResponse(raw: unknown, expectedSourceHash: string): unknown {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
   const parsed = raw as Record<string, unknown>;
   const units = Array.isArray(parsed.units) ? parsed.units : [];
@@ -144,6 +144,7 @@ function normalizeEvidenceUnitResponse(raw: unknown): unknown {
       return {
         ...record,
         id: /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) ? id : randomUUID(),
+        sourceHash: expectedSourceHash,
       };
     }),
   };
@@ -196,7 +197,7 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
           gates: "allowed gates when needed, otherwise []",
           links: "real links only, otherwise []",
           mergeHint: "optional evidence-backed compiler note only",
-          sourceHash: "exact supplied sourceHash",
+          sourceHash: options.sourceHash,
         },
         allowedBuckets: ltmEvidenceUnitBucketSchema.options,
         allowedStatuses: ltmEvidenceUnitStatusSchema.options,
@@ -304,7 +305,7 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
     if (!content) return ltmEvidenceUnitExtractionResponseSchema.parse({ summary: "", units: [] });
     try {
       const parsed = ltmEvidenceUnitExtractionResponseSchema.parse(
-        normalizeEvidenceUnitResponse(JSON.parse(extractJsonObject(content))),
+        normalizeEvidenceUnitResponse(JSON.parse(extractJsonObject(content)), options.sourceHash),
       );
       await recordLtmDebugEvent({
         operationId: options.operationId,

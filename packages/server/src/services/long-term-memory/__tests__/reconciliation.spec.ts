@@ -674,7 +674,7 @@ test("source note extraction ignores typed notes derived from another source rei
   }
 });
 
-test("evidence unit extraction normalizes non-uuid model ids", async () => {
+test("evidence unit extraction normalizes model-owned ids and source hashes", async () => {
   const sourceNote: LtmNote = {
     id: "scene_source_test",
     type: "scene",
@@ -727,7 +727,7 @@ test("evidence unit extraction normalizes non-uuid model ids", async () => {
             status: "active",
             gates: [],
             links: [],
-            sourceHash,
+            sourceHash: "exact supplied sourceHash",
           },
         ],
       }),
@@ -748,6 +748,7 @@ test("evidence unit extraction normalizes non-uuid model ids", async () => {
   assert.equal(result.units.length, 2);
   for (const unit of result.units) {
     assert.match(unit.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    assert.equal(unit.sourceHash, sourceHash);
   }
 });
 
@@ -821,6 +822,7 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
   });
   assert.equal(userPayload.unitFields.bucket, "one allowedBuckets value");
   assert.equal(userPayload.unitFields.links, "real links only, otherwise []");
+  assert.equal(userPayload.unitFields.sourceHash, sourceHash);
   assert.deepEqual(userPayload.bucketScanOrder.slice(0, 4), [
     "relationship_event",
     "relationship_state",
