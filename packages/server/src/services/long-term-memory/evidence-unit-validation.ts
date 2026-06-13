@@ -2,11 +2,7 @@ import type { LtmEvidenceUnit, LtmGate, LtmNote } from "@marinara-engine/shared"
 import { type LtmExtractionDiagnostic } from "./validation.js";
 
 const DIALOGUE_BUCKETS = new Set<LtmEvidenceUnit["bucket"]>(["voice", "tone"]);
-const RISK_BUCKETS = new Set<LtmEvidenceUnit["bucket"]>([
-  "boundary",
-  "preference",
-  "relationship_conflict",
-]);
+const RISK_BUCKETS = new Set<LtmEvidenceUnit["bucket"]>(["relationship_conflict"]);
 const GATED_WORDS: Array<{ gate: LtmGate; pattern: RegExp }> = [
   { gate: "spoiler", pattern: /\b(spoiler|twist|reveal|secret ending)\b/i },
   { gate: "character_secret", pattern: /\b(secret|unknown to|hiding|concealed|private knowledge)\b/i },
@@ -64,7 +60,7 @@ export function riskForEvidenceUnit(unit: LtmEvidenceUnit): "low" | "medium" | "
     return "high";
   }
   if (RISK_BUCKETS.has(unit.bucket) || unit.gates.length > 0) return "medium";
-  if (unit.bucket === "current_scene" || unit.bucket === "relationship_state" || unit.bucket === "character_state") {
+  if (unit.bucket === "relationship_state" || unit.bucket === "character_state") {
     return "medium";
   }
   return "low";
@@ -267,10 +263,7 @@ export function noteIdForEvidenceUnit(unit: Pick<LtmEvidenceUnit, "bucket" | "su
   if (unit.bucket === "thread") return prefixed("thread", unit.subjectId);
   if (unit.bucket === "world_fact") return prefixed("world", unit.subjectId);
   if (unit.bucket === "voice") return prefixed("voice", unit.subjectId);
-  if (unit.bucket === "tone" || unit.bucket === "boundary" || unit.bucket === "preference") {
-    return prefixed("tone", unit.subjectId);
-  }
-  if (unit.bucket === "current_scene") return prefixed("scene", unit.subjectId);
+  if (unit.bucket === "tone") return prefixed("tone", unit.subjectId);
   if (unit.bucket.startsWith("relationship_")) return prefixed("rel", unit.subjectId);
   if (unit.bucket === "anchor") return noteIdForAnchor(unit.subjectId, unit.sectionKey);
   return prefixed("char", unit.subjectId);

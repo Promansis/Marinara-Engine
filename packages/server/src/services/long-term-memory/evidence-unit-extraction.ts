@@ -31,7 +31,7 @@ export const DEFAULT_LTM_EXTRACTION_PROMPT = [
   "Extract every distinct durable memory unit supported by the source.",
   "Emit zero or more units per bucket. Do not stop after the first valid unit.",
   "Prefer several compact units over one blended paragraph.",
-  "Scan bucket groups explicitly: relationships (relationship_event, relationship_state, relationship_arc, relationship_conflict); scene state (current_scene); open loops (thread, callback); character and world facts (character_fact, character_state, world_fact); style and boundaries (voice, tone, anchor, boundary, preference).",
+  "Scan bucket groups explicitly: relationships (relationship_event, relationship_state, relationship_conflict); open loops (thread, callback); character and world facts (character_fact, character_state, world_fact); style and motifs (voice, tone, anchor).",
   "Each unit must be compact, typed, and useful for future continuity.",
   "Every unit must include at least one supplied evidence string, including source_note:<id>.",
   "Use real lowercase snake_case subjectId and sectionKey values derived from the source.",
@@ -42,7 +42,7 @@ export const DEFAULT_LTM_EXTRACTION_PROMPT = [
   "Set confidence and salience from 0 to 1.",
   "Mark spoilers, character secrets, private knowledge, and NSFW content with gates.",
   "For voice/tone quotes, quote only exact text present in the source.",
-  "Use current_scene only for the current transient scene state, not the source note.",
+  "Do not emit current scene, relationship arc, boundary, or preference memories from source-summary extraction.",
   "For enum fields, choose exactly one string from the allowed arrays. Do not join multiple values with |.",
 ].join("\n");
 export const DEFAULT_LTM_EXTRACTION_REASONING_EFFORT = "low" satisfies NonNullable<ChatOptions["reasoningEffort"]>;
@@ -53,9 +53,7 @@ export const DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS = 12_000;
 const LTM_EXTRACTION_BUCKET_SCAN_ORDER = [
   "relationship_event",
   "relationship_state",
-  "relationship_arc",
   "relationship_conflict",
-  "current_scene",
   "thread",
   "callback",
   "character_fact",
@@ -64,8 +62,6 @@ const LTM_EXTRACTION_BUCKET_SCAN_ORDER = [
   "voice",
   "tone",
   "anchor",
-  "boundary",
-  "preference",
 ] as const;
 
 export interface RunLongTermMemoryEvidenceUnitExtractionOptions {
@@ -208,17 +204,13 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
           character_state: "current character condition, aim, mood, capability, or position",
           relationship_event: "evidence-backed relationship history item",
           relationship_state: "current reduced relationship state",
-          relationship_arc: "compressed trajectory across events",
           relationship_conflict: "unresolved contradiction or instability",
           world_fact: "stable world/lore fact",
           thread: "unresolved situation, question, tension, or goal",
           callback: "setup expected to pay off later",
-          current_scene: "current transient scene state",
           voice: "speaker style, phrases, mannerisms",
           tone: "durable tone or scene tone",
           anchor: "recurring motif/anchor",
-          boundary: "hard user/character boundary",
-          preference: "preference useful for future generation",
         },
         sourceNote: {
           id: options.sourceNote.id,

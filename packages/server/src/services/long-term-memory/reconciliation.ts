@@ -70,16 +70,6 @@ function withSourceLink(noteId: string, links: LtmLink[], draft: LtmExtractionDr
   return uniqueLinks([...links, sourceLink]);
 }
 
-function isCurrentSceneTypedNote(note: Pick<LtmNote, "type" | "tags">) {
-  return (
-    note.type === "scene" &&
-    note.tags.includes("typed_memory") &&
-    note.tags.includes("current_scene") &&
-    !note.tags.includes("source_summary") &&
-    !note.tags.includes("chat_summary")
-  );
-}
-
 async function preflightDraftMutations(
   storage: LongTermMemoryStorage,
   draft: LtmExtractionDraft,
@@ -96,7 +86,7 @@ async function preflightDraftMutations(
         (mutation.note.tags.includes("source_summary") ||
           mutation.note.tags.includes("chat_summary") ||
           mutation.note.type === "source" ||
-          (mutation.note.type === "scene" && !isCurrentSceneTypedNote(mutation.note)))
+          mutation.note.type === "scene")
       ) {
         throw new Error(
           `Long-term memory source extraction draft cannot create scene/source notes: ${mutation.note.id}`,
@@ -110,7 +100,7 @@ async function preflightDraftMutations(
     }
     if (sourceExtractionDraft && (mutation.noteId.startsWith("source_") || mutation.noteId.startsWith("scene_"))) {
       const existing = await storage.getNote(mutation.noteId);
-      if (!existing || existing.type === "source" || !isCurrentSceneTypedNote(existing)) {
+      if (!existing || existing.type === "source" || existing.type === "scene") {
         throw new Error(
           `Long-term memory source extraction draft cannot mutate scene/source notes: ${mutation.noteId}`,
         );

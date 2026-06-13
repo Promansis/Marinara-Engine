@@ -416,9 +416,7 @@ function alwaysLane(
 
   for (const chunk of Object.values(metadata.chunks)) {
     if (
-      (chunk.noteType === "tone" ||
-        chunk.noteType === "voice" ||
-        (chunk.noteType === "scene" && chunk.tags.includes("current_scene"))) &&
+      (chunk.noteType === "tone" || chunk.noteType === "voice") &&
       candidateAllowed(chunk, input, config, characterIds)
     ) {
       items.push({ chunkId: chunk.id, reason: `always:${chunk.noteType}`, rawScore: 0.8 });
@@ -439,12 +437,6 @@ function typedPriorityLane(
       if (!candidateAllowed(chunk, input, config, characterIds)) return [];
       if (chunk.noteType === "relationship" && chunk.sectionKey === "state") {
         return [{ chunkId: chunk.id, reason: "priority:relationship_state", rawScore: 0.95 }];
-      }
-      if (chunk.noteType === "relationship" && chunk.sectionKey === "arc") {
-        return [{ chunkId: chunk.id, reason: "priority:relationship_arc", rawScore: 0.9 }];
-      }
-      if (chunk.noteType === "scene" && chunk.tags.includes("current_scene")) {
-        return [{ chunkId: chunk.id, reason: "priority:current_scene", rawScore: 0.9 }];
       }
       return [];
     })

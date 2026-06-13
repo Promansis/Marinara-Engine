@@ -30,7 +30,7 @@ const FACET_WORDS: Record<LtmRelationshipFacetName, RegExp> = {
 
 export function reduceRelationshipEvidenceUnits(units: LtmEvidenceUnit[]): LtmRelationshipReduction {
   const relationshipUnits = units
-    .filter((unit) => unit.bucket === "relationship_event" || unit.bucket === "relationship_state" || unit.bucket === "relationship_arc")
+    .filter((unit) => unit.bucket === "relationship_event" || unit.bucket === "relationship_state")
     .sort((a, b) => a.sectionKey.localeCompare(b.sectionKey) || a.id.localeCompare(b.id));
   const scores: Record<LtmRelationshipFacetName, number> = {
     trust: 0,

@@ -183,12 +183,7 @@ function targetForUnit(unit: LtmEvidenceUnit): UnitTarget {
   if (unit.bucket === "callback") return { ...base, noteType: "callback", tags: ["typed_memory"] };
   if (unit.bucket === "world_fact") return { ...base, noteType: "world", tags: ["typed_memory"] };
   if (unit.bucket === "voice") return { ...base, noteType: "voice", tags: ["typed_memory"] };
-  if (unit.bucket === "tone" || unit.bucket === "boundary" || unit.bucket === "preference") {
-    return { ...base, noteType: "tone", tags: ["typed_memory"] };
-  }
-  if (unit.bucket === "current_scene") {
-    return { ...base, noteType: "scene", tags: ["typed_memory", "current_scene"] };
-  }
+  if (unit.bucket === "tone") return { ...base, noteType: "tone", tags: ["typed_memory"] };
   if (unit.bucket === "anchor") {
     const noteType: LtmNoteType = noteId.startsWith("tone_") ? "tone" : noteId.startsWith("cb_") ? "callback" : "world";
     return { ...base, noteType, tags: ["typed_memory", "anchor"] };
@@ -238,8 +233,7 @@ function sectionsForUnits(units: LtmEvidenceUnit[], existing: LtmNote | undefine
 function sectionKeyForUnit(unit: LtmEvidenceUnit) {
   if (unit.bucket === "relationship_event") return "history";
   if (unit.bucket === "relationship_state") return "state";
-  if (unit.bucket === "relationship_arc") return "arc";
-  if (unit.bucket === "character_state" || unit.bucket === "current_scene") return "current_state";
+  if (unit.bucket === "character_state") return "current_state";
   if (unit.bucket === "character_fact") return unit.sectionKey || "facts";
   return unit.sectionKey;
 }

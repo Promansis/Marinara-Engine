@@ -24,17 +24,13 @@ export const ltmEvidenceUnitBucketSchema = z.enum([
   "character_state",
   "relationship_event",
   "relationship_state",
-  "relationship_arc",
   "relationship_conflict",
   "world_fact",
   "thread",
   "callback",
-  "current_scene",
   "voice",
   "tone",
   "anchor",
-  "boundary",
-  "preference",
 ]);
 
 export const ltmModeSchema = z.enum(["roleplay", "conversation", "game", "visual_novel"]);
