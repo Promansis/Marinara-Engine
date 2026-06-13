@@ -53,6 +53,8 @@ const LTM_BUCKET_LIFECYCLE: Record<LtmEvidenceUnit["bucket"], LtmCompilerLifecyc
   anchor: "cumulative",
 };
 
+const CUMULATIVE_LINE_PATTERN = /^-\s*(?<text>.*?)(?:\s*\[evidence:(?<evidence>[^\]]*)\])?$/;
+
 export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions): LtmExtractionResponse {
   const timestamp = options.createdAt ?? new Date().toISOString();
   const existingById = new Map(options.existingNotes.map((note) => [note.id, note]));
@@ -236,6 +238,7 @@ function targetForUnit(unit: LtmEvidenceUnit): UnitTarget {
 }
 
 function statusForUnit(unit: LtmEvidenceUnit): LtmStatus {
+  if (isResolvedLoopUnit(unit)) return "archived";
   if (unit.status === "developing") return "active";
   return unit.status;
 }
@@ -268,7 +271,12 @@ function sectionsForUnits(units: LtmEvidenceUnit[], existing: LtmNote | undefine
 
   const relationshipUnits = units.filter((unit) => unit.bucket.startsWith("relationship_"));
   if (relationshipUnits.some((unit) => unit.bucket === "relationship_event" || unit.bucket === "relationship_state")) {
-    const reduction = reduceRelationshipEvidenceUnits(relationshipUnits);
+    const reduction = reduceRelationshipEvidenceUnits([
+      ...relationshipUnitsFromExistingNote(existing),
+      ...relationshipUnits.filter(
+        (unit) => unit.bucket === "relationship_event" || unit.bucket === "relationship_state",
+      ),
+    ]);
     const existingState = existing?.sections.state;
     sections.state = {
       text: formatRelationshipReduction(reduction),
@@ -286,6 +294,85 @@ function sectionsForUnits(units: LtmEvidenceUnit[], existing: LtmNote | undefine
     };
   }
 
+  const voiceUnits = units.filter((unit) => unit.bucket === "voice");
+  if (voiceUnits.length > 0) {
+    const existingExamples = examplesFromSection(existing?.sections.examples?.text);
+    const incomingExamples = uniqueStrings(voiceUnits.map((unit) => unit.text.trim()).filter(Boolean));
+    const examples = uniqueStrings([...existingExamples, ...incomingExamples]).slice(-8);
+    const sectionExamples = existing
+      ? incomingExamples.filter((example) => !existingExamples.includes(example))
+      : examples;
+    const evidence = uniqueStrings([
+      ...(existing?.sections.profile?.evidence ?? []),
+      ...(existing?.sections.examples?.evidence ?? []),
+      ...voiceUnits.flatMap((unit) => unit.evidence),
+    ]).slice(0, 100);
+    const gates = uniqueStrings([
+      ...(existing?.sections.profile?.gates ?? []),
+      ...(existing?.sections.examples?.gates ?? []),
+      ...voiceUnits.flatMap((unit) => unit.gates),
+    ]) as LtmSection["gates"];
+    if (sectionExamples.length > 0 || !existing?.sections.examples) {
+      sections.examples = {
+        text: sectionExamples.map((example) => `- ${example}`).join("\n"),
+        updatedAt: timestamp,
+        salience: Math.max(existing?.sections.examples?.salience ?? 0, ...voiceUnits.map((unit) => unit.salience)),
+        confidence: Math.max(
+          existing?.sections.examples?.confidence ?? 0,
+          ...voiceUnits.map((unit) => unit.confidence),
+        ),
+        evidence,
+        gates,
+      };
+    } else {
+      delete sections.examples;
+    }
+    sections.profile = {
+      text: deriveVoiceProfile(examples),
+      updatedAt: timestamp,
+      salience: Math.max(existing?.sections.profile?.salience ?? 0, ...voiceUnits.map((unit) => unit.salience)),
+      confidence: Math.max(existing?.sections.profile?.confidence ?? 0, ...voiceUnits.map((unit) => unit.confidence)),
+      evidence,
+      gates,
+    };
+  }
+
+  const toneUnits = units.filter((unit) => unit.bucket === "tone");
+  if (toneUnits.length > 0) {
+    const existingObservations = examplesFromSection(existing?.sections.observations?.text);
+    const incomingObservations = uniqueStrings(toneUnits.map((unit) => unit.text.trim()).filter(Boolean));
+    const observations = uniqueStrings([...existingObservations, ...incomingObservations]).slice(-8);
+    const evidence = uniqueStrings([
+      ...(existing?.sections.profile?.evidence ?? []),
+      ...(existing?.sections.observations?.evidence ?? []),
+      ...toneUnits.flatMap((unit) => unit.evidence),
+    ]).slice(0, 100);
+    const gates = uniqueStrings([
+      ...(existing?.sections.profile?.gates ?? []),
+      ...(existing?.sections.observations?.gates ?? []),
+      ...toneUnits.flatMap((unit) => unit.gates),
+    ]) as LtmSection["gates"];
+    sections.observations = {
+      text: observations.map((observation) => `- ${observation}`).join("\n"),
+      updatedAt: timestamp,
+      salience: Math.max(existing?.sections.observations?.salience ?? 0, ...toneUnits.map((unit) => unit.salience)),
+      confidence: Math.max(
+        existing?.sections.observations?.confidence ?? 0,
+        ...toneUnits.map((unit) => unit.confidence),
+      ),
+      evidence,
+      gates,
+    };
+    sections.profile = {
+      text: deriveToneProfile(observations),
+      updatedAt: timestamp,
+      salience: Math.max(existing?.sections.profile?.salience ?? 0, ...toneUnits.map((unit) => unit.salience)),
+      confidence: Math.max(existing?.sections.profile?.confidence ?? 0, ...toneUnits.map((unit) => unit.confidence)),
+      evidence,
+      gates,
+    };
+  }
+
   return sections;
 }
 
@@ -295,6 +382,9 @@ function sectionKeyForUnit(unit: LtmEvidenceUnit) {
   if (unit.bucket === "relationship_state") return "state";
   if (unit.bucket === "character_state") return "current_state";
   if (unit.bucket === "character_fact") return unit.sectionKey || "facts";
+  if (unit.bucket === "voice") return "examples";
+  if (unit.bucket === "tone") return "observations";
+  if ((unit.bucket === "thread" || unit.bucket === "callback") && unit.status === "resolved") return "summary";
   return unit.sectionKey;
 }
 
@@ -307,6 +397,72 @@ function mergeSectionText(existing: string | undefined, incoming: string, append
   if (!append) return incoming.trim();
   if (existing.includes(incoming.trim())) return existing.trim();
   return `${existing.trim()}\n${incoming.trim()}`;
+}
+
+function relationshipUnitsFromExistingNote(existing: LtmNote | undefined): LtmEvidenceUnit[] {
+  if (!existing || existing.type !== "relationship") return [];
+  const history = existing.sections.history?.text;
+  if (!history?.trim()) return [];
+
+  const units: LtmEvidenceUnit[] = [];
+  for (const [index, line] of history.split(/\r?\n+/).entries()) {
+    const parsed = parseCumulativeLine(line);
+    if (!parsed?.text) continue;
+    units.push({
+      id: randomUUID(),
+      bucket: "relationship_event",
+      subjectId: existing.id.replace(/^rel_/, ""),
+      sectionKey: `existing_${String(index).padStart(4, "0")}`,
+      text: parsed.text,
+      evidence: parsed.evidence.length
+        ? parsed.evidence
+        : (existing.sections.history?.evidence ?? ["existing_history"]),
+      confidence: existing.sections.history?.confidence ?? 0.6,
+      salience: existing.sections.history?.salience ?? 0.6,
+      status: existing.status === "dormant" ? "active" : existing.status,
+      gates: existing.sections.history?.gates ?? [],
+      links: [],
+      sourceHash: "0".repeat(64),
+    });
+  }
+  return units;
+}
+
+function parseCumulativeLine(line: string) {
+  const match = line.trim().match(CUMULATIVE_LINE_PATTERN);
+  if (!match?.groups) return null;
+  return {
+    text: match.groups.text?.trim() ?? "",
+    evidence: uniqueStrings((match.groups.evidence ?? "").split(",").map((item) => item.trim())),
+  };
+}
+
+function examplesFromSection(text: string | undefined) {
+  if (!text?.trim()) return [];
+  return text
+    .split(/\r?\n+/)
+    .map((line) => line.trim().replace(/^-\s*/, ""))
+    .filter(Boolean);
+}
+
+function deriveVoiceProfile(examples: string[]) {
+  const sample = examples.slice(-3).map(compactProfileFragment).join("; ");
+  return sample
+    ? `Voice profile: ${sample}.`
+    : "Voice profile: keep responses concise and consistent with established speech examples.";
+}
+
+function deriveToneProfile(observations: string[]) {
+  const sample = observations.slice(-3).map(compactProfileFragment).join("; ");
+  return sample ? `Tone profile: ${sample}.` : "Tone profile: keep the established tone consistent.";
+}
+
+function compactProfileFragment(text: string) {
+  return text
+    .replace(/\s+/g, " ")
+    .replace(/^["']|["']$/g, "")
+    .trim()
+    .slice(0, 180);
 }
 
 function lifecycleForSection(units: LtmEvidenceUnit[], sectionKey: string): LtmCompilerLifecycle {
@@ -336,6 +492,7 @@ function isHighRiskOverwrite(units: LtmEvidenceUnit[], sectionKey: string) {
 
 function statusForUnits(units: LtmEvidenceUnit[]) {
   if (units.some((unit) => unit.status === "archived")) return "archived";
+  if (units.some(isResolvedLoopUnit)) return "archived";
   if (units.some((unit) => unit.status === "resolved")) return "resolved";
   if (units.some((unit) => unit.status === "active" || unit.status === "developing")) return "active";
   return "dormant";
@@ -343,8 +500,11 @@ function statusForUnits(units: LtmEvidenceUnit[]) {
 
 function shouldSetStatus(units: LtmEvidenceUnit[], existingStatus: LtmStatus, nextStatus: LtmStatus) {
   if (existingStatus === "archived") return false;
-  if (nextStatus === "archived") return false;
   return units.some((unit) => LTM_BUCKET_LIFECYCLE[unit.bucket] === "rolling_until_resolved");
+}
+
+function isResolvedLoopUnit(unit: LtmEvidenceUnit) {
+  return (unit.bucket === "thread" || unit.bucket === "callback") && unit.status === "resolved";
 }
 
 function maxRisk(risks: LtmDraftRisk[]): LtmDraftRisk {

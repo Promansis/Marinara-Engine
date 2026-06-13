@@ -243,7 +243,7 @@ test("source extraction low-risk policy blocks secret callback auto-apply", () =
   );
 });
 
-test("source extraction auto-apply leaves resolved memory status pending with content update", async () => {
+test("source extraction auto-apply leaves archived resolved memory status pending with content update", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-resolved-status-pending-"));
   try {
     const storage = new LongTermMemoryStorage(root);
@@ -303,6 +303,7 @@ test("source extraction auto-apply leaves resolved memory status pending with co
     });
     const statusMutation = response.mutations.find((mutation) => mutation.kind === "set_status");
     assert(statusMutation);
+    assert.equal(statusMutation.kind === "set_status" ? statusMutation.status : undefined, "archived");
     assert.equal(isLowRiskSourceExtractionMutation(statusMutation), false);
 
     const draft = await new LongTermMemoryDraftStore(root).createDraft({
@@ -1664,16 +1665,158 @@ test("evidence unit compiler applies explicit bucket lifecycle rules", () => {
       (mutation) =>
         mutation.kind === "update_section" &&
         mutation.noteId === "cb_lantern" &&
-        mutation.sectionKey === "setup" &&
+        mutation.sectionKey === "summary" &&
         mutation.section.text === "The lantern hum paid off when it revealed the archive door.",
     ),
   );
   assert(
     response.mutations.some(
       (mutation) =>
-        mutation.kind === "set_status" && mutation.noteId === "cb_lantern" && mutation.status === "resolved",
+        mutation.kind === "set_status" && mutation.noteId === "cb_lantern" && mutation.status === "archived",
     ),
   );
+});
+
+test("evidence unit compiler derives relationship state from existing history plus new events", () => {
+  const existingRelationship: LtmNote = {
+    id: "rel_mara_jules",
+    type: "relationship",
+    status: "active",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["typed_memory", "relationship_memory"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      history: {
+        text: "- Mara argued with Jules after the archive betrayal. [evidence:source_note:scene_old]",
+        updatedAt: timestamp,
+        evidence: ["source_note:scene_old"],
+        confidence: 0.9,
+        salience: 1,
+      },
+      state: {
+        text: "Current relationship state: trust: low; tension: medium. Trajectory: strained_with_unresolved_conflict.",
+        updatedAt: timestamp,
+        evidence: ["source_note:scene_old"],
+      },
+    },
+    version: 1,
+  };
+
+  const response = compileLtmEvidenceUnits({
+    units: [
+      evidenceUnit("relationship_event", {
+        subjectId: "mara_jules",
+        sectionKey: "history",
+        text: "Mara trusts Jules again when he protects her and returns the tower archive key.",
+        salience: 1,
+      }),
+    ],
+    existingNotes: [existingRelationship],
+    scope: {},
+    modes: ["roleplay"],
+    createdAt: timestamp,
+  });
+
+  const state = response.mutations.find(
+    (mutation) =>
+      mutation.kind === "update_section" && mutation.noteId === "rel_mara_jules" && mutation.sectionKey === "state",
+  );
+  assert(state?.kind === "update_section");
+  assert.match(state.section.text, /trust: medium/);
+  assert.match(state.section.text, /tension: medium/);
+  assert.match(state.section.text, /existing_0000:source_note:scene_old/);
+});
+
+test("evidence unit compiler derives voice and tone profiles from raw observations", () => {
+  const existingVoice: LtmNote = {
+    id: "voice_mara",
+    type: "voice",
+    status: "active",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["typed_memory"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      examples: {
+        text: "- Uses dry, clipped understatement when anxious.",
+        updatedAt: timestamp,
+        evidence: ["source_note:scene_old"],
+      },
+    },
+    version: 1,
+  };
+
+  const voiceResponse = compileLtmEvidenceUnits({
+    units: [
+      evidenceUnit("voice", {
+        subjectId: "mara",
+        sectionKey: "examples",
+        text: "Calls impossible plans 'Tuesday problems' instead of panicking.",
+      }),
+    ],
+    existingNotes: [existingVoice],
+    scope: {},
+    modes: ["roleplay"],
+    createdAt: timestamp,
+  });
+  const voiceExamples = voiceResponse.mutations.find(
+    (mutation) =>
+      mutation.kind === "append_section" && mutation.noteId === "voice_mara" && mutation.sectionKey === "examples",
+  );
+  const voiceProfile = voiceResponse.mutations.find(
+    (mutation) =>
+      mutation.kind === "update_section" && mutation.noteId === "voice_mara" && mutation.sectionKey === "profile",
+  );
+  assert(voiceExamples?.kind === "append_section");
+  assert(voiceProfile?.kind === "update_section");
+  assert.match(voiceExamples.text, /Tuesday problems/);
+  assert.match(voiceProfile.section.text, /^Voice profile:/);
+  assert.match(voiceProfile.section.text, /Uses dry, clipped understatement/);
+  assert.match(voiceProfile.section.text, /Tuesday problems/);
+
+  const repeatedVoiceResponse = compileLtmEvidenceUnits({
+    units: [
+      evidenceUnit("voice", {
+        subjectId: "mara",
+        sectionKey: "examples",
+        text: "Uses dry, clipped understatement when anxious.",
+      }),
+    ],
+    existingNotes: [existingVoice],
+    scope: {},
+    modes: ["roleplay"],
+    createdAt: timestamp,
+  });
+  assert(
+    !repeatedVoiceResponse.mutations.some(
+      (mutation) =>
+        mutation.kind === "append_section" && mutation.noteId === "voice_mara" && mutation.sectionKey === "examples",
+    ),
+  );
+  const toneResponse = compileLtmEvidenceUnits({
+    units: [
+      evidenceUnit("tone", {
+        subjectId: "chat",
+        sectionKey: "observations",
+        text: "Domestic warmth is balanced with low-key suspense around the archive.",
+      }),
+    ],
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    createdAt: timestamp,
+  });
+  const createdTone = toneResponse.mutations.find(
+    (mutation) => mutation.kind === "create_note" && mutation.note.id === "tone_chat",
+  );
+  assert(createdTone?.kind === "create_note");
+  assert.match(createdTone.note.sections.observations?.text ?? "", /Domestic warmth/);
+  assert.match(createdTone.note.sections.profile?.text ?? "", /^Tone profile:/);
 });
 
 test("evidence unit compiler routes stable fact changes through conflict review", () => {
@@ -2445,6 +2588,107 @@ test("retrieval excludes source notes by default and prioritizes relationship st
     assert.deepEqual(
       audit.chunks.map((chunk) => chunk.chunk.noteId),
       ["scene_source_test", "source_audit_test"],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("retrieval injects compact voice profile before raw examples", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-voice-profile-retrieval-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "voice_mara",
+        type: "voice",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          examples: {
+            text: "- Raw example: calls impossible plans 'Tuesday problems' instead of panicking.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_test"],
+          },
+          profile: {
+            text: "Voice profile: dry clipped understatement; reframes panic as practical scheduling.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    await rebuildLongTermMemoryIndexes({
+      root,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+
+    const result = await retrieveLongTermMemory({
+      root,
+      queryText: "Mara voice",
+      maxChunks: 1,
+      maxTokens: 1000,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+
+    assert.deepEqual(
+      result.chunks.map((chunk) => chunk.chunk.id),
+      ["voice_mara::profile"],
+    );
+    assert.equal(
+      formatLongTermMemoryBlock(result.chunks),
+      "Voice profile: dry clipped understatement; reframes panic as practical scheduling.",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("retrieval keeps legacy profile-less voice notes in the always lane", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-legacy-voice-retrieval-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "voice_mara",
+        type: "voice",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          examples: {
+            text: "- Legacy voice example: Mara calls impossible plans Tuesday problems.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    await rebuildLongTermMemoryIndexes({
+      root,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+
+    const result = await retrieveLongTermMemory({
+      root,
+      queryText: "unrelated",
+      maxChunks: 1,
+      maxTokens: 1000,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+
+    assert.deepEqual(
+      result.chunks.map((chunk) => chunk.chunk.id),
+      ["voice_mara::examples"],
     );
   } finally {
     await rm(root, { recursive: true, force: true });

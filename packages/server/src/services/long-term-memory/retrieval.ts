@@ -422,6 +422,7 @@ function alwaysLane(
   for (const chunk of Object.values(metadata.chunks)) {
     if (
       (chunk.noteType === "tone" || chunk.noteType === "voice") &&
+      shouldAlwaysInjectStyleChunk(chunk, metadata) &&
       candidateAllowed(chunk, input, config, characterIds)
     ) {
       items.push({ chunkId: chunk.id, reason: `always:${chunk.noteType}`, rawScore: 0.8 });
@@ -429,6 +430,11 @@ function alwaysLane(
   }
 
   return items.sort((a, b) => b.rawScore - a.rawScore || a.chunkId.localeCompare(b.chunkId));
+}
+
+function shouldAlwaysInjectStyleChunk(chunk: LtmMemoryChunk, metadata: LtmMetadataIndex) {
+  if (chunk.sectionKey === "profile") return true;
+  return !metadata.chunks[`${chunk.noteId}::profile`];
 }
 
 function typedPriorityLane(

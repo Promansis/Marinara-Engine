@@ -19,13 +19,14 @@ export interface LtmRelationshipReduction {
 type LtmRelationshipFacetName = keyof LtmRelationshipReduction["facets"];
 
 const FACET_WORDS: Record<LtmRelationshipFacetName, RegExp> = {
-  trust: /\b(trust|honest|rely|confide|safe|faith)\b/i,
+  trust: /\b(trust(?:s|ed|ing)?|honest|rel(?:y|ies|ied|ying)|confide(?:s|d|ing)?|safe|faith)\b/i,
   intimacy: /\b(intimate|close|kiss|tender|vulnerable|confession)\b/i,
-  tension: /\b(tension|uneasy|strain|awkward|conflict|argue)\b/i,
-  hostility: /\b(hostile|enemy|threat|attack|hate|betray)\b/i,
-  dependency: /\b(depend|need|rely|anchor|lifeline)\b/i,
+  tension: /\b(tension|uneasy|strain(?:s|ed|ing)?|awkward|conflict|argu(?:e|es|ed|ing))\b/i,
+  hostility: /\b(hostile|enemy|threat|attack(?:s|ed|ing)?|hate|betray(?:s|ed|ing)?)\b/i,
+  dependency: /\b(depend(?:s|ed|ing)?|need(?:s|ed|ing)?|rel(?:y|ies|ied|ying)|anchor|lifeline)\b/i,
   affection: /\b(affection|fond|care|love|warm|gentle)\b/i,
-  protectiveness: /\b(protects?|protected|protecting|guards?|guarded|shield(?:s|ed|ing)?|defends?|defended|watch(?:es|ed|ing)? over)\b/i,
+  protectiveness:
+    /\b(protects?|protected|protecting|guards?|guarded|shield(?:s|ed|ing)?|defends?|defended|watch(?:es|ed|ing)? over)\b/i,
 };
 
 export function reduceRelationshipEvidenceUnits(units: LtmEvidenceUnit[]): LtmRelationshipReduction {
@@ -72,7 +73,9 @@ export function formatRelationshipReduction(reduction: LtmRelationshipReduction)
   const facets = Object.entries(reduction.facets)
     .map(([key, value]) => `${key}: ${value}`)
     .join("; ");
-  const support = reduction.supportingEvents.length ? ` Supporting events: ${reduction.supportingEvents.join(", ")}.` : "";
+  const support = reduction.supportingEvents.length
+    ? ` Supporting events: ${reduction.supportingEvents.join(", ")}.`
+    : "";
   return `Current relationship state: ${facets}. Trajectory: ${reduction.trajectory}.${support}`;
 }
 
