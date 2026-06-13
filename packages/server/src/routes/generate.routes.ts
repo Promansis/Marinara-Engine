@@ -40,6 +40,7 @@ import type {
   PlayerStats,
   LorebookEntryTimingState,
   ChatSummaryEntry,
+  LongTermMemoryRecallStyle,
 } from "@marinara-engine/shared";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
@@ -161,6 +162,7 @@ import { recordLongTermMemoryInjection } from "../services/long-term-memory/usag
 import { runLongTermMemoryExtraction, LongTermMemoryDraftStore } from "../services/long-term-memory/extraction.js";
 import { applyLongTermMemoryDraft, isLowRiskTurnMutation } from "../services/long-term-memory/reconciliation.js";
 import { LongTermMemoryStorage } from "../services/long-term-memory/storage.js";
+import { getLtmExtractionConfig } from "../services/long-term-memory/extraction-config.js";
 import {
   markSummaryEntryForLtmIfEnabled,
   syncChatSummaryEntryToLongTermMemory,
@@ -325,6 +327,73 @@ function resolveLtmScope(
 function parseLongTermMemoryBudgetTokens(value: unknown) {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   return Math.max(128, Math.min(16_384, Math.floor(value)));
+}
+
+function parseLongTermMemoryMaxChunks(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return Math.max(1, Math.min(100, Math.floor(value)));
+}
+
+function parseLongTermMemoryScoreThreshold(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return Math.max(0, Math.min(1, value));
+}
+
+const LTM_RECALL_STYLE_WEIGHTS = {
+  balanced: {
+    semanticWeight: 0.6,
+    lexicalWeight: 0.3,
+    graphWeight: 0.1,
+    alwaysWeight: 2,
+    metadataWeight: 1,
+    typedPriorityWeight: 1.5,
+  },
+  exact: {
+    semanticWeight: 0.15,
+    lexicalWeight: 1,
+    graphWeight: 0,
+    alwaysWeight: 0,
+    metadataWeight: 0.3,
+    typedPriorityWeight: 0,
+  },
+  broad: {
+    semanticWeight: 0.55,
+    lexicalWeight: 0.2,
+    graphWeight: 0.8,
+    alwaysWeight: 0.4,
+    metadataWeight: 0.8,
+    typedPriorityWeight: 0.4,
+  },
+  story: {
+    semanticWeight: 0.45,
+    lexicalWeight: 0.25,
+    graphWeight: 0.35,
+    alwaysWeight: 1.2,
+    metadataWeight: 0.8,
+    typedPriorityWeight: 2,
+  },
+} as const satisfies Record<
+  LongTermMemoryRecallStyle,
+  {
+    semanticWeight: number;
+    lexicalWeight: number;
+    graphWeight: number;
+    alwaysWeight: number;
+    metadataWeight: number;
+    typedPriorityWeight: number;
+  }
+>;
+
+function parseLongTermMemoryRecallStyle(value: unknown): LongTermMemoryRecallStyle {
+  return value === "exact" || value === "broad" || value === "story" ? value : "balanced";
+}
+
+function parseLongTermMemoryIncludeGates(value: unknown) {
+  const gates = new Set(["spoiler", "character_secret", "private", "nsfw"]);
+  if (!Array.isArray(value)) return undefined;
+  return value.filter((gate): gate is "spoiler" | "character_secret" | "private" | "nsfw" => {
+    return typeof gate === "string" && gates.has(gate);
+  });
 }
 
 function parsePromptPresetChoices(value: unknown): Record<string, string | string[]> | null {
@@ -5253,6 +5322,12 @@ export async function generateRoutes(app: FastifyInstance) {
           const _tLtm = Date.now();
           const ltmInjectionOperationId = randomUUID();
           const ltmBudgetTokens = parseLongTermMemoryBudgetTokens(chatMeta.longTermMemoryBudgetTokens);
+          const ltmMaxChunks = parseLongTermMemoryMaxChunks(chatMeta.longTermMemoryMaxChunks);
+          const ltmScoreThreshold = parseLongTermMemoryScoreThreshold(chatMeta.longTermMemoryScoreThreshold);
+          const ltmRecallStyle = parseLongTermMemoryRecallStyle(chatMeta.longTermMemoryRecallStyle);
+          const ltmRecallWeights = LTM_RECALL_STYLE_WEIGHTS[ltmRecallStyle];
+          const ltmIncludeGates = parseLongTermMemoryIncludeGates(chatMeta.longTermMemoryIncludeGates);
+          const ltmDebugEnabled = chatMeta.longTermMemoryDebug === true || requestDebug;
           const ltmScope = resolveLtmScope(
             { id: input.chatId, groupId: chat.groupId, characterIds: promptCharacterIds },
             chatMeta,
@@ -5272,6 +5347,9 @@ export async function generateRoutes(app: FastifyInstance) {
               chatMode,
               characterIds: promptCharacterIds,
               budgetTokens: ltmBudgetTokens ?? null,
+              maxChunks: ltmMaxChunks ?? null,
+              scoreThreshold: ltmScoreThreshold ?? null,
+              recallStyle: ltmRecallStyle,
               scope: ltmScope,
             },
           });
@@ -5303,10 +5381,15 @@ export async function generateRoutes(app: FastifyInstance) {
               ],
               scope: ltmScope,
               characterIds: promptCharacterIds,
+              includeGates: ltmIncludeGates,
+              includeResolved: chatMeta.longTermMemoryIncludeResolved === true,
+              maxChunks: ltmMaxChunks,
               maxTokens: ltmBudgetTokens,
+              minScore: ltmScoreThreshold,
+              ...ltmRecallWeights,
               embeddingSource: memoryRecallEmbeddingSource ?? undefined,
-              debug: true,
-              explain: true,
+              debug: ltmDebugEnabled,
+              explain: ltmDebugEnabled,
             });
             const baseDecisionDetails = {
               outcome: retrieval.chunks.length > 0 ? "injected" : "skipped",
@@ -5421,7 +5504,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   queryCharacters: ltmQueryText.length,
                 },
               });
-              if (chatMeta.longTermMemoryDebug === true || requestDebug) {
+              if (ltmDebugEnabled) {
                 logger.debug(
                   "[ltm] No long-term memory chunks injected for chat %s%s",
                   input.chatId,
@@ -8272,13 +8355,14 @@ export async function generateRoutes(app: FastifyInstance) {
               const shouldAutoApplyLowRisk = chatMeta.longTermMemoryAutoApplyLowRisk === true;
               void (async () => {
                 try {
+                  const extractionConfig = await getLtmExtractionConfig();
                   const retrieval = await retrieveLongTermMemory({
                     queryText: `${input.userMessage ?? ""}\n${fullResponse}`,
                     recentUserMessage: input.userMessage ?? undefined,
                     scope: ltmScope,
                     characterIds,
-                    maxChunks: 8,
-                    maxTokens: 1800,
+                    maxChunks: extractionConfig.existingNoteMaxChunks,
+                    maxTokens: extractionConfig.existingNoteMaxTokens,
                     embeddingSource: memoryRecallEmbeddingSource ?? undefined,
                   });
                   const existingNotes = await Promise.all(

@@ -9,6 +9,7 @@ import { chunkNotes, stableJsonHash, type LtmMemoryChunk } from "./chunking.js";
 import { buildLtmGraphIndex, type LtmGraphIndex } from "./graph.js";
 import { buildLtmMetadataIndex, type LtmMetadataIndex } from "./metadata-index.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
+import { invalidateLongTermMemoryRetrievalCache } from "./retrieval.js";
 import { LongTermMemoryStorage } from "./storage.js";
 
 export interface LtmEmbeddingIndexEntry {
@@ -144,6 +145,7 @@ export async function rebuildLongTermMemoryIndexes(options: LtmRebuildOptions = 
   await writeJsonAtomic(safeJoin(dirs.indexes, "source-graph.json"), sourceGraph satisfies LtmGraphIndex);
   await writeJsonAtomic(safeJoin(dirs.indexes, "source-metadata.json"), sourceMetadata satisfies LtmMetadataIndex);
   await writeJsonAtomic(safeJoin(dirs.indexes, "manifest.json"), manifest);
+  invalidateLongTermMemoryRetrievalCache(root);
 
   logger.info(
     "[ltm] Rebuilt long-term memory indexes: %d note(s), %d typed chunk(s), %d source chunk(s), %d embedded typed chunk(s)",

@@ -11,6 +11,7 @@ import {
   FileJson,
   Hammer,
   History,
+  Info,
   Import,
   Loader2,
   Pencil,
@@ -27,6 +28,7 @@ import {
 import type {
   LtmDraftMutation,
   LtmExtractionDraft,
+  LtmGate,
   LtmLink,
   LtmNote,
   LtmNoteType,
@@ -48,8 +50,10 @@ import {
   useRejectLongTermMemoryDraft,
   useRepairLongTermMemory,
   useReplayLongTermMemory,
+  useSearchLongTermMemory,
   useUpdateLongTermMemoryDraft,
   useUpdateLongTermMemoryNote,
+  type LtmSearchResponse,
   type UpdateLongTermMemoryDraftInput,
   type LtmInteropSource,
 } from "../../hooks/use-long-term-memory";
@@ -73,7 +77,7 @@ import {
   isSourceMemoryDraft,
   sentenceCaseIdentifier,
 } from "../long-term-memory/ltm-editor-utils";
-import { SettingField } from "../long-term-memory/LtmFields";
+import { compactInputClassName, inputClassName, SettingField } from "../long-term-memory/LtmFields";
 import { StatusPill, ToolButton } from "../long-term-memory/LtmPills";
 import { Modal } from "../ui/Modal";
 
@@ -116,6 +120,70 @@ type SourceSummaryGroup = {
   derived: LtmNote[];
   orphaned: boolean;
 };
+type LtmRecallStyle = "balanced" | "exact" | "broad" | "story";
+
+const LTM_RECALL_STYLES: Array<{ id: LtmRecallStyle; label: string; description: string }> = [
+  { id: "balanced", label: "Balanced", description: "Mixes meaning, exact wording, and linked story notes." },
+  { id: "exact", label: "Exact", description: "Favors direct keyword and name matches." },
+  { id: "broad", label: "Broad", description: "Looks farther through linked memories." },
+  { id: "story", label: "Story", description: "Leans toward arcs, relationships, and scene continuity." },
+];
+
+const LTM_RECALL_STYLE_WEIGHTS: Record<
+  LtmRecallStyle,
+  {
+    semanticWeight: number;
+    lexicalWeight: number;
+    graphWeight: number;
+    alwaysWeight: number;
+    metadataWeight: number;
+    typedPriorityWeight: number;
+  }
+> = {
+  balanced: {
+    semanticWeight: 0.6,
+    lexicalWeight: 0.3,
+    graphWeight: 0.1,
+    alwaysWeight: 2,
+    metadataWeight: 1,
+    typedPriorityWeight: 1.5,
+  },
+  exact: {
+    semanticWeight: 0.15,
+    lexicalWeight: 1,
+    graphWeight: 0,
+    alwaysWeight: 0,
+    metadataWeight: 0.3,
+    typedPriorityWeight: 0,
+  },
+  broad: {
+    semanticWeight: 0.55,
+    lexicalWeight: 0.2,
+    graphWeight: 0.8,
+    alwaysWeight: 0.4,
+    metadataWeight: 0.8,
+    typedPriorityWeight: 0.4,
+  },
+  story: {
+    semanticWeight: 0.45,
+    lexicalWeight: 0.25,
+    graphWeight: 0.35,
+    alwaysWeight: 1.2,
+    metadataWeight: 0.8,
+    typedPriorityWeight: 2,
+  },
+};
+
+const LTM_GATE_OPTIONS: Array<{ id: LtmGate; label: string }> = [
+  { id: "spoiler", label: "Spoiler" },
+  { id: "character_secret", label: "Character secret" },
+  { id: "private", label: "Private" },
+  { id: "nsfw", label: "NSFW" },
+];
+
+const DEFAULT_LTM_BUDGET_TOKENS = 2048;
+const DEFAULT_LTM_MAX_CHUNKS = 12;
+const DEFAULT_LTM_SCORE_THRESHOLD = 0;
 
 const rowActionPillClassName =
   "absolute right-2 top-1/2 flex shrink-0 -translate-y-1/2 items-center gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-[var(--border)] transition-opacity group-hover:opacity-100 max-md:opacity-100";
@@ -170,6 +238,15 @@ function SettingToggle({
   );
 }
 
+function SettingGroup({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <div className="mb-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">{label}</div>
+      {children}
+    </div>
+  );
+}
+
 function normalizeScopeIdentifier(value: string) {
   const normalized = value
     .trim()
@@ -186,6 +263,28 @@ function readScopeValue(metadata: Record<string, unknown>, key: "universe" | "rp
   if (!scope || typeof scope !== "object" || Array.isArray(scope)) return "";
   const value = (scope as Record<string, unknown>)[key];
   return typeof value === "string" ? value : "";
+}
+
+function readRecallStyle(metadata: Record<string, unknown>): LtmRecallStyle {
+  const value = metadata.longTermMemoryRecallStyle;
+  return value === "exact" || value === "broad" || value === "story" ? value : "balanced";
+}
+
+function readGateSelection(metadata: Record<string, unknown>) {
+  const value = metadata.longTermMemoryIncludeGates;
+  if (!Array.isArray(value)) return [] as LtmGate[];
+  const valid = new Set(LTM_GATE_OPTIONS.map((option) => option.id));
+  return value.filter((gate): gate is LtmGate => typeof gate === "string" && valid.has(gate as LtmGate));
+}
+
+function readNumberSetting(metadata: Record<string, unknown>, key: string, fallback: number, min: number, max: number) {
+  const value = metadata[key];
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(min, Math.min(max, Math.floor(value))) : fallback;
+}
+
+function compactLtmText(text: string | undefined, limit = 260) {
+  const value = (text ?? "").replace(/\s+/g, " ").trim();
+  return value.length > limit ? `${value.slice(0, limit - 1).trim()}...` : value;
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -1515,6 +1614,7 @@ function ChatMemorySettings({ onOpenExtractionSettings }: { onOpenExtractionSett
   const activeChatQuery = useChat(activeChatId);
   const activeChat = activeChatQuery.data ?? cachedActiveChat;
   const updateMeta = useUpdateChatMetadata();
+  const searchMemory = useSearchLongTermMemory();
   const metadata = useMemo(() => parseMetadata(activeChat?.metadata), [activeChat?.metadata]);
   const enabled = metadata.enableLongTermMemory === true;
   const debug = metadata.longTermMemoryDebug === true;
@@ -1522,15 +1622,25 @@ function ChatMemorySettings({ onOpenExtractionSettings }: { onOpenExtractionSett
   const autoApplyLowRisk = metadata.longTermMemoryAutoApplyLowRisk === true;
   const scopeUniverse = readScopeValue(metadata, "universe");
   const scopeRpId = readScopeValue(metadata, "rpId");
-  const budgetValue =
-    typeof metadata.longTermMemoryBudgetTokens === "number" && Number.isFinite(metadata.longTermMemoryBudgetTokens)
-      ? Math.max(128, Math.min(16_384, Math.floor(metadata.longTermMemoryBudgetTokens)))
-      : 2048;
+  const budgetValue = readNumberSetting(metadata, "longTermMemoryBudgetTokens", DEFAULT_LTM_BUDGET_TOKENS, 128, 16_384);
+  const maxChunksValue = readNumberSetting(metadata, "longTermMemoryMaxChunks", DEFAULT_LTM_MAX_CHUNKS, 1, 100);
+  const scoreThresholdValue =
+    typeof metadata.longTermMemoryScoreThreshold === "number" && Number.isFinite(metadata.longTermMemoryScoreThreshold)
+      ? Math.max(0, Math.min(1, metadata.longTermMemoryScoreThreshold))
+      : DEFAULT_LTM_SCORE_THRESHOLD;
+  const recallStyle = readRecallStyle(metadata);
+  const includeGates = readGateSelection(metadata);
+  const includeResolved = metadata.longTermMemoryIncludeResolved === true;
   const [scopeDraft, setScopeDraft] = useState({
     universe: scopeUniverse,
     rpId: scopeRpId,
   });
   const [budgetDraft, setBudgetDraft] = useState(String(budgetValue));
+  const [maxChunksDraft, setMaxChunksDraft] = useState(String(maxChunksValue));
+  const [scoreThresholdDraft, setScoreThresholdDraft] = useState(scoreThresholdValue);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [previewQuery, setPreviewQuery] = useState("");
+  const [previewResult, setPreviewResult] = useState<LtmSearchResponse | null>(null);
   const sliderBudget = Number.isFinite(Number(budgetDraft))
     ? Math.max(128, Math.min(16_384, Math.floor(Number(budgetDraft))))
     : budgetValue;
@@ -1541,7 +1651,10 @@ function ChatMemorySettings({ onOpenExtractionSettings }: { onOpenExtractionSett
       rpId: scopeRpId,
     });
     setBudgetDraft(String(budgetValue));
-  }, [activeChat?.id, budgetValue, scopeRpId, scopeUniverse]);
+    setMaxChunksDraft(String(maxChunksValue));
+    setScoreThresholdDraft(scoreThresholdValue);
+    setPreviewResult(null);
+  }, [activeChat?.id, budgetValue, maxChunksValue, scopeRpId, scopeUniverse, scoreThresholdValue]);
 
   const patch = (next: Record<string, unknown>) => {
     if (!activeChat) return Promise.resolve();
@@ -1568,10 +1681,99 @@ function ChatMemorySettings({ onOpenExtractionSettings }: { onOpenExtractionSett
 
   const commitBudget = (value: string) => {
     const numeric = Number(value);
-    const next = Number.isFinite(numeric) ? Math.max(128, Math.min(16_384, Math.floor(numeric))) : 2048;
+    const next = Number.isFinite(numeric) ? Math.max(128, Math.min(16_384, Math.floor(numeric))) : DEFAULT_LTM_BUDGET_TOKENS;
     setBudgetDraft(String(next));
     if (next === budgetValue) return Promise.resolve();
     return patch({ longTermMemoryBudgetTokens: next });
+  };
+
+  const commitMaxChunks = (value: string) => {
+    const numeric = Number(value);
+    const next = Number.isFinite(numeric) ? Math.max(1, Math.min(100, Math.floor(numeric))) : DEFAULT_LTM_MAX_CHUNKS;
+    setMaxChunksDraft(String(next));
+    if (next === maxChunksValue) return Promise.resolve();
+    return patch({ longTermMemoryMaxChunks: next });
+  };
+
+  const commitScoreThreshold = (value: number) => {
+    const numeric = Number.isFinite(value) ? value : DEFAULT_LTM_SCORE_THRESHOLD;
+    const next = Math.max(0, Math.min(1, Number(numeric.toFixed(2))));
+    setScoreThresholdDraft(next);
+    if (next === scoreThresholdValue) return Promise.resolve();
+    return patch({ longTermMemoryScoreThreshold: next });
+  };
+
+  const toggleGate = (gate: LtmGate, checked: boolean) => {
+    const next = checked
+      ? Array.from(new Set([...includeGates, gate]))
+      : includeGates.filter((item) => item !== gate);
+    return patch({ longTermMemoryIncludeGates: next });
+  };
+
+  const resetRecallDefaults = () => {
+    setBudgetDraft(String(DEFAULT_LTM_BUDGET_TOKENS));
+    setMaxChunksDraft(String(DEFAULT_LTM_MAX_CHUNKS));
+    setScoreThresholdDraft(DEFAULT_LTM_SCORE_THRESHOLD);
+    return patch({
+      longTermMemoryBudgetTokens: DEFAULT_LTM_BUDGET_TOKENS,
+      longTermMemoryMaxChunks: DEFAULT_LTM_MAX_CHUNKS,
+      longTermMemoryScoreThreshold: DEFAULT_LTM_SCORE_THRESHOLD,
+      longTermMemoryRecallStyle: "balanced",
+      longTermMemoryIncludeGates: [],
+      longTermMemoryIncludeResolved: false,
+    });
+  };
+
+  const runPreview = async () => {
+    if (!activeChat || !previewQuery.trim()) return;
+    const characterIds = Array.isArray(activeChat.characterIds) ? activeChat.characterIds : [];
+    const scope = {
+      chatId: activeChat.id,
+      chatIds: [activeChat.id],
+      ...(activeChat.groupId ? { groupId: activeChat.groupId } : {}),
+      ...(characterIds.length ? { characterIds } : {}),
+      ...(scopeUniverse ? { universe: scopeUniverse } : {}),
+      ...(scopeRpId ? { rpId: scopeRpId } : {}),
+    };
+    try {
+      const request = {
+        queryText: previewQuery.trim(),
+        recentUserMessage: previewQuery.trim(),
+        scope,
+        characterIds,
+        includeGates,
+        includeResolved,
+        maxChunks: maxChunksValue,
+        maxTokens: budgetValue,
+        minScore: scoreThresholdValue,
+        debug,
+        ...LTM_RECALL_STYLE_WEIGHTS[recallStyle],
+      };
+      const result = await searchMemory.mutateAsync(request);
+      if (result.chunks.length > 0) {
+        setPreviewResult(result);
+        return;
+      }
+
+      const relaxed = await searchMemory.mutateAsync({
+        ...request,
+        scope: undefined,
+        characterIds: undefined,
+        debug: true,
+      });
+      setPreviewResult({
+        ...relaxed,
+        warnings: [
+          ...result.warnings,
+          ...(relaxed.chunks.length > 0
+            ? ["No chat-scoped memories matched; showing broader vault matches."]
+            : ["No chat-scoped or broader memories matched. Rebuild indexes if notes were added recently."]),
+          ...relaxed.warnings,
+        ],
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not preview memory recall.");
+    }
   };
 
   return (
@@ -1594,6 +1796,42 @@ function ChatMemorySettings({ onOpenExtractionSettings }: { onOpenExtractionSett
           />
 
           <div className="grid gap-3 rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
+            <SettingGroup label="Recall style">
+              <div className="grid grid-cols-2 gap-1 rounded-lg bg-[var(--background)] p-1 ring-1 ring-[var(--border)]">
+                {LTM_RECALL_STYLES.map((style) => (
+                  <div key={style.id} className="grid grid-cols-[1fr_auto] overflow-hidden rounded-md">
+                    <button
+                      type="button"
+                      onClick={() => patch({ longTermMemoryRecallStyle: style.id })}
+                      aria-pressed={recallStyle === style.id}
+                      className={cn(
+                        "min-h-8 px-2 text-left text-xs font-medium transition-colors",
+                        recallStyle === style.id
+                          ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
+                          : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                      )}
+                    >
+                      {style.label}
+                    </button>
+                    <button
+                      type="button"
+                      title={style.description}
+                      aria-label={`${style.label} recall style: ${style.description}`}
+                      onClick={(event) => event.preventDefault()}
+                      className={cn(
+                        "flex h-8 w-8 items-center justify-center transition-colors",
+                        recallStyle === style.id
+                          ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
+                          : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                      )}
+                    >
+                      <Info size="0.75rem" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </SettingGroup>
+
             <div className="grid gap-3 sm:grid-cols-2">
               <SettingField label="Universe">
                 <input
@@ -1601,7 +1839,7 @@ function ChatMemorySettings({ onOpenExtractionSettings }: { onOpenExtractionSett
                   onChange={(event) => setScopeDraft((current) => ({ ...current, universe: event.target.value }))}
                   onBlur={() => commitScope()}
                   placeholder="shared_realm"
-                  className="w-full rounded-lg bg-[var(--background)] px-3 py-2 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:ring-[var(--primary)]"
+                  className={inputClassName}
                 />
               </SettingField>
               <SettingField label="Story line">
@@ -1610,36 +1848,188 @@ function ChatMemorySettings({ onOpenExtractionSettings }: { onOpenExtractionSett
                   onChange={(event) => setScopeDraft((current) => ({ ...current, rpId: event.target.value }))}
                   onBlur={() => commitScope()}
                   placeholder="main_story"
-                  className="w-full rounded-lg bg-[var(--background)] px-3 py-2 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:ring-[var(--primary)]"
+                  className={inputClassName}
                 />
               </SettingField>
             </div>
 
-            <SettingField label="Memory space used in replies">
-              <div className="grid grid-cols-[1fr_5.5rem] items-center gap-3">
-                <input
-                  type="range"
-                  min={128}
-                  max={16384}
-                  step={128}
-                  value={sliderBudget}
-                  onChange={(event) => setBudgetDraft(event.target.value)}
-                  onPointerUp={(event) => commitBudget((event.target as HTMLInputElement).value)}
-                  onBlur={(event) => commitBudget(event.target.value)}
-                  className="min-w-0 accent-[var(--primary)]"
-                />
+            <div className="grid gap-3 sm:grid-cols-[1fr_6.5rem]">
+              <SettingField label="Memory space used in replies">
+                <div className="grid grid-cols-[1fr_5.5rem] items-center gap-3">
+                  <input
+                    type="range"
+                    min={128}
+                    max={16384}
+                    step={128}
+                    value={sliderBudget}
+                    onChange={(event) => setBudgetDraft(event.target.value)}
+                    onPointerUp={(event) => commitBudget((event.target as HTMLInputElement).value)}
+                    onBlur={(event) => commitBudget(event.target.value)}
+                    className="min-w-0 accent-[var(--primary)]"
+                  />
+                  <input
+                    type="number"
+                    min={128}
+                    max={16384}
+                    step={128}
+                    value={budgetDraft}
+                    onChange={(event) => setBudgetDraft(event.target.value)}
+                    onBlur={(event) => commitBudget(event.target.value)}
+                    className={compactInputClassName}
+                  />
+                </div>
+              </SettingField>
+              <SettingField label="Max memories">
                 <input
                   type="number"
-                  min={128}
-                  max={16384}
-                  step={128}
-                  value={budgetDraft}
-                  onChange={(event) => setBudgetDraft(event.target.value)}
-                  onBlur={(event) => commitBudget(event.target.value)}
-                  className="w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-2 py-1.5 text-xs outline-none focus:border-[var(--primary)]"
+                  min={1}
+                  max={100}
+                  step={1}
+                  value={maxChunksDraft}
+                  onChange={(event) => setMaxChunksDraft(event.target.value)}
+                  onBlur={(event) => commitMaxChunks(event.target.value)}
+                  className={compactInputClassName}
                 />
+              </SettingField>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setAdvancedOpen((current) => !current)}
+              className="flex min-h-8 items-center justify-between rounded-lg px-2 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+              aria-expanded={advancedOpen}
+            >
+              <span>Advanced recall</span>
+              {advancedOpen ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
+            </button>
+            {advancedOpen && (
+              <div className="grid gap-2 rounded-lg bg-[var(--background)] p-2 ring-1 ring-[var(--border)]">
+                <div className="grid gap-1 sm:grid-cols-2">
+                  {LTM_GATE_OPTIONS.map((option) => (
+                    <SettingToggle
+                      key={option.id}
+                      label={option.label}
+                      checked={includeGates.includes(option.id)}
+                      onChange={(checked) => toggleGate(option.id, checked)}
+                    />
+                  ))}
+                </div>
+                <SettingToggle
+                  label="Include resolved threads"
+                  checked={includeResolved}
+                  onChange={(checked) => patch({ longTermMemoryIncludeResolved: checked })}
+                />
+                <SettingGroup label="Score threshold">
+                  <div className="grid grid-cols-[1fr_4.5rem] items-center gap-3">
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={scoreThresholdDraft}
+                      onChange={(event) => setScoreThresholdDraft(Number(event.target.value))}
+                      onPointerUp={(event) => commitScoreThreshold(Number((event.target as HTMLInputElement).value))}
+                      onBlur={(event) => commitScoreThreshold(Number(event.target.value))}
+                      className="min-w-0 accent-[var(--primary)]"
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={scoreThresholdDraft}
+                      onChange={(event) => setScoreThresholdDraft(Number(event.target.value))}
+                      onBlur={(event) => commitScoreThreshold(Number(event.target.value))}
+                      className={compactInputClassName}
+                    />
+                  </div>
+                  <p className="mt-1 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                    0 keeps all ranked matches. Higher values keep only memories close to the strongest match.
+                  </p>
+                </SettingGroup>
+                <div>
+                  <ToolButton onClick={resetRecallDefaults}>
+                    <RotateCcw size="0.875rem" />
+                    Reset recall defaults
+                  </ToolButton>
+                </div>
               </div>
-            </SettingField>
+            )}
+
+            <div className="grid gap-2 rounded-lg bg-[var(--background)] p-2 ring-1 ring-[var(--border)]">
+              <SettingGroup label="Preview recall">
+                <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                  <input
+                    value={previewQuery}
+                    onChange={(event) => setPreviewQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") void runPreview();
+                    }}
+                    placeholder="Ask what memory should recall"
+                    className={inputClassName}
+                  />
+                  <ToolButton
+                    onClick={runPreview}
+                    disabled={!previewQuery.trim() || searchMemory.isPending}
+                    tone="primary"
+                  >
+                    {searchMemory.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Search size="0.875rem" />}
+                    Preview
+                  </ToolButton>
+                </div>
+              </SettingGroup>
+              {previewResult && (
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-1.5 text-[0.6875rem] text-[var(--muted-foreground)]">
+                    <StatusPill label={`${previewResult.chunks.length} selected`} tone={previewResult.chunks.length ? "good" : "neutral"} />
+                    <StatusPill label={`${previewResult.usedTokens}/${previewResult.maxTokens} tokens`} />
+                    <StatusPill label={previewResult.embeddingsAvailable ? "Embeddings on" : "Lexical only"} tone={previewResult.embeddingsAvailable ? "good" : "warn"} />
+                  </div>
+                  {previewResult.warnings.map((warning) => (
+                    <p key={warning} className="rounded-md bg-amber-500/10 px-2 py-1 text-[0.6875rem] text-amber-200">
+                      {warning}
+                    </p>
+                  ))}
+                  <div className="grid gap-2">
+                    {previewResult.chunks.length === 0 && (
+                      <p className="rounded-md bg-[var(--secondary)]/50 px-2 py-2 text-xs text-[var(--muted-foreground)]">
+                        No memories matched this preview.
+                      </p>
+                    )}
+                    {previewResult.chunks.map((item, index) => (
+                      <article key={`${item.chunk?.id ?? "chunk"}-${index}`} className="rounded-md bg-[var(--secondary)]/45 p-2 ring-1 ring-[var(--border)]">
+                        <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                          <span className="min-w-0 truncate font-mono text-[0.6875rem] text-[var(--foreground)]">
+                            {item.chunk?.noteId ?? "memory"} · {item.chunk?.sectionKey ?? "section"}
+                          </span>
+                          {item.estimatedTokens !== undefined && <StatusPill label={`~${item.estimatedTokens} tokens`} />}
+                          {item.lanes?.map((lane) => <StatusPill key={lane} label={lane} />)}
+                        </div>
+                        <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">
+                          {compactLtmText(item.chunk?.text)}
+                        </p>
+                      </article>
+                    ))}
+                  </div>
+                  {debug && previewResult.debug?.rejected && previewResult.debug.rejected.length > 0 && (
+                    <details className="rounded-md bg-[var(--secondary)]/35 p-2 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                      <summary className="cursor-pointer font-medium text-[var(--foreground)]">
+                        Rejected candidates ({previewResult.debug.rejected.length})
+                      </summary>
+                      <div className="mt-2 grid gap-1">
+                        {previewResult.debug.rejected.slice(0, 8).map((candidate) => (
+                          <div key={candidate.chunkId} className="flex flex-wrap gap-1.5">
+                            <span className="font-mono">{candidate.noteId ?? candidate.chunkId}</span>
+                            <span>{candidate.rejectionReason ?? "lower_rank"}</span>
+                            {candidate.estimatedTokens !== undefined && <span>~{candidate.estimatedTokens} tokens</span>}
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           <SettingToggle

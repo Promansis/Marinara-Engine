@@ -2,6 +2,7 @@
 // Chat & Message Types
 // ──────────────────────────────────────────────
 
+import type { LtmGate } from "./long-term-memory.js";
 import type { GenerationGuideSource } from "../utils/generation-guide.js";
 
 /** The four primary chat modes the engine supports. */
@@ -21,6 +22,8 @@ export type MessageRole = "user" | "assistant" | "system" | "narrator";
 
 /** Which side sprite sidebars / default sprite layouts prefer. */
 export type SpriteSide = "left" | "right";
+
+export type LongTermMemoryRecallStyle = "balanced" | "exact" | "broad" | "story";
 
 /** A saved on-screen sprite anchor position within the chat area. */
 export interface SpritePlacement {
@@ -219,6 +222,16 @@ export interface ChatMetadata {
   longTermMemoryScope?: { universe?: string; rpId?: string };
   /** Per-chat token budget for injected local long-term memory. Missing uses server retrieval defaults. */
   longTermMemoryBudgetTokens?: number;
+  /** Per-chat maximum selected long-term memory chunks for prompt injection. */
+  longTermMemoryMaxChunks?: number;
+  /** Normalized 0-1 retrieval score threshold. 0 keeps all ranked candidates; higher values require stronger matches. */
+  longTermMemoryScoreThreshold?: number;
+  /** Recall weighting profile for prompt-injected local long-term memory. */
+  longTermMemoryRecallStyle?: LongTermMemoryRecallStyle;
+  /** Gated memory categories this chat allows during prompt injection. */
+  longTermMemoryIncludeGates?: LtmGate[];
+  /** When true, resolved thread memories may be recalled during prompt injection. Default: false. */
+  longTermMemoryIncludeResolved?: boolean;
   /** When true, log/debug local long-term memory prompt injection decisions for this chat. Default: false. */
   longTermMemoryDebug?: boolean;
   /** When true, save draft long-term memory mutations after generated turns. Default: false. */

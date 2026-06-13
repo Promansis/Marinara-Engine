@@ -351,10 +351,9 @@ export const ltmPoliciesConfigSchema = z
   })
   .strict();
 
-export const ltmRetrievalConfigSchema = z
+const ltmRetrievalConfigShape = z
   .object({
     version: z.literal(1).default(1),
-    enabled: z.boolean().default(false),
     maxChunks: z.number().int().min(1).max(100).default(12),
     maxTokens: z.number().int().min(128).max(16_384).default(2_048),
     semanticWeight: z.number().finite().min(0).max(1).default(0.6),
@@ -367,6 +366,12 @@ export const ltmRetrievalConfigSchema = z
     (value) => value.semanticWeight + value.lexicalWeight + value.graphWeight > 0,
     "At least one retrieval weight must be positive.",
   );
+
+export const ltmRetrievalConfigSchema = z.preprocess((value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const { enabled: _enabled, ...rest } = value as Record<string, unknown>;
+  return rest;
+}, ltmRetrievalConfigShape);
 
 export const ltmIndexMetadataSchema = z
   .object({

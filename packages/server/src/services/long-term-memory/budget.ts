@@ -15,6 +15,7 @@ export interface LtmBudgetedChunk {
 export interface LtmBudgetOptions {
   maxChunks: number;
   maxTokens: number;
+  normalizedScoreThreshold?: number;
   explain?: boolean;
   rejectedLimit?: number;
 }
@@ -29,7 +30,7 @@ export interface LtmBudgetRejectedCandidate {
   laneScores?: Record<string, number>;
   rawLaneScores?: Record<string, number>;
   estimatedTokens?: number;
-  rejectionReason: "budget" | "lower_rank" | "missing_chunk";
+  rejectionReason: "budget" | "lower_rank" | "missing_chunk" | "score_threshold";
 }
 
 function estimateTokens(text: string) {
@@ -62,9 +63,30 @@ export function applyLtmBudget(
   const selectedIds = new Set<string>();
   const rejected: LtmBudgetRejectedCandidate[] = [];
   const rejectedLimit = Math.max(0, options.rejectedLimit ?? 20);
+  const scoreThreshold = Math.max(0, Math.min(1, options.normalizedScoreThreshold ?? 0));
+  const topScore = candidates[0]?.score ?? 0;
   let usedTokens = 0;
 
   for (const candidate of candidates) {
+    if (scoreThreshold > 0 && topScore > 0 && candidate.score / topScore < scoreThreshold) {
+      if (options.explain && rejected.length < rejectedLimit) {
+        const chunk = chunksById.get(candidate.chunkId);
+        rejected.push({
+          chunkId: candidate.chunkId,
+          noteId: chunk?.noteId,
+          sectionKey: chunk?.sectionKey,
+          score: candidate.score,
+          reasons: candidate.reasons,
+          lanes: candidate.lanes,
+          laneScores: candidate.laneScores,
+          rawLaneScores: candidate.rawLaneScores,
+          estimatedTokens: chunk ? estimateTokens(cleanLongTermMemoryChunkText(chunk.text)) : undefined,
+          rejectionReason: chunk ? "score_threshold" : "missing_chunk",
+        });
+      }
+      continue;
+    }
+
     if (selected.length >= options.maxChunks) {
       if (options.explain && rejected.length < rejectedLimit) {
         const chunk = chunksById.get(candidate.chunkId);

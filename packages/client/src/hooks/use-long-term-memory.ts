@@ -97,14 +97,61 @@ export type LtmSearchInput = {
   debug?: boolean;
   maxChunks?: number;
   maxTokens?: number;
+  minScore?: number;
+  semanticWeight?: number;
+  lexicalWeight?: number;
+  graphWeight?: number;
+  alwaysWeight?: number;
+  metadataWeight?: number;
+  typedPriorityWeight?: number;
+};
+
+export type LtmSearchChunk = {
+  chunk?: {
+    id?: string;
+    noteId?: string;
+    sectionKey?: string;
+    text?: string;
+    noteType?: string;
+    status?: string;
+  };
+  score?: number;
+  reasons?: string[];
+  lanes?: string[];
+  tier?: number;
+  estimatedTokens?: number;
+};
+
+export type LtmSearchDebugCandidate = {
+  chunkId: string;
+  noteId?: string;
+  sectionKey?: string;
+  score: number;
+  lanes: string[];
+  reasons: string[];
+  estimatedTokens?: number;
+  rejectionReason?: string;
 };
 
 export type LtmSearchResponse = {
-  chunks: unknown[];
+  chunks: LtmSearchChunk[];
   usedTokens: number;
   maxTokens: number;
   embeddingsAvailable: boolean;
   warnings: string[];
+  debug?: {
+    weights?: {
+      semantic: number;
+      lexical: number;
+      graph: number;
+      always?: number;
+      metadata?: number;
+      typedPriority?: number;
+    };
+    funnel?: Record<string, number>;
+    selected?: LtmSearchDebugCandidate[];
+    rejected?: LtmSearchDebugCandidate[];
+  };
 };
 
 export type LtmDebugLogFilter = {

@@ -1566,6 +1566,48 @@ test("retrieval excludes source notes by default and prioritizes relationship st
       ["rel_mara_jules::state", "rel_mara_jules::arc", "rel_mara_jules::history"],
     );
 
+    const exactStyle = await retrieveLongTermMemory({
+      root,
+      queryText: "Mara trusts Jules tower archive",
+      maxChunks: 3,
+      maxTokens: 1000,
+      semanticWeight: 0.15,
+      lexicalWeight: 1,
+      graphWeight: 0,
+      alwaysWeight: 0,
+      metadataWeight: 0.3,
+      typedPriorityWeight: 0,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+    assert.equal(exactStyle.chunks[0]?.chunk.id, "rel_mara_jules::history");
+
+    const storyStyle = await retrieveLongTermMemory({
+      root,
+      queryText: "Mara trusts Jules tower archive",
+      maxChunks: 3,
+      maxTokens: 1000,
+      semanticWeight: 0.45,
+      lexicalWeight: 0.25,
+      graphWeight: 0.35,
+      alwaysWeight: 1.2,
+      metadataWeight: 0.8,
+      typedPriorityWeight: 2,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+    assert.equal(storyStyle.chunks[0]?.chunk.id, "rel_mara_jules::state");
+
+    const thresholded = await retrieveLongTermMemory({
+      root,
+      queryText: "Mara trusts Jules tower archive",
+      maxChunks: 3,
+      maxTokens: 1000,
+      minScore: 1,
+      debug: true,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+    assert.equal(thresholded.chunks.length, 1);
+    assert((thresholded.debug?.funnel.scoreThresholdSkippedCandidates ?? 0) > 0);
+
     const audit = await retrieveLongTermMemory({
       root,
       queryText: "Mara trusts Jules tower archive",
@@ -1578,6 +1620,111 @@ test("retrieval excludes source notes by default and prioritizes relationship st
       audit.chunks.map((chunk) => chunk.chunk.noteId),
       ["scene_source_test"],
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("retrieval accepts legacy enabled config, per-chat weights, chunk limits, gates, and resolved threads", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-retrieval-preferences-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.initializeLtmStore();
+    const dirs = getLongTermMemoryDirectories(root);
+    await writeFile(
+      join(dirs.config, "retrieval.json"),
+      JSON.stringify({
+        version: 1,
+        enabled: false,
+        maxChunks: 12,
+        maxTokens: 2048,
+        semanticWeight: 0.6,
+        lexicalWeight: 0.3,
+        graphWeight: 0.1,
+        includeGates: [],
+      }),
+    );
+
+    await storage.createNote(
+      {
+        id: "char_mara",
+        type: "character",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { characterIds: ["mara"] },
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          core: {
+            text: "Mara carries a silver key from the tower archive.",
+            updatedAt: timestamp,
+            gates: ["private"],
+          },
+          current_state: {
+            text: "Mara is currently wary but willing to revisit the archive.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "thread_archive_key",
+        type: "thread",
+        status: "resolved",
+        modes: ["roleplay"],
+        scope: { characterIds: ["mara"] },
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          summary: {
+            text: "Resolved thread: the tower archive key was returned.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    await rebuildLongTermMemoryIndexes({
+      root,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+
+    const exact = await retrieveLongTermMemory({
+      root,
+      queryText: "tower archive key",
+      characterIds: ["mara"],
+      maxChunks: 1,
+      maxTokens: 1000,
+      semanticWeight: 0.25,
+      lexicalWeight: 0.7,
+      graphWeight: 0.05,
+      debug: true,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+    assert.equal(exact.debug?.weights.lexical, 0.7);
+    assert.equal(exact.chunks.length, 1);
+    assert(!exact.chunks.some((chunk) => chunk.chunk.id === "char_mara::core"));
+    assert(!exact.chunks.some((chunk) => chunk.chunk.noteId === "thread_archive_key"));
+    assert.equal(exact.debug?.selected.length, 1);
+
+    const withAdvanced = await retrieveLongTermMemory({
+      root,
+      queryText: "tower archive key",
+      characterIds: ["mara"],
+      includeGates: ["private"],
+      includeResolved: true,
+      maxChunks: 4,
+      maxTokens: 1000,
+      debug: false,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+    const ids = withAdvanced.chunks.map((chunk) => chunk.chunk.id);
+    assert(ids.includes("char_mara::core"));
+    assert(ids.includes("thread_archive_key::summary"));
+    assert.equal(withAdvanced.debug, undefined);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

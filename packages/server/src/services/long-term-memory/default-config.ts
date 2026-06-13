@@ -37,7 +37,6 @@ export const DEFAULT_LTM_POLICIES: LtmPoliciesConfig = {
 
 export const DEFAULT_LTM_RETRIEVAL_CONFIG: LtmRetrievalConfig = {
   version: 1,
-  enabled: false,
   maxChunks: 12,
   maxTokens: 2_048,
   semanticWeight: 0.6,

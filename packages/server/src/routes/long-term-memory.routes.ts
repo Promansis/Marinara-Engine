@@ -239,6 +239,13 @@ const searchBodySchema = z
     debug: z.boolean().optional(),
     maxChunks: z.number().int().min(1).max(100).optional(),
     maxTokens: z.number().int().min(128).max(16_384).optional(),
+    minScore: z.number().finite().min(0).max(1).optional(),
+    semanticWeight: z.number().finite().min(0).max(1).optional(),
+    lexicalWeight: z.number().finite().min(0).max(1).optional(),
+    graphWeight: z.number().finite().min(0).max(1).optional(),
+    alwaysWeight: z.number().finite().min(0).max(2).optional(),
+    metadataWeight: z.number().finite().min(0).max(2).optional(),
+    typedPriorityWeight: z.number().finite().min(0).max(2).optional(),
   })
   .strict()
   .refine(

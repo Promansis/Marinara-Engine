@@ -40,6 +40,13 @@ export interface RetrieveLongTermMemoryInput extends MemoryRecallEmbeddingOption
   explain?: boolean;
   maxChunks?: number;
   maxTokens?: number;
+  minScore?: number;
+  semanticWeight?: number;
+  lexicalWeight?: number;
+  graphWeight?: number;
+  alwaysWeight?: number;
+  metadataWeight?: number;
+  typedPriorityWeight?: number;
 }
 
 export interface LtmRetrievalDebugCandidate {
@@ -74,6 +81,9 @@ export interface LtmRetrievalDebugInfo {
     semantic: number;
     lexical: number;
     graph: number;
+    always: number;
+    metadata: number;
+    typedPriority: number;
   };
   funnel: Record<string, number>;
   selected: LtmRetrievalDebugCandidate[];
@@ -126,6 +136,85 @@ async function readConfig<T>(path: string, fallback: T, parse: (value: unknown) 
     }
     return fallback;
   }
+}
+
+type LtmRetrievalBundle = {
+  metadata: LtmMetadataIndex | null;
+  bm25: LtmBm25Index | null;
+  graph: LtmGraphIndex | null;
+  embeddings: LtmEmbeddingIndex | null;
+  config: LtmRetrievalConfig;
+  policies: LtmPoliciesConfig;
+  warnings: string[];
+};
+
+const retrievalBundleCache = new Map<string, Promise<LtmRetrievalBundle>>();
+
+function retrievalBundleCacheKey(root: string, includeSourceNotes: boolean) {
+  return `${root}\0${includeSourceNotes ? "source" : "typed"}`;
+}
+
+export function invalidateLongTermMemoryRetrievalCache(root?: string) {
+  if (!root) {
+    retrievalBundleCache.clear();
+    return;
+  }
+  for (const key of retrievalBundleCache.keys()) {
+    if (key.startsWith(`${root}\0`)) retrievalBundleCache.delete(key);
+  }
+}
+
+async function loadRetrievalBundle(root: string, includeSourceNotes: boolean): Promise<LtmRetrievalBundle> {
+  const key = retrievalBundleCacheKey(root, includeSourceNotes);
+  const cached = retrievalBundleCache.get(key);
+  if (cached) return cached;
+
+  const load = (async () => {
+    const dirs = getLongTermMemoryDirectories(root);
+    const warnings: string[] = [];
+    const indexPrefix = includeSourceNotes ? "source-" : "";
+    const [metadata, bm25, graph, embeddings, config, policies] = await Promise.all([
+      readIndexFile<LtmMetadataIndex>(safeJoin(dirs.indexes, `${indexPrefix}metadata.json`), warnings),
+      readIndexFile<LtmBm25Index>(safeJoin(dirs.indexes, `${indexPrefix}bm25.json`), warnings),
+      readIndexFile<LtmGraphIndex>(safeJoin(dirs.indexes, `${indexPrefix}graph.json`), warnings),
+      readIndexFile<LtmEmbeddingIndex>(safeJoin(dirs.indexes, `${indexPrefix}embeddings.json`), warnings),
+      readConfig(safeJoin(dirs.config, "retrieval.json"), DEFAULT_LTM_RETRIEVAL_CONFIG, (value) =>
+        ltmRetrievalConfigSchema.parse(value),
+      ),
+      readConfig(safeJoin(dirs.config, "policies.json"), DEFAULT_LTM_POLICIES, (value) =>
+        ltmPoliciesConfigSchema.parse(value),
+      ),
+    ]);
+    return { metadata, bm25, graph, embeddings, config, policies, warnings };
+  })();
+
+  retrievalBundleCache.set(key, load);
+  try {
+    return await load;
+  } catch (err) {
+    retrievalBundleCache.delete(key);
+    throw err;
+  }
+}
+
+function resolveRetrievalWeights(config: LtmRetrievalConfig, input: RetrieveLongTermMemoryInput) {
+  const semantic = input.semanticWeight ?? config.semanticWeight;
+  const lexical = input.lexicalWeight ?? config.lexicalWeight;
+  const graph = input.graphWeight ?? config.graphWeight;
+  const always = input.alwaysWeight ?? 2;
+  const metadata = input.metadataWeight ?? 1;
+  const typedPriority = input.typedPriorityWeight ?? 1.5;
+  if (semantic + lexical + graph + always + metadata + typedPriority <= 0) {
+    return {
+      semantic: config.semanticWeight,
+      lexical: config.lexicalWeight,
+      graph: config.graphWeight,
+      always: 2,
+      metadata: 1,
+      typedPriority: 1.5,
+    };
+  }
+  return { semantic, lexical, graph, always, metadata, typedPriority };
 }
 
 function uniqueSorted(values: string[]) {
@@ -395,22 +484,11 @@ export async function retrieveLongTermMemory(
   input: RetrieveLongTermMemoryInput = {},
 ): Promise<RetrieveLongTermMemoryResult> {
   const root = input.root ?? getLongTermMemoryRoot();
-  const dirs = getLongTermMemoryDirectories(root);
-  const warnings: string[] = [];
   const includeDebug = input.debug === true || input.explain === true;
-  const indexPrefix = input.includeSourceNotes ? "source-" : "";
-  const [metadata, bm25, graph, embeddings, config, policies] = await Promise.all([
-    readIndexFile<LtmMetadataIndex>(safeJoin(dirs.indexes, `${indexPrefix}metadata.json`), warnings),
-    readIndexFile<LtmBm25Index>(safeJoin(dirs.indexes, `${indexPrefix}bm25.json`), warnings),
-    readIndexFile<LtmGraphIndex>(safeJoin(dirs.indexes, `${indexPrefix}graph.json`), warnings),
-    readIndexFile<LtmEmbeddingIndex>(safeJoin(dirs.indexes, `${indexPrefix}embeddings.json`), warnings),
-    readConfig(safeJoin(dirs.config, "retrieval.json"), DEFAULT_LTM_RETRIEVAL_CONFIG, (value) =>
-      ltmRetrievalConfigSchema.parse(value),
-    ),
-    readConfig(safeJoin(dirs.config, "policies.json"), DEFAULT_LTM_POLICIES, (value) =>
-      ltmPoliciesConfigSchema.parse(value),
-    ),
-  ]);
+  const bundle = await loadRetrievalBundle(root, input.includeSourceNotes === true);
+  const { metadata, bm25, graph, embeddings, config, policies } = bundle;
+  const warnings = [...bundle.warnings];
+  const weights = resolveRetrievalWeights(config, input);
 
   if (!metadata) {
     const maxTokens = input.maxTokens ?? config.maxTokens;
@@ -434,9 +512,12 @@ export async function retrieveLongTermMemory(
               },
               embeddingsAvailable: false,
               weights: {
-                semantic: config.semanticWeight,
-                lexical: config.lexicalWeight,
-                graph: config.graphWeight,
+                semantic: weights.semantic,
+                lexical: weights.lexical,
+                graph: weights.graph,
+                always: weights.always,
+                metadata: weights.metadata,
+                typedPriority: weights.typedPriority,
               },
               funnel: {
                 totalChunks: 0,
@@ -453,6 +534,7 @@ export async function retrieveLongTermMemory(
                 rankedCandidates: 0,
                 selectedCandidates: 0,
                 tokenBudgetSkippedCandidates: 0,
+                scoreThresholdSkippedCandidates: 0,
               },
               selected: [],
               rejected: [],
@@ -493,36 +575,44 @@ export async function retrieveLongTermMemory(
   ]);
 
   const vector = await vectorLane(embeddings, signals.queryText, input, config, chunksById, characterIds);
-  const lanes: LtmRankLane[] = [
-    {
+  const lanes: LtmRankLane[] = [];
+
+  if (weights.always > 0) {
+    lanes.push({
       name: "always",
-      weight: 2,
+      weight: weights.always,
       items: alwaysLane(metadata, policies, input, config, characterIds),
-    },
-    {
+    });
+  }
+
+  if (weights.metadata > 0) {
+    lanes.push({
       name: "metadata",
-      weight: 1,
+      weight: weights.metadata,
       items: metadataMatches.map((match) => ({
         chunkId: match.chunkId,
         reason: match.reasons.join(","),
         rawScore: match.score,
       })),
-    },
-    {
+    });
+  }
+
+  if (weights.typedPriority > 0) {
+    lanes.push({
       name: "typed_priority",
-      weight: 1.5,
+      weight: weights.typedPriority,
       items: typedPriorityLane(metadata, input, config, characterIds),
-    },
-  ];
+    });
+  }
 
   if (vector.items.length > 0) {
-    lanes.push({ name: "vector", weight: config.semanticWeight, items: vector.items });
+    lanes.push({ name: "vector", weight: weights.semantic, items: vector.items });
   }
 
   if (bm25 && signals.queryText.trim().length > 0) {
     lanes.push({
       name: "bm25",
-      weight: config.lexicalWeight,
+      weight: weights.lexical,
       items: searchLtmBm25(bm25, signals.queryText).flatMap((match) => {
         const chunk = chunksById.get(match.chunkId);
         return chunk && candidateAllowed(chunk, input, config, characterIds)
@@ -535,7 +625,7 @@ export async function retrieveLongTermMemory(
   if (graph && graphSeeds.length > 0) {
     lanes.push({
       name: "graph",
-      weight: config.graphWeight,
+      weight: weights.graph,
       items: expandLtmGraph(graph, graphSeeds).flatMap((match) => {
         const chunk = chunksById.get(match.chunkId);
         return chunk && candidateAllowed(chunk, input, config, characterIds)
@@ -549,6 +639,7 @@ export async function retrieveLongTermMemory(
   const budgeted = applyLtmBudget(ranked, chunksById, {
     maxChunks: input.maxChunks ?? config.maxChunks,
     maxTokens: input.maxTokens ?? config.maxTokens,
+    normalizedScoreThreshold: input.minScore,
     explain: includeDebug,
     rejectedLimit: 20,
   });
@@ -566,9 +657,12 @@ export async function retrieveLongTermMemory(
         },
         embeddingsAvailable: vector.available,
         weights: {
-          semantic: config.semanticWeight,
-          lexical: config.lexicalWeight,
-          graph: config.graphWeight,
+          semantic: weights.semantic,
+          lexical: weights.lexical,
+          graph: weights.graph,
+          always: weights.always,
+          metadata: weights.metadata,
+          typedPriority: weights.typedPriority,
         },
         funnel: {
           totalChunks: allChunks.length,
@@ -586,6 +680,9 @@ export async function retrieveLongTermMemory(
           selectedCandidates: budgeted.chunks.length,
           tokenBudgetSkippedCandidates: budgeted.rejected.filter((candidate) => candidate.rejectionReason === "budget")
             .length,
+          scoreThresholdSkippedCandidates: budgeted.rejected.filter(
+            (candidate) => candidate.rejectionReason === "score_threshold",
+          ).length,
         },
         selected: budgeted.chunks.map(formatSelectedCandidate),
         rejected: budgeted.rejected.map((candidate) => formatRejectedCandidate(candidate, chunksById)),
