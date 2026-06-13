@@ -282,6 +282,11 @@ function shouldFilterDormantChunk(chunk: LtmMemoryChunk, input: RetrieveLongTerm
   return !(input.includeSourceNotes && isSourceSummaryChunk(chunk));
 }
 
+function shouldFilterResolvedChunk(chunk: LtmMemoryChunk, input: RetrieveLongTermMemoryInput) {
+  if (input.includeResolved || chunk.status !== "resolved") return false;
+  return chunk.noteType === "thread" || chunk.noteType === "callback";
+}
+
 function summarizeCandidateFilters(
   chunks: LtmMemoryChunk[],
   input: RetrieveLongTermMemoryInput,
@@ -311,7 +316,7 @@ function summarizeCandidateFilters(
       counts.dormantFiltered++;
       continue;
     }
-    if (!input.includeResolved && chunk.status === "resolved" && chunk.noteType === "thread") {
+    if (shouldFilterResolvedChunk(chunk, input)) {
       counts.resolvedFiltered++;
       continue;
     }
@@ -337,7 +342,7 @@ function candidateAllowed(
   if (!input.includeSourceNotes && isSourceSummaryChunk(chunk)) return false;
   if (!input.includeArchived && chunk.status === "archived") return false;
   if (shouldFilterDormantChunk(chunk, input)) return false;
-  if (!input.includeResolved && chunk.status === "resolved" && chunk.noteType === "thread") return false;
+  if (shouldFilterResolvedChunk(chunk, input)) return false;
   if (!gateAllows(chunk, includeGates)) return false;
   return scopeMatches(chunk, input.scope, characterIds);
 }

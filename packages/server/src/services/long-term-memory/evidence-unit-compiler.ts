@@ -31,6 +31,28 @@ type UnitTarget = {
   tags: string[];
 };
 
+type LtmCompilerLifecycle =
+  | "cumulative"
+  | "superseding"
+  | "superseding_conflict_review"
+  | "rolling_until_resolved"
+  | "manual_conflict";
+
+const LTM_BUCKET_LIFECYCLE: Record<LtmEvidenceUnit["bucket"], LtmCompilerLifecycle> = {
+  timeline_event: "cumulative",
+  character_fact: "superseding_conflict_review",
+  character_state: "superseding",
+  relationship_event: "cumulative",
+  relationship_state: "superseding",
+  relationship_conflict: "manual_conflict",
+  world_fact: "superseding_conflict_review",
+  thread: "rolling_until_resolved",
+  callback: "rolling_until_resolved",
+  voice: "cumulative",
+  tone: "superseding",
+  anchor: "cumulative",
+};
+
 export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions): LtmExtractionResponse {
   const timestamp = options.createdAt ?? new Date().toISOString();
   const existingById = new Map(options.existingNotes.map((note) => [note.id, note]));
@@ -118,7 +140,8 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
         continue;
       }
 
-      if (shouldAppend(units, sectionKey, existing)) {
+      const lifecycle = lifecycleForSection(units, sectionKey);
+      if (shouldAppend(lifecycle, sectionKey, existing)) {
         mutations.push({
           id: randomUUID(),
           kind: "append_section",
@@ -147,8 +170,24 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
       }
     }
 
+    const nextStatus = statusForUnits(units);
+    if (nextStatus !== existing.status && shouldSetStatus(units, existing.status, nextStatus)) {
+      mutations.push({
+        id: randomUUID(),
+        kind: "set_status",
+        risk,
+        confidence,
+        summary: `Set ${noteId} status to ${nextStatus}`,
+        evidence,
+        noteId,
+        status: nextStatus,
+      });
+    }
+
     for (const link of links) {
-      if (!existing.links.some((candidate) => candidate.target === link.target && candidate.relation === link.relation)) {
+      if (
+        !existing.links.some((candidate) => candidate.target === link.target && candidate.relation === link.relation)
+      ) {
         mutations.push({
           id: randomUUID(),
           kind: "add_link",
@@ -164,7 +203,9 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
   }
 
   return {
-    summary: options.summary ?? `Compiled ${options.units.length} evidence unit(s) into ${mutations.length} draft mutation(s).`,
+    summary:
+      options.summary ??
+      `Compiled ${options.units.length} evidence unit(s) into ${mutations.length} draft mutation(s).`,
     mutations: mutations.slice(0, 25),
   };
 }
@@ -204,15 +245,24 @@ function sectionsForUnits(units: LtmEvidenceUnit[], existing: LtmNote | undefine
   for (const unit of units) {
     const sectionKey = sectionKeyForUnit(unit);
     const existingSection = existing?.sections[sectionKey];
-    const text = unit.bucket === "relationship_event" ? eventLine(unit) : unit.text.trim();
-    const baseText = unit.bucket === "relationship_event" ? sections[sectionKey]?.text : sections[sectionKey]?.text ?? existingSection?.text;
+    const lifecycle = LTM_BUCKET_LIFECYCLE[unit.bucket];
+    const text = lifecycle === "cumulative" ? cumulativeLine(unit) : unit.text.trim();
+    const baseText = sections[sectionKey]?.text;
     sections[sectionKey] = {
-      text: mergeSectionText(baseText, text, unit.bucket === "relationship_event"),
+      text: mergeSectionText(baseText, text, lifecycle === "cumulative"),
       updatedAt: timestamp,
       salience: Math.max(sections[sectionKey]?.salience ?? 0, unit.salience),
       confidence: Math.max(sections[sectionKey]?.confidence ?? 0, unit.confidence),
-      evidence: uniqueStrings([...(sections[sectionKey]?.evidence ?? []), ...(existingSection?.evidence ?? []), ...unit.evidence]).slice(0, 100),
-      gates: uniqueStrings([...(sections[sectionKey]?.gates ?? []), ...(existingSection?.gates ?? []), ...unit.gates]) as LtmSection["gates"],
+      evidence: uniqueStrings([
+        ...(sections[sectionKey]?.evidence ?? []),
+        ...(existingSection?.evidence ?? []),
+        ...unit.evidence,
+      ]).slice(0, 100),
+      gates: uniqueStrings([
+        ...(sections[sectionKey]?.gates ?? []),
+        ...(existingSection?.gates ?? []),
+        ...unit.gates,
+      ]) as LtmSection["gates"],
     };
   }
 
@@ -225,8 +275,14 @@ function sectionsForUnits(units: LtmEvidenceUnit[], existing: LtmNote | undefine
       updatedAt: timestamp,
       salience: Math.max(existingState?.salience ?? 0, ...relationshipUnits.map((unit) => unit.salience)),
       confidence: Math.max(existingState?.confidence ?? 0, ...relationshipUnits.map((unit) => unit.confidence)),
-      evidence: uniqueStrings([...(existingState?.evidence ?? []), ...relationshipUnits.flatMap((unit) => unit.evidence)]).slice(0, 100),
-      gates: uniqueStrings([...(existingState?.gates ?? []), ...relationshipUnits.flatMap((unit) => unit.gates)]) as LtmSection["gates"],
+      evidence: uniqueStrings([
+        ...(existingState?.evidence ?? []),
+        ...relationshipUnits.flatMap((unit) => unit.evidence),
+      ]).slice(0, 100),
+      gates: uniqueStrings([
+        ...(existingState?.gates ?? []),
+        ...relationshipUnits.flatMap((unit) => unit.gates),
+      ]) as LtmSection["gates"],
     };
   }
 
@@ -242,7 +298,7 @@ function sectionKeyForUnit(unit: LtmEvidenceUnit) {
   return unit.sectionKey;
 }
 
-function eventLine(unit: LtmEvidenceUnit) {
+function cumulativeLine(unit: LtmEvidenceUnit) {
   return `- ${unit.text.trim()} [evidence:${unit.evidence.join(",")}]`;
 }
 
@@ -253,15 +309,42 @@ function mergeSectionText(existing: string | undefined, incoming: string, append
   return `${existing.trim()}\n${incoming.trim()}`;
 }
 
-function shouldAppend(units: LtmEvidenceUnit[], sectionKey: string, existing: LtmNote) {
+function lifecycleForSection(units: LtmEvidenceUnit[], sectionKey: string): LtmCompilerLifecycle {
+  const lifecycles = units
+    .filter((unit) => sectionKeyForUnit(unit) === sectionKey)
+    .map((unit) => LTM_BUCKET_LIFECYCLE[unit.bucket]);
+  if (lifecycles.includes("cumulative")) return "cumulative";
+  if (lifecycles.includes("rolling_until_resolved")) return "rolling_until_resolved";
+  if (lifecycles.includes("superseding_conflict_review")) return "superseding_conflict_review";
+  if (lifecycles.includes("manual_conflict")) return "manual_conflict";
+  return "superseding";
+}
+
+function shouldAppend(lifecycle: LtmCompilerLifecycle, sectionKey: string, existing: LtmNote) {
   if (!existing.sections[sectionKey]) return false;
-  return units.some((unit) => sectionKeyForUnit(unit) === sectionKey && unit.bucket === "relationship_event");
+  return lifecycle === "cumulative";
 }
 
 function isHighRiskOverwrite(units: LtmEvidenceUnit[], sectionKey: string) {
   return units
     .filter((unit) => sectionKeyForUnit(unit) === sectionKey)
-    .some((unit) => riskForEvidenceUnit(unit) === "high" || unit.bucket === "character_fact" || unit.bucket === "world_fact");
+    .some(
+      (unit) =>
+        riskForEvidenceUnit(unit) === "high" || LTM_BUCKET_LIFECYCLE[unit.bucket] === "superseding_conflict_review",
+    );
+}
+
+function statusForUnits(units: LtmEvidenceUnit[]) {
+  if (units.some((unit) => unit.status === "archived")) return "archived";
+  if (units.some((unit) => unit.status === "resolved")) return "resolved";
+  if (units.some((unit) => unit.status === "active" || unit.status === "developing")) return "active";
+  return "dormant";
+}
+
+function shouldSetStatus(units: LtmEvidenceUnit[], existingStatus: LtmStatus, nextStatus: LtmStatus) {
+  if (existingStatus === "archived") return false;
+  if (nextStatus === "archived") return false;
+  return units.some((unit) => LTM_BUCKET_LIFECYCLE[unit.bucket] === "rolling_until_resolved");
 }
 
 function maxRisk(risks: LtmDraftRisk[]): LtmDraftRisk {

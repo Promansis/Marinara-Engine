@@ -203,13 +203,6 @@ export function isLowRiskSourceExtractionMutation(mutation: LtmDraftMutation) {
   if (mutation.kind === "add_link") {
     return mutation.confidence >= 0.75;
   }
-  if (mutation.kind === "set_status") {
-    return (
-      mutation.status === "resolved" &&
-      mutation.confidence >= 0.85 &&
-      (mutation.noteId.startsWith("cb_") || mutation.noteId.startsWith("thread_"))
-    );
-  }
   return false;
 }
 
@@ -219,10 +212,7 @@ function isLowRiskMutationForPolicy(mutation: LtmDraftMutation, policy: ApplyLtm
   return policy === "source_extraction" ? isLowRiskSourceExtractionMutation(mutation) : isLowRiskTurnMutation(mutation);
 }
 
-async function filterAutoApplyMutationsWithDependencies(
-  storage: LongTermMemoryStorage,
-  mutations: LtmDraftMutation[],
-) {
+async function filterAutoApplyMutationsWithDependencies(storage: LongTermMemoryStorage, mutations: LtmDraftMutation[]) {
   const selectedCreateIds = new Set(
     mutations.flatMap((mutation) => (mutation.kind === "create_note" ? [mutation.note.id] : [])),
   );

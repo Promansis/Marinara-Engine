@@ -5,7 +5,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import type { LtmDraftMutation, LtmEvidenceUnit, LtmNote } from "@marinara-engine/shared";
-import { ltmEvidenceUnitSchema, ltmScopeSchema } from "../../../../../shared/src/schemas/long-term-memory.schema.js";
+import {
+  ltmEvidenceUnitSchema,
+  ltmPoliciesConfigSchema,
+  ltmScopeSchema,
+} from "../../../../../shared/src/schemas/long-term-memory.schema.js";
 import { chunkNotes } from "../chunking.js";
 import { buildLtmMetadataIndex } from "../metadata-index.js";
 import { compileLtmEvidenceUnits } from "../evidence-unit-compiler.js";
@@ -239,6 +243,97 @@ test("source extraction low-risk policy blocks secret callback auto-apply", () =
   );
 });
 
+test("source extraction auto-apply leaves resolved memory status pending with content update", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-resolved-status-pending-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "scene_source_test",
+        type: "scene",
+        status: "dormant",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "The lantern hum paid off when it revealed the archive door.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "cb_lantern",
+        type: "callback",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          setup: {
+            text: "The lantern hum should pay off later.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_old"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const response = compileLtmEvidenceUnits({
+      units: [
+        evidenceUnit("callback", {
+          subjectId: "lantern",
+          sectionKey: "setup",
+          text: "The lantern hum paid off when it revealed the archive door.",
+          status: "resolved",
+          confidence: 0.95,
+        }),
+      ],
+      existingNotes: [(await storage.getNote("cb_lantern"))!],
+      scope: {},
+      modes: ["roleplay"],
+      createdAt: timestamp,
+    });
+    const statusMutation = response.mutations.find((mutation) => mutation.kind === "set_status");
+    assert(statusMutation);
+    assert.equal(isLowRiskSourceExtractionMutation(statusMutation), false);
+
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      userMessage: "",
+      assistantReply: "",
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_source_test" },
+      response,
+    });
+
+    const result = await applyLongTermMemoryDraft(draft.id, {
+      root,
+      actor: "test",
+      autoApplyLowRiskOnly: true,
+      autoApplyPolicy: "source_extraction",
+      rebuildIndexes: false,
+    });
+
+    assert.deepEqual(result.appliedMutationIds, []);
+    assert.deepEqual(new Set(result.skippedMutationIds), new Set(response.mutations.map((mutation) => mutation.id)));
+    assert.equal(result.draft.status, "pending");
+
+    const callback = await storage.getNote("cb_lantern");
+    assert.equal(callback?.status, "active");
+    assert.equal(callback?.sections.setup?.text, "The lantern hum should pay off later.");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("source extraction auto-apply skips links to pending timeline notes", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-pending-timeline-link-"));
   try {
@@ -338,7 +433,10 @@ test("source extraction auto-apply skips links to pending timeline notes", async
     });
 
     assert.deepEqual(result.appliedMutationIds, []);
-    assert.deepEqual(new Set(result.skippedMutationIds), new Set([createTimelineMutation.id, addTimelineLinkMutation.id]));
+    assert.deepEqual(
+      new Set(result.skippedMutationIds),
+      new Set([createTimelineMutation.id, addTimelineLinkMutation.id]),
+    );
     assert.equal(result.draft.status, "pending");
     assert.equal(await storage.getNote("timeline_archive_confrontation"), null);
 
@@ -390,6 +488,37 @@ test("initializeLtmStore is idempotent across concurrent calls", async () => {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("policy config hides unenforced lifecycle knobs while accepting legacy files", () => {
+  const parsed = ltmPoliciesConfigSchema.parse({
+    version: 1,
+    policies: [
+      {
+        type: "thread",
+        injection: "on_relevance",
+        sectionsAlways: [],
+        sectionsOnRelevance: ["*"],
+        updateBehavior: "cumulative_until_resolved",
+        reconcileEvery: 5,
+        summarization: "compact_when_resolved",
+        pinAgainstSummarization: true,
+        autoArchiveOn: "status=resolved",
+      },
+    ],
+  });
+
+  assert.deepEqual(parsed, {
+    version: 1,
+    policies: [
+      {
+        type: "thread",
+        injection: "on_relevance",
+        sectionsAlways: [],
+        sectionsOnRelevance: ["*"],
+      },
+    ],
+  });
 });
 
 test("ltm scope accepts legacy chatId and multiple chatIds", () => {
@@ -948,7 +1077,12 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
     "relationship_state",
     "relationship_conflict",
   ]);
-  assert.deepEqual(userPayload.allowedTimelineRelations, ["occurred_in", "triggered_by", "resolved_in", "evidenced_by"]);
+  assert.deepEqual(userPayload.allowedTimelineRelations, [
+    "occurred_in",
+    "triggered_by",
+    "resolved_in",
+    "evidenced_by",
+  ]);
   assert.deepEqual(userPayload.requiredEvidence, ["source_note:scene_source_test", "chat:chat_test"]);
   assert.deepEqual(userPayload.allowedBuckets, [
     "timeline_event",
@@ -1413,7 +1547,9 @@ test("timeline event units create historical notes and typed memories link to th
     const relationship = await storage.getNote("rel_mara_jules");
     assert.equal(timeline?.type, "timeline_event");
     assert(timeline?.links.some((link) => link.target === "scene_source_test" && link.relation === "extracted_from"));
-    assert(relationship?.links.some((link) => link.target === "scene_source_test" && link.relation === "extracted_from"));
+    assert(
+      relationship?.links.some((link) => link.target === "scene_source_test" && link.relation === "extracted_from"),
+    );
     assert(
       relationship?.links.some(
         (link) => link.target === "timeline_archive_confrontation" && link.relation === "occurred_in",
@@ -1421,6 +1557,170 @@ test("timeline event units create historical notes and typed memories link to th
     );
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("evidence unit compiler applies explicit bucket lifecycle rules", () => {
+  const existingRelationship: LtmNote = {
+    id: "rel_mara_jules",
+    type: "relationship",
+    status: "active",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["typed_memory", "relationship_memory"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      history: {
+        text: "- Mara first trusted Jules with the hidden key. [evidence:source_note:scene_source_test]",
+        updatedAt: timestamp,
+        evidence: ["source_note:scene_source_test"],
+      },
+    },
+    version: 1,
+  };
+  const existingCharacter: LtmNote = {
+    id: "char_mara",
+    type: "character",
+    status: "active",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["typed_memory"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      current_state: {
+        text: "Mara is cautious around Jules.",
+        updatedAt: timestamp,
+        evidence: ["source_note:scene_old"],
+      },
+    },
+    version: 1,
+  };
+  const existingCallback: LtmNote = {
+    id: "cb_lantern",
+    type: "callback",
+    status: "active",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["typed_memory"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      setup: {
+        text: "The lantern hum should pay off later.",
+        updatedAt: timestamp,
+        evidence: ["source_note:scene_old"],
+      },
+    },
+    version: 1,
+  };
+
+  const response = compileLtmEvidenceUnits({
+    units: [
+      evidenceUnit("relationship_event", {
+        subjectId: "mara_jules",
+        sectionKey: "history",
+        text: "Mara trusts Jules again when he returns the tower archive key.",
+      }),
+      evidenceUnit("character_state", {
+        subjectId: "mara",
+        sectionKey: "current_state",
+        text: "Mara is openly relieved around Jules.",
+      }),
+      evidenceUnit("callback", {
+        subjectId: "lantern",
+        sectionKey: "setup",
+        text: "The lantern hum paid off when it revealed the archive door.",
+        status: "resolved",
+      }),
+    ],
+    existingNotes: [existingRelationship, existingCharacter, existingCallback],
+    scope: {},
+    modes: ["roleplay"],
+    createdAt: timestamp,
+  });
+
+  assert(
+    response.mutations.some(
+      (mutation) =>
+        mutation.kind === "append_section" && mutation.noteId === "rel_mara_jules" && mutation.sectionKey === "history",
+    ),
+  );
+  assert(
+    response.mutations.some(
+      (mutation) =>
+        mutation.kind === "update_section" &&
+        mutation.noteId === "char_mara" &&
+        mutation.sectionKey === "current_state" &&
+        mutation.section.text === "Mara is openly relieved around Jules.",
+    ),
+  );
+  assert(
+    response.mutations.some(
+      (mutation) =>
+        mutation.kind === "update_section" &&
+        mutation.noteId === "cb_lantern" &&
+        mutation.sectionKey === "setup" &&
+        mutation.section.text === "The lantern hum paid off when it revealed the archive door.",
+    ),
+  );
+  assert(
+    response.mutations.some(
+      (mutation) =>
+        mutation.kind === "set_status" && mutation.noteId === "cb_lantern" && mutation.status === "resolved",
+    ),
+  );
+});
+
+test("evidence unit compiler routes stable fact changes through conflict review", () => {
+  const existingWorld: LtmNote = {
+    id: "world_veil",
+    type: "world",
+    status: "active",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["typed_memory"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      facts: {
+        text: "The veil can only be crossed at sunrise.",
+        updatedAt: timestamp,
+        evidence: ["source_note:scene_old"],
+      },
+    },
+    version: 1,
+  };
+
+  const response = compileLtmEvidenceUnits({
+    units: [
+      evidenceUnit("world_fact", {
+        subjectId: "veil",
+        sectionKey: "facts",
+        text: "The veil can only be crossed at moonrise.",
+      }),
+    ],
+    existingNotes: [existingWorld],
+    scope: {},
+    modes: ["roleplay"],
+    createdAt: timestamp,
+  });
+
+  assert.deepEqual(
+    response.mutations.map((mutation) => mutation.kind),
+    ["flag_conflict"],
+  );
+  const conflict = response.mutations[0];
+  assert.equal(conflict?.kind, "flag_conflict");
+  if (conflict?.kind === "flag_conflict") {
+    assert.equal(conflict.conflict.policy, "manual_review");
+    assert.equal(conflict.conflict.existing, "The veil can only be crossed at sunrise.");
+    assert.equal(conflict.conflict.proposed, "The veil can only be crossed at moonrise.");
   }
 });
 
@@ -2151,7 +2451,7 @@ test("retrieval excludes source notes by default and prioritizes relationship st
   }
 });
 
-test("retrieval accepts legacy enabled config, per-chat weights, chunk limits, gates, and resolved threads", async () => {
+test("retrieval accepts legacy enabled config, per-chat weights, chunk limits, gates, and resolved memories", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-retrieval-preferences-"));
   try {
     const storage = new LongTermMemoryStorage(root);
@@ -2212,6 +2512,24 @@ test("retrieval accepts legacy enabled config, per-chat weights, chunk limits, g
       },
       { suppressEvent: true },
     );
+    await storage.createNote(
+      {
+        id: "cb_archive_key",
+        type: "callback",
+        status: "resolved",
+        modes: ["roleplay"],
+        scope: { characterIds: ["mara"] },
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          setup: {
+            text: "Resolved callback: reveal the archive key's hiding place.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
 
     await rebuildLongTermMemoryIndexes({
       root,
@@ -2234,6 +2552,7 @@ test("retrieval accepts legacy enabled config, per-chat weights, chunk limits, g
     assert.equal(exact.chunks.length, 1);
     assert(!exact.chunks.some((chunk) => chunk.chunk.id === "char_mara::core"));
     assert(!exact.chunks.some((chunk) => chunk.chunk.noteId === "thread_archive_key"));
+    assert(!exact.chunks.some((chunk) => chunk.chunk.noteId === "cb_archive_key"));
     assert.equal(exact.debug?.selected.length, 1);
 
     const withAdvanced = await retrieveLongTermMemory({
@@ -2250,6 +2569,7 @@ test("retrieval accepts legacy enabled config, per-chat weights, chunk limits, g
     const ids = withAdvanced.chunks.map((chunk) => chunk.chunk.id);
     assert(ids.includes("char_mara::core"));
     assert(ids.includes("thread_archive_key::summary"));
+    assert(ids.includes("cb_archive_key::setup"));
     assert.equal(withAdvanced.debug, undefined);
   } finally {
     await rm(root, { recursive: true, force: true });

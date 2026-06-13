@@ -329,21 +329,28 @@ export const ltmDebugEventSchema = z
   })
   .strict();
 
-export const ltmPolicySchema = z
-  .object({
-    type: ltmNoteTypeSchema,
-    injection: z.enum(["always_for_active_characters", "on_relevance", "never"]).default("on_relevance"),
-    sectionsAlways: z.array(ltmSectionKeySchema).default([]),
-    sectionsOnRelevance: z.array(z.union([ltmSectionKeySchema, z.literal("*")])).default(["*"]),
-    updateBehavior: z
-      .enum(["superseding", "cumulative_reconciled", "cumulative_until_resolved", "manual_only"])
-      .default("manual_only"),
-    reconcileEvery: z.number().int().min(1).optional(),
-    summarization: z.enum(["none", "reconcile_into_current_dynamic", "compact_when_resolved"]).default("none"),
-    pinAgainstSummarization: z.boolean().default(false),
-    autoArchiveOn: z.string().min(1).max(120).optional(),
-  })
-  .strict();
+export const ltmPolicySchema = z.preprocess(
+  (value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+    const {
+      updateBehavior: _updateBehavior,
+      reconcileEvery: _reconcileEvery,
+      summarization: _summarization,
+      pinAgainstSummarization: _pinAgainstSummarization,
+      autoArchiveOn: _autoArchiveOn,
+      ...rest
+    } = value as Record<string, unknown>;
+    return rest;
+  },
+  z
+    .object({
+      type: ltmNoteTypeSchema,
+      injection: z.enum(["always_for_active_characters", "on_relevance", "never"]).default("on_relevance"),
+      sectionsAlways: z.array(ltmSectionKeySchema).default([]),
+      sectionsOnRelevance: z.array(z.union([ltmSectionKeySchema, z.literal("*")])).default(["*"]),
+    })
+    .strict(),
+);
 
 export const ltmPoliciesConfigSchema = z
   .object({
