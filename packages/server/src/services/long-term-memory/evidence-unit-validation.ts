@@ -259,6 +259,7 @@ function placeholderDiagnostics(unit: LtmEvidenceUnit, noteId: string): LtmExtra
 }
 
 export function noteIdForEvidenceUnit(unit: Pick<LtmEvidenceUnit, "bucket" | "subjectId" | "sectionKey">) {
+  if (unit.bucket === "timeline_event") return prefixed("timeline", unit.subjectId);
   if (unit.bucket === "callback") return prefixed("cb", unit.subjectId);
   if (unit.bucket === "thread") return prefixed("thread", unit.subjectId);
   if (unit.bucket === "world_fact") return prefixed("world", unit.subjectId);

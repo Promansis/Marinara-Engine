@@ -179,6 +179,9 @@ function targetForUnit(unit: LtmEvidenceUnit): UnitTarget {
   if (unit.bucket.startsWith("relationship_")) {
     return { ...base, noteType: "relationship", tags: ["typed_memory", "relationship_memory"] };
   }
+  if (unit.bucket === "timeline_event") {
+    return { ...base, noteType: "timeline_event", tags: ["typed_memory", "timeline_event"] };
+  }
   if (unit.bucket === "thread") return { ...base, noteType: "thread", tags: ["typed_memory"] };
   if (unit.bucket === "callback") return { ...base, noteType: "callback", tags: ["typed_memory"] };
   if (unit.bucket === "world_fact") return { ...base, noteType: "world", tags: ["typed_memory"] };
@@ -231,6 +234,7 @@ function sectionsForUnits(units: LtmEvidenceUnit[], existing: LtmNote | undefine
 }
 
 function sectionKeyForUnit(unit: LtmEvidenceUnit) {
+  if (unit.bucket === "timeline_event") return unit.sectionKey || "event";
   if (unit.bucket === "relationship_event") return "history";
   if (unit.bucket === "relationship_state") return "state";
   if (unit.bucket === "character_state") return "current_state";

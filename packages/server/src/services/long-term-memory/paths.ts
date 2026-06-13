@@ -21,6 +21,7 @@ export const LTM_DEBUG_LOG = "log.jsonl";
 
 export const LTM_VAULT_FOLDERS = [
   "sources",
+  "timeline",
   "characters",
   "relationships",
   "scenes",

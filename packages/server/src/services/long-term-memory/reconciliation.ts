@@ -70,6 +70,10 @@ function withSourceLink(noteId: string, links: LtmLink[], draft: LtmExtractionDr
   return uniqueLinks([...links, sourceLink]);
 }
 
+function isSourceSummaryNote(note: Pick<LtmNote, "type" | "tags">) {
+  return note.type === "source" || note.tags.includes("source_summary") || note.tags.includes("chat_summary");
+}
+
 async function preflightDraftMutations(
   storage: LongTermMemoryStorage,
   draft: LtmExtractionDraft,
@@ -81,13 +85,7 @@ async function preflightDraftMutations(
 
   for (const mutation of mutations) {
     if (mutation.kind === "create_note") {
-      if (
-        sourceExtractionDraft &&
-        (mutation.note.tags.includes("source_summary") ||
-          mutation.note.tags.includes("chat_summary") ||
-          mutation.note.type === "source" ||
-          mutation.note.type === "scene")
-      ) {
+      if (sourceExtractionDraft && (isSourceSummaryNote(mutation.note) || mutation.note.type === "scene")) {
         throw new Error(
           `Long-term memory source extraction draft cannot create scene/source notes: ${mutation.note.id}`,
         );
@@ -100,7 +98,7 @@ async function preflightDraftMutations(
     }
     if (sourceExtractionDraft && (mutation.noteId.startsWith("source_") || mutation.noteId.startsWith("scene_"))) {
       const existing = await storage.getNote(mutation.noteId);
-      if (!existing || existing.type === "source" || existing.type === "scene") {
+      if (!existing || isSourceSummaryNote(existing) || existing.type === "scene") {
         throw new Error(
           `Long-term memory source extraction draft cannot mutate scene/source notes: ${mutation.noteId}`,
         );
@@ -219,6 +217,31 @@ export const isLowRiskAutoApplyMutation = isLowRiskTurnMutation;
 
 function isLowRiskMutationForPolicy(mutation: LtmDraftMutation, policy: ApplyLtmDraftOptions["autoApplyPolicy"]) {
   return policy === "source_extraction" ? isLowRiskSourceExtractionMutation(mutation) : isLowRiskTurnMutation(mutation);
+}
+
+async function filterAutoApplyMutationsWithDependencies(
+  storage: LongTermMemoryStorage,
+  mutations: LtmDraftMutation[],
+) {
+  const selectedCreateIds = new Set(
+    mutations.flatMap((mutation) => (mutation.kind === "create_note" ? [mutation.note.id] : [])),
+  );
+  const linkMutations = mutations.filter((mutation) => mutation.kind === "add_link");
+  if (linkMutations.length === 0) return mutations;
+
+  const targetExists = new Map<string, boolean>();
+  for (const target of Array.from(new Set(linkMutations.map((mutation) => mutation.link.target)))) {
+    if (selectedCreateIds.has(target)) {
+      targetExists.set(target, true);
+      continue;
+    }
+    targetExists.set(target, Boolean(await storage.getNote(target)));
+  }
+
+  return mutations.filter((mutation) => {
+    if (mutation.kind !== "add_link") return true;
+    return targetExists.get(mutation.link.target) === true;
+  });
 }
 
 async function applyMutation(
@@ -350,11 +373,14 @@ async function applyLongTermMemoryDraftInner(
     throw new Error(`Long-term memory draft mutation not found: ${unknownMutationIds.join(", ")}`);
   }
   const autoApplyPolicy = options.autoApplyPolicy ?? (draft.source.sourceNoteId ? "source_extraction" : "turn");
-  const mutationsToApply = draft.mutations.filter((mutation) => {
+  const lowRiskMutations = draft.mutations.filter((mutation) => {
     if (selectedMutationIds && !selectedMutationIds.has(mutation.id)) return false;
     if (options.autoApplyLowRiskOnly && !isLowRiskMutationForPolicy(mutation, autoApplyPolicy)) return false;
     return true;
   });
+  const mutationsToApply = options.autoApplyLowRiskOnly
+    ? await filterAutoApplyMutationsWithDependencies(storage, lowRiskMutations)
+    : lowRiskMutations;
   const skippedMutationIds = draft.mutations
     .filter((mutation) => !mutationsToApply.some((candidate) => candidate.id === mutation.id))
     .map((mutation) => mutation.id);

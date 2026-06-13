@@ -132,8 +132,8 @@ function buildExtractionMessages(input: LtmExtractionTurnInput): ChatMessage[] {
             summary: "what changes",
             evidence: ["user:<id>", "assistant:<id>"],
             note: {
-              id: "char_name|rel_name_name|scene_name|thread_name|cb_name|world_name|voice_name|tone_name",
-              type: "character|relationship|scene|thread|callback|world|voice|tone",
+              id: "char_name|rel_name_name|timeline_event_name|scene_name|thread_name|cb_name|world_name|voice_name|tone_name",
+              type: "character|relationship|timeline_event|scene|thread|callback|world|voice|tone",
               status: "active|resolved|archived|dormant",
               modes: input.modes,
               scope,

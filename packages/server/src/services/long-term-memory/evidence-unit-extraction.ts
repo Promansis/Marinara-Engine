@@ -31,13 +31,16 @@ export const DEFAULT_LTM_EXTRACTION_PROMPT = [
   "Extract every distinct durable memory unit supported by the source.",
   "Emit zero or more units per bucket. Do not stop after the first valid unit.",
   "Prefer several compact units over one blended paragraph.",
-  "Scan bucket groups explicitly: relationships (relationship_event, relationship_state, relationship_conflict); open loops (thread, callback); character and world facts (character_fact, character_state, world_fact); style and motifs (voice, tone, anchor).",
+  "Scan bucket groups explicitly: timeline beats (timeline_event); relationships (relationship_event, relationship_state, relationship_conflict); open loops (thread, callback); character and world facts (character_fact, character_state, world_fact); style and motifs (voice, tone, anchor).",
   "Each unit must be compact, typed, and useful for future continuity.",
   "Every unit must include at least one supplied evidence string, including source_note:<id>.",
   "Use real lowercase snake_case subjectId and sectionKey values derived from the source.",
   "Never output placeholder values such as lowercase_snake_case_scope_id, lowercase_snake_case, target_note_id, or copied schema/example text.",
   "Do not copy schema/example placeholder values.",
   "Omit optional fields unless they are real and evidence-backed.",
+  "Use timeline_event for historical source-summary scenes or beats; never call those current_scene.",
+  "Typed memories may link to timeline_event notes using occurred_in, triggered_by, resolved_in, or evidenced_by.",
+  "Keep source-note provenance as source_note evidence; timeline links describe story structure, not source provenance.",
   "Use sourceHash exactly as supplied.",
   "Set confidence and salience from 0 to 1.",
   "Mark spoilers, character secrets, private knowledge, and NSFW content with gates.",
@@ -51,6 +54,7 @@ export const DEFAULT_LTM_EXTRACTION_MAX_TOKENS = 3200;
 export const DEFAULT_LTM_EXTRACTION_MAX_SOURCE_CHARS = 24_000;
 export const DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS = 12_000;
 const LTM_EXTRACTION_BUCKET_SCAN_ORDER = [
+  "timeline_event",
   "relationship_event",
   "relationship_state",
   "relationship_conflict",
@@ -199,7 +203,9 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
         allowedStatuses: ltmEvidenceUnitStatusSchema.options,
         allowedGates: ltmGateSchema.options,
         bucketScanOrder: LTM_EXTRACTION_BUCKET_SCAN_ORDER,
+        allowedTimelineRelations: ["occurred_in", "triggered_by", "resolved_in", "evidenced_by"],
         buckets: {
+          timeline_event: "historical source-summary scene or beat; not the live current scene",
           character_fact: "stable character fact",
           character_state: "current character condition, aim, mood, capability, or position",
           relationship_event: "evidence-backed relationship history item",

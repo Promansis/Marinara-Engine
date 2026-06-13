@@ -5,6 +5,7 @@ import { z } from "zod";
 
 export const ltmNoteTypeSchema = z.enum([
   "source",
+  "timeline_event",
   "character",
   "relationship",
   "scene",
@@ -20,6 +21,7 @@ export const ltmStatusSchema = z.enum(["active", "resolved", "archived", "dorman
 export const ltmEvidenceUnitStatusSchema = z.enum(["active", "resolved", "archived", "dormant", "developing"]);
 
 export const ltmEvidenceUnitBucketSchema = z.enum([
+  "timeline_event",
   "character_fact",
   "character_state",
   "relationship_event",
@@ -77,6 +79,7 @@ export const ltmResolvedExtractionSettingsSchema = z
 
 export const ltmVaultFolderSchema = z.enum([
   "sources",
+  "timeline",
   "characters",
   "relationships",
   "scenes",
@@ -89,6 +92,7 @@ export const ltmVaultFolderSchema = z.enum([
 
 export const LTM_NOTE_TYPE_TO_VAULT_FOLDER = {
   source: "sources",
+  timeline_event: "timeline",
   character: "characters",
   relationship: "relationships",
   scene: "scenes",
@@ -101,6 +105,7 @@ export const LTM_NOTE_TYPE_TO_VAULT_FOLDER = {
 
 const idPrefixesByType = {
   source: ["source_", "scene_summary_"],
+  timeline_event: ["timeline_"],
   character: ["char_"],
   relationship: ["rel_"],
   scene: ["scene_"],

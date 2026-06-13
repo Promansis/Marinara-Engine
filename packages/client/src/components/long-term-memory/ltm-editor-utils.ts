@@ -14,6 +14,7 @@ import type { CreateLongTermMemoryNoteInput, UpdateLongTermMemoryNoteInput } fro
 
 export const noteTypeOptions: LtmNoteType[] = [
   "source",
+  "timeline_event",
   "character",
   "relationship",
   "scene",
@@ -30,6 +31,7 @@ export const gateOptions: LtmGate[] = ["spoiler", "character_secret", "private",
 
 export const allowedIdPrefixesByType: Record<LtmNoteType, readonly string[]> = {
   source: ["source_", "scene_summary_"],
+  timeline_event: ["timeline_"],
   character: ["char_"],
   relationship: ["rel_"],
   scene: ["scene_"],
@@ -42,6 +44,7 @@ export const allowedIdPrefixesByType: Record<LtmNoteType, readonly string[]> = {
 
 const NOTE_TYPE_LABELS: Record<LtmNoteType, string> = {
   source: "Source",
+  timeline_event: "Timeline event",
   character: "Character",
   relationship: "Relationship",
   scene: "Scene",
@@ -79,6 +82,7 @@ const KNOWN_ID_PREFIXES = [
   "relationship_",
   "rel_",
   "source_",
+  "timeline_",
   "scene_",
   "thread_",
   "callback_",
@@ -187,6 +191,7 @@ export function normalizeIdentifierList(value: string, fallbackPrefix = "item") 
 
 export function defaultSectionKeyForType(type: LtmNoteType) {
   if (type === "source") return "source";
+  if (type === "timeline_event") return "event";
   return type === "scene" ? "summary" : "core";
 }
 

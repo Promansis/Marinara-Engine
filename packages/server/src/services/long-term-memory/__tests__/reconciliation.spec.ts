@@ -239,6 +239,120 @@ test("source extraction low-risk policy blocks secret callback auto-apply", () =
   );
 });
 
+test("source extraction auto-apply skips links to pending timeline notes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-pending-timeline-link-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "scene_source_test",
+        type: "scene",
+        status: "dormant",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Mara confronts Jules in the archive.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "rel_mara_jules",
+        type: "relationship",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory", "relationship_memory"],
+        links: [],
+        sections: {
+          state: {
+            text: "Mara and Jules are guarded allies.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const createTimelineMutation: Extract<LtmDraftMutation, { kind: "create_note" }> = {
+      id: randomUUID(),
+      kind: "create_note",
+      risk: "low",
+      confidence: 0.95,
+      summary: "Create timeline event",
+      evidence: ["source_note:scene_source_test"],
+      note: {
+        id: "timeline_archive_confrontation",
+        type: "timeline_event",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory", "timeline_event"],
+        links: [],
+        sections: {
+          event: {
+            text: "Mara confronts Jules in the archive.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_test"],
+          },
+        },
+      },
+    };
+    const addTimelineLinkMutation: Extract<LtmDraftMutation, { kind: "add_link" }> = {
+      id: randomUUID(),
+      kind: "add_link",
+      risk: "low",
+      confidence: 0.95,
+      summary: "Link relationship to timeline event",
+      evidence: ["source_note:scene_source_test"],
+      noteId: "rel_mara_jules",
+      link: { target: "timeline_archive_confrontation", relation: "occurred_in" },
+    };
+
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      userMessage: "",
+      assistantReply: "",
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_source_test" },
+      response: {
+        summary: "Timeline link draft",
+        mutations: [createTimelineMutation, addTimelineLinkMutation],
+      },
+    });
+
+    const result = await applyLongTermMemoryDraft(draft.id, {
+      root,
+      actor: "test",
+      autoApplyLowRiskOnly: true,
+      autoApplyPolicy: "source_extraction",
+      rebuildIndexes: false,
+    });
+
+    assert.deepEqual(result.appliedMutationIds, []);
+    assert.deepEqual(new Set(result.skippedMutationIds), new Set([createTimelineMutation.id, addTimelineLinkMutation.id]));
+    assert.equal(result.draft.status, "pending");
+    assert.equal(await storage.getNote("timeline_archive_confrontation"), null);
+
+    const relationship = await storage.getNote("rel_mara_jules");
+    assert(
+      !relationship?.links.some(
+        (link) => link.target === "timeline_archive_confrontation" && link.relation === "occurred_in",
+      ),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("integrity reports malformed event log rows instead of throwing", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-integrity-"));
   try {
@@ -829,13 +943,15 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
   assert.equal(userPayload.unitFields.links, "real links only, otherwise []");
   assert.equal(userPayload.unitFields.sourceHash, sourceHash);
   assert.deepEqual(userPayload.bucketScanOrder.slice(0, 4), [
+    "timeline_event",
     "relationship_event",
     "relationship_state",
     "relationship_conflict",
-    "thread",
   ]);
+  assert.deepEqual(userPayload.allowedTimelineRelations, ["occurred_in", "triggered_by", "resolved_in", "evidenced_by"]);
   assert.deepEqual(userPayload.requiredEvidence, ["source_note:scene_source_test", "chat:chat_test"]);
   assert.deepEqual(userPayload.allowedBuckets, [
+    "timeline_event",
     "character_fact",
     "character_state",
     "relationship_event",
@@ -1178,6 +1294,7 @@ test("archived notes are excluded from long-term memory chunks", () => {
 
 test("evidence unit compiler maps buckets to typed memory draft mutations", () => {
   const cases: Array<[LtmEvidenceUnit["bucket"], string, string]> = [
+    ["timeline_event", "timeline_mara_jules_archive", "timeline_event"],
     ["character_fact", "char_mara", "character"],
     ["character_state", "char_mara", "character"],
     ["relationship_event", "rel_mara_jules", "relationship"],
@@ -1192,7 +1309,7 @@ test("evidence unit compiler maps buckets to typed memory draft mutations", () =
 
   for (const [bucket, expectedNoteId, expectedType] of cases) {
     const unit = evidenceUnit(bucket, {
-      subjectId: expectedNoteId.replace(/^(char|rel|world|thread|cb|scene|voice|tone)_/, ""),
+      subjectId: expectedNoteId.replace(/^(char|rel|world|thread|cb|timeline|scene|voice|tone)_/, ""),
       sectionKey: bucket === "anchor" ? "world_anchor" : "facts",
     });
     const response = compileLtmEvidenceUnits({
@@ -1208,6 +1325,102 @@ test("evidence unit compiler maps buckets to typed memory draft mutations", () =
       assert.equal(mutation.note.id, expectedNoteId);
       assert.equal(mutation.note.type, expectedType);
     }
+  }
+});
+
+test("timeline event units create historical notes and typed memories link to them", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-timeline-layer-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "scene_source_test",
+        type: "scene",
+        status: "dormant",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Mara confronts Jules in the archive and trusts him with the hidden key.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const units = [
+      evidenceUnit("timeline_event", {
+        subjectId: "archive_confrontation",
+        sectionKey: "event",
+        text: "Mara confronts Jules in the archive.",
+      }),
+      evidenceUnit("relationship_event", {
+        subjectId: "mara_jules",
+        sectionKey: "history",
+        text: "Mara trusts Jules with the hidden key during the archive confrontation.",
+        links: [{ target: "timeline_archive_confrontation", relation: "occurred_in" }],
+      }),
+    ];
+    const response = compileLtmEvidenceUnits({
+      units,
+      existingNotes: [],
+      scope: {},
+      modes: ["roleplay"],
+      createdAt: timestamp,
+    });
+
+    const created = response.mutations.filter((mutation) => mutation.kind === "create_note");
+    assert.equal(created.length, 2);
+    assert(
+      created.some(
+        (mutation) =>
+          mutation.kind === "create_note" &&
+          mutation.note.id === "timeline_archive_confrontation" &&
+          mutation.note.type === "timeline_event",
+      ),
+    );
+    assert(
+      created.some(
+        (mutation) =>
+          mutation.kind === "create_note" &&
+          mutation.note.id === "rel_mara_jules" &&
+          mutation.note.links.some(
+            (link) => link.target === "timeline_archive_confrontation" && link.relation === "occurred_in",
+          ),
+      ),
+    );
+
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      userMessage: "Mara confronts Jules in the archive and trusts him with the hidden key.",
+      assistantReply: "",
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_source_test", sourceHash },
+      response,
+    });
+
+    await applyLongTermMemoryDraft(draft.id, {
+      root,
+      actor: "test",
+      rebuildIndexes: false,
+    });
+
+    const timeline = await storage.getNote("timeline_archive_confrontation");
+    const relationship = await storage.getNote("rel_mara_jules");
+    assert.equal(timeline?.type, "timeline_event");
+    assert(timeline?.links.some((link) => link.target === "scene_source_test" && link.relation === "extracted_from"));
+    assert(relationship?.links.some((link) => link.target === "scene_source_test" && link.relation === "extracted_from"));
+    assert(
+      relationship?.links.some(
+        (link) => link.target === "timeline_archive_confrontation" && link.relation === "occurred_in",
+      ),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
