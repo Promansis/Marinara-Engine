@@ -1,4 +1,11 @@
-import type { LtmExtractionDraft, LtmExtractionResponse, LtmMode, LtmNote, LtmScope } from "@marinara-engine/shared";
+import {
+  getLtmScopeChatIds,
+  type LtmExtractionDraft,
+  type LtmExtractionResponse,
+  type LtmMode,
+  type LtmNote,
+  type LtmScope,
+} from "@marinara-engine/shared";
 import type { BaseLLMProvider } from "../llm/base-provider.js";
 import {
   compileEvidenceUnitExtraction,
@@ -12,6 +19,7 @@ import {
 import { getLtmExtractionConfig } from "./extraction-config.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import { LongTermMemoryDraftStore } from "./extraction.js";
+import { noteIdForEvidenceUnit } from "./evidence-unit-validation.js";
 import { retrieveLongTermMemory, type RetrieveLongTermMemoryInput } from "./retrieval.js";
 import { LongTermMemoryStorage } from "./storage.js";
 import type { LtmExtractionDiagnostic } from "./validation.js";
@@ -50,6 +58,7 @@ export function getLtmSourceNoteText(note: LtmNote) {
 
 async function getExistingTypedNotes(options: {
   storage: LongTermMemoryStorage;
+  root?: string;
   sourceNoteId: string;
   sourceText: string;
   scope: LtmScope;
@@ -60,6 +69,7 @@ async function getExistingTypedNotes(options: {
 }) {
   if (!options.includeExistingNotes) return [];
   const retrieval = await retrieveLongTermMemory({
+    root: options.root,
     queryText: options.sourceText,
     scope: options.scope,
     characterIds: options.scope.characterIds,
@@ -73,9 +83,67 @@ async function getExistingTypedNotes(options: {
   return notes.filter((note): note is LtmNote => {
     if (!note) return false;
     if (note.status === "archived") return false;
+    if (note.status === "dormant") return false;
     if (isLtmSourceNote(note)) return false;
-    return note.links.some((link) => link.relation === "extracted_from" && link.target === options.sourceNoteId);
+    if (!scopeOverlaps(note.scope, options.scope)) return false;
+    return true;
   });
+}
+
+async function getExistingTypedNotesForTargets(options: {
+  storage: LongTermMemoryStorage;
+  existingNotes: LtmNote[];
+  targetNoteIds: string[];
+  scope: LtmScope;
+}): Promise<{ notes: LtmNote[]; diagnostics: LtmExtractionDiagnostic[] }> {
+  const existingById = new Map(options.existingNotes.map((note) => [note.id, note]));
+  const missingTargetIds = Array.from(new Set(options.targetNoteIds.filter((noteId) => !existingById.has(noteId))));
+  const diagnostics: LtmExtractionDiagnostic[] = [];
+  if (missingTargetIds.length === 0) return { notes: options.existingNotes, diagnostics };
+
+  const targetNotes = await Promise.all(missingTargetIds.map((noteId) => options.storage.getNote(noteId)));
+  for (const note of targetNotes) {
+    if (!note) continue;
+    if (note.status === "archived" || note.status === "dormant") continue;
+    if (isLtmSourceNote(note)) continue;
+    if (!scopeOverlaps(note.scope, options.scope)) {
+      diagnostics.push({
+        severity: "error",
+        code: "target_note_scope_mismatch",
+        noteId: note.id,
+        message: `Evidence targets existing note ${note.id}, but that note belongs to a different scope.`,
+      });
+      continue;
+    }
+    existingById.set(note.id, note);
+  }
+  return { notes: Array.from(existingById.values()).sort((a, b) => a.id.localeCompare(b.id)), diagnostics };
+}
+
+function scopeOverlaps(noteScope: LtmScope, extractionScope: LtmScope) {
+  if (scopeIsGlobal(noteScope) || scopeIsGlobal(extractionScope)) return true;
+  const noteChatIds = new Set(getLtmScopeChatIds(noteScope));
+  const extractionChatIds = getLtmScopeChatIds(extractionScope);
+  if (extractionChatIds.some((chatId) => noteChatIds.has(chatId))) return true;
+
+  const noteCharacters = new Set(noteScope.characterIds ?? []);
+  if (extractionScope.characterIds?.some((characterId) => noteCharacters.has(characterId))) return true;
+
+  return Boolean(
+    (noteScope.groupId && noteScope.groupId === extractionScope.groupId) ||
+    (noteScope.rpId && noteScope.rpId === extractionScope.rpId) ||
+    (noteScope.universe && noteScope.universe === extractionScope.universe),
+  );
+}
+
+function scopeIsGlobal(scope: LtmScope) {
+  return !(
+    getLtmScopeChatIds(scope).length ||
+    scope.groupId ||
+    scope.rpId ||
+    scope.universe ||
+    scope.characterIds?.length
+  );
 }
 
 export async function extractLongTermMemoryFromSourceNote(
@@ -141,6 +209,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
   });
   const existingNotes = await getExistingTypedNotes({
     storage,
+    root: options.root,
     sourceNoteId: sourceNote.id,
     sourceText,
     scope,
@@ -195,17 +264,42 @@ async function extractLongTermMemoryFromSourceNoteInner(
     signal: options.signal,
     operationId: options.operationId,
   });
+  const targetLookup = await getExistingTypedNotesForTargets({
+    storage,
+    existingNotes,
+    targetNoteIds: unitResponse.units.map(noteIdForEvidenceUnit),
+    scope,
+  });
+  const compilerExistingNotes = targetLookup.notes;
+  if (compilerExistingNotes.length !== existingNotes.length) {
+    await recordLtmDebugEvent({
+      operationId: options.operationId,
+      root: options.root,
+      phase: "retrieval",
+      action: "existing_target_notes_loaded",
+      status: "ok",
+      sourceNoteId: sourceNote.id,
+      counts: {
+        existingNotes: compilerExistingNotes.length,
+        addedTargetNotes: compilerExistingNotes.length - existingNotes.length,
+      },
+      details: {
+        noteIds: compilerExistingNotes.map((note) => note.id).slice(0, 80),
+      },
+    });
+  }
   const compiled = compileEvidenceUnitExtraction({
     unitResponse,
     sourceText,
     sourceNote,
-    existingNotes,
+    existingNotes: compilerExistingNotes,
     scope,
     modes,
     model: options.model,
     sourceHash,
     rejectPlaceholderOutput: extractionConfig.rejectPlaceholderOutput,
   });
+  compiled.diagnostics.push(...targetLookup.diagnostics);
   const compiledSummary = summarizeCompiledEvidenceUnitExtraction(compiled);
   await recordLtmDebugEvent({
     operationId: options.operationId,

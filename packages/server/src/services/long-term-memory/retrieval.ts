@@ -231,9 +231,7 @@ function extractQuerySignals(input: RetrieveLongTermMemoryInput) {
   const noteIds = uniqueSorted([
     ...(input.noteIds ?? []),
     ...Array.from(
-      queryText.matchAll(
-        /\b(?:source|char|rel|scene|thread|cb|world|faction|location|rule|voice|tone)_[a-z0-9_]+\b/g,
-      ),
+      queryText.matchAll(/\b(?:source|char|rel|scene|thread|cb|world|faction|location|rule|voice|tone)_[a-z0-9_]+\b/g),
       (match) => match[0],
     ),
   ]);
@@ -276,7 +274,12 @@ function gateAllows(chunk: LtmMemoryChunk, includeGates: Set<LtmGate>) {
 }
 
 function isSourceSummaryChunk(chunk: LtmMemoryChunk) {
-  return chunk.tags.includes("source_summary") || chunk.tags.includes("chat_summary");
+  return chunk.noteType === "source" || chunk.tags.includes("source_summary") || chunk.tags.includes("chat_summary");
+}
+
+function shouldFilterDormantChunk(chunk: LtmMemoryChunk, input: RetrieveLongTermMemoryInput) {
+  if (chunk.status !== "dormant") return false;
+  return !(input.includeSourceNotes && isSourceSummaryChunk(chunk));
 }
 
 function summarizeCandidateFilters(
@@ -289,6 +292,7 @@ function summarizeCandidateFilters(
   const counts = {
     sourceSummariesSkipped: 0,
     archivedFiltered: 0,
+    dormantFiltered: 0,
     resolvedFiltered: 0,
     gateFiltered: 0,
     scopeFiltered: 0,
@@ -301,6 +305,10 @@ function summarizeCandidateFilters(
     }
     if (!input.includeArchived && chunk.status === "archived") {
       counts.archivedFiltered++;
+      continue;
+    }
+    if (shouldFilterDormantChunk(chunk, input)) {
+      counts.dormantFiltered++;
       continue;
     }
     if (!input.includeResolved && chunk.status === "resolved" && chunk.noteType === "thread") {
@@ -328,6 +336,7 @@ function candidateAllowed(
   const includeGates = new Set([...(config.includeGates ?? []), ...(input.includeGates ?? [])]);
   if (!input.includeSourceNotes && isSourceSummaryChunk(chunk)) return false;
   if (!input.includeArchived && chunk.status === "archived") return false;
+  if (shouldFilterDormantChunk(chunk, input)) return false;
   if (!input.includeResolved && chunk.status === "resolved" && chunk.noteType === "thread") return false;
   if (!gateAllows(chunk, includeGates)) return false;
   return scopeMatches(chunk, input.scope, characterIds);
@@ -669,7 +678,10 @@ export async function retrieveLongTermMemory(
           sourceSummariesSkipped: filterCounts?.sourceSummariesSkipped ?? 0,
           scopeFiltered: filterCounts?.scopeFiltered ?? 0,
           gateFiltered: filterCounts?.gateFiltered ?? 0,
-          statusFiltered: (filterCounts?.archivedFiltered ?? 0) + (filterCounts?.resolvedFiltered ?? 0),
+          statusFiltered:
+            (filterCounts?.archivedFiltered ?? 0) +
+            (filterCounts?.dormantFiltered ?? 0) +
+            (filterCounts?.resolvedFiltered ?? 0),
           alwaysCandidates: laneCount("always"),
           metadataCandidates: laneCount("metadata"),
           typedPriorityCandidates: laneCount("typed_priority"),

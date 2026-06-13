@@ -23,7 +23,11 @@ import {
 } from "../reconciliation.js";
 import { retrieveLongTermMemory } from "../retrieval.js";
 import { LongTermMemoryStorage } from "../storage.js";
-import { compileEvidenceUnitExtraction, runLongTermMemoryEvidenceUnitExtraction } from "../evidence-unit-extraction.js";
+import {
+  compileEvidenceUnitExtraction,
+  runLongTermMemoryEvidenceUnitExtraction,
+  sourceHashForEvidenceUnitExtraction,
+} from "../evidence-unit-extraction.js";
 import { getLtmExtractionConfig, updateLtmExtractionConfig } from "../extraction-config.js";
 import { extractLongTermMemoryFromSourceNote } from "../source-extraction.js";
 import { applyLtmScopeLinksToDerivedNotes } from "../scope-links.js";
@@ -579,7 +583,7 @@ test("source note extraction applies saved extraction config to llm request", as
   }
 });
 
-test("source note extraction ignores typed notes derived from another source reimport", async () => {
+test("source note extraction includes relevant typed notes from other source notes", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-source-reimport-filter-"));
   try {
     const storage = new LongTermMemoryStorage(root);
@@ -668,7 +672,8 @@ test("source note extraction ignores typed notes derived from another source rei
     });
 
     const userPayload = JSON.parse(messages.find((message) => message.role === "user")!.content);
-    assert.equal(userPayload.existingTypedNotes, "(no relevant typed notes)");
+    assert.match(userPayload.existingTypedNotes, /id: world_kiseki_academy/);
+    assert.match(userPayload.existingTypedNotes, /Kiseki Academy is a floating school with moonlit archives/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1498,6 +1503,344 @@ test("source extraction drafts replace archived typed notes with matching ids", 
   }
 });
 
+test("source extraction updates existing typed note from another source instead of creating duplicate", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-cross-source-update-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    const secondSourceText = "Mara trusts Jules again when he returns the tower archive key.";
+    await storage.createNote(
+      {
+        id: "scene_source_first",
+        type: "scene",
+        status: "dormant",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_a" },
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Mara first trusted Jules with the hidden key.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "scene_source_second",
+        type: "scene",
+        status: "dormant",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_b" },
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: secondSourceText,
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "rel_mara_jules",
+        type: "relationship",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_a" },
+        tags: ["typed_memory", "relationship_memory"],
+        links: [{ target: "scene_source_first", relation: "extracted_from" }],
+        sections: {
+          history: {
+            text: "- Mara first trusted Jules with the hidden key. [evidence:source_note:scene_source_first]",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_first"],
+          },
+          state: {
+            text: "Current relationship state: trust: medium; tension: low. Trajectory: warming_trust_with_remaining_secrets.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_first"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const sourceNote = (await storage.getNote("scene_source_second"))!;
+    const compiled = compileEvidenceUnitExtraction({
+      unitResponse: {
+        summary: "Second relationship event",
+        units: [
+          evidenceUnit("relationship_event", {
+            subjectId: "mara_jules",
+            sectionKey: "history",
+            text: secondSourceText,
+            evidence: ["source_note:scene_source_second"],
+            sourceHash: sourceHashForEvidenceUnitExtraction(sourceNote),
+          }),
+        ],
+      },
+      sourceText: secondSourceText,
+      sourceNote,
+      existingNotes: [(await storage.getNote("rel_mara_jules"))!],
+      scope: {},
+      modes: ["roleplay"],
+      model: "test-model",
+      sourceHash: sourceHashForEvidenceUnitExtraction(sourceNote),
+    });
+    assert.deepEqual(
+      compiled.compiledResponse.mutations.map((mutation) => mutation.kind),
+      ["append_section", "update_section"],
+    );
+
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      userMessage: secondSourceText,
+      assistantReply: "",
+      scope: {},
+      modes: ["roleplay"],
+      source: {
+        sourceNoteId: sourceNote.id,
+        sourceHash: sourceHashForEvidenceUnitExtraction(sourceNote),
+      },
+      response: compiled.compiledResponse,
+    });
+
+    await applyLongTermMemoryDraft(draft.id, {
+      root,
+      actor: "test",
+      rebuildIndexes: false,
+    });
+
+    const updated = await storage.getNote("rel_mara_jules");
+    assert.match(updated?.sections.history?.text ?? "", /Mara first trusted Jules with the hidden key/);
+    assert.match(
+      updated?.sections.history?.text ?? "",
+      /Mara trusts Jules again when he returns the tower archive key/,
+    );
+    assert(updated?.links.some((link) => link.target === "scene_source_first" && link.relation === "extracted_from"));
+    assert(updated?.links.some((link) => link.target === "scene_source_second" && link.relation === "extracted_from"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source note extraction target lookup prevents duplicate creates across source notes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-target-lookup-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    const secondSourceText = "Mara trusts Jules again when he returns the tower archive key.";
+    await storage.createNote(
+      {
+        id: "scene_source_first",
+        type: "scene",
+        status: "dormant",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_a" },
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Mara first trusted Jules with the hidden key.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "scene_source_second",
+        type: "scene",
+        status: "dormant",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_b" },
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: secondSourceText,
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "rel_mara_jules",
+        type: "relationship",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_a" },
+        tags: ["typed_memory", "relationship_memory"],
+        links: [{ target: "scene_source_first", relation: "extracted_from" }],
+        sections: {
+          history: {
+            text: "- Mara first trusted Jules with the hidden key. [evidence:source_note:scene_source_first]",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_first"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await rebuildLongTermMemoryIndexes({
+      root,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+
+    const provider = {
+      maxTokensOverrideValue: undefined,
+      chatComplete: async () => ({
+        content: JSON.stringify({
+          summary: "Second relationship event",
+          units: [
+            {
+              id: randomUUID(),
+              bucket: "relationship_event",
+              subjectId: "mara_jules",
+              sectionKey: "history",
+              text: secondSourceText,
+              evidence: ["source_note:scene_source_second"],
+              confidence: 0.9,
+              salience: 0.7,
+              status: "active",
+              gates: [],
+              links: [],
+              sourceHash: sourceHashForEvidenceUnitExtraction((await storage.getNote("scene_source_second"))!),
+            },
+          ],
+        }),
+      }),
+    } as any;
+
+    const result = await extractLongTermMemoryFromSourceNote({
+      noteId: "scene_source_second",
+      provider,
+      model: "test-model",
+      root,
+      operationId: randomUUID(),
+      embeddingSource: {
+        label: "test",
+        embed: async (texts) => texts.map(() => []),
+      },
+    });
+
+    assert.equal(result.draft, null);
+    assert(
+      result.diagnostics.some(
+        (diagnostic) => diagnostic.severity === "error" && diagnostic.code === "target_note_scope_mismatch",
+      ),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source note extraction target lookup updates matching scoped notes only", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-target-lookup-scoped-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    const secondSourceText = "Mara trusts Jules again when he returns the tower archive key.";
+    await storage.createNote(
+      {
+        id: "scene_source_second",
+        type: "scene",
+        status: "dormant",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_a" },
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: secondSourceText,
+            updatedAt: timestamp,
+            evidence: ["chat:chat_a"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "rel_mara_jules",
+        type: "relationship",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_a" },
+        tags: ["typed_memory", "relationship_memory"],
+        links: [{ target: "scene_source_first", relation: "extracted_from" }],
+        sections: {
+          history: {
+            text: "- Mara first trusted Jules with the hidden key. [evidence:source_note:scene_source_first]",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_first"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await rebuildLongTermMemoryIndexes({
+      root,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+
+    const provider = {
+      maxTokensOverrideValue: undefined,
+      chatComplete: async () => ({
+        content: JSON.stringify({
+          summary: "Second relationship event",
+          units: [
+            {
+              id: randomUUID(),
+              bucket: "relationship_event",
+              subjectId: "mara_jules",
+              sectionKey: "history",
+              text: secondSourceText,
+              evidence: ["source_note:scene_source_second"],
+              confidence: 0.9,
+              salience: 0.7,
+              status: "active",
+              gates: [],
+              links: [],
+              sourceHash: sourceHashForEvidenceUnitExtraction((await storage.getNote("scene_source_second"))!),
+            },
+          ],
+        }),
+      }),
+    } as any;
+
+    const result = await extractLongTermMemoryFromSourceNote({
+      noteId: "scene_source_second",
+      provider,
+      model: "test-model",
+      root,
+      operationId: randomUUID(),
+      embeddingSource: {
+        label: "test",
+        embed: async (texts) => texts.map(() => []),
+      },
+    });
+
+    assert(result.draft);
+    assert(!result.draft.mutations.some((mutation) => mutation.kind === "create_note"));
+    assert(
+      result.draft.mutations.some(
+        (mutation) => mutation.kind === "append_section" && mutation.noteId === "rel_mara_jules",
+      ),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("retrieval excludes source notes by default and prioritizes relationship state before history", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-retrieval-"));
   try {
@@ -1514,6 +1857,25 @@ test("retrieval excludes source notes by default and prioritizes relationship st
         sections: {
           source: {
             text: "Raw transcript says Mara trusts Jules at the tower archive.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "source_audit_test",
+        type: "source",
+        status: "dormant",
+        modes: ["roleplay"],
+        scope: {},
+        tags: [],
+        links: [],
+        sections: {
+          source: {
+            text: "Dormant source audit note about the tower archive key.",
             updatedAt: timestamp,
             evidence: ["chat:chat_test"],
           },
@@ -1550,6 +1912,25 @@ test("retrieval excludes source notes by default and prioritizes relationship st
       },
       { suppressEvent: true },
     );
+    await storage.createNote(
+      {
+        id: "world_dormant_archive_key",
+        type: "world",
+        status: "dormant",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: {
+            text: "Dormant typed archive key lore should not enter normal recall.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
 
     await rebuildLongTermMemoryIndexes({
       root,
@@ -1567,6 +1948,18 @@ test("retrieval excludes source notes by default and prioritizes relationship st
       normal.chunks.map((chunk) => chunk.chunk.id),
       ["rel_mara_jules::state", "rel_mara_jules::arc", "rel_mara_jules::history"],
     );
+    assert(!normal.chunks.some((chunk) => chunk.chunk.noteId === "world_dormant_archive_key"));
+
+    const dormantDebug = await retrieveLongTermMemory({
+      root,
+      queryText: "dormant typed archive key lore",
+      maxChunks: 4,
+      maxTokens: 1000,
+      debug: true,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+    assert(!dormantDebug.chunks.some((chunk) => chunk.chunk.noteId === "world_dormant_archive_key"));
+    assert((dormantDebug.debug?.funnel.statusFiltered ?? 0) > 0);
 
     const exactStyle = await retrieveLongTermMemory({
       root,
@@ -1620,7 +2013,7 @@ test("retrieval excludes source notes by default and prioritizes relationship st
     });
     assert.deepEqual(
       audit.chunks.map((chunk) => chunk.chunk.noteId),
-      ["scene_source_test"],
+      ["scene_source_test", "source_audit_test"],
     );
   } finally {
     await rm(root, { recursive: true, force: true });
