@@ -24,9 +24,10 @@ export interface ChunkLtmNotesOptions {
 }
 
 const LEGACY_LABEL_SUFFIX_PATTERN = /\n{2,}\[note:[^\n]*\]\s*$/;
+const INLINE_EVIDENCE_LABEL_PATTERN = /\s*\[evidence:[^\]\n]*\]/g;
 
 export function cleanLongTermMemoryChunkText(text: string) {
-  return text.trim().replace(LEGACY_LABEL_SUFFIX_PATTERN, "").trim();
+  return text.trim().replace(LEGACY_LABEL_SUFFIX_PATTERN, "").replace(INLINE_EVIDENCE_LABEL_PATTERN, "").trim();
 }
 
 export function stableJsonHash(value: unknown) {

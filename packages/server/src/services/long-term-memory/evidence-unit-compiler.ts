@@ -389,7 +389,7 @@ function sectionKeyForUnit(unit: LtmEvidenceUnit) {
 }
 
 function cumulativeLine(unit: LtmEvidenceUnit) {
-  return `- ${unit.text.trim()} [evidence:${unit.evidence.join(",")}]`;
+  return `- ${unit.text.trim()}`;
 }
 
 function mergeSectionText(existing: string | undefined, incoming: string, append: boolean) {

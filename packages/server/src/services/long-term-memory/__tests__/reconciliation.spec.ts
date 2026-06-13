@@ -70,6 +70,33 @@ test("long-term memory chunks keep prompt text free of index labels", () => {
   assert.doesNotMatch(chunks[0]?.text ?? "", /note:|type:|section:|status:|chat:|group:|characters:/);
 });
 
+test("long-term memory chunks strip legacy inline evidence labels", () => {
+  const chunks = chunkNotes([
+    {
+      id: "sample_memory_note",
+      type: "relationship",
+      status: "active",
+      modes: ["roleplay"],
+      scope: { chatId: "sample_chat" },
+      tags: ["typed_memory"],
+      links: [],
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      version: 1,
+      sections: {
+        history: {
+          text: "- Rika softened after the bridge argument. [evidence:source_note:source_import_chat_rika_rp_f3c3957d08,chat:v5bijiUY6rB_cVcQ7Q_DT]",
+          updatedAt: timestamp,
+          evidence: ["source_note:source_import_chat_rika_rp_f3c3957d08", "chat:v5bijiUY6rB_cVcQ7Q_DT"],
+        },
+      },
+    },
+  ]);
+
+  assert.equal(chunks[0]?.text, "- Rika softened after the bridge argument.");
+  assert.doesNotMatch(chunks[0]?.text ?? "", /evidence:|source_note:|chat:/);
+});
+
 test("long-term memory prompt injection contains prose only", () => {
   const block = formatLongTermMemoryBlock([
     {
@@ -1574,7 +1601,7 @@ test("evidence unit compiler applies explicit bucket lifecycle rules", () => {
     links: [],
     sections: {
       history: {
-        text: "- Mara first trusted Jules with the hidden key. [evidence:source_note:scene_source_test]",
+        text: "- Mara first trusted Jules with the hidden key.",
         updatedAt: timestamp,
         evidence: ["source_note:scene_source_test"],
       },
@@ -1690,7 +1717,7 @@ test("evidence unit compiler derives relationship state from existing history pl
     links: [],
     sections: {
       history: {
-        text: "- Mara argued with Jules after the archive betrayal. [evidence:source_note:scene_old]",
+        text: "- Mara argued with Jules after the archive betrayal.",
         updatedAt: timestamp,
         evidence: ["source_note:scene_old"],
         confidence: 0.9,
@@ -1727,7 +1754,7 @@ test("evidence unit compiler derives relationship state from existing history pl
   assert(state?.kind === "update_section");
   assert.match(state.section.text, /trust: medium/);
   assert.match(state.section.text, /tension: medium/);
-  assert.match(state.section.text, /existing_0000:source_note:scene_old/);
+  assert.doesNotMatch(state.section.text, /Supporting events:|source_note:|chat:|evidence:|existing_\d+/);
 });
 
 test("evidence unit compiler derives voice and tone profiles from raw observations", () => {
@@ -1884,10 +1911,7 @@ test("relationship reducer accumulates events into qualitative current state", (
   assert.equal(reduction.facets.trust, "medium");
   assert.equal(reduction.facets.protectiveness, "medium");
   assert.equal(reduction.trajectory, "warming_trust_with_remaining_secrets");
-  assert.deepEqual(reduction.supportingEvents, [
-    "event_001:source_note:scene_source_test",
-    "event_002:source_note:scene_source_test",
-  ]);
+  assert.deepEqual(reduction.supportingEvents, ["event_001", "event_002"]);
 });
 
 test("evidence unit schema rejects removed source-summary buckets", () => {
@@ -2131,7 +2155,7 @@ test("source extraction updates existing typed note from another source instead 
         links: [{ target: "scene_source_first", relation: "extracted_from" }],
         sections: {
           history: {
-            text: "- Mara first trusted Jules with the hidden key. [evidence:source_note:scene_source_first]",
+            text: "- Mara first trusted Jules with the hidden key.",
             updatedAt: timestamp,
             evidence: ["source_note:scene_source_first"],
           },
@@ -2257,7 +2281,7 @@ test("source note extraction target lookup prevents duplicate creates across sou
         links: [{ target: "scene_source_first", relation: "extracted_from" }],
         sections: {
           history: {
-            text: "- Mara first trusted Jules with the hidden key. [evidence:source_note:scene_source_first]",
+            text: "- Mara first trusted Jules with the hidden key.",
             updatedAt: timestamp,
             evidence: ["source_note:scene_source_first"],
           },
@@ -2353,7 +2377,7 @@ test("source note extraction target lookup updates matching scoped notes only", 
         links: [{ target: "scene_source_first", relation: "extracted_from" }],
         sections: {
           history: {
-            text: "- Mara first trusted Jules with the hidden key. [evidence:source_note:scene_source_first]",
+            text: "- Mara first trusted Jules with the hidden key.",
             updatedAt: timestamp,
             evidence: ["source_note:scene_source_first"],
           },

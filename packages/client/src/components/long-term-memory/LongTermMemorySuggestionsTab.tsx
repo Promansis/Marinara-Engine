@@ -45,6 +45,11 @@ const rewriteKinds = new Set<LtmDraftMutation["kind"]>([
   "set_status",
   "flag_conflict",
 ]);
+function visibleExtractionDiagnostics(diagnostics: LtmExtractionDiagnostic[]) {
+  return diagnostics.filter(
+    (diagnostic) => !(diagnostic.code === "missing_gate" && diagnostic.message === "Potential nsfw content is not gated."),
+  );
+}
 
 function isSourceMemory(note: LtmNote) {
   return (
@@ -187,6 +192,7 @@ export function LongTermMemorySuggestionsTab({ note }: { note: LtmNote }) {
   const [autoApplySafeChanges, setAutoApplySafeChanges] = useState(false);
   const [diagnostics, setDiagnostics] = useState<LtmExtractionDiagnostic[]>([]);
   const sourceMemory = isSourceMemory(note);
+  const visibleDiagnostics = useMemo(() => visibleExtractionDiagnostics(diagnostics), [diagnostics]);
   const rows = useMemo<SuggestionRowModel[]>(() => {
     if (!sourceMemory) return [];
     return (drafts.data ?? [])
@@ -224,9 +230,10 @@ export function LongTermMemorySuggestionsTab({ note }: { note: LtmNote }) {
                   applyLowRisk: autoApplySafeChanges,
                 })
                 .then((result) => {
-                  setDiagnostics(result.diagnostics);
+                  const visibleResultDiagnostics = visibleExtractionDiagnostics(result.diagnostics);
+                  setDiagnostics(visibleResultDiagnostics);
                   const count = result.draft?.mutations.length ?? 0;
-                  const issueCount = result.diagnostics.length;
+                  const issueCount = visibleResultDiagnostics.length;
                   toast.success(
                     count
                       ? `Created ${count} typed memory suggestion${count === 1 ? "" : "s"}${
@@ -266,7 +273,7 @@ export function LongTermMemorySuggestionsTab({ note }: { note: LtmNote }) {
         </div>
       </div>
 
-      <ExtractionDiagnosticsList diagnostics={diagnostics} />
+      <ExtractionDiagnosticsList diagnostics={visibleDiagnostics} />
 
       {drafts.isLoading ? (
         <div className="flex items-center justify-center rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-3 text-xs text-[var(--muted-foreground)]">

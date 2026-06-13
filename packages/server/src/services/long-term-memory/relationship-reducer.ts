@@ -64,7 +64,7 @@ export function reduceRelationshipEvidenceUnits(units: LtmEvidenceUnit[]): LtmRe
     trajectory: trajectoryFor(scores),
     supportingEvents: relationshipUnits
       .filter((unit) => unit.bucket === "relationship_event")
-      .map((unit) => `${unit.sectionKey}:${unit.evidence[0]}`)
+      .map((unit) => unit.sectionKey)
       .slice(-8),
   };
 }
@@ -73,10 +73,7 @@ export function formatRelationshipReduction(reduction: LtmRelationshipReduction)
   const facets = Object.entries(reduction.facets)
     .map(([key, value]) => `${key}: ${value}`)
     .join("; ");
-  const support = reduction.supportingEvents.length
-    ? ` Supporting events: ${reduction.supportingEvents.join(", ")}.`
-    : "";
-  return `Current relationship state: ${facets}. Trajectory: ${reduction.trajectory}.${support}`;
+  return `Current relationship state: ${facets}. Trajectory: ${reduction.trajectory}.`;
 }
 
 function qualitative(score: number): LtmRelationshipFacet {
