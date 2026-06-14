@@ -10,15 +10,13 @@ export const ltmNoteTypeSchema = z.enum([
   "relationship",
   "scene",
   "thread",
-  "callback",
   "world",
-  "voice",
   "tone",
 ]);
 
-export const ltmStatusSchema = z.enum(["active", "resolved", "archived", "dormant"]);
+export const ltmStatusSchema = z.enum(["active", "resolved", "archived"]);
 
-export const ltmEvidenceUnitStatusSchema = z.enum(["active", "resolved", "archived", "dormant", "developing"]);
+export const ltmEvidenceUnitStatusSchema = z.enum(["active", "resolved", "archived", "developing"]);
 
 export const ltmEvidenceUnitBucketSchema = z.enum([
   "timeline_event",
@@ -29,15 +27,11 @@ export const ltmEvidenceUnitBucketSchema = z.enum([
   "relationship_conflict",
   "world_fact",
   "thread",
-  "callback",
-  "voice",
   "tone",
   "anchor",
 ]);
 
-export const ltmModeSchema = z.enum(["roleplay", "conversation", "game", "visual_novel"]);
-
-export const ltmGateSchema = z.enum(["spoiler", "character_secret", "private", "nsfw"]);
+export const ltmModeSchema = z.enum(["roleplay", "conversation", "game"]);
 
 export const ltmExtractionReasoningEffortSchema = z.enum(["low", "medium", "high"]);
 
@@ -84,9 +78,7 @@ export const ltmVaultFolderSchema = z.enum([
   "relationships",
   "scenes",
   "threads",
-  "callbacks",
   "world",
-  "voice",
   "tone",
 ]);
 
@@ -97,9 +89,7 @@ export const LTM_NOTE_TYPE_TO_VAULT_FOLDER = {
   relationship: "relationships",
   scene: "scenes",
   thread: "threads",
-  callback: "callbacks",
   world: "world",
-  voice: "voice",
   tone: "tone",
 } as const satisfies Record<z.infer<typeof ltmNoteTypeSchema>, z.infer<typeof ltmVaultFolderSchema>>;
 
@@ -110,9 +100,7 @@ const idPrefixesByType = {
   relationship: ["rel_"],
   scene: ["scene_"],
   thread: ["thread_"],
-  callback: ["cb_"],
   world: ["world_", "faction_", "location_", "rule_", "rules"],
-  voice: ["voice_"],
   tone: ["tone_"],
 } as const satisfies Record<z.infer<typeof ltmNoteTypeSchema>, readonly string[]>;
 
@@ -176,7 +164,6 @@ export const ltmEvidenceUnitSchema = z
     confidence: z.number().finite().min(0).max(1),
     salience: z.number().finite().min(0).max(1),
     status: ltmEvidenceUnitStatusSchema,
-    gates: z.array(ltmGateSchema).max(8).default([]),
     links: z.array(ltmLinkSchema).max(50).default([]),
     mergeHint: z.string().min(1).max(240).optional(),
     sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
@@ -190,7 +177,6 @@ export const ltmSectionSchema = z
     salience: z.number().finite().min(0).max(1).optional(),
     confidence: z.number().finite().min(0).max(1).optional(),
     evidence: z.array(z.string().min(1).max(240)).max(100).optional(),
-    gates: z.array(ltmGateSchema).max(8).optional(),
   })
   .strict();
 
@@ -219,6 +205,7 @@ export const ltmNoteSchema = z
     sections: z.record(ltmSectionKeySchema, ltmSectionSchema),
     conflicts: z.array(ltmConflictSchema).max(250).optional(),
     version: z.number().int().min(1),
+    extracted: z.boolean().optional(),
     previousHash: z
       .string()
       .regex(/^[a-f0-9]{64}$/)
@@ -367,7 +354,6 @@ const ltmRetrievalConfigShape = z
     semanticWeight: z.number().finite().min(0).max(1).default(0.6),
     lexicalWeight: z.number().finite().min(0).max(1).default(0.3),
     graphWeight: z.number().finite().min(0).max(1).default(0.1),
-    includeGates: z.array(ltmGateSchema).default([]),
   })
   .strict()
   .refine(
@@ -421,6 +407,7 @@ export const ltmDraftNoteInputSchema = z
     tags: z.array(ltmIdentifierSchema).max(100).default([]),
     createdAt: ltmIsoTimestampSchema.optional(),
     updatedAt: ltmIsoTimestampSchema.optional(),
+    extracted: z.boolean().optional(),
     links: z.array(ltmLinkSchema).max(250).default([]),
     sections: z.record(ltmSectionKeySchema, ltmSectionSchema),
     conflicts: z.array(ltmConflictSchema).max(250).optional(),
@@ -464,7 +451,6 @@ export const ltmDraftMutationSchema = z.discriminatedUnion("kind", [
       sectionKey: ltmSectionKeySchema,
       text: z.string().min(1).max(20_000),
       salience: z.number().finite().min(0).max(1).optional(),
-      gates: z.array(ltmGateSchema).max(8).optional(),
     })
     .strict(),
   ltmDraftMutationBaseSchema
@@ -487,13 +473,6 @@ export const ltmDraftMutationSchema = z.discriminatedUnion("kind", [
       kind: z.literal("set_status"),
       noteId: ltmNoteIdSchema,
       status: ltmStatusSchema,
-    })
-    .strict(),
-  ltmDraftMutationBaseSchema
-    .extend({
-      kind: z.literal("flag_conflict"),
-      noteId: ltmNoteIdSchema,
-      conflict: ltmConflictSchema,
     })
     .strict(),
 ]);
@@ -539,7 +518,6 @@ export type LtmExtractionVerbosity = z.infer<typeof ltmExtractionVerbositySchema
 export type LtmExtractionSettings = z.infer<typeof ltmExtractionSettingsSchema>;
 export type LtmResolvedExtractionSettings = z.infer<typeof ltmResolvedExtractionSettingsSchema>;
 export type LtmMode = z.infer<typeof ltmModeSchema>;
-export type LtmGate = z.infer<typeof ltmGateSchema>;
 export type LtmScope = z.infer<typeof ltmScopeSchema>;
 export type LtmLink = z.infer<typeof ltmLinkSchema>;
 export type LtmSection = z.infer<typeof ltmSectionSchema>;

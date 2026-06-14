@@ -37,17 +37,15 @@ function estimateTokens(text: string) {
   return Math.max(1, Math.ceil(text.length / 4));
 }
 
-function tierFor(chunk: LtmMemoryChunk, candidate: LtmRankedCandidate): 1 | 2 | 3 {
+function tierFor(chunk: LtmMemoryChunk): 1 | 2 | 3 {
   if (
-    candidate.lanes.includes("always") ||
     chunk.noteType === "tone" ||
-    chunk.noteType === "voice" ||
-    (chunk.noteType === "character" && ["core", "current_state", "voice"].includes(chunk.sectionKey))
+    (chunk.noteType === "character" && ["core", "current_state"].includes(chunk.sectionKey))
   ) {
     return 1;
   }
 
-  if (chunk.noteType === "callback" || (chunk.noteType === "thread" && chunk.status !== "resolved")) {
+  if (chunk.noteType === "thread" && chunk.status !== "resolved") {
     return 2;
   }
 
@@ -148,7 +146,7 @@ export function applyLtmBudget(
       lanes: candidate.lanes,
       laneScores: candidate.laneScores,
       rawLaneScores: candidate.rawLaneScores,
-      tier: tierFor(chunk, candidate),
+      tier: tierFor(chunk),
       estimatedTokens,
     });
     selectedIds.add(candidate.chunkId);

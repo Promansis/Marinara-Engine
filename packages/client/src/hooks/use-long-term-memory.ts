@@ -7,7 +7,6 @@ import type {
   LtmExtractionDraft,
   LtmExtractionResponse,
   LtmExtractionSettings as SharedLtmExtractionSettings,
-  LtmGate,
   LtmNote,
   LtmNoteType,
   LtmResolvedExtractionSettings as SharedLtmResolvedExtractionSettings,
@@ -90,7 +89,6 @@ export type LtmSearchInput = {
   tags?: string[];
   scope?: LtmScope;
   characterIds?: string[];
-  includeGates?: LtmGate[];
   includeResolved?: boolean;
   includeSourceNotes?: boolean;
   debug?: boolean;
@@ -100,9 +98,7 @@ export type LtmSearchInput = {
   semanticWeight?: number;
   lexicalWeight?: number;
   graphWeight?: number;
-  alwaysWeight?: number;
   metadataWeight?: number;
-  typedPriorityWeight?: number;
 };
 
 export type LtmSearchChunk = {
@@ -494,13 +490,19 @@ export function useRejectLongTermMemoryDraft() {
   });
 }
 
-export type UpdateLongTermMemoryDraftInput = Partial<Omit<LtmExtractionDraft, "id" | "createdAt" | "updatedAt">>;
-
-export function useUpdateLongTermMemoryDraft() {
+export function useRestoreLongTermMemoryDraft() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: UpdateLongTermMemoryDraftInput }) =>
-      api.patch<LtmExtractionDraft>(`/long-term-memory/drafts/${id}`, patch),
+    mutationFn: (id: string) => api.post<LtmExtractionDraft>(`/long-term-memory/drafts/${id}/restore`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
+  });
+}
+
+export function useArchiveLongTermMemoryDraftMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, mutationId }: { id: string; mutationId: string }) =>
+      api.post<LtmExtractionDraft>(`/long-term-memory/drafts/${id}/mutations/${mutationId}/archive`),
     onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
   });
 }

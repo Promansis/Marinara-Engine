@@ -1576,7 +1576,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     const chatMode = (chat.mode as string) ?? "roleplay";
     const chatSummaryFingerprint = fingerprintChatSummary(chatMeta.summary);
     const visibleGameStateAnchor = resolveVisibleGameStateAnchor(chatMessages);
-    const supportsHiddenFromAI = chatMode === "conversation" || chatMode === "roleplay" || chatMode === "visual_novel";
+    const supportsHiddenFromAI = chatMode === "conversation" || chatMode === "roleplay";
 
     const readCachedPrompt = (
       extra: Record<string, unknown>,
@@ -2458,7 +2458,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     // store the per-branch display label in metadata instead.
     const newChat = await storage.create({
       name: sourceChat.name,
-      mode: sourceChat.mode as "conversation" | "roleplay" | "visual_novel",
+      mode: sourceChat.mode as "conversation" | "roleplay",
       characterIds: (() => {
         try {
           return JSON.parse(sourceChat.characterIds as string);

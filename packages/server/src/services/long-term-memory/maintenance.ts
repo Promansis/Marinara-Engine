@@ -660,7 +660,7 @@ async function chatImportCandidates(
       (entry) => entry.enabled,
     );
     if (entries.length === 0) return [];
-    const mode = chat.mode === "visual_novel" ? "visual_novel" : (chat.mode as LtmMode);
+    const mode = ((chat.mode as string) === "visual_novel" ? "roleplay" : chat.mode) as LtmMode;
     return entries.map((entry) => {
       const chatName = evidenceSafeValue(chat.name) || "Chat";
       const title = chatSummaryImportTitle(chatName, entry);
@@ -788,7 +788,7 @@ export async function createLongTermMemoryInteropSourceNotes(
         const noteInput = {
           id: candidate.sourceNoteId,
           type: "source" as const,
-          status: "dormant" as const,
+          status: "active" as const,
           modes: candidate.modes,
           scope: { ...(candidate.scope ?? {}), ...(options.scope ?? {}) },
           tags: ["source_summary", candidate.sourceTag],
@@ -808,7 +808,7 @@ export async function createLongTermMemoryInteropSourceNotes(
           const note = await storage.updateNote(
             existing.id,
             {
-              status: "dormant",
+              status: "active",
               modes: noteInput.modes,
               scope: noteInput.scope,
               tags: Array.from(new Set([...existing.tags, ...noteInput.tags])),

@@ -297,8 +297,8 @@ function normalizeLtmIdentifier(value: unknown): string | undefined {
   return /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(trimmed) ? trimmed : undefined;
 }
 
-function ltmModeForChatMode(mode: string): "conversation" | "roleplay" | "visual_novel" | "game" {
-  if (mode === "conversation" || mode === "game" || mode === "visual_novel") return mode;
+function ltmModeForChatMode(mode: string): "conversation" | "roleplay" | "game" {
+  if (mode === "conversation" || mode === "game") return mode;
   return "roleplay";
 }
 
@@ -344,33 +344,25 @@ const LTM_RECALL_STYLE_WEIGHTS = {
     semanticWeight: 0.6,
     lexicalWeight: 0.3,
     graphWeight: 0.1,
-    alwaysWeight: 2,
     metadataWeight: 1,
-    typedPriorityWeight: 1.5,
   },
   exact: {
     semanticWeight: 0.15,
     lexicalWeight: 1,
     graphWeight: 0,
-    alwaysWeight: 0,
     metadataWeight: 0.3,
-    typedPriorityWeight: 0,
   },
   broad: {
     semanticWeight: 0.55,
     lexicalWeight: 0.2,
     graphWeight: 0.8,
-    alwaysWeight: 0.4,
     metadataWeight: 0.8,
-    typedPriorityWeight: 0.4,
   },
   story: {
     semanticWeight: 0.45,
     lexicalWeight: 0.25,
     graphWeight: 0.35,
-    alwaysWeight: 1.2,
     metadataWeight: 0.8,
-    typedPriorityWeight: 2,
   },
 } as const satisfies Record<
   LongTermMemoryRecallStyle,
@@ -378,22 +370,12 @@ const LTM_RECALL_STYLE_WEIGHTS = {
     semanticWeight: number;
     lexicalWeight: number;
     graphWeight: number;
-    alwaysWeight: number;
     metadataWeight: number;
-    typedPriorityWeight: number;
   }
 >;
 
 function parseLongTermMemoryRecallStyle(value: unknown): LongTermMemoryRecallStyle {
   return value === "exact" || value === "broad" || value === "story" ? value : "balanced";
-}
-
-function parseLongTermMemoryIncludeGates(value: unknown) {
-  const gates = new Set(["spoiler", "character_secret", "private", "nsfw"]);
-  if (!Array.isArray(value)) return undefined;
-  return value.filter((gate): gate is "spoiler" | "character_secret" | "private" | "nsfw" => {
-    return typeof gate === "string" && gates.has(gate);
-  });
 }
 
 function parsePromptPresetChoices(value: unknown): Record<string, string | string[]> | null {
@@ -2078,7 +2060,7 @@ export async function generateRoutes(app: FastifyInstance) {
       const chatMode = requestChatMode;
       const lorebookGenerationTriggers = resolveLorebookGenerationTriggers(input, chatMode);
       const supportsHiddenFromAI =
-        chatMode === "conversation" || chatMode === "roleplay" || chatMode === "visual_novel";
+        chatMode === "conversation" || chatMode === "roleplay";
       const preferLatestVisibleGameState = shouldPreferLatestVisibleGameState(input);
 
       // ── Conversation-start filter: find the latest "isConversationStart" marker ──
@@ -3754,10 +3736,10 @@ export async function generateRoutes(app: FastifyInstance) {
           }
         }
 
-        // ── Lorebook injection for preset-less roleplay / visual_novel ──
+        // ── Lorebook injection for preset-less roleplay ──
         // Conversation mode handles this above; game mode handles it below;
         // preset-driven chats get lorebook content via the preset assembler.
-        if (!presetId && (chatMode === "roleplay" || chatMode === "visual_novel")) {
+        if (!presetId && chatMode === "roleplay") {
           sendProgress("lorebooks");
           const lorebookResult = await processLorebooks(app.db, toLorebookScanMessages(), null, {
             chatId: input.chatId,
@@ -5219,7 +5201,7 @@ export async function generateRoutes(app: FastifyInstance) {
         }
 
         const roleplayDmCommandsEnabled =
-          (chatMode === "roleplay" || chatMode === "visual_novel") &&
+          chatMode === "roleplay" &&
           chatMeta.roleplayDmCommandsEnabled === true &&
           !input.impersonate;
         if (roleplayDmCommandsEnabled) {
@@ -5326,7 +5308,6 @@ export async function generateRoutes(app: FastifyInstance) {
           const ltmScoreThreshold = parseLongTermMemoryScoreThreshold(chatMeta.longTermMemoryScoreThreshold);
           const ltmRecallStyle = parseLongTermMemoryRecallStyle(chatMeta.longTermMemoryRecallStyle);
           const ltmRecallWeights = LTM_RECALL_STYLE_WEIGHTS[ltmRecallStyle];
-          const ltmIncludeGates = parseLongTermMemoryIncludeGates(chatMeta.longTermMemoryIncludeGates);
           const ltmDebugEnabled = chatMeta.longTermMemoryDebug === true || requestDebug;
           const ltmScope = resolveLtmScope(
             { id: input.chatId, groupId: chat.groupId, characterIds: promptCharacterIds },
@@ -5381,7 +5362,6 @@ export async function generateRoutes(app: FastifyInstance) {
               ],
               scope: ltmScope,
               characterIds: promptCharacterIds,
-              includeGates: ltmIncludeGates,
               includeResolved: chatMeta.longTermMemoryIncludeResolved === true,
               maxChunks: ltmMaxChunks,
               maxTokens: ltmBudgetTokens,
@@ -6847,7 +6827,7 @@ export async function generateRoutes(app: FastifyInstance) {
           }
 
           const shouldReviewWriterAgentOutputs =
-            (chatMode === "roleplay" || chatMode === "visual_novel") &&
+            chatMode === "roleplay" &&
             chatMeta.reviewWriterAgentOutputs === true &&
             reviewedAgentInjections.length === 0 &&
             !input.regenerateMessageId;

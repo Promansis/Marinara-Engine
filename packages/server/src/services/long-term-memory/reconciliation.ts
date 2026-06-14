@@ -44,7 +44,6 @@ function appendSection(
       updatedAt: timestamp,
       salience: mutation.salience ?? existing?.salience,
       confidence: Math.max(existing?.confidence ?? 0, mutation.confidence),
-      gates: mutation.gates ?? existing?.gates,
     },
     mutation.evidence,
   );
@@ -139,39 +138,6 @@ function mutationHasSourceSummaryTag(mutation: LtmDraftMutation) {
   );
 }
 
-function mutationHasGates(mutation: LtmDraftMutation) {
-  if (mutation.kind === "create_note") {
-    return Object.values(mutation.note.sections).some((section) => (section.gates?.length ?? 0) > 0);
-  }
-  if (mutation.kind === "append_section") return (mutation.gates?.length ?? 0) > 0;
-  if (mutation.kind === "update_section") return (mutation.section.gates?.length ?? 0) > 0;
-  return false;
-}
-
-const GATED_CONTENT_PATTERNS = [
-  /\b(spoiler|twist|reveal|secret ending)\b/i,
-  /\b(secret|unknown to|hiding|concealed|private knowledge)\b/i,
-  /\b(private|confidential|intimate)\b/i,
-  /\b(nsfw|explicit|sexual|sex)\b/i,
-];
-
-function mutationText(mutation: LtmDraftMutation) {
-  if (mutation.kind === "create_note") {
-    return Object.values(mutation.note.sections)
-      .map((section) => section.text)
-      .join("\n");
-  }
-  if (mutation.kind === "append_section") return mutation.text;
-  if (mutation.kind === "update_section") return mutation.section.text;
-  if (mutation.kind === "flag_conflict") return mutation.conflict.proposed;
-  return "";
-}
-
-function mutationHasPotentialGatedContent(mutation: LtmDraftMutation) {
-  const text = mutationText(mutation);
-  return text.length > 0 && GATED_CONTENT_PATTERNS.some((pattern) => pattern.test(text));
-}
-
 export function isLowRiskTurnMutation(mutation: LtmDraftMutation) {
   if (mutation.risk !== "low") return false;
   if (mutation.kind === "append_section") {
@@ -181,7 +147,7 @@ export function isLowRiskTurnMutation(mutation: LtmDraftMutation) {
     return mutation.confidence >= 0.75;
   }
   if (mutation.kind === "create_note") {
-    return mutation.note.type === "callback" && mutation.confidence >= 0.85 && !mutation.note.conflicts?.length;
+    return mutation.note.type === "thread" && mutation.confidence >= 0.85 && !mutation.note.conflicts?.length;
   }
   return false;
 }
@@ -189,10 +155,9 @@ export function isLowRiskTurnMutation(mutation: LtmDraftMutation) {
 export function isLowRiskSourceExtractionMutation(mutation: LtmDraftMutation) {
   if (mutation.risk !== "low") return false;
   if (mutationTouchesSceneId(mutation) || mutationHasSourceSummaryTag(mutation)) return false;
-  if (mutationHasGates(mutation) || mutationHasPotentialGatedContent(mutation)) return false;
   if (mutation.kind === "append_section") return false;
   if (mutation.kind === "create_note") {
-    return mutation.note.type === "callback" && mutation.confidence >= 0.85 && !mutation.note.conflicts?.length;
+    return mutation.note.type === "thread" && mutation.confidence >= 0.85 && !mutation.note.conflicts?.length;
   }
   if (mutation.kind === "add_link") {
     return mutation.confidence >= 0.75;
@@ -283,7 +248,8 @@ async function applyMutation(
   } else if (mutation.kind === "set_status") {
     patch = { status: mutation.status };
   } else {
-    patch = { conflicts: [...(existing.conflicts ?? []), mutation.conflict] };
+    const _exhaustive: never = mutation;
+    throw new Error(`Unsupported mutation kind: ${(_exhaustive as LtmDraftMutation).kind}`);
   }
 
   patch = {

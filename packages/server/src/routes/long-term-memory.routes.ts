@@ -14,7 +14,6 @@ import {
   ltmExtractionSettingsSchema,
   ltmExtractionDraftSchema,
   ltmExtractionResponseSchema,
-  ltmGateSchema,
   ltmIndexMetadataSchema,
   ltmIsoTimestampSchema,
   ltmLinkSchema,
@@ -160,6 +159,7 @@ const interopImportBodySchema = z
   .strict();
 
 const draftIdParamSchema = z.object({ id: z.string().uuid() }).strict();
+const draftMutationParamsSchema = z.object({ id: z.string().uuid(), mutationId: z.string().uuid() }).strict();
 const noteIdParamSchema = z.object({ id: ltmNoteIdSchema }).strict();
 
 const listDraftsQuerySchema = z
@@ -194,12 +194,6 @@ const acceptDraftBodySchema = z
   .strict()
   .default({});
 
-const updateDraftBodySchema = ltmExtractionDraftSchema
-  .omit({ id: true, createdAt: true, updatedAt: true })
-  .partial()
-  .strict()
-  .refine((value) => Object.keys(value).length > 0, "Patch body must include at least one updatable field.");
-
 const extractSourceNoteBodySchema = z
   .object({
     chatId: z.string().min(1).max(120).optional(),
@@ -231,7 +225,6 @@ const searchBodySchema = z
     tags: z.array(ltmIdentifierSchema).max(100).optional(),
     scope: ltmScopeSchema.optional(),
     characterIds: z.array(z.string().min(1).max(120)).max(100).optional(),
-    includeGates: z.array(ltmGateSchema).max(8).optional(),
     includeResolved: z.boolean().optional(),
     includeSourceNotes: z.boolean().optional(),
     debug: z.boolean().optional(),
@@ -241,9 +234,7 @@ const searchBodySchema = z
     semanticWeight: z.number().finite().min(0).max(1).optional(),
     lexicalWeight: z.number().finite().min(0).max(1).optional(),
     graphWeight: z.number().finite().min(0).max(1).optional(),
-    alwaysWeight: z.number().finite().min(0).max(2).optional(),
     metadataWeight: z.number().finite().min(0).max(2).optional(),
-    typedPriorityWeight: z.number().finite().min(0).max(2).optional(),
   })
   .strict()
   .refine(
@@ -904,23 +895,39 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     return reply.status(201).send(draft);
   });
 
-  app.patch<{ Params: { id: string }; Body: unknown }>(
-    "/drafts/:id",
-    { bodyLimit: DRAFT_BODY_LIMIT_BYTES },
-    async (req, reply) => {
-      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft update" })) return;
-      const { id } = draftIdParamSchema.parse(req.params);
-      const patch = updateDraftBodySchema.parse(req.body);
-      try {
-        const draft = await draftStore.updateDraft(id, patch);
-        if (!draft) return reply.status(404).send({ error: "Long-term memory draft not found" });
-        return draft;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to update long-term memory draft";
-        return reply.status(message.includes("cannot be restored") ? 409 : 400).send({ error: message });
+  app.post<{ Params: { id: string } }>("/drafts/:id/restore", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft restore" })) return;
+    const { id } = draftIdParamSchema.parse(req.params);
+    try {
+      const draft = await draftStore.updateDraft(id, { status: "pending" });
+      if (!draft) return reply.status(404).send({ error: "Long-term memory draft not found" });
+      return draft;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to restore draft";
+      return reply.status(message.includes("cannot be restored") ? 409 : 400).send({ error: message });
+    }
+  });
+
+  app.post<{ Params: { id: string; mutationId: string } }>("/drafts/:id/mutations/:mutationId/archive", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft mutation archive" })) return;
+    const { id, mutationId } = draftMutationParamsSchema.parse(req.params);
+    try {
+      const draft = await draftStore.getDraft(id);
+      if (!draft) return reply.status(404).send({ error: "Long-term memory draft not found" });
+      const next = draft.mutations.filter((m) => m.id !== mutationId);
+      if (next.length === draft.mutations.length) {
+        return reply.status(404).send({ error: "Mutation not found in draft" });
       }
-    },
-  );
+      const updated = next.length === 0
+        ? await draftStore.updateDraft(id, { status: "rejected", rejectedReason: "All mutations archived" })
+        : await draftStore.updateDraft(id, { mutations: next });
+      if (!updated) return reply.status(404).send({ error: "Long-term memory draft not found" });
+      return updated;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to archive mutation";
+      return reply.status(400).send({ error: message });
+    }
+  });
 
   app.post<{ Params: { id: string }; Body: unknown }>("/drafts/:id/accept", async (req, reply) => {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft acceptance" })) return;

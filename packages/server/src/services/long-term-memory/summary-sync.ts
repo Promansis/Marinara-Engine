@@ -152,7 +152,7 @@ function buildSummaryNote(
   return {
     id: noteId,
     type: "source",
-    status: "dormant",
+    status: "active",
     modes: [ltmModeForChatMode(chat.mode)],
     scope: resolveChatScope(chat, meta),
     tags: tagsForEntry(entry),
@@ -315,16 +315,11 @@ async function syncChatSummaryEntryToLongTermMemoryInner(
           ? { ...existing.sections, source: nextSourceSection }
           : existing.sections;
         if (
-          existing.status !== "dormant" ||
-          JSON.stringify(existing.modes) !== JSON.stringify(nextNote.modes) ||
-          JSON.stringify(existing.scope) !== JSON.stringify(nextNote.scope) ||
-          JSON.stringify(existing.tags) !== JSON.stringify(nextNote.tags) ||
           sourceSectionNeedsUpdate
         ) {
           await storage.updateNote(
             noteId,
             {
-              status: "dormant",
               modes: nextNote.modes,
               scope: nextNote.scope,
               tags: nextNote.tags,

@@ -9,7 +9,7 @@ import {
   useLongTermMemoryDrafts,
   useLongTermMemoryNotes,
   useRejectLongTermMemoryDraft,
-  useUpdateLongTermMemoryDraft,
+  useArchiveLongTermMemoryDraftMutation,
   type LtmExtractionDiagnostic,
 } from "../../hooks/use-long-term-memory";
 import { cn } from "../../lib/utils";
@@ -43,7 +43,6 @@ const rewriteKinds = new Set<LtmDraftMutation["kind"]>([
   "update_section",
   "add_link",
   "set_status",
-  "flag_conflict",
 ]);
 function visibleExtractionDiagnostics(diagnostics: LtmExtractionDiagnostic[]) {
   return diagnostics.filter(
@@ -74,8 +73,6 @@ function mutationKindLabel(kind: LtmDraftMutation["kind"]) {
       return "Related memory";
     case "set_status":
       return "Status change";
-    case "flag_conflict":
-      return "Conflict";
   }
 }
 
@@ -125,7 +122,7 @@ function compactMutationText(mutation: LtmDraftMutation, noteLookup: Map<string,
     return `${friendlyIdentifier(mutation.link.relation)}: ${targetLabel}`;
   }
   if (mutation.kind === "set_status") return friendlyStatus(mutation.status);
-  return `${friendlyIdentifier(mutation.conflict.field)}: ${mutation.conflict.proposed}`;
+  return "Unknown mutation";
 }
 
 function SettingToggle({
@@ -331,17 +328,15 @@ function SuggestionRow({ row, noteLookup }: { row: SuggestionRowModel; noteLooku
   const { draft, mutation } = row;
   const accept = useAcceptLongTermMemoryDraft();
   const reject = useRejectLongTermMemoryDraft();
-  const updateDraft = useUpdateLongTermMemoryDraft();
   const deleteDraft = useDeleteLongTermMemoryDraft();
+  const archiveMutation = useArchiveLongTermMemoryDraftMutation();
   const [editing, setEditing] = useState(false);
-  const busy = accept.isPending || reject.isPending || updateDraft.isPending || deleteDraft.isPending;
+  const busy = accept.isPending || reject.isPending || archiveMutation.isPending || deleteDraft.isPending;
 
   const patchWithoutMutation = () =>
-    updateDraft.mutateAsync({
+    archiveMutation.mutateAsync({
       id: draft.id,
-      patch: {
-        mutations: draft.mutations.filter((item) => item.id !== mutation.id),
-      },
+      mutationId: mutation.id,
     });
 
   const archiveOne = async () => {
@@ -366,22 +361,6 @@ function SuggestionRow({ row, noteLookup }: { row: SuggestionRowModel; noteLooku
         await patchWithoutMutation();
       }
       toast.success("Suggestion deleted");
-    } catch (err) {
-      toast.error((err as Error).message);
-    }
-  };
-
-  const saveMutation = async (next: LtmDraftMutation) => {
-    try {
-      await updateDraft.mutateAsync({
-        id: draft.id,
-        patch: {
-          summary: draft.summary,
-          mutations: draft.mutations.map((item) => (item.id === mutation.id ? next : item)),
-        },
-      });
-      setEditing(false);
-      toast.success("Suggestion saved");
     } catch (err) {
       toast.error((err as Error).message);
     }
@@ -434,7 +413,7 @@ function SuggestionRow({ row, noteLookup }: { row: SuggestionRowModel; noteLooku
           </ToolButton>
         </div>
       </div>
-      {editing && <SuggestionMutationEditor mutation={mutation} onSave={saveMutation} saving={updateDraft.isPending} noteLookup={noteLookup} />}
+      {editing && <SuggestionMutationEditor mutation={mutation} onSave={() => {}} saving={false} noteLookup={noteLookup} />}
     </article>
   );
 }
@@ -727,40 +706,8 @@ function MutationSpecificFields({
   }
 
   return (
-    <div className="grid gap-2">
-      <div className="grid gap-2 sm:grid-cols-2">
-        <SettingField label="Target memory">
-          <input value={friendlyIdentifier(mutation.noteId)} readOnly className={compactInputClassName} />
-        </SettingField>
-        <SettingField label="Field">
-          <input
-            value={friendlyIdentifier(mutation.conflict.field)}
-            onChange={(event) =>
-              onChange({
-                ...mutation,
-                conflict: { ...mutation.conflict, field: normalizeIdentifier(event.target.value, "field") },
-              })
-            }
-            className={compactInputClassName}
-          />
-        </SettingField>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        <SettingField label="Existing text">
-          <textarea
-            value={mutation.conflict.existing}
-            onChange={(event) => onChange({ ...mutation, conflict: { ...mutation.conflict, existing: event.target.value } })}
-            className={textareaClassName}
-          />
-        </SettingField>
-        <SettingField label="Proposed text">
-          <textarea
-            value={mutation.conflict.proposed}
-            onChange={(event) => onChange({ ...mutation, conflict: { ...mutation.conflict, proposed: event.target.value } })}
-            className={textareaClassName}
-          />
-        </SettingField>
-      </div>
+    <div className="p-3 text-xs text-[var(--foreground)]/60">
+      This mutation kind is not editable.
     </div>
   );
 }

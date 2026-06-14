@@ -28,8 +28,6 @@ export const LTM_VAULT_FOLDERS = [
   "scenes",
   "world",
   "threads",
-  "callbacks",
-  "voice",
   "tone",
 ] as const;
 

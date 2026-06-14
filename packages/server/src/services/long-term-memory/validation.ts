@@ -1,4 +1,4 @@
-import type { LtmDraftMutation, LtmExtractionResponse, LtmGate, LtmNote } from "@marinara-engine/shared";
+import type { LtmDraftMutation, LtmExtractionResponse, LtmNote } from "@marinara-engine/shared";
 
 export type LtmExtractionDiagnostic = {
   severity: "warning" | "error";
@@ -7,13 +7,6 @@ export type LtmExtractionDiagnostic = {
   noteId?: string;
   message: string;
 };
-
-const GATED_WORDS: Array<{ gate: LtmGate; pattern: RegExp }> = [
-  { gate: "spoiler", pattern: /\b(spoiler|twist|reveal|secret ending)\b/i },
-  { gate: "character_secret", pattern: /\b(secret|unknown to|hiding|concealed|private knowledge)\b/i },
-  { gate: "private", pattern: /\b(private|confidential|intimate)\b/i },
-  { gate: "nsfw", pattern: /\b(nsfw|explicit|sexual|sex)\b/i },
-];
 
 function tokenize(value: string) {
   return new Set(
@@ -43,7 +36,6 @@ function textForMutation(mutation: LtmDraftMutation) {
   }
   if (mutation.kind === "append_section") return mutation.text;
   if (mutation.kind === "update_section") return mutation.section.text;
-  if (mutation.kind === "flag_conflict") return mutation.conflict.proposed;
   return mutation.summary;
 }
 
@@ -54,15 +46,6 @@ function noteIdForMutation(mutation: LtmDraftMutation) {
 function sectionKeyForMutation(mutation: LtmDraftMutation) {
   if (mutation.kind === "append_section" || mutation.kind === "update_section") return mutation.sectionKey;
   return null;
-}
-
-function gatesForMutation(mutation: LtmDraftMutation) {
-  if (mutation.kind === "create_note") {
-    return Object.values(mutation.note.sections).flatMap((section) => section.gates ?? []);
-  }
-  if (mutation.kind === "append_section") return mutation.gates ?? [];
-  if (mutation.kind === "update_section") return mutation.section.gates ?? [];
-  return [];
 }
 
 function targetsSceneOrSourceNote(mutation: LtmDraftMutation, existing: LtmNote | undefined) {
@@ -130,7 +113,7 @@ export function validateLtmExtractionResponse({
         code: "scene_or_source_note_from_source",
         mutationId: mutation.id,
         noteId,
-        message: "Source extraction cannot create or update scene/source notes; scene content stays in the dormant source note.",
+        message: "Source extraction cannot create or update scene/source notes; scene content stays in the source note.",
       });
     }
 
@@ -187,18 +170,6 @@ export function validateLtmExtractionResponse({
       }
     }
 
-    const gates = gatesForMutation(mutation);
-    for (const { gate, pattern } of GATED_WORDS) {
-      if (pattern.test(text) && !gates.includes(gate)) {
-        diagnostics.push({
-          severity: "warning",
-          code: "missing_gate",
-          mutationId: mutation.id,
-          noteId,
-          message: `Potential ${gate} content is not gated.`,
-        });
-      }
-    }
   }
 
   return diagnostics;

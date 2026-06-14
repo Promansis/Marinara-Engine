@@ -438,7 +438,7 @@ function getCachedChatForGeneration(qc: QueryClient, chatId: string): Chat | und
 function shouldRefreshGameStateAfterGeneration(qc: QueryClient, chatId: string) {
   const chat = getCachedChatForGeneration(qc, chatId);
   if (chat?.mode === "game") return true;
-  if (chat?.mode !== "roleplay" && chat?.mode !== "visual_novel") return false;
+  if (chat?.mode !== "roleplay") return false;
   const enableAgents = parseChatMetadata(chat.metadata).enableAgents;
   return enableAgents === true || enableAgents === "true";
 }
@@ -1275,7 +1275,7 @@ export function useGenerate() {
                     );
                   const chatList = qc.getQueryData<Chat[]>(chatKeys.list());
                   const thisChat = chatList?.find((c) => c.id === params.chatId);
-                  const isRpMode = thisChat?.mode === "roleplay" || thisChat?.mode === "visual_novel";
+                  const isRpMode = thisChat?.mode === "roleplay";
                   const soundOn = isRpMode
                     ? useUIStore.getState().rpNotificationSound
                     : useUIStore.getState().convoNotificationSound;
@@ -1721,7 +1721,7 @@ export function useGenerate() {
               .getState()
               .addNotification(params.chatId, identity.name ?? "Character", identity.avatarUrl, identity.avatarCrop);
           }
-          const isRp = chat?.mode === "roleplay" || chat?.mode === "visual_novel";
+          const isRp = chat?.mode === "roleplay";
           const soundEnabled = isRp
             ? useUIStore.getState().rpNotificationSound
             : useUIStore.getState().convoNotificationSound;

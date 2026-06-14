@@ -414,7 +414,7 @@ export function ChatArea() {
   const rawMode = (chat as unknown as { mode?: string })?.mode;
   if (rawMode) lastModeRef.current = rawMode;
   const chatMode = rawMode ?? lastModeRef.current;
-  const isRoleplay = chatMode === "roleplay" || chatMode === "visual_novel";
+  const isRoleplay = chatMode === "roleplay";
   const { startEncounter } = useEncounter();
   const { concludeScene, abandonScene, forkScene, isForking } = useScene();
   const encounterActive = useEncounterStore((s) => s.active || s.showConfigModal);
@@ -1384,7 +1384,7 @@ export function ChatArea() {
 
     const mode = chatModeRef.current;
     const shouldAutoplay =
-      mode === "roleplay" || mode === "visual_novel" ? cfg.autoplayRP : mode === "game" ? false : cfg.autoplayConvo;
+      mode === "roleplay" ? cfg.autoplayRP : mode === "game" ? false : cfg.autoplayConvo;
     if (!shouldAutoplay) return;
 
     const msgs = messagesRef.current ?? [];

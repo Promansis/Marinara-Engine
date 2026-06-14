@@ -1,16 +1,13 @@
 import { readFile } from "node:fs/promises";
 import {
-  ltmPoliciesConfigSchema,
   ltmRetrievalConfigSchema,
   getLtmScopeChatIds,
-  type LtmGate,
-  type LtmPoliciesConfig,
   type LtmRetrievalConfig,
   type LtmScope,
 } from "@marinara-engine/shared";
 import { logger } from "../../lib/logger.js";
 import { embedMemoryRecallTexts, type MemoryRecallEmbeddingOptions } from "../memory-recall.js";
-import { DEFAULT_LTM_POLICIES, DEFAULT_LTM_RETRIEVAL_CONFIG } from "./default-config.js";
+import { DEFAULT_LTM_RETRIEVAL_CONFIG } from "./default-config.js";
 import type { LtmBm25Index } from "./bm25.js";
 import { searchLtmBm25 } from "./bm25.js";
 import type { LtmMemoryChunk } from "./chunking.js";
@@ -32,7 +29,6 @@ export interface RetrieveLongTermMemoryInput extends MemoryRecallEmbeddingOption
   tags?: string[];
   scope?: LtmScope;
   characterIds?: string[];
-  includeGates?: LtmGate[];
   includeResolved?: boolean;
   includeSourceNotes?: boolean;
   debug?: boolean;
@@ -43,9 +39,7 @@ export interface RetrieveLongTermMemoryInput extends MemoryRecallEmbeddingOption
   semanticWeight?: number;
   lexicalWeight?: number;
   graphWeight?: number;
-  alwaysWeight?: number;
   metadataWeight?: number;
-  typedPriorityWeight?: number;
 }
 
 export interface LtmRetrievalDebugCandidate {
@@ -80,9 +74,7 @@ export interface LtmRetrievalDebugInfo {
     semantic: number;
     lexical: number;
     graph: number;
-    always: number;
     metadata: number;
-    typedPriority: number;
   };
   funnel: Record<string, number>;
   selected: LtmRetrievalDebugCandidate[];
@@ -143,7 +135,6 @@ type LtmRetrievalBundle = {
   graph: LtmGraphIndex | null;
   embeddings: LtmEmbeddingIndex | null;
   config: LtmRetrievalConfig;
-  policies: LtmPoliciesConfig;
   warnings: string[];
 };
 
@@ -172,7 +163,7 @@ async function loadRetrievalBundle(root: string, includeSourceNotes: boolean): P
     const dirs = getLongTermMemoryDirectories(root);
     const warnings: string[] = [];
     const indexPrefix = includeSourceNotes ? "source-" : "";
-    const [metadata, bm25, graph, embeddings, config, policies] = await Promise.all([
+    const [metadata, bm25, graph, embeddings, config] = await Promise.all([
       readIndexFile<LtmMetadataIndex>(safeJoin(dirs.indexes, `${indexPrefix}metadata.json`), warnings),
       readIndexFile<LtmBm25Index>(safeJoin(dirs.indexes, `${indexPrefix}bm25.json`), warnings),
       readIndexFile<LtmGraphIndex>(safeJoin(dirs.indexes, `${indexPrefix}graph.json`), warnings),
@@ -180,11 +171,8 @@ async function loadRetrievalBundle(root: string, includeSourceNotes: boolean): P
       readConfig(safeJoin(dirs.config, "retrieval.json"), DEFAULT_LTM_RETRIEVAL_CONFIG, (value) =>
         ltmRetrievalConfigSchema.parse(value),
       ),
-      readConfig(safeJoin(dirs.config, "policies.json"), DEFAULT_LTM_POLICIES, (value) =>
-        ltmPoliciesConfigSchema.parse(value),
-      ),
     ]);
-    return { metadata, bm25, graph, embeddings, config, policies, warnings };
+    return { metadata, bm25, graph, embeddings, config, warnings };
   })();
 
   retrievalBundleCache.set(key, load);
@@ -200,20 +188,16 @@ function resolveRetrievalWeights(config: LtmRetrievalConfig, input: RetrieveLong
   const semantic = input.semanticWeight ?? config.semanticWeight;
   const lexical = input.lexicalWeight ?? config.lexicalWeight;
   const graph = input.graphWeight ?? config.graphWeight;
-  const always = input.alwaysWeight ?? 2;
   const metadata = input.metadataWeight ?? 1;
-  const typedPriority = input.typedPriorityWeight ?? 1.5;
-  if (semantic + lexical + graph + always + metadata + typedPriority <= 0) {
+  if (semantic + lexical + graph + metadata <= 0) {
     return {
       semantic: config.semanticWeight,
       lexical: config.lexicalWeight,
       graph: config.graphWeight,
-      always: 2,
       metadata: 1,
-      typedPriority: 1.5,
     };
   }
-  return { semantic, lexical, graph, always, metadata, typedPriority };
+  return { semantic, lexical, graph, metadata };
 }
 
 function uniqueSorted(values: string[]) {
@@ -230,7 +214,7 @@ function extractQuerySignals(input: RetrieveLongTermMemoryInput) {
   const noteIds = uniqueSorted([
     ...(input.noteIds ?? []),
     ...Array.from(
-      queryText.matchAll(/\b(?:source|char|rel|scene|thread|cb|world|faction|location|rule|voice|tone)_[a-z0-9_]+\b/g),
+      queryText.matchAll(/\b(?:source|char|rel|scene|thread|world|faction|location|rule|tone)_[a-z0-9_]+\b/g),
       (match) => match[0],
     ),
   ]);
@@ -268,22 +252,13 @@ function scopeMatches(chunk: LtmMemoryChunk, scope: LtmScope | undefined, charac
   return true;
 }
 
-function gateAllows(chunk: LtmMemoryChunk, includeGates: Set<LtmGate>) {
-  return chunk.gates.length === 0 || chunk.gates.every((gate) => includeGates.has(gate));
-}
-
 function isSourceSummaryChunk(chunk: LtmMemoryChunk) {
   return chunk.noteType === "source" || chunk.tags.includes("source_summary") || chunk.tags.includes("chat_summary");
 }
 
-function shouldFilterDormantChunk(chunk: LtmMemoryChunk, input: RetrieveLongTermMemoryInput) {
-  if (chunk.status !== "dormant") return false;
-  return !(input.includeSourceNotes && isSourceSummaryChunk(chunk));
-}
-
 function shouldFilterResolvedChunk(chunk: LtmMemoryChunk, input: RetrieveLongTermMemoryInput) {
   if (input.includeResolved || chunk.status !== "resolved") return false;
-  return chunk.noteType === "thread" || chunk.noteType === "callback";
+  return chunk.noteType === "thread";
 }
 
 function summarizeCandidateFilters(
@@ -292,12 +267,9 @@ function summarizeCandidateFilters(
   config: LtmRetrievalConfig,
   characterIds: string[],
 ) {
-  const includeGates = new Set([...(config.includeGates ?? []), ...(input.includeGates ?? [])]);
   const counts = {
     sourceSummariesSkipped: 0,
-    dormantFiltered: 0,
     resolvedFiltered: 0,
-    gateFiltered: 0,
     scopeFiltered: 0,
   };
 
@@ -306,16 +278,8 @@ function summarizeCandidateFilters(
       counts.sourceSummariesSkipped++;
       continue;
     }
-    if (shouldFilterDormantChunk(chunk, input)) {
-      counts.dormantFiltered++;
-      continue;
-    }
     if (shouldFilterResolvedChunk(chunk, input)) {
       counts.resolvedFiltered++;
-      continue;
-    }
-    if (!gateAllows(chunk, includeGates)) {
-      counts.gateFiltered++;
       continue;
     }
     if (!scopeMatches(chunk, input.scope, characterIds)) {
@@ -332,11 +296,8 @@ function candidateAllowed(
   config: LtmRetrievalConfig,
   characterIds: string[],
 ) {
-  const includeGates = new Set([...(config.includeGates ?? []), ...(input.includeGates ?? [])]);
   if (!input.includeSourceNotes && isSourceSummaryChunk(chunk)) return false;
-  if (shouldFilterDormantChunk(chunk, input)) return false;
   if (shouldFilterResolvedChunk(chunk, input)) return false;
-  if (!gateAllows(chunk, includeGates)) return false;
   return scopeMatches(chunk, input.scope, characterIds);
 }
 
@@ -385,68 +346,6 @@ function formatRejectedCandidate(
   };
 }
 
-function alwaysLane(
-  metadata: LtmMetadataIndex,
-  policies: LtmPoliciesConfig,
-  input: RetrieveLongTermMemoryInput,
-  config: LtmRetrievalConfig,
-  characterIds: string[],
-) {
-  const items = [];
-  const activeCharacters = new Set(characterIds);
-  for (const policy of policies.policies) {
-    if (policy.injection !== "always_for_active_characters") continue;
-    for (const chunkId of metadata.byType[policy.type] ?? []) {
-      const chunk = metadata.chunks[chunkId];
-      if (!chunk) continue;
-      if (
-        policy.type === "character" &&
-        !activeCharacters.has(chunk.noteId) &&
-        !chunk.scope.characterIds?.some((characterId) => activeCharacters.has(characterId))
-      ) {
-        continue;
-      }
-      if (!policy.sectionsAlways.includes(chunk.sectionKey)) continue;
-      if (!candidateAllowed(chunk, input, config, characterIds)) continue;
-      items.push({ chunkId, reason: `always:${policy.type}.${chunk.sectionKey}`, rawScore: 1 });
-    }
-  }
-
-  for (const chunk of Object.values(metadata.chunks)) {
-    if (
-      (chunk.noteType === "tone" || chunk.noteType === "voice") &&
-      shouldAlwaysInjectStyleChunk(chunk, metadata) &&
-      candidateAllowed(chunk, input, config, characterIds)
-    ) {
-      items.push({ chunkId: chunk.id, reason: `always:${chunk.noteType}`, rawScore: 0.8 });
-    }
-  }
-
-  return items.sort((a, b) => b.rawScore - a.rawScore || a.chunkId.localeCompare(b.chunkId));
-}
-
-function shouldAlwaysInjectStyleChunk(chunk: LtmMemoryChunk, metadata: LtmMetadataIndex) {
-  if (chunk.sectionKey === "profile") return true;
-  return !metadata.chunks[`${chunk.noteId}::profile`];
-}
-
-function typedPriorityLane(
-  metadata: LtmMetadataIndex,
-  input: RetrieveLongTermMemoryInput,
-  config: LtmRetrievalConfig,
-  characterIds: string[],
-) {
-  return Object.values(metadata.chunks)
-    .flatMap((chunk) => {
-      if (!candidateAllowed(chunk, input, config, characterIds)) return [];
-      if (chunk.noteType === "relationship" && chunk.sectionKey === "state") {
-        return [{ chunkId: chunk.id, reason: "priority:relationship_state", rawScore: 0.95 }];
-      }
-      return [];
-    })
-    .sort((a, b) => b.rawScore - a.rawScore || a.chunkId.localeCompare(b.chunkId));
-}
-
 async function vectorLane(
   embeddings: LtmEmbeddingIndex | null,
   queryText: string,
@@ -491,7 +390,7 @@ export async function retrieveLongTermMemory(
   const root = input.root ?? getLongTermMemoryRoot();
   const includeDebug = input.debug === true || input.explain === true;
   const bundle = await loadRetrievalBundle(root, input.includeSourceNotes === true);
-  const { metadata, bm25, graph, embeddings, config, policies } = bundle;
+  const { metadata, bm25, graph, embeddings, config } = bundle;
   const warnings = [...bundle.warnings];
   const weights = resolveRetrievalWeights(config, input);
 
@@ -520,19 +419,14 @@ export async function retrieveLongTermMemory(
                 semantic: weights.semantic,
                 lexical: weights.lexical,
                 graph: weights.graph,
-                always: weights.always,
                 metadata: weights.metadata,
-                typedPriority: weights.typedPriority,
               },
               funnel: {
                 totalChunks: 0,
                 sourceSummariesSkipped: 0,
                 scopeFiltered: 0,
-                gateFiltered: 0,
                 statusFiltered: 0,
-                alwaysCandidates: 0,
                 metadataCandidates: 0,
-                typedPriorityCandidates: 0,
                 vectorCandidates: 0,
                 bm25Candidates: 0,
                 graphCandidates: 0,
@@ -582,14 +476,6 @@ export async function retrieveLongTermMemory(
   const vector = await vectorLane(embeddings, signals.queryText, input, config, chunksById, characterIds);
   const lanes: LtmRankLane[] = [];
 
-  if (weights.always > 0) {
-    lanes.push({
-      name: "always",
-      weight: weights.always,
-      items: alwaysLane(metadata, policies, input, config, characterIds),
-    });
-  }
-
   if (weights.metadata > 0) {
     lanes.push({
       name: "metadata",
@@ -599,14 +485,6 @@ export async function retrieveLongTermMemory(
         reason: match.reasons.join(","),
         rawScore: match.score,
       })),
-    });
-  }
-
-  if (weights.typedPriority > 0) {
-    lanes.push({
-      name: "typed_priority",
-      weight: weights.typedPriority,
-      items: typedPriorityLane(metadata, input, config, characterIds),
     });
   }
 
@@ -665,20 +543,15 @@ export async function retrieveLongTermMemory(
           semantic: weights.semantic,
           lexical: weights.lexical,
           graph: weights.graph,
-          always: weights.always,
           metadata: weights.metadata,
-          typedPriority: weights.typedPriority,
         },
         funnel: {
           totalChunks: allChunks.length,
           sourceSummariesSkipped: filterCounts?.sourceSummariesSkipped ?? 0,
           scopeFiltered: filterCounts?.scopeFiltered ?? 0,
-          gateFiltered: filterCounts?.gateFiltered ?? 0,
           statusFiltered:
-            (filterCounts?.dormantFiltered ?? 0) + (filterCounts?.resolvedFiltered ?? 0),
-          alwaysCandidates: laneCount("always"),
+            filterCounts?.resolvedFiltered ?? 0,
           metadataCandidates: laneCount("metadata"),
-          typedPriorityCandidates: laneCount("typed_priority"),
           vectorCandidates: laneCount("vector"),
           bm25Candidates: laneCount("bm25"),
           graphCandidates: laneCount("graph"),

@@ -12,7 +12,6 @@ import type {
   LtmStatus,
 } from "@marinara-engine/shared";
 import { noteIdForEvidenceUnit, riskForEvidenceUnit } from "./evidence-unit-validation.js";
-import { formatRelationshipReduction, reduceRelationshipEvidenceUnits } from "./relationship-reducer.js";
 
 export interface CompileLtmEvidenceUnitsOptions {
   units: LtmEvidenceUnit[];
@@ -34,26 +33,20 @@ type UnitTarget = {
 type LtmCompilerLifecycle =
   | "cumulative"
   | "superseding"
-  | "superseding_conflict_review"
-  | "rolling_until_resolved"
-  | "manual_conflict";
+  | "rolling_until_resolved";
 
 const LTM_BUCKET_LIFECYCLE: Record<LtmEvidenceUnit["bucket"], LtmCompilerLifecycle> = {
   timeline_event: "cumulative",
-  character_fact: "superseding_conflict_review",
+  character_fact: "superseding",
   character_state: "superseding",
   relationship_event: "cumulative",
   relationship_state: "superseding",
-  relationship_conflict: "manual_conflict",
-  world_fact: "superseding_conflict_review",
+  relationship_conflict: "superseding",
+  world_fact: "superseding",
   thread: "rolling_until_resolved",
-  callback: "rolling_until_resolved",
-  voice: "cumulative",
   tone: "superseding",
   anchor: "cumulative",
 };
-
-const CUMULATIVE_LINE_PATTERN = /^-\s*(?<text>.*?)(?:\s*\[evidence:(?<evidence>[^\]]*)\])?$/;
 
 export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions): LtmExtractionResponse {
   const timestamp = options.createdAt ?? new Date().toISOString();
@@ -76,57 +69,6 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
     const risk = maxRisk(units.map(riskForEvidenceUnit));
     const evidence = uniqueStrings(units.flatMap((unit) => unit.evidence)).slice(0, 20);
     const confidence = Math.min(...units.map((unit) => unit.confidence));
-
-    if (target.noteType === "relationship" && units.some((unit) => unit.bucket === "relationship_conflict")) {
-      const conflictUnit = units.find((unit) => unit.bucket === "relationship_conflict")!;
-      if (!existing) {
-        mutations.push({
-          id: randomUUID(),
-          kind: "create_note",
-          risk: "high",
-          confidence: conflictUnit.confidence,
-          summary: `Create relationship conflict memory ${noteId}`,
-          evidence: conflictUnit.evidence,
-          note: {
-            id: noteId,
-            type: "relationship",
-            status: target.status,
-            modes: options.modes,
-            scope: options.scope,
-            tags: target.tags,
-            links,
-            sections,
-            conflicts: [
-              {
-                field: conflictUnit.sectionKey,
-                existing: "",
-                proposed: conflictUnit.text,
-                resolution: "pending",
-                policy: "manual_review",
-              },
-            ],
-          },
-        });
-        continue;
-      }
-      mutations.push({
-        id: randomUUID(),
-        kind: "flag_conflict",
-        risk: "high",
-        confidence: conflictUnit.confidence,
-        summary: `Flag relationship conflict for ${noteId}`,
-        evidence: conflictUnit.evidence,
-        noteId,
-        conflict: {
-          field: conflictUnit.sectionKey,
-          existing: existing?.sections[conflictUnit.sectionKey]?.text ?? "",
-          proposed: conflictUnit.text,
-          resolution: "pending",
-          policy: "manual_review",
-        },
-      });
-      continue;
-    }
 
     if (!existing) {
       mutations.push({
@@ -152,26 +94,6 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
 
     for (const [sectionKey, section] of Object.entries(sections)) {
       const existingText = existing.sections[sectionKey]?.text.trim();
-      if (existingText && existingText !== section.text.trim() && isHighRiskOverwrite(units, sectionKey)) {
-        mutations.push({
-          id: randomUUID(),
-          kind: "flag_conflict",
-          risk: "high",
-          confidence,
-          summary: `Flag conflicting ${noteId}.${sectionKey}`,
-          evidence: section.evidence ?? evidence,
-          noteId,
-          conflict: {
-            field: sectionKey,
-            existing: existingText,
-            proposed: section.text,
-            resolution: "pending",
-            policy: "manual_review",
-          },
-        });
-        continue;
-      }
-
       const lifecycle = lifecycleForSection(units, sectionKey);
       if (shouldAppend(lifecycle, sectionKey, existing)) {
         mutations.push({
@@ -185,7 +107,6 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
           sectionKey,
           text: section.text,
           salience: section.salience,
-          gates: section.gates,
         });
       } else {
         mutations.push({
@@ -256,12 +177,10 @@ function targetForUnit(unit: LtmEvidenceUnit): UnitTarget {
     return { ...base, noteType: "timeline_event", tags: ["typed_memory", "timeline_event"] };
   }
   if (unit.bucket === "thread") return { ...base, noteType: "thread", tags: ["typed_memory"] };
-  if (unit.bucket === "callback") return { ...base, noteType: "callback", tags: ["typed_memory"] };
   if (unit.bucket === "world_fact") return { ...base, noteType: "world", tags: ["typed_memory"] };
-  if (unit.bucket === "voice") return { ...base, noteType: "voice", tags: ["typed_memory"] };
   if (unit.bucket === "tone") return { ...base, noteType: "tone", tags: ["typed_memory"] };
   if (unit.bucket === "anchor") {
-    const noteType: LtmNoteType = noteId.startsWith("tone_") ? "tone" : noteId.startsWith("cb_") ? "callback" : "world";
+    const noteType: LtmNoteType = noteId.startsWith("tone_") ? "tone" : "world";
     return { ...base, noteType, tags: ["typed_memory", "anchor"] };
   }
   return { ...base, noteType: "character", tags: ["typed_memory"] };
@@ -291,79 +210,6 @@ function sectionsForUnits(units: LtmEvidenceUnit[], existing: LtmNote | undefine
         ...(existingSection?.evidence ?? []),
         ...unit.evidence,
       ]).slice(0, 100),
-      gates: uniqueStrings([
-        ...(sections[sectionKey]?.gates ?? []),
-        ...(existingSection?.gates ?? []),
-        ...unit.gates,
-      ]) as LtmSection["gates"],
-    };
-  }
-
-  const relationshipUnits = units.filter((unit) => unit.bucket.startsWith("relationship_"));
-  if (relationshipUnits.some((unit) => unit.bucket === "relationship_event" || unit.bucket === "relationship_state")) {
-    const reduction = reduceRelationshipEvidenceUnits([
-      ...relationshipUnitsFromExistingNote(existing),
-      ...relationshipUnits.filter(
-        (unit) => unit.bucket === "relationship_event" || unit.bucket === "relationship_state",
-      ),
-    ]);
-    const existingState = existing?.sections.state;
-    sections.state = {
-      text: formatRelationshipReduction(reduction),
-      updatedAt: timestamp,
-      salience: Math.max(existingState?.salience ?? 0, ...relationshipUnits.map((unit) => unit.salience)),
-      confidence: Math.max(existingState?.confidence ?? 0, ...relationshipUnits.map((unit) => unit.confidence)),
-      evidence: uniqueStrings([
-        ...(existingState?.evidence ?? []),
-        ...relationshipUnits.flatMap((unit) => unit.evidence),
-      ]).slice(0, 100),
-      gates: uniqueStrings([
-        ...(existingState?.gates ?? []),
-        ...relationshipUnits.flatMap((unit) => unit.gates),
-      ]) as LtmSection["gates"],
-    };
-  }
-
-  const voiceUnits = units.filter((unit) => unit.bucket === "voice");
-  if (voiceUnits.length > 0) {
-    const existingExamples = examplesFromSection(existing?.sections.examples?.text);
-    const incomingExamples = uniqueStrings(voiceUnits.map((unit) => unit.text.trim()).filter(Boolean));
-    const examples = uniqueStrings([...existingExamples, ...incomingExamples]).slice(-8);
-    const sectionExamples = existing
-      ? incomingExamples.filter((example) => !existingExamples.includes(example))
-      : examples;
-    const evidence = uniqueStrings([
-      ...(existing?.sections.profile?.evidence ?? []),
-      ...(existing?.sections.examples?.evidence ?? []),
-      ...voiceUnits.flatMap((unit) => unit.evidence),
-    ]).slice(0, 100);
-    const gates = uniqueStrings([
-      ...(existing?.sections.profile?.gates ?? []),
-      ...(existing?.sections.examples?.gates ?? []),
-      ...voiceUnits.flatMap((unit) => unit.gates),
-    ]) as LtmSection["gates"];
-    if (sectionExamples.length > 0 || !existing?.sections.examples) {
-      sections.examples = {
-        text: sectionExamples.map((example) => `- ${example}`).join("\n"),
-        updatedAt: timestamp,
-        salience: Math.max(existing?.sections.examples?.salience ?? 0, ...voiceUnits.map((unit) => unit.salience)),
-        confidence: Math.max(
-          existing?.sections.examples?.confidence ?? 0,
-          ...voiceUnits.map((unit) => unit.confidence),
-        ),
-        evidence,
-        gates,
-      };
-    } else {
-      delete sections.examples;
-    }
-    sections.profile = {
-      text: deriveVoiceProfile(examples),
-      updatedAt: timestamp,
-      salience: Math.max(existing?.sections.profile?.salience ?? 0, ...voiceUnits.map((unit) => unit.salience)),
-      confidence: Math.max(existing?.sections.profile?.confidence ?? 0, ...voiceUnits.map((unit) => unit.confidence)),
-      evidence,
-      gates,
     };
   }
 
@@ -377,11 +223,6 @@ function sectionsForUnits(units: LtmEvidenceUnit[], existing: LtmNote | undefine
       ...(existing?.sections.observations?.evidence ?? []),
       ...toneUnits.flatMap((unit) => unit.evidence),
     ]).slice(0, 100);
-    const gates = uniqueStrings([
-      ...(existing?.sections.profile?.gates ?? []),
-      ...(existing?.sections.observations?.gates ?? []),
-      ...toneUnits.flatMap((unit) => unit.gates),
-    ]) as LtmSection["gates"];
     sections.observations = {
       text: observations.map((observation) => `- ${observation}`).join("\n"),
       updatedAt: timestamp,
@@ -391,7 +232,6 @@ function sectionsForUnits(units: LtmEvidenceUnit[], existing: LtmNote | undefine
         ...toneUnits.map((unit) => unit.confidence),
       ),
       evidence,
-      gates,
     };
     sections.profile = {
       text: deriveToneProfile(observations),
@@ -399,7 +239,6 @@ function sectionsForUnits(units: LtmEvidenceUnit[], existing: LtmNote | undefine
       salience: Math.max(existing?.sections.profile?.salience ?? 0, ...toneUnits.map((unit) => unit.salience)),
       confidence: Math.max(existing?.sections.profile?.confidence ?? 0, ...toneUnits.map((unit) => unit.confidence)),
       evidence,
-      gates,
     };
   }
 
@@ -412,9 +251,8 @@ function sectionKeyForUnit(unit: LtmEvidenceUnit) {
   if (unit.bucket === "relationship_state") return "state";
   if (unit.bucket === "character_state") return "current_state";
   if (unit.bucket === "character_fact") return unit.sectionKey || "facts";
-  if (unit.bucket === "voice") return "examples";
   if (unit.bucket === "tone") return "observations";
-  if ((unit.bucket === "thread" || unit.bucket === "callback") && unit.status === "resolved") return "summary";
+  if ((unit.bucket === "thread") && unit.status === "resolved") return "summary";
   return unit.sectionKey;
 }
 
@@ -429,57 +267,12 @@ function mergeSectionText(existing: string | undefined, incoming: string, append
   return `${existing.trim()}\n${incoming.trim()}`;
 }
 
-function relationshipUnitsFromExistingNote(existing: LtmNote | undefined): LtmEvidenceUnit[] {
-  if (!existing || existing.type !== "relationship") return [];
-  const history = existing.sections.history?.text;
-  if (!history?.trim()) return [];
-
-  const units: LtmEvidenceUnit[] = [];
-  for (const [index, line] of history.split(/\r?\n+/).entries()) {
-    const parsed = parseCumulativeLine(line);
-    if (!parsed?.text) continue;
-    units.push({
-      id: randomUUID(),
-      bucket: "relationship_event",
-      subjectId: existing.id.replace(/^rel_/, ""),
-      sectionKey: `existing_${String(index).padStart(4, "0")}`,
-      text: parsed.text,
-      evidence: parsed.evidence.length
-        ? parsed.evidence
-        : (existing.sections.history?.evidence ?? ["existing_history"]),
-      confidence: existing.sections.history?.confidence ?? 0.6,
-      salience: existing.sections.history?.salience ?? 0.6,
-      status: existing.status === "dormant" ? "active" : existing.status,
-      gates: existing.sections.history?.gates ?? [],
-      links: [],
-      sourceHash: "0".repeat(64),
-    });
-  }
-  return units;
-}
-
-function parseCumulativeLine(line: string) {
-  const match = line.trim().match(CUMULATIVE_LINE_PATTERN);
-  if (!match?.groups) return null;
-  return {
-    text: match.groups.text?.trim() ?? "",
-    evidence: uniqueStrings((match.groups.evidence ?? "").split(",").map((item) => item.trim())),
-  };
-}
-
 function examplesFromSection(text: string | undefined) {
   if (!text?.trim()) return [];
   return text
     .split(/\r?\n+/)
     .map((line) => line.trim().replace(/^-\s*/, ""))
     .filter(Boolean);
-}
-
-function deriveVoiceProfile(examples: string[]) {
-  const sample = examples.slice(-3).map(compactProfileFragment).join("; ");
-  return sample
-    ? `Voice profile: ${sample}.`
-    : "Voice profile: keep responses concise and consistent with established speech examples.";
 }
 
 function deriveToneProfile(observations: string[]) {
@@ -501,8 +294,6 @@ function lifecycleForSection(units: LtmEvidenceUnit[], sectionKey: string): LtmC
     .map((unit) => LTM_BUCKET_LIFECYCLE[unit.bucket]);
   if (lifecycles.includes("cumulative")) return "cumulative";
   if (lifecycles.includes("rolling_until_resolved")) return "rolling_until_resolved";
-  if (lifecycles.includes("superseding_conflict_review")) return "superseding_conflict_review";
-  if (lifecycles.includes("manual_conflict")) return "manual_conflict";
   return "superseding";
 }
 
@@ -511,21 +302,12 @@ function shouldAppend(lifecycle: LtmCompilerLifecycle, sectionKey: string, exist
   return lifecycle === "cumulative";
 }
 
-function isHighRiskOverwrite(units: LtmEvidenceUnit[], sectionKey: string) {
-  return units
-    .filter((unit) => sectionKeyForUnit(unit) === sectionKey)
-    .some(
-      (unit) =>
-        riskForEvidenceUnit(unit) === "high" || LTM_BUCKET_LIFECYCLE[unit.bucket] === "superseding_conflict_review",
-    );
-}
-
 function statusForUnits(units: LtmEvidenceUnit[]) {
   if (units.some((unit) => unit.status === "archived")) return "archived";
   if (units.some(isResolvedLoopUnit)) return "archived";
   if (units.some((unit) => unit.status === "resolved")) return "resolved";
   if (units.some((unit) => unit.status === "active" || unit.status === "developing")) return "active";
-  return "dormant";
+  return "active";
 }
 
 function shouldSetStatus(units: LtmEvidenceUnit[], existingStatus: LtmStatus, nextStatus: LtmStatus) {
@@ -534,7 +316,7 @@ function shouldSetStatus(units: LtmEvidenceUnit[], existingStatus: LtmStatus, ne
 }
 
 function isResolvedLoopUnit(unit: LtmEvidenceUnit) {
-  return (unit.bucket === "thread" || unit.bucket === "callback") && unit.status === "resolved";
+  return unit.bucket === "thread" && unit.status === "resolved";
 }
 
 function maxRisk(risks: LtmDraftRisk[]): LtmDraftRisk {

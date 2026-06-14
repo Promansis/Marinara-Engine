@@ -6,7 +6,7 @@ import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
 export const chatFolders = sqliteTable("chat_folders", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
-  mode: text("mode", { enum: ["conversation", "roleplay", "visual_novel", "game"] }).notNull(),
+  mode: text("mode", { enum: ["conversation", "roleplay", "game"] }).notNull(),
   color: text("color").notNull().default(""),
   sortOrder: integer("sort_order").notNull().default(0),
   collapsed: text("collapsed").notNull().default("false"),
@@ -17,7 +17,7 @@ export const chatFolders = sqliteTable("chat_folders", {
 export const chats = sqliteTable("chats", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
-  mode: text("mode", { enum: ["conversation", "roleplay", "visual_novel", "game"] }).notNull(),
+  mode: text("mode", { enum: ["conversation", "roleplay", "game"] }).notNull(),
   /** JSON array of character IDs */
   characterIds: text("character_ids").notNull().default("[]"),
   /** Groups related chats together (like ST "chat files" per character) */

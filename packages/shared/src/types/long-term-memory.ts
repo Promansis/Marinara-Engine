@@ -14,7 +14,6 @@ export type {
   LtmExtractionResponse,
   LtmExtractionSettings,
   LtmExtractionVerbosity,
-  LtmGate,
   LtmIndexMetadata,
   LtmLink,
   LtmMode,

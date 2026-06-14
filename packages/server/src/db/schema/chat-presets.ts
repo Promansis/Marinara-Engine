@@ -8,7 +8,7 @@ export const chatPresets = sqliteTable("chat_presets", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   /** Which chat mode this preset applies to. */
-  mode: text("mode", { enum: ["conversation", "roleplay", "visual_novel", "game"] }).notNull(),
+  mode: text("mode", { enum: ["conversation", "roleplay", "game"] }).notNull(),
   /** "true" for the built-in default preset (cannot be deleted, renamed, or saved into). */
   isDefault: text("is_default").notNull().default("false"),
   /** "true" for the active preset of its mode (used as starting state for new chats). */

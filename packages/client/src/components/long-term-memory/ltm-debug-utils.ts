@@ -1,11 +1,7 @@
 export function labelLtmLane(value: string) {
   switch (value) {
-    case "always":
-      return "Always included by policy";
     case "metadata":
       return "Matched tags, scope, or note IDs";
-    case "typed_priority":
-      return "Important memory type";
     case "vector":
       return "Meaning matched current context";
     case "bm25":
@@ -24,14 +20,8 @@ export function summarizeLtmCandidateSignals(lanes: string[], reasons: string[])
   const signals: string[] = [];
   const reasonText = reasons.join(" ");
 
-  if (lanes.includes("always")) signals.push("policy include");
-
   if (lanes.includes("metadata")) {
     signals.push(/(?:^|\s|,)chat:|(?:^|\s|,)group:/.test(reasonText) ? "active chat/group scope" : "metadata match");
-  }
-
-  if (lanes.includes("typed_priority")) {
-    signals.push(reasonText.includes("priority:current_scene") ? "current scene priority" : "memory type priority");
   }
 
   const contextSignals = [
@@ -51,7 +41,7 @@ export function labelLtmTier(value: number | string | undefined) {
     case 1:
       return "Core context";
     case 2:
-      return "Active thread/callback";
+      return "Active thread";
     case 3:
       return "Supporting detail";
     default:

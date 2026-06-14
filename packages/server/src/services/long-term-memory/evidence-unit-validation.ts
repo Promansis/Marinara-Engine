@@ -1,14 +1,8 @@
-import type { LtmEvidenceUnit, LtmGate, LtmNote } from "@marinara-engine/shared";
+import type { LtmEvidenceUnit, LtmNote } from "@marinara-engine/shared";
 import { type LtmExtractionDiagnostic } from "./validation.js";
 
-const DIALOGUE_BUCKETS = new Set<LtmEvidenceUnit["bucket"]>(["voice", "tone"]);
+const DIALOGUE_BUCKETS = new Set<LtmEvidenceUnit["bucket"]>(["tone"]);
 const RISK_BUCKETS = new Set<LtmEvidenceUnit["bucket"]>(["relationship_conflict"]);
-const GATED_WORDS: Array<{ gate: LtmGate; pattern: RegExp }> = [
-  { gate: "spoiler", pattern: /\b(spoiler|twist|reveal|secret ending)\b/i },
-  { gate: "character_secret", pattern: /\b(secret|unknown to|hiding|concealed|private knowledge)\b/i },
-  { gate: "private", pattern: /\b(private|confidential|intimate)\b/i },
-  { gate: "nsfw", pattern: /\b(nsfw|explicit|sexual|sex)\b/i },
-];
 const PLACEHOLDER_UUID = "550e8400-e29b-41d4-a716-446655440000";
 const PLACEHOLDER_MERGE_HINT = "optional note for deterministic compiler";
 
@@ -56,10 +50,7 @@ function isSourceNote(note: LtmNote) {
 }
 
 export function riskForEvidenceUnit(unit: LtmEvidenceUnit): "low" | "medium" | "high" {
-  if (unit.gates.includes("nsfw") || unit.gates.includes("private") || unit.gates.includes("character_secret")) {
-    return "high";
-  }
-  if (RISK_BUCKETS.has(unit.bucket) || unit.gates.length > 0) return "medium";
+  if (RISK_BUCKETS.has(unit.bucket)) return "medium";
   if (unit.bucket === "relationship_state" || unit.bucket === "character_state") {
     return "medium";
   }
@@ -89,7 +80,7 @@ export function validateLtmEvidenceUnits({
       severity: "error",
       code: "invalid_source_note",
       noteId: sourceNote.id,
-      message: "Evidence unit extraction requires a dormant source note.",
+      message: "Evidence unit extraction requires a source note.",
     });
   }
 
@@ -182,18 +173,6 @@ export function validateLtmEvidenceUnits({
         message: "Evidence unit has low lexical overlap with the source note.",
       });
     }
-
-    for (const { gate, pattern } of GATED_WORDS) {
-      if (pattern.test(unit.text) && !unit.gates.includes(gate)) {
-        diagnostics.push({
-          severity: "warning",
-          code: "missing_gate",
-          mutationId: unit.id,
-          noteId,
-          message: `Potential ${gate} content is not gated.`,
-        });
-      }
-    }
   }
 
   return diagnostics;
@@ -260,10 +239,8 @@ function placeholderDiagnostics(unit: LtmEvidenceUnit, noteId: string): LtmExtra
 
 export function noteIdForEvidenceUnit(unit: Pick<LtmEvidenceUnit, "bucket" | "subjectId" | "sectionKey">) {
   if (unit.bucket === "timeline_event") return prefixed("timeline", unit.subjectId);
-  if (unit.bucket === "callback") return prefixed("cb", unit.subjectId);
   if (unit.bucket === "thread") return prefixed("thread", unit.subjectId);
   if (unit.bucket === "world_fact") return prefixed("world", unit.subjectId);
-  if (unit.bucket === "voice") return prefixed("voice", unit.subjectId);
   if (unit.bucket === "tone") return prefixed("tone", unit.subjectId);
   if (unit.bucket.startsWith("relationship_")) return prefixed("rel", unit.subjectId);
   if (unit.bucket === "anchor") return noteIdForAnchor(unit.subjectId, unit.sectionKey);
@@ -276,7 +253,6 @@ function prefixed(prefix: string, subjectId: string) {
 
 function noteIdForAnchor(subjectId: string, sectionKey: string) {
   if (sectionKey.startsWith("tone")) return prefixed("tone", subjectId);
-  if (sectionKey.startsWith("callback")) return prefixed("cb", subjectId);
   return prefixed("world", subjectId);
 }
 

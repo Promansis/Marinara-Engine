@@ -14,7 +14,6 @@ import { chunkNotes } from "../chunking.js";
 import { buildLtmMetadataIndex } from "../metadata-index.js";
 import { compileLtmEvidenceUnits } from "../evidence-unit-compiler.js";
 import { applyLtmBudget } from "../budget.js";
-import { reduceRelationshipEvidenceUnits } from "../relationship-reducer.js";
 import { LongTermMemoryDraftStore } from "../extraction.js";
 import { checkLongTermMemoryIntegrity } from "../maintenance.js";
 import { getLongTermMemoryDirectories } from "../paths.js";
@@ -109,13 +108,12 @@ test("long-term memory prompt injection contains prose only", () => {
         status: "active",
         scope: {},
         tags: ["typed_memory"],
-        gates: [],
         updatedAt: timestamp,
         sourceHash,
       },
       score: 1,
-      reasons: ["always:tone", "vector", "bm25", "graph:sample_memory_note:2"],
-      lanes: ["always", "vector", "bm25", "graph"],
+      reasons: ["vector", "bm25", "graph:sample_memory_note:2"],
+      lanes: ["vector", "bm25", "graph"],
       tier: 1,
       estimatedTokens: 42,
     } satisfies LtmBudgetedChunk,
@@ -135,13 +133,12 @@ test("long-term memory budget uses prompt-clean text for legacy chunks", () => {
     status: "active",
     scope: {},
     tags: ["typed_memory"],
-    gates: [],
     updatedAt: timestamp,
     sourceHash,
   } satisfies LtmBudgetedChunk["chunk"];
 
   const result = applyLtmBudget(
-    [{ chunkId: chunk.id, score: 1, reasons: ["always:tone"], lanes: ["always"] }],
+    [{ chunkId: chunk.id, score: 1, reasons: ["vector"], lanes: ["vector"] }],
     new Map([[chunk.id, chunk]]),
     { maxChunks: 1, maxTokens: 8 },
   );
@@ -166,7 +163,7 @@ function sceneAppendMutation(): Extract<LtmDraftMutation, { kind: "append_sectio
   };
 }
 
-function callbackCreateMutation(
+function threadCreateMutation(
   text = "When the lantern is found, remember the old promise.",
 ): Extract<LtmDraftMutation, { kind: "create_note" }> {
   return {
@@ -174,11 +171,11 @@ function callbackCreateMutation(
     kind: "create_note",
     risk: "low",
     confidence: 0.95,
-    summary: "Create callback",
+    summary: "Create thread",
     evidence: ["source_note:scene_source_test"],
     note: {
-      id: "cb_lantern_promise",
-      type: "callback",
+      id: "thread_lantern_promise",
+      type: "thread",
       status: "active",
       modes: ["roleplay"],
       scope: {},
@@ -204,7 +201,7 @@ test("source extraction low-risk policy blocks scene append auto-apply", async (
       {
         id: "scene_source_test",
         type: "scene",
-        status: "dormant",
+        status: "active",
         modes: ["roleplay"],
         scope: {},
         tags: ["source_summary"],
@@ -260,11 +257,11 @@ test("source extraction low-risk policy blocks scene append auto-apply", async (
   }
 });
 
-test("source extraction low-risk policy blocks secret callback auto-apply", () => {
-  assert.equal(isLowRiskSourceExtractionMutation(callbackCreateMutation()), true);
+test("source extraction low-risk policy blocks secret thread auto-apply", () => {
+  assert.equal(isLowRiskSourceExtractionMutation(threadCreateMutation()), true);
   assert.equal(
     isLowRiskSourceExtractionMutation(
-      callbackCreateMutation("When the lantern is found, reveal Mira's private secret."),
+      threadCreateMutation("When the lantern is found, reveal Mira's private secret."),
     ),
     false,
   );
@@ -278,7 +275,7 @@ test("source extraction auto-apply leaves archived resolved memory status pendin
       {
         id: "scene_source_test",
         type: "scene",
-        status: "dormant",
+        status: "active",
         modes: ["roleplay"],
         scope: {},
         tags: ["source_summary"],
@@ -295,8 +292,8 @@ test("source extraction auto-apply leaves archived resolved memory status pendin
     );
     await storage.createNote(
       {
-        id: "cb_lantern",
-        type: "callback",
+        id: "thread_lantern",
+        type: "thread",
         status: "active",
         modes: ["roleplay"],
         scope: {},
@@ -315,7 +312,7 @@ test("source extraction auto-apply leaves archived resolved memory status pendin
 
     const response = compileLtmEvidenceUnits({
       units: [
-        evidenceUnit("callback", {
+        evidenceUnit("thread", {
           subjectId: "lantern",
           sectionKey: "setup",
           text: "The lantern hum paid off when it revealed the archive door.",
@@ -323,7 +320,7 @@ test("source extraction auto-apply leaves archived resolved memory status pendin
           confidence: 0.95,
         }),
       ],
-      existingNotes: [(await storage.getNote("cb_lantern"))!],
+      existingNotes: [(await storage.getNote("thread_lantern"))!],
       scope: {},
       modes: ["roleplay"],
       createdAt: timestamp,
@@ -354,9 +351,9 @@ test("source extraction auto-apply leaves archived resolved memory status pendin
     assert.deepEqual(new Set(result.skippedMutationIds), new Set(response.mutations.map((mutation) => mutation.id)));
     assert.equal(result.draft.status, "pending");
 
-    const callback = await storage.getNote("cb_lantern");
-    assert.equal(callback?.status, "active");
-    assert.equal(callback?.sections.setup?.text, "The lantern hum should pay off later.");
+    const thread = await storage.getNote("thread_lantern");
+    assert.equal(thread?.status, "active");
+    assert.equal(thread?.sections.setup?.text, "The lantern hum should pay off later.");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -370,7 +367,7 @@ test("source extraction auto-apply skips links to pending timeline notes", async
       {
         id: "scene_source_test",
         type: "scene",
-        status: "dormant",
+        status: "active",
         modes: ["roleplay"],
         scope: {},
         tags: ["source_summary"],
@@ -655,7 +652,7 @@ test("derived scope apply merges only extracted_from children", async () => {
       {
         id: "scene_source_links",
         type: "scene",
-        status: "dormant",
+        status: "active",
         modes: ["roleplay"],
         scope: { chatId: "chat_source" },
         tags: ["source_summary"],
@@ -671,8 +668,8 @@ test("derived scope apply merges only extracted_from children", async () => {
     );
     await storage.createNote(
       {
-        id: "cb_derived_scope",
-        type: "callback",
+        id: "thread_derived_scope",
+        type: "thread",
         status: "active",
         modes: ["roleplay"],
         scope: { chatId: "chat_old", characterIds: ["char_old"] },
@@ -680,7 +677,7 @@ test("derived scope apply merges only extracted_from children", async () => {
         links: [{ target: "scene_source_links", relation: "extracted_from" }],
         sections: {
           setup: {
-            text: "Derived callback.",
+            text: "Derived thread.",
             updatedAt: timestamp,
           },
         },
@@ -689,8 +686,8 @@ test("derived scope apply merges only extracted_from children", async () => {
     );
     await storage.createNote(
       {
-        id: "cb_unrelated_scope",
-        type: "callback",
+        id: "thread_unrelated_scope",
+        type: "thread",
         status: "active",
         modes: ["roleplay"],
         scope: { chatId: "chat_old" },
@@ -698,7 +695,7 @@ test("derived scope apply merges only extracted_from children", async () => {
         links: [{ target: "scene_source_links", relation: "mentioned_in" }],
         sections: {
           setup: {
-            text: "Unrelated callback.",
+            text: "Unrelated thread.",
             updatedAt: timestamp,
           },
         },
@@ -711,15 +708,15 @@ test("derived scope apply merges only extracted_from children", async () => {
       { chatIds: ["chat_new"], characterIds: ["char_new"] },
       { root, rebuildIndexes: false },
     );
-    assert.deepEqual(result?.affectedNoteIds, ["cb_derived_scope"]);
+    assert.deepEqual(result?.affectedNoteIds, ["thread_derived_scope"]);
     assert.equal(result?.count, 1);
 
-    const derived = await storage.getNote("cb_derived_scope");
+    const derived = await storage.getNote("thread_derived_scope");
     assert.equal(derived?.scope.chatId, "chat_old");
     assert.deepEqual(derived?.scope.chatIds, ["chat_old", "chat_new"]);
     assert.deepEqual(derived?.scope.characterIds, ["char_old", "char_new"]);
 
-    const unrelated = await storage.getNote("cb_unrelated_scope");
+    const unrelated = await storage.getNote("thread_unrelated_scope");
     assert.deepEqual(unrelated?.scope.chatIds, ["chat_old"]);
     assert.deepEqual(unrelated?.scope.characterIds, undefined);
   } finally {
@@ -740,7 +737,7 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
 
     const updated = await updateLtmExtractionConfig(
       {
-        extraInstruction: "Prefer callbacks when source text sets up later payoff.",
+        extraInstruction: "Prefer threads when source text sets up later payoff.",
         reasoningEffort: "medium",
         verbosity: "high",
         maxOutputTokens: 4096,
@@ -752,7 +749,7 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
       },
       root,
     );
-    assert.equal(updated.extraInstruction, "Prefer callbacks when source text sets up later payoff.");
+    assert.equal(updated.extraInstruction, "Prefer threads when source text sets up later payoff.");
     assert.equal(updated.reasoningEffort, "medium");
     assert.equal(updated.verbosity, "high");
     assert.equal(updated.maxOutputTokens, 4096);
@@ -765,7 +762,7 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
     const dirs = getLongTermMemoryDirectories(root);
     const persisted = JSON.parse(await readFile(join(dirs.config, "extraction.json"), "utf8"));
     assert.equal(persisted.systemPrompt, undefined);
-    assert.equal(persisted.extraInstruction, "Prefer callbacks when source text sets up later payoff.");
+    assert.equal(persisted.extraInstruction, "Prefer threads when source text sets up later payoff.");
 
     const reset = await updateLtmExtractionConfig({}, root);
     assert.equal(reset.reasoningEffort, "low");
@@ -787,7 +784,7 @@ test("source note extraction applies saved extraction config to llm request", as
       {
         id: "scene_source_test",
         type: "scene",
-        status: "dormant",
+        status: "active",
         modes: ["roleplay"],
         scope: {},
         tags: ["source_summary"],
@@ -805,7 +802,7 @@ test("source note extraction applies saved extraction config to llm request", as
     await updateLtmExtractionConfig(
       {
         systemPrompt: "Return JSON with compact test units only.",
-        extraInstruction: "Treat lantern hum as a callback.",
+        extraInstruction: "Treat lantern hum as a thread.",
         reasoningEffort: "high",
         verbosity: "medium",
         maxOutputTokens: 1024,
@@ -843,7 +840,7 @@ test("source note extraction applies saved extraction config to llm request", as
       messages.find((message) => message.role === "system")!.content,
       "Return JSON with compact test units only.",
     );
-    assert.equal(userPayload.extraInstruction, "Treat lantern hum as a callback.");
+    assert.equal(userPayload.extraInstruction, "Treat lantern hum as a thread.");
     assert.equal(userPayload.sourceText, sourceText.slice(0, 1000));
     assert.equal(chatOptions.maxTokens, 1024);
     assert.equal(chatOptions.temperature, 0.5);
@@ -863,7 +860,7 @@ test("source note extraction includes relevant typed notes from other source not
       {
         id: "scene_source_original",
         type: "scene",
-        status: "dormant",
+        status: "active",
         modes: ["roleplay"],
         scope: {},
         tags: ["source_summary"],
@@ -882,7 +879,7 @@ test("source note extraction includes relevant typed notes from other source not
       {
         id: "scene_source_reimport",
         type: "scene",
-        status: "dormant",
+        status: "active",
         modes: ["roleplay"],
         scope: {},
         tags: ["source_summary"],
@@ -954,7 +951,7 @@ test("evidence unit extraction normalizes model-owned ids and source hashes", as
   const sourceNote: LtmNote = {
     id: "scene_source_test",
     type: "scene",
-    status: "dormant",
+    status: "active",
     modes: ["roleplay"],
     scope: {},
     tags: ["source_summary"],
@@ -987,13 +984,12 @@ test("evidence unit extraction normalizes model-owned ids and source hashes", as
             confidence: 0.9,
             salience: 0.7,
             status: "active",
-            gates: [],
             links: [],
             sourceHash,
           },
           {
             id: "",
-            bucket: "callback",
+            bucket: "thread",
             subjectId: "lantern_hum",
             sectionKey: "setup",
             text: "Lantern hum should pay off later.",
@@ -1001,7 +997,6 @@ test("evidence unit extraction normalizes model-owned ids and source hashes", as
             confidence: 0.88,
             salience: 0.66,
             status: "active",
-            gates: [],
             links: [],
             sourceHash: "exact supplied sourceHash",
           },
@@ -1032,7 +1027,7 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
   const sourceNote: LtmNote = {
     id: "scene_source_test",
     type: "scene",
-    status: "dormant",
+    status: "active",
     modes: ["roleplay"],
     scope: {},
     tags: ["source_summary"],
@@ -1070,7 +1065,6 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
               confidence: 0.9,
               salience: 0.7,
               status: "active",
-              gates: [],
               links: [],
               sourceHash,
             },
@@ -1121,8 +1115,6 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
     "relationship_conflict",
     "world_fact",
     "thread",
-    "callback",
-    "voice",
     "tone",
     "anchor",
   ]);
@@ -1145,7 +1137,7 @@ test("evidence unit extraction accepts and compiles multiple typed buckets", asy
   const sourceNote: LtmNote = {
     id: "scene_source_test",
     type: "scene",
-    status: "dormant",
+    status: "active",
     modes: ["roleplay"],
     scope: {},
     tags: ["source_summary"],
@@ -1170,7 +1162,7 @@ test("evidence unit extraction accepts and compiles multiple typed buckets", asy
     maxTokensOverrideValue: undefined,
     chatComplete: async () => ({
       content: JSON.stringify({
-        summary: "Three compact units across relationship, callback, and world buckets",
+        summary: "Three compact units across relationship, thread, and world buckets",
         units: [
           {
             id: randomUUID(),
@@ -1182,13 +1174,12 @@ test("evidence unit extraction accepts and compiles multiple typed buckets", asy
             confidence: 0.92,
             salience: 0.75,
             status: "active",
-            gates: [],
             links: [],
             sourceHash,
           },
           {
             id: randomUUID(),
-            bucket: "callback",
+            bucket: "thread",
             subjectId: "lantern_hum",
             sectionKey: "setup",
             text: "The lantern hum should pay off later.",
@@ -1196,7 +1187,6 @@ test("evidence unit extraction accepts and compiles multiple typed buckets", asy
             confidence: 0.86,
             salience: 0.7,
             status: "active",
-            gates: [],
             links: [],
             sourceHash,
           },
@@ -1210,7 +1200,6 @@ test("evidence unit extraction accepts and compiles multiple typed buckets", asy
             confidence: 0.9,
             salience: 0.65,
             status: "active",
-            gates: [],
             links: [],
             sourceHash,
           },
@@ -1253,14 +1242,14 @@ test("evidence unit extraction accepts and compiles multiple typed buckets", asy
   const createdTypes = compiled.compiledResponse.mutations.flatMap((mutation) =>
     mutation.kind === "create_note" ? [mutation.note.type] : [],
   );
-  assert.deepEqual(new Set(createdTypes), new Set(["relationship", "callback", "world"]));
+  assert.deepEqual(new Set(createdTypes), new Set(["relationship", "thread", "world"]));
 });
 
 test("evidence unit extraction validation rejects copied placeholder values", () => {
   const sourceNote: LtmNote = {
     id: "scene_source_test",
     type: "scene",
-    status: "dormant",
+    status: "active",
     modes: ["roleplay"],
     scope: {},
     tags: ["source_summary"],
@@ -1289,7 +1278,6 @@ test("evidence unit extraction validation rejects copied placeholder values", ()
         confidence: 0.9,
         salience: 0.7,
         status: "active",
-        gates: [],
         links: [{ target: "target_note_id", relation: "related_to" }],
         mergeHint: "optional note for deterministic compiler",
         sourceHash,
@@ -1332,7 +1320,6 @@ function evidenceUnit(bucket: LtmEvidenceUnit["bucket"], patch: Partial<LtmEvide
     confidence: 0.9,
     salience: 0.7,
     status: "active",
-    gates: [],
     links: [],
     sourceHash,
     ...patch,
@@ -1351,7 +1338,6 @@ test("evidence unit schema rejects invalid bucket and empty evidence", () => {
       confidence: 0.9,
       salience: 0.7,
       status: "active",
-      gates: [],
       links: [],
       sourceHash,
     }).success,
@@ -1368,7 +1354,6 @@ test("evidence unit schema rejects invalid bucket and empty evidence", () => {
       confidence: 0.9,
       salience: 0.7,
       status: "active",
-      gates: [],
       links: [],
       sourceHash,
     }).success,
@@ -1380,7 +1365,7 @@ test("source notes are excluded from normal chunks and kept for source audit chu
   const sourceNote: LtmNote = {
     id: "scene_source_test",
     type: "scene",
-    status: "dormant",
+    status: "active",
     modes: ["roleplay"],
     scope: {},
     tags: ["source_summary", "chat_summary"],
@@ -1571,15 +1556,13 @@ test("evidence unit compiler maps buckets to typed memory draft mutations", () =
     ["relationship_state", "rel_mara_jules", "relationship"],
     ["world_fact", "world_veil", "world"],
     ["thread", "thread_missing_key", "thread"],
-    ["callback", "cb_lantern", "callback"],
-    ["voice", "voice_mara", "voice"],
     ["tone", "tone_chat", "tone"],
     ["anchor", "world_red_thread", "world"],
   ];
 
   for (const [bucket, expectedNoteId, expectedType] of cases) {
     const unit = evidenceUnit(bucket, {
-      subjectId: expectedNoteId.replace(/^(char|rel|world|thread|cb|timeline|scene|voice|tone)_/, ""),
+      subjectId: expectedNoteId.replace(/^(char|rel|world|thread|timeline|scene|tone)_/, ""),
       sectionKey: bucket === "anchor" ? "world_anchor" : "facts",
     });
     const response = compileLtmEvidenceUnits({
@@ -1606,7 +1589,7 @@ test("timeline event units create historical notes and typed memories link to th
       {
         id: "scene_source_test",
         type: "scene",
-        status: "dormant",
+        status: "active",
         modes: ["roleplay"],
         scope: {},
         tags: ["source_summary"],
@@ -1735,9 +1718,9 @@ test("evidence unit compiler applies explicit bucket lifecycle rules", () => {
     },
     version: 1,
   };
-  const existingCallback: LtmNote = {
-    id: "cb_lantern",
-    type: "callback",
+  const existingThread: LtmNote = {
+    id: "thread_lantern",
+    type: "thread",
     status: "active",
     modes: ["roleplay"],
     scope: {},
@@ -1767,14 +1750,14 @@ test("evidence unit compiler applies explicit bucket lifecycle rules", () => {
         sectionKey: "current_state",
         text: "Mara is openly relieved around Jules.",
       }),
-      evidenceUnit("callback", {
+      evidenceUnit("thread", {
         subjectId: "lantern",
         sectionKey: "setup",
         text: "The lantern hum paid off when it revealed the archive door.",
         status: "resolved",
       }),
     ],
-    existingNotes: [existingRelationship, existingCharacter, existingCallback],
+    existingNotes: [existingRelationship, existingCharacter, existingThread],
     scope: {},
     modes: ["roleplay"],
     createdAt: timestamp,
@@ -1799,7 +1782,7 @@ test("evidence unit compiler applies explicit bucket lifecycle rules", () => {
     response.mutations.some(
       (mutation) =>
         mutation.kind === "update_section" &&
-        mutation.noteId === "cb_lantern" &&
+        mutation.noteId === "thread_lantern" &&
         mutation.sectionKey === "summary" &&
         mutation.section.text === "The lantern hum paid off when it revealed the archive door.",
     ),
@@ -1807,7 +1790,7 @@ test("evidence unit compiler applies explicit bucket lifecycle rules", () => {
   assert(
     response.mutations.some(
       (mutation) =>
-        mutation.kind === "set_status" && mutation.noteId === "cb_lantern" && mutation.status === "archived",
+        mutation.kind === "set_status" && mutation.noteId === "thread_lantern" && mutation.status === "archived",
     ),
   );
 });
@@ -1865,74 +1848,7 @@ test("evidence unit compiler derives relationship state from existing history pl
   assert.doesNotMatch(state.section.text, /Supporting events:|source_note:|chat:|evidence:|existing_\d+/);
 });
 
-test("evidence unit compiler derives voice and tone profiles from raw observations", () => {
-  const existingVoice: LtmNote = {
-    id: "voice_mara",
-    type: "voice",
-    status: "active",
-    modes: ["roleplay"],
-    scope: {},
-    tags: ["typed_memory"],
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    links: [],
-    sections: {
-      examples: {
-        text: "- Uses dry, clipped understatement when anxious.",
-        updatedAt: timestamp,
-        evidence: ["source_note:scene_old"],
-      },
-    },
-    version: 1,
-  };
-
-  const voiceResponse = compileLtmEvidenceUnits({
-    units: [
-      evidenceUnit("voice", {
-        subjectId: "mara",
-        sectionKey: "examples",
-        text: "Calls impossible plans 'Tuesday problems' instead of panicking.",
-      }),
-    ],
-    existingNotes: [existingVoice],
-    scope: {},
-    modes: ["roleplay"],
-    createdAt: timestamp,
-  });
-  const voiceExamples = voiceResponse.mutations.find(
-    (mutation) =>
-      mutation.kind === "append_section" && mutation.noteId === "voice_mara" && mutation.sectionKey === "examples",
-  );
-  const voiceProfile = voiceResponse.mutations.find(
-    (mutation) =>
-      mutation.kind === "update_section" && mutation.noteId === "voice_mara" && mutation.sectionKey === "profile",
-  );
-  assert(voiceExamples?.kind === "append_section");
-  assert(voiceProfile?.kind === "update_section");
-  assert.match(voiceExamples.text, /Tuesday problems/);
-  assert.match(voiceProfile.section.text, /^Voice profile:/);
-  assert.match(voiceProfile.section.text, /Uses dry, clipped understatement/);
-  assert.match(voiceProfile.section.text, /Tuesday problems/);
-
-  const repeatedVoiceResponse = compileLtmEvidenceUnits({
-    units: [
-      evidenceUnit("voice", {
-        subjectId: "mara",
-        sectionKey: "examples",
-        text: "Uses dry, clipped understatement when anxious.",
-      }),
-    ],
-    existingNotes: [existingVoice],
-    scope: {},
-    modes: ["roleplay"],
-    createdAt: timestamp,
-  });
-  assert(
-    !repeatedVoiceResponse.mutations.some(
-      (mutation) =>
-        mutation.kind === "append_section" && mutation.noteId === "voice_mara" && mutation.sectionKey === "examples",
-    ),
-  );
+test("evidence unit compiler derives tone profiles from raw observations", () => {
   const toneResponse = compileLtmEvidenceUnits({
     units: [
       evidenceUnit("tone", {
@@ -1954,74 +1870,6 @@ test("evidence unit compiler derives voice and tone profiles from raw observatio
   assert.match(createdTone.note.sections.profile?.text ?? "", /^Tone profile:/);
 });
 
-test("evidence unit compiler routes stable fact changes through conflict review", () => {
-  const existingWorld: LtmNote = {
-    id: "world_veil",
-    type: "world",
-    status: "active",
-    modes: ["roleplay"],
-    scope: {},
-    tags: ["typed_memory"],
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    links: [],
-    sections: {
-      facts: {
-        text: "The veil can only be crossed at sunrise.",
-        updatedAt: timestamp,
-        evidence: ["source_note:scene_old"],
-      },
-    },
-    version: 1,
-  };
-
-  const response = compileLtmEvidenceUnits({
-    units: [
-      evidenceUnit("world_fact", {
-        subjectId: "veil",
-        sectionKey: "facts",
-        text: "The veil can only be crossed at moonrise.",
-      }),
-    ],
-    existingNotes: [existingWorld],
-    scope: {},
-    modes: ["roleplay"],
-    createdAt: timestamp,
-  });
-
-  assert.deepEqual(
-    response.mutations.map((mutation) => mutation.kind),
-    ["flag_conflict"],
-  );
-  const conflict = response.mutations[0];
-  assert.equal(conflict?.kind, "flag_conflict");
-  if (conflict?.kind === "flag_conflict") {
-    assert.equal(conflict.conflict.policy, "manual_review");
-    assert.equal(conflict.conflict.existing, "The veil can only be crossed at sunrise.");
-    assert.equal(conflict.conflict.proposed, "The veil can only be crossed at moonrise.");
-  }
-});
-
-test("relationship reducer accumulates events into qualitative current state", () => {
-  const reduction = reduceRelationshipEvidenceUnits([
-    evidenceUnit("relationship_event", {
-      subjectId: "mara_jules",
-      sectionKey: "event_001",
-      text: "Mara chooses to trust Jules with the hidden key.",
-    }),
-    evidenceUnit("relationship_event", {
-      subjectId: "mara_jules",
-      sectionKey: "event_002",
-      text: "Jules protects Mara during a tense argument.",
-    }),
-  ]);
-
-  assert.equal(reduction.facets.trust, "medium");
-  assert.equal(reduction.facets.protectiveness, "medium");
-  assert.equal(reduction.trajectory, "warming_trust_with_remaining_secrets");
-  assert.deepEqual(reduction.supportingEvents, ["event_001", "event_002"]);
-});
-
 test("evidence unit schema rejects removed source-summary buckets", () => {
   for (const bucket of ["relationship_arc", "current_scene", "boundary", "preference"]) {
     assert.equal(
@@ -2035,7 +1883,6 @@ test("evidence unit schema rejects removed source-summary buckets", () => {
         confidence: 0.9,
         salience: 0.7,
         status: "active",
-        gates: [],
         links: [],
         sourceHash,
       }).success,
@@ -2053,7 +1900,7 @@ test("source extraction drafts reject scene note mutations from source summaries
       {
         id: "scene_source_test",
         type: "scene",
-        status: "dormant",
+        status: "active",
         modes: ["roleplay"],
         scope: {},
         tags: ["source_summary"],
@@ -2137,7 +1984,7 @@ test("source extraction drafts treat archived typed notes as isolated", async ()
       {
         id: "scene_source_test",
         type: "scene",
-        status: "dormant",
+        status: "active",
         modes: ["roleplay"],
         scope: {},
         tags: ["source_summary"],
@@ -2219,7 +2066,7 @@ test("source extraction updates existing typed note from another source instead 
       {
         id: "scene_source_first",
         type: "scene",
-        status: "dormant",
+        status: "active",
         modes: ["roleplay"],
         scope: { chatId: "chat_a" },
         tags: ["source_summary"],
@@ -2238,7 +2085,7 @@ test("source extraction updates existing typed note from another source instead 
       {
         id: "scene_source_second",
         type: "scene",
-        status: "dormant",
+        status: "active",
         modes: ["roleplay"],
         scope: { chatId: "chat_b" },
         tags: ["source_summary"],
@@ -2345,7 +2192,7 @@ test("source note extraction target lookup prevents duplicate creates across sou
       {
         id: "scene_source_first",
         type: "scene",
-        status: "dormant",
+        status: "active",
         modes: ["roleplay"],
         scope: { chatId: "chat_a" },
         tags: ["source_summary"],
@@ -2364,7 +2211,7 @@ test("source note extraction target lookup prevents duplicate creates across sou
       {
         id: "scene_source_second",
         type: "scene",
-        status: "dormant",
+        status: "active",
         modes: ["roleplay"],
         scope: { chatId: "chat_b" },
         tags: ["source_summary"],
@@ -2419,7 +2266,6 @@ test("source note extraction target lookup prevents duplicate creates across sou
               confidence: 0.9,
               salience: 0.7,
               status: "active",
-              gates: [],
               links: [],
               sourceHash: sourceHashForEvidenceUnitExtraction((await storage.getNote("scene_source_second"))!),
             },
@@ -2460,7 +2306,7 @@ test("source note extraction target lookup updates matching scoped notes only", 
       {
         id: "scene_source_second",
         type: "scene",
-        status: "dormant",
+        status: "active",
         modes: ["roleplay"],
         scope: { chatId: "chat_a" },
         tags: ["source_summary"],
@@ -2515,7 +2361,6 @@ test("source note extraction target lookup updates matching scoped notes only", 
               confidence: 0.9,
               salience: 0.7,
               status: "active",
-              gates: [],
               links: [],
               sourceHash: sourceHashForEvidenceUnitExtraction((await storage.getNote("scene_source_second"))!),
             },
@@ -2556,7 +2401,7 @@ test("retrieval excludes source notes by default and prioritizes relationship st
       {
         id: "scene_source_test",
         type: "scene",
-        status: "dormant",
+        status: "active",
         modes: ["roleplay"],
         scope: {},
         tags: ["source_summary"],
@@ -2575,7 +2420,7 @@ test("retrieval excludes source notes by default and prioritizes relationship st
       {
         id: "source_audit_test",
         type: "source",
-        status: "dormant",
+        status: "active",
         modes: ["roleplay"],
         scope: {},
         tags: [],
@@ -2623,7 +2468,7 @@ test("retrieval excludes source notes by default and prioritizes relationship st
       {
         id: "world_dormant_archive_key",
         type: "world",
-        status: "dormant",
+        status: "active",
         modes: ["roleplay"],
         scope: {},
         tags: ["typed_memory"],
@@ -2655,18 +2500,6 @@ test("retrieval excludes source notes by default and prioritizes relationship st
       normal.chunks.map((chunk) => chunk.chunk.id),
       ["rel_mara_jules::state", "rel_mara_jules::history"],
     );
-    assert(!normal.chunks.some((chunk) => chunk.chunk.noteId === "world_dormant_archive_key"));
-
-    const dormantDebug = await retrieveLongTermMemory({
-      root,
-      queryText: "dormant typed archive key lore",
-      maxChunks: 4,
-      maxTokens: 1000,
-      debug: true,
-      localEmbedder: async (texts) => texts.map(() => []),
-    });
-    assert(!dormantDebug.chunks.some((chunk) => chunk.chunk.noteId === "world_dormant_archive_key"));
-    assert((dormantDebug.debug?.funnel.statusFiltered ?? 0) > 0);
 
     const exactStyle = await retrieveLongTermMemory({
       root,
@@ -2676,9 +2509,7 @@ test("retrieval excludes source notes by default and prioritizes relationship st
       semanticWeight: 0.15,
       lexicalWeight: 1,
       graphWeight: 0,
-      alwaysWeight: 0,
       metadataWeight: 0.3,
-      typedPriorityWeight: 0,
       localEmbedder: async (texts) => texts.map(() => []),
     });
     assert.equal(exactStyle.chunks[0]?.chunk.id, "rel_mara_jules::history");
@@ -2691,9 +2522,7 @@ test("retrieval excludes source notes by default and prioritizes relationship st
       semanticWeight: 0.45,
       lexicalWeight: 0.25,
       graphWeight: 0.35,
-      alwaysWeight: 1.2,
       metadataWeight: 0.8,
-      typedPriorityWeight: 2,
       localEmbedder: async (texts) => texts.map(() => []),
     });
     assert.equal(storyStyle.chunks[0]?.chunk.id, "rel_mara_jules::state");
@@ -2727,108 +2556,7 @@ test("retrieval excludes source notes by default and prioritizes relationship st
   }
 });
 
-test("retrieval injects compact voice profile before raw examples", async () => {
-  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-voice-profile-retrieval-"));
-  try {
-    const storage = new LongTermMemoryStorage(root);
-    await storage.createNote(
-      {
-        id: "voice_mara",
-        type: "voice",
-        status: "active",
-        modes: ["roleplay"],
-        scope: {},
-        tags: ["typed_memory"],
-        links: [],
-        sections: {
-          examples: {
-            text: "- Raw example: calls impossible plans 'Tuesday problems' instead of panicking.",
-            updatedAt: timestamp,
-            evidence: ["source_note:scene_source_test"],
-          },
-          profile: {
-            text: "Voice profile: dry clipped understatement; reframes panic as practical scheduling.",
-            updatedAt: timestamp,
-            evidence: ["source_note:scene_source_test"],
-          },
-        },
-      },
-      { suppressEvent: true },
-    );
-
-    await rebuildLongTermMemoryIndexes({
-      root,
-      localEmbedder: async (texts) => texts.map(() => []),
-    });
-
-    const result = await retrieveLongTermMemory({
-      root,
-      queryText: "Mara voice",
-      maxChunks: 1,
-      maxTokens: 1000,
-      localEmbedder: async (texts) => texts.map(() => []),
-    });
-
-    assert.deepEqual(
-      result.chunks.map((chunk) => chunk.chunk.id),
-      ["voice_mara::profile"],
-    );
-    assert.equal(
-      formatLongTermMemoryBlock(result.chunks),
-      "Voice profile: dry clipped understatement; reframes panic as practical scheduling.",
-    );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("retrieval keeps legacy profile-less voice notes in the always lane", async () => {
-  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-legacy-voice-retrieval-"));
-  try {
-    const storage = new LongTermMemoryStorage(root);
-    await storage.createNote(
-      {
-        id: "voice_mara",
-        type: "voice",
-        status: "active",
-        modes: ["roleplay"],
-        scope: {},
-        tags: ["typed_memory"],
-        links: [],
-        sections: {
-          examples: {
-            text: "- Legacy voice example: Mara calls impossible plans Tuesday problems.",
-            updatedAt: timestamp,
-            evidence: ["source_note:scene_source_test"],
-          },
-        },
-      },
-      { suppressEvent: true },
-    );
-
-    await rebuildLongTermMemoryIndexes({
-      root,
-      localEmbedder: async (texts) => texts.map(() => []),
-    });
-
-    const result = await retrieveLongTermMemory({
-      root,
-      queryText: "unrelated",
-      maxChunks: 1,
-      maxTokens: 1000,
-      localEmbedder: async (texts) => texts.map(() => []),
-    });
-
-    assert.deepEqual(
-      result.chunks.map((chunk) => chunk.chunk.id),
-      ["voice_mara::examples"],
-    );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("retrieval accepts legacy enabled config, per-chat weights, chunk limits, gates, and resolved memories", async () => {
+test("retrieval accepts legacy enabled config, per-chat weights, chunk limits, and resolved memories", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-retrieval-preferences-"));
   try {
     const storage = new LongTermMemoryStorage(root);
@@ -2844,7 +2572,6 @@ test("retrieval accepts legacy enabled config, per-chat weights, chunk limits, g
         semanticWeight: 0.6,
         lexicalWeight: 0.3,
         graphWeight: 0.1,
-        includeGates: [],
       }),
     );
 
@@ -2861,7 +2588,6 @@ test("retrieval accepts legacy enabled config, per-chat weights, chunk limits, g
           core: {
             text: "Mara carries a silver key from the tower archive.",
             updatedAt: timestamp,
-            gates: ["private"],
           },
           current_state: {
             text: "Mara is currently wary but willing to revisit the archive.",
@@ -2883,24 +2609,6 @@ test("retrieval accepts legacy enabled config, per-chat weights, chunk limits, g
         sections: {
           summary: {
             text: "Resolved thread: the tower archive key was returned.",
-            updatedAt: timestamp,
-          },
-        },
-      },
-      { suppressEvent: true },
-    );
-    await storage.createNote(
-      {
-        id: "cb_archive_key",
-        type: "callback",
-        status: "resolved",
-        modes: ["roleplay"],
-        scope: { characterIds: ["mara"] },
-        tags: ["typed_memory"],
-        links: [],
-        sections: {
-          setup: {
-            text: "Resolved callback: reveal the archive key's hiding place.",
             updatedAt: timestamp,
           },
         },
@@ -2929,14 +2637,12 @@ test("retrieval accepts legacy enabled config, per-chat weights, chunk limits, g
     assert.equal(exact.chunks.length, 1);
     assert(!exact.chunks.some((chunk) => chunk.chunk.id === "char_mara::core"));
     assert(!exact.chunks.some((chunk) => chunk.chunk.noteId === "thread_archive_key"));
-    assert(!exact.chunks.some((chunk) => chunk.chunk.noteId === "cb_archive_key"));
     assert.equal(exact.debug?.selected.length, 1);
 
     const withAdvanced = await retrieveLongTermMemory({
       root,
       queryText: "tower archive key",
       characterIds: ["mara"],
-      includeGates: ["private"],
       includeResolved: true,
       maxChunks: 4,
       maxTokens: 1000,
@@ -2946,7 +2652,6 @@ test("retrieval accepts legacy enabled config, per-chat weights, chunk limits, g
     const ids = withAdvanced.chunks.map((chunk) => chunk.chunk.id);
     assert(ids.includes("char_mara::core"));
     assert(ids.includes("thread_archive_key::summary"));
-    assert(ids.includes("cb_archive_key::setup"));
     assert.equal(withAdvanced.debug, undefined);
   } finally {
     await rm(root, { recursive: true, force: true });

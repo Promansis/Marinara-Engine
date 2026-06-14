@@ -26,7 +26,6 @@ import {
 import type {
   LtmDraftMutation,
   LtmExtractionDraft,
-  LtmGate,
   LtmLink,
   LtmNote,
   LtmNoteType,
@@ -47,10 +46,9 @@ import {
   useRepairLongTermMemory,
   useReplayLongTermMemory,
   useSearchLongTermMemory,
-  useUpdateLongTermMemoryDraft,
   useUpdateLongTermMemoryNote,
+  useRestoreLongTermMemoryDraft,
   type LtmSearchResponse,
-  type UpdateLongTermMemoryDraftInput,
   type LtmInteropSource,
 } from "../../hooks/use-long-term-memory";
 import type { Chat } from "@marinara-engine/shared";
@@ -86,17 +84,15 @@ const NOTE_TYPES: Array<"all" | LtmNoteType> = [
   "relationship",
   "scene",
   "thread",
-  "callback",
   "world",
-  "voice",
   "tone",
 ];
-const NOTE_STATUSES: Array<"all" | Exclude<LtmStatus, "archived">> = ["all", "active", "dormant", "resolved"];
+const NOTE_STATUSES: Array<"all" | Exclude<LtmStatus, "archived">> = ["all", "active", "resolved"];
 const NOTE_TYPE_ORDER = new Map<LtmNoteType, number>(
   NOTE_TYPES.filter((type) => type !== "all").map((type, index) => [type, index]),
 );
 const NOTE_STATUS_ORDER = new Map<LtmStatus, number>(
-  ["active", "dormant", "resolved", "archived"].map((status, index) => [status as LtmStatus, index]),
+  ["active", "resolved", "archived"].map((status, index) => [status as LtmStatus, index]),
 );
 const IMPORT_SOURCES: Array<{ id: LtmInteropSource; label: string }> = [
   { id: "chats", label: "Chat summaries" },
@@ -137,51 +133,34 @@ const LTM_RECALL_STYLE_WEIGHTS: Record<
     semanticWeight: number;
     lexicalWeight: number;
     graphWeight: number;
-    alwaysWeight: number;
     metadataWeight: number;
-    typedPriorityWeight: number;
   }
 > = {
   balanced: {
     semanticWeight: 0.6,
     lexicalWeight: 0.3,
     graphWeight: 0.1,
-    alwaysWeight: 2,
     metadataWeight: 1,
-    typedPriorityWeight: 1.5,
   },
   exact: {
     semanticWeight: 0.15,
     lexicalWeight: 1,
     graphWeight: 0,
-    alwaysWeight: 0,
     metadataWeight: 0.3,
-    typedPriorityWeight: 0,
   },
   broad: {
     semanticWeight: 0.55,
     lexicalWeight: 0.2,
     graphWeight: 0.8,
-    alwaysWeight: 0.4,
     metadataWeight: 0.8,
-    typedPriorityWeight: 0.4,
   },
   story: {
     semanticWeight: 0.45,
     lexicalWeight: 0.25,
     graphWeight: 0.35,
-    alwaysWeight: 1.2,
     metadataWeight: 0.8,
-    typedPriorityWeight: 2,
   },
 };
-
-const LTM_GATE_OPTIONS: Array<{ id: LtmGate; label: string }> = [
-  { id: "spoiler", label: "Spoiler" },
-  { id: "character_secret", label: "Character secret" },
-  { id: "private", label: "Private" },
-  { id: "nsfw", label: "NSFW" },
-];
 
 const DEFAULT_LTM_BUDGET_TOKENS = 2048;
 const DEFAULT_LTM_MAX_CHUNKS = 12;
@@ -192,8 +171,6 @@ const rowActionPillClassName =
 
 const rowActionButtonClassName =
   "inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] active:scale-90 disabled:cursor-not-allowed disabled:opacity-45";
-
-const hiddenImportRowCache = new Set<string>();
 
 function importRowKey(source: LtmInteropSource, sourceId: string) {
   return `${source}:${sourceId}`;
@@ -270,13 +247,6 @@ function readScopeValue(metadata: Record<string, unknown>, key: "universe" | "rp
 function readRecallStyle(metadata: Record<string, unknown>): LtmRecallStyle {
   const value = metadata.longTermMemoryRecallStyle;
   return value === "exact" || value === "broad" || value === "story" ? value : "balanced";
-}
-
-function readGateSelection(metadata: Record<string, unknown>) {
-  const value = metadata.longTermMemoryIncludeGates;
-  if (!Array.isArray(value)) return [] as LtmGate[];
-  const valid = new Set(LTM_GATE_OPTIONS.map((option) => option.id));
-  return value.filter((gate): gate is LtmGate => typeof gate === "string" && valid.has(gate as LtmGate));
 }
 
 function readNumberSetting(metadata: Record<string, unknown>, key: string, fallback: number, min: number, max: number) {
@@ -389,6 +359,7 @@ function NoteRow({
           {!showSourceSummary && (
             <StatusPill label={friendlyStatus(note.status)} tone={note.status === "active" ? "good" : "neutral"} />
           )}
+          {note.extracted && <StatusPill label="Extracted" />}
           {sectionCount > 1 && <StatusPill label={`${sectionCount} details`} />}
         </div>
         {children}
@@ -485,8 +456,6 @@ function mutationKindLabel(kind: LtmDraftMutation["kind"]) {
       return "Related memory";
     case "set_status":
       return "Status change";
-    case "flag_conflict":
-      return "Needs review";
   }
 }
 
@@ -1341,8 +1310,6 @@ function mutationText(mutation: LtmDraftMutation) {
       )}`;
     case "set_status":
       return `Mark ${friendlyIdentifier(mutation.noteId)} as ${friendlyStatus(mutation.status).toLowerCase()}`;
-    case "flag_conflict":
-      return `${mutation.conflict.field}\nExisting: ${mutation.conflict.existing}\nProposed: ${mutation.conflict.proposed}`;
   }
 }
 
@@ -1583,9 +1550,6 @@ function NoteViewModalContent({
               <span className="text-xs font-semibold text-[var(--foreground)]">{friendlySectionKey(key)}</span>
               {typeof section.salience === "number" && <StatusPill label={`Importance ${section.salience}`} />}
               {typeof section.confidence === "number" && <StatusPill label={`AI certainty ${section.confidence}`} />}
-              {(section.gates ?? []).map((gate) => (
-                <StatusPill key={gate} label={sentenceCaseIdentifier(gate)} tone="warn" />
-              ))}
             </div>
             <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-[var(--foreground)]">{section.text}</p>
             {(section.evidence ?? []).length > 0 && (
@@ -1622,6 +1586,320 @@ function NoteViewModalContent({
           {note.previousHash && <div>Previous hash: {note.previousHash}</div>}
         </div>
       </details>
+    </div>
+  );
+}
+
+function MemoryOverviewPanel({
+  note,
+  activeNotes,
+  noteLookup,
+  chatLookup,
+  activeNotesLoading,
+  pendingSuggestionCount,
+  onOpenNote,
+}: {
+  note: LtmNote;
+  activeNotes: LtmNote[];
+  noteLookup: Map<string, LtmNote>;
+  chatLookup?: Map<string, Chat>;
+  activeNotesLoading: boolean;
+  pendingSuggestionCount: number;
+  onOpenNote: (noteId: string) => void;
+}) {
+  const sourceIds = sourceLinkIds(note);
+  const conflictCount = pendingConflictCount(note);
+  const isSourceNote = isSourceSummaryNote(note);
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
+        <div className="flex flex-wrap gap-1.5">
+          <StatusPill label={isSourceNote ? sourceTypeLabel(note) : friendlyNoteType(note.type)} />
+          <StatusPill label={friendlyStatus(note.status)} tone={note.status === "active" ? "good" : "neutral"} />
+          {note.modes.map((mode) => (
+            <StatusPill key={mode} label={friendlyMode(mode)} />
+          ))}
+          {pendingSuggestionCount > 0 && (
+            <StatusPill
+              label={`${pendingSuggestionCount} pending suggestion${pendingSuggestionCount === 1 ? "" : "s"}`}
+              tone="warn"
+            />
+          )}
+          {conflictCount > 0 && <StatusPill label={`${conflictCount} needs review`} tone="warn" />}
+        </div>
+        <div className="mt-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+          {compactScope(note)} · updated {new Date(note.updatedAt).toLocaleString()}
+        </div>
+      </div>
+
+      <div className="rounded-lg bg-[var(--secondary)]/25 p-3 ring-1 ring-[var(--border)]">
+        <div className="text-xs font-semibold text-[var(--foreground)]">Preview</div>
+        <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-[var(--foreground)]">
+          {noteTextPreview(note, 600) || "No memory text has been written yet."}
+        </p>
+      </div>
+
+      <section className="space-y-2">
+        <h3 className="px-1 text-xs font-semibold text-[var(--foreground)]">Source And Links</h3>
+        {sourceIds.length > 0 ? (
+          <div className="space-y-2">
+            {sourceIds.map((sourceId) => {
+              const source = noteLookup.get(sourceId);
+              return (
+                <button
+                  key={sourceId}
+                  type="button"
+                  onClick={() => onOpenNote(sourceId)}
+                  className="w-full rounded-lg bg-[var(--secondary)]/35 p-3 text-left ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+                >
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="min-w-0 truncate text-xs font-medium text-[var(--foreground)]">
+                      {sourceReferenceLabel(sourceId, noteLookup, chatLookup)}
+                    </span>
+                    {source && <StatusPill label={friendlyStatus(source.status)} tone="neutral" />}
+                  </div>
+                  {source && (
+                    <p className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                      {noteTextPreview(source) || "Source has no summary text."}
+                    </p>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <GraphLinks links={note.links} noteLookup={noteLookup} chatLookup={chatLookup} />
+        )}
+      </section>
+
+      {isSourceNote && (
+        <DerivedActiveMemories
+          sourceNote={note}
+          activeNotes={activeNotes}
+          noteLookup={noteLookup}
+          chatLookup={chatLookup}
+          loading={activeNotesLoading}
+          onOpenNote={onOpenNote}
+        />
+      )}
+    </div>
+  );
+}
+
+function MemoryContentsPanel({ note }: { note: LtmNote }) {
+  return (
+    <div className="space-y-2">
+      {Object.entries(note.sections).map(([key, section]) => (
+        <details
+          key={key}
+          open={Object.keys(note.sections).length <= 3}
+          className="rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]"
+        >
+          <summary className="cursor-pointer list-none">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs font-semibold text-[var(--foreground)]">{friendlySectionKey(key)}</span>
+              {typeof section.salience === "number" && <StatusPill label={`Importance ${section.salience}`} />}
+              {typeof section.confidence === "number" && <StatusPill label={`AI certainty ${section.confidence}`} />}
+            </div>
+          </summary>
+          <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-[var(--foreground)]">{section.text}</p>
+          {(section.evidence ?? []).length > 0 && (
+            <div className="mt-2 rounded-md bg-[var(--background)]/55 p-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+              Evidence: {section.evidence?.join(", ")}
+            </div>
+          )}
+        </details>
+      ))}
+      <details className="rounded-lg bg-[var(--secondary)]/25 p-3 ring-1 ring-[var(--border)]">
+        <summary className="cursor-pointer text-xs font-semibold text-[var(--foreground)]">Advanced metadata</summary>
+        <div className="mt-2 space-y-1 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+          <div>Note ID: {note.id}</div>
+          {note.tags.length > 0 && <div>Tags: {note.tags.map(friendlyIdentifier).join(", ")}</div>}
+          {note.links.length > 0 && <div>Linked IDs: {note.links.map((link) => link.target).join(", ")}</div>}
+          <div>Version: {note.version}</div>
+          {note.previousHash && <div>Previous hash: {note.previousHash}</div>}
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function MemoryRecallPanel({
+  note,
+  result,
+  pending,
+  query,
+  onQueryChange,
+  onRun,
+}: {
+  note: LtmNote;
+  result: LtmSearchResponse | null;
+  pending: boolean;
+  query: string;
+  onQueryChange: (query: string) => void;
+  onRun: () => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+        <input
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") onRun();
+          }}
+          placeholder="Test a recall query"
+          className={inputClassName}
+        />
+        <ToolButton onClick={onRun} disabled={!query.trim() || pending} tone="primary">
+          {pending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Search size="0.875rem" />}
+          Test
+        </ToolButton>
+      </div>
+      <div className="rounded-lg bg-[var(--secondary)]/25 p-3 ring-1 ring-[var(--border)]">
+        <div className="flex flex-wrap gap-1.5">
+          <StatusPill label={`Focused on ${friendlyNoteType(note.type)}`} />
+          <StatusPill label={friendlyStatus(note.status)} tone={note.status === "active" ? "good" : "neutral"} />
+          <StatusPill label="Debug funnel on" />
+        </div>
+      </div>
+      {!result && (
+        <p className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]">
+          Run a query to see selected chunks, rejected candidates, scores, and token use for this memory.
+        </p>
+      )}
+      {result && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <StatusPill label={`${result.chunks.length} selected`} tone={result.chunks.length ? "good" : "neutral"} />
+            <StatusPill label={`${result.usedTokens}/${result.maxTokens} tokens`} />
+            <StatusPill
+              label={result.embeddingsAvailable ? "Smart search" : "Basic search"}
+              tone={result.embeddingsAvailable ? "good" : "warn"}
+            />
+          </div>
+          {result.warnings.map((warning) => (
+            <p key={warning} className="rounded-md bg-amber-500/10 px-2 py-1 text-[0.6875rem] text-amber-200">
+              {warning}
+            </p>
+          ))}
+          {result.debug?.weights && (
+            <div className="flex flex-wrap gap-1.5">
+              {Object.entries(result.debug.weights).map(([key, value]) => (
+                <StatusPill key={key} label={`${friendlyIdentifier(key)} ${value}`} />
+              ))}
+            </div>
+          )}
+          {result.debug?.funnel && (
+            <div className="rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
+              <div className="mb-2 text-xs font-semibold text-[var(--foreground)]">Funnel</div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {Object.entries(result.debug.funnel).map(([key, value]) => (
+                  <div
+                    key={key}
+                    className="flex min-w-0 items-center justify-between gap-2 rounded-md bg-[var(--background)]/45 px-2 py-1 text-[0.6875rem] ring-1 ring-[var(--border)]/70"
+                  >
+                    <span className="truncate text-[var(--muted-foreground)]">{friendlyIdentifier(key)}</span>
+                    <span className="font-medium text-[var(--foreground)]">{value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="space-y-2">
+            {result.chunks.length === 0 && (
+              <p className="rounded-md bg-[var(--secondary)]/50 px-2 py-2 text-xs text-[var(--muted-foreground)]">
+                No chunks matched this memory-focused query.
+              </p>
+            )}
+            {result.chunks.map((item, index) => (
+              <article
+                key={`${item.chunk?.id ?? "chunk"}-${index}`}
+                className="rounded-md bg-[var(--secondary)]/45 p-2 ring-1 ring-[var(--border)]"
+              >
+                <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                  <span className="min-w-0 truncate font-mono text-[0.6875rem] text-[var(--foreground)]">
+                    {item.chunk?.noteId ?? "memory"} · {item.chunk?.sectionKey ?? "section"}
+                  </span>
+                  {typeof item.score === "number" && <StatusPill label={`Score ${item.score.toFixed(2)}`} />}
+                  {item.estimatedTokens !== undefined && <StatusPill label={`~${item.estimatedTokens} tokens`} />}
+                  {item.lanes?.map((lane) => (
+                    <StatusPill key={lane} label={lane} />
+                  ))}
+                </div>
+                <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">
+                  {compactLtmText(item.chunk?.text, 360)}
+                </p>
+              </article>
+            ))}
+          </div>
+          {result.debug?.rejected && result.debug.rejected.length > 0 && (
+            <details className="rounded-md bg-[var(--secondary)]/35 p-2 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+              <summary className="cursor-pointer font-medium text-[var(--foreground)]">
+                Rejected candidates ({result.debug.rejected.length})
+              </summary>
+              <div className="mt-2 grid gap-1">
+                {result.debug.rejected.slice(0, 12).map((candidate) => (
+                  <div key={candidate.chunkId} className="flex flex-wrap gap-1.5">
+                    <span className="font-mono">{candidate.noteId ?? candidate.chunkId}</span>
+                    <span>{candidate.rejectionReason ?? "lower_rank"}</span>
+                    {candidate.estimatedTokens !== undefined && <span>~{candidate.estimatedTokens} tokens</span>}
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MemorySuggestionsPanel({
+  note,
+  drafts,
+  noteLookup,
+  chatLookup,
+  onViewDraft,
+  onOpenSourceNote,
+}: {
+  note: LtmNote;
+  drafts: LtmExtractionDraft[];
+  noteLookup: Map<string, LtmNote>;
+  chatLookup?: Map<string, Chat>;
+  onViewDraft: (draftId: string) => void;
+  onOpenSourceNote: (noteId: string) => void;
+}) {
+  if (!isSourceSummaryNote(note)) {
+    return (
+      <p className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]">
+        Suggestions live on source memories. Open a source summary to review extracted memory drafts.
+      </p>
+    );
+  }
+
+  if (drafts.length === 0) {
+    return (
+      <p className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]">
+        No pending suggestions for this source.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {drafts.map((draft) => (
+        <button
+          key={draft.id}
+          type="button"
+          onClick={() => onViewDraft(draft.id)}
+          className="w-full rounded-lg bg-[var(--secondary)]/35 p-3 text-left ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+        >
+          <div className="truncate text-xs font-semibold text-[var(--foreground)]">{draft.summary || draft.id}</div>
+          <DraftMetadataPills draft={draft} noteLookup={noteLookup} chatLookup={chatLookup} onOpenSourceNote={onOpenSourceNote} />
+        </button>
+      ))}
     </div>
   );
 }
@@ -1694,66 +1972,6 @@ function DraftDetails({
           <MutationPreview key={mutation.id} mutation={mutation} />
         ))}
       </section>
-    </div>
-  );
-}
-
-function DraftJsonEditor({
-  draft,
-  onSaved,
-}: {
-  draft: LtmExtractionDraft;
-  onSaved?: (draft: LtmExtractionDraft) => void;
-}) {
-  const updateDraft = useUpdateLongTermMemoryDraft();
-  const [text, setText] = useState(() => JSON.stringify(draft, null, 2));
-
-  useEffect(() => {
-    setText(JSON.stringify(draft, null, 2));
-  }, [draft]);
-
-  const save = async () => {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(text);
-    } catch (err) {
-      toast.error(`Suggestion JSON is invalid: ${(err as Error).message}`);
-      return;
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      toast.error("Suggestion JSON must be an object.");
-      return;
-    }
-    const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...patch } = parsed as Record<string, unknown>;
-    try {
-      const saved = await updateDraft.mutateAsync({
-        id: draft.id,
-        patch: patch as UpdateLongTermMemoryDraftInput,
-      });
-      toast.success("Suggestion saved");
-      onSaved?.(saved);
-    } catch (err) {
-      toast.error((err as Error).message);
-    }
-  };
-
-  return (
-    <div className="grid gap-3">
-      <p className="text-xs text-[var(--muted-foreground)]">
-        Advanced: edit the raw suggestion payload before restoring or keeping it archived.
-      </p>
-      <textarea
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-        spellCheck={false}
-        className="min-h-[24rem] w-full resize-y rounded-lg bg-[var(--background)] p-3 font-mono text-[0.6875rem] leading-relaxed text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] focus:ring-[var(--primary)]"
-      />
-      <div className="flex justify-end">
-        <ToolButton onClick={save} disabled={updateDraft.isPending} tone="primary">
-          {updateDraft.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Save size="0.875rem" />}
-          Save Suggestion
-        </ToolButton>
-      </div>
     </div>
   );
 }
@@ -1863,19 +2081,15 @@ function ImportPreviewRowItem({
   selected,
   disabled,
   importing,
-  hidden,
   onSelect,
   onImport,
-  onToggleHidden,
 }: {
   sample: ImportPreviewRow;
   selected: boolean;
   disabled?: boolean;
   importing?: boolean;
-  hidden?: boolean;
   onSelect: (selected: boolean) => void;
   onImport: () => void;
-  onToggleHidden: () => void;
 }) {
   return (
     <article
@@ -1916,16 +2130,6 @@ function ImportPreviewRowItem({
         >
           {importing ? <Loader2 size="0.875rem" className="animate-spin" /> : <Import size="0.875rem" />}
         </button>
-        <button
-          type="button"
-          onClick={onToggleHidden}
-          disabled={disabled}
-          className={rowActionButtonClassName}
-          aria-label={hidden ? `Show ${sample.title}` : `Hide ${sample.title}`}
-          title={hidden ? "Show source" : "Hide source"}
-        >
-          {hidden ? <Eye size="0.875rem" /> : <EyeOff size="0.875rem" />}
-        </button>
       </div>
     </article>
   );
@@ -1952,7 +2156,6 @@ function ChatMemorySettings({ onOpenExtractionSettings }: { onOpenExtractionSett
       ? Math.max(0, Math.min(1, metadata.longTermMemoryScoreThreshold))
       : DEFAULT_LTM_SCORE_THRESHOLD;
   const recallStyle = readRecallStyle(metadata);
-  const includeGates = readGateSelection(metadata);
   const includeResolved = metadata.longTermMemoryIncludeResolved === true;
   const [scopeDraft, setScopeDraft] = useState({
     universe: scopeUniverse,
@@ -2028,11 +2231,6 @@ function ChatMemorySettings({ onOpenExtractionSettings }: { onOpenExtractionSett
     return patch({ longTermMemoryScoreThreshold: next });
   };
 
-  const toggleGate = (gate: LtmGate, checked: boolean) => {
-    const next = checked ? Array.from(new Set([...includeGates, gate])) : includeGates.filter((item) => item !== gate);
-    return patch({ longTermMemoryIncludeGates: next });
-  };
-
   const resetRecallDefaults = () => {
     setBudgetDraft(String(DEFAULT_LTM_BUDGET_TOKENS));
     setMaxChunksDraft(String(DEFAULT_LTM_MAX_CHUNKS));
@@ -2042,7 +2240,6 @@ function ChatMemorySettings({ onOpenExtractionSettings }: { onOpenExtractionSett
       longTermMemoryMaxChunks: DEFAULT_LTM_MAX_CHUNKS,
       longTermMemoryScoreThreshold: DEFAULT_LTM_SCORE_THRESHOLD,
       longTermMemoryRecallStyle: "balanced",
-      longTermMemoryIncludeGates: [],
       longTermMemoryIncludeResolved: false,
     });
   };
@@ -2064,7 +2261,6 @@ function ChatMemorySettings({ onOpenExtractionSettings }: { onOpenExtractionSett
         recentUserMessage: previewQuery.trim(),
         scope,
         characterIds,
-        includeGates,
         includeResolved,
         maxChunks: maxChunksValue,
         maxTokens: budgetValue,
@@ -2227,16 +2423,6 @@ function ChatMemorySettings({ onOpenExtractionSettings }: { onOpenExtractionSett
             </button>
             {advancedOpen && (
               <div className="grid gap-2 rounded-lg bg-[var(--background)] p-2 ring-1 ring-[var(--border)]">
-                <div className="grid gap-1 sm:grid-cols-2">
-                  {LTM_GATE_OPTIONS.map((option) => (
-                    <SettingToggle
-                      key={option.id}
-                      label={option.label}
-                      checked={includeGates.includes(option.id)}
-                      onChange={(checked) => toggleGate(option.id, checked)}
-                    />
-                  ))}
-                </div>
                 <SettingToggle
                   label="Include resolved threads"
                   checked={includeResolved}
@@ -2414,9 +2600,7 @@ export function LongTermMemoryPanel() {
   const [query, setQuery] = useState("");
   const [importSource, setImportSource] = useState<LtmInteropSource>("chats");
   const [importLimit, setImportLimit] = useState(25);
-  const [hiddenImportRows, setHiddenImportRows] = useState<Set<string>>(() => new Set(hiddenImportRowCache));
   const [selectedImportRows, setSelectedImportRows] = useState<Set<string>>(() => new Set());
-  const [showHiddenImportRows, setShowHiddenImportRows] = useState(false);
   const [activeImportIds, setActiveImportIds] = useState<Set<string>>(() => new Set());
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [debugLogOpen, setDebugLogOpen] = useState(false);
@@ -2434,7 +2618,6 @@ export function LongTermMemoryPanel() {
   const [expandedSourceIds, setExpandedSourceIds] = useState<Set<string>>(() => new Set());
   const [expandedMemoryIds, setExpandedMemoryIds] = useState<Set<string>>(() => new Set());
   const [viewingDraftId, setViewingDraftId] = useState<string | null>(null);
-  const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
 
   const { data: chats } = useChats();
   const chatLookup = useMemo(() => new Map((chats as Chat[] | undefined)?.map((c) => [c.id, c])), [chats]);
@@ -2458,8 +2641,7 @@ export function LongTermMemoryPanel() {
         archiveOpen ||
         Boolean(viewingNoteId) ||
         Boolean(sourceViewerNoteId) ||
-        Boolean(viewingDraftId) ||
-        Boolean(editingDraftId),
+        Boolean(viewingDraftId),
     },
   );
   const exactViewingNote = useLongTermMemoryNote(viewingNoteId ?? sourceViewerNoteId ?? undefined);
@@ -2471,7 +2653,7 @@ export function LongTermMemoryPanel() {
   const archiveNote = useArchiveLongTermMemoryNote();
   const deleteNote = useDeleteLongTermMemoryNote();
   const updateNote = useUpdateLongTermMemoryNote();
-  const updateDraft = useUpdateLongTermMemoryDraft();
+  const restoreDraftMutation = useRestoreLongTermMemoryDraft();
   const deleteDraft = useDeleteLongTermMemoryDraft();
 
   const filteredNotes = useMemo(() => {
@@ -2540,20 +2722,13 @@ export function LongTermMemoryPanel() {
   }, [allDrafts.data]);
   const importRows = useMemo(() => importPreview.data?.samples ?? [], [importPreview.data?.samples]);
   const visibleImportRows = useMemo(
-    () =>
-      importRows.filter((sample) => {
-        const key = importRowKey(importSource, sample.sourceId);
-        return showHiddenImportRows ? hiddenImportRows.has(key) : !hiddenImportRows.has(key);
-      }),
-    [hiddenImportRows, importRows, importSource, showHiddenImportRows],
+    () => importRows,
+    [importRows],
   );
   const selectedVisibleImportRows = useMemo(
     () => visibleImportRows.filter((sample) => selectedImportRows.has(importRowKey(importSource, sample.sourceId))),
     [importSource, selectedImportRows, visibleImportRows],
   );
-  const hiddenImportRowCount = importRows.filter((sample) =>
-    hiddenImportRows.has(importRowKey(importSource, sample.sourceId)),
-  ).length;
   const allVisibleImportRowsSelected =
     visibleImportRows.length > 0 &&
     visibleImportRows.every((sample) => selectedImportRows.has(importRowKey(importSource, sample.sourceId)));
@@ -2590,10 +2765,6 @@ export function LongTermMemoryPanel() {
     () => (viewingDraftId ? (combinedDrafts.find((draft) => draft.id === viewingDraftId) ?? null) : null),
     [combinedDrafts, viewingDraftId],
   );
-  const editingDraft = useMemo(
-    () => (editingDraftId ? (combinedDrafts.find((draft) => draft.id === editingDraftId) ?? null) : null),
-    [combinedDrafts, editingDraftId],
-  );
   const viewingNoteModalOpen = Boolean(viewingNote) && (archiveOpen || tab !== "notes");
   const editedNoteFilteredOut = Boolean(editingNote && !filteredNotes.some((note) => note.id === editingNote.id));
   const editingNoteHiddenByFilters = Boolean(editedNoteFilteredOut && editingNote);
@@ -2616,10 +2787,6 @@ export function LongTermMemoryPanel() {
     setViewingDraftId(null);
   };
 
-  const closeDraftEditor = () => {
-    setEditingDraftId(null);
-  };
-
   const closeCreateForm = () => {
     setCreatingNote(false);
     setCreateNoteDirty(false);
@@ -2639,7 +2806,6 @@ export function LongTermMemoryPanel() {
     if (viewingNoteId) closeViewer();
     if (sourceViewerNoteId) closeSourceViewer();
     if (viewingDraftId) closeDraftViewer();
-    if (editingDraftId) closeDraftEditor();
     setTab(nextTab);
   };
 
@@ -2661,7 +2827,6 @@ export function LongTermMemoryPanel() {
     if (editingNoteId && !confirmDiscardEditor()) return;
     setArchiveOpen(false);
     setViewingDraftId(null);
-    setEditingDraftId(null);
     setEditingNoteId(null);
     setEditedNoteDirty(false);
     setSourceViewerNoteId(id);
@@ -2695,7 +2860,6 @@ export function LongTermMemoryPanel() {
     closeViewer();
     closeSourceViewer();
     closeDraftViewer();
-    closeDraftEditor();
     setEditingNoteId(id);
     setEditedNoteDirty(false);
   };
@@ -2708,7 +2872,6 @@ export function LongTermMemoryPanel() {
     closeViewer();
     closeSourceViewer();
     closeDraftViewer();
-    closeDraftEditor();
     setCreatingNote(true);
   };
 
@@ -2841,10 +3004,10 @@ export function LongTermMemoryPanel() {
     }
   };
 
-  const restoreDraft = (draft: LtmExtractionDraft) => {
+  const restoreArchivedDraft = (draft: LtmExtractionDraft) => {
     if (draft.status !== "rejected") return;
-    updateDraft
-      .mutateAsync({ id: draft.id, patch: { status: "pending" } })
+    restoreDraftMutation
+      .mutateAsync(draft.id)
       .then(() => {
         toast.success("Suggestion restored");
         setSelectedArchivedDraftIds((current) => {
@@ -2853,7 +3016,6 @@ export function LongTermMemoryPanel() {
           return next;
         });
         setViewingDraftId(null);
-        setEditingDraftId(null);
       })
       .catch((err: Error) => toast.error(err.message));
   };
@@ -2870,7 +3032,6 @@ export function LongTermMemoryPanel() {
           return next;
         });
         if (viewingDraftId === draft.id) closeDraftViewer();
-        if (editingDraftId === draft.id) closeDraftEditor();
       })
       .catch((err: Error) => toast.error(err.message));
   };
@@ -2880,7 +3041,7 @@ export function LongTermMemoryPanel() {
     if (restorableDrafts.length === 0) return;
     try {
       await Promise.all(
-        restorableDrafts.map((draft) => updateDraft.mutateAsync({ id: draft.id, patch: { status: "pending" } })),
+        restorableDrafts.map((draft) => restoreDraftMutation.mutateAsync(draft.id)),
       );
       toast.success(`Restored ${restorableDrafts.length} suggestion${restorableDrafts.length === 1 ? "" : "s"}`);
       setSelectedArchivedDraftIds((current) => {
@@ -2912,7 +3073,6 @@ export function LongTermMemoryPanel() {
       const deletedIds = new Set(selectedArchivedDrafts.map((draft) => draft.id));
       setSelectedArchivedDraftIds(new Set());
       if (viewingDraftId && deletedIds.has(viewingDraftId)) closeDraftViewer();
-      if (editingDraftId && deletedIds.has(editingDraftId)) closeDraftEditor();
     } catch (err) {
       toast.error((err as Error).message);
     }
@@ -2936,49 +3096,6 @@ export function LongTermMemoryPanel() {
         if (selected) next.add(key);
         else next.delete(key);
       }
-      return next;
-    });
-  };
-
-  const updateHiddenImportRows = (updater: (current: Set<string>) => Set<string>) => {
-    setHiddenImportRows((current) => {
-      const next = updater(current);
-      hiddenImportRowCache.clear();
-      for (const key of next) hiddenImportRowCache.add(key);
-      return next;
-    });
-  };
-
-  const hideImportRows = (sourceIds: string[]) => {
-    updateHiddenImportRows((current) => {
-      const next = new Set(current);
-      for (const sourceId of sourceIds) next.add(importRowKey(importSource, sourceId));
-      return next;
-    });
-    setSelectedImportRows((current) => {
-      const next = new Set(current);
-      for (const sourceId of sourceIds) next.delete(importRowKey(importSource, sourceId));
-      return next;
-    });
-  };
-
-  const unhideImportRows = (sourceIds: string[]) => {
-    updateHiddenImportRows((current) => {
-      const next = new Set(current);
-      for (const sourceId of sourceIds) next.delete(importRowKey(importSource, sourceId));
-      return next;
-    });
-    setSelectedImportRows((current) => {
-      const next = new Set(current);
-      for (const sourceId of sourceIds) next.delete(importRowKey(importSource, sourceId));
-      return next;
-    });
-  };
-
-  const restoreHiddenImportRows = () => {
-    updateHiddenImportRows((current) => {
-      const next = new Set(current);
-      for (const row of importRows) next.delete(importRowKey(importSource, row.sourceId));
       return next;
     });
   };
@@ -3197,7 +3314,7 @@ export function LongTermMemoryPanel() {
                     />
                   ))}
               </div>
-          </section>
+            </section>
         </Section>
       )}
 
@@ -3326,39 +3443,13 @@ export function LongTermMemoryPanel() {
               )}
               Import selected
             </ToolButton>
-            <ToolButton
-              onClick={() =>
-                showHiddenImportRows
-                  ? unhideImportRows(selectedVisibleImportRows.map((row) => row.sourceId))
-                  : hideImportRows(selectedVisibleImportRows.map((row) => row.sourceId))
-              }
-              disabled={selectedVisibleImportRows.length === 0}
-            >
-              {showHiddenImportRows ? <Eye size="0.875rem" /> : <EyeOff size="0.875rem" />}
-              {showHiddenImportRows ? "Unhide selected" : "Hide selected"}
-            </ToolButton>
-            <button
-              type="button"
-              onClick={() => setShowHiddenImportRows((open) => !open)}
-              disabled={!showHiddenImportRows && hiddenImportRowCount === 0}
-              className="inline-flex min-h-8 items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Eye size="0.875rem" />
-              {showHiddenImportRows ? "Show active" : `Show hidden (${hiddenImportRowCount})`}
-            </button>
-            {showHiddenImportRows && hiddenImportRowCount > 0 && (
-              <ToolButton onClick={restoreHiddenImportRows}>
-                <RotateCcw size="0.875rem" />
-                Restore hidden
-              </ToolButton>
-            )}
           </div>
 
           <div className="mt-3 space-y-2">
             {importPreview.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
             {!importPreview.isLoading && visibleImportRows.length === 0 && (
               <p className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]">
-                {hiddenImportRowCount > 0 ? "All sources are hidden." : "No sources are ready to bring in."}
+                No sources are ready to bring in.
               </p>
             )}
             {visibleImportRows.map((sample) => (
@@ -3368,14 +3459,8 @@ export function LongTermMemoryPanel() {
                 selected={selectedImportRows.has(importRowKey(importSource, sample.sourceId))}
                 disabled={importSourceNotes.isPending}
                 importing={activeImportIds.has(importRowKey(importSource, sample.sourceId))}
-                hidden={hiddenImportRows.has(importRowKey(importSource, sample.sourceId))}
                 onSelect={(selected) => setImportRowSelected(sample.sourceId, selected)}
                 onImport={() => importRowsToVault([sample.sourceId])}
-                onToggleHidden={() =>
-                  hiddenImportRows.has(importRowKey(importSource, sample.sourceId))
-                    ? unhideImportRows([sample.sourceId])
-                    : hideImportRows([sample.sourceId])
-                }
               />
             ))}
           </div>
@@ -3388,7 +3473,6 @@ export function LongTermMemoryPanel() {
           if (editingNoteId && !confirmDiscardEditor()) return;
           setArchiveOpen(false);
           setViewingDraftId(null);
-          setEditingDraftId(null);
         }}
         title="Archive"
         width="max-w-5xl"
@@ -3483,7 +3567,7 @@ export function LongTermMemoryPanel() {
                   <input
                     type="checkbox"
                     checked={allArchivedDraftsSelected}
-                    disabled={archivedDraftIds.length === 0 || deleteDraft.isPending || updateDraft.isPending}
+                    disabled={archivedDraftIds.length === 0 || deleteDraft.isPending || restoreDraftMutation.isPending}
                     onChange={(event) => setArchivedDraftsSelected(archivedDraftIds, event.target.checked)}
                     className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
                   />
@@ -3496,11 +3580,11 @@ export function LongTermMemoryPanel() {
                   onClick={() => void restoreSelectedArchivedDrafts()}
                   disabled={
                     selectedArchivedDrafts.every((draft) => draft.status !== "rejected") ||
-                    updateDraft.isPending ||
+                    restoreDraftMutation.isPending ||
                     deleteDraft.isPending
                   }
                 >
-                  {updateDraft.isPending ? (
+                  {restoreDraftMutation.isPending ? (
                     <Loader2 size="0.875rem" className="animate-spin" />
                   ) : (
                     <RotateCcw size="0.875rem" />
@@ -3532,18 +3616,14 @@ export function LongTermMemoryPanel() {
                   draft={draft}
                   noteLookup={noteLookup}
                   chatLookup={chatLookup}
-                  selected={viewingDraftId === draft.id || editingDraftId === draft.id}
+                  selected={viewingDraftId === draft.id}
                   bulkSelected={selectedArchivedDraftIds.has(draft.id)}
                   onSelect={(selected) => setArchivedDraftsSelected([draft.id], selected)}
                   onView={() => {
-                    setEditingDraftId(null);
                     setViewingDraftId(draft.id);
                   }}
-                  onEdit={() => {
-                    setViewingDraftId(null);
-                    setEditingDraftId(draft.id);
-                  }}
-                  onRestore={() => restoreDraft(draft)}
+                  onEdit={() => {}}
+                  onRestore={() => restoreArchivedDraft(draft)}
                   onDelete={() => deleteArchivedDraft(draft)}
                   onOpenSourceNote={openSourceNote}
                 />
@@ -3643,22 +3723,6 @@ export function LongTermMemoryPanel() {
       >
         {viewingDraft && (
           <DraftDetails draft={viewingDraft} noteLookup={noteLookup} chatLookup={chatLookup} onOpenSourceNote={openSourceNote} />
-        )}
-      </Modal>
-
-      <Modal
-        open={Boolean(editingDraft)}
-        onClose={closeDraftEditor}
-        title={editingDraft ? `Edit Suggestion ${editingDraft.id}` : "Edit Suggestion"}
-        width="max-w-4xl"
-      >
-        {editingDraft && (
-          <DraftJsonEditor
-            draft={editingDraft}
-            onSaved={(saved) => {
-              setEditingDraftId(saved.id);
-            }}
-          />
         )}
       </Modal>
       <LongTermMemoryDebugLogModal open={debugLogOpen} onClose={() => setDebugLogOpen(false)} />

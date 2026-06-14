@@ -83,7 +83,6 @@ async function getExistingTypedNotes(options: {
   return notes.filter((note): note is LtmNote => {
     if (!note) return false;
     if (note.status === "archived") return false;
-    if (note.status === "dormant") return false;
     if (isLtmSourceNote(note)) return false;
     if (!scopeOverlaps(note.scope, options.scope)) return false;
     return true;
@@ -104,7 +103,7 @@ async function getExistingTypedNotesForTargets(options: {
   const targetNotes = await Promise.all(missingTargetIds.map((noteId) => options.storage.getNote(noteId)));
   for (const note of targetNotes) {
     if (!note) continue;
-    if (note.status === "archived" || note.status === "dormant") continue;
+    if (note.status === "archived") continue;
     if (isLtmSourceNote(note)) continue;
     if (!scopeOverlaps(note.scope, options.scope)) {
       diagnostics.push({

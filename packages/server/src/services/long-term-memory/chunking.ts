@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { type LtmGate, type LtmNote, type LtmNoteType, type LtmScope, type LtmStatus } from "@marinara-engine/shared";
+import { type LtmNote, type LtmNoteType, type LtmScope, type LtmStatus } from "@marinara-engine/shared";
 
 export interface LtmMemoryChunk {
   id: string;
@@ -10,7 +10,6 @@ export interface LtmMemoryChunk {
   status: LtmStatus;
   scope: LtmScope;
   tags: string[];
-  gates: LtmGate[];
   salience?: number;
   confidence?: number;
   updatedAt: string;
@@ -67,7 +66,6 @@ export function chunkNoteSections(note: LtmNote): LtmMemoryChunk[] {
         status: note.status,
         scope: note.scope,
         tags: [...note.tags].sort((a, b) => a.localeCompare(b)),
-        gates: [...(section.gates ?? [])].sort((a, b) => a.localeCompare(b)),
         salience: section.salience,
         confidence: section.confidence,
         updatedAt: section.updatedAt,

@@ -2,11 +2,10 @@
 // Chat & Message Types
 // ──────────────────────────────────────────────
 
-import type { LtmGate } from "./long-term-memory.js";
 import type { GenerationGuideSource } from "../utils/generation-guide.js";
 
-/** The four primary chat modes the engine supports. */
-export type ChatMode = "conversation" | "roleplay" | "visual_novel" | "game";
+/** The three primary chat modes the engine supports. */
+export type ChatMode = "conversation" | "roleplay" | "game";
 
 /** How a multi-character (group) chat is handled. */
 export type GroupChatMode = "merged" | "individual";
@@ -228,8 +227,6 @@ export interface ChatMetadata {
   longTermMemoryScoreThreshold?: number;
   /** Recall weighting profile for prompt-injected local long-term memory. */
   longTermMemoryRecallStyle?: LongTermMemoryRecallStyle;
-  /** Gated memory categories this chat allows during prompt injection. */
-  longTermMemoryIncludeGates?: LtmGate[];
   /** When true, resolved thread memories may be recalled during prompt injection. Default: false. */
   longTermMemoryIncludeResolved?: boolean;
   /** When true, log/debug local long-term memory prompt injection decisions for this chat. Default: false. */

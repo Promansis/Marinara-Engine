@@ -4,7 +4,6 @@ import { Archive, Loader2, Pencil, Plus, RefreshCw, Save, Trash2, X } from "luci
 import {
   getLtmScopeChatIds,
   withMergedLtmScopeLinks,
-  type LtmGate,
   type LtmLink,
   type LtmMode,
   type LtmNote,
@@ -27,13 +26,11 @@ import { ToolButton } from "./LtmPills";
 import {
   editablePatchFromDraft,
   emptySection,
-  friendlyGate,
   friendlyIdentifier,
   friendlyMode,
   friendlyNoteTitle,
   friendlySectionKey,
   friendlyStatus,
-  gateOptions,
   modeOptions,
   normalizeIdentifier,
   normalizeTagsInput,
@@ -537,32 +534,6 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
                 placeholder="Why this matters, one item per line"
                 className={cn(textareaClassName, "mt-2 min-h-16")}
               />
-              <div className="mt-2 flex flex-wrap gap-2">
-                {gateOptions.map((gate) => (
-                  <label
-                    key={gate}
-                    className="flex items-center gap-1.5 text-[0.6875rem] text-[var(--muted-foreground)]"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={(section.gates ?? []).includes(gate)}
-                      onChange={(event) =>
-                        setSection(key, (current) => {
-                          const gates = current.gates ?? [];
-                          return {
-                            ...current,
-                            gates: event.target.checked
-                              ? ([...gates, gate] as LtmGate[])
-                              : gates.filter((item) => item !== gate),
-                          };
-                        })
-                      }
-                      className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-                    />
-                    {friendlyGate(gate)}
-                  </label>
-                ))}
-              </div>
             </section>
           ))}
           {floatingSectionKey && floatingSection && (

@@ -2,7 +2,6 @@ import {
   withMergedLtmScopeLinks,
   type ChatMode,
   type LtmExtractionDraft,
-  type LtmGate,
   type LtmMode,
   type LtmNote,
   type LtmNoteType,
@@ -19,15 +18,12 @@ export const noteTypeOptions: LtmNoteType[] = [
   "relationship",
   "scene",
   "thread",
-  "callback",
   "world",
-  "voice",
   "tone",
 ];
 
-export const statusOptions: LtmStatus[] = ["active", "dormant", "resolved", "archived"];
-export const modeOptions: LtmMode[] = ["roleplay", "conversation", "game", "visual_novel"];
-export const gateOptions: LtmGate[] = ["spoiler", "character_secret", "private", "nsfw"];
+export const statusOptions: LtmStatus[] = ["active", "resolved", "archived"];
+export const modeOptions: LtmMode[] = ["roleplay", "conversation", "game"];
 
 export const allowedIdPrefixesByType: Record<LtmNoteType, readonly string[]> = {
   source: ["source_", "scene_summary_"],
@@ -36,9 +32,7 @@ export const allowedIdPrefixesByType: Record<LtmNoteType, readonly string[]> = {
   relationship: ["rel_"],
   scene: ["scene_"],
   thread: ["thread_"],
-  callback: ["cb_"],
   world: ["world_", "faction_", "location_", "rule_", "rules"],
-  voice: ["voice_"],
   tone: ["tone_"],
 };
 
@@ -49,15 +43,12 @@ const NOTE_TYPE_LABELS: Record<LtmNoteType, string> = {
   relationship: "Relationship",
   scene: "Scene",
   thread: "Story thread",
-  callback: "Callback",
   world: "World detail",
-  voice: "Voice",
   tone: "Tone",
 };
 
 const STATUS_LABELS: Record<LtmStatus, string> = {
   active: "Active",
-  dormant: "Quiet",
   resolved: "Resolved",
   archived: "Archived",
 };
@@ -66,14 +57,6 @@ const MODE_LABELS: Record<LtmMode, string> = {
   roleplay: "Roleplay",
   conversation: "Conversation",
   game: "Game",
-  visual_novel: "Visual novel",
-};
-
-const GATE_LABELS: Record<LtmGate, string> = {
-  spoiler: "Spoiler",
-  character_secret: "Character secret",
-  private: "Private",
-  nsfw: "Adult",
 };
 
 const KNOWN_ID_PREFIXES = [
@@ -85,13 +68,10 @@ const KNOWN_ID_PREFIXES = [
   "timeline_",
   "scene_",
   "thread_",
-  "callback_",
-  "cb_",
   "world_",
   "faction_",
   "location_",
   "rule_",
-  "voice_",
   "tone_",
   "scope_",
   "universe_",
@@ -112,10 +92,6 @@ export function friendlyStatus(status: LtmStatus) {
 
 export function friendlyMode(mode: LtmMode) {
   return MODE_LABELS[mode] ?? sentenceCaseIdentifier(mode);
-}
-
-export function friendlyGate(gate: LtmGate) {
-  return GATE_LABELS[gate] ?? sentenceCaseIdentifier(gate);
 }
 
 export function sentenceCaseIdentifier(value: string) {
@@ -194,7 +170,7 @@ export function emptySection(text = ""): LtmSection {
 }
 
 export function defaultModeFromChatMode(mode?: ChatMode): LtmMode {
-  if (mode === "conversation" || mode === "game" || mode === "visual_novel") return mode;
+  if (mode === "conversation" || mode === "game") return mode;
   return "roleplay";
 }
 

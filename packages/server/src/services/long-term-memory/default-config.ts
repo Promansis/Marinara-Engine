@@ -31,5 +31,4 @@ export const DEFAULT_LTM_RETRIEVAL_CONFIG: LtmRetrievalConfig = {
   semanticWeight: 0.6,
   lexicalWeight: 0.3,
   graphWeight: 0.1,
-  includeGates: [],
 };
