@@ -331,6 +331,7 @@ function SuggestionRow({ row, noteLookup }: { row: SuggestionRowModel; noteLooku
   const deleteDraft = useDeleteLongTermMemoryDraft();
   const archiveMutation = useArchiveLongTermMemoryDraftMutation();
   const [editing, setEditing] = useState(false);
+  const [editedMutation, setEditedMutation] = useState<LtmDraftMutation | null>(null);
   const busy = accept.isPending || reject.isPending || archiveMutation.isPending || deleteDraft.isPending;
 
   const patchWithoutMutation = () =>
@@ -366,6 +367,32 @@ function SuggestionRow({ row, noteLookup }: { row: SuggestionRowModel; noteLooku
     }
   };
 
+  const handleAccept = () => {
+    accept
+      .mutateAsync({
+        id: draft.id,
+        mutationIds: [mutation.id],
+        editedMutations: editedMutation ? [editedMutation] : undefined,
+      })
+      .then(() => {
+        toast.success(editedMutation ? "Edited suggestion kept" : "Suggestion kept");
+        setEditedMutation(null);
+      })
+      .catch((err: Error) => toast.error(err.message));
+  };
+
+  const handleToggleEdit = () => {
+    if (!editing && !editedMutation) setEditedMutation(mutation);
+    setEditing((current) => !current);
+  };
+
+  const handleSave = (saved: LtmDraftMutation) => {
+    setEditedMutation(saved);
+    setEditing(false);
+  };
+
+  const hasEdits = editedMutation !== null && !editing;
+
   return (
     <article className="rounded-lg bg-[var(--card)] p-3 ring-1 ring-[var(--border)]">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -376,6 +403,7 @@ function SuggestionRow({ row, noteLookup }: { row: SuggestionRowModel; noteLooku
             <StatusPill label={`Confidence ${Math.round(mutation.confidence * 100)}%`} />
             <StatusPill label={referenceLabel(mutation.evidence.length)} />
             <StatusPill label={draftStatusLabel(draft.status)} />
+            {hasEdits && <StatusPill label="edited" />}
           </div>
           <h4 className="mt-2 text-xs font-semibold text-[var(--foreground)]">{mutation.summary}</h4>
           <div className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">
@@ -387,21 +415,16 @@ function SuggestionRow({ row, noteLookup }: { row: SuggestionRowModel; noteLooku
         </div>
         <div className="flex flex-wrap gap-1.5">
           <ToolButton
-            onClick={() =>
-              accept
-                .mutateAsync({ id: draft.id, mutationIds: [mutation.id] })
-                .then(() => toast.success("Suggestion kept"))
-                .catch((err: Error) => toast.error(err.message))
-            }
+            onClick={handleAccept}
             disabled={busy}
             tone="primary"
           >
             {accept.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Check size="0.875rem" />}
             Accept
           </ToolButton>
-          <ToolButton onClick={() => setEditing((current) => !current)} disabled={busy}>
+          <ToolButton onClick={handleToggleEdit} disabled={busy}>
             {editing ? <X size="0.875rem" /> : <Save size="0.875rem" />}
-            {editing ? "Close" : "Edit"}
+            {editing ? "Close" : hasEdits ? "Edit" : "Edit"}
           </ToolButton>
           <ToolButton onClick={archiveOne} disabled={busy}>
             <Archive size="0.875rem" />
@@ -413,7 +436,7 @@ function SuggestionRow({ row, noteLookup }: { row: SuggestionRowModel; noteLooku
           </ToolButton>
         </div>
       </div>
-      {editing && <SuggestionMutationEditor mutation={mutation} onSave={() => {}} saving={false} noteLookup={noteLookup} />}
+      {editing && <SuggestionMutationEditor mutation={editedMutation ?? mutation} onSave={handleSave} saving={false} noteLookup={noteLookup} />}
     </article>
   );
 }

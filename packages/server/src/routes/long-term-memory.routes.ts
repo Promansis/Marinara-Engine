@@ -7,6 +7,7 @@ import type { FastifyInstance } from "fastify";
 import {
   LOCAL_SIDECAR_CONNECTION_ID,
   ltmConflictSchema,
+  ltmDraftMutationSchema,
   ltmDraftSourceSchema,
   ltmDraftStatusSchema,
   ltmDebugPhaseSchema,
@@ -190,6 +191,7 @@ const acceptDraftBodySchema = z
   .object({
     mutationIds: z.array(z.string().uuid()).min(1).max(25).optional(),
     lowRiskOnly: z.boolean().optional(),
+    editedMutations: z.array(ltmDraftMutationSchema).max(25).optional(),
   })
   .strict()
   .default({});
@@ -762,7 +764,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
 
   app.post<{ Body: unknown }>("/import/preview", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req) => {
     const body = interopBodySchema.parse(req.body);
-    return previewLongTermMemoryInterop(app.db, body.source as LtmInteropSource, body.limit);
+    return previewLongTermMemoryInterop(app.db, body.source as LtmInteropSource, body.limit, getLongTermMemoryRoot());
   });
 
   app.post<{ Body: unknown }>(
@@ -937,6 +939,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
       return await applyLongTermMemoryDraft(id, {
         actor: "maintenance_api",
         mutationIds: body.mutationIds,
+        editedMutations: body.editedMutations,
         autoApplyLowRiskOnly: body.lowRiskOnly,
         operationId: randomUUID(),
       });

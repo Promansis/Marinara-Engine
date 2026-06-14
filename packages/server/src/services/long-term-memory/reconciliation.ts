@@ -12,6 +12,7 @@ export interface ApplyLtmDraftOptions {
   autoApplyLowRiskOnly?: boolean;
   autoApplyPolicy?: "turn" | "source_extraction";
   mutationIds?: string[];
+  editedMutations?: Array<{ id: string } & Record<string, unknown>>;
   operationId?: string;
 }
 
@@ -304,6 +305,15 @@ async function applyLongTermMemoryDraftInner(
   );
   if (unknownMutationIds?.length) {
     throw new Error(`Long-term memory draft mutation not found: ${unknownMutationIds.join(", ")}`);
+  }
+  if (options.editedMutations?.length) {
+    const editedById = new Map(options.editedMutations.map((edit) => [edit.id as string, edit]));
+    draft.mutations = draft.mutations.map((mutation) => {
+      const edit = editedById.get(mutation.id);
+      if (!edit) return mutation;
+      const { id, kind, ...patch } = edit;
+      return { ...mutation, ...patch } as typeof mutation;
+    });
   }
   const autoApplyPolicy = options.autoApplyPolicy ?? (draft.source.sourceNoteId ? "source_extraction" : "turn");
   const lowRiskMutations = draft.mutations.filter((mutation) => {

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  LtmDraftMutation,
   LtmDraftStatus,
   LtmDebugEvent,
   LtmDebugPhase,
@@ -454,8 +455,8 @@ export function useImportLongTermMemorySourceNotes() {
 export function useAcceptLongTermMemoryDraft() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, mutationIds, lowRiskOnly }: { id: string; mutationIds?: string[]; lowRiskOnly?: boolean }) =>
-      api.post(`/long-term-memory/drafts/${id}/accept`, { mutationIds, lowRiskOnly }),
+    mutationFn: ({ id, mutationIds, lowRiskOnly, editedMutations }: { id: string; mutationIds?: string[]; lowRiskOnly?: boolean; editedMutations?: LtmDraftMutation[] }) =>
+      api.post(`/long-term-memory/drafts/${id}/accept`, { mutationIds, lowRiskOnly, editedMutations }),
     onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
   });
 }

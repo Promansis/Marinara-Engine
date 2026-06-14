@@ -2600,6 +2600,7 @@ export function LongTermMemoryPanel() {
   const [query, setQuery] = useState("");
   const [importSource, setImportSource] = useState<LtmInteropSource>("chats");
   const [importLimit, setImportLimit] = useState(25);
+  const [importChatId, setImportChatId] = useState<string>("");
   const [selectedImportRows, setSelectedImportRows] = useState<Set<string>>(() => new Set());
   const [activeImportIds, setActiveImportIds] = useState<Set<string>>(() => new Set());
   const [archiveOpen, setArchiveOpen] = useState(false);
@@ -2722,8 +2723,10 @@ export function LongTermMemoryPanel() {
   }, [allDrafts.data]);
   const importRows = useMemo(() => importPreview.data?.samples ?? [], [importPreview.data?.samples]);
   const visibleImportRows = useMemo(
-    () => importRows,
-    [importRows],
+    () => importSource === "chats" && importChatId
+      ? importRows.filter((sample) => sample.sourceId.startsWith(`${importChatId}:`))
+      : importRows,
+    [importRows, importSource, importChatId],
   );
   const selectedVisibleImportRows = useMemo(
     () => visibleImportRows.filter((sample) => selectedImportRows.has(importRowKey(importSource, sample.sourceId))),
@@ -3391,7 +3394,7 @@ export function LongTermMemoryPanel() {
           <div className="grid grid-cols-[1fr_auto] gap-2">
             <select
               value={importSource}
-              onChange={(event) => setImportSource(event.target.value as LtmInteropSource)}
+              onChange={(event) => { setImportSource(event.target.value as LtmInteropSource); setImportChatId(""); }}
               className="rounded-lg bg-[var(--secondary)] px-2.5 py-2 text-xs outline-none ring-1 ring-transparent focus:ring-[var(--primary)]"
             >
               {IMPORT_SOURCES.map((source) => (
@@ -3409,6 +3412,25 @@ export function LongTermMemoryPanel() {
               className="w-20 rounded-lg bg-[var(--secondary)] px-2.5 py-2 text-xs outline-none ring-1 ring-transparent focus:ring-[var(--primary)]"
             />
           </div>
+          {importSource === "chats" && (
+            <div className="mt-2">
+              <select
+                value={importChatId}
+                onChange={(event) => setImportChatId(event.target.value)}
+                className="w-full rounded-lg bg-[var(--secondary)] px-2.5 py-2 text-xs outline-none ring-1 ring-transparent focus:ring-[var(--primary)]"
+              >
+                <option value="">All chats ({importRows.length})</option>
+                {(chats as Chat[] | undefined)
+                  ?.filter((c) => importRows.some((row) => row.sourceId.startsWith(`${c.id}:`)))
+                  .sort((a, b) => (a.name || "Untitled").localeCompare(b.name || "Untitled"))
+                  .map((chat) => (
+                    <option key={chat.id} value={chat.id}>
+                      {chat.name || "Untitled"} — {importRows.filter((row) => row.sourceId.startsWith(`${chat.id}:`)).length}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          )}
           <div className="mt-3 rounded-lg bg-[var(--secondary)]/50 p-3 ring-1 ring-[var(--border)]">
             <div className="flex items-center justify-between gap-3">
               <div>
