@@ -5,7 +5,6 @@ import {
   Archive,
   ChevronDown,
   ChevronRight,
-  Check,
   Eye,
   EyeOff,
   FileJson,
@@ -23,7 +22,6 @@ import {
   SlidersHorizontal,
   ShieldCheck,
   Trash2,
-  X,
 } from "lucide-react";
 import type {
   LtmDraftMutation,
@@ -35,7 +33,6 @@ import type {
   LtmStatus,
 } from "@marinara-engine/shared";
 import {
-  useAcceptLongTermMemoryDraft,
   useArchiveLongTermMemoryNote,
   useDeleteLongTermMemoryNote,
   useImportLongTermMemorySourceNotes,
@@ -47,7 +44,6 @@ import {
   useLongTermMemoryNotes,
   useLongTermMemoryStatus,
   useRebuildLongTermMemory,
-  useRejectLongTermMemoryDraft,
   useRepairLongTermMemory,
   useReplayLongTermMemory,
   useSearchLongTermMemory,
@@ -75,6 +71,7 @@ import {
   friendlySectionKey,
   friendlyStatus,
   isSourceMemoryDraft,
+  isTypedSuggestionDraft,
   sentenceCaseIdentifier,
 } from "../long-term-memory/ltm-editor-utils";
 import { compactInputClassName, inputClassName, SettingField } from "../long-term-memory/LtmFields";
@@ -109,12 +106,11 @@ const IMPORT_SOURCES: Array<{ id: LtmInteropSource; label: string }> = [
 
 const TAB_LABELS: Record<TabId, string> = {
   notes: "Memories",
-  drafts: "Drafts",
   tools: "Tools",
   import: "Import",
 };
 
-type TabId = "notes" | "drafts" | "tools" | "import";
+type TabId = "notes" | "tools" | "import";
 type ImportPreviewRow = NonNullable<ReturnType<typeof useLongTermMemoryImportPreview>["data"]>["samples"][number];
 type SourceSummaryGroup = {
   source: LtmNote;
@@ -701,6 +697,7 @@ function EvidencePills({ note, noteLookup }: { note: LtmNote; noteLookup: Map<st
 function SourceSummaryGroupRow({
   group,
   noteLookup,
+  pendingSuggestionCount,
   expanded,
   viewingNoteId,
   editingNoteId,
@@ -711,6 +708,7 @@ function SourceSummaryGroupRow({
 }: {
   group: SourceSummaryGroup;
   noteLookup: Map<string, LtmNote>;
+  pendingSuggestionCount: number;
   expanded: boolean;
   viewingNoteId: string | null;
   editingNoteId: string | null;
@@ -772,6 +770,12 @@ function SourceSummaryGroupRow({
             <StatusPill label={sourceTypeLabel(group.source)} />
             <StatusPill label={friendlyStatus(group.source.status)} tone="neutral" />
             <StatusPill label={`${group.derived.length} typed memor${group.derived.length === 1 ? "y" : "ies"}`} />
+            {pendingSuggestionCount > 0 && (
+              <StatusPill
+                label={`${pendingSuggestionCount} pending suggestion${pendingSuggestionCount === 1 ? "" : "s"}`}
+                tone="warn"
+              />
+            )}
             {timelineCount > 0 && (
               <StatusPill label={`${timelineCount} timeline link${timelineCount === 1 ? "" : "s"}`} />
             )}
@@ -1620,90 +1624,6 @@ function NoteViewModalContent({
   );
 }
 
-function DraftRow({
-  draft,
-  noteLookup,
-  selected,
-  onView,
-  onOpenSourceNote,
-}: {
-  draft: LtmExtractionDraft;
-  noteLookup?: Map<string, LtmNote>;
-  selected: boolean;
-  onView: () => void;
-  onOpenSourceNote?: (noteId: string) => void;
-}) {
-  const accept = useAcceptLongTermMemoryDraft();
-  const reject = useRejectLongTermMemoryDraft();
-  const pending = draft.status === "pending";
-
-  return (
-    <article
-      className={cn(
-        "group relative rounded-lg bg-[var(--secondary)]/45 p-2.5 ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/45 hover:ring-rose-300/25",
-        selected && "bg-rose-300/10 ring-rose-300/35",
-      )}
-    >
-      <div className={cn("min-w-0", pending && "transition-[padding] group-hover:pr-32 max-md:pr-32")}>
-        <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={draft.summary || draft.id}>
-          {draft.summary || draft.id}
-        </div>
-        <div className="mt-1 flex flex-wrap gap-1.5">
-          <StatusPill label={draftStatusLabel(draft.status)} tone={draftStatusTone(draft.status)} />
-          <StatusPill label={`${draft.mutations.length} suggested change${draft.mutations.length === 1 ? "" : "s"}`} />
-        </div>
-        <DraftMetadataPills draft={draft} noteLookup={noteLookup} onOpenSourceNote={onOpenSourceNote} />
-      </div>
-      {pending && (
-        <div className={rowActionPillClassName}>
-          <button
-            type="button"
-            onClick={onView}
-            className={cn(rowActionButtonClassName, selected && "bg-[var(--accent)] text-[var(--foreground)]")}
-            aria-label={`View suggestion ${draft.id}`}
-            title="View suggestion"
-          >
-            <Eye size="0.875rem" />
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              accept
-                .mutateAsync({ id: draft.id })
-                .then(() => toast.success("Suggestion kept"))
-                .catch((err: Error) => toast.error(err.message))
-            }
-            disabled={accept.isPending}
-            className={cn(
-              rowActionButtonClassName,
-              "bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary)]/85",
-            )}
-            aria-label={`Keep suggestion ${draft.id}`}
-            title="Keep suggestion"
-          >
-            <Check size="0.875rem" />
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              reject
-                .mutateAsync({ id: draft.id, reason: "Rejected from memory panel" })
-                .then(() => toast.success("Suggestion skipped"))
-                .catch((err: Error) => toast.error(err.message))
-            }
-            disabled={reject.isPending}
-            className={rowActionButtonClassName}
-            aria-label={`Skip suggestion ${draft.id}`}
-            title="Skip suggestion"
-          >
-            <X size="0.875rem" />
-          </button>
-        </div>
-      )}
-    </article>
-  );
-}
-
 function draftStatusTone(statusId: LtmExtractionDraft["status"]) {
   if (statusId === "pending") return "warn";
   if (statusId === "accepted" || statusId === "auto_applied") return "good";
@@ -2516,7 +2436,7 @@ export function LongTermMemoryPanel() {
     { status: "archived" },
     { enabled: archiveOpen || Boolean(viewingNoteId) || Boolean(editingNoteId) },
   );
-  const drafts = useLongTermMemoryDrafts({ status: "pending" });
+  const pendingSuggestionDrafts = useLongTermMemoryDrafts({ status: "pending" }, { enabled: tab === "notes" });
   const allDrafts = useLongTermMemoryDrafts(
     {},
     { enabled: archiveOpen || Boolean(viewingNoteId) || Boolean(viewingDraftId) || Boolean(editingDraftId) },
@@ -2550,6 +2470,10 @@ export function LongTermMemoryPanel() {
         Object.values(note.sections).some((section) => section.text.toLowerCase().includes(needle)),
     );
   }, [noteStatus, noteType, notes.data, query]);
+  const nonArchivedMemoryCount = useMemo(
+    () => (notes.data ?? []).filter((note) => note.status !== "archived").length,
+    [notes.data],
+  );
   const groupedFilteredNotes = useMemo(() => sourceSummaryGroups(filteredNotes), [filteredNotes]);
   const bucketFilteredNotes = useMemo(
     () =>
@@ -2559,8 +2483,15 @@ export function LongTermMemoryPanel() {
     [filteredNotes, noteType],
   );
   const groupedBucketNotes = useMemo(() => groupNotesByType(bucketFilteredNotes), [bucketFilteredNotes]);
+  const pendingSuggestionCountsBySource = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const draft of pendingSuggestionDrafts.data ?? []) {
+      if (!draft.source.sourceNoteId || !isTypedSuggestionDraft(draft) || isSourceMemoryDraft(draft)) continue;
+      counts.set(draft.source.sourceNoteId, (counts.get(draft.source.sourceNoteId) ?? 0) + draft.mutations.length);
+    }
+    return counts;
+  }, [pendingSuggestionDrafts.data]);
 
-  const filteredDrafts = useMemo(() => (drafts.data ?? []).filter(isSourceMemoryDraft), [drafts.data]);
   const archivedDrafts = useMemo(
     () => (allDrafts.data ?? []).filter((draft) => draft.status !== "pending"),
     [allDrafts.data],
@@ -2583,10 +2514,9 @@ export function LongTermMemoryPanel() {
     archivedDraftIds.length > 0 && archivedDraftIds.every((id) => selectedArchivedDraftIds.has(id));
   const combinedDrafts = useMemo(() => {
     const byId = new Map<string, LtmExtractionDraft>();
-    for (const draft of drafts.data ?? []) byId.set(draft.id, draft);
     for (const draft of allDrafts.data ?? []) byId.set(draft.id, draft);
     return [...byId.values()];
-  }, [allDrafts.data, drafts.data]);
+  }, [allDrafts.data]);
   const importRows = useMemo(() => importPreview.data?.samples ?? [], [importPreview.data?.samples]);
   const visibleImportRows = useMemo(
     () =>
@@ -2683,16 +2613,6 @@ export function LongTermMemoryPanel() {
       return;
     }
     setViewingNoteId(id);
-  };
-
-  const requestViewDraft = (id: string) => {
-    if (viewingDraftId === id) {
-      closeDraftViewer();
-      return;
-    }
-    setViewingNoteId(null);
-    setEditingDraftId(null);
-    setViewingDraftId(id);
   };
 
   const openSourceNote = (id: string) => {
@@ -3073,7 +2993,7 @@ export function LongTermMemoryPanel() {
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold leading-tight text-[var(--foreground)]">Story Memory</div>
             <div className="mt-1 flex flex-wrap gap-1.5">
-              <StatusPill label={`${status.data?.notes.total ?? 0} memories`} />
+              <StatusPill label={`${nonArchivedMemoryCount} memor${nonArchivedMemoryCount === 1 ? "y" : "ies"}`} />
               <StatusPill label={`${status.data?.indexes.chunkCount ?? 0} search chunks`} />
               <StatusPill label={integrity.data?.ok ? "Healthy" : "Needs check"} tone={statusTone} />
               <StatusPill
@@ -3104,8 +3024,8 @@ export function LongTermMemoryPanel() {
       </section>
 
       <div className="sticky top-0 z-10 -mx-3 bg-[var(--background)]/95 px-3 py-2 backdrop-blur-sm">
-        <div className="grid grid-cols-4 gap-1 rounded-lg bg-[var(--secondary)]/45 p-1 ring-1 ring-[var(--border)]/80">
-          {(["notes", "drafts", "tools", "import"] as TabId[]).map((id) => (
+        <div className="grid grid-cols-3 gap-1 rounded-lg bg-[var(--secondary)]/45 p-1 ring-1 ring-[var(--border)]/80">
+          {(["notes", "tools", "import"] as TabId[]).map((id) => (
             <button
               key={id}
               onClick={() => setTabWithGuards(id)}
@@ -3203,6 +3123,7 @@ export function LongTermMemoryPanel() {
                       key={group.orphaned ? `orphan:${group.source.id}` : `source:${group.source.id}`}
                       group={group}
                       noteLookup={noteLookup}
+                      pendingSuggestionCount={pendingSuggestionCountsBySource.get(group.source.id) ?? 0}
                       expanded={expandedSourceIds.has(group.source.id)}
                       viewingNoteId={viewingNoteId}
                       editingNoteId={editingNoteId}
@@ -3227,28 +3148,6 @@ export function LongTermMemoryPanel() {
                 )}
               </>
             )}
-          </div>
-        </Section>
-      )}
-
-      {tab === "drafts" && (
-        <Section title="Drafts">
-          <div className="space-y-2">
-            {filteredDrafts.length === 0 && (
-              <p className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]">
-                No suggestions need review.
-              </p>
-            )}
-            {filteredDrafts.map((draft) => (
-              <DraftRow
-                key={draft.id}
-                draft={draft}
-                noteLookup={noteLookup}
-                selected={viewingDraftId === draft.id}
-                onView={() => requestViewDraft(draft.id)}
-                onOpenSourceNote={openSourceNote}
-              />
-            ))}
           </div>
         </Section>
       )}
@@ -3459,7 +3358,7 @@ export function LongTermMemoryPanel() {
                     : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
                 )}
               >
-                {id === "notes" ? "Memories" : "Drafts"}
+                {id === "notes" ? "Memories" : "Archived Suggestions"}
               </button>
             ))}
           </div>
