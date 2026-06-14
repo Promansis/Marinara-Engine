@@ -3,7 +3,7 @@ import { Check, MessageCircle, Plus, Search, UserRound, X } from "lucide-react";
 import type { Chat } from "@marinara-engine/shared";
 import { useChats } from "../../hooks/use-chats";
 import { useCharacters } from "../../hooks/use-characters";
-import { getCharacterTitle, parseCharacterDisplayData } from "../../lib/character-display";
+import { parseCharacterDisplayData } from "../../lib/character-display";
 import { cn } from "../../lib/utils";
 
 export type LtmScopePickerValue = {
@@ -35,7 +35,7 @@ function chatLabel(chat: Chat | undefined, id: string) {
 function characterLabel(character: CharacterRow | undefined, id: string) {
   if (!character) return id;
   const display = parseCharacterDisplayData({ data: character.data, comment: character.comment });
-  return getCharacterTitle(display) ?? display.name ?? id;
+  return display.name.trim() || id;
 }
 
 export function LtmScopePicker({ value, onChange }: LtmScopePickerProps) {
