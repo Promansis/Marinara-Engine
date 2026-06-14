@@ -91,7 +91,6 @@ export type LtmSearchInput = {
   scope?: LtmScope;
   characterIds?: string[];
   includeGates?: LtmGate[];
-  includeArchived?: boolean;
   includeResolved?: boolean;
   includeSourceNotes?: boolean;
   debug?: boolean;

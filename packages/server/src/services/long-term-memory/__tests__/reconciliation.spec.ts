@@ -1511,6 +1511,57 @@ test("archived notes are moved out of the live vault and excluded from indexes",
   }
 });
 
+test("archived notes remain available to explicit archive management only", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-archive-display-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "world_archive_display",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: {
+            text: "Archived lore remains viewable in archive management.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    await storage.archiveNote("world_archive_display", { suppressEvent: true });
+
+    assert.equal(await storage.getNote("world_archive_display"), null);
+    assert.deepEqual(
+      (await storage.listNotes({ status: "archived" })).map((note) => note.id),
+      [],
+    );
+
+    const archived = await storage.listArchivedNotes({ status: "archived" });
+    assert.deepEqual(
+      archived.map((note) => note.id),
+      ["world_archive_display"],
+    );
+    assert.equal((await storage.getArchivedNote("world_archive_display"))?.status, "archived");
+
+    const restored = await storage.restoreArchivedNote(
+      "world_archive_display",
+      { status: "active" },
+      { suppressEvent: true },
+    );
+    assert.equal(restored.status, "active");
+    assert.equal((await storage.getNote("world_archive_display"))?.status, "active");
+    assert.equal(await storage.getArchivedNote("world_archive_display"), null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("evidence unit compiler maps buckets to typed memory draft mutations", () => {
   const cases: Array<[LtmEvidenceUnit["bucket"], string, string]> = [
     ["timeline_event", "timeline_mara_jules_archive", "timeline_event"],

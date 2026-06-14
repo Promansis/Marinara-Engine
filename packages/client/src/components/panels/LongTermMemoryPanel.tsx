@@ -2972,7 +2972,6 @@ export function LongTermMemoryPanel() {
         noteIds: [selectedWorkbenchNote.id],
         includeSourceNotes: true,
         includeResolved: true,
-        includeArchived: selectedWorkbenchNote.status === "archived",
         debug: true,
         maxChunks: 16,
         maxTokens: DEFAULT_LTM_BUDGET_TOKENS,

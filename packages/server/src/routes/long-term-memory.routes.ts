@@ -519,6 +519,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
 
   app.get<{ Querystring: unknown }>("/notes", async (req) => {
     const query = listNotesQuerySchema.parse(req.query);
+    if (query.status === "archived") return storage.listArchivedNotes(query);
     return storage.listNotes(query);
   });
 
@@ -629,7 +630,23 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
       const id = ltmNoteIdSchema.parse(req.params.id);
       const patch = updateNoteBodySchema.parse(req.body);
       const existing = await storage.getNote(id);
-      if (!existing) return reply.status(404).send({ error: "Long-term memory note not found" });
+      if (!existing) {
+        const archived = await storage.getArchivedNote(id);
+        if (!archived) return reply.status(404).send({ error: "Long-term memory note not found" });
+        if (patch.status && patch.status !== "archived") {
+          const restorePatch = { ...patch, status: patch.status };
+          return storage.restoreArchivedNote(id, restorePatch, {
+            actor: "maintenance_api",
+            cause: "api.restore",
+            summary: "Restored via long-term memory archive",
+          });
+        }
+        return storage.updateArchivedNote(id, patch, {
+          actor: "maintenance_api",
+          cause: "api.patch_archived",
+          summary: "Updated archived long-term memory note",
+        });
+      }
 
       return storage.updateNote(id, patch, {
         actor: "maintenance_api",
@@ -679,7 +696,16 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory note deletion" })) return;
     const id = ltmNoteIdSchema.parse(req.params.id);
     const existing = await storage.getNote(id);
-    if (!existing) return reply.status(404).send({ error: "Long-term memory note not found" });
+    if (!existing) {
+      const archived = await storage.getArchivedNote(id);
+      if (!archived) return reply.status(404).send({ error: "Long-term memory note not found" });
+      const note = await storage.deleteArchivedNote(id, {
+        actor: "maintenance_api",
+        cause: "api.delete_archived",
+        summary: "Deleted archived long-term memory note via maintenance API",
+      });
+      return { deleted: true, id: note.id };
+    }
 
     const note = await storage.deleteNote(id, {
       actor: "maintenance_api",
