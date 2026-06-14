@@ -28,14 +28,14 @@ function uniqueIds(values: string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 }
 
-function chatLabel(chat: Chat | undefined, id: string) {
-  return chat?.name?.trim() || id;
+function chatLabel(chat: Chat | undefined, _id: string) {
+  return chat?.name?.trim() || "Unknown Chat";
 }
 
-function characterLabel(character: CharacterRow | undefined, id: string) {
-  if (!character) return id;
+function characterLabel(character: CharacterRow | undefined, _id: string) {
+  if (!character) return "Unknown Character";
   const display = parseCharacterDisplayData({ data: character.data, comment: character.comment });
-  return display.name.trim() || id;
+  return display.name.trim() || "Unknown Character";
 }
 
 export function LtmScopePicker({ value, onChange }: LtmScopePickerProps) {

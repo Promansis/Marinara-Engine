@@ -53,8 +53,9 @@ import {
   type UpdateLongTermMemoryDraftInput,
   type LtmInteropSource,
 } from "../../hooks/use-long-term-memory";
+import type { Chat } from "@marinara-engine/shared";
 import { useChatStore } from "../../stores/chat.store";
-import { useChat, useUpdateChatMetadata } from "../../hooks/use-chats";
+import { useChat, useChats, useUpdateChatMetadata } from "../../hooks/use-chats";
 import { cn } from "../../lib/utils";
 import {
   CreateLongTermMemoryNoteForm,
@@ -524,8 +525,8 @@ function sourceSummaryEvidenceValue(note: LtmNote, prefix: string) {
   return item?.slice(prefix.length).trim();
 }
 
-function sourceSummaryChatName(note: LtmNote) {
-  return sourceSummaryEvidenceValue(note, "chat_name:") || friendlyIdentifier(note.scope.chatId ?? note.id);
+function sourceSummaryChatName(note: LtmNote, chatLookup?: Map<string, Chat>) {
+  return sourceSummaryEvidenceValue(note, "chat_name:") || chatLookup?.get(note.scope.chatId ?? "")?.name || "Unknown Chat";
 }
 
 function sourceSummaryMessageRange(note: LtmNote) {
@@ -553,14 +554,14 @@ function isSourceSummaryNote(note: LtmNote) {
   return note.type === "source" || isChatSummarySourceNote(note);
 }
 
-function sourceSummaryTitle(note: LtmNote) {
-  const chatName = sourceSummaryChatName(note);
+function sourceSummaryTitle(note: LtmNote, chatLookup?: Map<string, Chat>) {
+  const chatName = sourceSummaryChatName(note, chatLookup);
   const range = sourceSummaryMessageRange(note);
   return `${chatName}, msgs ${range}`;
 }
 
-function sourceNoteTitle(note: LtmNote) {
-  return isChatSummarySourceNote(note) ? sourceSummaryTitle(note) : friendlyNoteTitle(note);
+function sourceNoteTitle(note: LtmNote, chatLookup?: Map<string, Chat>) {
+  return isChatSummarySourceNote(note) ? sourceSummaryTitle(note, chatLookup) : friendlyNoteTitle(note);
 }
 
 function sourceLinkIds(note: LtmNote) {
@@ -571,15 +572,15 @@ function buildNoteLookup(notes: LtmNote[]) {
   return new Map(notes.map((note) => [note.id, note] as const));
 }
 
-function noteReferenceLabel(noteId: string, noteLookup: Map<string, LtmNote>) {
+function noteReferenceLabel(noteId: string, noteLookup: Map<string, LtmNote>, chatLookup?: Map<string, Chat>) {
   const note = noteLookup.get(noteId);
-  if (!note) return friendlyIdentifier(noteId);
-  return isSourceSummaryNote(note) ? sourceNoteTitle(note) : friendlyNoteTitle(note);
+  if (!note) return "Unknown Memory";
+  return isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : friendlyNoteTitle(note);
 }
 
-function sourceReferenceLabel(sourceNoteId: string, noteLookup: Map<string, LtmNote>) {
+function sourceReferenceLabel(sourceNoteId: string, noteLookup: Map<string, LtmNote>, chatLookup?: Map<string, Chat>) {
   const note = noteLookup.get(sourceNoteId);
-  return note ? sourceNoteTitle(note) : friendlyIdentifier(sourceNoteId);
+  return note ? sourceNoteTitle(note, chatLookup) : "Unknown Source";
 }
 
 const TIMELINE_LINK_RELATIONS = new Set(["occurred_in", "triggered_by", "resolved_in", "evidenced_by"]);
@@ -599,7 +600,7 @@ function isDerivedFromSource(note: LtmNote, sourceNoteId: string) {
   return note.links.some((link) => link.relation === "extracted_from" && link.target === sourceNoteId);
 }
 
-function sourceSummaryGroups(notes: LtmNote[]): SourceSummaryGroup[] {
+function sourceSummaryGroups(notes: LtmNote[], chatLookup?: Map<string, Chat>): SourceSummaryGroup[] {
   const sourceNotes = notes.filter(isSourceSummaryNote);
   const sourceIds = new Set(sourceNotes.map((note) => note.id));
   const groups = new Map<string, SourceSummaryGroup>();
@@ -624,8 +625,8 @@ function sourceSummaryGroups(notes: LtmNote[]): SourceSummaryGroup[] {
       const leftTime = Date.parse(left.source.updatedAt);
       const rightTime = Date.parse(right.source.updatedAt);
       if (!Number.isNaN(leftTime) && !Number.isNaN(rightTime) && leftTime !== rightTime) return rightTime - leftTime;
-      return (left.orphaned ? friendlyNoteTitle(left.source) : sourceNoteTitle(left.source)).localeCompare(
-        right.orphaned ? friendlyNoteTitle(right.source) : sourceNoteTitle(right.source),
+      return (left.orphaned ? friendlyNoteTitle(left.source) : sourceNoteTitle(left.source, chatLookup)).localeCompare(
+        right.orphaned ? friendlyNoteTitle(right.source) : sourceNoteTitle(right.source, chatLookup),
       );
     });
 }
@@ -657,7 +658,7 @@ function sourceTypeLabel(note: LtmNote) {
   return note.type === "source" ? "Source note" : "Manual memory";
 }
 
-function EvidencePills({ note, noteLookup }: { note: LtmNote; noteLookup: Map<string, LtmNote> }) {
+function EvidencePills({ note, noteLookup, chatLookup }: { note: LtmNote; noteLookup: Map<string, LtmNote>; chatLookup?: Map<string, Chat> }) {
   const sourceIds = sourceLinkIds(note);
   const timelineLinks = timelineLinksForNote(note, noteLookup);
   const conflictCount = pendingConflictCount(note);
@@ -677,13 +678,13 @@ function EvidencePills({ note, noteLookup }: { note: LtmNote; noteLookup: Map<st
   return (
     <div className="mt-1 flex flex-wrap gap-1.5">
       {sourceIds.slice(0, 3).map((sourceId) => (
-        <StatusPill key={sourceId} label={`From: ${sourceReferenceLabel(sourceId, noteLookup)}`} />
+        <StatusPill key={sourceId} label={`From: ${sourceReferenceLabel(sourceId, noteLookup, chatLookup)}`} />
       ))}
       {sourceIds.length > 3 && <StatusPill label={`+${sourceIds.length - 3} sources`} />}
       {timelineLinks.slice(0, 2).map((link, index) => (
         <StatusPill
           key={`${link.relation}:${link.target}:${index}`}
-          label={`Timeline: ${noteReferenceLabel(link.target, noteLookup)}`}
+          label={`Timeline: ${noteReferenceLabel(link.target, noteLookup, chatLookup)}`}
         />
       ))}
       {timelineLinks.length > 2 && <StatusPill label={`+${timelineLinks.length - 2} timeline links`} />}
@@ -697,6 +698,7 @@ function EvidencePills({ note, noteLookup }: { note: LtmNote; noteLookup: Map<st
 function SourceSummaryGroupRow({
   group,
   noteLookup,
+  chatLookup,
   pendingSuggestionCount,
   expanded,
   viewingNoteId,
@@ -708,6 +710,7 @@ function SourceSummaryGroupRow({
 }: {
   group: SourceSummaryGroup;
   noteLookup: Map<string, LtmNote>;
+  chatLookup?: Map<string, Chat>;
   pendingSuggestionCount: number;
   expanded: boolean;
   viewingNoteId: string | null;
@@ -717,7 +720,7 @@ function SourceSummaryGroupRow({
   onEdit: (id: string) => void;
   onArchive: (note: LtmNote) => void;
 }) {
-  const sourceTitle = group.orphaned ? friendlyNoteTitle(group.source) : sourceNoteTitle(group.source);
+  const sourceTitle = group.orphaned ? friendlyNoteTitle(group.source) : sourceNoteTitle(group.source, chatLookup);
   const sourceText = noteTextPreview(group.source);
   const derivedGroups = groupNotesByType(group.derived);
   const timelineCount = new Set([
@@ -735,7 +738,7 @@ function SourceSummaryGroupRow({
         onEdit={() => onEdit(group.source.id)}
         onArchive={() => onArchive(group.source)}
       >
-        <EvidencePills note={group.source} noteLookup={noteLookup} />
+        <EvidencePills note={group.source} noteLookup={noteLookup} chatLookup={chatLookup} />
         {sourceLinkIds(group.source).length === 0 && (
           <div className="mt-1">
             <StatusPill label="Manual or orphaned" />
@@ -854,7 +857,7 @@ function SourceSummaryGroupRow({
                           <StatusPill label={`${sourceLinkIds(derivedNote).length} sources`} />
                         )}
                       </div>
-                      <EvidencePills note={derivedNote} noteLookup={noteLookup} />
+                      <EvidencePills note={derivedNote} noteLookup={noteLookup} chatLookup={chatLookup} />
                     </div>
                     <div className="flex shrink-0 items-center gap-0.5">
                       <button
@@ -919,6 +922,7 @@ function TypeMemoryGroups({
   onView,
   onEdit,
   onArchive,
+  chatLookup,
 }: {
   groups: LtmBucketGroup[];
   noteLookup: Map<string, LtmNote>;
@@ -929,6 +933,7 @@ function TypeMemoryGroups({
   onView: (id: string) => void;
   onEdit: (id: string) => void;
   onArchive: (note: LtmNote) => void;
+  chatLookup?: Map<string, Chat>;
 }) {
   if (groups.length === 0) {
     return (
@@ -994,7 +999,7 @@ function TypeMemoryGroups({
                       </button>
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={note.id}>
-                          {isSourceSummaryNote(note) ? sourceNoteTitle(note) : friendlyNoteTitle(note)}
+                          {isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : friendlyNoteTitle(note)}
                         </div>
                         <p className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
                           {note.type === "source"
@@ -1008,7 +1013,7 @@ function TypeMemoryGroups({
                           />
                           {sourceIds.length === 0 && note.type !== "source" && <StatusPill label="Manual" />}
                         </div>
-                        <EvidencePills note={note} noteLookup={noteLookup} />
+                        <EvidencePills note={note} noteLookup={noteLookup} chatLookup={chatLookup} />
                         {expanded && (
                           <div className="mt-2 space-y-1.5 rounded-lg bg-[var(--background)]/35 p-2 ring-1 ring-[var(--border)]/70">
                             {sourceIds.length === 0 ? (
@@ -1027,7 +1032,7 @@ function TypeMemoryGroups({
                                   >
                                     <div className="flex flex-wrap items-center gap-1.5">
                                       <span className="min-w-0 truncate text-xs font-medium text-[var(--foreground)]">
-                                        {sourceReferenceLabel(sourceId, noteLookup)}
+                                        {sourceReferenceLabel(sourceId, noteLookup, chatLookup)}
                                       </span>
                                       {source && <StatusPill label={friendlyStatus(source.status)} tone="neutral" />}
                                     </div>
@@ -1114,6 +1119,7 @@ function ArchivedSourceSummaryGroupRow({
   onEdit,
   onRestore,
   onDelete,
+  chatLookup,
 }: {
   group: SourceSummaryGroup;
   viewingNoteId: string | null;
@@ -1124,6 +1130,7 @@ function ArchivedSourceSummaryGroupRow({
   onEdit: (id: string) => void;
   onRestore: (note: LtmNote) => void;
   onDelete: (note: LtmNote) => void;
+  chatLookup?: Map<string, Chat>;
 }) {
   const groupIds = sourceGroupNoteIds(group);
   const allSelected = groupIds.every((id) => selectedNoteIds.has(id));
@@ -1144,7 +1151,7 @@ function ArchivedSourceSummaryGroupRow({
     );
   }
 
-  const sourceTitle = sourceNoteTitle(group.source);
+  const sourceTitle = sourceNoteTitle(group.source, chatLookup);
   const sourceText =
     group.source.sections.summary?.text.trim() ||
     group.source.sections.core?.text.trim() ||
@@ -1385,14 +1392,16 @@ function MutationPreview({ mutation }: { mutation: LtmDraftMutation }) {
 function SourceNoteReference({
   sourceNoteId,
   noteLookup,
+  chatLookup,
   onOpenSourceNote,
 }: {
   sourceNoteId?: string;
   noteLookup?: Map<string, LtmNote>;
+  chatLookup?: Map<string, Chat>;
   onOpenSourceNote?: (noteId: string) => void;
 }) {
   if (!sourceNoteId) return null;
-  const label = noteLookup ? sourceReferenceLabel(sourceNoteId, noteLookup) : friendlyIdentifier(sourceNoteId);
+  const label = noteLookup ? sourceReferenceLabel(sourceNoteId, noteLookup, chatLookup) : friendlyIdentifier(sourceNoteId);
   if (onOpenSourceNote) {
     return (
       <button
@@ -1411,10 +1420,12 @@ function SourceNoteReference({
 function DraftMetadataPills({
   draft,
   noteLookup,
+  chatLookup,
   onOpenSourceNote,
 }: {
   draft: LtmExtractionDraft;
   noteLookup?: Map<string, LtmNote>;
+  chatLookup?: Map<string, Chat>;
   onOpenSourceNote?: (noteId: string) => void;
 }) {
   const { highestRisk, averageConfidence, evidenceCount } = draftRiskSummary(draft);
@@ -1426,13 +1437,14 @@ function DraftMetadataPills({
       <SourceNoteReference
         sourceNoteId={draft.source.sourceNoteId}
         noteLookup={noteLookup}
+        chatLookup={chatLookup}
         onOpenSourceNote={onOpenSourceNote}
       />
     </div>
   );
 }
 
-function GraphLinks({ links, noteLookup }: { links: LtmLink[]; noteLookup: Map<string, LtmNote> }) {
+function GraphLinks({ links, noteLookup, chatLookup }: { links: LtmLink[]; noteLookup: Map<string, LtmNote>; chatLookup?: Map<string, Chat> }) {
   if (links.length === 0) {
     return (
       <p className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-3 text-xs text-[var(--muted-foreground)]">
@@ -1452,7 +1464,7 @@ function GraphLinks({ links, noteLookup }: { links: LtmLink[]; noteLookup: Map<s
             {friendlyIdentifier(link.relation)}
           </span>
           <span className="min-w-0 truncate text-[var(--foreground)]" title={link.target}>
-            {noteReferenceLabel(link.target, noteLookup)}
+            {noteReferenceLabel(link.target, noteLookup, chatLookup)}
           </span>
         </div>
       ))}
@@ -1464,12 +1476,14 @@ function DerivedActiveMemories({
   sourceNote,
   activeNotes,
   noteLookup,
+  chatLookup,
   loading,
   onOpenNote,
 }: {
   sourceNote: LtmNote;
   activeNotes: LtmNote[];
   noteLookup: Map<string, LtmNote>;
+  chatLookup?: Map<string, Chat>;
   loading: boolean;
   onOpenNote?: (noteId: string) => void;
 }) {
@@ -1532,7 +1546,7 @@ function DerivedActiveMemories({
                     <p className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
                       {noteTextPreview(derivedNote) || "No summary text."}
                     </p>
-                    <EvidencePills note={derivedNote} noteLookup={noteLookup} />
+                    <EvidencePills note={derivedNote} noteLookup={noteLookup} chatLookup={chatLookup} />
                   </button>
                 ))}
               </div>
@@ -1548,12 +1562,14 @@ function NoteViewModalContent({
   note,
   activeNotes,
   noteLookup,
+  chatLookup,
   activeNotesLoading,
   onOpenSourceNote,
 }: {
   note: LtmNote;
   activeNotes: LtmNote[];
   noteLookup: Map<string, LtmNote>;
+  chatLookup?: Map<string, Chat>;
   activeNotesLoading: boolean;
   onOpenSourceNote?: (noteId: string) => void;
 }) {
@@ -1598,7 +1614,7 @@ function NoteViewModalContent({
 
       <section className="space-y-2">
         <h3 className="text-xs font-semibold text-[var(--foreground)]">Related Memories</h3>
-        <GraphLinks links={note.links} noteLookup={noteLookup} />
+        <GraphLinks links={note.links} noteLookup={noteLookup} chatLookup={chatLookup} />
       </section>
 
       {isSourceNote && (
@@ -1606,6 +1622,7 @@ function NoteViewModalContent({
           sourceNote={note}
           activeNotes={activeNotes}
           noteLookup={noteLookup}
+          chatLookup={chatLookup}
           loading={activeNotesLoading}
           onOpenNote={onOpenSourceNote}
         />
@@ -1628,6 +1645,7 @@ function MemoryOverviewPanel({
   note,
   activeNotes,
   noteLookup,
+  chatLookup,
   activeNotesLoading,
   pendingSuggestionCount,
   onOpenNote,
@@ -1635,6 +1653,7 @@ function MemoryOverviewPanel({
   note: LtmNote;
   activeNotes: LtmNote[];
   noteLookup: Map<string, LtmNote>;
+  chatLookup?: Map<string, Chat>;
   activeNotesLoading: boolean;
   pendingSuggestionCount: number;
   onOpenNote: (noteId: string) => void;
@@ -1687,7 +1706,7 @@ function MemoryOverviewPanel({
                 >
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="min-w-0 truncate text-xs font-medium text-[var(--foreground)]">
-                      {sourceReferenceLabel(sourceId, noteLookup)}
+                      {sourceReferenceLabel(sourceId, noteLookup, chatLookup)}
                     </span>
                     {source && <StatusPill label={friendlyStatus(source.status)} tone="neutral" />}
                   </div>
@@ -1701,7 +1720,7 @@ function MemoryOverviewPanel({
             })}
           </div>
         ) : (
-          <GraphLinks links={note.links} noteLookup={noteLookup} />
+          <GraphLinks links={note.links} noteLookup={noteLookup} chatLookup={chatLookup} />
         )}
       </section>
 
@@ -1710,6 +1729,7 @@ function MemoryOverviewPanel({
           sourceNote={note}
           activeNotes={activeNotes}
           noteLookup={noteLookup}
+          chatLookup={chatLookup}
           loading={activeNotesLoading}
           onOpenNote={onOpenNote}
         />
@@ -1894,12 +1914,14 @@ function MemorySuggestionsPanel({
   note,
   drafts,
   noteLookup,
+  chatLookup,
   onViewDraft,
   onOpenSourceNote,
 }: {
   note: LtmNote;
   drafts: LtmExtractionDraft[];
   noteLookup: Map<string, LtmNote>;
+  chatLookup?: Map<string, Chat>;
   onViewDraft: (draftId: string) => void;
   onOpenSourceNote: (noteId: string) => void;
 }) {
@@ -1929,7 +1951,7 @@ function MemorySuggestionsPanel({
           className="w-full rounded-lg bg-[var(--secondary)]/35 p-3 text-left ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
         >
           <div className="truncate text-xs font-semibold text-[var(--foreground)]">{draft.summary || draft.id}</div>
-          <DraftMetadataPills draft={draft} noteLookup={noteLookup} onOpenSourceNote={onOpenSourceNote} />
+          <DraftMetadataPills draft={draft} noteLookup={noteLookup} chatLookup={chatLookup} onOpenSourceNote={onOpenSourceNote} />
         </button>
       ))}
     </div>
@@ -1952,10 +1974,12 @@ function draftStatusLabel(statusId: LtmExtractionDraft["status"]) {
 function DraftDetails({
   draft,
   noteLookup,
+  chatLookup,
   onOpenSourceNote,
 }: {
   draft: LtmExtractionDraft;
   noteLookup?: Map<string, LtmNote>;
+  chatLookup?: Map<string, Chat>;
   onOpenSourceNote?: (noteId: string) => void;
 }) {
   const { highestRisk, averageConfidence, evidenceCount } = draftRiskSummary(draft);
@@ -1979,6 +2003,7 @@ function DraftDetails({
             <SourceNoteReference
               sourceNoteId={draft.source.sourceNoteId}
               noteLookup={noteLookup}
+              chatLookup={chatLookup}
               onOpenSourceNote={onOpenSourceNote}
             />
           </div>
@@ -2068,6 +2093,7 @@ function DraftJsonEditor({
 function ArchivedDraftRow({
   draft,
   noteLookup,
+  chatLookup,
   selected,
   bulkSelected,
   onView,
@@ -2079,6 +2105,7 @@ function ArchivedDraftRow({
 }: {
   draft: LtmExtractionDraft;
   noteLookup?: Map<string, LtmNote>;
+  chatLookup?: Map<string, Chat>;
   selected: boolean;
   bulkSelected?: boolean;
   onView: () => void;
@@ -2114,7 +2141,7 @@ function ArchivedDraftRow({
           <StatusPill label={draftStatusLabel(draft.status)} tone={draftStatusTone(draft.status)} />
           <StatusPill label={`${draft.mutations.length} suggested change${draft.mutations.length === 1 ? "" : "s"}`} />
         </div>
-        <DraftMetadataPills draft={draft} noteLookup={noteLookup} onOpenSourceNote={onOpenSourceNote} />
+        <DraftMetadataPills draft={draft} noteLookup={noteLookup} chatLookup={chatLookup} onOpenSourceNote={onOpenSourceNote} />
         <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]/80">Internal ID: {draft.id}</div>
       </div>
       <div className={rowActionPillClassName}>
@@ -2743,6 +2770,9 @@ export function LongTermMemoryPanel() {
   const [viewingDraftId, setViewingDraftId] = useState<string | null>(null);
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
 
+  const { data: chats } = useChats();
+  const chatLookup = useMemo(() => new Map((chats as Chat[] | undefined)?.map((c) => [c.id, c])), [chats]);
+
   const status = useLongTermMemoryStatus();
   const integrity = useLongTermMemoryIntegrity();
   const notes = useLongTermMemoryNotes();
@@ -2790,7 +2820,7 @@ export function LongTermMemoryPanel() {
     () => (notes.data ?? []).filter((note) => note.status !== "archived").length,
     [notes.data],
   );
-  const groupedFilteredNotes = useMemo(() => sourceSummaryGroups(filteredNotes), [filteredNotes]);
+  const groupedFilteredNotes = useMemo(() => sourceSummaryGroups(filteredNotes, chatLookup), [filteredNotes, chatLookup]);
   const bucketFilteredNotes = useMemo(
     () =>
       noteType === "source"
@@ -2813,7 +2843,7 @@ export function LongTermMemoryPanel() {
     [allDrafts.data],
   );
   const archivedMemoryNotes = useMemo(() => archivedNotes.data ?? [], [archivedNotes.data]);
-  const groupedArchivedMemoryNotes = useMemo(() => sourceSummaryGroups(archivedMemoryNotes), [archivedMemoryNotes]);
+  const groupedArchivedMemoryNotes = useMemo(() => sourceSummaryGroups(archivedMemoryNotes, chatLookup), [archivedMemoryNotes, chatLookup]);
   const archivedNoteIds = useMemo(() => archivedMemoryNotes.map((note) => note.id), [archivedMemoryNotes]);
   const archivedDraftIds = useMemo(() => archivedDrafts.map((draft) => draft.id), [archivedDrafts]);
   const selectedArchivedNotes = useMemo(
@@ -3484,6 +3514,7 @@ export function LongTermMemoryPanel() {
                         key={group.orphaned ? `orphan:${group.source.id}` : `source:${group.source.id}`}
                         group={group}
                         noteLookup={noteLookup}
+                        chatLookup={chatLookup}
                         pendingSuggestionCount={pendingSuggestionCountsBySource.get(group.source.id) ?? 0}
                         expanded={expandedSourceIds.has(group.source.id)}
                         viewingNoteId={selectedWorkbenchNoteId}
@@ -3498,6 +3529,7 @@ export function LongTermMemoryPanel() {
                     <TypeMemoryGroups
                       groups={groupedBucketNotes}
                       noteLookup={noteLookup}
+                      chatLookup={chatLookup}
                       expandedMemoryIds={expandedMemoryIds}
                       viewingNoteId={selectedWorkbenchNoteId}
                       editingNoteId={editingNoteId}
@@ -3597,6 +3629,7 @@ export function LongTermMemoryPanel() {
                       note={selectedWorkbenchNote}
                       activeNotes={activeNotes.data ?? []}
                       noteLookup={noteLookup}
+                      chatLookup={chatLookup}
                       activeNotesLoading={activeNotes.isLoading}
                       pendingSuggestionCount={selectedWorkbenchPendingMutationCount}
                       onOpenNote={openSourceNote}
@@ -3618,6 +3651,7 @@ export function LongTermMemoryPanel() {
                       note={selectedWorkbenchNote}
                       drafts={selectedWorkbenchPendingDrafts}
                       noteLookup={noteLookup}
+                      chatLookup={chatLookup}
                       onViewDraft={(draftId) => {
                         setEditingDraftId(null);
                         setViewingDraftId(draftId);
@@ -3891,16 +3925,17 @@ export function LongTermMemoryPanel() {
               )}
               {groupedArchivedMemoryNotes.map((group) => (
                 <ArchivedSourceSummaryGroupRow
-                  key={`${group.source.id}:${group.derived.map((note) => note.id).join(":")}`}
+                  key={group.source.id}
                   group={group}
-                  viewingNoteId={viewingNoteId}
+                  viewingNoteId={selectedWorkbenchNoteId}
                   editingNoteId={editingNoteId}
                   selectedNoteIds={selectedArchivedNoteIds}
                   onSelect={setArchivedNotesSelected}
                   onView={requestViewNote}
                   onEdit={requestEditNote}
-                  onRestore={restoreNote}
+                  onRestore={(n) => restoreNote(n)}
                   onDelete={deleteArchivedNote}
+                  chatLookup={chatLookup}
                 />
               ))}
             </div>
@@ -3961,6 +3996,7 @@ export function LongTermMemoryPanel() {
                   key={draft.id}
                   draft={draft}
                   noteLookup={noteLookup}
+                  chatLookup={chatLookup}
                   selected={viewingDraftId === draft.id || editingDraftId === draft.id}
                   bulkSelected={selectedArchivedDraftIds.has(draft.id)}
                   onSelect={(selected) => setArchivedDraftsSelected([draft.id], selected)}
@@ -4018,6 +4054,7 @@ export function LongTermMemoryPanel() {
             note={viewingNote}
             activeNotes={activeNotes.data ?? []}
             noteLookup={noteLookup}
+            chatLookup={chatLookup}
             activeNotesLoading={activeNotes.isLoading}
             onOpenSourceNote={openSourceNote}
           />
@@ -4053,7 +4090,7 @@ export function LongTermMemoryPanel() {
         width="max-w-4xl"
       >
         {viewingDraft && (
-          <DraftDetails draft={viewingDraft} noteLookup={noteLookup} onOpenSourceNote={openSourceNote} />
+          <DraftDetails draft={viewingDraft} noteLookup={noteLookup} chatLookup={chatLookup} onOpenSourceNote={openSourceNote} />
         )}
       </Modal>
 

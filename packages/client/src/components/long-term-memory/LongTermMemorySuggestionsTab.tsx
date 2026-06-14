@@ -7,6 +7,7 @@ import {
   useDeleteLongTermMemoryDraft,
   useExtractLongTermMemorySourceNote,
   useLongTermMemoryDrafts,
+  useLongTermMemoryNotes,
   useRejectLongTermMemoryDraft,
   useUpdateLongTermMemoryDraft,
   type LtmExtractionDiagnostic,
@@ -111,7 +112,7 @@ function mutationTargetTitle(mutation: LtmDraftMutation) {
   return friendlyIdentifier(mutation.noteId);
 }
 
-function compactMutationText(mutation: LtmDraftMutation) {
+function compactMutationText(mutation: LtmDraftMutation, noteLookup: Map<string, LtmNote>) {
   if (mutation.kind === "create_note") {
     const first = firstSectionEntry(mutation);
     return first?.[1].text ?? "";
@@ -119,7 +120,9 @@ function compactMutationText(mutation: LtmDraftMutation) {
   if (mutation.kind === "append_section") return mutation.text;
   if (mutation.kind === "update_section") return mutation.section.text;
   if (mutation.kind === "add_link") {
-    return `${friendlyIdentifier(mutation.link.relation)}: ${friendlyIdentifier(mutation.link.target)}`;
+    const targetNote = noteLookup.get(mutation.link.target);
+    const targetLabel = targetNote ? friendlyNoteTitle(targetNote) : friendlyIdentifier(mutation.link.target);
+    return `${friendlyIdentifier(mutation.link.relation)}: ${targetLabel}`;
   }
   if (mutation.kind === "set_status") return friendlyStatus(mutation.status);
   return `${friendlyIdentifier(mutation.conflict.field)}: ${mutation.conflict.proposed}`;
@@ -186,6 +189,8 @@ function ExtractionDiagnosticsList({ diagnostics }: { diagnostics: LtmExtraction
 
 export function LongTermMemorySuggestionsTab({ note }: { note: LtmNote }) {
   const drafts = useLongTermMemoryDrafts({}, { enabled: isSourceMemory(note) });
+  const notes = useLongTermMemoryNotes();
+  const noteLookup = useMemo(() => new Map((notes.data ?? []).map((n) => [n.id, n])), [notes.data]);
   const extractSourceNote = useExtractLongTermMemorySourceNote();
   const [includeExistingNotes, setIncludeExistingNotes] = useState(true);
   const [autoApplySafeChanges, setAutoApplySafeChanges] = useState(false);
@@ -284,15 +289,15 @@ export function LongTermMemorySuggestionsTab({ note }: { note: LtmNote }) {
         </p>
       ) : (
         <div className="space-y-3">
-          <SuggestionDrawer title="New" rows={newRows} />
-          <SuggestionDrawer title="Rewrite" rows={rewriteRows} />
+          <SuggestionDrawer title="New" rows={newRows} noteLookup={noteLookup} />
+          <SuggestionDrawer title="Rewrite" rows={rewriteRows} noteLookup={noteLookup} />
         </div>
       )}
     </div>
   );
 }
 
-function SuggestionDrawer({ title, rows }: { title: "New" | "Rewrite"; rows: SuggestionRowModel[] }) {
+function SuggestionDrawer({ title, rows, noteLookup }: { title: "New" | "Rewrite"; rows: SuggestionRowModel[]; noteLookup: Map<string, LtmNote> }) {
   const [open, setOpen] = useState(true);
   return (
     <section className="rounded-lg bg-[var(--secondary)]/25 ring-1 ring-[var(--border)]">
@@ -314,7 +319,7 @@ function SuggestionDrawer({ title, rows }: { title: "New" | "Rewrite"; rows: Sug
               No {title.toLowerCase()} suggestions.
             </p>
           ) : (
-            rows.map((row) => <SuggestionRow key={`${row.draft.id}:${row.mutation.id}`} row={row} />)
+            rows.map((row) => <SuggestionRow key={`${row.draft.id}:${row.mutation.id}`} row={row} noteLookup={noteLookup} />)
           )}
         </div>
       )}
@@ -322,7 +327,7 @@ function SuggestionDrawer({ title, rows }: { title: "New" | "Rewrite"; rows: Sug
   );
 }
 
-function SuggestionRow({ row }: { row: SuggestionRowModel }) {
+function SuggestionRow({ row, noteLookup }: { row: SuggestionRowModel; noteLookup: Map<string, LtmNote> }) {
   const { draft, mutation } = row;
   const accept = useAcceptLongTermMemoryDraft();
   const reject = useRejectLongTermMemoryDraft();
@@ -398,7 +403,7 @@ function SuggestionRow({ row }: { row: SuggestionRowModel }) {
             {mutationTargetTitle(mutation)}
           </div>
           <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-xs leading-relaxed text-[var(--foreground)]">
-            {compactMutationText(mutation)}
+            {compactMutationText(mutation, noteLookup)}
           </p>
         </div>
         <div className="flex flex-wrap gap-1.5">
@@ -429,7 +434,7 @@ function SuggestionRow({ row }: { row: SuggestionRowModel }) {
           </ToolButton>
         </div>
       </div>
-      {editing && <SuggestionMutationEditor mutation={mutation} onSave={saveMutation} saving={updateDraft.isPending} />}
+      {editing && <SuggestionMutationEditor mutation={mutation} onSave={saveMutation} saving={updateDraft.isPending} noteLookup={noteLookup} />}
     </article>
   );
 }
@@ -438,10 +443,12 @@ function SuggestionMutationEditor({
   mutation,
   onSave,
   saving,
+  noteLookup,
 }: {
   mutation: LtmDraftMutation;
   onSave: (mutation: LtmDraftMutation) => void;
   saving?: boolean;
+  noteLookup: Map<string, LtmNote>;
 }) {
   const [draft, setDraft] = useState(mutation);
   const setCommon = (patch: Partial<Pick<LtmDraftMutation, "summary" | "risk" | "confidence" | "evidence">>) => {
@@ -494,7 +501,7 @@ function SuggestionMutationEditor({
           className={cn(textareaClassName, "min-h-16")}
         />
       </SettingField>
-      <MutationSpecificFields mutation={draft} onChange={setDraft} />
+      <MutationSpecificFields mutation={draft} onChange={setDraft} noteLookup={noteLookup} />
       <div className="flex justify-end">
         <ToolButton onClick={() => onSave(draft)} disabled={saving} tone="primary">
           {saving ? <Loader2 size="0.875rem" className="animate-spin" /> : <Save size="0.875rem" />}
@@ -508,9 +515,11 @@ function SuggestionMutationEditor({
 function MutationSpecificFields({
   mutation,
   onChange,
+  noteLookup,
 }: {
   mutation: LtmDraftMutation;
   onChange: (mutation: LtmDraftMutation) => void;
+  noteLookup: Map<string, LtmNote>;
 }) {
   if (mutation.kind === "create_note") {
     const firstSection = firstSectionEntry(mutation);
@@ -661,10 +670,15 @@ function MutationSpecificFields({
   }
 
   if (mutation.kind === "add_link") {
+    const targetNote = noteLookup.get(mutation.link.target);
+    const targetLabel = targetNote ? friendlyNoteTitle(targetNote) : friendlyIdentifier(mutation.link.target);
+    const sourceNote = noteLookup.get(mutation.noteId);
+    const sourceLabel = sourceNote ? friendlyNoteTitle(sourceNote) : friendlyIdentifier(mutation.noteId);
+
     return (
       <div className="grid gap-2 sm:grid-cols-3">
         <SettingField label="Target memory">
-          <input value={friendlyIdentifier(mutation.noteId)} readOnly className={compactInputClassName} />
+          <input value={sourceLabel} readOnly className={compactInputClassName} title={mutation.noteId} />
         </SettingField>
         <SettingField label="Relation">
           <input
@@ -677,11 +691,12 @@ function MutationSpecificFields({
         </SettingField>
         <SettingField label="Related memory">
           <input
-            value={friendlyIdentifier(mutation.link.target)}
+            value={targetLabel}
             onChange={(event) =>
               onChange({ ...mutation, link: { ...mutation.link, target: normalizeIdentifier(event.target.value, "note") } })
             }
             className={compactInputClassName}
+            title={mutation.link.target}
           />
         </SettingField>
       </div>
