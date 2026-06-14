@@ -48,7 +48,7 @@ export const DEFAULT_LTM_EXTRACTION_PROMPT = [
 ].join("\n");
 export const DEFAULT_LTM_EXTRACTION_REASONING_EFFORT = "low" satisfies NonNullable<ChatOptions["reasoningEffort"]>;
 export const DEFAULT_LTM_EXTRACTION_VERBOSITY = "low" satisfies NonNullable<ChatOptions["verbosity"]>;
-export const DEFAULT_LTM_EXTRACTION_MAX_TOKENS = 3200;
+export const DEFAULT_LTM_EXTRACTION_MAX_TOKENS = 8192;
 export const DEFAULT_LTM_EXTRACTION_MAX_SOURCE_CHARS = 24_000;
 export const DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS = 12_000;
 const LTM_EXTRACTION_BUCKET_SCAN_ORDER = [
@@ -125,6 +125,97 @@ function extractJsonObject(text: string) {
   const start = trimmed.indexOf("{");
   const end = trimmed.lastIndexOf("}");
   return start >= 0 && end > start ? trimmed.slice(start, end + 1) : trimmed;
+}
+
+function repairTruncatedJson(raw: string): string {
+  let out = "";
+  let inString = false;
+  let escape = false;
+  const depth: Array<"object" | "array"> = [];
+
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i];
+    out += ch;
+
+    if (escape) {
+      escape = false;
+      continue;
+    }
+
+    if (ch === "\\" && inString) {
+      escape = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (ch === "{") {
+      depth.push("object");
+    } else if (ch === "[") {
+      depth.push("array");
+    } else if (ch === "}") {
+      if (depth.length > 0 && depth[depth.length - 1] === "object") depth.pop();
+    } else if (ch === "]") {
+      if (depth.length > 0 && depth[depth.length - 1] === "array") depth.pop();
+    }
+  }
+
+  if (inString) out += '"';
+  for (let i = depth.length - 1; i >= 0; i -= 1) {
+    out += depth[i] === "object" ? "}" : "]";
+  }
+  return out;
+}
+
+function extractPartialUnits(raw: string): Array<Record<string, unknown>> {
+  const units: Array<Record<string, unknown>> = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escape = false;
+
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i];
+
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === "\\" && inString) {
+      escape = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+
+    if (ch === "{") {
+      if (depth === 0) start = i;
+      depth += 1;
+    } else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        try {
+          const parsed = JSON.parse(raw.slice(start, i + 1));
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            units.push(parsed as Record<string, unknown>);
+          }
+        } catch {
+          // skip unparseable fragments
+        }
+        start = -1;
+      }
+    }
+  }
+
+  return units;
 }
 
 function normalizeEvidenceUnitResponse(raw: unknown, expectedSourceHash: string): unknown {
@@ -306,7 +397,54 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
         counts: { units: parsed.units.length, responseChars: content.length },
       });
       return parsed;
-    } catch (err) {
+    } catch (parseErr) {
+      try {
+        const repaired = repairTruncatedJson(extractJsonObject(content));
+        const parsed = ltmEvidenceUnitExtractionResponseSchema.parse(
+          normalizeEvidenceUnitResponse(JSON.parse(repaired), options.sourceHash),
+        );
+        await recordLtmDebugEvent({
+          operationId: options.operationId,
+          phase: "llm",
+          action: "evidence_unit_json_parse",
+          status: "ok",
+          sourceNoteId: options.sourceNote.id,
+          counts: { units: parsed.units.length, responseChars: content.length },
+          details: { recovered: "repaired" },
+        });
+        return parsed;
+      } catch {
+        // continue to partial extraction
+      }
+
+      const partialObjects = extractPartialUnits(content);
+      const rawUnits = partialObjects.flatMap((obj) => {
+        if (Array.isArray(obj.units)) return obj.units as Array<Record<string, unknown>>;
+        if (typeof obj.bucket === "string") return [obj];
+        return [];
+      });
+      if (rawUnits.length > 0) {
+        const syntheticResponse = normalizeEvidenceUnitResponse(
+          { summary: "", units: rawUnits },
+          options.sourceHash,
+        );
+        try {
+          const parsed = ltmEvidenceUnitExtractionResponseSchema.parse(syntheticResponse);
+          await recordLtmDebugEvent({
+            operationId: options.operationId,
+            phase: "llm",
+            action: "evidence_unit_json_parse",
+            status: "ok",
+            sourceNoteId: options.sourceNote.id,
+            counts: { units: parsed.units.length, responseChars: content.length },
+            details: { recovered: "partial" },
+          });
+          return parsed;
+        } catch {
+          // fall through to final throw
+        }
+      }
+
       await recordLtmDebugEvent({
         operationId: options.operationId,
         phase: "llm",
@@ -314,10 +452,10 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
         status: "error",
         sourceNoteId: options.sourceNote.id,
         counts: { responseChars: content.length },
-        error: err,
+        error: parseErr,
         details: { responseSnippet: content.slice(0, 1_500) },
       });
-      throw err;
+      throw parseErr;
     }
   } catch (err) {
     await recordLtmDebugEvent({

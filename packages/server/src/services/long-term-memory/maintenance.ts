@@ -656,11 +656,12 @@ async function chatImportCandidates(
   const candidates = rows.flatMap((chat) => {
     const metadata = readJsonObject(chat.metadata);
     const summary = typeof metadata.summary === "string" ? metadata.summary.trim() : "";
-    const entries = normalizeChatSummaryEntries(metadata.summaryEntries, { legacySummary: summary }).filter(
-      (entry) => entry.enabled,
-    );
+    const entries = normalizeChatSummaryEntries(metadata.summaryEntries, {
+      legacySummary: summary,
+      legacyFallback: Array.isArray(metadata.summaryEntries) ? false : true,
+    }).filter((entry) => entry.enabled,);
     if (entries.length === 0) return [];
-    const mode = ((chat.mode as string) === "visual_novel" ? "roleplay" : chat.mode) as LtmMode;
+    const mode = chat.mode as LtmMode;
     return entries.map((entry) => {
       const chatName = evidenceSafeValue(chat.name) || "Chat";
       const title = chatSummaryImportTitle(chatName, entry);
@@ -724,13 +725,21 @@ export async function previewLongTermMemoryInterop(
   db: DB,
   source: LtmInteropSource,
   limit = 25,
+  root?: string,
 ): Promise<LtmInteropPreview> {
   const candidates = await interopImportCandidates(db, source, limit);
+  const storage = new LongTermMemoryStorage(root ?? getLongTermMemoryRoot());
+  const deduped: typeof candidates = [];
+  for (const c of candidates) {
+    const ids = [c.sourceNoteId, ...(c.legacySourceNoteIds ?? [])];
+    const exists = (await Promise.all(ids.map((id) => storage.getNote(id)))).some((n) => n !== null);
+    if (!exists) deduped.push(c);
+  }
   return {
     source,
     scanned: limit,
-    draftable: candidates.length,
-    samples: candidates.map((candidate) => ({
+    draftable: deduped.length,
+    samples: deduped.map((candidate) => ({
       sourceId: candidate.sourceId,
       title: candidate.title,
       mutationCount: candidate.response.mutations.length,

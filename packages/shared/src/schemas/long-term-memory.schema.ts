@@ -168,7 +168,7 @@ export const ltmEvidenceUnitSchema = z
     mergeHint: z.string().min(1).max(240).optional(),
     sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
   })
-  .strict();
+  .strip();
 
 export const ltmSectionSchema = z
   .object({
