@@ -232,7 +232,6 @@ const searchBodySchema = z
     scope: ltmScopeSchema.optional(),
     characterIds: z.array(z.string().min(1).max(120)).max(100).optional(),
     includeGates: z.array(ltmGateSchema).max(8).optional(),
-    includeArchived: z.boolean().optional(),
     includeResolved: z.boolean().optional(),
     includeSourceNotes: z.boolean().optional(),
     debug: z.boolean().optional(),
@@ -672,7 +671,8 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
       cause: "api.archive",
       summary: "Archived via long-term memory maintenance API",
     });
-    return { archived: true, note: archivedNotes[0], notes: archivedNotes };
+    const rebuild = await rebuildLongTermMemoryIndexes();
+    return { archived: true, note: archivedNotes[0], notes: archivedNotes, rebuild: publicRebuildResult(rebuild) };
   });
 
   app.delete<{ Params: { id: string } }>("/notes/:id/permanent", async (req, reply) => {

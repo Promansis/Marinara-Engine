@@ -109,13 +109,7 @@ async function preflightDraftMutations(
 
   for (const noteId of createIds) {
     const existing = await storage.getNote(noteId);
-    const createMutation = mutations.find((mutation) => mutation.kind === "create_note" && mutation.note.id === noteId);
-    if (
-      existing &&
-      (existing.status !== "archived" ||
-        createMutation?.kind !== "create_note" ||
-        existing.type !== createMutation.note.type)
-    ) {
+    if (existing) {
       throw new Error(`Long-term memory note already exists for draft ${draft.id}: ${noteId}`);
     }
   }
@@ -254,23 +248,6 @@ async function applyMutation(
   };
 
   if (mutation.kind === "create_note") {
-    const existing = await storage.getNote(mutation.note.id);
-    if (existing?.status === "archived" && existing.type === mutation.note.type) {
-      await storage.updateNote(
-        existing.id,
-        {
-          status: mutation.note.status,
-          modes: mutation.note.modes,
-          scope: mutation.note.scope,
-          tags: mutation.note.tags,
-          links: withSourceLink(mutation.note.id, mutation.note.links, draft),
-          sections: mutation.note.sections,
-          conflicts: mutation.note.conflicts,
-        },
-        eventContext,
-      );
-      return;
-    }
     await storage.createNote(
       {
         ...mutation.note,

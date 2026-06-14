@@ -10,6 +10,7 @@ import { getDataDir } from "../../utils/data-dir.js";
 
 export const LTM_DIR_NAME = "long-term-memory";
 export const LTM_VAULT_DIR = "vault";
+export const LTM_ARCHIVE_DIR = "archive";
 export const LTM_EVENTS_DIR = "events";
 export const LTM_DEBUG_DIR = "debug";
 export const LTM_INDEXES_DIR = "indexes";
@@ -40,6 +41,7 @@ export function getLongTermMemoryDirectories(root = getLongTermMemoryRoot()) {
   return {
     root,
     vault: join(root, LTM_VAULT_DIR),
+    archive: join(root, LTM_ARCHIVE_DIR),
     events: join(root, LTM_EVENTS_DIR),
     debug: join(root, LTM_DEBUG_DIR),
     indexes: join(root, LTM_INDEXES_DIR),
@@ -59,6 +61,18 @@ export function notePathForId(id: string, type: LtmNoteType, root = getLongTermM
   const parsedId = ltmNoteIdSchema.parse(id);
   const parsedType = ltmNoteTypeSchema.parse(type);
   return join(root, LTM_VAULT_DIR, vaultFolderForNoteType(parsedType), `${parsedId}.json`);
+}
+
+export function archivedNotePathForId(
+  id: string,
+  type: LtmNoteType,
+  archivedAt: string,
+  root = getLongTermMemoryRoot(),
+) {
+  const parsedId = ltmNoteIdSchema.parse(id);
+  const parsedType = ltmNoteTypeSchema.parse(type);
+  const safeTimestamp = archivedAt.replace(/[^0-9A-Za-z_-]+/g, "_");
+  return join(root, LTM_ARCHIVE_DIR, vaultFolderForNoteType(parsedType), `${parsedId}-${safeTimestamp}.json`);
 }
 
 export function assertInsideDirectory(root: string, candidate: string) {

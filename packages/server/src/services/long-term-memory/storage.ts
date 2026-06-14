@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, unlink } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, unlink } from "node:fs/promises";
 import {
   ltmEventSchema,
   ltmNoteSchema,
@@ -18,6 +18,7 @@ import {
   getLongTermMemoryDirectories,
   getLongTermMemoryRoot,
   LTM_VAULT_FOLDERS,
+  archivedNotePathForId,
   notePathForId,
   safeJoin,
   vaultFolderForNoteType,
@@ -144,6 +145,7 @@ export class LongTermMemoryStorage {
       mkdir(dirs.config, { recursive: true }),
       mkdir(dirs.drafts, { recursive: true }),
       mkdir(dirs.evidenceUnitDrafts, { recursive: true }),
+      ...LTM_VAULT_FOLDERS.map((folder) => mkdir(safeJoin(dirs.archive, folder), { recursive: true })),
       ...LTM_VAULT_FOLDERS.map((folder) => mkdir(safeJoin(dirs.vault, folder), { recursive: true })),
     ]);
 
@@ -156,7 +158,22 @@ export class LongTermMemoryStorage {
 
     await writeJsonIfChanged(policiesPath, existingPolicies);
     await writeJsonIfChanged(retrievalPath, existingRetrieval);
+    await this.migrateArchivedVaultNotes();
     logger.debug("[ltm] Initialized inert long-term memory store at %s", this.root);
+  }
+
+  private async migrateArchivedVaultNotes() {
+    for (const folder of LTM_VAULT_FOLDERS) {
+      const folderPath = safeJoin(this.dirs.vault, folder);
+      const entries = await readdir(folderPath, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+        const sourcePath = safeJoin(folderPath, entry.name);
+        const note = await this.readNoteFile(sourcePath, folder);
+        if (note.status !== "archived") continue;
+        await this.moveArchivedNoteFile(note, sourcePath);
+      }
+    }
   }
 
   async listNotes(filter: LtmListNotesFilter = {}) {
@@ -171,6 +188,7 @@ export class LongTermMemoryStorage {
       for (const entry of entries) {
         if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
         const note = await this.readNoteFile(safeJoin(folderPath, entry.name), folder);
+        if (note.status === "archived") continue;
         if (filter.status && note.status !== filter.status) continue;
         if (filter.tag && !note.tags.includes(filter.tag)) continue;
         notes.push(note);
@@ -207,6 +225,9 @@ export class LongTermMemoryStorage {
         await this.appendEvent(eventFor(`${note.type}.created`, note.id, eventContext, { note }));
       }
       await createJsonFileExclusive(path, note);
+      if (note.status === "archived") {
+        await this.moveArchivedNoteFile(note, path);
+      }
       return note;
     });
   }
@@ -220,7 +241,7 @@ export class LongTermMemoryStorage {
   async archiveNote(id: string, eventContext: LtmEventContext = {}) {
     await this.initializeLtmStore();
     const existing = await this.getRequiredNote(id);
-    return this.writeNotePatch(existing, { status: "archived" }, `${existing.type}.archived`, eventContext);
+    return this.archiveExistingNote(existing, eventContext);
   }
 
   async archiveSourceNoteWithDerived(id: string, eventContext: LtmEventContext = {}) {
@@ -242,9 +263,9 @@ export class LongTermMemoryStorage {
       },
     };
 
-    archived.push(await this.writeNotePatch(existing, { status: "archived" }, `${existing.type}.archived`, eventContext));
+    archived.push(await this.archiveExistingNote(existing, eventContext));
     for (const note of derived) {
-      archived.push(await this.writeNotePatch(note, { status: "archived" }, `${note.type}.archived`, archiveContext));
+      archived.push(await this.archiveExistingNote(note, archiveContext));
     }
 
     return archived;
@@ -253,7 +274,8 @@ export class LongTermMemoryStorage {
   async deleteNote(id: string, eventContext: LtmEventContext = {}) {
     await this.initializeLtmStore();
     const existing = await this.getRequiredNote(id);
-    const path = notePathForId(existing.id, existing.type, this.root);
+    const path = existing.status === "archived" ? null : notePathForId(existing.id, existing.type, this.root);
+    if (!path) throw new Error(`Long-term memory note not found: ${id}`);
     return withNoteWriteLock(path, async () => {
       const current = await this.getRequiredNote(id);
       if (!eventContext.suppressEvent) {
@@ -297,6 +319,34 @@ export class LongTermMemoryStorage {
     return note;
   }
 
+  private async moveArchivedNoteFile(note: LtmNote, sourcePath: string) {
+    const archivedPath = archivedNotePathForId(note.id, note.type, note.updatedAt, this.root);
+    await mkdir(safeJoin(this.dirs.archive, vaultFolderForNoteType(note.type)), { recursive: true });
+    await rename(sourcePath, archivedPath);
+  }
+
+  private async archiveExistingNote(existing: LtmNote, eventContext: LtmEventContext) {
+    const path = notePathForId(existing.id, existing.type, this.root);
+    return withNoteWriteLock(path, async () => {
+      const current = await this.getRequiredNote(existing.id);
+      const timestamp = nowIso();
+      const archived = ltmNoteSchema.parse({
+        ...current,
+        status: "archived",
+        updatedAt: timestamp,
+        version: current.version + 1,
+        previousHash: hashNote(current),
+      });
+
+      if (!eventContext.suppressEvent) {
+        await this.appendEvent(eventFor(`${current.type}.archived`, current.id, eventContext, { note: archived }));
+      }
+      await writeJsonAtomic(path, archived);
+      await this.moveArchivedNoteFile(archived, path);
+      return archived;
+    });
+  }
+
   private async readNoteFile(path: string, folder: (typeof LTM_VAULT_FOLDERS)[number]) {
     const raw = JSON.parse(await readFile(path, "utf8"));
     const note = ltmNoteSchema.parse(raw);
@@ -332,6 +382,9 @@ export class LongTermMemoryStorage {
         await this.appendEvent(eventFor(eventType, existing.id, eventContext, { patch, note: next }));
       }
       await writeJsonAtomic(path, next);
+      if (next.status === "archived") {
+        await this.moveArchivedNoteFile(next, path);
+      }
       return next;
     });
   }

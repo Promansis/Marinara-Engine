@@ -33,7 +33,6 @@ export interface RetrieveLongTermMemoryInput extends MemoryRecallEmbeddingOption
   scope?: LtmScope;
   characterIds?: string[];
   includeGates?: LtmGate[];
-  includeArchived?: boolean;
   includeResolved?: boolean;
   includeSourceNotes?: boolean;
   debug?: boolean;
@@ -296,7 +295,6 @@ function summarizeCandidateFilters(
   const includeGates = new Set([...(config.includeGates ?? []), ...(input.includeGates ?? [])]);
   const counts = {
     sourceSummariesSkipped: 0,
-    archivedFiltered: 0,
     dormantFiltered: 0,
     resolvedFiltered: 0,
     gateFiltered: 0,
@@ -306,10 +304,6 @@ function summarizeCandidateFilters(
   for (const chunk of chunks) {
     if (!input.includeSourceNotes && isSourceSummaryChunk(chunk)) {
       counts.sourceSummariesSkipped++;
-      continue;
-    }
-    if (!input.includeArchived && chunk.status === "archived") {
-      counts.archivedFiltered++;
       continue;
     }
     if (shouldFilterDormantChunk(chunk, input)) {
@@ -340,7 +334,6 @@ function candidateAllowed(
 ) {
   const includeGates = new Set([...(config.includeGates ?? []), ...(input.includeGates ?? [])]);
   if (!input.includeSourceNotes && isSourceSummaryChunk(chunk)) return false;
-  if (!input.includeArchived && chunk.status === "archived") return false;
   if (shouldFilterDormantChunk(chunk, input)) return false;
   if (shouldFilterResolvedChunk(chunk, input)) return false;
   if (!gateAllows(chunk, includeGates)) return false;
@@ -682,9 +675,7 @@ export async function retrieveLongTermMemory(
           scopeFiltered: filterCounts?.scopeFiltered ?? 0,
           gateFiltered: filterCounts?.gateFiltered ?? 0,
           statusFiltered:
-            (filterCounts?.archivedFiltered ?? 0) +
-            (filterCounts?.dormantFiltered ?? 0) +
-            (filterCounts?.resolvedFiltered ?? 0),
+            (filterCounts?.dormantFiltered ?? 0) + (filterCounts?.resolvedFiltered ?? 0),
           alwaysCandidates: laneCount("always"),
           metadataCandidates: laneCount("metadata"),
           typedPriorityCandidates: laneCount("typed_priority"),

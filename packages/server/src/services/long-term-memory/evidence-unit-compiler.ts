@@ -79,6 +79,36 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
 
     if (target.noteType === "relationship" && units.some((unit) => unit.bucket === "relationship_conflict")) {
       const conflictUnit = units.find((unit) => unit.bucket === "relationship_conflict")!;
+      if (!existing) {
+        mutations.push({
+          id: randomUUID(),
+          kind: "create_note",
+          risk: "high",
+          confidence: conflictUnit.confidence,
+          summary: `Create relationship conflict memory ${noteId}`,
+          evidence: conflictUnit.evidence,
+          note: {
+            id: noteId,
+            type: "relationship",
+            status: target.status,
+            modes: options.modes,
+            scope: options.scope,
+            tags: target.tags,
+            links,
+            sections,
+            conflicts: [
+              {
+                field: conflictUnit.sectionKey,
+                existing: "",
+                proposed: conflictUnit.text,
+                resolution: "pending",
+                policy: "manual_review",
+              },
+            ],
+          },
+        });
+        continue;
+      }
       mutations.push({
         id: randomUUID(),
         kind: "flag_conflict",

@@ -21,7 +21,10 @@ export function buildLtmGraphIndex(notes: LtmNote[], chunks: LtmMemoryChunk[]): 
   }
 
   const nodes: LtmGraphIndex["nodes"] = {};
-  for (const note of notes.slice().sort((a, b) => a.id.localeCompare(b.id))) {
+  const liveNoteIds = new Set(chunks.map((chunk) => chunk.noteId));
+  const liveNotes = notes.filter((note) => liveNoteIds.has(note.id));
+
+  for (const note of liveNotes.slice().sort((a, b) => a.id.localeCompare(b.id))) {
     nodes[note.id] = {
       chunkIds: (chunkIdsByNote.get(note.id) ?? []).sort((a, b) => a.localeCompare(b)),
       outgoing: [],
@@ -29,13 +32,12 @@ export function buildLtmGraphIndex(notes: LtmNote[], chunks: LtmMemoryChunk[]): 
     };
   }
 
-  for (const note of notes.slice().sort((a, b) => a.id.localeCompare(b.id))) {
+  for (const note of liveNotes.slice().sort((a, b) => a.id.localeCompare(b.id))) {
     for (const link of note.links.slice().sort((a, b) => a.target.localeCompare(b.target) || a.relation.localeCompare(b.relation))) {
+      if (!liveNoteIds.has(link.target)) continue;
       const edge = { source: note.id, target: link.target, relation: link.relation };
       nodes[note.id]?.outgoing.push(edge);
-      const targetNode = nodes[link.target] ?? { chunkIds: [], outgoing: [], incoming: [] };
-      targetNode.incoming.push(edge);
-      nodes[link.target] = targetNode;
+      nodes[link.target]?.incoming.push(edge);
     }
   }
 

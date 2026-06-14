@@ -1448,10 +1448,67 @@ test("archived notes are excluded from long-term memory chunks", () => {
   };
 
   assert.deepEqual(chunkNotes([archivedNote]), []);
-  assert.deepEqual(
-    chunkNotes([archivedNote], { includeArchived: true }).map((chunk) => chunk.noteId),
-    ["world_kiseki_academy"],
-  );
+});
+
+test("archived notes are moved out of the live vault and excluded from indexes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-archive-isolated-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "world_archive_sealed",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [{ target: "world_active_neighbor", relation: "related_to" }],
+        sections: {
+          facts: {
+            text: "Archived lore must not be visible to live memory.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "world_active_neighbor",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [{ target: "world_archive_sealed", relation: "related_to" }],
+        sections: {
+          facts: {
+            text: "Live lore remains visible.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    await storage.archiveNote("world_archive_sealed", { suppressEvent: true });
+    assert.equal(await storage.getNote("world_archive_sealed"), null);
+
+    await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
+    const dirs = getLongTermMemoryDirectories(root);
+    const graph = JSON.parse(await readFile(join(dirs.indexes, "graph.json"), "utf8")) as {
+      nodes: Record<string, unknown>;
+    };
+    const metadata = JSON.parse(await readFile(join(dirs.indexes, "metadata.json"), "utf8")) as {
+      chunks: Record<string, { noteId: string }>;
+    };
+
+    assert(!("world_archive_sealed" in graph.nodes));
+    assert(!Object.values(metadata.chunks).some((chunk) => chunk.noteId === "world_archive_sealed"));
+    assert(await storage.getNote("world_active_neighbor"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("evidence unit compiler maps buckets to typed memory draft mutations", () => {
@@ -2021,8 +2078,8 @@ test("source extraction drafts reject scene note mutations from source summaries
   }
 });
 
-test("source extraction drafts replace archived typed notes with matching ids", async () => {
-  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-archived-replace-"));
+test("source extraction drafts treat archived typed notes as isolated", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-archived-isolated-"));
   try {
     const storage = new LongTermMemoryStorage(root);
     await storage.createNote(
@@ -2092,10 +2149,11 @@ test("source extraction drafts replace archived typed notes with matching ids", 
       rebuildIndexes: false,
     });
 
-    const replaced = await storage.getNote("world_kiseki_academy");
-    assert.equal(replaced?.status, "active");
-    assert.equal(replaced?.sections.facts?.text, "Kiseki Academy is a floating school above the old city.");
-    assert(replaced?.links.some((link) => link.target === "scene_source_test" && link.relation === "extracted_from"));
+    const created = await storage.getNote("world_kiseki_academy");
+    assert.equal(created?.status, "active");
+    assert.equal(created?.sections.facts?.text, "Kiseki Academy is a floating school above the old city.");
+    assert(created?.links.some((link) => link.target === "scene_source_test" && link.relation === "extracted_from"));
+    assert(!created?.previousHash);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
