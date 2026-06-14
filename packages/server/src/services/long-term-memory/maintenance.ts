@@ -2,10 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import {
+  normalizeChatSummaryEntries,
   ltmExtractionResponseSchema,
   ltmEventSchema,
   ltmNoteSchema,
   withMergedLtmScopeLinks,
+  type ChatSummaryEntry,
   type LtmDraftMutation,
   type LtmExtractionDraft,
   type LtmMode,
@@ -58,6 +60,28 @@ type ImportSourceCandidate = {
     mutations: LtmDraftMutation[];
   };
 };
+
+function chatSummaryMessageRange(entry: ChatSummaryEntry) {
+  if (entry.sourceMode === "range" && entry.rangeStartIndex && entry.rangeEndIndex) {
+    return `${entry.rangeStartIndex}-${entry.rangeEndIndex}`;
+  }
+  if (entry.rangeStartIndex && entry.rangeEndIndex) return `${entry.rangeStartIndex}-${entry.rangeEndIndex}`;
+  if (entry.messageCount) return `last ${entry.messageCount}`;
+  if (entry.sourceMode === "agent") return "agent summary";
+  return "last messages";
+}
+
+function chatSummaryImportTitle(chatName: string, entry: ChatSummaryEntry) {
+  return `${chatName}, msgs ${chatSummaryMessageRange(entry)}`;
+}
+
+function chatSummaryImportSourceId(chatId: string, entryId: string) {
+  return `${chatId}:${entryId}`;
+}
+
+function evidenceSafeValue(value: string) {
+  return value.trim().replace(/\s+/g, " ").slice(0, 200);
+}
 
 export interface LtmIntegrityResult {
   ok: boolean;
@@ -628,48 +652,64 @@ async function chatImportCandidates(
   sourceIds?: Set<string>,
 ): Promise<ImportSourceCandidate[]> {
   const chats = await createChatsStorage(db).list();
-  const rows = sourceIds ? chats.filter((chat) => sourceIds.has(chat.id)) : chats.slice(0, limit);
-  return rows.flatMap((chat) => {
+  const rows = sourceIds ? chats : chats.slice(0, limit);
+  const candidates = rows.flatMap((chat) => {
     const metadata = readJsonObject(chat.metadata);
     const summary = typeof metadata.summary === "string" ? metadata.summary.trim() : "";
-    if (!summary) return [];
+    const entries = normalizeChatSummaryEntries(metadata.summaryEntries, { legacySummary: summary }).filter(
+      (entry) => entry.enabled,
+    );
+    if (entries.length === 0) return [];
     const mode = chat.mode === "visual_novel" ? "visual_novel" : (chat.mode as LtmMode);
-    const noteId = `scene_${normalizeIdentifier(chat.name, "chat")}_${hashShort(chat.id)}`;
-    const sourceNoteId = `source_import_chat_${normalizeIdentifier(chat.name, "chat")}_${hashShort(chat.id)}`;
-    const evidence = [`chat:${chat.id}`];
-    const mutation: LtmDraftMutation = {
-      ...mutationBase(`Import chat summary for ${chat.name}`, evidence, "low"),
-      kind: "create_note",
-      note: {
-        id: noteId,
-        type: "scene",
-        status: "active",
-        modes: [mode],
-        scope: withMergedLtmScopeLinks(
-          { chatId: chat.id, groupId: chat.groupId ?? undefined, characterIds: readJsonArray(chat.characterIds) },
-          { chatIds: [chat.id] },
-        ),
-        tags: ["imported_chat_summary"],
-        links: [],
-        sections: { summary: textSection(summary, evidence) },
-      },
-    };
-    return [
-      {
-        title: chat.name,
-        sourceId: chat.id,
-        sourceText: summary,
+    return entries.map((entry) => {
+      const chatName = evidenceSafeValue(chat.name) || "Chat";
+      const title = chatSummaryImportTitle(chatName, entry);
+      const range = chatSummaryMessageRange(entry);
+      const noteSeed = `${chat.id}:${entry.id}`;
+      const noteId = `scene_${normalizeIdentifier(chat.name, "chat")}_${hashShort(noteSeed)}`;
+      const sourceNoteId = `source_import_chat_${normalizeIdentifier(chat.name, "chat")}_${hashShort(noteSeed)}`;
+      const evidence = [
+        `chat:${chat.id}`,
+        `chat_name:${chatName}`,
+        `summary_entry:${entry.id}`,
+        `message_range:${range}`,
+      ];
+      const mutation: LtmDraftMutation = {
+        ...mutationBase(`Import chat summary for ${title}`, evidence, "low"),
+        kind: "create_note",
+        note: {
+          id: noteId,
+          type: "scene",
+          status: "active",
+          modes: [mode],
+          scope: withMergedLtmScopeLinks(
+            { chatId: chat.id, groupId: chat.groupId ?? undefined, characterIds: readJsonArray(chat.characterIds) },
+            { chatIds: [chat.id] },
+          ),
+          tags: ["imported_chat_summary"],
+          links: [],
+          sections: { summary: textSection(entry.content, evidence) },
+        },
+      };
+      return {
+        title,
+        sourceId: chatSummaryImportSourceId(chat.id, entry.id),
+        sourceText: entry.content,
         sourceNoteId,
-        legacySourceNoteIds: [`scene_import_chat_${normalizeIdentifier(chat.name, "chat")}_${hashShort(chat.id)}`],
+        legacySourceNoteIds:
+          entry.origin === "legacy"
+            ? [`scene_import_chat_${normalizeIdentifier(chat.name, "chat")}_${hashShort(chat.id)}`]
+            : undefined,
         sourceTag: "imported_chat",
         evidence,
         modes: mutation.note.modes,
         source: { chatId: chat.id },
         scope: mutation.note.scope,
-        response: makeDraftResponse([mutation], `Import ${chat.name}`),
-      },
-    ];
+        response: makeDraftResponse([mutation], `Import ${title}`),
+      };
+    });
   });
+  return sourceIds ? candidates.filter((candidate) => sourceIds.has(candidate.sourceId)) : candidates.slice(0, limit);
 }
 
 async function interopImportCandidates(db: DB, source: LtmInteropSource, limit: number, sourceIds?: Set<string>) {

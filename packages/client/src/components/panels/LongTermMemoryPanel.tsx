@@ -556,7 +556,7 @@ function isSourceSummaryNote(note: LtmNote) {
 function sourceSummaryTitle(note: LtmNote) {
   const chatName = sourceSummaryChatName(note);
   const range = sourceSummaryMessageRange(note);
-  return `Chat summary: ${chatName}, msgs ${range}`;
+  return `${chatName}, msgs ${range}`;
 }
 
 function sourceNoteTitle(note: LtmNote) {
