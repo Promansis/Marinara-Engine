@@ -286,7 +286,7 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
           sourceHash: options.sourceHash,
         },
         allowedBuckets: ltmEvidenceUnitBucketSchema.options,
-        allowedStatuses: ltmEvidenceUnitStatusSchema.options,
+        allowedStatuses: ["active", "resolved"],
         bucketScanOrder: LTM_EXTRACTION_BUCKET_SCAN_ORDER,
         allowedTimelineRelations: ["occurred_in", "triggered_by", "resolved_in", "evidenced_by"],
         buckets: {

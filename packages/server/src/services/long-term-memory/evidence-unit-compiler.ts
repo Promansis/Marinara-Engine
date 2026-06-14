@@ -188,8 +188,8 @@ function targetForUnit(unit: LtmEvidenceUnit): UnitTarget {
 
 function statusForUnit(unit: LtmEvidenceUnit): LtmStatus {
   if (isResolvedLoopUnit(unit)) return "archived";
-  if (unit.status === "developing") return "active";
-  return unit.status;
+  if (unit.status === "resolved") return "resolved";
+  return "active";
 }
 
 function sectionsForUnits(units: LtmEvidenceUnit[], existing: LtmNote | undefined, timestamp: string) {
