@@ -70,7 +70,6 @@ import {
   friendlyNoteType,
   friendlySectionKey,
   friendlyStatus,
-  isSourceMemoryDraft,
   isTypedSuggestionDraft,
   sentenceCaseIdentifier,
 } from "../long-term-memory/ltm-editor-utils";
@@ -2486,7 +2485,7 @@ export function LongTermMemoryPanel() {
   const pendingSuggestionCountsBySource = useMemo(() => {
     const counts = new Map<string, number>();
     for (const draft of pendingSuggestionDrafts.data ?? []) {
-      if (!draft.source.sourceNoteId || !isTypedSuggestionDraft(draft) || isSourceMemoryDraft(draft)) continue;
+      if (!draft.source.sourceNoteId || !isTypedSuggestionDraft(draft)) continue;
       counts.set(draft.source.sourceNoteId, (counts.get(draft.source.sourceNoteId) ?? 0) + draft.mutations.length);
     }
     return counts;

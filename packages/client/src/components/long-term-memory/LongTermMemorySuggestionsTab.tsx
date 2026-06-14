@@ -22,7 +22,6 @@ import {
   friendlyNoteType,
   friendlySectionKey,
   friendlyStatus,
-  isSourceMemoryDraft,
   isTypedSuggestionDraft,
   modeOptions,
   normalizeIdentifier,
@@ -199,7 +198,6 @@ export function LongTermMemorySuggestionsTab({ note }: { note: LtmNote }) {
       .filter((draft) => draft.status === "pending")
       .filter((draft) => draft.source.sourceNoteId === note.id)
       .filter(isTypedSuggestionDraft)
-      .filter((draft) => !isSourceMemoryDraft(draft))
       .flatMap((draft) => draft.mutations.map((mutation) => ({ draft, mutation })));
   }, [drafts.data, note.id, sourceMemory]);
   const newRows = rows.filter((row) => mutationGroup(row.mutation) === "new");

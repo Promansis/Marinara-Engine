@@ -443,18 +443,6 @@ export function useRepairLongTermMemory() {
   });
 }
 
-export function useCreateLongTermMemoryImportDrafts() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ source, limit }: { source: LtmInteropSource; limit: number }) =>
-      api.post<{ source: LtmInteropSource; created: LtmExtractionDraft[] }>("/long-term-memory/import/drafts", {
-        source,
-        limit,
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
-  });
-}
-
 export function useImportLongTermMemorySourceNotes() {
   const qc = useQueryClient();
   return useMutation({

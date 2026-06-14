@@ -17,7 +17,6 @@ import type { DB } from "../../db/connection.js";
 import { createCharactersStorage } from "../storage/characters.storage.js";
 import { createChatsStorage } from "../storage/chats.storage.js";
 import { createLorebooksStorage } from "../storage/lorebooks.storage.js";
-import { LongTermMemoryDraftStore } from "./extraction.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import {
   getLongTermMemoryDirectories,
@@ -43,7 +42,7 @@ type IntegrityIssue = {
 export type LtmRepairAction = "rebuild_indexes" | "quarantine_malformed_notes";
 export type LtmInteropSource = "characters" | "lorebooks" | "chats";
 
-type DraftSeed = {
+type ImportSourceCandidate = {
   title: string;
   sourceId: string;
   sourceText: string;
@@ -54,7 +53,10 @@ type DraftSeed = {
   source?: LtmExtractionDraft["source"];
   scope?: LtmScope;
   modes: LtmMode[];
-  response: Parameters<LongTermMemoryDraftStore["createDraft"]>[0]["response"];
+  response: {
+    summary: string;
+    mutations: LtmDraftMutation[];
+  };
 };
 
 export interface LtmIntegrityResult {
@@ -491,7 +493,11 @@ export async function repairLongTermMemory(
   );
 }
 
-async function characterDrafts(db: DB, limit: number, sourceIds?: Set<string>): Promise<DraftSeed[]> {
+async function characterImportCandidates(
+  db: DB,
+  limit: number,
+  sourceIds?: Set<string>,
+): Promise<ImportSourceCandidate[]> {
   const characters = await createCharactersStorage(db).list();
   const rows = sourceIds ? characters.filter((row) => sourceIds.has(row.id)) : characters.slice(0, limit);
   return rows.flatMap((row) => {
@@ -541,13 +547,17 @@ async function characterDrafts(db: DB, limit: number, sourceIds?: Set<string>): 
   });
 }
 
-async function lorebookDrafts(db: DB, limit: number, sourceIds?: Set<string>): Promise<DraftSeed[]> {
+async function lorebookImportCandidates(
+  db: DB,
+  limit: number,
+  sourceIds?: Set<string>,
+): Promise<ImportSourceCandidate[]> {
   const storage = createLorebooksStorage(db);
   const books = (await storage.list()) as Array<Record<string, unknown>>;
   const selectedBooks = sourceIds
     ? books.filter((book) => typeof book.id === "string" && sourceIds.has(book.id))
     : books.slice(0, limit);
-  const drafts: DraftSeed[] = [];
+  const candidates: ImportSourceCandidate[] = [];
   for (const book of selectedBooks) {
     const id = typeof book.id === "string" ? book.id : "";
     const name = typeof book.name === "string" && book.name.trim() ? book.name : "Lorebook";
@@ -596,7 +606,7 @@ async function lorebookDrafts(db: DB, limit: number, sourceIds?: Set<string>): P
         sections: { lore: textSection(text, evidence) },
       },
     };
-    drafts.push({
+    candidates.push({
       title: name,
       sourceId: id,
       sourceText: text,
@@ -609,10 +619,14 @@ async function lorebookDrafts(db: DB, limit: number, sourceIds?: Set<string>): P
       response: makeDraftResponse([mutation], `Import ${name}`),
     });
   }
-  return drafts;
+  return candidates;
 }
 
-async function chatDrafts(db: DB, limit: number, sourceIds?: Set<string>): Promise<DraftSeed[]> {
+async function chatImportCandidates(
+  db: DB,
+  limit: number,
+  sourceIds?: Set<string>,
+): Promise<ImportSourceCandidate[]> {
   const chats = await createChatsStorage(db).list();
   const rows = sourceIds ? chats.filter((chat) => sourceIds.has(chat.id)) : chats.slice(0, limit);
   return rows.flatMap((chat) => {
@@ -658,12 +672,12 @@ async function chatDrafts(db: DB, limit: number, sourceIds?: Set<string>): Promi
   });
 }
 
-async function interopDraftSeeds(db: DB, source: LtmInteropSource, limit: number, sourceIds?: Set<string>) {
+async function interopImportCandidates(db: DB, source: LtmInteropSource, limit: number, sourceIds?: Set<string>) {
   return source === "characters"
-    ? characterDrafts(db, limit, sourceIds)
+    ? characterImportCandidates(db, limit, sourceIds)
     : source === "lorebooks"
-      ? lorebookDrafts(db, limit, sourceIds)
-      : chatDrafts(db, limit, sourceIds);
+      ? lorebookImportCandidates(db, limit, sourceIds)
+      : chatImportCandidates(db, limit, sourceIds);
 }
 
 export async function previewLongTermMemoryInterop(
@@ -671,43 +685,18 @@ export async function previewLongTermMemoryInterop(
   source: LtmInteropSource,
   limit = 25,
 ): Promise<LtmInteropPreview> {
-  const drafts = await interopDraftSeeds(db, source, limit);
+  const candidates = await interopImportCandidates(db, source, limit);
   return {
     source,
     scanned: limit,
-    draftable: drafts.length,
-    samples: drafts.map((draft) => ({
-      sourceId: draft.sourceId,
-      title: draft.title,
-      mutationCount: draft.response.mutations.length,
-      summary: draft.response.summary,
+    draftable: candidates.length,
+    samples: candidates.map((candidate) => ({
+      sourceId: candidate.sourceId,
+      title: candidate.title,
+      mutationCount: candidate.response.mutations.length,
+      summary: candidate.response.summary,
     })),
   };
-}
-
-export async function createLongTermMemoryInteropDrafts(
-  db: DB,
-  source: LtmInteropSource,
-  options: { limit?: number; scope?: LtmScope } = {},
-): Promise<{ source: LtmInteropSource; created: LtmExtractionDraft[] }> {
-  const limit = options.limit ?? 25;
-  const store = new LongTermMemoryDraftStore();
-  const drafts = await interopDraftSeeds(db, source, limit);
-  const created: LtmExtractionDraft[] = [];
-  for (const draft of drafts) {
-    created.push(
-      await store.createDraft({
-        modes: draft.modes,
-        source: draft.source,
-        scope: { ...(draft.scope ?? {}), ...(options.scope ?? {}) },
-        summary: draft.response.summary,
-        response: draft.response,
-        userMessage: "",
-        assistantReply: "",
-      }),
-    );
-  }
-  return { source, created };
 }
 
 export async function createLongTermMemoryInteropSourceNotes(
@@ -730,8 +719,8 @@ export async function createLongTermMemoryInteropSourceNotes(
       const selected = new Set(options.sourceIds);
       const limit = Math.max(options.limit ?? options.sourceIds.length, options.sourceIds.length, 1);
       const storage = new LongTermMemoryStorage(root);
-      const drafts = (await interopDraftSeeds(db, source, limit, selected)).filter((draft) =>
-        selected.has(draft.sourceId),
+      const candidates = (await interopImportCandidates(db, source, limit, selected)).filter((candidate) =>
+        selected.has(candidate.sourceId),
       );
       const imported: LtmInteropSourceNoteImport[] = [];
       await recordLtmDebugEvent({
@@ -739,39 +728,39 @@ export async function createLongTermMemoryInteropSourceNotes(
         operationId,
         phase: "import",
         action: "source_candidates_resolved",
-        status: drafts.length ? "ok" : "skipped",
+        status: candidates.length ? "ok" : "skipped",
         source,
         counts: {
           selectedSources: options.sourceIds.length,
-          resolvedSources: drafts.length,
-          missingSources: Math.max(0, options.sourceIds.length - drafts.length),
+          resolvedSources: candidates.length,
+          missingSources: Math.max(0, options.sourceIds.length - candidates.length),
         },
         details: {
-          resolvedSourceIds: drafts.map((draft) => draft.sourceId),
+          resolvedSourceIds: candidates.map((candidate) => candidate.sourceId),
           missingSourceIds: options.sourceIds.filter(
-            (sourceId) => !drafts.some((draft) => draft.sourceId === sourceId),
+            (sourceId) => !candidates.some((candidate) => candidate.sourceId === sourceId),
           ),
         },
       });
 
-      for (const draft of drafts) {
+      for (const candidate of candidates) {
         const now = nowIso();
         const noteInput = {
-          id: draft.sourceNoteId,
+          id: candidate.sourceNoteId,
           type: "source" as const,
           status: "dormant" as const,
-          modes: draft.modes,
-          scope: { ...(draft.scope ?? {}), ...(options.scope ?? {}) },
-          tags: ["source_summary", draft.sourceTag],
+          modes: candidate.modes,
+          scope: { ...(candidate.scope ?? {}), ...(options.scope ?? {}) },
+          tags: ["source_summary", candidate.sourceTag],
           links: [],
           sections: {
             source: {
-              ...textSection(draft.sourceText, draft.evidence),
+              ...textSection(candidate.sourceText, candidate.evidence),
               updatedAt: now,
             },
           },
         };
-        const noteIds = [...(draft.legacySourceNoteIds ?? []), draft.sourceNoteId];
+        const noteIds = [...(candidate.legacySourceNoteIds ?? []), candidate.sourceNoteId];
         const existing = (await Promise.all(noteIds.map((noteId) => storage.getNote(noteId)))).find(
           (note): note is LtmNote => note !== null,
         );
@@ -788,10 +777,10 @@ export async function createLongTermMemoryInteropSourceNotes(
             {
               actor: "maintenance_api",
               cause: "interop.source_import",
-              summary: `Refreshed ${source} import source ${draft.title}`,
+              summary: `Refreshed ${source} import source ${candidate.title}`,
             },
           );
-          imported.push({ sourceId: draft.sourceId, title: draft.title, note, created: false });
+          imported.push({ sourceId: candidate.sourceId, title: candidate.title, note, created: false });
           await recordLtmDebugEvent({
             root,
             operationId,
@@ -799,10 +788,10 @@ export async function createLongTermMemoryInteropSourceNotes(
             action: "source_note_refreshed",
             status: "ok",
             source,
-            sourceId: draft.sourceId,
+            sourceId: candidate.sourceId,
             sourceNoteId: note.id,
-            counts: { sourceChars: draft.sourceText.length },
-            message: `Refreshed ${draft.title}`,
+            counts: { sourceChars: candidate.sourceText.length },
+            message: `Refreshed ${candidate.title}`,
           });
           continue;
         }
@@ -810,9 +799,9 @@ export async function createLongTermMemoryInteropSourceNotes(
         const note = await storage.createNote(noteInput, {
           actor: "maintenance_api",
           cause: "interop.source_import",
-          summary: `Imported ${source} source ${draft.title}`,
+          summary: `Imported ${source} source ${candidate.title}`,
         });
-        imported.push({ sourceId: draft.sourceId, title: draft.title, note, created: true });
+        imported.push({ sourceId: candidate.sourceId, title: candidate.title, note, created: true });
         await recordLtmDebugEvent({
           root,
           operationId,
@@ -820,10 +809,10 @@ export async function createLongTermMemoryInteropSourceNotes(
           action: "source_note_created",
           status: "ok",
           source,
-          sourceId: draft.sourceId,
+          sourceId: candidate.sourceId,
           sourceNoteId: note.id,
-          counts: { sourceChars: draft.sourceText.length },
-          message: `Created ${draft.title}`,
+          counts: { sourceChars: candidate.sourceText.length },
+          message: `Created ${candidate.title}`,
         });
       }
 

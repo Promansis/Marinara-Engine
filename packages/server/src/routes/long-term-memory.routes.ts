@@ -54,7 +54,6 @@ import { LongTermMemoryDraftStore } from "../services/long-term-memory/extractio
 import {
   auditLongTermMemoryReplay,
   checkLongTermMemoryIntegrity,
-  createLongTermMemoryInteropDrafts,
   createLongTermMemoryInteropSourceNotes,
   previewLongTermMemoryInterop,
   repairLongTermMemory,
@@ -747,15 +746,6 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
   app.post<{ Body: unknown }>("/import/preview", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req) => {
     const body = interopBodySchema.parse(req.body);
     return previewLongTermMemoryInterop(app.db, body.source as LtmInteropSource, body.limit);
-  });
-
-  app.post<{ Body: unknown }>("/import/drafts", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req, reply) => {
-    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory import draft creation" })) return;
-    const body = interopBodySchema.parse(req.body);
-    return createLongTermMemoryInteropDrafts(app.db, body.source as LtmInteropSource, {
-      limit: body.limit,
-      scope: body.scope,
-    });
   });
 
   app.post<{ Body: unknown }>(
