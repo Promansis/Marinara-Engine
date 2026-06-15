@@ -79,7 +79,7 @@ export type LtmInteropPreview = {
   source: LtmInteropSource;
   scanned: number;
   draftable: number;
-  samples: Array<{ sourceId: string; title: string; mutationCount: number; summary: string }>;
+  samples: Array<{ sourceId: string; title: string; mutationCount: number; summary: string; snippet: string }>;
 };
 
 export type LtmSearchInput = {

@@ -112,7 +112,7 @@ export interface LtmInteropPreview {
   source: LtmInteropSource;
   scanned: number;
   draftable: number;
-  samples: Array<{ sourceId: string; title: string; mutationCount: number; summary: string }>;
+  samples: Array<{ sourceId: string; title: string; mutationCount: number; summary: string; snippet: string }>;
 }
 
 export interface LtmInteropSourceNoteImport {
@@ -710,7 +710,14 @@ async function chatImportCandidates(
       };
     });
   });
-  return sourceIds ? candidates.filter((candidate) => sourceIds.has(candidate.sourceId)) : candidates.slice(0, limit);
+  const seenHashes = new Set<string>();
+  const deduped = candidates.filter((candidate) => {
+    const hash = createHash("sha256").update(candidate.sourceText).digest("hex");
+    if (seenHashes.has(hash)) return false;
+    seenHashes.add(hash);
+    return true;
+  });
+  return sourceIds ? deduped.filter((candidate) => sourceIds.has(candidate.sourceId)) : deduped.slice(0, limit);
 }
 
 async function interopImportCandidates(db: DB, source: LtmInteropSource, limit: number, sourceIds?: Set<string>) {
@@ -739,12 +746,17 @@ export async function previewLongTermMemoryInterop(
     source,
     scanned: limit,
     draftable: deduped.length,
-    samples: deduped.map((candidate) => ({
-      sourceId: candidate.sourceId,
-      title: candidate.title,
-      mutationCount: candidate.response.mutations.length,
-      summary: candidate.response.summary,
-    })),
+    samples: deduped.map((candidate) => {
+      const trimmed = candidate.sourceText.trim();
+      const snippet = trimmed.length > 200 ? `${trimmed.slice(0, 200)}…` : trimmed;
+      return {
+        sourceId: candidate.sourceId,
+        title: candidate.title,
+        mutationCount: candidate.response.mutations.length,
+        summary: candidate.response.summary,
+        snippet,
+      };
+    }),
   };
 }
 

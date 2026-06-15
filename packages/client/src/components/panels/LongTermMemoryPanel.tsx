@@ -2112,6 +2112,11 @@ function ImportPreviewRowItem({
         <div className="truncate text-xs font-medium text-[var(--foreground)]" title={sample.title}>
           {sample.title}
         </div>
+        {sample.snippet && (
+          <div className="mt-1 truncate text-[10px] leading-relaxed text-[var(--muted-foreground)]" title={sample.snippet}>
+            {sample.snippet}
+          </div>
+        )}
         <div className="mt-1 flex flex-wrap gap-1.5">
           <StatusPill label={`${sample.mutationCount} suggested change${sample.mutationCount === 1 ? "" : "s"}`} />
         </div>
