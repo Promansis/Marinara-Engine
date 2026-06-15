@@ -100,14 +100,9 @@ function resolveChatScope(chat: SummaryLtmChat, meta: Record<string, unknown>): 
     meta.longTermMemoryScope && typeof meta.longTermMemoryScope === "object" && !Array.isArray(meta.longTermMemoryScope)
       ? (meta.longTermMemoryScope as Record<string, unknown>)
       : {};
-  const universe =
-    typeof configured.universe === "string" && isLtmIdentifier(configured.universe) ? configured.universe : undefined;
-  const rpId = typeof configured.rpId === "string" && isLtmIdentifier(configured.rpId) ? configured.rpId : undefined;
   const characterIds = normalizeCharacterIds(chat.characterIds);
   return withMergedLtmScopeLinks(
     {
-      ...(universe ? { universe } : {}),
-      ...(rpId ? { rpId } : {}),
       chatId: chat.id,
       ...(chat.groupId ? { groupId: chat.groupId } : {}),
       ...(characterIds.length > 0 ? { characterIds } : {}),

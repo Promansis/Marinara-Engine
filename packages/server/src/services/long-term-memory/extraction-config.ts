@@ -31,6 +31,8 @@ export const DEFAULT_LTM_EXTRACTION_CONFIG = ltmResolvedExtractionSettingsSchema
   existingNoteMaxChunks: DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS,
   existingNoteMaxTokens: DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
   rejectPlaceholderOutput: true,
+  promptTemplates: [],
+  activePromptTemplateId: null,
 });
 
 function extractionConfigPath(root = getLongTermMemoryRoot()) {
@@ -80,6 +82,12 @@ function normalizePersistedConfig(input: LtmExtractionSettings): LtmExtractionSe
   ) {
     next.rejectPlaceholderOutput = input.rejectPlaceholderOutput;
   }
+  if (Array.isArray(input.promptTemplates) && input.promptTemplates.length > 0) {
+    next.promptTemplates = input.promptTemplates.slice(0, 50);
+  }
+  if (input.activePromptTemplateId !== undefined) {
+    next.activePromptTemplateId = input.activePromptTemplateId;
+  }
   return next;
 }
 
@@ -90,6 +98,8 @@ function resolveExtractionConfig(config: LtmExtractionSettings): LtmResolvedExtr
     version: 1,
     systemPrompt: config.systemPrompt?.trim() || DEFAULT_LTM_EXTRACTION_CONFIG.systemPrompt,
     extraInstruction: config.extraInstruction?.trim() || "",
+    promptTemplates: config.promptTemplates ?? [],
+    activePromptTemplateId: config.activePromptTemplateId ?? null,
   });
 }
 

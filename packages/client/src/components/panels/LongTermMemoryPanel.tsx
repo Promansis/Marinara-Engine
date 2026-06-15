@@ -6,7 +6,6 @@ import {
   ChevronDown,
   ChevronRight,
   Eye,
-  EyeOff,
   FileJson,
   Hammer,
   History,
@@ -17,7 +16,6 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
-  Save,
   Search,
   SlidersHorizontal,
   ShieldCheck,
@@ -45,7 +43,6 @@ import {
   useRebuildLongTermMemory,
   useRepairLongTermMemory,
   useReplayLongTermMemory,
-  useSearchLongTermMemory,
   useUpdateLongTermMemoryNote,
   useRestoreLongTermMemoryDraft,
   type LtmSearchResponse,
@@ -54,6 +51,7 @@ import {
 import type { Chat } from "@marinara-engine/shared";
 import { useChatStore } from "../../stores/chat.store";
 import { useChat, useChats, useUpdateChatMetadata } from "../../hooks/use-chats";
+import { useConnections } from "../../hooks/use-connections";
 import { cn } from "../../lib/utils";
 import {
   CreateLongTermMemoryNoteForm,
@@ -61,6 +59,7 @@ import {
 } from "../long-term-memory/CreateLongTermMemoryNoteForm";
 import { LongTermMemoryDebugLogModal } from "../long-term-memory/LongTermMemoryDebugLogModal";
 import { LongTermMemoryExtractionSettingsModal } from "../long-term-memory/LongTermMemoryExtractionSettingsModal";
+import { LongTermMemoryWorkbenchModal } from "../long-term-memory/LongTermMemoryWorkbenchModal";
 import { LongTermMemoryNoteEditor } from "../long-term-memory/LongTermMemoryNoteEditor";
 import {
   friendlyIdentifier,
@@ -127,41 +126,6 @@ const LTM_RECALL_STYLES: Array<{ id: LtmRecallStyle; label: string; description:
   { id: "story", label: "Story", description: "Leans toward arcs, relationships, and scene continuity." },
 ];
 
-const LTM_RECALL_STYLE_WEIGHTS: Record<
-  LtmRecallStyle,
-  {
-    semanticWeight: number;
-    lexicalWeight: number;
-    graphWeight: number;
-    metadataWeight: number;
-  }
-> = {
-  balanced: {
-    semanticWeight: 0.6,
-    lexicalWeight: 0.3,
-    graphWeight: 0.1,
-    metadataWeight: 1,
-  },
-  exact: {
-    semanticWeight: 0.15,
-    lexicalWeight: 1,
-    graphWeight: 0,
-    metadataWeight: 0.3,
-  },
-  broad: {
-    semanticWeight: 0.55,
-    lexicalWeight: 0.2,
-    graphWeight: 0.8,
-    metadataWeight: 0.8,
-  },
-  story: {
-    semanticWeight: 0.45,
-    lexicalWeight: 0.25,
-    graphWeight: 0.35,
-    metadataWeight: 0.8,
-  },
-};
-
 const DEFAULT_LTM_BUDGET_TOKENS = 2048;
 const DEFAULT_LTM_MAX_CHUNKS = 12;
 const DEFAULT_LTM_SCORE_THRESHOLD = 0;
@@ -224,24 +188,6 @@ function SettingGroup({ label, children }: { label: string; children: ReactNode 
       {children}
     </div>
   );
-}
-
-function normalizeScopeIdentifier(value: string) {
-  const normalized = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .replace(/_+/g, "_");
-  if (!normalized) return "";
-  return /^[a-z]/.test(normalized) ? normalized : `scope_${normalized}`;
-}
-
-function readScopeValue(metadata: Record<string, unknown>, key: "universe" | "rpId") {
-  const scope = metadata.longTermMemoryScope;
-  if (!scope || typeof scope !== "object" || Array.isArray(scope)) return "";
-  const value = (scope as Record<string, unknown>)[key];
-  return typeof value === "string" ? value : "";
 }
 
 function readRecallStyle(metadata: Record<string, unknown>): LtmRecallStyle {
@@ -2140,20 +2086,29 @@ function ImportPreviewRowItem({
   );
 }
 
-function ChatMemorySettings({ onOpenExtractionSettings }: { onOpenExtractionSettings: () => void }) {
+function ChatMemorySettings({
+  onOpenExtractionSettings,
+  onOpenWorkbench,
+  integrity,
+  rebuild,
+  replay,
+  repair,
+}: {
+  onOpenExtractionSettings: () => void;
+  onOpenWorkbench: () => void;
+  integrity: ReturnType<typeof useLongTermMemoryIntegrity>;
+  rebuild: ReturnType<typeof useRebuildLongTermMemory>;
+  replay: ReturnType<typeof useReplayLongTermMemory>;
+  repair: ReturnType<typeof useRepairLongTermMemory>;
+}) {
   const activeChatId = useChatStore((s) => s.activeChatId);
   const cachedActiveChat = useChatStore((s) => s.activeChat);
   const activeChatQuery = useChat(activeChatId);
   const activeChat = activeChatQuery.data ?? cachedActiveChat;
   const updateMeta = useUpdateChatMetadata();
-  const searchMemory = useSearchLongTermMemory();
   const metadata = useMemo(() => parseMetadata(activeChat?.metadata), [activeChat?.metadata]);
   const enabled = metadata.enableLongTermMemory === true;
   const debug = metadata.longTermMemoryDebug === true;
-  const autoExtract = metadata.longTermMemoryAutoExtract === true;
-  const autoApplyLowRisk = metadata.longTermMemoryAutoApplyLowRisk === true;
-  const scopeUniverse = readScopeValue(metadata, "universe");
-  const scopeRpId = readScopeValue(metadata, "rpId");
   const budgetValue = readNumberSetting(metadata, "longTermMemoryBudgetTokens", DEFAULT_LTM_BUDGET_TOKENS, 128, 16_384);
   const maxChunksValue = readNumberSetting(metadata, "longTermMemoryMaxChunks", DEFAULT_LTM_MAX_CHUNKS, 1, 100);
   const scoreThresholdValue =
@@ -2162,30 +2117,33 @@ function ChatMemorySettings({ onOpenExtractionSettings }: { onOpenExtractionSett
       : DEFAULT_LTM_SCORE_THRESHOLD;
   const recallStyle = readRecallStyle(metadata);
   const includeResolved = metadata.longTermMemoryIncludeResolved === true;
-  const [scopeDraft, setScopeDraft] = useState({
-    universe: scopeUniverse,
-    rpId: scopeRpId,
-  });
+  const contextMessagesValue = readNumberSetting(metadata, "longTermMemoryRecallContextMessages", 4, 1, 20);
+  const autoAcceptAll = metadata.longTermMemoryAutoAcceptAll === true;
+  const useDefaultAgent = metadata.longTermMemoryUseDefaultAgent !== false;
+  const agentConnectionId =
+    typeof metadata.longTermMemoryAgentConnectionId === "string"
+      ? metadata.longTermMemoryAgentConnectionId
+      : null;
+  const { data: connections } = useConnections();
   const [budgetDraft, setBudgetDraft] = useState(String(budgetValue));
   const [maxChunksDraft, setMaxChunksDraft] = useState(String(maxChunksValue));
   const [scoreThresholdDraft, setScoreThresholdDraft] = useState(scoreThresholdValue);
+  const [contextMessagesDraft, setContextMessagesDraft] = useState(String(contextMessagesValue));
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [previewQuery, setPreviewQuery] = useState("");
-  const [previewResult, setPreviewResult] = useState<LtmSearchResponse | null>(null);
+  const [recallOpen, setRecallOpen] = useState(true);
+  const [extractionOpen, setExtractionOpen] = useState(false);
+  const [maintenanceOpen, setMaintenanceOpen] = useState(false);
+  const [debugOpen, setDebugOpen] = useState(false);
   const sliderBudget = Number.isFinite(Number(budgetDraft))
     ? Math.max(128, Math.min(16_384, Math.floor(Number(budgetDraft))))
     : budgetValue;
 
   useEffect(() => {
-    setScopeDraft({
-      universe: scopeUniverse,
-      rpId: scopeRpId,
-    });
     setBudgetDraft(String(budgetValue));
     setMaxChunksDraft(String(maxChunksValue));
     setScoreThresholdDraft(scoreThresholdValue);
-    setPreviewResult(null);
-  }, [activeChat?.id, budgetValue, maxChunksValue, scopeRpId, scopeUniverse, scoreThresholdValue]);
+    setContextMessagesDraft(String(contextMessagesValue));
+  }, [activeChat?.id, budgetValue, maxChunksValue, scoreThresholdValue, contextMessagesValue]);
 
   const patch = (next: Record<string, unknown>) => {
     if (!activeChat) return Promise.resolve();
@@ -2193,21 +2151,6 @@ function ChatMemorySettings({ onOpenExtractionSettings }: { onOpenExtractionSett
       .mutateAsync({ id: activeChat.id, ...next })
       .then(() => toast.success("Chat memory settings updated"))
       .catch((err: Error) => toast.error(err.message));
-  };
-
-  const commitScope = (draft = scopeDraft) => {
-    const universe = normalizeScopeIdentifier(draft.universe);
-    const rpId = normalizeScopeIdentifier(draft.rpId);
-    setScopeDraft({ universe, rpId });
-    if (universe === scopeUniverse && rpId === scopeRpId) {
-      return Promise.resolve();
-    }
-    return patch({
-      longTermMemoryScope: {
-        ...(universe ? { universe } : {}),
-        ...(rpId ? { rpId } : {}),
-      },
-    });
   };
 
   const commitBudget = (value: string) => {
@@ -2226,6 +2169,14 @@ function ChatMemorySettings({ onOpenExtractionSettings }: { onOpenExtractionSett
     setMaxChunksDraft(String(next));
     if (next === maxChunksValue) return Promise.resolve();
     return patch({ longTermMemoryMaxChunks: next });
+  };
+
+  const commitContextMessages = (value: string) => {
+    const numeric = Number(value);
+    const next = Number.isFinite(numeric) ? Math.max(1, Math.min(20, Math.floor(numeric))) : 4;
+    setContextMessagesDraft(String(next));
+    if (next === contextMessagesValue) return Promise.resolve();
+    return patch({ longTermMemoryRecallContextMessages: next });
   };
 
   const commitScoreThreshold = (value: number) => {
@@ -2249,348 +2200,318 @@ function ChatMemorySettings({ onOpenExtractionSettings }: { onOpenExtractionSett
     });
   };
 
-  const runPreview = async () => {
-    if (!activeChat || !previewQuery.trim()) return;
-    const characterIds = Array.isArray(activeChat.characterIds) ? activeChat.characterIds : [];
-    const scope = {
-      chatId: activeChat.id,
-      chatIds: [activeChat.id],
-      ...(activeChat.groupId ? { groupId: activeChat.groupId } : {}),
-      ...(characterIds.length ? { characterIds } : {}),
-      ...(scopeUniverse ? { universe: scopeUniverse } : {}),
-      ...(scopeRpId ? { rpId: scopeRpId } : {}),
-    };
-    try {
-      const request = {
-        queryText: previewQuery.trim(),
-        recentUserMessage: previewQuery.trim(),
-        scope,
-        characterIds,
-        includeResolved,
-        maxChunks: maxChunksValue,
-        maxTokens: budgetValue,
-        minScore: scoreThresholdValue,
-        debug,
-        ...LTM_RECALL_STYLE_WEIGHTS[recallStyle],
-      };
-      const result = await searchMemory.mutateAsync(request);
-      if (result.chunks.length > 0) {
-        setPreviewResult(result);
-        return;
-      }
-
-      const relaxed = await searchMemory.mutateAsync({
-        ...request,
-        scope: undefined,
-        characterIds: undefined,
-        debug: true,
-      });
-      setPreviewResult({
-        ...relaxed,
-        warnings: [
-          ...result.warnings,
-          ...(relaxed.chunks.length > 0
-            ? ["No chat-scoped memories matched; showing broader vault matches."]
-            : ["No chat-scoped or broader memories matched. Rebuild indexes if notes were added recently."]),
-          ...relaxed.warnings,
-        ],
-      });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not preview memory recall.");
-    }
-  };
-
   return (
     <div className="space-y-2">
-      <ToolButton onClick={onOpenExtractionSettings}>
-        <SlidersHorizontal size="0.875rem" />
-        Extraction settings
-      </ToolButton>
-
       {!activeChat && (
         <p className="text-xs text-[var(--muted-foreground)]">Open a chat to edit its long-term memory settings.</p>
       )}
 
       {activeChat && (
         <>
-          <SettingToggle
-            label="Use memory in prompts"
-            checked={enabled}
-            onChange={(checked) => patch({ enableLongTermMemory: checked })}
-          />
-
-          <div className="grid gap-3 rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
-            <SettingGroup label="Recall style">
-              <div className="grid grid-cols-2 gap-1 rounded-lg bg-[var(--background)] p-1 ring-1 ring-[var(--border)]">
-                {LTM_RECALL_STYLES.map((style) => (
-                  <div key={style.id} className="grid grid-cols-[1fr_auto] overflow-hidden rounded-md">
-                    <button
-                      type="button"
-                      onClick={() => patch({ longTermMemoryRecallStyle: style.id })}
-                      aria-pressed={recallStyle === style.id}
-                      className={cn(
-                        "min-h-8 px-2 text-left text-xs font-medium transition-colors",
-                        recallStyle === style.id
-                          ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
-                          : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                      )}
-                    >
-                      {style.label}
-                    </button>
-                    <button
-                      type="button"
-                      title={style.description}
-                      aria-label={`${style.label} recall style: ${style.description}`}
-                      onClick={(event) => event.preventDefault()}
-                      className={cn(
-                        "flex h-8 w-8 items-center justify-center transition-colors",
-                        recallStyle === style.id
-                          ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
-                          : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                      )}
-                    >
-                      <Info size="0.75rem" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </SettingGroup>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <SettingField label="Universe">
-                <input
-                  value={scopeDraft.universe}
-                  onChange={(event) => setScopeDraft((current) => ({ ...current, universe: event.target.value }))}
-                  onBlur={() => commitScope()}
-                  placeholder="shared_realm"
-                  className={inputClassName}
-                />
-              </SettingField>
-              <SettingField label="Story line">
-                <input
-                  value={scopeDraft.rpId}
-                  onChange={(event) => setScopeDraft((current) => ({ ...current, rpId: event.target.value }))}
-                  onBlur={() => commitScope()}
-                  placeholder="main_story"
-                  className={inputClassName}
-                />
-              </SettingField>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-[1fr_6.5rem]">
-              <SettingField label="Memory space used in replies">
-                <div className="grid grid-cols-[1fr_5.5rem] items-center gap-3">
-                  <input
-                    type="range"
-                    min={128}
-                    max={16384}
-                    step={128}
-                    value={sliderBudget}
-                    onChange={(event) => setBudgetDraft(event.target.value)}
-                    onPointerUp={(event) => commitBudget((event.target as HTMLInputElement).value)}
-                    onBlur={(event) => commitBudget(event.target.value)}
-                    className="min-w-0 accent-[var(--primary)]"
-                  />
-                  <input
-                    type="number"
-                    min={128}
-                    max={16384}
-                    step={128}
-                    value={budgetDraft}
-                    onChange={(event) => setBudgetDraft(event.target.value)}
-                    onBlur={(event) => commitBudget(event.target.value)}
-                    className={compactInputClassName}
-                  />
+          <button
+            type="button"
+            onClick={() => setRecallOpen((c) => !c)}
+            className="flex min-h-8 items-center justify-between rounded-lg px-2 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            aria-expanded={recallOpen}
+          >
+            <span>Recall</span>
+            {recallOpen ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
+          </button>
+          {recallOpen && (
+            <div className="grid gap-2 rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
+              <SettingToggle
+                label="Use memory in prompts"
+                checked={enabled}
+                onChange={(checked) => patch({ enableLongTermMemory: checked })}
+              />
+              <SettingGroup label="Recall style">
+                <div className="grid grid-cols-2 gap-1 rounded-lg bg-[var(--background)] p-1 ring-1 ring-[var(--border)]">
+                  {LTM_RECALL_STYLES.map((style) => (
+                    <div key={style.id} className="grid grid-cols-[1fr_auto] overflow-hidden rounded-md">
+                      <button
+                        type="button"
+                        onClick={() => patch({ longTermMemoryRecallStyle: style.id })}
+                        aria-pressed={recallStyle === style.id}
+                        className={cn(
+                          "min-h-8 px-2 text-left text-xs font-medium transition-colors",
+                          recallStyle === style.id
+                            ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
+                            : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                        )}
+                      >
+                        {style.label}
+                      </button>
+                      <button
+                        type="button"
+                        title={style.description}
+                        aria-label={`${style.label} recall style: ${style.description}`}
+                        onClick={(event) => event.preventDefault()}
+                        className={cn(
+                          "flex h-8 w-8 items-center justify-center transition-colors",
+                          recallStyle === style.id
+                            ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
+                            : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                        )}
+                      >
+                        <Info size="0.75rem" />
+                      </button>
+                    </div>
+                  ))}
                 </div>
-              </SettingField>
-              <SettingField label="Max memories">
-                <input
-                  type="number"
-                  min={1}
-                  max={100}
-                  step={1}
-                  value={maxChunksDraft}
-                  onChange={(event) => setMaxChunksDraft(event.target.value)}
-                  onBlur={(event) => commitMaxChunks(event.target.value)}
-                  className={compactInputClassName}
-                />
-              </SettingField>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setAdvancedOpen((current) => !current)}
-              className="flex min-h-8 items-center justify-between rounded-lg px-2 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
-              aria-expanded={advancedOpen}
-            >
-              <span>Advanced recall</span>
-              {advancedOpen ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
-            </button>
-            {advancedOpen && (
-              <div className="grid gap-2 rounded-lg bg-[var(--background)] p-2 ring-1 ring-[var(--border)]">
-                <SettingToggle
-                  label="Include resolved threads"
-                  checked={includeResolved}
-                  onChange={(checked) => patch({ longTermMemoryIncludeResolved: checked })}
-                />
-                <SettingGroup label="Score threshold">
-                  <div className="grid grid-cols-[1fr_4.5rem] items-center gap-3">
+              </SettingGroup>
+              <div className="grid gap-3 sm:grid-cols-[1fr_6.5rem]">
+                <SettingField label="Max tokens">
+                  <div className="grid grid-cols-[1fr_5.5rem] items-center gap-3">
                     <input
                       type="range"
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      value={scoreThresholdDraft}
-                      onChange={(event) => setScoreThresholdDraft(Number(event.target.value))}
-                      onPointerUp={(event) => commitScoreThreshold(Number((event.target as HTMLInputElement).value))}
-                      onBlur={(event) => commitScoreThreshold(Number(event.target.value))}
+                      min={128}
+                      max={16384}
+                      step={128}
+                      value={sliderBudget}
+                      onChange={(event) => setBudgetDraft(event.target.value)}
+                      onPointerUp={(event) => commitBudget((event.target as HTMLInputElement).value)}
+                      onBlur={(event) => commitBudget(event.target.value)}
                       className="min-w-0 accent-[var(--primary)]"
                     />
                     <input
                       type="number"
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      value={scoreThresholdDraft}
-                      onChange={(event) => setScoreThresholdDraft(Number(event.target.value))}
-                      onBlur={(event) => commitScoreThreshold(Number(event.target.value))}
+                      min={128}
+                      max={16384}
+                      step={128}
+                      value={budgetDraft}
+                      onChange={(event) => setBudgetDraft(event.target.value)}
+                      onBlur={(event) => commitBudget(event.target.value)}
                       className={compactInputClassName}
                     />
                   </div>
-                  <p className="mt-1 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-                    0 keeps all ranked matches. Higher values keep only memories close to the strongest match.
-                  </p>
-                </SettingGroup>
-                <div>
-                  <ToolButton onClick={resetRecallDefaults}>
-                    <RotateCcw size="0.875rem" />
-                    Reset recall defaults
-                  </ToolButton>
-                </div>
-              </div>
-            )}
-
-            <div className="grid gap-2 rounded-lg bg-[var(--background)] p-2 ring-1 ring-[var(--border)]">
-              <SettingGroup label="Preview recall">
-                <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                </SettingField>
+                <SettingField label="Max memories">
                   <input
-                    value={previewQuery}
-                    onChange={(event) => setPreviewQuery(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") void runPreview();
-                    }}
-                    placeholder="Ask what memory should recall"
-                    className={inputClassName}
+                    type="number"
+                    min={1}
+                    max={100}
+                    step={1}
+                    value={maxChunksDraft}
+                    onChange={(event) => setMaxChunksDraft(event.target.value)}
+                    onBlur={(event) => commitMaxChunks(event.target.value)}
+                    className={compactInputClassName}
                   />
-                  <ToolButton
-                    onClick={runPreview}
-                    disabled={!previewQuery.trim() || searchMemory.isPending}
-                    tone="primary"
-                  >
-                    {searchMemory.isPending ? (
-                      <Loader2 size="0.875rem" className="animate-spin" />
-                    ) : (
-                      <Search size="0.875rem" />
-                    )}
-                    Preview
-                  </ToolButton>
-                </div>
-              </SettingGroup>
-              {previewResult && (
-                <div className="space-y-2">
-                  <div className="flex flex-wrap items-center gap-1.5 text-[0.6875rem] text-[var(--muted-foreground)]">
-                    <StatusPill
-                      label={`${previewResult.chunks.length} selected`}
-                      tone={previewResult.chunks.length ? "good" : "neutral"}
-                    />
-                    <StatusPill label={`${previewResult.usedTokens}/${previewResult.maxTokens} tokens`} />
-                    <StatusPill
-                      label={previewResult.embeddingsAvailable ? "Embeddings on" : "Lexical only"}
-                      tone={previewResult.embeddingsAvailable ? "good" : "warn"}
-                    />
-                  </div>
-                  {previewResult.warnings.map((warning) => (
-                    <p key={warning} className="rounded-md bg-amber-500/10 px-2 py-1 text-[0.6875rem] text-amber-200">
-                      {warning}
+                </SettingField>
+              </div>
+              <SettingField label="Context messages for search">
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  step={1}
+                  value={contextMessagesDraft}
+                  onChange={(event) => setContextMessagesDraft(event.target.value)}
+                  onBlur={(event) => commitContextMessages(event.target.value)}
+                  className={compactInputClassName}
+                />
+              </SettingField>
+              <p className="mt-1 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                How many recent chat messages to use for searching the database. Default 4 (last 2 exchanges).
+              </p>
+              <button
+                type="button"
+                onClick={() => setAdvancedOpen((current) => !current)}
+                className="flex min-h-8 items-center justify-between rounded-lg px-2 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+                aria-expanded={advancedOpen}
+              >
+                <span>Advanced recall</span>
+                {advancedOpen ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
+              </button>
+              {advancedOpen && (
+                <div className="grid gap-2 rounded-lg bg-[var(--background)] p-2 ring-1 ring-[var(--border)]">
+                  <SettingToggle
+                    label="Include resolved threads"
+                    checked={includeResolved}
+                    onChange={(checked) => patch({ longTermMemoryIncludeResolved: checked })}
+                  />
+                  <SettingGroup label="Score threshold">
+                    <div className="grid grid-cols-[1fr_4.5rem] items-center gap-3">
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={scoreThresholdDraft}
+                        onChange={(event) => setScoreThresholdDraft(Number(event.target.value))}
+                        onPointerUp={(event) => commitScoreThreshold(Number((event.target as HTMLInputElement).value))}
+                        onBlur={(event) => commitScoreThreshold(Number(event.target.value))}
+                        className="min-w-0 accent-[var(--primary)]"
+                      />
+                      <input
+                        type="number"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={scoreThresholdDraft}
+                        onChange={(event) => setScoreThresholdDraft(Number(event.target.value))}
+                        onBlur={(event) => commitScoreThreshold(Number(event.target.value))}
+                        className={compactInputClassName}
+                      />
+                    </div>
+                    <p className="mt-1 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                      0 keeps all ranked matches. Higher values keep only memories close to the strongest match.
                     </p>
-                  ))}
-                  <div className="grid gap-2">
-                    {previewResult.chunks.length === 0 && (
-                      <p className="rounded-md bg-[var(--secondary)]/50 px-2 py-2 text-xs text-[var(--muted-foreground)]">
-                        No memories matched this preview.
-                      </p>
-                    )}
-                    {previewResult.chunks.map((item, index) => (
-                      <article
-                        key={`${item.chunk?.id ?? "chunk"}-${index}`}
-                        className="rounded-md bg-[var(--secondary)]/45 p-2 ring-1 ring-[var(--border)]"
-                      >
-                        <div className="mb-1 flex flex-wrap items-center gap-1.5">
-                          <span className="min-w-0 truncate font-mono text-[0.6875rem] text-[var(--foreground)]">
-                            {item.chunk?.noteId ?? "memory"} · {item.chunk?.sectionKey ?? "section"}
-                          </span>
-                          {item.estimatedTokens !== undefined && (
-                            <StatusPill label={`~${item.estimatedTokens} tokens`} />
-                          )}
-                          {item.lanes?.map((lane) => (
-                            <StatusPill key={lane} label={lane} />
-                          ))}
-                        </div>
-                        <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">
-                          {compactLtmText(item.chunk?.text)}
-                        </p>
-                      </article>
-                    ))}
+                  </SettingGroup>
+                  <div>
+                    <ToolButton onClick={resetRecallDefaults}>
+                      <RotateCcw size="0.875rem" />
+                      Reset recall defaults
+                    </ToolButton>
                   </div>
-                  {debug && previewResult.debug?.rejected && previewResult.debug.rejected.length > 0 && (
-                    <details className="rounded-md bg-[var(--secondary)]/35 p-2 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-                      <summary className="cursor-pointer font-medium text-[var(--foreground)]">
-                        Rejected candidates ({previewResult.debug.rejected.length})
-                      </summary>
-                      <div className="mt-2 grid gap-1">
-                        {previewResult.debug.rejected.slice(0, 8).map((candidate) => (
-                          <div key={candidate.chunkId} className="flex flex-wrap gap-1.5">
-                            <span className="font-mono">{candidate.noteId ?? candidate.chunkId}</span>
-                            <span>{candidate.rejectionReason ?? "lower_rank"}</span>
-                            {candidate.estimatedTokens !== undefined && (
-                              <span>~{candidate.estimatedTokens} tokens</span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </details>
-                  )}
                 </div>
               )}
             </div>
-          </div>
+          )}
 
-          <SettingToggle
-            label="Debug retrieval logs"
-            checked={debug}
-            onChange={(checked) => patch({ longTermMemoryDebug: checked })}
-          />
-          <SettingToggle
-            label="Create suggestions after replies"
-            checked={autoExtract}
-            onChange={(checked) =>
-              patch({
-                longTermMemoryAutoExtract: checked,
-                ...(checked ? {} : { longTermMemoryAutoApplyLowRisk: false }),
-              })
-            }
-          />
-          <SettingToggle
-            label="Auto-apply low-risk suggestions"
-            checked={autoExtract && autoApplyLowRisk}
-            disabled={!autoExtract}
-            onChange={(checked) =>
-              patch({
-                longTermMemoryAutoExtract: true,
-                longTermMemoryAutoApplyLowRisk: checked,
-              })
-            }
-          />
+          <button
+            type="button"
+            onClick={() => setExtractionOpen((c) => !c)}
+            className="flex min-h-8 items-center justify-between rounded-lg px-2 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            aria-expanded={extractionOpen}
+          >
+            <span>Extraction</span>
+            {extractionOpen ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
+          </button>
+          {extractionOpen && (
+            <div className="grid gap-2 rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
+              <ToolButton onClick={onOpenExtractionSettings}>
+                <SlidersHorizontal size="0.875rem" />
+                Extraction settings
+              </ToolButton>
+              <SettingToggle
+                label="Auto-accept all extracted memories (bypass review)"
+                checked={autoAcceptAll}
+                onChange={(checked) => patch({ longTermMemoryAutoAcceptAll: checked })}
+              />
+              <p className="text-[0.625rem] text-amber-200/80">
+                Skips the review step entirely — all extracted suggestions are applied automatically.
+              </p>
+              <SettingToggle
+                label="Use default agent for extraction"
+                checked={useDefaultAgent}
+                onChange={(checked) => patch({ longTermMemoryUseDefaultAgent: checked })}
+              />
+              {!useDefaultAgent && (
+                <select
+                  value={agentConnectionId ?? ""}
+                  onChange={(event) =>
+                    patch({ longTermMemoryAgentConnectionId: event.target.value || null })
+                  }
+                  className="w-full rounded-lg bg-[var(--secondary)] px-2.5 py-2 text-xs outline-none ring-1 ring-transparent focus:ring-[var(--primary)]"
+                >
+                  <option value="">Select a connection...</option>
+                  {(connections ?? []).map((conn: unknown) => {
+                    const c = conn as { id: string; name: string; model?: string };
+                    return (
+                      <option key={c.id} value={c.id}>
+                        {c.name}{c.model ? ` — ${c.model}` : ""}
+                      </option>
+                    );
+                  })}
+                </select>
+              )}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setMaintenanceOpen((c) => !c)}
+            className="flex min-h-8 items-center justify-between rounded-lg px-2 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            aria-expanded={maintenanceOpen}
+          >
+            <span>Maintenance</span>
+            {maintenanceOpen ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
+          </button>
+          {maintenanceOpen && (
+            <div className="grid gap-2 rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
+              <ToolButton
+                onClick={() =>
+                  rebuild
+                    .mutateAsync()
+                    .then(() => toast.success("Memory search refreshed"))
+                    .catch((err: Error) => toast.error(err.message))
+                }
+                disabled={rebuild.isPending}
+                tone="primary"
+              >
+                <RefreshCw size="0.875rem" />
+                Refresh Memory Search
+              </ToolButton>
+              <ToolButton
+                onClick={() =>
+                  replay
+                    .mutateAsync()
+                    .then((result) => toast(result.replayable ? "Memory history looks healthy" : result.messages[0]))
+                    .catch((err: Error) => toast.error(err.message))
+                }
+                disabled={replay.isPending}
+              >
+                <History size="0.875rem" />
+                Check Memory History
+              </ToolButton>
+              <ToolButton
+                onClick={() =>
+                  repair
+                    .mutateAsync(["quarantine_malformed_notes", "rebuild_indexes"])
+                    .then(() => toast.success("Repair actions finished"))
+                    .catch((err: Error) => toast.error(err.message))
+                }
+                disabled={repair.isPending}
+                tone="danger"
+              >
+                <Hammer size="0.875rem" />
+                Repair Broken Memory Files
+              </ToolButton>
+              <div className="mt-3 space-y-2">
+                {(integrity.data?.issues ?? [])
+                  .filter((issue) => issue.severity !== "info")
+                  .slice(0, 8).map((issue) => (
+                  <div
+                    key={`${issue.code}-${issue.path ?? issue.noteId ?? issue.message}`}
+                    className="rounded-lg bg-[var(--secondary)]/50 p-3 text-xs ring-1 ring-[var(--border)]"
+                  >
+                    <div className="flex items-center gap-2 font-medium">
+                      {issue.severity === "error" ? (
+                        <AlertTriangle size="0.875rem" className="text-rose-300" />
+                      ) : (
+                        <ShieldCheck size="0.875rem" />
+                      )}
+                      {issue.code}
+                    </div>
+                    <p className="mt-1 text-xs text-[var(--muted-foreground)]">{issue.message}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setDebugOpen((c) => !c)}
+            className="flex min-h-8 items-center justify-between rounded-lg px-2 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            aria-expanded={debugOpen}
+          >
+            <span>Debug</span>
+            {debugOpen ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
+          </button>
+          {debugOpen && (
+            <div className="grid gap-2 rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
+              <SettingToggle
+                label="Debug retrieval logs"
+                checked={debug}
+                onChange={(checked) => patch({ longTermMemoryDebug: checked })}
+              />
+              <ToolButton onClick={onOpenWorkbench}>
+                <Search size="0.875rem" />
+                Open LTM Workbench
+              </ToolButton>
+            </div>
+          )}
         </>
       )}
     </div>
@@ -2611,6 +2532,7 @@ export function LongTermMemoryPanel() {
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [debugLogOpen, setDebugLogOpen] = useState(false);
   const [extractionSettingsOpen, setExtractionSettingsOpen] = useState(false);
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [archiveTab, setArchiveTab] = useState<"notes" | "drafts">("notes");
   const [selectedArchivedNoteIds, setSelectedArchivedNoteIds] = useState<Set<string>>(() => new Set());
   const [selectedArchivedDraftIds, setSelectedArchivedDraftIds] = useState<Set<string>>(() => new Set());
@@ -3327,71 +3249,14 @@ export function LongTermMemoryPanel() {
       )}
 
       {tab === "tools" && (
-        <>
-          <Section title="Chat Settings">
-            <ChatMemorySettings onOpenExtractionSettings={() => setExtractionSettingsOpen(true)} />
-          </Section>
-          <Section title="Tools">
-            <div className="space-y-2">
-              <ToolButton
-                onClick={() =>
-                  rebuild
-                    .mutateAsync()
-                    .then(() => toast.success("Memory search refreshed"))
-                    .catch((err: Error) => toast.error(err.message))
-                }
-                disabled={rebuild.isPending}
-                tone="primary"
-              >
-                <RefreshCw size="0.875rem" />
-                Refresh Memory Search
-              </ToolButton>
-              <ToolButton
-                onClick={() =>
-                  replay
-                    .mutateAsync()
-                    .then((result) => toast(result.replayable ? "Memory history looks healthy" : result.messages[0]))
-                    .catch((err: Error) => toast.error(err.message))
-                }
-                disabled={replay.isPending}
-              >
-                <History size="0.875rem" />
-                Check Memory History
-              </ToolButton>
-              <ToolButton
-                onClick={() =>
-                  repair
-                    .mutateAsync(["quarantine_malformed_notes", "rebuild_indexes"])
-                    .then(() => toast.success("Repair actions finished"))
-                    .catch((err: Error) => toast.error(err.message))
-                }
-                disabled={repair.isPending}
-                tone="danger"
-              >
-                <Hammer size="0.875rem" />
-                Repair Broken Memory Files
-              </ToolButton>
-            </div>
-            <div className="mt-3 space-y-2">
-              {(integrity.data?.issues ?? []).slice(0, 8).map((issue) => (
-                <div
-                  key={`${issue.code}-${issue.path ?? issue.noteId ?? issue.message}`}
-                  className="rounded-lg bg-[var(--secondary)]/50 p-3 text-xs ring-1 ring-[var(--border)]"
-                >
-                  <div className="flex items-center gap-2 font-medium">
-                    {issue.severity === "error" ? (
-                      <AlertTriangle size="0.875rem" className="text-rose-300" />
-                    ) : (
-                      <ShieldCheck size="0.875rem" />
-                    )}
-                    {issue.code}
-                  </div>
-                  <p className="mt-1 text-xs text-[var(--muted-foreground)]">{issue.message}</p>
-                </div>
-              ))}
-            </div>
-          </Section>
-        </>
+        <ChatMemorySettings
+          onOpenExtractionSettings={() => setExtractionSettingsOpen(true)}
+          onOpenWorkbench={() => setWorkbenchOpen(true)}
+          integrity={integrity}
+          rebuild={rebuild}
+          replay={replay}
+          repair={repair}
+        />
       )}
 
       {tab === "import" && (
@@ -3756,6 +3621,10 @@ export function LongTermMemoryPanel() {
       <LongTermMemoryExtractionSettingsModal
         open={extractionSettingsOpen}
         onClose={() => setExtractionSettingsOpen(false)}
+      />
+      <LongTermMemoryWorkbenchModal
+        open={workbenchOpen}
+        onClose={() => setWorkbenchOpen(false)}
       />
 
       {(status.isLoading || integrity.isLoading) && (

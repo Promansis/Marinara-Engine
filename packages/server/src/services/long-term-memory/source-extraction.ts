@@ -137,9 +137,7 @@ function scopeOverlaps(noteScope: LtmScope, extractionScope: LtmScope) {
   if (extractionScope.characterIds?.some((characterId) => noteCharacters.has(characterId))) return true;
 
   return Boolean(
-    (noteScope.groupId && noteScope.groupId === extractionScope.groupId) ||
-    (noteScope.rpId && noteScope.rpId === extractionScope.rpId) ||
-    (noteScope.universe && noteScope.universe === extractionScope.universe),
+    (noteScope.groupId && noteScope.groupId === extractionScope.groupId),
   );
 }
 

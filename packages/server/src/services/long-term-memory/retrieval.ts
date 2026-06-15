@@ -24,6 +24,7 @@ export interface RetrieveLongTermMemoryInput extends MemoryRecallEmbeddingOption
   root?: string;
   queryText?: string;
   recentUserMessage?: string;
+  recentMessages?: string[];
   mentionedCharacterNames?: string[];
   noteIds?: string[];
   tags?: string[];
@@ -205,9 +206,12 @@ function uniqueSorted(values: string[]) {
 }
 
 function extractQuerySignals(input: RetrieveLongTermMemoryInput) {
+  const recentMessagesText = input.recentMessages?.length
+    ? input.recentMessages.filter(Boolean).join("\n")
+    : "";
   const queryParts = [
     input.queryText ?? "",
-    input.recentUserMessage ?? "",
+    recentMessagesText || (input.recentUserMessage ?? ""),
     ...(input.mentionedCharacterNames ?? []),
   ].filter(Boolean);
   const queryText = queryParts.join("\n");
@@ -231,13 +235,11 @@ function scopeMatches(chunk: LtmMemoryChunk, scope: LtmScope | undefined, charac
   const activeChatIds = new Set(getLtmScopeChatIds(scope));
   const chunkChatIds = getLtmScopeChatIds(chunk.scope);
   const hasCallerScope =
-    Boolean(activeChatIds.size || scope?.groupId || scope?.rpId || scope?.universe || scope?.characterIds?.length) ||
+    Boolean(activeChatIds.size || scope?.groupId || scope?.characterIds?.length) ||
     activeCharacters.size > 0;
   const chunkHasScope = Boolean(
     chunkChatIds.length ||
     chunk.scope.groupId ||
-    chunk.scope.rpId ||
-    chunk.scope.universe ||
     chunk.scope.characterIds?.length,
   );
 
@@ -247,8 +249,6 @@ function scopeMatches(chunk: LtmMemoryChunk, scope: LtmScope | undefined, charac
   if (chunk.scope.groupId) return chunk.scope.groupId === scope?.groupId;
   if (chunk.scope.characterIds?.length) return chunk.scope.characterIds.some((id) => activeCharacters.has(id));
   if (chunk.noteType === "character" && activeCharacters.has(chunk.noteId)) return true;
-  if (chunk.scope.rpId) return chunk.scope.rpId === scope?.rpId;
-  if (chunk.scope.universe) return chunk.scope.universe === scope?.universe;
   return true;
 }
 

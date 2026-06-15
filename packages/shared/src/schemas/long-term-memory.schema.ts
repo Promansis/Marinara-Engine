@@ -51,6 +51,17 @@ export const ltmExtractionSettingsSchema = z
     existingNoteMaxChunks: z.number().int().min(1).max(100).optional(),
     existingNoteMaxTokens: z.number().int().min(128).max(16_384).optional(),
     rejectPlaceholderOutput: z.boolean().optional(),
+    promptTemplates: z
+      .array(
+        z.object({
+          id: z.string().min(1),
+          name: z.string().min(1).max(120),
+          prompt: z.string().min(1),
+        }),
+      )
+      .max(50)
+      .optional(),
+    activePromptTemplateId: z.string().min(1).max(64).nullable().optional(),
   })
   .strict();
 
@@ -68,6 +79,16 @@ export const ltmResolvedExtractionSettingsSchema = z
     existingNoteMaxChunks: z.number().int().min(1).max(100),
     existingNoteMaxTokens: z.number().int().min(128).max(16_384),
     rejectPlaceholderOutput: z.boolean(),
+    promptTemplates: z
+      .array(
+        z.object({
+          id: z.string().min(1),
+          name: z.string().min(1).max(120),
+          prompt: z.string().min(1),
+        }),
+      )
+      .max(50),
+    activePromptTemplateId: z.string().min(1).max(64).nullable(),
   })
   .strict();
 

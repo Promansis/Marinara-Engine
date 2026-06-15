@@ -14,7 +14,6 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
-  useBackfillSummaryEntriesToLtm,
   useBulkSetMessagesHiddenFromAI,
   useDeleteSummaryEntry,
   useGenerateSummary,
@@ -57,9 +56,6 @@ interface SummaryPopoverProps {
   contextSize: number;
   promptTemplates?: ChatSummaryPromptTemplate[];
   activePromptTemplateId?: string | null;
-  summaryLongTermMemoryEnabled?: boolean;
-  summaryLongTermMemoryAutoExtract?: boolean;
-  summaryLongTermMemoryAutoApplyLowRisk?: boolean;
   totalMessageCount: number;
   onClose: () => void;
 }
@@ -173,9 +169,6 @@ export function SummaryPopover({
   contextSize,
   promptTemplates = [],
   activePromptTemplateId = null,
-  summaryLongTermMemoryEnabled = false,
-  summaryLongTermMemoryAutoExtract = false,
-  summaryLongTermMemoryAutoApplyLowRisk = false,
   totalMessageCount,
   onClose,
 }: SummaryPopoverProps) {
@@ -214,7 +207,6 @@ export function SummaryPopover({
   const deleteSummaryEntry = useDeleteSummaryEntry();
   const toggleSummaryEntry = useToggleSummaryEntry();
   const toggleSummaryEntryLtm = useToggleSummaryEntryLtm();
-  const backfillSummaryEntriesToLtm = useBackfillSummaryEntriesToLtm();
   const entryTextareaRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const scopeSettingsButtonRef = useRef<HTMLButtonElement>(null);
@@ -358,8 +350,7 @@ export function SummaryPopover({
     updateSummaryEntry.isPending ||
     deleteSummaryEntry.isPending ||
     toggleSummaryEntry.isPending ||
-    toggleSummaryEntryLtm.isPending ||
-    backfillSummaryEntriesToLtm.isPending;
+    toggleSummaryEntryLtm.isPending;
 
   const handleSourceModeChange = useCallback(
     (mode: SummarySourceMode) => {
@@ -504,56 +495,6 @@ export function SummaryPopover({
     [chatId, toggleSummaryEntry],
   );
 
-  const handleToggleSummaryLtm = useCallback(
-    (enabled: boolean) => {
-      updateMeta.mutate(
-        {
-          id: chatId,
-          summaryLongTermMemoryEnabled: enabled,
-          ...(enabled ? {} : { summaryLongTermMemoryAutoExtract: false, summaryLongTermMemoryAutoApplyLowRisk: false }),
-        },
-        {
-          onError: () => toast.error("Could not update long-term memory setting."),
-        },
-      );
-    },
-    [chatId, updateMeta],
-  );
-
-  const handleToggleSummaryExtraction = useCallback(
-    (enabled: boolean) => {
-      updateMeta.mutate(
-        {
-          id: chatId,
-          summaryLongTermMemoryEnabled: true,
-          summaryLongTermMemoryAutoExtract: enabled,
-          ...(enabled ? {} : { summaryLongTermMemoryAutoApplyLowRisk: false }),
-        },
-        {
-          onError: () => toast.error("Could not update long-term memory extraction setting."),
-        },
-      );
-    },
-    [chatId, updateMeta],
-  );
-
-  const handleToggleSummaryExtractionApply = useCallback(
-    (enabled: boolean) => {
-      updateMeta.mutate(
-        {
-          id: chatId,
-          summaryLongTermMemoryEnabled: true,
-          summaryLongTermMemoryAutoExtract: true,
-          summaryLongTermMemoryAutoApplyLowRisk: enabled,
-        },
-        {
-          onError: () => toast.error("Could not update long-term memory extraction setting."),
-        },
-      );
-    },
-    [chatId, updateMeta],
-  );
-
   const handleToggleEntryLtm = useCallback(
     async (entry: ChatSummaryEntry, enabled: boolean) => {
       try {
@@ -564,15 +505,6 @@ export function SummaryPopover({
     },
     [chatId, toggleSummaryEntryLtm],
   );
-
-  const handleBackfillSummaryLtm = useCallback(async () => {
-    try {
-      const result = await backfillSummaryEntriesToLtm.mutateAsync(chatId);
-      toast.success(`Sent ${result.synced} summaries to long-term memory.`);
-    } catch {
-      toast.error("Could not send summaries to long-term memory.");
-    }
-  }, [backfillSummaryEntriesToLtm, chatId]);
 
   const handleToggleAllEntries = useCallback(async () => {
     const nextEnabled = enabledEntryCount === 0;
@@ -960,41 +892,10 @@ export function SummaryPopover({
             />
           </div>
 
-          <div className="space-y-1 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/25 p-2">
-            <p className="px-1 text-xs font-semibold text-[var(--popover-foreground)]">Long-Term Memory</p>
-            <SummarySettingsToggle
-              label="Add summaries to long-term memory"
-              checked={summaryLongTermMemoryEnabled}
-              disabled={updateMeta.isPending}
-              onChange={handleToggleSummaryLtm}
-            />
-            <SummarySettingsToggle
-              label="Extract typed memories from summaries"
-              checked={summaryLongTermMemoryEnabled && summaryLongTermMemoryAutoExtract}
-              disabled={updateMeta.isPending || !summaryLongTermMemoryEnabled}
-              onChange={handleToggleSummaryExtraction}
-            />
-            <SummarySettingsToggle
-              label="Auto-keep low-risk extracted memories"
-              checked={
-                summaryLongTermMemoryEnabled &&
-                summaryLongTermMemoryAutoExtract &&
-                summaryLongTermMemoryAutoApplyLowRisk
-              }
-              disabled={updateMeta.isPending || !summaryLongTermMemoryEnabled || !summaryLongTermMemoryAutoExtract}
-              onChange={handleToggleSummaryExtractionApply}
-            />
-            {hasPersistedEntries && (
-              <button
-                type="button"
-                onClick={() => void handleBackfillSummaryLtm()}
-                disabled={backfillSummaryEntriesToLtm.isPending}
-                className="flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[0.625rem] font-semibold text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {backfillSummaryEntriesToLtm.isPending && <Loader2 size="0.6875rem" className="animate-spin" />}
-                Send existing summaries to LTM
-              </button>
-            )}
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/25 p-2 text-center">
+            <p className="text-xs text-[var(--muted-foreground)]">
+              LTM extraction settings are now in the Tools tab of the Memory panel.
+            </p>
           </div>
         </div>
       </div>

@@ -226,6 +226,7 @@ const searchBodySchema = z
   .object({
     queryText: z.string().max(20_000).optional(),
     recentUserMessage: z.string().max(20_000).optional(),
+    recentMessages: z.array(z.string().max(10_000)).max(20).optional(),
     mentionedCharacterNames: z.array(z.string().min(1).max(120)).max(100).optional(),
     noteIds: z.array(ltmNoteIdSchema).max(100).optional(),
     tags: z.array(ltmIdentifierSchema).max(100).optional(),
@@ -248,6 +249,7 @@ const searchBodySchema = z
       Boolean(
         value.queryText?.trim() ||
         value.recentUserMessage?.trim() ||
+        value.recentMessages?.length ||
         value.mentionedCharacterNames?.length ||
         value.noteIds?.length ||
         value.tags?.length ||
@@ -345,16 +347,12 @@ function resolveChatLtmScope(chat: {
     meta.longTermMemoryScope && typeof meta.longTermMemoryScope === "object" && !Array.isArray(meta.longTermMemoryScope)
       ? (meta.longTermMemoryScope as Record<string, unknown>)
       : {};
-  const universe = normalizeLtmIdentifier(configuredScope.universe);
-  const rpId = normalizeLtmIdentifier(configuredScope.rpId);
   const characterIds = normalizeCharacterIds(chat.characterIds);
   return withMergedLtmScopeLinks(
     {
       chatId: chat.id,
       ...(chat.groupId ? { groupId: chat.groupId } : {}),
       ...(characterIds.length ? { characterIds } : {}),
-      ...(universe ? { universe } : {}),
-      ...(rpId ? { rpId } : {}),
     },
     { chatIds: [chat.id] },
   ) satisfies LtmScope;

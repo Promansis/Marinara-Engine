@@ -33,6 +33,8 @@ export interface RunLtmExtractionOptions extends LtmExtractionTurnInput {
   model: string;
   root?: string;
   signal?: AbortSignal;
+  systemPrompt?: string;
+  extraInstruction?: string;
 }
 
 export interface StoreLtmDraftOptions extends LtmExtractionTurnInput {
@@ -88,132 +90,139 @@ function formatExistingNotes(notes: LtmNote[]) {
   return lines.length ? lines.join("\n\n---\n\n") : "(no relevant notes)";
 }
 
-function buildExtractionMessages(input: LtmExtractionTurnInput): ChatMessage[] {
+function buildExtractionMessages(
+  input: LtmExtractionTurnInput,
+  options?: { systemPrompt?: string; extraInstruction?: string },
+): ChatMessage[] {
   const scope = input.scope ?? {};
   const timestamp = nowIso();
-  return [
-    {
-      role: "system",
-      content: [
-        "You extract draft long-term memory mutations for a local roleplay/chat memory vault.",
-        "Return only strict JSON. Do not explain.",
-        "Create drafts, not final writes. Favor no mutation when the turn contains no durable continuity.",
-        "Use mutation ids as UUIDs.",
-        "Allowed mutation kinds: create_note, append_section, update_section, add_link, set_status.",
-        "Each mutation kind has different required fields. Follow requiredMutationShapes exactly.",
-        "Do not emit placeholders or omit required fields. If you cannot fill every required field for a mutation kind, omit that mutation.",
-        "Low risk is only: scene append, neutral metadata/link, or high-confidence thread setup with no conflict.",
-        "Keep secrets, character traits, relationship facts, and world facts medium/high risk.",
-        "Evidence strings must reference the supplied message ids when present.",
-      ].join("\n"),
-    },
-    {
-      role: "user",
-      content: JSON.stringify({
-        outputShape: {
-          summary: "short summary of proposed memory changes",
-          mutations: [
-            {
-              id: "uuid",
-              kind: "append_section",
-              risk: "low|medium|high",
-              confidence: 0.0,
-              summary: "what changes",
-              evidence: ["user:<id>", "assistant:<id>"],
-            },
-          ],
+  const systemPrompt =
+    options?.systemPrompt?.trim() ||
+    [
+      "You extract draft long-term memory mutations for a local roleplay/chat memory vault.",
+      "Return only strict JSON. Do not explain.",
+      "Create drafts, not final writes. Favor no mutation when the turn contains no durable continuity.",
+      "Use mutation ids as UUIDs.",
+      "Allowed mutation kinds: create_note, append_section, update_section, add_link, set_status.",
+      "Each mutation kind has different required fields. Follow requiredMutationShapes exactly.",
+      "Do not emit placeholders or omit required fields. If you cannot fill every required field for a mutation kind, omit that mutation.",
+      "Low risk is only: scene append, neutral metadata/link, or high-confidence thread setup with no conflict.",
+      "Keep secrets, character traits, relationship facts, and world facts medium/high risk.",
+      "Evidence strings must reference the supplied message ids when present.",
+    ].join("\n");
+  const userContent = JSON.stringify({
+    outputShape: {
+      summary: "short summary of proposed memory changes",
+      mutations: [
+        {
+          id: "uuid",
+          kind: "append_section",
+          risk: "low|medium|high",
+          confidence: 0.0,
+          summary: "what changes",
+          evidence: ["user:<id>", "assistant:<id>"],
         },
-        requiredMutationShapes: {
-          create_note: {
-            id: "uuid",
-            kind: "create_note",
-            risk: "low|medium|high",
-            confidence: 0.0,
-            summary: "what changes",
-            evidence: ["user:<id>", "assistant:<id>"],
-            note: {
-               id: "char_name|rel_name_name|timeline_event_name|scene_name|thread_name|world_name|tone_name",
-               type: "character|relationship|timeline_event|scene|thread|world|tone",
-              status: "active|resolved|archived",
-              modes: input.modes,
-              scope,
-              tags: ["lowercase_snake_case"],
-              links: [{ target: "target_note_id", relation: "lowercase_snake_case" }],
-              sections: {
-                section_key: {
-                  text: "durable memory text",
-                  updatedAt: timestamp,
-                  salience: 0.5,
-                  confidence: 0.5,
-                  evidence: ["user:<id>", "assistant:<id>"],
-                },
-              },
-            },
-          },
-          append_section: {
-            id: "uuid",
-            kind: "append_section",
-            risk: "low|medium|high",
-            confidence: 0.0,
-            summary: "what changes",
-            evidence: ["user:<id>", "assistant:<id>"],
-            noteId: "existing_note_id",
-            sectionKey: "lowercase_snake_case",
-            text: "text to append",
-            salience: 0.5,
-          },
-          update_section: {
-            id: "uuid",
-            kind: "update_section",
-            risk: "low|medium|high",
-            confidence: 0.0,
-            summary: "what changes",
-            evidence: ["user:<id>", "assistant:<id>"],
-            noteId: "existing_note_id",
-            sectionKey: "lowercase_snake_case",
-            section: {
-              text: "replacement section text",
+      ],
+    },
+    requiredMutationShapes: {
+      create_note: {
+        id: "uuid",
+        kind: "create_note",
+        risk: "low|medium|high",
+        confidence: 0.0,
+        summary: "what changes",
+        evidence: ["user:<id>", "assistant:<id>"],
+        note: {
+          id: "char_name|rel_name_name|timeline_event_name|scene_name|thread_name|world_name|tone_name",
+          type: "character|relationship|timeline_event|scene|thread|world|tone",
+          status: "active|resolved|archived",
+          modes: input.modes,
+          scope,
+          tags: ["lowercase_snake_case"],
+          links: [{ target: "target_note_id", relation: "lowercase_snake_case" }],
+          sections: {
+            section_key: {
+              text: "durable memory text",
               updatedAt: timestamp,
               salience: 0.5,
               confidence: 0.5,
               evidence: ["user:<id>", "assistant:<id>"],
             },
           },
-          add_link: {
-            id: "uuid",
-            kind: "add_link",
-            risk: "low|medium|high",
-            confidence: 0.0,
-            summary: "what changes",
-            evidence: ["user:<id>", "assistant:<id>"],
-            noteId: "existing_note_id",
-            link: { target: "target_note_id", relation: "lowercase_snake_case" },
-          },
-          set_status: {
-            id: "uuid",
-            kind: "set_status",
-            risk: "low|medium|high",
-            confidence: 0.0,
-            summary: "what changes",
-            evidence: ["user:<id>", "assistant:<id>"],
-            noteId: "existing_note_id",
-            status: "active|resolved|archived",
-          },
-
         },
-        scope,
-        modes: input.modes,
-        source: input.source ?? {},
-        existingNotes: formatExistingNotes(input.existingNotes ?? []),
-        latestUserMessage: input.userMessage,
-        assistantReply: input.assistantReply,
-      }),
+      },
+      append_section: {
+        id: "uuid",
+        kind: "append_section",
+        risk: "low|medium|high",
+        confidence: 0.0,
+        summary: "what changes",
+        evidence: ["user:<id>", "assistant:<id>"],
+        noteId: "existing_note_id",
+        sectionKey: "lowercase_snake_case",
+        text: "text to append",
+        salience: 0.5,
+      },
+      update_section: {
+        id: "uuid",
+        kind: "update_section",
+        risk: "low|medium|high",
+        confidence: 0.0,
+        summary: "what changes",
+        evidence: ["user:<id>", "assistant:<id>"],
+        noteId: "existing_note_id",
+        sectionKey: "lowercase_snake_case",
+        section: {
+          text: "replacement section text",
+          updatedAt: timestamp,
+          salience: 0.5,
+          confidence: 0.5,
+          evidence: ["user:<id>", "assistant:<id>"],
+        },
+      },
+      add_link: {
+        id: "uuid",
+        kind: "add_link",
+        risk: "low|medium|high",
+        confidence: 0.0,
+        summary: "what changes",
+        evidence: ["user:<id>", "assistant:<id>"],
+        noteId: "existing_note_id",
+        link: { target: "target_note_id", relation: "lowercase_snake_case" },
+      },
+      set_status: {
+        id: "uuid",
+        kind: "set_status",
+        risk: "low|medium|high",
+        confidence: 0.0,
+        summary: "what changes",
+        evidence: ["user:<id>", "assistant:<id>"],
+        noteId: "existing_note_id",
+        status: "active|resolved|archived",
+      },
     },
+    scope,
+    modes: input.modes,
+    source: input.source ?? {},
+    existingNotes: formatExistingNotes(input.existingNotes ?? []),
+    latestUserMessage: input.userMessage,
+    assistantReply: input.assistantReply,
+  });
+  const extraInstruction = options?.extraInstruction?.trim();
+  const mergedContent = extraInstruction
+    ? `${userContent}\n\nAdditional instructions: ${extraInstruction}`
+    : userContent;
+  return [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: mergedContent },
   ];
 }
 
 export async function runLongTermMemoryExtraction(options: RunLtmExtractionOptions): Promise<LtmExtractionResponse> {
-  const messages = buildExtractionMessages(options);
+  const messages = buildExtractionMessages(options, {
+    systemPrompt: options.systemPrompt,
+    extraInstruction: options.extraInstruction,
+  });
   const result = await options.provider.chatComplete(messages, {
     model: options.model,
     temperature: 0,

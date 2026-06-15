@@ -315,10 +315,6 @@ function resolveLtmScope(
       chatId: chat.id,
       ...(chat.groupId ? { groupId: chat.groupId } : {}),
       ...(chat.characterIds?.length ? { characterIds: chat.characterIds } : {}),
-      ...(normalizeLtmIdentifier(configuredScope.universe)
-        ? { universe: normalizeLtmIdentifier(configuredScope.universe) }
-        : {}),
-      ...(normalizeLtmIdentifier(configuredScope.rpId) ? { rpId: normalizeLtmIdentifier(configuredScope.rpId) } : {}),
     },
     { chatIds: [chat.id] },
   );
@@ -337,6 +333,11 @@ function parseLongTermMemoryMaxChunks(value: unknown) {
 function parseLongTermMemoryScoreThreshold(value: unknown) {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   return Math.max(0, Math.min(1, value));
+}
+
+function parseLongTermMemoryContextMessages(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 4;
+  return Math.max(1, Math.min(20, Math.floor(value)));
 }
 
 const LTM_RECALL_STYLE_WEIGHTS = {
@@ -5309,6 +5310,7 @@ export async function generateRoutes(app: FastifyInstance) {
           const ltmRecallStyle = parseLongTermMemoryRecallStyle(chatMeta.longTermMemoryRecallStyle);
           const ltmRecallWeights = LTM_RECALL_STYLE_WEIGHTS[ltmRecallStyle];
           const ltmDebugEnabled = chatMeta.longTermMemoryDebug === true || requestDebug;
+          const ltmContextMessages = parseLongTermMemoryContextMessages(chatMeta.longTermMemoryRecallContextMessages);
           const ltmScope = resolveLtmScope(
             { id: input.chatId, groupId: chat.groupId, characterIds: promptCharacterIds },
             chatMeta,
@@ -5331,6 +5333,7 @@ export async function generateRoutes(app: FastifyInstance) {
               maxChunks: ltmMaxChunks ?? null,
               scoreThreshold: ltmScoreThreshold ?? null,
               recallStyle: ltmRecallStyle,
+              contextMessages: ltmContextMessages,
               scope: ltmScope,
             },
           });
@@ -5356,6 +5359,10 @@ export async function generateRoutes(app: FastifyInstance) {
             const retrieval = await retrieveLongTermMemory({
               queryText: ltmQueryText,
               recentUserMessage: lastUserMsg?.content ?? input.userMessage ?? undefined,
+              recentMessages: [...currentInputMessages()]
+                .slice(-ltmContextMessages)
+                .map((m) => m.content)
+                .filter(Boolean),
               mentionedCharacterNames: [
                 ...charInfo.map((character) => character.name),
                 ...((input.mentionedCharacterNames as string[] | undefined) ?? []),
@@ -8333,6 +8340,12 @@ export async function generateRoutes(app: FastifyInstance) {
                 assistantMessageId: savedMsg.id,
               };
               const shouldAutoApplyLowRisk = chatMeta.longTermMemoryAutoApplyLowRisk === true;
+              const shouldAutoAcceptAll = chatMeta.longTermMemoryAutoAcceptAll === true;
+              const ltmUseDefaultAgent = chatMeta.longTermMemoryUseDefaultAgent !== false;
+              const ltmAgentConnectionId =
+                typeof chatMeta.longTermMemoryAgentConnectionId === "string"
+                  ? chatMeta.longTermMemoryAgentConnectionId
+                  : null;
               void (async () => {
                 try {
                   const extractionConfig = await getLtmExtractionConfig();
@@ -8350,9 +8363,39 @@ export async function generateRoutes(app: FastifyInstance) {
                       new LongTermMemoryStorage().getNote(noteId),
                     ),
                   );
+                  // Resolve extraction provider/model: agent override -> default
+                  let extractionProvider = provider;
+                  let extractionModel = conn.model;
+                  if (!ltmUseDefaultAgent && ltmAgentConnectionId) {
+                    try {
+                      const agentConn = await connections.getWithKey(ltmAgentConnectionId);
+                      if (agentConn) {
+                        const baseUrl = resolveBaseUrl(agentConn);
+                        if (baseUrl) {
+                          extractionProvider = createLLMProvider(
+                            agentConn.provider,
+                            baseUrl,
+                            agentConn.apiKey,
+                            agentConn.maxContext,
+                            agentConn.openrouterProvider,
+                            agentConn.maxTokensOverride,
+                          );
+                          extractionModel = agentConn.model;
+                        }
+                      }
+                    } catch {
+                      // Fall back to default provider/model
+                    }
+                  }
+                  // Resolve prompt from active template
+                  const activeTemplate = extractionConfig.activePromptTemplateId
+                    ? extractionConfig.promptTemplates.find(
+                        (t: { id: string }) => t.id === extractionConfig.activePromptTemplateId,
+                      )
+                    : null;
                   const extraction = await runLongTermMemoryExtraction({
-                    provider,
-                    model: conn.model,
+                    provider: extractionProvider,
+                    model: extractionModel,
                     userMessage: input.userMessage ?? "",
                     assistantReply: fullResponse,
                     scope: ltmScope,
@@ -8360,9 +8403,13 @@ export async function generateRoutes(app: FastifyInstance) {
                     source: ltmSource,
                     existingNotes: existingNotes.filter((note): note is NonNullable<typeof note> => Boolean(note)),
                     signal: abortController.signal,
+                    systemPrompt: activeTemplate?.prompt ?? extractionConfig.systemPrompt,
+                    extraInstruction: extractionConfig.extraInstruction,
                   });
                   if (extraction.mutations.length === 0) return;
-                  const canAutoApplyDraft = shouldAutoApplyLowRisk && extraction.mutations.every(isLowRiskTurnMutation);
+                  const canAutoApplyDraft =
+                    shouldAutoAcceptAll ||
+                    (shouldAutoApplyLowRisk && extraction.mutations.every(isLowRiskTurnMutation));
                   const draft = await new LongTermMemoryDraftStore().createDraft({
                     userMessage: input.userMessage ?? "",
                     assistantReply: fullResponse,
@@ -8373,8 +8420,8 @@ export async function generateRoutes(app: FastifyInstance) {
                   });
                   if (canAutoApplyDraft) {
                     await applyLongTermMemoryDraft(draft.id, {
-                      actor: "auto_low_risk",
-                      autoApplyLowRiskOnly: true,
+                      actor: shouldAutoAcceptAll ? "auto_accept_all" : "auto_low_risk",
+                      autoApplyLowRiskOnly: !shouldAutoAcceptAll,
                       autoApplyPolicy: "turn",
                     });
                   }

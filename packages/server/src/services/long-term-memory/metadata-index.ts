@@ -9,8 +9,6 @@ export interface LtmMetadataIndex {
   byStatus: Record<string, string[]>;
   byTag: Record<string, string[]>;
   byScope: {
-    universe: Record<string, string[]>;
-    rpId: Record<string, string[]>;
     chatId: Record<string, string[]>;
     groupId: Record<string, string[]>;
     characterId: Record<string, string[]>;
@@ -41,8 +39,6 @@ export function buildLtmMetadataIndex(chunks: LtmMemoryChunk[]): LtmMetadataInde
     byStatus: {},
     byTag: {},
     byScope: {
-      universe: {},
-      rpId: {},
       chatId: {},
       groupId: {},
       characterId: {},
@@ -55,8 +51,6 @@ export function buildLtmMetadataIndex(chunks: LtmMemoryChunk[]): LtmMetadataInde
     addToBucket(index.byType, chunk.noteType, chunk.id);
     addToBucket(index.byStatus, chunk.status, chunk.id);
     for (const tag of chunk.tags) addToBucket(index.byTag, tag, chunk.id);
-    addToBucket(index.byScope.universe, chunk.scope.universe, chunk.id);
-    addToBucket(index.byScope.rpId, chunk.scope.rpId, chunk.id);
     for (const chatId of getLtmScopeChatIds(chunk.scope)) {
       addToBucket(index.byScope.chatId, chatId, chunk.id);
     }
@@ -74,8 +68,6 @@ export function buildLtmMetadataIndex(chunks: LtmMemoryChunk[]): LtmMetadataInde
     byStatus: sortRecordBuckets(index.byStatus),
     byTag: sortRecordBuckets(index.byTag),
     byScope: {
-      universe: sortRecordBuckets(index.byScope.universe),
-      rpId: sortRecordBuckets(index.byScope.rpId),
       chatId: sortRecordBuckets(index.byScope.chatId),
       groupId: sortRecordBuckets(index.byScope.groupId),
       characterId: sortRecordBuckets(index.byScope.characterId),
@@ -112,13 +104,6 @@ export function getLtmMetadataMatches(
   }
   for (const characterId of [...(scope?.characterIds ?? []), ...(query.characterIds ?? [])]) {
     for (const chunkId of index.byScope.characterId[characterId] ?? []) add(chunkId, 0.7, `character:${characterId}`);
-  }
-  if (scope?.rpId) {
-    for (const chunkId of index.byScope.rpId[scope.rpId] ?? []) add(chunkId, 0.45, `rp:${scope.rpId}`);
-  }
-  if (scope?.universe) {
-    for (const chunkId of index.byScope.universe[scope.universe] ?? [])
-      add(chunkId, 0.35, `universe:${scope.universe}`);
   }
 
   return Array.from(scores.entries())
