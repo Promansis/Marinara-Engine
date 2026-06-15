@@ -119,7 +119,7 @@ test("long-term memory prompt injection contains prose only", () => {
     } satisfies LtmBudgetedChunk,
   ]);
 
-  assert.equal(block, "A sample instruction remains available for later retrieval.");
+  assert.equal(block, "[TONE]\nA sample instruction remains available for later retrieval.");
   assert.doesNotMatch(block, /<long_term_memory>|tier:|reasons:|note:|section:|chat:|group:|characters:|graph:/);
 });
 
