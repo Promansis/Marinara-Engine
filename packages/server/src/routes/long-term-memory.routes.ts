@@ -512,7 +512,6 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
 
   app.get<{ Querystring: unknown }>("/notes", async (req) => {
     const query = listNotesQuerySchema.parse(req.query);
-    if (query.status === "archived") return storage.listArchivedNotes(query);
     return storage.listNotes(query);
   });
 
@@ -623,23 +622,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
       const id = ltmNoteIdSchema.parse(req.params.id);
       const patch = updateNoteBodySchema.parse(req.body);
       const existing = await storage.getNote(id);
-      if (!existing) {
-        const archived = await storage.getArchivedNote(id);
-        if (!archived) return reply.status(404).send({ error: "Long-term memory note not found" });
-        if (patch.status && patch.status !== "archived") {
-          const restorePatch = { ...patch, status: patch.status };
-          return storage.restoreArchivedNote(id, restorePatch, {
-            actor: "maintenance_api",
-            cause: "api.restore",
-            summary: "Restored via long-term memory archive",
-          });
-        }
-        return storage.updateArchivedNote(id, patch, {
-          actor: "maintenance_api",
-          cause: "api.patch_archived",
-          summary: "Updated archived long-term memory note",
-        });
-      }
+      if (!existing) return reply.status(404).send({ error: "Long-term memory note not found" });
 
       return storage.updateNote(id, patch, {
         actor: "maintenance_api",
@@ -689,16 +672,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory note deletion" })) return;
     const id = ltmNoteIdSchema.parse(req.params.id);
     const existing = await storage.getNote(id);
-    if (!existing) {
-      const archived = await storage.getArchivedNote(id);
-      if (!archived) return reply.status(404).send({ error: "Long-term memory note not found" });
-      const note = await storage.deleteArchivedNote(id, {
-        actor: "maintenance_api",
-        cause: "api.delete_archived",
-        summary: "Deleted archived long-term memory note via maintenance API",
-      });
-      return { deleted: true, id: note.id };
-    }
+    if (!existing) return reply.status(404).send({ error: "Long-term memory note not found" });
 
     const note = await storage.deleteNote(id, {
       actor: "maintenance_api",
@@ -925,27 +899,6 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to restore draft";
       return reply.status(message.includes("cannot be restored") ? 409 : 400).send({ error: message });
-    }
-  });
-
-  app.post<{ Params: { id: string; mutationId: string } }>("/drafts/:id/mutations/:mutationId/archive", async (req, reply) => {
-    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft mutation archive" })) return;
-    const { id, mutationId } = draftMutationParamsSchema.parse(req.params);
-    try {
-      const draft = await draftStore.getDraft(id);
-      if (!draft) return reply.status(404).send({ error: "Long-term memory draft not found" });
-      const next = draft.mutations.filter((m) => m.id !== mutationId);
-      if (next.length === draft.mutations.length) {
-        return reply.status(404).send({ error: "Mutation not found in draft" });
-      }
-      const updated = next.length === 0
-        ? await draftStore.updateDraft(id, { status: "rejected", rejectedReason: "All mutations archived" })
-        : await draftStore.updateDraft(id, { mutations: next });
-      if (!updated) return reply.status(404).send({ error: "Long-term memory draft not found" });
-      return updated;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to archive mutation";
-      return reply.status(400).send({ error: message });
     }
   });
 

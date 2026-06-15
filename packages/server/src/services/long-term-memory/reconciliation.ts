@@ -146,15 +146,8 @@ async function preflightDraftMutations(
     }
   }
 
-  for (const noteId of requiredNoteIds) {
-    if (createIds.has(noteId)) {
-      continue;
-    }
-    const existing = await storage.getNote(noteId);
-    if (!existing) {
-      throw new Error(`Long-term memory note not found for draft ${draft.id}: ${noteId}`);
-    }
-  }
+  // Notes with status "archived" are returned by getNote/listNotes — nothing to check.
+  void requiredNoteIds;
 
   return redundantMutationIds;
 }

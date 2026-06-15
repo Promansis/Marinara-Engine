@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Archive, BrainCircuit, Check, ChevronDown, ChevronRight, Loader2, Save, Trash2, X } from "lucide-react";
+import { BrainCircuit, Check, ChevronDown, ChevronRight, Loader2, Save, Trash2, X } from "lucide-react";
 import type { LtmDraftMutation, LtmExtractionDraft, LtmMode, LtmNote, LtmNoteType } from "@marinara-engine/shared";
 import {
   useAcceptLongTermMemoryDraft,
@@ -9,7 +9,6 @@ import {
   useLongTermMemoryDrafts,
   useLongTermMemoryNotes,
   useRejectLongTermMemoryDraft,
-  useArchiveLongTermMemoryDraftMutation,
   type LtmExtractionDiagnostic,
 } from "../../hooks/use-long-term-memory";
 import { cn } from "../../lib/utils";
@@ -321,38 +320,14 @@ function SuggestionRow({ row, noteLookup }: { row: SuggestionRowModel; noteLooku
   const accept = useAcceptLongTermMemoryDraft();
   const reject = useRejectLongTermMemoryDraft();
   const deleteDraft = useDeleteLongTermMemoryDraft();
-  const archiveMutation = useArchiveLongTermMemoryDraftMutation();
   const [editing, setEditing] = useState(false);
   const [editedMutation, setEditedMutation] = useState<LtmDraftMutation | null>(null);
-  const busy = accept.isPending || reject.isPending || archiveMutation.isPending || deleteDraft.isPending;
-
-  const patchWithoutMutation = () =>
-    archiveMutation.mutateAsync({
-      id: draft.id,
-      mutationId: mutation.id,
-    });
-
-  const archiveOne = async () => {
-    try {
-      if (draft.mutations.length === 1) {
-        await reject.mutateAsync({ id: draft.id, reason: "Archived from source memory suggestions" });
-      } else {
-        await patchWithoutMutation();
-      }
-      toast.success("Suggestion archived");
-    } catch (err) {
-      toast.error((err as Error).message);
-    }
-  };
+  const busy = accept.isPending || reject.isPending || deleteDraft.isPending;
 
   const deleteOne = async () => {
     if (!confirm("Delete this suggestion?")) return;
     try {
-      if (draft.mutations.length === 1) {
-        await deleteDraft.mutateAsync(draft.id);
-      } else {
-        await patchWithoutMutation();
-      }
+      await deleteDraft.mutateAsync(draft.id);
       toast.success("Suggestion deleted");
     } catch (err) {
       toast.error((err as Error).message);
@@ -423,10 +398,6 @@ function SuggestionRow({ row, noteLookup }: { row: SuggestionRowModel; noteLooku
           <ToolButton onClick={handleToggleEdit} disabled={busy}>
             {editing ? <X size="0.875rem" /> : <Save size="0.875rem" />}
             {editing ? "Close" : hasEdits ? "Edit" : "Edit"}
-          </ToolButton>
-          <ToolButton onClick={archiveOne} disabled={busy}>
-            <Archive size="0.875rem" />
-            Archive
           </ToolButton>
           <ToolButton onClick={deleteOne} disabled={busy} tone="danger">
             <Trash2 size="0.875rem" />

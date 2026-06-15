@@ -314,19 +314,6 @@ export function useUpdateLongTermMemoryNote() {
   });
 }
 
-export function useArchiveLongTermMemoryNote() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.delete<{ archived: true; note: LtmNote; notes?: LtmNote[] }>(`/long-term-memory/notes/${id}`),
-    onSuccess: (result) => {
-      for (const note of result.notes ?? [result.note]) {
-        qc.setQueryData(longTermMemoryKeys.note(note.id), note);
-      }
-      qc.invalidateQueries({ queryKey: longTermMemoryKeys.all });
-    },
-  });
-}
-
 export function useDeleteLongTermMemoryNote() {
   const qc = useQueryClient();
   return useMutation({
@@ -494,15 +481,6 @@ export function useRestoreLongTermMemoryDraft() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.post<LtmExtractionDraft>(`/long-term-memory/drafts/${id}/restore`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
-  });
-}
-
-export function useArchiveLongTermMemoryDraftMutation() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, mutationId }: { id: string; mutationId: string }) =>
-      api.post<LtmExtractionDraft>(`/long-term-memory/drafts/${id}/mutations/${mutationId}/archive`),
     onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
   });
 }

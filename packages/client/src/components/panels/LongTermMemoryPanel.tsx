@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
   AlertTriangle,
-  Archive,
   ChevronDown,
   ChevronRight,
   Eye,
@@ -30,10 +29,7 @@ import type {
   LtmStatus,
 } from "@marinara-engine/shared";
 import {
-  useArchiveLongTermMemoryNote,
-  useDeleteLongTermMemoryNote,
   useImportLongTermMemorySourceNotes,
-  useDeleteLongTermMemoryDraft,
   useLongTermMemoryDrafts,
   useLongTermMemoryImportPreview,
   useLongTermMemoryIntegrity,
@@ -43,8 +39,6 @@ import {
   useRebuildLongTermMemory,
   useRepairLongTermMemory,
   useReplayLongTermMemory,
-  useUpdateLongTermMemoryNote,
-  useRestoreLongTermMemoryDraft,
   type LtmSearchResponse,
   type LtmInteropSource,
 } from "../../hooks/use-long-term-memory";
@@ -86,7 +80,7 @@ const NOTE_TYPES: Array<"all" | LtmNoteType> = [
   "world",
   "tone",
 ];
-const NOTE_STATUSES: Array<"all" | Exclude<LtmStatus, "archived">> = ["all", "active", "resolved"];
+const NOTE_STATUSES: Array<"all" | LtmStatus> = ["all", "active", "resolved", "archived"];
 const NOTE_TYPE_ORDER = new Map<LtmNoteType, number>(
   NOTE_TYPES.filter((type) => type !== "all").map((type, index) => [type, index]),
 );
@@ -232,7 +226,6 @@ function NoteRow({
   editing,
   onView,
   onEdit,
-  onArchive,
   onRestore,
   onDelete,
   bulkSelected,
@@ -247,7 +240,6 @@ function NoteRow({
   editing: boolean;
   onView: () => void;
   onEdit: () => void;
-  onArchive?: () => void;
   onRestore?: () => void;
   onDelete?: () => void;
   bulkSelected?: boolean;
@@ -319,7 +311,7 @@ function NoteRow({
         >
           <Eye size="0.875rem" />
         </button>
-        {onRestore ? (
+        {onRestore && (
           <button
             type="button"
             onClick={onRestore}
@@ -328,17 +320,6 @@ function NoteRow({
             title="Restore memory"
           >
             <RotateCcw size="0.875rem" />
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={onArchive}
-            disabled={note.status === "archived"}
-            className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
-            aria-label={`Archive ${displayTitle}`}
-            title="Archive memory"
-          >
-            <Archive size="0.875rem" />
           </button>
         )}
         {onDelete && (
@@ -668,7 +649,6 @@ function TypeMemoryGroups({
   onToggleType,
   onView,
   onEdit,
-  onArchive,
   onOpenSource,
   chatLookup,
 }: {
@@ -683,7 +663,6 @@ function TypeMemoryGroups({
   onToggleType: (type: string) => void;
   onView: (id: string) => void;
   onEdit: (id: string) => void;
-  onArchive: (note: LtmNote) => void;
   onOpenSource: (id: string) => void;
   chatLookup?: Map<string, Chat>;
 }) {
@@ -848,19 +827,6 @@ function TypeMemoryGroups({
                           title="View memory"
                         >
                           <Eye size="0.875rem" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onArchive(note)}
-                          disabled={note.status === "archived"}
-                          className={cn(
-                            rowActionButtonClassName,
-                            "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]",
-                          )}
-                          aria-label={`Archive ${friendlyNoteTitle(note)}`}
-                          title="Archive memory"
-                        >
-                          <Archive size="0.875rem" />
                         </button>
                         <button
                           type="button"
@@ -2387,20 +2353,16 @@ function ChatMemorySettings({
 export function LongTermMemoryPanel() {
   const [tab, setTab] = useState<TabId>("notes");
   const [noteType, setNoteType] = useState<"all" | LtmNoteType>("all");
-  const [noteStatus, setNoteStatus] = useState<"all" | Exclude<LtmStatus, "archived">>("all");
+  const [noteStatus, setNoteStatus] = useState<"all" | LtmStatus>("all");
   const [query, setQuery] = useState("");
   const [importSource, setImportSource] = useState<LtmInteropSource>("chats");
   const [importLimit, setImportLimit] = useState(25);
   const [importChatId, setImportChatId] = useState<string>("");
   const [selectedImportRows, setSelectedImportRows] = useState<Set<string>>(() => new Set());
   const [activeImportIds, setActiveImportIds] = useState<Set<string>>(() => new Set());
-  const [archiveOpen, setArchiveOpen] = useState(false);
   const [debugLogOpen, setDebugLogOpen] = useState(false);
   const [extractionSettingsOpen, setExtractionSettingsOpen] = useState(false);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
-  const [archiveTab, setArchiveTab] = useState<"notes" | "drafts">("notes");
-  const [selectedArchivedNoteIds, setSelectedArchivedNoteIds] = useState<Set<string>>(() => new Set());
-  const [selectedArchivedDraftIds, setSelectedArchivedDraftIds] = useState<Set<string>>(() => new Set());
   const [creatingNote, setCreatingNote] = useState(false);
   const [createNoteDraft, setCreateNoteDraft] = useState<CreateLongTermMemoryNoteDraft | null>(null);
   const [createNoteDirty, setCreateNoteDirty] = useState(false);
@@ -2424,15 +2386,10 @@ export function LongTermMemoryPanel() {
     { status: "active" },
     { enabled: tab === "notes" || Boolean(viewingNoteId) || Boolean(sourceViewerNoteId) },
   );
-  const archivedNotes = useLongTermMemoryNotes(
-    { status: "archived" },
-    { enabled: archiveOpen || Boolean(viewingNoteId) || Boolean(sourceViewerNoteId) || Boolean(editingNoteId) },
-  );
   const allDrafts = useLongTermMemoryDrafts(
     {},
     {
       enabled:
-        archiveOpen ||
         Boolean(viewingNoteId) ||
         Boolean(sourceViewerNoteId) ||
         Boolean(viewingDraftId),
@@ -2444,15 +2401,9 @@ export function LongTermMemoryPanel() {
   const replay = useReplayLongTermMemory();
   const repair = useRepairLongTermMemory();
   const importSourceNotes = useImportLongTermMemorySourceNotes();
-  const archiveNote = useArchiveLongTermMemoryNote();
-  const deleteNote = useDeleteLongTermMemoryNote();
-  const updateNote = useUpdateLongTermMemoryNote();
-  const restoreDraftMutation = useRestoreLongTermMemoryDraft();
-  const deleteDraft = useDeleteLongTermMemoryDraft();
 
   const filteredNotes = useMemo(() => {
     const list = (notes.data ?? []).filter((note) => {
-      if (note.status === "archived") return false;
       if (noteStatus !== "all" && note.status !== noteStatus) return false;
       if (noteType !== "all" && note.type !== noteType) return false;
       return true;
@@ -2467,10 +2418,6 @@ export function LongTermMemoryPanel() {
         Object.values(note.sections).some((section) => section.text.toLowerCase().includes(needle)),
     );
   }, [noteStatus, noteType, notes.data, query]);
-  const nonArchivedMemoryCount = useMemo(
-    () => (notes.data ?? []).filter((note) => note.status !== "archived").length,
-    [notes.data],
-  );
   const groupedBucketNotes = useMemo(() => groupNotesByType(filteredNotes), [filteredNotes]);
   const derivedCountBySource = useMemo(() => {
     const counts = new Map<string, number>();
@@ -2488,22 +2435,6 @@ export function LongTermMemoryPanel() {
     () => (allDrafts.data ?? []).filter((draft) => draft.status !== "pending"),
     [allDrafts.data],
   );
-  const archivedMemoryNotes = useMemo(() => archivedNotes.data ?? [], [archivedNotes.data]);
-  const groupedArchivedMemoryNotes = useMemo(() => sourceSummaryGroups(archivedMemoryNotes, chatLookup), [archivedMemoryNotes, chatLookup]);
-  const archivedNoteIds = useMemo(() => archivedMemoryNotes.map((note) => note.id), [archivedMemoryNotes]);
-  const archivedDraftIds = useMemo(() => archivedDrafts.map((draft) => draft.id), [archivedDrafts]);
-  const selectedArchivedNotes = useMemo(
-    () => archivedMemoryNotes.filter((note) => selectedArchivedNoteIds.has(note.id)),
-    [archivedMemoryNotes, selectedArchivedNoteIds],
-  );
-  const selectedArchivedDrafts = useMemo(
-    () => archivedDrafts.filter((draft) => selectedArchivedDraftIds.has(draft.id)),
-    [archivedDrafts, selectedArchivedDraftIds],
-  );
-  const allArchivedNotesSelected =
-    archivedNoteIds.length > 0 && archivedNoteIds.every((id) => selectedArchivedNoteIds.has(id));
-  const allArchivedDraftsSelected =
-    archivedDraftIds.length > 0 && archivedDraftIds.every((id) => selectedArchivedDraftIds.has(id));
   const combinedDrafts = useMemo(() => {
     const byId = new Map<string, LtmExtractionDraft>();
     for (const draft of allDrafts.data ?? []) byId.set(draft.id, draft);
@@ -2526,10 +2457,9 @@ export function LongTermMemoryPanel() {
   const combinedNotes = useMemo(() => {
     const byId = new Map<string, LtmNote>();
     for (const note of notes.data ?? []) byId.set(note.id, note);
-    for (const note of archivedNotes.data ?? []) byId.set(note.id, note);
     if (exactViewingNote.data) byId.set(exactViewingNote.data.id, exactViewingNote.data);
     return [...byId.values()];
-  }, [archivedNotes.data, exactViewingNote.data, notes.data]);
+  }, [exactViewingNote.data, notes.data]);
   const noteLookup = useMemo(() => buildNoteLookup(combinedNotes), [combinedNotes]);
   const statusTone = integrity.data?.ok ? "good" : integrity.data ? "bad" : "neutral";
   const editingNote = useMemo(
@@ -2556,7 +2486,7 @@ export function LongTermMemoryPanel() {
     () => (viewingDraftId ? (combinedDrafts.find((draft) => draft.id === viewingDraftId) ?? null) : null),
     [combinedDrafts, viewingDraftId],
   );
-  const viewingNoteModalOpen = Boolean(viewingNote) && (archiveOpen || tab !== "notes");
+  const viewingNoteModalOpen = Boolean(viewingNote) && tab !== "notes";
   const editedNoteFilteredOut = Boolean(editingNote && !filteredNotes.some((note) => note.id === editingNote.id));
   const editingNoteHiddenByFilters = Boolean(editedNoteFilteredOut && editingNote);
   const activeListViewingNoteId = sourceViewerNoteId ?? viewingNoteId;
@@ -2616,7 +2546,6 @@ export function LongTermMemoryPanel() {
 
   const openSourceNote = (id: string) => {
     if (editingNoteId && !confirmDiscardEditor()) return;
-    setArchiveOpen(false);
     setViewingDraftId(null);
     setEditingNoteId(null);
     setEditedNoteDirty(false);
@@ -2664,209 +2593,6 @@ export function LongTermMemoryPanel() {
     closeSourceViewer();
     closeDraftViewer();
     setCreatingNote(true);
-  };
-
-  const archiveFromRow = (note: LtmNote) => {
-    const derivedNotes = isSourceSummaryNote(note)
-      ? (notes.data ?? []).filter(
-          (candidate) =>
-            candidate.id !== note.id && candidate.status !== "archived" && isDerivedFromSource(candidate, note.id),
-        )
-      : [];
-    const title = isSourceSummaryNote(note) ? sourceNoteTitle(note) : friendlyNoteTitle(note);
-    const confirmCopy =
-      derivedNotes.length > 0
-        ? `Archive "${title}"?\n\nThis will archive the source and ${derivedNotes.length} typed memor${
-            derivedNotes.length === 1 ? "y" : "ies"
-          } extracted from it. Archived memories stop participating in recall, but remain available in the archive.`
-        : `Archive "${title}"?\n\nArchived memories stop participating in recall, but remain available in the archive.`;
-    if (!confirm(confirmCopy)) return;
-    archiveNote
-      .mutateAsync(note.id)
-      .then((result) => {
-        const archivedCount = result.notes?.length ?? 1;
-        toast.success(
-          archivedCount > 1
-            ? `Archived source and ${archivedCount - 1} typed memor${archivedCount === 2 ? "y" : "ies"}`
-            : "Memory archived",
-        );
-        const archivedIds = new Set((result.notes ?? [result.note]).map((archivedNote) => archivedNote.id));
-        if (editingNoteId && archivedIds.has(editingNoteId)) closeEditor();
-        if (viewingNoteId && archivedIds.has(viewingNoteId)) closeViewer();
-        if (sourceViewerNoteId && archivedIds.has(sourceViewerNoteId)) closeSourceViewer();
-      })
-      .catch((err: Error) => toast.error(err.message));
-  };
-
-  const restoreNote = (note: LtmNote) => {
-    updateNote
-      .mutateAsync({ id: note.id, patch: { status: "active" } })
-      .then((saved) => {
-        toast.success("Memory restored");
-        setSelectedArchivedNoteIds((current) => {
-          const next = new Set(current);
-          next.delete(saved.id);
-          return next;
-        });
-        setArchiveOpen(false);
-        setViewingNoteId(null);
-        setEditingNoteId(saved.id);
-        setEditedNoteDirty(false);
-      })
-      .catch((err: Error) => toast.error(err.message));
-  };
-
-  const deleteArchivedNote = (note: LtmNote) => {
-    if (!confirm(`Delete ${friendlyNoteTitle(note)}? This cannot be undone.`)) return;
-    deleteNote
-      .mutateAsync(note.id)
-      .then(() => {
-        toast.success("Memory deleted");
-        setSelectedArchivedNoteIds((current) => {
-          const next = new Set(current);
-          next.delete(note.id);
-          return next;
-        });
-        if (viewingNoteId === note.id) closeViewer();
-        if (sourceViewerNoteId === note.id) closeSourceViewer();
-        if (editingNoteId === note.id) closeEditor();
-      })
-      .catch((err: Error) => toast.error(err.message));
-  };
-
-  const setArchivedNotesSelected = (ids: string[], selected: boolean) => {
-    setSelectedArchivedNoteIds((current) => {
-      const next = new Set(current);
-      for (const id of ids) {
-        if (selected) next.add(id);
-        else next.delete(id);
-      }
-      return next;
-    });
-  };
-
-  const setArchivedDraftsSelected = (ids: string[], selected: boolean) => {
-    setSelectedArchivedDraftIds((current) => {
-      const next = new Set(current);
-      for (const id of ids) {
-        if (selected) next.add(id);
-        else next.delete(id);
-      }
-      return next;
-    });
-  };
-
-  const restoreSelectedArchivedNotes = async () => {
-    if (selectedArchivedNotes.length === 0) return;
-    try {
-      await Promise.all(
-        selectedArchivedNotes.map((note) => updateNote.mutateAsync({ id: note.id, patch: { status: "active" } })),
-      );
-      toast.success(
-        `Restored ${selectedArchivedNotes.length} memor${selectedArchivedNotes.length === 1 ? "y" : "ies"}`,
-      );
-      setSelectedArchivedNoteIds(new Set());
-    } catch (err) {
-      toast.error((err as Error).message);
-    }
-  };
-
-  const deleteSelectedArchivedNotes = async () => {
-    if (selectedArchivedNotes.length === 0) return;
-    if (
-      !confirm(
-        `Delete ${selectedArchivedNotes.length} archived memor${
-          selectedArchivedNotes.length === 1 ? "y" : "ies"
-        }? This cannot be undone.`,
-      )
-    ) {
-      return;
-    }
-    try {
-      await Promise.all(selectedArchivedNotes.map((note) => deleteNote.mutateAsync(note.id)));
-      toast.success(`Deleted ${selectedArchivedNotes.length} memor${selectedArchivedNotes.length === 1 ? "y" : "ies"}`);
-      const deletedIds = new Set(selectedArchivedNotes.map((note) => note.id));
-      setSelectedArchivedNoteIds(new Set());
-      if (viewingNoteId && deletedIds.has(viewingNoteId)) closeViewer();
-      if (sourceViewerNoteId && deletedIds.has(sourceViewerNoteId)) closeSourceViewer();
-      if (editingNoteId && deletedIds.has(editingNoteId)) closeEditor();
-    } catch (err) {
-      toast.error((err as Error).message);
-    }
-  };
-
-  const restoreArchivedDraft = (draft: LtmExtractionDraft) => {
-    if (draft.status !== "rejected") return;
-    restoreDraftMutation
-      .mutateAsync(draft.id)
-      .then(() => {
-        toast.success("Suggestion restored");
-        setSelectedArchivedDraftIds((current) => {
-          const next = new Set(current);
-          next.delete(draft.id);
-          return next;
-        });
-        setViewingDraftId(null);
-      })
-      .catch((err: Error) => toast.error(err.message));
-  };
-
-  const deleteArchivedDraft = (draft: LtmExtractionDraft) => {
-    if (!confirm(`Delete suggestion ${draft.id}? This cannot be undone.`)) return;
-    deleteDraft
-      .mutateAsync(draft.id)
-      .then(() => {
-        toast.success("Suggestion deleted");
-        setSelectedArchivedDraftIds((current) => {
-          const next = new Set(current);
-          next.delete(draft.id);
-          return next;
-        });
-        if (viewingDraftId === draft.id) closeDraftViewer();
-      })
-      .catch((err: Error) => toast.error(err.message));
-  };
-
-  const restoreSelectedArchivedDrafts = async () => {
-    const restorableDrafts = selectedArchivedDrafts.filter((draft) => draft.status === "rejected");
-    if (restorableDrafts.length === 0) return;
-    try {
-      await Promise.all(
-        restorableDrafts.map((draft) => restoreDraftMutation.mutateAsync(draft.id)),
-      );
-      toast.success(`Restored ${restorableDrafts.length} suggestion${restorableDrafts.length === 1 ? "" : "s"}`);
-      setSelectedArchivedDraftIds((current) => {
-        const next = new Set(current);
-        for (const draft of restorableDrafts) next.delete(draft.id);
-        return next;
-      });
-    } catch (err) {
-      toast.error((err as Error).message);
-    }
-  };
-
-  const deleteSelectedArchivedDrafts = async () => {
-    if (selectedArchivedDrafts.length === 0) return;
-    if (
-      !confirm(
-        `Delete ${selectedArchivedDrafts.length} archived suggestion${
-          selectedArchivedDrafts.length === 1 ? "" : "s"
-        }? This cannot be undone.`,
-      )
-    ) {
-      return;
-    }
-    try {
-      await Promise.all(selectedArchivedDrafts.map((draft) => deleteDraft.mutateAsync(draft.id)));
-      toast.success(
-        `Deleted ${selectedArchivedDrafts.length} suggestion${selectedArchivedDrafts.length === 1 ? "" : "s"}`,
-      );
-      const deletedIds = new Set(selectedArchivedDrafts.map((draft) => draft.id));
-      setSelectedArchivedDraftIds(new Set());
-      if (viewingDraftId && deletedIds.has(viewingDraftId)) closeDraftViewer();
-    } catch (err) {
-      toast.error((err as Error).message);
-    }
   };
 
   const setImportRowSelected = (sourceId: string, selected: boolean) => {
@@ -2948,7 +2674,7 @@ export function LongTermMemoryPanel() {
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold leading-tight text-[var(--foreground)]">Story Memory</div>
             <div className="mt-1 flex flex-wrap gap-1.5">
-              <StatusPill label={`${nonArchivedMemoryCount} memor${nonArchivedMemoryCount === 1 ? "y" : "ies"}`} />
+              <StatusPill label={`${(notes.data ?? []).length} memor${(notes.data ?? []).length === 1 ? "y" : "ies"}`} />
               <StatusPill label={`${status.data?.indexes.chunkCount ?? 0} search chunks`} />
               <StatusPill label={integrity.data?.ok ? "Healthy" : "Needs check"} tone={statusTone} />
               <StatusPill
@@ -2957,15 +2683,6 @@ export function LongTermMemoryPanel() {
               />
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setArchiveOpen(true)}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-            aria-label="Open memory archive"
-            title="Archive"
-          >
-            <Archive size="0.75rem" />
-          </button>
           <button
             type="button"
             onClick={() => setDebugLogOpen(true)}
@@ -3037,7 +2754,7 @@ export function LongTermMemoryPanel() {
                 </select>
                 <select
                   value={noteStatus}
-                  onChange={(event) => setNoteStatus(event.target.value as "all" | Exclude<LtmStatus, "archived">)}
+                  onChange={(event) => setNoteStatus(event.target.value as "all" | LtmStatus)}
                   className="rounded-lg bg-[var(--secondary)] px-2.5 py-2 text-xs outline-none ring-1 ring-transparent focus:ring-[var(--primary)]"
                 >
                   {NOTE_STATUSES.map((statusId) => (
@@ -3065,12 +2782,11 @@ export function LongTermMemoryPanel() {
                       viewingNoteId={activeListViewingNoteId}
                       editingNoteId={editingNoteId}
                       derivedCountBySource={derivedCountBySource}
-                      onToggleMemory={toggleExpandedMemory}
-                      onToggleType={toggleExpandedType}
-                      onView={requestViewMemory}
-                      onEdit={requestEditNote}
-                      onArchive={archiveFromRow}
-                      onOpenSource={openSourceNote}
+      onToggleMemory={toggleExpandedMemory}
+      onToggleType={toggleExpandedType}
+      onView={requestViewMemory}
+      onEdit={requestEditNote}
+      onOpenSource={openSourceNote}
                     />
                   )}
               </div>
@@ -3188,172 +2904,6 @@ export function LongTermMemoryPanel() {
           </div>
         </Section>
       )}
-
-      <Modal
-        open={archiveOpen}
-        onClose={() => {
-          if (editingNoteId && !confirmDiscardEditor()) return;
-          setArchiveOpen(false);
-          setViewingDraftId(null);
-        }}
-        title="Archive"
-        width="max-w-5xl"
-      >
-        <div className="grid gap-3">
-          <div className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--background)]/95 p-1">
-            {(["notes", "drafts"] as const).map((id) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => setArchiveTab(id)}
-                className={cn(
-                  "rounded-lg px-2 py-1.5 text-xs font-medium transition-all active:scale-[0.98]",
-                  archiveTab === id
-                    ? "bg-rose-300/15 text-[var(--foreground)] ring-1 ring-rose-300/30"
-                    : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                )}
-              >
-                {id === "notes" ? "Memories" : "Archived Suggestions"}
-              </button>
-            ))}
-          </div>
-
-          {archiveTab === "notes" && (
-            <div className="space-y-2">
-              <div className="flex flex-wrap items-center gap-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
-                <label className="flex min-h-8 items-center gap-2 rounded-lg px-2 text-xs text-[var(--foreground)]">
-                  <input
-                    type="checkbox"
-                    checked={allArchivedNotesSelected}
-                    disabled={archivedNoteIds.length === 0 || deleteNote.isPending || updateNote.isPending}
-                    onChange={(event) => setArchivedNotesSelected(archivedNoteIds, event.target.checked)}
-                    className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-                  />
-                  Select visible
-                </label>
-                <span className="text-[0.6875rem] text-[var(--muted-foreground)]">
-                  {selectedArchivedNotes.length} selected
-                </span>
-                <ToolButton
-                  onClick={() => void restoreSelectedArchivedNotes()}
-                  disabled={selectedArchivedNotes.length === 0 || updateNote.isPending || deleteNote.isPending}
-                >
-                  {updateNote.isPending ? (
-                    <Loader2 size="0.875rem" className="animate-spin" />
-                  ) : (
-                    <RotateCcw size="0.875rem" />
-                  )}
-                  Restore selected
-                </ToolButton>
-                <ToolButton
-                  onClick={() => void deleteSelectedArchivedNotes()}
-                  disabled={selectedArchivedNotes.length === 0 || deleteNote.isPending}
-                  tone="danger"
-                >
-                  {deleteNote.isPending ? (
-                    <Loader2 size="0.875rem" className="animate-spin" />
-                  ) : (
-                    <Trash2 size="0.875rem" />
-                  )}
-                  Delete selected
-                </ToolButton>
-              </div>
-              {archivedNotes.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
-              {!archivedNotes.isLoading && archivedMemoryNotes.length === 0 && (
-                <p className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]">
-                  No archived memories.
-                </p>
-              )}
-              {groupedArchivedMemoryNotes.map((group) => (
-                <ArchivedSourceSummaryGroupRow
-                  key={group.source.id}
-                  group={group}
-                  viewingNoteId={activeListViewingNoteId}
-                  editingNoteId={editingNoteId}
-                  selectedNoteIds={selectedArchivedNoteIds}
-                  onSelect={setArchivedNotesSelected}
-                  onView={requestViewMemory}
-                  onEdit={requestEditNote}
-                  onRestore={(n) => restoreNote(n)}
-                  onDelete={deleteArchivedNote}
-                  chatLookup={chatLookup}
-                />
-              ))}
-            </div>
-          )}
-
-          {archiveTab === "drafts" && (
-            <div className="space-y-2">
-              <div className="flex flex-wrap items-center gap-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
-                <label className="flex min-h-8 items-center gap-2 rounded-lg px-2 text-xs text-[var(--foreground)]">
-                  <input
-                    type="checkbox"
-                    checked={allArchivedDraftsSelected}
-                    disabled={archivedDraftIds.length === 0 || deleteDraft.isPending || restoreDraftMutation.isPending}
-                    onChange={(event) => setArchivedDraftsSelected(archivedDraftIds, event.target.checked)}
-                    className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-                  />
-                  Select visible
-                </label>
-                <span className="text-[0.6875rem] text-[var(--muted-foreground)]">
-                  {selectedArchivedDrafts.length} selected
-                </span>
-                <ToolButton
-                  onClick={() => void restoreSelectedArchivedDrafts()}
-                  disabled={
-                    selectedArchivedDrafts.every((draft) => draft.status !== "rejected") ||
-                    restoreDraftMutation.isPending ||
-                    deleteDraft.isPending
-                  }
-                >
-                  {restoreDraftMutation.isPending ? (
-                    <Loader2 size="0.875rem" className="animate-spin" />
-                  ) : (
-                    <RotateCcw size="0.875rem" />
-                  )}
-                  Restore selected
-                </ToolButton>
-                <ToolButton
-                  onClick={() => void deleteSelectedArchivedDrafts()}
-                  disabled={selectedArchivedDrafts.length === 0 || deleteDraft.isPending}
-                  tone="danger"
-                >
-                  {deleteDraft.isPending ? (
-                    <Loader2 size="0.875rem" className="animate-spin" />
-                  ) : (
-                    <Trash2 size="0.875rem" />
-                  )}
-                  Delete selected
-                </ToolButton>
-              </div>
-              {allDrafts.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
-              {!allDrafts.isLoading && archivedDrafts.length === 0 && (
-                <p className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]">
-                  No archived suggestions.
-                </p>
-              )}
-              {archivedDrafts.map((draft) => (
-                <ArchivedDraftRow
-                  key={draft.id}
-                  draft={draft}
-                  noteLookup={noteLookup}
-                  chatLookup={chatLookup}
-                  selected={viewingDraftId === draft.id}
-                  bulkSelected={selectedArchivedDraftIds.has(draft.id)}
-                  onSelect={(selected) => setArchivedDraftsSelected([draft.id], selected)}
-                  onView={() => {
-                    setViewingDraftId(draft.id);
-                  }}
-                  onEdit={() => {}}
-                  onRestore={() => restoreArchivedDraft(draft)}
-                  onDelete={() => deleteArchivedDraft(draft)}
-                  onOpenSourceNote={openSourceNote}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      </Modal>
 
       <Modal
         open={creatingNote}

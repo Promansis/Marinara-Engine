@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rename, unlink } from "node:fs/promises";
+import { mkdir, readdir, readFile, unlink } from "node:fs/promises";
 import {
   ltmEventSchema,
   ltmNoteSchema,
@@ -18,7 +18,6 @@ import {
   getLongTermMemoryDirectories,
   getLongTermMemoryRoot,
   LTM_VAULT_FOLDERS,
-  archivedNotePathForId,
   notePathForId,
   safeJoin,
   vaultFolderForNoteType,
@@ -40,11 +39,6 @@ export type LtmListNotesFilter = {
   type?: LtmNoteType;
   status?: LtmNote["status"];
   tag?: string;
-};
-
-type ArchivedNoteEntry = {
-  note: LtmNote;
-  path: string;
 };
 
 export type CreateLtmNoteInput = Omit<LtmNote, "createdAt" | "updatedAt" | "version" | "previousHash"> &
@@ -150,7 +144,6 @@ export class LongTermMemoryStorage {
       mkdir(dirs.config, { recursive: true }),
       mkdir(dirs.drafts, { recursive: true }),
       mkdir(dirs.evidenceUnitDrafts, { recursive: true }),
-      ...LTM_VAULT_FOLDERS.map((folder) => mkdir(safeJoin(dirs.archive, folder), { recursive: true })),
       ...LTM_VAULT_FOLDERS.map((folder) => mkdir(safeJoin(dirs.vault, folder), { recursive: true })),
     ]);
 
@@ -163,22 +156,7 @@ export class LongTermMemoryStorage {
 
     await writeJsonIfChanged(policiesPath, existingPolicies);
     await writeJsonIfChanged(retrievalPath, existingRetrieval);
-    await this.migrateArchivedVaultNotes();
     logger.debug("[ltm] Initialized inert long-term memory store at %s", this.root);
-  }
-
-  private async migrateArchivedVaultNotes() {
-    for (const folder of LTM_VAULT_FOLDERS) {
-      const folderPath = safeJoin(this.dirs.vault, folder);
-      const entries = await readdir(folderPath, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-        const sourcePath = safeJoin(folderPath, entry.name);
-        const note = await this.readNoteFile(sourcePath, folder);
-        if (note.status !== "archived") continue;
-        await this.moveArchivedNoteFile(note, sourcePath);
-      }
-    }
   }
 
   async listNotes(filter: LtmListNotesFilter = {}) {
@@ -193,7 +171,6 @@ export class LongTermMemoryStorage {
       for (const entry of entries) {
         if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
         const note = await this.readNoteFile(safeJoin(folderPath, entry.name), folder);
-        if (note.status === "archived") continue;
         if (filter.status && note.status !== filter.status) continue;
         if (filter.tag && !note.tags.includes(filter.tag)) continue;
         notes.push(note);
@@ -207,28 +184,6 @@ export class LongTermMemoryStorage {
     await this.initializeLtmStore();
     const notes = await this.listNotes();
     return notes.find((note) => note.id === id) ?? null;
-  }
-
-  async listArchivedNotes(filter: LtmListNotesFilter = {}) {
-    await this.initializeLtmStore();
-    if (filter.status && filter.status !== "archived") return [];
-
-    const entries = await this.listArchivedNoteEntries(filter);
-    const latestById = new Map<string, LtmNote>();
-    for (const entry of entries) {
-      const existing = latestById.get(entry.note.id);
-      if (!existing || entry.note.updatedAt > existing.updatedAt) {
-        latestById.set(entry.note.id, entry.note);
-      }
-    }
-
-    return [...latestById.values()].sort((a, b) => a.id.localeCompare(b.id));
-  }
-
-  async getArchivedNote(id: string) {
-    await this.initializeLtmStore();
-    const entries = (await this.listArchivedNoteEntries()).filter((entry) => entry.note.id === id);
-    return entries.at(0)?.note ?? null;
   }
 
   async createNote(input: CreateLtmNoteInput, eventContext: LtmEventContext = {}) {
@@ -252,9 +207,6 @@ export class LongTermMemoryStorage {
         await this.appendEvent(eventFor(`${note.type}.created`, note.id, eventContext, { note }));
       }
       await createJsonFileExclusive(path, note);
-      if (note.status === "archived") {
-        await this.moveArchivedNoteFile(note, path);
-      }
       return note;
     });
   }
@@ -266,9 +218,7 @@ export class LongTermMemoryStorage {
   }
 
   async archiveNote(id: string, eventContext: LtmEventContext = {}) {
-    await this.initializeLtmStore();
-    const existing = await this.getRequiredNote(id);
-    return this.archiveExistingNote(existing, eventContext);
+    return this.updateNote(id, { status: "archived" }, eventContext);
   }
 
   async archiveSourceNoteWithDerived(id: string, eventContext: LtmEventContext = {}) {
@@ -278,10 +228,8 @@ export class LongTermMemoryStorage {
     const derived = relatedNotes.filter(
       (note) =>
         note.id !== id &&
-        note.status !== "archived" &&
         note.links.some((link) => link.relation === "extracted_from" && link.target === id),
     );
-    const archived: LtmNote[] = [];
     const archiveContext = {
       ...eventContext,
       payload: {
@@ -290,9 +238,10 @@ export class LongTermMemoryStorage {
       },
     };
 
-    archived.push(await this.archiveExistingNote(existing, eventContext));
+    const archived: LtmNote[] = [];
+    archived.push(await this.updateNote(existing.id, { status: "archived" }, eventContext));
     for (const note of derived) {
-      archived.push(await this.archiveExistingNote(note, archiveContext));
+      archived.push(await this.updateNote(note.id, { status: "archived" }, archiveContext));
     }
 
     return archived;
@@ -309,108 +258,6 @@ export class LongTermMemoryStorage {
       }
       await unlink(path);
       return current;
-    });
-  }
-
-  async deleteArchivedNote(id: string, eventContext: LtmEventContext = {}) {
-    await this.initializeLtmStore();
-    const entries = (await this.listArchivedNoteEntries()).filter((entry) => entry.note.id === id);
-    if (entries.length === 0) throw new Error(`Long-term memory note not found: ${id}`);
-
-    const latest = entries[0]!;
-    for (const entry of entries) {
-      await withNoteWriteLock(entry.path, async () => {
-        await unlink(entry.path);
-      });
-    }
-    if (!eventContext.suppressEvent) {
-      await this.appendEvent(
-        eventFor(`${latest.note.type}.deleted`, latest.note.id, eventContext, {
-          note: latest.note,
-          archived: true,
-        }),
-      );
-    }
-    return latest.note;
-  }
-
-  async updateArchivedNote(id: string, patch: UpdateLtmNotePatch, eventContext: LtmEventContext = {}) {
-    await this.initializeLtmStore();
-    const entry = await this.getRequiredArchivedNoteEntry(id);
-    return withNoteWriteLock(entry.path, async () => {
-      const allArchivedEntries = (await this.listArchivedNoteEntries()).filter((candidate) => candidate.note.id === id);
-      const currentEntry = allArchivedEntries[0];
-      if (!currentEntry) {
-        throw new Error(`Long-term memory note not found: ${id}`);
-      }
-      const current = currentEntry.note;
-      const timestamp = nowIso();
-      const next = ltmNoteSchema.parse({
-        ...current,
-        ...patch,
-        status: "archived",
-        scope: normalizeStoredScope(patch.scope ?? current.scope),
-        links: patch.links ?? current.links,
-        sections: patch.sections ?? current.sections,
-        conflicts: patch.conflicts ?? current.conflicts,
-        updatedAt: timestamp,
-        version: current.version + 1,
-        previousHash: hashNote(current),
-      });
-
-      if (!eventContext.suppressEvent) {
-        await this.appendEvent(eventFor(`${current.type}.updated`, current.id, eventContext, { patch, note: next }));
-      }
-      await writeJsonAtomic(currentEntry.path, next);
-      return next;
-    });
-  }
-
-  async restoreArchivedNote(
-    id: string,
-    patch: UpdateLtmNotePatch & { status?: Exclude<LtmNote["status"], "archived"> } = {},
-    eventContext: LtmEventContext = {},
-  ) {
-    await this.initializeLtmStore();
-    const entry = await this.getRequiredArchivedNoteEntry(id);
-    const livePath = notePathForId(entry.note.id, entry.note.type, this.root);
-    return withNoteWriteLock(livePath, async () => {
-      const existingLive = await this.getNote(id);
-      if (existingLive) throw new Error(`Long-term memory note already exists: ${id}`);
-
-      const allArchivedEntries = (await this.listArchivedNoteEntries()).filter((candidate) => candidate.note.id === id);
-      const currentEntry = allArchivedEntries[0];
-      if (!currentEntry) {
-        throw new Error(`Long-term memory note not found: ${id}`);
-      }
-      const current = currentEntry.note;
-      const timestamp = nowIso();
-      const restored = ltmNoteSchema.parse({
-        ...current,
-        ...patch,
-        status: patch.status ?? "active",
-        scope: normalizeStoredScope(patch.scope ?? current.scope),
-        links: patch.links ?? current.links,
-        sections: patch.sections ?? current.sections,
-        conflicts: patch.conflicts ?? current.conflicts,
-        updatedAt: timestamp,
-        version: current.version + 1,
-        previousHash: hashNote(current),
-      });
-
-      if (!eventContext.suppressEvent) {
-        await this.appendEvent(
-          eventFor(`${current.type}.restored`, current.id, eventContext, {
-            patch,
-            note: restored,
-          }),
-        );
-      }
-      await createJsonFileExclusive(livePath, restored);
-      for (const archivedEntry of allArchivedEntries) {
-        await unlink(archivedEntry.path);
-      }
-      return restored;
     });
   }
 
@@ -445,65 +292,6 @@ export class LongTermMemoryStorage {
       throw new Error(`Long-term memory note not found: ${id}`);
     }
     return note;
-  }
-
-  private async getRequiredArchivedNoteEntry(id: string) {
-    const entry = (await this.listArchivedNoteEntries()).find((candidate) => candidate.note.id === id);
-    if (!entry) {
-      throw new Error(`Long-term memory note not found: ${id}`);
-    }
-    return entry;
-  }
-
-  private async listArchivedNoteEntries(filter: LtmListNotesFilter = {}) {
-    const folders = filter.type ? [vaultFolderForNoteType(filter.type)] : LTM_VAULT_FOLDERS;
-    const entries: ArchivedNoteEntry[] = [];
-
-    for (const folder of folders) {
-      const folderPath = safeJoin(this.dirs.archive, folder);
-      const files = await readdir(folderPath, { withFileTypes: true });
-      for (const file of files) {
-        if (!file.isFile() || !file.name.endsWith(".json")) continue;
-        const path = safeJoin(folderPath, file.name);
-        const note = await this.readNoteFile(path, folder);
-        if (note.status !== "archived") continue;
-        if (filter.tag && !note.tags.includes(filter.tag)) continue;
-        entries.push({ note, path });
-      }
-    }
-
-    return entries.sort((a, b) => {
-      const updated = b.note.updatedAt.localeCompare(a.note.updatedAt);
-      return updated === 0 ? a.path.localeCompare(b.path) : updated;
-    });
-  }
-
-  private async moveArchivedNoteFile(note: LtmNote, sourcePath: string) {
-    const archivedPath = archivedNotePathForId(note.id, note.type, note.updatedAt, this.root);
-    await mkdir(safeJoin(this.dirs.archive, vaultFolderForNoteType(note.type)), { recursive: true });
-    await rename(sourcePath, archivedPath);
-  }
-
-  private async archiveExistingNote(existing: LtmNote, eventContext: LtmEventContext) {
-    const path = notePathForId(existing.id, existing.type, this.root);
-    return withNoteWriteLock(path, async () => {
-      const current = await this.getRequiredNote(existing.id);
-      const timestamp = nowIso();
-      const archived = ltmNoteSchema.parse({
-        ...current,
-        status: "archived",
-        updatedAt: timestamp,
-        version: current.version + 1,
-        previousHash: hashNote(current),
-      });
-
-      if (!eventContext.suppressEvent) {
-        await this.appendEvent(eventFor(`${current.type}.archived`, current.id, eventContext, { note: archived }));
-      }
-      await writeJsonAtomic(path, archived);
-      await this.moveArchivedNoteFile(archived, path);
-      return archived;
-    });
   }
 
   private async readNoteFile(path: string, folder: (typeof LTM_VAULT_FOLDERS)[number]) {
@@ -541,9 +329,6 @@ export class LongTermMemoryStorage {
         await this.appendEvent(eventFor(eventType, existing.id, eventContext, { patch, note: next }));
       }
       await writeJsonAtomic(path, next);
-      if (next.status === "archived") {
-        await this.moveArchivedNoteFile(next, path);
-      }
       return next;
     });
   }

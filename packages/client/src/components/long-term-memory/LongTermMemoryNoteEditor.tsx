@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Archive, Loader2, Pencil, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
+import { Loader2, Pencil, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
 import {
   getLtmScopeChatIds,
   withMergedLtmScopeLinks,
@@ -11,7 +11,6 @@ import {
 } from "@marinara-engine/shared";
 import {
   useApplyLongTermMemoryScopeToDerived,
-  useArchiveLongTermMemoryNote,
   useRebuildLongTermMemory,
   useUpdateLongTermMemoryNote,
 } from "../../hooks/use-long-term-memory";
@@ -29,7 +28,6 @@ import {
   emptySection,
   friendlyIdentifier,
   friendlyMode,
-  friendlyNoteTitle,
   friendlySectionKey,
   friendlyStatus,
   modeOptions,
@@ -89,7 +87,6 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
   const [floatingSectionKey, setFloatingSectionKey] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"details" | "suggestions">("details");
   const updateNote = useUpdateLongTermMemoryNote();
-  const archiveNote = useArchiveLongTermMemoryNote();
   const applyScopeToDerived = useApplyLongTermMemoryScopeToDerived();
   const rebuild = useRebuildLongTermMemory();
 
@@ -100,7 +97,7 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
   }, [note]);
 
   const dirty = useMemo(() => serializedEditable(draft) !== serializedEditable(savedBaseline), [draft, savedBaseline]);
-  const busy = updateNote.isPending || archiveNote.isPending || rebuild.isPending || applyScopeToDerived.isPending;
+  const busy = updateNote.isPending || rebuild.isPending || applyScopeToDerived.isPending;
   const sourceMemory = isSourceMemory(draft);
 
   useEffect(() => {
@@ -158,20 +155,6 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
   const cancel = () => {
     if (dirty && !confirm("Discard unsaved memory changes?")) return;
     onCancel();
-  };
-
-  const archive = async () => {
-    if (!confirm(`Archive ${friendlyNoteTitle(draft)}?`)) return;
-    try {
-      const result = await archiveNote.mutateAsync(draft.id);
-      toast.success("Memory archived");
-      setSavedBaseline(result.note);
-      setDraft(result.note);
-      onDirtyChange?.(false);
-      onSaved?.(result.note);
-    } catch (err) {
-      toast.error((err as Error).message);
-    }
   };
 
   const renameSection = (from: string, nextRaw: string) => {
@@ -596,10 +579,6 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
           <ToolButton onClick={() => save({ rebuildAfter: true })} disabled={!dirty || busy}>
             {rebuild.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <RefreshCw size="0.875rem" />}
             Save And Refresh Search
-          </ToolButton>
-          <ToolButton onClick={archive} disabled={busy || draft.status === "archived"} tone="danger">
-            <Archive size="0.875rem" />
-            Archive Memory
           </ToolButton>
           <ToolButton onClick={cancel} disabled={busy}>
             <X size="0.875rem" />

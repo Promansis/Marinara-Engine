@@ -128,7 +128,6 @@ export function chunkNotes(notes: LtmNote[], options: ChunkLtmNotesOptions = {})
   return notes
     .slice()
     .filter((note) => {
-      if (note.status === "archived") return false;
       const isSource = isLtmSourceSummaryNote(note);
       if (options.sourceNotesOnly) return isSource;
       return options.includeSourceNotes === true || !isSource;
