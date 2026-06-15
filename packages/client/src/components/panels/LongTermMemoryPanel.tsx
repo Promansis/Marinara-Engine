@@ -69,7 +69,6 @@ import {
   friendlyNoteType,
   friendlySectionKey,
   friendlyStatus,
-  isTypedSuggestionDraft,
   sentenceCaseIdentifier,
 } from "../long-term-memory/ltm-editor-utils";
 import { compactInputClassName, inputClassName, SettingField } from "../long-term-memory/LtmFields";
@@ -117,7 +116,6 @@ type LtmBucketGroup = {
   type: LtmNoteType;
   notes: LtmNote[];
 };
-type LtmMemoryLens = "source" | "type";
 type LtmRecallStyle = "balanced" | "exact" | "broad" | "story";
 
 const LTM_RECALL_STYLES: Array<{ id: LtmRecallStyle; label: string; description: string }> = [
@@ -487,6 +485,16 @@ function sourceLinkIds(note: LtmNote) {
   return note.links.filter((link) => link.relation === "extracted_from").map((link) => link.target);
 }
 
+function abbreviateSourceTitle(title: string): string {
+  const parts = title.split(", msgs ");
+  if (parts.length === 2) {
+    const chatName = parts[0].replace(/\s+Chat$/i, "").trim();
+    const range = parts[1].trim();
+    return chatName.length > 12 ? `${chatName.slice(0, 10)}… ${range}` : `${chatName} ${range}`;
+  }
+  return title.length > 18 ? `${title.slice(0, 16)}…` : title;
+}
+
 function buildNoteLookup(notes: LtmNote[]) {
   return new Map(notes.map((note) => [note.id, note] as const));
 }
@@ -577,7 +585,17 @@ function sourceTypeLabel(note: LtmNote) {
   return note.type === "source" ? "Source note" : "Manual memory";
 }
 
-function EvidencePills({ note, noteLookup, chatLookup }: { note: LtmNote; noteLookup: Map<string, LtmNote>; chatLookup?: Map<string, Chat> }) {
+function EvidencePills({
+  note,
+  noteLookup,
+  chatLookup,
+  onOpenSource,
+}: {
+  note: LtmNote;
+  noteLookup: Map<string, LtmNote>;
+  chatLookup?: Map<string, Chat>;
+  onOpenSource?: (id: string) => void;
+}) {
   const sourceIds = sourceLinkIds(note);
   const timelineLinks = timelineLinksForNote(note, noteLookup);
   const conflictCount = pendingConflictCount(note);
@@ -596,10 +614,30 @@ function EvidencePills({ note, noteLookup, chatLookup }: { note: LtmNote; noteLo
 
   return (
     <div className="mt-1 flex flex-wrap gap-1.5">
-      {sourceIds.slice(0, 3).map((sourceId) => (
-        <StatusPill key={sourceId} label={`From: ${sourceReferenceLabel(sourceId, noteLookup, chatLookup)}`} />
-      ))}
-      {sourceIds.length > 3 && <StatusPill label={`+${sourceIds.length - 3} sources`} />}
+      {sourceIds.slice(0, 4).map((sourceId) => {
+        const sourceTitle = sourceReferenceLabel(sourceId, noteLookup, chatLookup);
+        const tag = abbreviateSourceTitle(sourceTitle);
+        const pill = (
+          <StatusPill key={sourceId} label={tag} />
+        );
+        if (onOpenSource) {
+          return (
+            <button
+              key={sourceId}
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onOpenSource(sourceId); }}
+              className="transition-opacity hover:opacity-75"
+              title={sourceTitle}
+            >
+              {pill}
+            </button>
+          );
+        }
+        return pill;
+      })}
+      {sourceIds.length > 4 && (
+        <StatusPill label={`+${sourceIds.length - 4}`} />
+      )}
       {timelineLinks.slice(0, 2).map((link, index) => (
         <StatusPill
           key={`${link.relation}:${link.target}:${index}`}
@@ -614,212 +652,6 @@ function EvidencePills({ note, noteLookup, chatLookup }: { note: LtmNote; noteLo
   );
 }
 
-function SourceSummaryGroupRow({
-  group,
-  noteLookup,
-  chatLookup,
-  pendingSuggestionCount,
-  expanded,
-  viewingNoteId,
-  editingNoteId,
-  onToggle,
-  onView,
-  onEdit,
-  onArchive,
-}: {
-  group: SourceSummaryGroup;
-  noteLookup: Map<string, LtmNote>;
-  chatLookup?: Map<string, Chat>;
-  pendingSuggestionCount: number;
-  expanded: boolean;
-  viewingNoteId: string | null;
-  editingNoteId: string | null;
-  onToggle: () => void;
-  onView: (id: string) => void;
-  onEdit: (id: string) => void;
-  onArchive: (note: LtmNote) => void;
-}) {
-  const sourceTitle = group.orphaned ? friendlyNoteTitle(group.source) : sourceNoteTitle(group.source, chatLookup);
-  const derivedGroups = groupNotesByType(group.derived);
-  const timelineCount = new Set([
-    ...group.derived.filter((note) => note.type === "timeline_event").map((note) => note.id),
-    ...group.derived.flatMap((note) => timelineLinksForNote(note, noteLookup).map((link) => link.target)),
-  ]).size;
-
-  if (group.orphaned) {
-    return (
-      <NoteRow
-        note={group.source}
-        viewing={viewingNoteId === group.source.id}
-        editing={editingNoteId === group.source.id}
-        onView={() => onView(group.source.id)}
-        onEdit={() => onEdit(group.source.id)}
-        onArchive={() => onArchive(group.source)}
-      >
-        <EvidencePills note={group.source} noteLookup={noteLookup} chatLookup={chatLookup} />
-        {sourceLinkIds(group.source).length === 0 && (
-          <div className="mt-1">
-            <StatusPill label="Manual or orphaned" />
-          </div>
-        )}
-      </NoteRow>
-    );
-  }
-
-  return (
-    <article className="group rounded-lg bg-[var(--secondary)]/45 p-2.5 ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/35 hover:ring-rose-300/25">
-      <div className="flex items-start gap-2">
-        <button
-          type="button"
-          onClick={onToggle}
-          className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-          aria-label={expanded ? "Hide derived memories" : "Show derived memories"}
-          aria-expanded={expanded}
-        >
-          {expanded ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
-        </button>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={sourceTitle}>
-            {sourceTitle}
-          </div>
-          <div className="mt-1 flex flex-wrap gap-1.5">
-            <StatusPill label={sourceTypeLabel(group.source)} />
-            <StatusPill label={`${group.derived.length} typed memor${group.derived.length === 1 ? "y" : "ies"}`} />
-            {pendingSuggestionCount > 0 && (
-              <StatusPill
-                label={`${pendingSuggestionCount} pending suggestion${pendingSuggestionCount === 1 ? "" : "s"}`}
-                tone="warn"
-              />
-            )}
-            {timelineCount > 0 && (
-              <StatusPill label={`${timelineCount} timeline link${timelineCount === 1 ? "" : "s"}`} />
-            )}
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 shadow-sm ring-1 ring-[var(--border)]">
-          <button
-            type="button"
-            onClick={() => onView(group.source.id)}
-            className={cn(
-              rowActionButtonClassName,
-              viewingNoteId === group.source.id && "bg-[var(--accent)] text-[var(--foreground)]",
-            )}
-            aria-label={`View ${sourceTitle}`}
-            title="View source summary"
-          >
-            <Eye size="0.875rem" />
-          </button>
-          <button
-            type="button"
-            onClick={() => onArchive(group.source)}
-            disabled={group.source.status === "archived"}
-            className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
-            aria-label={`Archive ${sourceTitle}`}
-            title="Archive source summary"
-          >
-            <Archive size="0.875rem" />
-          </button>
-          <button
-            type="button"
-            onClick={() => onEdit(group.source.id)}
-            className={cn(
-              rowActionButtonClassName,
-              editingNoteId === group.source.id && "bg-[var(--accent)] text-[var(--foreground)]",
-            )}
-            aria-label={`Edit ${sourceTitle}`}
-            title="Edit source summary"
-          >
-            <Pencil size="0.875rem" />
-          </button>
-        </div>
-      </div>
-      {expanded && (
-        <div className="mt-3 space-y-1.5 border-t border-[var(--border)]/70 pt-2">
-          {group.derived.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--background)]/35 p-3 text-xs text-[var(--muted-foreground)]">
-              No typed memories have been extracted from this source yet.
-            </p>
-          ) : (
-            derivedGroups.map((derivedGroup) => (
-              <div key={derivedGroup.type} className="space-y-1.5">
-                <div className="flex flex-wrap items-center gap-1.5 px-1">
-                  <StatusPill label={friendlyNoteType(derivedGroup.type)} />
-                  <StatusPill
-                    label={`${derivedGroup.notes.length} memor${derivedGroup.notes.length === 1 ? "y" : "ies"}`}
-                  />
-                </div>
-                {derivedGroup.notes.map((derivedNote) => (
-                  <div
-                    key={derivedNote.id}
-                    className="flex min-w-0 items-start gap-2 rounded-lg bg-[var(--background)]/35 p-2 ring-1 ring-[var(--border)]/70"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-xs font-medium text-[var(--foreground)]">
-                        {friendlyNoteTitle(derivedNote)}
-                      </div>
-                      <p className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-                        {noteTextPreview(derivedNote) || "No summary text."}
-                      </p>
-                      <div className="mt-1 flex flex-wrap gap-1.5">
-                        <StatusPill
-                          label={friendlyStatus(derivedNote.status)}
-                          tone={derivedNote.status === "active" ? "good" : "neutral"}
-                        />
-                        {sourceLinkIds(derivedNote).length > 1 && (
-                          <StatusPill label={`${sourceLinkIds(derivedNote).length} sources`} />
-                        )}
-                      </div>
-                      <EvidencePills note={derivedNote} noteLookup={noteLookup} chatLookup={chatLookup} />
-                    </div>
-                    <div className="flex shrink-0 items-center gap-0.5">
-                      <button
-                        type="button"
-                        onClick={() => onView(derivedNote.id)}
-                        className={cn(
-                          rowActionButtonClassName,
-                          viewingNoteId === derivedNote.id && "bg-[var(--accent)] text-[var(--foreground)]",
-                        )}
-                        aria-label={`View ${friendlyNoteTitle(derivedNote)}`}
-                        title="View memory"
-                      >
-                        <Eye size="0.875rem" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onArchive(derivedNote)}
-                        className={cn(
-                          rowActionButtonClassName,
-                          "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]",
-                        )}
-                        aria-label={`Archive ${friendlyNoteTitle(derivedNote)}`}
-                        title="Archive memory"
-                      >
-                        <Archive size="0.875rem" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onEdit(derivedNote.id)}
-                        className={cn(
-                          rowActionButtonClassName,
-                          editingNoteId === derivedNote.id && "bg-[var(--accent)] text-[var(--foreground)]",
-                        )}
-                        aria-label={`Edit ${friendlyNoteTitle(derivedNote)}`}
-                        title="Edit memory"
-                      >
-                        <Pencil size="0.875rem" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ))
-          )}
-        </div>
-      )}
-    </article>
-  );
-}
-
 function sourceGroupNoteIds(group: SourceSummaryGroup) {
   return [group.source.id, ...group.derived.map((note) => note.id)];
 }
@@ -828,23 +660,31 @@ function TypeMemoryGroups({
   groups,
   noteLookup,
   expandedMemoryIds,
+  expandedTypeIds,
   viewingNoteId,
   editingNoteId,
+  derivedCountBySource,
   onToggleMemory,
+  onToggleType,
   onView,
   onEdit,
   onArchive,
+  onOpenSource,
   chatLookup,
 }: {
   groups: LtmBucketGroup[];
   noteLookup: Map<string, LtmNote>;
   expandedMemoryIds: Set<string>;
+  expandedTypeIds: Set<string>;
   viewingNoteId: string | null;
   editingNoteId: string | null;
+  derivedCountBySource: Map<string, number>;
   onToggleMemory: (id: string) => void;
+  onToggleType: (type: string) => void;
   onView: (id: string) => void;
   onEdit: (id: string) => void;
   onArchive: (note: LtmNote) => void;
+  onOpenSource: (id: string) => void;
   chatLookup?: Map<string, Chat>;
 }) {
   if (groups.length === 0) {
@@ -866,158 +706,180 @@ function TypeMemoryGroups({
         ).length;
         const missingSourceCount = sourceIds.filter((sourceId) => !noteLookup.has(sourceId)).length;
         const conflictCount = group.notes.reduce((total, note) => total + pendingConflictCount(note), 0);
+        const typeExpanded = expandedTypeIds.has(group.type);
         return (
-          <section key={group.type} className="space-y-2">
-            <div className="flex flex-wrap items-center gap-1.5 px-1">
-              <StatusPill label={friendlyNoteType(group.type)} />
-              <StatusPill label={`${group.notes.length} memor${group.notes.length === 1 ? "y" : "ies"}`} />
-              {sourceCount > 0 && <StatusPill label={`${activeSourceCount}/${sourceCount} active sources`} />}
-              {archivedSourceCount > 0 && (
-                <StatusPill
-                  label={`${archivedSourceCount} archived source${archivedSourceCount === 1 ? "" : "s"}`}
-                  tone="warn"
-                />
-              )}
-              {missingSourceCount > 0 && (
-                <StatusPill
-                  label={`${missingSourceCount} missing source${missingSourceCount === 1 ? "" : "s"}`}
-                  tone="warn"
-                />
-              )}
-              {conflictCount > 0 && <StatusPill label={`${conflictCount} needs review`} tone="warn" />}
-            </div>
-            <div className="space-y-2">
-              {group.notes.map((note) => {
-                const expanded = expandedMemoryIds.has(note.id);
-                const sourceIds = sourceLinkIds(note);
-                return (
-                  <article
-                    key={note.id}
-                    className={cn(
-                      "group relative rounded-lg bg-[var(--secondary)]/45 p-2.5 ring-1 ring-[var(--border)] transition-colors",
-                      "hover:bg-[var(--accent)]/45 hover:ring-rose-300/25",
-                      (viewingNoteId === note.id || editingNoteId === note.id) && "bg-rose-300/10 ring-rose-300/35",
-                    )}
-                  >
-                    <div className="flex min-w-0 items-start gap-2 pr-28 max-md:pr-28">
-                      <button
-                        type="button"
-                        onClick={() => onToggleMemory(note.id)}
-                        className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                        aria-label={expanded ? "Hide source details" : "Show source details"}
-                        aria-expanded={expanded}
-                      >
-                        {expanded ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
-                      </button>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={note.id}>
-                          {isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : friendlyNoteTitle(note)}
-                        </div>
-                        {note.type !== "source" && (
-                          <p className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-                            Current: {noteTextPreview(note) || "No summary text."}
-                          </p>
-                        )}
-                        <div className="mt-1 flex flex-wrap gap-1.5">
-                          {note.type === "source" ? (
-                            <StatusPill label={sourceTypeLabel(note)} />
-                          ) : (
-                            <StatusPill
-                              label={friendlyStatus(note.status)}
-                              tone={note.status === "active" ? "good" : "neutral"}
-                            />
-                          )}
-                          {sourceIds.length === 0 && note.type !== "source" && <StatusPill label="Manual" />}
-                        </div>
-                        <EvidencePills note={note} noteLookup={noteLookup} chatLookup={chatLookup} />
-                        {expanded && (
-                          <div className="mt-2 space-y-1.5 rounded-lg bg-[var(--background)]/35 p-2 ring-1 ring-[var(--border)]/70">
-                            {sourceIds.length === 0 ? (
-                              <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
-                                No source evidence is linked to this memory.
-                              </p>
-                            ) : (
-                              sourceIds.map((sourceId) => {
-                                const source = noteLookup.get(sourceId);
-                                return (
-                                  <button
-                                    key={sourceId}
-                                    type="button"
-                                    onClick={() => onView(sourceId)}
-                                    className="w-full rounded-md bg-[var(--secondary)]/45 p-2 text-left ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
-                                  >
-                                    <div className="flex flex-wrap items-center gap-1.5">
-                                      <span className="min-w-0 truncate text-xs font-medium text-[var(--foreground)]">
-                                        {sourceReferenceLabel(sourceId, noteLookup, chatLookup)}
-                                      </span>
-                                      {source && <StatusPill label={friendlyStatus(source.status)} tone="neutral" />}
-                                    </div>
-                                    {source && (
-                                      <p className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-                                        {noteTextPreview(source) || "Source has no summary text."}
-                                      </p>
-                                    )}
-                                  </button>
-                                );
-                              })
+          <section key={group.type}>
+            <button
+              type="button"
+              onClick={() => onToggleType(group.type)}
+              className="flex w-full items-center gap-2 rounded-lg px-1 py-1.5 text-left transition-colors hover:bg-[var(--accent)]/35"
+              aria-label={typeExpanded ? `Collapse ${friendlyNoteType(group.type)}` : `Expand ${friendlyNoteType(group.type)}`}
+              aria-expanded={typeExpanded}
+            >
+              <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)]">
+                {typeExpanded ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
+              </span>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <StatusPill label={friendlyNoteType(group.type)} />
+                <StatusPill label={`${group.notes.length} memor${group.notes.length === 1 ? "y" : "ies"}`} />
+                {sourceCount > 0 && <StatusPill label={`${activeSourceCount}/${sourceCount} active sources`} />}
+                {archivedSourceCount > 0 && (
+                  <StatusPill
+                    label={`${archivedSourceCount} archived source${archivedSourceCount === 1 ? "" : "s"}`}
+                    tone="warn"
+                  />
+                )}
+                {missingSourceCount > 0 && (
+                  <StatusPill
+                    label={`${missingSourceCount} missing source${missingSourceCount === 1 ? "" : "s"}`}
+                    tone="warn"
+                  />
+                )}
+                {conflictCount > 0 && <StatusPill label={`${conflictCount} needs review`} tone="warn" />}
+              </div>
+            </button>
+            {typeExpanded && (
+              <div className="mt-2 space-y-2">
+                {group.notes.map((note) => {
+                  const expanded = expandedMemoryIds.has(note.id);
+                  const sourcesCount = sourceLinkIds(note).length;
+                  const derivedCount = derivedCountBySource.get(note.id) ?? 0;
+                  return (
+                    <article
+                      key={note.id}
+                      className={cn(
+                        "group relative rounded-lg bg-[var(--secondary)]/45 p-2.5 ring-1 ring-[var(--border)] transition-colors",
+                        "hover:bg-[var(--accent)]/45 hover:ring-rose-300/25",
+                        (viewingNoteId === note.id || editingNoteId === note.id) && "bg-rose-300/10 ring-rose-300/35",
+                      )}
+                    >
+                      <div className="flex min-w-0 items-start gap-2 pr-28 max-md:pr-28">
+                        <button
+                          type="button"
+                          onClick={() => onToggleMemory(note.id)}
+                          className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                          aria-label={expanded ? "Hide source details" : "Show source details"}
+                          aria-expanded={expanded}
+                        >
+                          {expanded ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
+                        </button>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 truncate">
+                            <span className="truncate text-xs font-semibold text-[var(--foreground)]" title={note.id}>
+                              {isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : friendlyNoteTitle(note)}
+                            </span>
+                            {isSourceSummaryNote(note) && derivedCount > 0 && (
+                              <span className="shrink-0 rounded bg-[var(--muted-foreground)]/10 px-1.5 py-0.5 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                                &rarr;{derivedCount}
+                              </span>
                             )}
-                            {(note.conflicts ?? [])
-                              .filter((conflict) => conflict.resolution === "pending")
-                              .map((conflict) => (
-                                <div
-                                  key={`${conflict.field}:${conflict.policy}`}
-                                  className="rounded-md bg-amber-500/10 p-2 text-[0.6875rem] leading-relaxed text-amber-100 ring-1 ring-amber-400/30"
-                                >
-                                  Needs review: {sentenceCaseIdentifier(conflict.field)}
-                                </div>
-                              ))}
                           </div>
-                        )}
+                          {note.type !== "source" && (
+                            <p className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                              {noteTextPreview(note) || "No summary text."}
+                            </p>
+                          )}
+                          <div className="mt-1 flex flex-wrap gap-1.5">
+                            {note.type === "source" ? (
+                              <StatusPill label={sourceTypeLabel(note)} />
+                            ) : (
+                              <StatusPill
+                                label={friendlyStatus(note.status)}
+                                tone={note.status === "active" ? "good" : "neutral"}
+                              />
+                            )}
+                            {sourcesCount === 0 && note.type !== "source" && <StatusPill label="Manual" />}
+                          </div>
+                          <EvidencePills note={note} noteLookup={noteLookup} chatLookup={chatLookup} onOpenSource={onOpenSource} />
+                          {expanded && (
+                            <div className="mt-2 space-y-1.5 rounded-lg bg-[var(--background)]/35 p-2 ring-1 ring-[var(--border)]/70">
+                              {sourcesCount === 0 ? (
+                                <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
+                                  No source evidence is linked to this memory.
+                                </p>
+                              ) : (
+                                sourceLinkIds(note).map((sourceId) => {
+                                  const source = noteLookup.get(sourceId);
+                                  return (
+                                    <button
+                                      key={sourceId}
+                                      type="button"
+                                      onClick={() => onView(sourceId)}
+                                      className="w-full rounded-md bg-[var(--secondary)]/45 p-2 text-left ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+                                    >
+                                      <div className="flex flex-wrap items-center gap-1.5">
+                                        <span className="min-w-0 truncate text-xs font-medium text-[var(--foreground)]">
+                                          {sourceReferenceLabel(sourceId, noteLookup, chatLookup)}
+                                        </span>
+                                        {source && <StatusPill label={friendlyStatus(source.status)} tone="neutral" />}
+                                      </div>
+                                      {source && (
+                                        <p className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                                          {noteTextPreview(source) || "Source has no summary text."}
+                                        </p>
+                                      )}
+                                    </button>
+                                  );
+                                })
+                              )}
+                              {(note.conflicts ?? [])
+                                .filter((conflict) => conflict.resolution === "pending")
+                                .map((conflict) => (
+                                  <div
+                                    key={`${conflict.field}:${conflict.policy}`}
+                                    className="rounded-md bg-amber-500/10 p-2 text-[0.6875rem] leading-relaxed text-amber-100 ring-1 ring-amber-400/30"
+                                  >
+                                    Needs review: {sentenceCaseIdentifier(conflict.field)}
+                                  </div>
+                                ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                    <div className={rowActionPillClassName}>
-                      <button
-                        type="button"
-                        onClick={() => onView(note.id)}
-                        className={cn(
-                          rowActionButtonClassName,
-                          viewingNoteId === note.id && "bg-[var(--accent)] text-[var(--foreground)]",
-                        )}
-                        aria-label={`View ${friendlyNoteTitle(note)}`}
-                        title="View memory"
-                      >
-                        <Eye size="0.875rem" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onArchive(note)}
-                        disabled={note.status === "archived"}
-                        className={cn(
-                          rowActionButtonClassName,
-                          "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]",
-                        )}
-                        aria-label={`Archive ${friendlyNoteTitle(note)}`}
-                        title="Archive memory"
-                      >
-                        <Archive size="0.875rem" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onEdit(note.id)}
-                        className={cn(
-                          rowActionButtonClassName,
-                          editingNoteId === note.id && "bg-[var(--accent)] text-[var(--foreground)]",
-                        )}
-                        aria-label={`Edit ${friendlyNoteTitle(note)}`}
-                        title="Edit memory"
-                      >
-                        <Pencil size="0.875rem" />
-                      </button>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
+                      <div className={rowActionPillClassName}>
+                        <button
+                          type="button"
+                          onClick={() => onView(note.id)}
+                          className={cn(
+                            rowActionButtonClassName,
+                            viewingNoteId === note.id && "bg-[var(--accent)] text-[var(--foreground)]",
+                          )}
+                          aria-label={`View ${friendlyNoteTitle(note)}`}
+                          title="View memory"
+                        >
+                          <Eye size="0.875rem" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onArchive(note)}
+                          disabled={note.status === "archived"}
+                          className={cn(
+                            rowActionButtonClassName,
+                            "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]",
+                          )}
+                          aria-label={`Archive ${friendlyNoteTitle(note)}`}
+                          title="Archive memory"
+                        >
+                          <Archive size="0.875rem" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onEdit(note.id)}
+                          className={cn(
+                            rowActionButtonClassName,
+                            editingNoteId === note.id && "bg-[var(--accent)] text-[var(--foreground)]",
+                          )}
+                          aria-label={`Edit ${friendlyNoteTitle(note)}`}
+                          title="Edit memory"
+                        >
+                          <Pencil size="0.875rem" />
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
           </section>
         );
       })}
@@ -2524,7 +2386,6 @@ function ChatMemorySettings({
 
 export function LongTermMemoryPanel() {
   const [tab, setTab] = useState<TabId>("notes");
-  const [memoryLens, setMemoryLens] = useState<LtmMemoryLens>("source");
   const [noteType, setNoteType] = useState<"all" | LtmNoteType>("all");
   const [noteStatus, setNoteStatus] = useState<"all" | Exclude<LtmStatus, "archived">>("all");
   const [query, setQuery] = useState("");
@@ -2547,7 +2408,9 @@ export function LongTermMemoryPanel() {
   const [sourceViewerNoteId, setSourceViewerNoteId] = useState<string | null>(null);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editedNoteDirty, setEditedNoteDirty] = useState(false);
-  const [expandedSourceIds, setExpandedSourceIds] = useState<Set<string>>(() => new Set());
+  const [expandedTypeIds, setExpandedTypeIds] = useState<Set<string>>(
+    () => new Set(NOTE_TYPES.filter((t) => t !== "all")),
+  );
   const [expandedMemoryIds, setExpandedMemoryIds] = useState<Set<string>>(() => new Set());
   const [viewingDraftId, setViewingDraftId] = useState<string | null>(null);
 
@@ -2565,7 +2428,6 @@ export function LongTermMemoryPanel() {
     { status: "archived" },
     { enabled: archiveOpen || Boolean(viewingNoteId) || Boolean(sourceViewerNoteId) || Boolean(editingNoteId) },
   );
-  const pendingSuggestionDrafts = useLongTermMemoryDrafts({ status: "pending" }, { enabled: tab === "notes" });
   const allDrafts = useLongTermMemoryDrafts(
     {},
     {
@@ -2609,23 +2471,18 @@ export function LongTermMemoryPanel() {
     () => (notes.data ?? []).filter((note) => note.status !== "archived").length,
     [notes.data],
   );
-  const groupedFilteredNotes = useMemo(() => sourceSummaryGroups(filteredNotes, chatLookup), [filteredNotes, chatLookup]);
-  const bucketFilteredNotes = useMemo(
-    () =>
-      noteType === "source"
-        ? filteredNotes.filter(isSourceSummaryNote)
-        : filteredNotes.filter((note) => !isSourceSummaryNote(note)),
-    [filteredNotes, noteType],
-  );
-  const groupedBucketNotes = useMemo(() => groupNotesByType(bucketFilteredNotes), [bucketFilteredNotes]);
-  const pendingSuggestionCountsBySource = useMemo(() => {
+  const groupedBucketNotes = useMemo(() => groupNotesByType(filteredNotes), [filteredNotes]);
+  const derivedCountBySource = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const draft of pendingSuggestionDrafts.data ?? []) {
-      if (!draft.source.sourceNoteId || !isTypedSuggestionDraft(draft)) continue;
-      counts.set(draft.source.sourceNoteId, (counts.get(draft.source.sourceNoteId) ?? 0) + draft.mutations.length);
+    for (const note of filteredNotes) {
+      for (const link of note.links) {
+        if (link.relation === "extracted_from") {
+          counts.set(link.target, (counts.get(link.target) ?? 0) + 1);
+        }
+      }
     }
     return counts;
-  }, [pendingSuggestionDrafts.data]);
+  }, [filteredNotes]);
 
   const archivedDrafts = useMemo(
     () => (allDrafts.data ?? []).filter((draft) => draft.status !== "pending"),
@@ -2766,11 +2623,11 @@ export function LongTermMemoryPanel() {
     setSourceViewerNoteId(id);
   };
 
-  const toggleExpandedSource = (id: string) => {
-    setExpandedSourceIds((current) => {
+  const toggleExpandedType = (type: string) => {
+    setExpandedTypeIds((current) => {
       const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
       return next;
     });
   };
@@ -3166,23 +3023,6 @@ export function LongTermMemoryPanel() {
                   New
                 </ToolButton>
               </div>
-              <div className="grid grid-cols-2 gap-1 rounded-lg bg-[var(--secondary)]/45 p-1 ring-1 ring-[var(--border)]/80">
-                {(["source", "type"] as LtmMemoryLens[]).map((lens) => (
-                  <button
-                    key={lens}
-                    type="button"
-                    onClick={() => setMemoryLens(lens)}
-                    className={cn(
-                      "rounded-md px-2 py-1.5 text-xs font-medium transition-all active:scale-[0.98]",
-                      memoryLens === lens
-                        ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm ring-1 ring-rose-300/25"
-                        : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                    )}
-                  >
-                    {lens === "source" ? "By Source" : "By Type"}
-                  </button>
-                ))}
-              </div>
               <div className="grid grid-cols-2 gap-2">
                 <select
                   value={noteType}
@@ -3215,38 +3055,24 @@ export function LongTermMemoryPanel() {
                   </p>
                 )}
                 {!notes.isLoading &&
-                  filteredNotes.length > 0 &&
-                  (memoryLens === "source" ? (
-                    groupedFilteredNotes.map((group) => (
-                      <SourceSummaryGroupRow
-                        key={group.orphaned ? `orphan:${group.source.id}` : `source:${group.source.id}`}
-                        group={group}
-                        noteLookup={noteLookup}
-                        chatLookup={chatLookup}
-                        pendingSuggestionCount={pendingSuggestionCountsBySource.get(group.source.id) ?? 0}
-                        expanded={expandedSourceIds.has(group.source.id)}
-                        viewingNoteId={activeListViewingNoteId}
-                        editingNoteId={editingNoteId}
-                        onToggle={() => toggleExpandedSource(group.source.id)}
-                        onView={requestViewMemory}
-                        onEdit={requestEditNote}
-                        onArchive={archiveFromRow}
-                      />
-                    ))
-                  ) : (
+                  filteredNotes.length > 0 && (
                     <TypeMemoryGroups
                       groups={groupedBucketNotes}
                       noteLookup={noteLookup}
                       chatLookup={chatLookup}
                       expandedMemoryIds={expandedMemoryIds}
+                      expandedTypeIds={expandedTypeIds}
                       viewingNoteId={activeListViewingNoteId}
                       editingNoteId={editingNoteId}
+                      derivedCountBySource={derivedCountBySource}
                       onToggleMemory={toggleExpandedMemory}
+                      onToggleType={toggleExpandedType}
                       onView={requestViewMemory}
                       onEdit={requestEditNote}
                       onArchive={archiveFromRow}
+                      onOpenSource={openSourceNote}
                     />
-                  ))}
+                  )}
               </div>
             </section>
         </Section>
