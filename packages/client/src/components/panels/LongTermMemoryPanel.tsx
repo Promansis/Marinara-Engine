@@ -62,6 +62,7 @@ import { LongTermMemoryExtractionSettingsModal } from "../long-term-memory/LongT
 import { LongTermMemoryWorkbenchModal } from "../long-term-memory/LongTermMemoryWorkbenchModal";
 import { LongTermMemoryNoteEditor } from "../long-term-memory/LongTermMemoryNoteEditor";
 import {
+  friendlyEvidence,
   friendlyIdentifier,
   friendlyMode,
   friendlyNoteTitle,
@@ -373,7 +374,9 @@ function NoteRow({
 }
 
 function compactScope(note: LtmNote) {
+  const SKIP_KEYS = new Set(["universe", "rpId"]);
   const scopeEntries = Object.entries(note.scope).flatMap(([key, value]) => {
+    if (SKIP_KEYS.has(key)) return [];
     if (Array.isArray(value)) return value.length ? [[key, value.join(", ")]] : [];
     return typeof value === "string" && value.trim() ? [[key, value]] : [];
   });
@@ -1280,7 +1283,8 @@ function MutationPreview({ mutation }: { mutation: LtmDraftMutation }) {
       </pre>
       {mutation.evidence.length > 0 && (
         <div className="mt-2 rounded-md bg-[var(--background)]/70 p-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-          <span className="font-medium text-[var(--foreground)]">Evidence:</span> {mutation.evidence.join(", ")}
+          <span className="font-medium text-[var(--foreground)]">Evidence:</span>{" "}
+          {mutation.evidence.map(friendlyEvidence).join(", ")}
         </div>
       )}
     </article>
@@ -1500,7 +1504,7 @@ function NoteViewModalContent({
             <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-[var(--foreground)]">{section.text}</p>
             {(section.evidence ?? []).length > 0 && (
               <div className="mt-2 text-[0.625rem] text-[var(--muted-foreground)]">
-                Evidence: {section.evidence?.join(", ")}
+                Evidence: {section.evidence?.map(friendlyEvidence).join(", ")}
               </div>
             )}
           </article>
@@ -1652,7 +1656,7 @@ function MemoryContentsPanel({ note }: { note: LtmNote }) {
           <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-[var(--foreground)]">{section.text}</p>
           {(section.evidence ?? []).length > 0 && (
             <div className="mt-2 rounded-md bg-[var(--background)]/55 p-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-              Evidence: {section.evidence?.join(", ")}
+              Evidence: {section.evidence?.map(friendlyEvidence).join(", ")}
             </div>
           )}
         </details>

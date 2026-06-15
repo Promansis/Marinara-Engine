@@ -44,8 +44,6 @@ export type CreateLongTermMemoryNoteDraft = {
   modes: LtmMode[];
   tagsText: string;
   scopeDraft: {
-    universe: string;
-    rpId: string;
     chatIds: string[];
     groupId: string;
     characterIds: string[];
@@ -53,16 +51,6 @@ export type CreateLongTermMemoryNoteDraft = {
   sectionKey: string;
   sectionText: string;
 };
-
-function readLtmScopeMetadata(chat: Chat | null | undefined) {
-  const metadata =
-    chat?.metadata && typeof chat.metadata === "object" && !Array.isArray(chat.metadata)
-      ? (chat.metadata as Record<string, unknown>)
-      : {};
-  const scope = metadata.longTermMemoryScope;
-  if (!scope || typeof scope !== "object" || Array.isArray(scope)) return {};
-  return scope as { universe?: string; rpId?: string };
-}
 
 function readChatCharacterIds(chat: Chat | null | undefined) {
   const raw = chat?.characterIds as unknown;
@@ -83,11 +71,9 @@ function readChatCharacterIds(chat: Chat | null | undefined) {
 function createDefaultDraft({
   activeChat,
   defaultMode,
-  metadataScope,
 }: {
   activeChat: Chat | null | undefined;
   defaultMode: LtmMode;
-  metadataScope: { universe?: string; rpId?: string };
 }): CreateLongTermMemoryNoteDraft {
   return {
     type: "scene",
@@ -96,8 +82,6 @@ function createDefaultDraft({
     modes: [defaultMode],
     tagsText: "",
     scopeDraft: {
-      universe: metadataScope.universe ?? "",
-      rpId: metadataScope.rpId ?? "",
       chatIds: activeChat?.id ? [activeChat.id] : [],
       groupId: activeChat?.groupId ?? "",
       characterIds: readChatCharacterIds(activeChat),
@@ -124,10 +108,9 @@ export function CreateLongTermMemoryNoteForm({
   const activeChat = activeChatQuery.data ?? cachedActiveChat;
   const createNote = useCreateLongTermMemoryNote();
   const defaultMode = defaultModeFromChatMode(activeChat?.mode);
-  const metadataScope = useMemo(() => readLtmScopeMetadata(activeChat), [activeChat]);
   const defaultDraft = useMemo(
-    () => createDefaultDraft({ activeChat, defaultMode, metadataScope }),
-    [activeChat, defaultMode, metadataScope],
+    () => createDefaultDraft({ activeChat, defaultMode }),
+    [activeChat, defaultMode],
   );
   const [draft, setDraft] = useState<CreateLongTermMemoryNoteDraft>(initialDraft ?? defaultDraft);
   const [summaryEditorOpen, setSummaryEditorOpen] = useState(false);
@@ -317,26 +300,7 @@ export function CreateLongTermMemoryNoteForm({
               }))
             }
           />
-          <div className="grid gap-2 sm:grid-cols-2">
-            <input
-              value={scopeDraft.universe}
-              onChange={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  scopeDraft: { ...current.scopeDraft, universe: event.target.value },
-                }))
-              }
-              placeholder="shared world"
-              className={compactInputClassName}
-            />
-            <input
-              value={scopeDraft.rpId}
-              onChange={(event) =>
-                setDraft((current) => ({ ...current, scopeDraft: { ...current.scopeDraft, rpId: event.target.value } }))
-              }
-              placeholder="story line"
-              className={compactInputClassName}
-            />
+           <div className="grid gap-2">
             <input
               value={scopeDraft.groupId}
               onChange={(event) =>

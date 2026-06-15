@@ -74,8 +74,6 @@ const KNOWN_ID_PREFIXES = [
   "rule_",
   "tone_",
   "scope_",
-  "universe_",
-  "rp_",
   "section_",
   "tag_",
   "note_",
@@ -175,17 +173,11 @@ export function defaultModeFromChatMode(mode?: ChatMode): LtmMode {
 }
 
 export function emptyScopeFromDraft(draft: {
-  universe?: string;
-  rpId?: string;
   chatIds?: string[];
   groupId?: string;
   characterIds?: string[];
 }): LtmScope {
   let scope: LtmScope = {};
-  const universe = normalizeIdentifier(draft.universe ?? "", "universe");
-  const rpId = normalizeIdentifier(draft.rpId ?? "", "rp");
-  if (universe) scope.universe = universe;
-  if (rpId) scope.rpId = rpId;
   if (draft.groupId?.trim()) scope.groupId = draft.groupId.trim();
   scope = withMergedLtmScopeLinks(scope, {
     chatIds: draft.chatIds ?? [],
@@ -234,4 +226,14 @@ export function editablePatchFromDraft(draft: LtmNote): UpdateLongTermMemoryNote
 export function isAllowedNoteId(type: LtmNoteType, id: string) {
   const prefixes = allowedIdPrefixesByType[type];
   return prefixes.some((prefix) => id === prefix || id.startsWith(prefix));
+}
+
+export function friendlyEvidence(entry: string) {
+  const colonIdx = entry.indexOf(":");
+  if (colonIdx > 0) {
+    const prefix = sentenceCaseIdentifier(entry.slice(0, colonIdx));
+    const value = friendlyIdentifier(entry.slice(colonIdx + 1));
+    return `${prefix}: ${value}`;
+  }
+  return friendlyIdentifier(entry);
 }

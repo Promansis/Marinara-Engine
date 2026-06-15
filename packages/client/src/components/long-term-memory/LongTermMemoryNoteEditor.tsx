@@ -19,6 +19,7 @@ import { useChat } from "../../hooks/use-chats";
 import { cn } from "../../lib/utils";
 import { useChatStore } from "../../stores/chat.store";
 import { FloatingMessageEditor } from "../chat/FloatingMessageEditor";
+import { HelpTooltip } from "../ui/HelpTooltip";
 import { compactInputClassName, SettingField, textareaClassName } from "./LtmFields";
 import { LtmScopePicker } from "./LtmScopePicker";
 import { LongTermMemorySuggestionsTab } from "./LongTermMemorySuggestionsTab";
@@ -369,7 +370,13 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
 
         <div className="grid gap-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
           <div className="flex items-center justify-between gap-2">
-            <div className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Where this applies</div>
+            <div className="flex items-center gap-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+              Where this applies
+              <HelpTooltip
+                text="Scope controls which chats this memory applies to. The AI only retrieves memories matching your active context."
+                size="0.6875rem"
+              />
+            </div>
             <button
               type="button"
               onClick={useCurrentChatScope}
@@ -383,44 +390,7 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
             value={{ chatIds: getLtmScopeChatIds(draft.scope), characterIds: draft.scope.characterIds ?? [] }}
             onChange={setLinkedScope}
           />
-          <div className="grid gap-2 sm:grid-cols-2">
-            <input
-              value={draft.scope.universe ?? ""}
-              onChange={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  scope: { ...current.scope, universe: event.target.value || undefined },
-                }))
-              }
-              onBlur={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  scope: {
-                    ...current.scope,
-                    universe: normalizeIdentifier(event.target.value, "universe") || undefined,
-                  },
-                }))
-              }
-              placeholder="shared world"
-              className={compactInputClassName}
-            />
-            <input
-              value={draft.scope.rpId ?? ""}
-              onChange={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  scope: { ...current.scope, rpId: event.target.value || undefined },
-                }))
-              }
-              onBlur={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  scope: { ...current.scope, rpId: normalizeIdentifier(event.target.value, "rp") || undefined },
-                }))
-              }
-              placeholder="story line"
-              className={compactInputClassName}
-            />
+          <div className="grid gap-2">
             <input
               value={draft.scope.groupId ?? ""}
               onChange={(event) =>
@@ -495,45 +465,63 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
                 </span>
               </button>
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                <input
-                  type="number"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={section.salience ?? ""}
-                  onChange={(event) =>
-                    setSection(key, (current) => ({ ...current, salience: numberOrUndefined(event.target.value) }))
-                  }
-                  placeholder="importance"
-                  className={compactInputClassName}
-                />
-                <input
-                  type="number"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={section.confidence ?? ""}
-                  onChange={(event) =>
-                    setSection(key, (current) => ({ ...current, confidence: numberOrUndefined(event.target.value) }))
-                  }
-                  placeholder="ai certainty"
-                  className={compactInputClassName}
-                />
+                <label className="block">
+                  <span className="mb-1 inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                    Relevance
+                    <HelpTooltip text="Higher values make this memory more likely to appear in the AI's context for the current chat." size="0.625rem" />
+                  </span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={section.salience ?? ""}
+                    onChange={(event) =>
+                      setSection(key, (current) => ({ ...current, salience: numberOrUndefined(event.target.value) }))
+                    }
+                    placeholder="0-1"
+                    className={compactInputClassName}
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                    AI Certainty
+                    <HelpTooltip text="How confident the AI was when creating this memory. Lower values mean the AI treats this as less reliable. Edit to override." size="0.625rem" />
+                  </span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={section.confidence ?? ""}
+                    onChange={(event) =>
+                      setSection(key, (current) => ({ ...current, confidence: numberOrUndefined(event.target.value) }))
+                    }
+                    placeholder="0-1"
+                    className={compactInputClassName}
+                  />
+                </label>
               </div>
-              <textarea
-                value={section.evidence?.join("\n") ?? ""}
-                onChange={(event) =>
-                  setSection(key, (current) => ({
-                    ...current,
-                    evidence: event.target.value
-                      .split("\n")
-                      .map((line) => line.trim())
-                      .filter(Boolean),
-                  }))
-                }
-                placeholder="Why this matters, one item per line"
-                className={cn(textareaClassName, "mt-2 min-h-16")}
-              />
+              <label className="mt-2 block">
+                <span className="mb-1 inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                  Supporting Evidence
+                  <HelpTooltip text="Reasons the AI created this memory. Each line is a source reference or justification." size="0.625rem" />
+                </span>
+                <textarea
+                  value={section.evidence?.join("\n") ?? ""}
+                  onChange={(event) =>
+                    setSection(key, (current) => ({
+                      ...current,
+                      evidence: event.target.value
+                        .split("\n")
+                        .map((line) => line.trim())
+                        .filter(Boolean),
+                    }))
+                  }
+                  placeholder="One reason per line"
+                  className={cn(textareaClassName, "min-h-16")}
+                />
+              </label>
             </section>
           ))}
           {floatingSectionKey && floatingSection && (
