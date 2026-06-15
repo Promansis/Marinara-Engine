@@ -281,7 +281,7 @@ export class LongTermMemoryDraftStore {
       const raw = JSON.parse(await readFile(safeJoin(this.dirs.drafts, entry.name), "utf8"));
       const parsed = ltmExtractionDraftSchema.safeParse(raw);
       if (!parsed.success) {
-        logger.warn(parsed.error.issues, "Skipping invalid draft %s", entry.name);
+        logger.warn("Skipping invalid draft %s", entry.name);
         continue;
       }
       const draft = parsed.data;

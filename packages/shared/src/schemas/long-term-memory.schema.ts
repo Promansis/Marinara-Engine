@@ -199,7 +199,7 @@ export const ltmSectionSchema = z
     confidence: z.number().finite().min(0).max(1).optional(),
     evidence: z.array(z.string().min(1).max(240)).max(100).optional(),
   })
-  .strict();
+  .strip();
 
 export const ltmConflictSchema = z
   .object({
@@ -438,7 +438,7 @@ export const ltmDraftNoteInputSchema = z
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
   })
-  .strict()
+  .strip()
   .superRefine((note, ctx) => {
     const allowedPrefixes = idPrefixesByType[note.type];
     if (!allowedPrefixes.some((prefix) => note.id === prefix || note.id.startsWith(prefix))) {
@@ -464,7 +464,7 @@ export const ltmDraftMutationSchema = z.discriminatedUnion("kind", [
       kind: z.literal("create_note"),
       note: ltmDraftNoteInputSchema,
     })
-    .strict(),
+    .strip(),
   ltmDraftMutationBaseSchema
     .extend({
       kind: z.literal("append_section"),
@@ -473,7 +473,7 @@ export const ltmDraftMutationSchema = z.discriminatedUnion("kind", [
       text: z.string().min(1).max(20_000),
       salience: z.number().finite().min(0).max(1).optional(),
     })
-    .strict(),
+    .strip(),
   ltmDraftMutationBaseSchema
     .extend({
       kind: z.literal("update_section"),
@@ -481,21 +481,21 @@ export const ltmDraftMutationSchema = z.discriminatedUnion("kind", [
       sectionKey: ltmSectionKeySchema,
       section: ltmSectionSchema,
     })
-    .strict(),
+    .strip(),
   ltmDraftMutationBaseSchema
     .extend({
       kind: z.literal("add_link"),
       noteId: ltmNoteIdSchema,
       link: ltmLinkSchema,
     })
-    .strict(),
+    .strip(),
   ltmDraftMutationBaseSchema
     .extend({
       kind: z.literal("set_status"),
       noteId: ltmNoteIdSchema,
       status: ltmStatusSchema,
     })
-    .strict(),
+    .strip(),
 ]);
 
 export const ltmExtractionDraftSchema = z
@@ -514,7 +514,7 @@ export const ltmExtractionDraftSchema = z
     appliedMutationIds: z.array(z.string().uuid()).max(25).optional(),
     skippedMutationIds: z.array(z.string().uuid()).max(25).optional(),
   })
-  .strict();
+  .strip();
 
 export const ltmExtractionResponseSchema = z
   .object({
