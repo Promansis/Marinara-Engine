@@ -374,8 +374,14 @@ function SuggestionRow({ row, noteLookup }: { row: SuggestionRowModel; noteLooku
         mutationIds: [mutation.id],
         editedMutations: editedMutation ? [editedMutation] : undefined,
       })
-      .then(() => {
-        toast.success(editedMutation ? "Edited suggestion kept" : "Suggestion kept");
+      .then((result: any) => {
+        const autoCount: number = result?.autoIncludedMutationIds?.length ?? 0;
+        const suffix = autoCount
+          ? ` (also created ${autoCount} note${autoCount > 1 ? "s" : ""} to support this change)`
+          : "";
+        toast.success(
+          editedMutation ? `Edited suggestion kept${suffix}` : `Suggestion kept${suffix}`,
+        );
         setEditedMutation(null);
       })
       .catch((err: Error) => toast.error(err.message));

@@ -20,6 +20,7 @@ export interface ApplyLtmDraftResult {
   draft: LtmExtractionDraft;
   appliedMutationIds: string[];
   skippedMutationIds: string[];
+  autoIncludedMutationIds: string[];
 }
 
 function nowIso() {
@@ -135,7 +136,7 @@ async function preflightDraftMutations(
 
   for (const noteId of requiredNoteIds) {
     if (createIds.has(noteId)) {
-      throw new Error(`Long-term memory draft cannot mutate a note it creates in the same apply batch: ${noteId}`);
+      continue;
     }
     const existing = await storage.getNote(noteId);
     if (!existing) {
@@ -340,9 +341,42 @@ async function applyLongTermMemoryDraftInner(
     if (options.autoApplyLowRiskOnly && !isLowRiskMutationForPolicy(mutation, autoApplyPolicy)) return false;
     return true;
   });
-  const mutationsToApply = options.autoApplyLowRiskOnly
+  let mutationsToApply = options.autoApplyLowRiskOnly
     ? await filterAutoApplyMutationsWithDependencies(storage, lowRiskMutations)
     : lowRiskMutations;
+
+  const autoIncludedMutationIds: string[] = [];
+  if (
+    options.mutationIds &&
+    options.mutationIds.length > 0 &&
+    !options.autoApplyLowRiskOnly
+  ) {
+    const selectedSet = new Set(options.mutationIds);
+    const targetNoteIds = new Set(
+      mutationsToApply
+        .filter((m) => m.kind !== "create_note")
+        .map((m) => (m as { noteId: string }).noteId),
+    );
+    const depCreateMutations = (
+      draft.mutations.filter(
+        (m) => m.kind === "create_note",
+      ) as Extract<LtmDraftMutation, { kind: "create_note" }>[]
+    ).filter(
+      (m) => !selectedSet.has(m.id) && targetNoteIds.has(m.note.id),
+    );
+    if (depCreateMutations.length > 0) {
+      const toInclude: typeof depCreateMutations = [];
+      for (const m of depCreateMutations) {
+        const exists = await storage.getNote(m.note.id);
+        if (!exists) toInclude.push(m);
+      }
+      if (toInclude.length > 0) {
+        autoIncludedMutationIds.push(...toInclude.map((m) => m.id));
+        mutationsToApply = [...toInclude, ...mutationsToApply];
+      }
+    }
+  }
+
   const skippedMutationIds = draft.mutations
     .filter((mutation) => !mutationsToApply.some((candidate) => candidate.id === mutation.id))
     .map((mutation) => mutation.id);
@@ -371,7 +405,7 @@ async function applyLongTermMemoryDraftInner(
 
   if (mutationsToApply.length === 0) {
     if (options.autoApplyLowRiskOnly) {
-      return { draft, appliedMutationIds, skippedMutationIds };
+      return { draft, appliedMutationIds, skippedMutationIds, autoIncludedMutationIds };
     }
     throw new Error(`Long-term memory draft has no mutations selected for apply: ${draftId}`);
   }
@@ -428,7 +462,7 @@ async function applyLongTermMemoryDraftInner(
     skippedMutationIds.length,
   );
 
-  return { draft: updated, appliedMutationIds, skippedMutationIds };
+  return { draft: updated, appliedMutationIds, skippedMutationIds, autoIncludedMutationIds };
 }
 
 export async function rejectLongTermMemoryDraft(
