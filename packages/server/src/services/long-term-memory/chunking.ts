@@ -53,6 +53,48 @@ export function isLtmSourceSummaryNote(note: Pick<LtmNote, "type" | "tags">) {
 }
 
 export function chunkNoteSections(note: LtmNote): LtmMemoryChunk[] {
+  if (note.type === "tone") {
+    const profileText = note.sections.profile?.text
+      ? cleanLongTermMemoryChunkText(note.sections.profile.text)
+      : "";
+    const obsText = note.sections.observations?.text
+      ? cleanLongTermMemoryChunkText(note.sections.observations.text)
+      : "";
+    const combined = [profileText, obsText].filter(Boolean).join("\n\n");
+    const section = note.sections.profile ?? note.sections.observations;
+    if (!section || !combined) return [];
+    return [
+      {
+        id: `${note.id}::profile`,
+        noteId: note.id,
+        sectionKey: "profile",
+        text: combined,
+        noteType: note.type,
+        status: note.status,
+        scope: note.scope,
+        tags: [...note.tags].sort((a, b) => a.localeCompare(b)),
+        salience: Math.max(
+          note.sections.profile?.salience ?? 0,
+          note.sections.observations?.salience ?? 0,
+        ),
+        confidence: Math.max(
+          note.sections.profile?.confidence ?? 0,
+          note.sections.observations?.confidence ?? 0,
+        ),
+        updatedAt: note.sections.profile?.updatedAt ?? note.sections.observations?.updatedAt ?? "",
+        sourceHash: stableJsonHash({
+          noteId: note.id,
+          noteType: note.type,
+          status: note.status,
+          scope: note.scope,
+          tags: note.tags,
+          sectionKey: "profile",
+          section,
+        }),
+      },
+    ];
+  }
+
   return Object.entries(note.sections)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([sectionKey, section]) => {

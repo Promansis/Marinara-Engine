@@ -216,8 +216,16 @@ function sectionsForUnits(units: LtmEvidenceUnit[], existing: LtmNote | undefine
   const toneUnits = units.filter((unit) => unit.bucket === "tone");
   if (toneUnits.length > 0) {
     const existingObservations = examplesFromSection(existing?.sections.observations?.text);
-    const incomingObservations = uniqueStrings(toneUnits.map((unit) => unit.text.trim()).filter(Boolean));
-    const observations = uniqueStrings([...existingObservations, ...incomingObservations]).slice(-8);
+    const incomingObservations = toneUnits.map((unit) => unit.text.trim()).filter(Boolean);
+    const allObservations = [...existingObservations];
+    const seenNormalized = new Set<string>(existingObservations.map(normalizeForComparison));
+    for (const obs of incomingObservations) {
+      const key = normalizeForComparison(obs);
+      if (!key || seenNormalized.has(key)) continue;
+      seenNormalized.add(key);
+      allObservations.push(obs);
+    }
+    const observations = allObservations.slice(-8);
     const evidence = uniqueStrings([
       ...(existing?.sections.profile?.evidence ?? []),
       ...(existing?.sections.observations?.evidence ?? []),
@@ -273,6 +281,10 @@ function examplesFromSection(text: string | undefined) {
     .split(/\r?\n+/)
     .map((line) => line.trim().replace(/^-\s*/, ""))
     .filter(Boolean);
+}
+
+function normalizeForComparison(text: string) {
+  return text.toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim();
 }
 
 function deriveToneProfile(observations: string[]) {
