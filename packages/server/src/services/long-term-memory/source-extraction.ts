@@ -38,7 +38,6 @@ export type ExtractLongTermMemoryFromSourceNoteOptions = {
   scope?: LtmScope;
   modes?: LtmMode[];
   instruction?: string;
-  includeExistingNotes?: boolean;
   signal?: AbortSignal;
   embeddingSource?: RetrieveLongTermMemoryInput["embeddingSource"];
   operationId?: string;
@@ -218,7 +217,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
     sourceNoteId: sourceNote.id,
     sourceText,
     scope,
-    includeExistingNotes: options.includeExistingNotes !== false,
+    includeExistingNotes: true,
     maxChunks: extractionConfig.existingNoteMaxChunks,
     maxTokens: extractionConfig.existingNoteMaxTokens,
     embeddingSource: options.embeddingSource,
@@ -228,7 +227,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
     root: options.root,
     phase: "retrieval",
     action: "existing_notes_loaded",
-    status: options.includeExistingNotes === false ? "skipped" : "ok",
+    status: "ok",
     sourceNoteId: sourceNote.id,
     counts: {
       existingNotes: existingNotes.length,

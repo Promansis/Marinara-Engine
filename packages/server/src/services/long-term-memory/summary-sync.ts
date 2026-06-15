@@ -27,7 +27,6 @@ export type SummaryLtmSyncOptions = {
     model: string;
     enabled?: boolean;
     applyLowRisk?: boolean;
-    includeExistingNotes?: boolean;
     instruction?: string;
     signal?: AbortSignal;
     useGroupedExtraction?: boolean;
@@ -408,7 +407,6 @@ async function syncChatSummaryEntryToLongTermMemoryInner(
           scope: nextNote.scope,
           modes: nextNote.modes,
           instruction: options.extraction.instruction,
-          includeExistingNotes: options.extraction.includeExistingNotes,
           signal: options.extraction.signal,
           operationId: extractionOperationId,
           useGroupedExtraction: options.extraction.useGroupedExtraction,

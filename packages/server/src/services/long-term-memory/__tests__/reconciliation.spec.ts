@@ -831,7 +831,6 @@ test("source note extraction applies saved extraction config to llm request", as
       provider,
       model: "test-model",
       root,
-      includeExistingNotes: false,
       operationId: randomUUID(),
     });
 

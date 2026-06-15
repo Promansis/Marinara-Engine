@@ -98,10 +98,11 @@ async function preflightDraftMutations(
   storage: LongTermMemoryStorage,
   draft: LtmExtractionDraft,
   mutations: LtmDraftMutation[],
-) {
+): Promise<Set<string>> {
   const createIds = new Set<string>();
   const requiredNoteIds = new Set<string>();
   const sourceExtractionDraft = Boolean(draft.source.sourceNoteId);
+  const redundantMutationIds = new Set<string>();
 
   for (const mutation of mutations) {
     if (mutation.kind === "create_note") {
@@ -130,7 +131,18 @@ async function preflightDraftMutations(
   for (const noteId of createIds) {
     const existing = await storage.getNote(noteId);
     if (existing) {
-      throw new Error(`Long-term memory note already exists for draft ${draft.id}: ${noteId}`);
+      for (const m of mutations) {
+        if (m.kind === "create_note" && m.note.id === noteId) {
+          redundantMutationIds.add(m.id);
+        }
+      }
+    }
+  }
+
+  for (const id of redundantMutationIds) {
+    const mutation = mutations.find((m) => m.id === id);
+    if (mutation && mutation.kind === "create_note") {
+      createIds.delete(mutation.note.id);
     }
   }
 
@@ -143,6 +155,8 @@ async function preflightDraftMutations(
       throw new Error(`Long-term memory note not found for draft ${draft.id}: ${noteId}`);
     }
   }
+
+  return redundantMutationIds;
 }
 
 function mutationTouchesSceneId(mutation: LtmDraftMutation) {
@@ -410,7 +424,13 @@ async function applyLongTermMemoryDraftInner(
     throw new Error(`Long-term memory draft has no mutations selected for apply: ${draftId}`);
   }
 
-  await preflightDraftMutations(storage, draft, mutationsToApply);
+  const redundantMutationIds = await preflightDraftMutations(storage, draft, mutationsToApply);
+  if (redundantMutationIds.size > 0) {
+    mutationsToApply = mutationsToApply.filter((m) => !redundantMutationIds.has(m.id));
+    if (mutationsToApply.length === 0) {
+      return { draft, appliedMutationIds, skippedMutationIds, autoIncludedMutationIds };
+    }
+  }
 
   const groups = groupMutationsByNote(mutationsToApply);
   const groupResults = await Promise.all(

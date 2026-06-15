@@ -178,7 +178,6 @@ export type ExtractLongTermMemorySourceInput = {
   model?: string;
   instruction?: string;
   applyLowRisk?: boolean;
-  includeExistingNotes?: boolean;
 };
 
 export type ExtractLongTermMemorySourceResponse = {

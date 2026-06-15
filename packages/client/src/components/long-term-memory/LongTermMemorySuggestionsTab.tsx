@@ -189,7 +189,6 @@ export function LongTermMemorySuggestionsTab({ note }: { note: LtmNote }) {
   const notes = useLongTermMemoryNotes();
   const noteLookup = useMemo(() => new Map((notes.data ?? []).map((n) => [n.id, n])), [notes.data]);
   const extractSourceNote = useExtractLongTermMemorySourceNote();
-  const [includeExistingNotes, setIncludeExistingNotes] = useState(true);
   const [autoApplySafeChanges, setAutoApplySafeChanges] = useState(false);
   const [diagnostics, setDiagnostics] = useState<LtmExtractionDiagnostic[]>([]);
   const sourceMemory = isSourceMemory(note);
@@ -226,7 +225,6 @@ export function LongTermMemorySuggestionsTab({ note }: { note: LtmNote }) {
               extractSourceNote
                 .mutateAsync({
                   noteId: note.id,
-                  includeExistingNotes,
                   applyLowRisk: autoApplySafeChanges,
                 })
                 .then((result) => {
@@ -257,13 +255,7 @@ export function LongTermMemorySuggestionsTab({ note }: { note: LtmNote }) {
             Extract typed memories
           </ToolButton>
         </div>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          <SettingToggle
-            label="Include existing notes"
-            checked={includeExistingNotes}
-            disabled={extractSourceNote.isPending}
-            onChange={setIncludeExistingNotes}
-          />
+        <div className="mt-3 grid gap-2">
           <SettingToggle
             label="Auto-apply safe changes"
             checked={autoApplySafeChanges}
