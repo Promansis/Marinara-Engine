@@ -278,9 +278,13 @@ export class LongTermMemoryDraftStore {
     const drafts: LtmExtractionDraft[] = [];
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-      const draft = ltmExtractionDraftSchema.parse(
-        JSON.parse(await readFile(safeJoin(this.dirs.drafts, entry.name), "utf8")),
-      );
+      const raw = JSON.parse(await readFile(safeJoin(this.dirs.drafts, entry.name), "utf8"));
+      const parsed = ltmExtractionDraftSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn(parsed.error.issues, "Skipping invalid draft %s", entry.name);
+        continue;
+      }
+      const draft = parsed.data;
       if (filter.status && draft.status !== filter.status) continue;
       if (filter.chatId && draft.source.chatId !== filter.chatId) continue;
       drafts.push(draft);
