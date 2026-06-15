@@ -84,6 +84,7 @@ export interface RunLongTermMemoryEvidenceUnitExtractionOptions {
   maxExistingNoteChars?: number;
   signal?: AbortSignal;
   operationId?: string;
+  allowedBuckets?: LtmEvidenceUnit["bucket"][];
 }
 
 export interface LtmEvidenceUnitDraftArtifact {
@@ -259,6 +260,28 @@ function formatExistingNotes(notes: LtmNote[], maxChars = DEFAULT_LTM_EXTRACTION
 }
 
 function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOptions): ChatMessage[] {
+  const allowedBuckets = options.allowedBuckets ?? ltmEvidenceUnitBucketSchema.options;
+  const filteredScanOrder = LTM_EXTRACTION_BUCKET_SCAN_ORDER.filter((bucket) => allowedBuckets.includes(bucket));
+  const allBucketDescriptions: Record<string, string> = {
+    timeline_event: "historical source-summary scene or beat; not the live current scene",
+    character_fact: "stable character fact",
+    character_state: "current character condition, aim, mood, capability, or position",
+    relationship_event: "evidence-backed relationship history item",
+    relationship_state: "current reduced relationship state",
+    relationship_conflict: "unresolved contradiction or instability",
+    world_fact: "stable world/lore fact",
+    thread: "unresolved situation, question, tension, or goal",
+    tone: "durable tone or scene tone",
+    anchor: "recurring motif/anchor",
+  };
+  const filteredBucketDescriptions: Record<string, string> = {};
+  for (const bucket of allowedBuckets) {
+    const desc = allBucketDescriptions[bucket];
+    if (desc) {
+      filteredBucketDescriptions[bucket] = desc;
+    }
+  }
+
   return [
     {
       role: "system",
@@ -285,22 +308,11 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
           mergeHint: "optional evidence-backed compiler note only",
           sourceHash: options.sourceHash,
         },
-        allowedBuckets: ltmEvidenceUnitBucketSchema.options,
+        allowedBuckets,
         allowedStatuses: ["active", "resolved"],
-        bucketScanOrder: LTM_EXTRACTION_BUCKET_SCAN_ORDER,
+        bucketScanOrder: filteredScanOrder,
         allowedTimelineRelations: ["occurred_in", "triggered_by", "resolved_in", "evidenced_by"],
-        buckets: {
-          timeline_event: "historical source-summary scene or beat; not the live current scene",
-          character_fact: "stable character fact",
-          character_state: "current character condition, aim, mood, capability, or position",
-          relationship_event: "evidence-backed relationship history item",
-          relationship_state: "current reduced relationship state",
-          relationship_conflict: "unresolved contradiction or instability",
-          world_fact: "stable world/lore fact",
-          thread: "unresolved situation, question, tension, or goal",
-          tone: "durable tone or scene tone",
-          anchor: "recurring motif/anchor",
-        },
+        buckets: filteredBucketDescriptions,
         sourceNote: {
           id: options.sourceNote.id,
           status: options.sourceNote.status,

@@ -7,6 +7,7 @@ import {
   type LtmNote,
 } from "@marinara-engine/shared";
 import { logger } from "../../lib/logger.js";
+import { withConcurrency } from "../../lib/concurrency.js";
 import type { BaseLLMProvider } from "../llm/base-provider.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import { applyLongTermMemoryDraft } from "./reconciliation.js";
@@ -29,8 +30,10 @@ export type SummaryLtmSyncOptions = {
     includeExistingNotes?: boolean;
     instruction?: string;
     signal?: AbortSignal;
+    useGroupedExtraction?: boolean;
   };
   operationId?: string;
+  concurrency?: number;
 };
 
 export type SummaryLtmChat = {
@@ -413,6 +416,7 @@ async function syncChatSummaryEntryToLongTermMemoryInner(
           includeExistingNotes: options.extraction.includeExistingNotes,
           signal: options.extraction.signal,
           operationId: extractionOperationId,
+          useGroupedExtraction: options.extraction.useGroupedExtraction,
         });
         const applyResult =
           options.extraction.applyLowRisk && result.draft
@@ -480,16 +484,22 @@ export async function syncChatSummaryEntriesToLongTermMemory(
   entries: ChatSummaryEntry[],
   options: SummaryLtmSyncOptions = {},
 ) {
-  const results = [];
+  const concurrency = Math.max(options.concurrency ?? 3, 1);
   let mutated = false;
-  for (const entry of entries) {
+
+  const tasks = entries.map((entry) => async () => {
     const result = await syncChatSummaryEntryToLongTermMemory(chat, entry, {
       ...options,
       rebuildIndexes: false,
     });
-    results.push(result);
+    return result;
+  });
+
+  const results = await withConcurrency(tasks, concurrency);
+  for (const result of results) {
     mutated = mutated || result.mutated;
   }
+
   if (mutated && options.rebuildIndexes !== false) {
     await rebuildLongTermMemoryIndexes();
   }

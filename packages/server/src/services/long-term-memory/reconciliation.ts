@@ -33,6 +33,25 @@ function withEvidence(section: LtmSection, evidence: string[]) {
   } satisfies LtmSection;
 }
 
+function noteIdForMutation(mutation: LtmDraftMutation): string {
+  if (mutation.kind === "create_note") return mutation.note.id;
+  return mutation.noteId;
+}
+
+function groupMutationsByNote(mutations: LtmDraftMutation[]): LtmDraftMutation[][] {
+  const groups = new Map<string, LtmDraftMutation[]>();
+  for (const mutation of mutations) {
+    const id = noteIdForMutation(mutation);
+    const group = groups.get(id);
+    if (group) {
+      group.push(mutation);
+    } else {
+      groups.set(id, [mutation]);
+    }
+  }
+  return Array.from(groups.values());
+}
+
 function appendSection(
   existing: LtmSection | undefined,
   mutation: Extract<LtmDraftMutation, { kind: "append_section" }>,
@@ -359,9 +378,19 @@ async function applyLongTermMemoryDraftInner(
 
   await preflightDraftMutations(storage, draft, mutationsToApply);
 
-  for (const mutation of mutationsToApply) {
-    await applyMutation(storage, draft, mutation, actor);
-    appliedMutationIds.push(mutation.id);
+  const groups = groupMutationsByNote(mutationsToApply);
+  const groupResults = await Promise.all(
+    groups.map(async (group) => {
+      const ids: string[] = [];
+      for (const mutation of group) {
+        await applyMutation(storage, draft, mutation, actor);
+        ids.push(mutation.id);
+      }
+      return ids;
+    }),
+  );
+  for (const ids of groupResults) {
+    appliedMutationIds.push(...ids);
   }
 
   const partialApply = skippedMutationIds.length > 0;

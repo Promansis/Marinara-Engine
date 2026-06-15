@@ -16,6 +16,12 @@ import {
   sourceHashForEvidenceUnitExtraction,
   sourceMetadataForEvidenceUnitDraft,
 } from "./evidence-unit-extraction.js";
+import {
+  LTM_BUCKET_GROUPS,
+  mergeGroupedEvidenceUnitResults,
+  runGroupedEvidenceUnitExtraction,
+  type LtmBucketGroupConfig,
+} from "./evidence-unit-groups.js";
 import { getLtmExtractionConfig } from "./extraction-config.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import { LongTermMemoryDraftStore } from "./extraction.js";
@@ -36,6 +42,8 @@ export type ExtractLongTermMemoryFromSourceNoteOptions = {
   signal?: AbortSignal;
   embeddingSource?: RetrieveLongTermMemoryInput["embeddingSource"];
   operationId?: string;
+  useGroupedExtraction?: boolean;
+  groupedExtractionGroups?: LtmBucketGroupConfig[];
 };
 
 export type ExtractLongTermMemoryFromSourceNoteResult = {
@@ -242,7 +250,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
     details: { sourceHash },
   });
 
-  const unitResponse = await runLongTermMemoryEvidenceUnitExtraction({
+  const baseExtractionOptions = {
     sourceNote,
     sourceText,
     existingNotes,
@@ -262,7 +270,16 @@ async function extractLongTermMemoryFromSourceNoteInner(
     maxExistingNoteChars: extractionConfig.maxExistingNoteChars,
     signal: options.signal,
     operationId: options.operationId,
-  });
+  };
+
+  const unitResponse = options.useGroupedExtraction
+    ? mergeGroupedEvidenceUnitResults(
+        await runGroupedEvidenceUnitExtraction({
+          ...baseExtractionOptions,
+          groupedExtractionGroups: options.groupedExtractionGroups,
+        }),
+      )
+    : await runLongTermMemoryEvidenceUnitExtraction(baseExtractionOptions);
   const targetLookup = await getExistingTypedNotesForTargets({
     storage,
     existingNotes,

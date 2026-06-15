@@ -70,6 +70,7 @@ import {
 import { getLtmExtractionConfig, updateLtmExtractionConfig } from "../services/long-term-memory/extraction-config.js";
 import { LongTermMemoryStorage } from "../services/long-term-memory/storage.js";
 import { applyLtmScopeLinksToDerivedNotes } from "../services/long-term-memory/scope-links.js";
+import { withConcurrency } from "../lib/concurrency.js";
 
 const NOTE_BODY_LIMIT_BYTES = 512 * 1024;
 const DRAFT_BODY_LIMIT_BYTES = 512 * 1024;
@@ -156,6 +157,8 @@ const interopImportBodySchema = z
     instruction: z.string().max(2_000).optional(),
     applyLowRisk: z.boolean().optional(),
     includeExistingNotes: z.boolean().optional(),
+    importConcurrency: z.number().int().min(1).max(10).optional(),
+    useGroupedExtraction: z.boolean().optional(),
   })
   .strict();
 
@@ -204,6 +207,7 @@ const extractSourceNoteBodySchema = z
     instruction: z.string().max(2_000).optional(),
     applyLowRisk: z.boolean().optional(),
     includeExistingNotes: z.boolean().optional(),
+    useGroupedExtraction: z.boolean().optional(),
   })
   .strict()
   .default({});
@@ -560,6 +564,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
           instruction: body.instruction,
           includeExistingNotes: body.includeExistingNotes,
           operationId,
+          useGroupedExtraction: body.useGroupedExtraction,
         });
         const applyResult =
           body.applyLowRisk && result.draft
@@ -781,21 +786,21 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
         operationId,
       });
       const results = [];
+      const { provider, model } = await resolveExtractionProvider(body);
+      await recordLtmDebugEvent({
+        operationId,
+        phase: "extraction",
+        action: "provider_resolved",
+        status: "ok",
+        source: imported.source,
+        provider: provider.constructor.name,
+        model,
+      });
 
-      for (const item of imported.imported) {
+      const importConcurrency = Math.max(body.importConcurrency ?? 3, 1);
+
+      const tasks = imported.imported.map((item) => async () => {
         try {
-          const { provider, model } = await resolveExtractionProvider(body);
-          await recordLtmDebugEvent({
-            operationId,
-            phase: "extraction",
-            action: "provider_resolved",
-            status: "ok",
-            source: imported.source,
-            sourceId: item.sourceId,
-            sourceNoteId: item.note.id,
-            provider: provider.constructor.name,
-            model,
-          });
           const result = await extractLongTermMemoryFromSourceNote({
             noteId: item.note.id,
             provider,
@@ -805,6 +810,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
             instruction: body.instruction,
             includeExistingNotes: body.includeExistingNotes,
             operationId,
+            useGroupedExtraction: body.useGroupedExtraction,
           });
           const applyResult =
             body.applyLowRisk && result.draft
@@ -812,11 +818,12 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
                   actor: "maintenance_api",
                   autoApplyLowRiskOnly: true,
                   autoApplyPolicy: "source_extraction",
+                  rebuildIndexes: false,
                   operationId,
                 })
               : null;
 
-          results.push({
+          return {
             sourceId: item.sourceId,
             title: item.title,
             note: item.note,
@@ -825,7 +832,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
             diagnostics: result.diagnostics,
             appliedMutationIds: applyResult?.appliedMutationIds ?? [],
             skippedMutationIds: applyResult?.skippedMutationIds ?? [],
-          });
+          };
         } catch (err) {
           const message = err instanceof Error ? err.message : "Failed to extract imported source";
           await recordLtmDebugEvent({
@@ -838,7 +845,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
             sourceNoteId: item.note.id,
             error: err,
           });
-          results.push({
+          return {
             sourceId: item.sourceId,
             title: item.title,
             note: item.note,
@@ -847,8 +854,25 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
             diagnostics: [{ severity: "error", code: "extract_failed", message }],
             appliedMutationIds: [],
             skippedMutationIds: [],
-          });
+          };
         }
+      });
+
+      for (const result of await withConcurrency(tasks, importConcurrency)) {
+        results.push(result);
+      }
+
+      const totalApplied = results.reduce((sum, result) => sum + result.appliedMutationIds.length, 0);
+      if (totalApplied > 0) {
+        const rebuildResult = await rebuildLongTermMemoryIndexes();
+        await recordLtmDebugEvent({
+          root: undefined,
+          operationId,
+          phase: "rebuild",
+          action: "import_batch_rebuild",
+          status: "ok",
+          counts: { appliedMutations: totalApplied, notes: rebuildResult.noteCount, chunks: rebuildResult.chunkCount },
+        });
       }
 
       return {
