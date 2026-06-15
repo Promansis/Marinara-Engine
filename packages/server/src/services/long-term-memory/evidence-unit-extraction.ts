@@ -389,7 +389,7 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
       maxTokens: options.maxOutputTokens ?? options.provider.maxTokensOverrideValue ?? DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
       reasoningEffort: options.reasoningEffort ?? DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
       verbosity: options.verbosity ?? DEFAULT_LTM_EXTRACTION_VERBOSITY,
-      stream: false,
+      stream: true,
       signal: options.signal,
     });
 
