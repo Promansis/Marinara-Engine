@@ -20,7 +20,16 @@ import { cn } from "../../lib/utils";
 import { useChatStore } from "../../stores/chat.store";
 import { FloatingMessageEditor } from "../chat/FloatingMessageEditor";
 import { HelpTooltip } from "../ui/HelpTooltip";
-import { compactInputClassName, SettingField, textareaClassName } from "./LtmFields";
+import {
+  actionRowClassName,
+  compactInputClassName,
+  helperTextClassName,
+  insetSectionCardClassName,
+  modalIntroCardClassName,
+  sectionCardClassName,
+  SettingField,
+  textareaClassName,
+} from "./LtmFields";
 import { LtmScopePicker } from "./LtmScopePicker";
 import { LongTermMemorySuggestionsTab } from "./LongTermMemorySuggestionsTab";
 import { ToolButton } from "./LtmPills";
@@ -267,20 +276,27 @@ export function LongTermMemoryNoteEditor({
   const floatingSection = floatingSectionKey ? draft.sections[floatingSectionKey] : null;
 
   return (
-    <div className="grid gap-3">
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-[0.625rem] text-[var(--muted-foreground)]">
-            {friendlyStatus(draft.status)} · version {draft.version} · updated{" "}
-            {new Date(draft.updatedAt).toLocaleString()}
+    <div className="grid gap-4">
+      <div className={modalIntroCardClassName}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-[var(--foreground)]">{friendlyIdentifier(draft.id)}</div>
+            <div className="mt-2 text-[0.625rem] text-[var(--muted-foreground)]">
+              {friendlyStatus(draft.status)} · version {draft.version} · updated {new Date(draft.updatedAt).toLocaleString()}
+            </div>
           </div>
+          {dirty ? (
+            <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-amber-600 dark:text-amber-200">
+              Unsaved
+            </span>
+          ) : null}
         </div>
-        {dirty && (
-          <span className="rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[0.625rem] text-amber-200">Unsaved</span>
-        )}
+        <p className={cn("mt-2", helperTextClassName)}>
+          Keep the note structure, scope, and supporting evidence aligned with the rest of the memory library.
+        </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--background)]/95 p-1">
+      <div className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--secondary)]/45 p-1 ring-1 ring-[var(--border)]">
         {(["details", "suggestions"] as const).map((tab) => {
           const disabled = tab === "suggestions" && !sourceMemory;
           return (
@@ -290,9 +306,9 @@ export function LongTermMemoryNoteEditor({
               onClick={() => !disabled && setActiveTab(tab)}
               disabled={disabled}
               className={cn(
-                "rounded-lg px-2 py-1.5 text-xs font-medium transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45",
+                "rounded-lg px-3 py-2 text-xs font-semibold transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45",
                 activeTab === tab
-                  ? "bg-rose-300/15 text-[var(--foreground)] ring-1 ring-rose-300/30"
+                  ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm ring-1 ring-[var(--border)]"
                   : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
               )}
             >
@@ -307,7 +323,7 @@ export function LongTermMemoryNoteEditor({
       ) : null}
 
       {activeTab === "details" && (
-      <div className="grid gap-3">
+      <div className="grid gap-4">
         <div className="grid gap-2 sm:grid-cols-2">
           <SettingField label="Status">
             <select
@@ -334,13 +350,15 @@ export function LongTermMemoryNoteEditor({
           </SettingField>
         </div>
 
-        <fieldset className="rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
-          <legend className="px-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Use In</legend>
+        <fieldset className={sectionCardClassName}>
+          <legend className="px-1 text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+            Use In
+          </legend>
           <div className="grid gap-1 sm:grid-cols-2">
             {modeOptions.map((mode) => (
               <label
                 key={mode}
-                className="flex items-center gap-2 rounded-md px-2 py-1 text-xs hover:bg-[var(--secondary)]"
+                className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs transition-colors hover:bg-[var(--accent)]/60"
               >
                 <input
                   type="checkbox"
@@ -361,20 +379,25 @@ export function LongTermMemoryNoteEditor({
           </div>
         </fieldset>
 
-        <div className="grid gap-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
+        <div className={sectionCardClassName}>
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-              Where this applies
-              <HelpTooltip
-                text="Scope controls which chats this memory applies to. The AI only retrieves memories matching your active context."
-                size="0.6875rem"
-              />
+            <div className="min-w-0">
+              <div className="flex items-center gap-1 text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+                Where this applies
+                <HelpTooltip
+                  text="Scope controls which chats this memory applies to. The AI only retrieves memories matching your active context."
+                  size="0.6875rem"
+                />
+              </div>
+              <p className={cn("mt-1", helperTextClassName)}>
+                Scope this memory to the right chats, characters, or group so recall stays predictable.
+              </p>
             </div>
             <button
               type="button"
               onClick={useCurrentChatScope}
               disabled={!activeChat}
-              className="rounded-md px-2 py-1 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--secondary)] disabled:opacity-50"
+              className="rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50"
             >
               Use this chat
             </button>
@@ -397,10 +420,8 @@ export function LongTermMemoryNoteEditor({
             />
           </div>
           {sourceMemory && (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-[var(--background)] p-2 ring-1 ring-[var(--border)]">
-              <span className="text-[0.6875rem] text-[var(--muted-foreground)]">
-                Push these chat and character links to extracted memories.
-              </span>
+            <div className={cn(insetSectionCardClassName, "flex flex-wrap items-center justify-between gap-2")}>
+              <span className={helperTextClassName}>Push these chat and character links to extracted memories.</span>
               <ToolButton onClick={applyToDerived} disabled={busy}>
                 {applyScopeToDerived.isPending ? (
                   <Loader2 size="0.875rem" className="animate-spin" />
@@ -413,16 +434,21 @@ export function LongTermMemoryNoteEditor({
           )}
         </div>
 
-        <div className="space-y-2">
+        <div className="space-y-3">
           <div className="flex items-center justify-between gap-2">
-            <h4 className="text-xs font-medium text-[var(--foreground)]">Memory Details</h4>
+            <div>
+              <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+                Memory Details
+              </h4>
+              <p className={cn("mt-1", helperTextClassName)}>Edit each section, relevance score, and supporting evidence.</p>
+            </div>
             <ToolButton onClick={addSection}>
               <Plus size="0.875rem" />
               Add
             </ToolButton>
           </div>
           {Object.entries(draft.sections).map(([key, section]) => (
-            <section key={key} className="rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
+            <section key={key} className={sectionCardClassName}>
               <div className="mb-2 grid grid-cols-[1fr_auto] gap-2">
                 <input
                   defaultValue={key}
@@ -433,7 +459,7 @@ export function LongTermMemoryNoteEditor({
                 <button
                   type="button"
                   onClick={() => removeSection(key)}
-                  className="rounded-md px-2 text-[var(--destructive)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--destructive)]/10 active:scale-95"
+                  className="rounded-lg px-2 text-[var(--destructive)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--destructive)]/10 active:scale-95"
                   aria-label={`Remove ${friendlySectionKey(key)}`}
                 >
                   <Trash2 size="0.875rem" />
@@ -442,7 +468,7 @@ export function LongTermMemoryNoteEditor({
               <button
                 type="button"
                 onClick={() => setFloatingSectionKey(key)}
-                className="group/summary flex min-h-24 w-full flex-col rounded-lg bg-[var(--background)] px-3 py-2 text-left text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/35 focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
+                className="group/summary flex min-h-28 w-full flex-col rounded-xl bg-[var(--background)] px-3 py-3 text-left text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/45 focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
               >
                 <span className="mb-2 inline-flex items-center gap-1.5 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
                   <Pencil size="0.75rem" />
@@ -457,11 +483,14 @@ export function LongTermMemoryNoteEditor({
                   {section.text.trim() || "No memory text yet."}
                 </span>
               </button>
-              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 <label className="block">
                   <span className="mb-1 inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
                     Relevance
-                    <HelpTooltip text="Higher values make this memory more likely to appear in the AI's context for the current chat." size="0.625rem" />
+                    <HelpTooltip
+                      text="Higher values make this memory more likely to appear in the AI's context for the current chat."
+                      size="0.625rem"
+                    />
                   </span>
                   <input
                     type="number"
@@ -479,7 +508,10 @@ export function LongTermMemoryNoteEditor({
                 <label className="block">
                   <span className="mb-1 inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
                     AI Certainty
-                    <HelpTooltip text="How confident the AI was when creating this memory. Lower values mean the AI treats this as less reliable. Edit to override." size="0.625rem" />
+                    <HelpTooltip
+                      text="How confident the AI was when creating this memory. Lower values mean the AI treats this as less reliable. Edit to override."
+                      size="0.625rem"
+                    />
                   </span>
                   <input
                     type="number"
@@ -495,10 +527,13 @@ export function LongTermMemoryNoteEditor({
                   />
                 </label>
               </div>
-              <label className="mt-2 block">
+              <label className="mt-3 block">
                 <span className="mb-1 inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
                   Supporting Evidence
-                  <HelpTooltip text="Reasons the AI created this memory. Each line is a source reference or justification." size="0.625rem" />
+                  <HelpTooltip
+                    text="Reasons the AI created this memory. Each line is a source reference or justification."
+                    size="0.625rem"
+                  />
                 </span>
                 <textarea
                   value={section.evidence?.join("\n") ?? ""}
@@ -536,8 +571,15 @@ export function LongTermMemoryNoteEditor({
           )}
         </div>
 
-        <div className="space-y-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
-          <h4 className="text-xs font-medium text-[var(--foreground)]">Related Memories</h4>
+        <div className={sectionCardClassName}>
+          <div>
+            <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+              Related Memories
+            </h4>
+            <p className={cn("mt-1", helperTextClassName)}>
+              Link this note to source memories, timeline events, or other typed notes.
+            </p>
+          </div>
           {draft.links.map((link, index) => (
             <div
               key={`${link.target}-${link.relation}-${index}`}
@@ -554,7 +596,7 @@ export function LongTermMemoryNoteEditor({
                     links: current.links.filter((_, linkIndex) => linkIndex !== index),
                   }))
                 }
-                className="rounded-md p-1 text-[var(--destructive)] hover:bg-[var(--destructive)]/10"
+                className="rounded-lg p-1 text-[var(--destructive)] hover:bg-[var(--destructive)]/10"
                 aria-label={`Remove relation ${friendlyIdentifier(link.relation)}`}
               >
                 <X size="0.875rem" />
@@ -581,7 +623,7 @@ export function LongTermMemoryNoteEditor({
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2 border-t border-[var(--border)]/35 pt-3">
+        <div className={actionRowClassName}>
           <ToolButton onClick={() => save()} disabled={!dirty || busy} tone="primary">
             {updateNote.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Save size="0.875rem" />}
             Save

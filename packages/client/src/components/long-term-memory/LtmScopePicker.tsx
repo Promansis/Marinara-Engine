@@ -5,6 +5,7 @@ import { useChats } from "../../hooks/use-chats";
 import { useCharacters } from "../../hooks/use-characters";
 import { parseCharacterDisplayData } from "../../lib/character-display";
 import { cn } from "../../lib/utils";
+import { helperTextClassName, insetSectionCardClassName } from "./LtmFields";
 
 export type LtmScopePickerValue = {
   chatIds: string[];
@@ -115,7 +116,7 @@ export function LtmScopePicker({ value, onChange }: LtmScopePickerProps) {
             <span
               key={`chat-${id}`}
               className={cn(
-                "inline-flex max-w-full items-center gap-1.5 rounded-md bg-[var(--background)] px-2 py-1 text-[0.6875rem] ring-1 ring-[var(--border)]",
+                "inline-flex max-w-full items-center gap-1.5 rounded-full bg-[var(--background)] px-2.5 py-1.5 text-[0.6875rem] ring-1 ring-[var(--border)]",
                 !chat && "text-[var(--muted-foreground)]",
               )}
               title={id}
@@ -140,7 +141,7 @@ export function LtmScopePicker({ value, onChange }: LtmScopePickerProps) {
             <span
               key={`character-${id}`}
               className={cn(
-                "inline-flex max-w-full items-center gap-1.5 rounded-md bg-[var(--background)] px-2 py-1 text-[0.6875rem] ring-1 ring-[var(--border)]",
+                "inline-flex max-w-full items-center gap-1.5 rounded-full bg-[var(--background)] px-2.5 py-1.5 text-[0.6875rem] ring-1 ring-[var(--border)]",
                 !character && "text-[var(--muted-foreground)]",
               )}
               title={id}
@@ -160,7 +161,7 @@ export function LtmScopePicker({ value, onChange }: LtmScopePickerProps) {
           );
         })}
         {!selectedChatIds.length && !selectedCharacterIds.length && (
-          <span className="text-[0.6875rem] text-[var(--muted-foreground)]">
+          <span className={helperTextClassName}>
             Available everywhere unless a chat, group, or character scope is set.
           </span>
         )}
@@ -171,8 +172,8 @@ export function LtmScopePicker({ value, onChange }: LtmScopePickerProps) {
           type="button"
           onClick={() => openPicker("character")}
           className={cn(
-            "inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[0.6875rem] font-medium ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--secondary)]",
-            picker === "character" && "bg-[var(--secondary)] text-[var(--foreground)]",
+            "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.12em] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]",
+            picker === "character" && "bg-[var(--accent)] text-[var(--foreground)]",
           )}
         >
           <Plus size="0.75rem" />
@@ -182,8 +183,8 @@ export function LtmScopePicker({ value, onChange }: LtmScopePickerProps) {
           type="button"
           onClick={() => openPicker("chat")}
           className={cn(
-            "inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[0.6875rem] font-medium ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--secondary)]",
-            picker === "chat" && "bg-[var(--secondary)] text-[var(--foreground)]",
+            "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.12em] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]",
+            picker === "chat" && "bg-[var(--accent)] text-[var(--foreground)]",
           )}
         >
           <Plus size="0.75rem" />
@@ -192,7 +193,7 @@ export function LtmScopePicker({ value, onChange }: LtmScopePickerProps) {
       </div>
 
       {picker && (
-        <div className="rounded-lg bg-[var(--background)] p-2 ring-1 ring-[var(--border)]">
+        <div className={insetSectionCardClassName}>
           <div className="relative">
             <Search
               size="0.75rem"

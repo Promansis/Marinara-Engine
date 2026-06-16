@@ -1,13 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Loader2, Pencil, Plus, X } from "lucide-react";
+import { Loader2, Pencil, Plus } from "lucide-react";
 import type { Chat, LtmLink, LtmMode, LtmNote, LtmNoteType } from "@marinara-engine/shared";
 import { useChat } from "../../hooks/use-chats";
 import { useCreateLongTermMemoryNote } from "../../hooks/use-long-term-memory";
 import { useChatStore } from "../../stores/chat.store";
 import { cn } from "../../lib/utils";
 import { FloatingMessageEditor } from "../chat/FloatingMessageEditor";
-import { compactInputClassName, SettingField } from "./LtmFields";
+import {
+  actionRowClassName,
+  compactInputClassName,
+  helperTextClassName,
+  modalIntroCardClassName,
+  sectionCardClassName,
+  SettingField,
+} from "./LtmFields";
 import { LtmScopePicker } from "./LtmScopePicker";
 import { ToolButton } from "./LtmPills";
 import {
@@ -197,19 +204,20 @@ export function CreateLongTermMemoryNoteForm({
   };
 
   return (
-    <div className="grid gap-3">
-      <div className="flex items-center justify-end">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded-md p-1 text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
-          aria-label="Cancel note creation"
-        >
-          <X size="0.875rem" />
-        </button>
+    <div className="grid gap-4">
+      <div className={modalIntroCardClassName}>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold text-[var(--foreground)]">Add a manual memory</span>
+          <span className="rounded-full border border-[var(--border)] bg-[var(--muted)]/55 px-2 py-1 text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+            Saved to the current vault
+          </span>
+        </div>
+        <p className={cn("mt-2", helperTextClassName)}>
+          Create a typed memory with the same scope, tags, and section structure used across the rest of Marinara.
+        </p>
       </div>
 
-      <div className="grid gap-3">
+      <div className="grid gap-4">
         <div className="grid gap-2 sm:grid-cols-2">
           <SettingField label="Type">
             <select
@@ -253,13 +261,15 @@ export function CreateLongTermMemoryNoteForm({
           </div>
         </SettingField>
 
-        <fieldset className="rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
-          <legend className="px-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Use In</legend>
+        <fieldset className={sectionCardClassName}>
+          <legend className="px-1 text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+            Use In
+          </legend>
           <div className="grid gap-1 sm:grid-cols-2">
             {modeOptions.map((mode) => (
               <label
                 key={mode}
-                className="flex items-center gap-2 rounded-md px-2 py-1 text-xs hover:bg-[var(--secondary)]"
+                className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs transition-colors hover:bg-[var(--accent)]/60"
               >
                 <input
                   type="checkbox"
@@ -288,14 +298,21 @@ export function CreateLongTermMemoryNoteForm({
           />
         </SettingField>
 
-        <div className="grid gap-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
+        <div className={sectionCardClassName}>
           <div className="flex items-center justify-between gap-2">
-            <div className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Where this applies</div>
+            <div>
+              <div className="text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+                Where this applies
+              </div>
+              <p className={cn("mt-1", helperTextClassName)}>
+                Limit this memory to specific chats, groups, or linked characters when needed.
+              </p>
+            </div>
             <button
               type="button"
               onClick={useCurrentChatScope}
               disabled={!activeChat}
-              className="rounded-md px-2 py-1 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--secondary)] disabled:opacity-50"
+              className="rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50"
             >
               Use this chat
             </button>
@@ -308,7 +325,7 @@ export function CreateLongTermMemoryNoteForm({
                 scopeDraft: { ...current.scopeDraft, chatIds: next.chatIds, characterIds: next.characterIds },
               }))
             }
-          />
+            />
            <div className="grid gap-2">
             <input
               value={scopeDraft.groupId}
@@ -324,19 +341,20 @@ export function CreateLongTermMemoryNoteForm({
           </div>
         </div>
 
-        <div className="grid gap-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
+        <div className={sectionCardClassName}>
           <SettingField label="Detail label">
             <input
               value={sectionKey}
               onChange={(event) => setDraft((current) => ({ ...current, sectionKey: event.target.value }))}
-              placeholder={friendlySectionKey(sectionKey)}
-              className={compactInputClassName}
-            />
+            placeholder={friendlySectionKey(sectionKey)}
+            className={compactInputClassName}
+          />
           </SettingField>
+          <p className={helperTextClassName}>Start with the clearest single section for this memory. You can expand it later.</p>
           <button
             type="button"
             onClick={() => setSummaryEditorOpen(true)}
-            className="group/summary flex min-h-24 w-full flex-col rounded-lg bg-[var(--background)] px-3 py-2 text-left text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/35 focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
+            className="group/summary flex min-h-28 w-full flex-col rounded-xl bg-[var(--background)] px-3 py-3 text-left text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/45 focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
           >
             <span className="mb-2 inline-flex items-center gap-1.5 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
               <Pencil size="0.75rem" />
@@ -365,7 +383,7 @@ export function CreateLongTermMemoryNoteForm({
           />
         </div>
 
-        <div className="flex flex-wrap gap-2 border-t border-[var(--border)]/35 pt-3">
+        <div className={actionRowClassName}>
           <ToolButton onClick={submit} disabled={createNote.isPending || modes.length === 0} tone="primary">
             {createNote.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Plus size="0.875rem" />}
             Save Memory

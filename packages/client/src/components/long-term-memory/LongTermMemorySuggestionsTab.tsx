@@ -29,6 +29,7 @@ import {
   type ExtractLongTermMemorySourceResponse,
 } from "../../hooks/use-long-term-memory";
 import { cn } from "../../lib/utils";
+import { actionRowClassName, helperTextClassName, insetSectionCardClassName, sectionCardClassName } from "./LtmFields";
 import { StatusPill, ToolButton } from "./LtmPills";
 import {
   friendlyIdentifier,
@@ -201,11 +202,16 @@ export function LongTermMemorySuggestionsTab({
 
   return (
     <div className="grid gap-3">
-      <div className="rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
+      <div className={sectionCardClassName}>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap gap-1.5">
-            <StatusPill label="Source memory" tone="good" />
-            <StatusPill label={`${rows.length} pending suggestion${rows.length === 1 ? "" : "s"}`} />
+          <div className="space-y-2">
+            <div className="flex flex-wrap gap-1.5">
+              <StatusPill label="Source memory" tone="good" />
+              <StatusPill label={`${rows.length} pending suggestion${rows.length === 1 ? "" : "s"}`} />
+            </div>
+            <p className={helperTextClassName}>
+              Extract typed memories from this source note, then keep, skip, or manually recover anything useful.
+            </p>
           </div>
           <ToolButton
             onClick={() =>
@@ -237,7 +243,7 @@ export function LongTermMemorySuggestionsTab({
         <div className="mt-3 grid gap-2">
           <label
             className={cn(
-              "flex items-center gap-2 rounded-lg p-1.5 text-xs text-[var(--foreground)] hover:bg-[var(--secondary)]/55",
+              "flex items-center gap-2 rounded-lg p-2 text-xs text-[var(--foreground)] transition-colors hover:bg-[var(--accent)]/60",
               extractSourceNote.isPending && "pointer-events-none opacity-45",
             )}
           >
@@ -296,7 +302,7 @@ function ExtractionOutcomePanel({
   const unreadableCount = outcome.droppedUnits - readableDropped.length;
 
   return (
-    <section className="rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
+    <section className={sectionCardClassName}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-1.5">
@@ -322,7 +328,7 @@ function ExtractionOutcomePanel({
           {visibleDropped.map((candidate) => (
             <article
               key={`${candidate.index}-${candidate.reason}-${candidate.snippet}`}
-              className="rounded-lg bg-[var(--background)]/55 p-3 ring-1 ring-[var(--border)]"
+              className={insetSectionCardClassName}
             >
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
@@ -368,11 +374,11 @@ function SuggestionDrawer({
 }) {
   const [open, setOpen] = useState(true);
   return (
-    <section className="rounded-lg bg-[var(--secondary)]/25 ring-1 ring-[var(--border)]">
+    <section className="overflow-hidden rounded-xl bg-[var(--secondary)]/25 ring-1 ring-[var(--border)]">
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
-        className="flex min-h-11 w-full items-center justify-between gap-2 px-3 py-2 text-left"
+        className="flex min-h-11 w-full items-center justify-between gap-2 px-3 py-2.5 text-left transition-colors hover:bg-[var(--accent)]/45"
       >
         <span className="flex items-center gap-2 text-xs font-semibold text-[var(--foreground)]">
           {open ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
@@ -381,7 +387,7 @@ function SuggestionDrawer({
         <StatusPill label={`${rows.length}`} tone={rows.length ? "warn" : "neutral"} />
       </button>
       {open ? (
-        <div className="space-y-2 border-t border-[var(--border)]/45 p-2">
+        <div className="space-y-2 border-t border-[var(--border)]/45 p-3">
           {rows.length === 0 ? (
             <p className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--background)]/45 p-3 text-xs text-[var(--muted-foreground)]">
               No {title.toLowerCase()} suggestions.
@@ -445,7 +451,7 @@ function SuggestionRow({ row, noteLookup }: { row: SuggestionRowModel; noteLooku
   const hasEdits = editedMutation !== null && !editing;
 
   return (
-    <article className="rounded-lg bg-[var(--card)] p-3 ring-1 ring-[var(--border)]">
+    <article className="rounded-xl bg-[var(--card)] p-3 ring-1 ring-[var(--border)]">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
@@ -523,13 +529,13 @@ function SuggestionMutationEditor({
   }
 
   return (
-    <div className="mt-3 space-y-2 rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
+    <div className={cn("mt-3 space-y-2", insetSectionCardClassName)}>
       <textarea
         value={text}
         onChange={(event) => setText(event.target.value)}
         className="min-h-24 w-full resize-y rounded-lg bg-[var(--background)] px-3 py-2 text-xs leading-relaxed text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] focus:ring-[var(--primary)]"
       />
-      <div className="flex justify-end gap-2">
+      <div className={cn(actionRowClassName, "justify-end border-t-0 pt-0")}>
         <ToolButton onClick={onCancel}>Cancel</ToolButton>
         <ToolButton
           onClick={() => {

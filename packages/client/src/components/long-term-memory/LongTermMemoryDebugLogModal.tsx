@@ -18,6 +18,7 @@ import {
   useLongTermMemoryDebugLog,
 } from "../../hooks/use-long-term-memory";
 import { Modal } from "../ui/Modal";
+import { helperTextClassName, modalIntroCardClassName, sectionCardClassName } from "./LtmFields";
 import { StatusPill, ToolButton } from "./LtmPills";
 import { labelLtmTier, labelRejectionReason, summarizeLtmCandidateSignals } from "./ltm-debug-utils";
 
@@ -556,6 +557,16 @@ export function LongTermMemoryDebugLogModal({ open, onClose }: { open: boolean; 
   return (
     <Modal open={open} onClose={onClose} title="LTM Debug Log" width="max-w-5xl">
       <div className="space-y-3">
+        <div className={modalIntroCardClassName}>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold text-[var(--foreground)]">Memory operations timeline</span>
+            <StatusPill label={`${grouped.length} operation${grouped.length === 1 ? "" : "s"}`} />
+          </div>
+          <p className={cn("mt-2", helperTextClassName)}>
+            Review imports, extraction, injection, rebuilds, and failures without leaving the memory workflow.
+          </p>
+        </div>
+
         <div className="flex flex-wrap items-center justify-between gap-2">
           <select
             value={phase}
@@ -592,7 +603,7 @@ export function LongTermMemoryDebugLogModal({ open, onClose }: { open: boolean; 
           </div>
         </div>
 
-        <div className="rounded-lg bg-[var(--secondary)]/25 p-2 ring-1 ring-[var(--border)]">
+        <div className={cn(sectionCardClassName, "p-2")}>
           {log.isLoading ? (
             <div className="space-y-2">
               {[0, 1, 2, 3].map((item) => (

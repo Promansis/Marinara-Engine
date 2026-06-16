@@ -64,7 +64,14 @@ import {
   friendlyStatus,
   sentenceCaseIdentifier,
 } from "../long-term-memory/ltm-editor-utils";
-import { compactInputClassName, inputClassName, SettingField } from "../long-term-memory/LtmFields";
+import {
+  compactInputClassName,
+  helperTextClassName,
+  inputClassName,
+  modalIntroCardClassName,
+  sectionCardClassName,
+  SettingField,
+} from "../long-term-memory/LtmFields";
 import { StatusPill, ToolButton } from "../long-term-memory/LtmPills";
 import { Modal } from "../ui/Modal";
 
@@ -103,6 +110,11 @@ type ImportPreviewRow = NonNullable<ReturnType<typeof useLongTermMemoryImportPre
 type LtmBucketGroup = {
   type: LtmNoteType;
   notes: LtmNote[];
+};
+type SourceSummaryGroup = {
+  source: LtmNote;
+  derived: LtmNote[];
+  orphaned: boolean;
 };
 type LtmRecallStyle = "balanced" | "exact" | "broad" | "story";
 
@@ -255,8 +267,8 @@ function NoteRow({
     <article
       className={cn(
         "group relative rounded-lg bg-[var(--secondary)]/45 p-2.5 ring-1 ring-[var(--border)] transition-colors",
-        "hover:bg-[var(--accent)]/45 hover:ring-rose-300/25",
-        (editing || bulkSelected) && "bg-rose-300/10 ring-rose-300/35",
+        "hover:bg-[var(--accent)]/45 hover:ring-[var(--ring)]/25",
+        (editing || bulkSelected) && "bg-[var(--accent)]/65 ring-[var(--ring)]/35",
       )}
     >
       {onSelect && (
@@ -689,8 +701,9 @@ function TypeMemoryGroups({
                       key={note.id}
                       className={cn(
                         "group relative rounded-lg bg-[var(--secondary)]/45 p-2.5 ring-1 ring-[var(--border)] transition-colors",
-                        "hover:bg-[var(--accent)]/45 hover:ring-rose-300/25",
-                        (viewingNoteId === note.id || editingNoteId === note.id) && "bg-rose-300/10 ring-rose-300/35",
+                        "hover:bg-[var(--accent)]/45 hover:ring-[var(--ring)]/25",
+                        (viewingNoteId === note.id || editingNoteId === note.id) &&
+                          "bg-[var(--accent)]/65 ring-[var(--ring)]/35",
                       )}
                     >
                       <div className="flex min-w-0 items-start gap-2 pr-28 max-md:pr-28">
@@ -1743,8 +1756,8 @@ function ArchivedDraftRow({
   return (
     <article
       className={cn(
-        "group relative rounded-xl border border-rose-300/15 bg-gradient-to-br from-rose-300/5 to-fuchsia-500/5 p-2.5 transition-all hover:border-rose-300/30 hover:bg-[var(--sidebar-accent)]",
-        (selected || bulkSelected) && "border-rose-300/40 bg-rose-300/10 ring-1 ring-rose-300/25",
+        "group relative rounded-xl border border-[var(--border)] bg-[var(--secondary)]/35 p-2.5 transition-all hover:bg-[var(--accent)]/45",
+        (selected || bulkSelected) && "border-[var(--ring)]/35 bg-[var(--accent)]/65 ring-1 ring-[var(--ring)]/25",
       )}
     >
       {onSelect && (
@@ -1834,7 +1847,7 @@ function ImportPreviewRowItem({
     <article
       className={cn(
         "group relative grid grid-cols-[auto_minmax(0,1fr)] gap-3 rounded-lg bg-[var(--secondary)]/45 p-3 ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/45",
-        selected && "bg-rose-300/10 ring-rose-300/35",
+        selected && "bg-[var(--accent)]/65 ring-[var(--ring)]/35",
       )}
     >
       <label className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--background)]/55 ring-1 ring-[var(--border)]">
@@ -2630,11 +2643,40 @@ export function LongTermMemoryPanel() {
 
   return (
     <div className="flex min-h-full flex-col gap-3 p-3 text-[var(--foreground)]">
-      <section className="space-y-2 border-b border-[var(--border)]/70 pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="truncate text-sm font-semibold leading-tight text-[var(--foreground)]">Story Memory</div>
-            <div className="mt-1 flex flex-wrap gap-1.5">
+      <div className="sticky top-0 z-10 -mx-3 bg-[var(--background)]/95 px-3 py-2 backdrop-blur-sm">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+          <div className="grid grid-cols-3 gap-1 rounded-xl bg-[var(--secondary)]/45 p-1 ring-1 ring-[var(--border)]/80">
+            {(["notes", "tools", "import"] as TabId[]).map((id) => (
+              <button
+                key={id}
+                onClick={() => setTabWithGuards(id)}
+                className={cn(
+                  "min-w-0 rounded-lg px-3 py-2 text-xs font-semibold transition-all active:scale-[0.98]",
+                  tab === id
+                    ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm ring-1 ring-[var(--border)]"
+                    : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                )}
+              >
+                {TAB_LABELS[id]}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => setDebugLogOpen(true)}
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+            aria-label="Open memory debug log"
+            title="Debug log"
+          >
+            <History size="0.875rem" />
+          </button>
+        </div>
+      </div>
+
+      {tab === "notes" && (
+        <Section title="Memories">
+          <div className={modalIntroCardClassName}>
+            <div className="flex flex-wrap gap-1.5">
               <StatusPill label={`${(notes.data ?? []).length} memor${(notes.data ?? []).length === 1 ? "y" : "ies"}`} />
               <StatusPill label={`${status.data?.indexes.chunkCount ?? 0} search chunks`} />
               <StatusPill label={integrity.data?.ok ? "Healthy" : "Needs check"} tone={statusTone} />
@@ -2643,51 +2685,22 @@ export function LongTermMemoryPanel() {
                 tone="neutral"
               />
             </div>
+            <p className={cn("mt-2", helperTextClassName)}>
+              Search, review, and maintain the same typed memory library used to support long-running story continuity.
+            </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setDebugLogOpen(true)}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-            aria-label="Open memory debug log"
-            title="Debug log"
-          >
-            <History size="0.75rem" />
-          </button>
-        </div>
-      </section>
 
-      <div className="sticky top-0 z-10 -mx-3 bg-[var(--background)]/95 px-3 py-2 backdrop-blur-sm">
-        <div className="grid grid-cols-3 gap-1 rounded-lg bg-[var(--secondary)]/45 p-1 ring-1 ring-[var(--border)]/80">
-          {(["notes", "tools", "import"] as TabId[]).map((id) => (
-            <button
-              key={id}
-              onClick={() => setTabWithGuards(id)}
-              className={cn(
-                "min-w-0 rounded-md px-2 py-1.5 text-xs font-medium transition-all active:scale-[0.98]",
-                tab === id
-                  ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm ring-1 ring-rose-300/25"
-                  : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-              )}
-            >
-              {TAB_LABELS[id]}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {tab === "notes" && (
-        <Section title="Memories">
           {editingNoteHiddenByFilters && (
-            <div className="mb-3 rounded-lg bg-amber-500/10 p-3 ring-1 ring-amber-400/30">
-              <div className="text-xs font-medium text-amber-100">Open note is hidden by filters</div>
-              <p className="mt-1 text-[0.6875rem] text-amber-100/80">
+            <div className="mb-3 rounded-xl bg-amber-500/10 p-3 ring-1 ring-amber-500/30">
+              <div className="text-xs font-medium text-amber-700 dark:text-amber-100">Open note is hidden by filters</div>
+              <p className="mt-1 text-[0.6875rem] text-amber-700/80 dark:text-amber-100/80">
                 The editor stays open so unsaved edits are not lost.
               </p>
             </div>
           )}
           <section className="space-y-3">
               <div className="grid grid-cols-[1fr_auto] gap-2">
-                <div className="flex items-center gap-2 rounded-xl bg-[var(--secondary)] px-3 py-2 ring-1 ring-[var(--border)] transition-shadow focus-within:ring-[var(--ring)]">
+                <div className="flex items-center gap-2 rounded-xl bg-[var(--secondary)] px-3 py-2 ring-1 ring-[var(--border)] transition-shadow focus-within:ring-[var(--ring)]/60">
                   <Search size="0.875rem" className="text-[var(--muted-foreground)]" />
                   <input
                     value={query}
@@ -2705,7 +2718,7 @@ export function LongTermMemoryPanel() {
                 <select
                   value={noteType}
                   onChange={(event) => setNoteType(event.target.value as "all" | LtmNoteType)}
-                  className="rounded-lg bg-[var(--secondary)] px-2.5 py-2 text-xs outline-none ring-1 ring-transparent focus:ring-[var(--primary)]"
+                  className={compactInputClassName}
                 >
                   {NOTE_TYPES.map((type) => (
                     <option key={type} value={type}>
@@ -2716,7 +2729,7 @@ export function LongTermMemoryPanel() {
                 <select
                   value={noteStatus}
                   onChange={(event) => setNoteStatus(event.target.value as "all" | LtmStatus)}
-                  className="rounded-lg bg-[var(--secondary)] px-2.5 py-2 text-xs outline-none ring-1 ring-transparent focus:ring-[var(--primary)]"
+                  className={compactInputClassName}
                 >
                   {NOTE_STATUSES.map((statusId) => (
                     <option key={statusId} value={statusId}>
@@ -2743,11 +2756,11 @@ export function LongTermMemoryPanel() {
                       viewingNoteId={activeListViewingNoteId}
                       editingNoteId={editingNoteId}
                       derivedCountBySource={derivedCountBySource}
-      onToggleMemory={toggleExpandedMemory}
-      onToggleType={toggleExpandedType}
-      onView={requestViewMemory}
-      onEdit={requestEditNote}
-      onOpenSource={openSourceNote}
+                      onToggleMemory={toggleExpandedMemory}
+                      onToggleType={toggleExpandedType}
+                      onView={requestViewMemory}
+                      onEdit={requestEditNote}
+                      onOpenSource={openSourceNote}
                     />
                   )}
               </div>
@@ -2756,22 +2769,47 @@ export function LongTermMemoryPanel() {
       )}
 
       {tab === "tools" && (
-        <ChatMemorySettings
-          onOpenExtractionSettings={() => setExtractionSettingsOpen(true)}
-          integrity={integrity}
-          rebuild={rebuild}
-          replay={replay}
-          repair={repair}
-        />
+        <div className="space-y-3">
+          <div className={modalIntroCardClassName}>
+            <div className="flex flex-wrap gap-1.5">
+              <StatusPill label={integrity.data?.ok ? "Healthy indexes" : "Needs maintenance"} tone={statusTone} />
+              <StatusPill label={status.data?.indexes.embeddingsAvailable ? "Smart search" : "Basic search"} />
+            </div>
+            <p className={cn("mt-2", helperTextClassName)}>
+              Tune recall, extraction, maintenance, and debug behavior for the active chat without leaving the right panel.
+            </p>
+          </div>
+          <ChatMemorySettings
+            onOpenExtractionSettings={() => setExtractionSettingsOpen(true)}
+            integrity={integrity}
+            rebuild={rebuild}
+            replay={replay}
+            repair={repair}
+          />
+        </div>
       )}
 
       {tab === "import" && (
         <Section title="Import">
+          <div className={modalIntroCardClassName}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-[var(--foreground)]">
+                  {importPreview.data?.draftable ?? 0} source{importPreview.data?.draftable === 1 ? "" : "s"} ready
+                </div>
+                <p className={cn("mt-2", helperTextClassName)}>
+                  Pull chat summaries, character notes, or lorebook notes into the typed-memory workflow and review the suggestions they create.
+                </p>
+              </div>
+              {importPreview.isLoading ? <Loader2 className="animate-spin" size="1rem" /> : <FileJson size="1rem" />}
+            </div>
+          </div>
+
           <div className="grid grid-cols-[1fr_auto] gap-2">
             <select
               value={importSource}
               onChange={(event) => { setImportSource(event.target.value as LtmInteropSource); setImportChatId(""); }}
-              className="rounded-lg bg-[var(--secondary)] px-2.5 py-2 text-xs outline-none ring-1 ring-transparent focus:ring-[var(--primary)]"
+              className={compactInputClassName}
             >
               {IMPORT_SOURCES.map((source) => (
                 <option key={source.id} value={source.id}>
@@ -2785,7 +2823,7 @@ export function LongTermMemoryPanel() {
               max={100}
               value={importLimit}
               onChange={(event) => setImportLimit(Number(event.target.value))}
-              className="w-20 rounded-lg bg-[var(--secondary)] px-2.5 py-2 text-xs outline-none ring-1 ring-transparent focus:ring-[var(--primary)]"
+              className={cn(compactInputClassName, "w-24")}
             />
           </div>
           {importSource === "chats" && (
@@ -2793,7 +2831,7 @@ export function LongTermMemoryPanel() {
               <select
                 value={importChatId}
                 onChange={(event) => setImportChatId(event.target.value)}
-                className="w-full rounded-lg bg-[var(--secondary)] px-2.5 py-2 text-xs outline-none ring-1 ring-transparent focus:ring-[var(--primary)]"
+                className={compactInputClassName}
               >
                 <option value="">All chats ({importRows.length})</option>
                 {(chats as Chat[] | undefined)
@@ -2807,40 +2845,31 @@ export function LongTermMemoryPanel() {
               </select>
             </div>
           )}
-          <div className="mt-3 rounded-lg bg-[var(--secondary)]/50 p-3 ring-1 ring-[var(--border)]">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-xs font-medium text-[var(--foreground)]">
-                  {importPreview.data?.draftable ?? 0} source{importPreview.data?.draftable === 1 ? "" : "s"} ready
-                </div>
-              </div>
-              {importPreview.isLoading ? <Loader2 className="animate-spin" size="1rem" /> : <FileJson size="1rem" />}
+          <div className={cn(sectionCardClassName, "mt-3")}>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex min-h-8 items-center gap-2 rounded-lg px-2 text-xs text-[var(--foreground)]">
+                <input
+                  type="checkbox"
+                  checked={allVisibleImportRowsSelected}
+                  disabled={visibleImportRows.length === 0}
+                  onChange={(event) => setAllVisibleImportRowsSelected(event.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+                />
+                Select visible
+              </label>
+              <ToolButton
+                onClick={() => importRowsToVault(selectedVisibleImportRows.map((row) => row.sourceId))}
+                disabled={selectedVisibleImportRows.length === 0 || importSourceNotes.isPending}
+                tone="primary"
+              >
+                {importSourceNotes.isPending ? (
+                  <Loader2 size="0.875rem" className="animate-spin" />
+                ) : (
+                  <Import size="0.875rem" />
+                )}
+                Import selected
+              </ToolButton>
             </div>
-          </div>
-
-          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
-            <label className="flex min-h-8 items-center gap-2 rounded-lg px-2 text-xs text-[var(--foreground)]">
-              <input
-                type="checkbox"
-                checked={allVisibleImportRowsSelected}
-                disabled={visibleImportRows.length === 0}
-                onChange={(event) => setAllVisibleImportRowsSelected(event.target.checked)}
-                className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-              />
-              Select visible
-            </label>
-            <ToolButton
-              onClick={() => importRowsToVault(selectedVisibleImportRows.map((row) => row.sourceId))}
-              disabled={selectedVisibleImportRows.length === 0 || importSourceNotes.isPending}
-              tone="primary"
-            >
-              {importSourceNotes.isPending ? (
-                <Loader2 size="0.875rem" className="animate-spin" />
-              ) : (
-                <Import size="0.875rem" />
-              )}
-              Import selected
-            </ToolButton>
           </div>
 
           <div className="mt-3 space-y-2">

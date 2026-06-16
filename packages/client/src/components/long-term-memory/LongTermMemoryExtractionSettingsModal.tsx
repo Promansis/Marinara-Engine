@@ -22,7 +22,16 @@ import {
 } from "../../hooks/use-long-term-memory";
 import { cn, generateClientId } from "../../lib/utils";
 import { Modal } from "../ui/Modal";
-import { SettingField, compactInputClassName, textareaClassName } from "./LtmFields";
+import {
+  actionRowClassName,
+  compactInputClassName,
+  helperTextClassName,
+  insetSectionCardClassName,
+  modalIntroCardClassName,
+  sectionCardClassName,
+  SettingField,
+  textareaClassName,
+} from "./LtmFields";
 import { StatusPill, ToolButton } from "./LtmPills";
 
 type OptionalLevel<T extends string> = "default" | T;
@@ -383,24 +392,29 @@ export function LongTermMemoryExtractionSettingsModal({ open, onClose }: { open:
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <BrainCircuit size="1rem" className="text-rose-200" />
-              <span className="text-xs font-medium text-[var(--foreground)]">Source note extractor</span>
-              {dirty ? <StatusPill label="Unsaved" tone="warn" /> : <StatusPill label="Saved" tone="good" />}
+          <div className={modalIntroCardClassName}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <BrainCircuit size="1rem" className="text-[var(--primary)]" />
+                <span className="text-sm font-semibold text-[var(--foreground)]">Source note extractor</span>
+                {dirty ? <StatusPill label="Unsaved" tone="warn" /> : <StatusPill label="Saved" tone="good" />}
+              </div>
+              <button
+                type="button"
+                onClick={() => setDraft(settings.data ? draftFromSettings(settings.data) : draft)}
+                disabled={!dirty || updateSettings.isPending}
+                className="inline-flex min-h-9 items-center gap-1.5 rounded-xl bg-[var(--secondary)] px-3 py-2 text-xs font-semibold text-[var(--foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <X size="0.875rem" />
+                Discard
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setDraft(settings.data ? draftFromSettings(settings.data) : draft)}
-              disabled={!dirty || updateSettings.isPending}
-              className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <X size="0.875rem" />
-              Discard
-            </button>
+            <p className={cn("mt-2", helperTextClassName)}>
+              Tune how source notes become typed memories while keeping the same dense settings vocabulary used elsewhere in Marinara.
+            </p>
           </div>
 
-          <section className="space-y-3 border-t border-[var(--border)] pt-3">
+          <section className={cn("space-y-3", sectionCardClassName)}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-xs font-semibold text-[var(--foreground)]">
                 <SlidersHorizontal size="0.875rem" />
@@ -505,7 +519,7 @@ export function LongTermMemoryExtractionSettingsModal({ open, onClose }: { open:
             </div>
 
             {templateEditorOpen ? (
-              <div className="space-y-2 border-t border-[var(--border)] pt-2">
+              <div className="space-y-2 border-t border-[var(--border)] pt-3">
                 <div className="max-h-28 space-y-1 overflow-y-auto pr-0.5">
                   {promptTemplates.map((template) => (
                     <div
@@ -543,7 +557,7 @@ export function LongTermMemoryExtractionSettingsModal({ open, onClose }: { open:
                       <button
                         type="button"
                         onClick={() => handleDeletePromptTemplate(template.id)}
-                        className="shrink-0 rounded p-0.5 text-[var(--muted-foreground)] hover:text-rose-300"
+                        className="shrink-0 rounded p-0.5 text-[var(--muted-foreground)] hover:text-[var(--destructive)]"
                         title="Delete"
                       >
                         <Trash2 size="0.625rem" />
@@ -562,7 +576,7 @@ export function LongTermMemoryExtractionSettingsModal({ open, onClose }: { open:
                 </button>
 
                 {templateNameDraft || templatePromptDraft ? (
-                  <div className="space-y-1.5 rounded-lg bg-[var(--background)]/30 p-2 ring-1 ring-[var(--border)]">
+                  <div className={cn("space-y-1.5", insetSectionCardClassName)}>
                     <input
                       value={templateNameDraft}
                       onChange={(event) => setTemplateNameDraft(event.target.value)}
@@ -613,7 +627,7 @@ export function LongTermMemoryExtractionSettingsModal({ open, onClose }: { open:
               />
             </SettingField>
             {activePromptTemplate ? (
-              <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
+              <p className={helperTextClassName}>
                 Source-memory extraction uses the selected template above. Clear the selection to edit the fallback
                 prompt override directly.
               </p>
@@ -627,7 +641,7 @@ export function LongTermMemoryExtractionSettingsModal({ open, onClose }: { open:
             </SettingField>
           </section>
 
-          <section className="space-y-3 border-t border-[var(--border)] pt-3">
+          <section className={cn("space-y-3", sectionCardClassName)}>
             <div className="text-xs font-semibold text-[var(--foreground)]">Model Behavior</div>
             <div className="grid gap-3 sm:grid-cols-2">
               <LevelSelect<LtmExtractionReasoningEffort>
@@ -659,7 +673,7 @@ export function LongTermMemoryExtractionSettingsModal({ open, onClose }: { open:
             </div>
           </section>
 
-          <section className="space-y-3 border-t border-[var(--border)] pt-3">
+          <section className={cn("space-y-3", sectionCardClassName)}>
             <div className="text-xs font-semibold text-[var(--foreground)]">Extraction Shape</div>
             <div className="grid gap-3 sm:grid-cols-2">
               <NumberField
@@ -695,13 +709,13 @@ export function LongTermMemoryExtractionSettingsModal({ open, onClose }: { open:
                 onChange={(value) => set("existingNoteMaxTokens", value)}
               />
             </div>
-            <p className="rounded-lg bg-[var(--secondary)]/35 px-3 py-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+            <p className={cn(insetSectionCardClassName, helperTextClassName)}>
               Placeholder-looking extraction output is always rejected internally now. Recovery happens through kept
               suggestions and dropped-candidate review instead of a user-facing toggle.
             </p>
           </section>
 
-          <div className="flex flex-wrap justify-end gap-2">
+          <div className={cn(actionRowClassName, "justify-end")}>
             <ToolButton onClick={onClose} disabled={updateSettings.isPending}>
               Cancel
             </ToolButton>
