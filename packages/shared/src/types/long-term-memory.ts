@@ -32,9 +32,3 @@ export type {
   LtmDraftStatus,
   LtmResolvedExtractionSettings,
 } from "../schemas/long-term-memory.schema.js";
-
-export interface LtmExtractionPromptTemplate {
-  id: string;
-  name: string;
-  prompt: string;
-}

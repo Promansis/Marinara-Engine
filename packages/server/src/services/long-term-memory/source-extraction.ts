@@ -24,11 +24,11 @@ import {
 } from "./evidence-unit-groups.js";
 import { getLtmExtractionConfig } from "./extraction-config.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
-import { LongTermMemoryDraftStore } from "./extraction.js";
+import type { LtmExtractionDiagnostic } from "./diagnostics.js";
+import { LongTermMemoryDraftStore } from "./draft-store.js";
 import { noteIdForEvidenceUnit } from "./evidence-unit-validation.js";
 import { retrieveLongTermMemory, type RetrieveLongTermMemoryInput } from "./retrieval.js";
 import { LongTermMemoryStorage } from "./storage.js";
-import type { LtmExtractionDiagnostic } from "./validation.js";
 
 export type ExtractLongTermMemoryFromSourceNoteOptions = {
   noteId: string;

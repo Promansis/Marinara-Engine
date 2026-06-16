@@ -45,7 +45,6 @@ import {
 import type { Chat } from "@marinara-engine/shared";
 import { useChatStore } from "../../stores/chat.store";
 import { useChat, useChats, useUpdateChatMetadata } from "../../hooks/use-chats";
-import { useConnections } from "../../hooks/use-connections";
 import { cn } from "../../lib/utils";
 import {
   CreateLongTermMemoryNoteForm,
@@ -1950,13 +1949,6 @@ function ChatMemorySettings({
   const recallStyle = readRecallStyle(metadata);
   const includeResolved = metadata.longTermMemoryIncludeResolved === true;
   const contextMessagesValue = readNumberSetting(metadata, "longTermMemoryRecallContextMessages", 4, 1, 20);
-  const autoAcceptAll = metadata.longTermMemoryAutoAcceptAll === true;
-  const useDefaultAgent = metadata.longTermMemoryUseDefaultAgent !== false;
-  const agentConnectionId =
-    typeof metadata.longTermMemoryAgentConnectionId === "string"
-      ? metadata.longTermMemoryAgentConnectionId
-      : null;
-  const { data: connections } = useConnections();
   const [budgetDraft, setBudgetDraft] = useState(String(budgetValue));
   const [maxChunksDraft, setMaxChunksDraft] = useState(String(maxChunksValue));
   const [scoreThresholdDraft, setScoreThresholdDraft] = useState(scoreThresholdValue);
@@ -2215,38 +2207,10 @@ function ChatMemorySettings({
                 <SlidersHorizontal size="0.875rem" />
                 Extraction settings
               </ToolButton>
-              <SettingToggle
-                label="Auto-accept all extracted memories (bypass review)"
-                checked={autoAcceptAll}
-                onChange={(checked) => patch({ longTermMemoryAutoAcceptAll: checked })}
-              />
-              <p className="text-[0.625rem] text-amber-200/80">
-                Skips the review step entirely — all extracted suggestions are applied automatically.
+              <p className="text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                Extraction now runs only from imported or created source notes. Generated chat turns no longer create
+                long-term memory drafts automatically.
               </p>
-              <SettingToggle
-                label="Use default agent for extraction"
-                checked={useDefaultAgent}
-                onChange={(checked) => patch({ longTermMemoryUseDefaultAgent: checked })}
-              />
-              {!useDefaultAgent && (
-                <select
-                  value={agentConnectionId ?? ""}
-                  onChange={(event) =>
-                    patch({ longTermMemoryAgentConnectionId: event.target.value || null })
-                  }
-                  className="w-full rounded-lg bg-[var(--secondary)] px-2.5 py-2 text-xs outline-none ring-1 ring-transparent focus:ring-[var(--primary)]"
-                >
-                  <option value="">Select a connection...</option>
-                  {(connections ?? []).map((conn: unknown) => {
-                    const c = conn as { id: string; name: string; model?: string };
-                    return (
-                      <option key={c.id} value={c.id}>
-                        {c.name}{c.model ? ` — ${c.model}` : ""}
-                      </option>
-                    );
-                  })}
-                </select>
-              )}
             </div>
           )}
 

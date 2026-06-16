@@ -1,8 +1,8 @@
 import type { LtmDraftMutation, LtmExtractionDraft, LtmLink, LtmNote, LtmSection } from "@marinara-engine/shared";
 import { logger } from "../../lib/logger.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
+import { LongTermMemoryDraftStore } from "./draft-store.js";
 import { rebuildLongTermMemoryIndexes } from "./rebuild.js";
-import { LongTermMemoryDraftStore } from "./extraction.js";
 import { LongTermMemoryStorage, type UpdateLtmNotePatch } from "./storage.js";
 
 export interface ApplyLtmDraftOptions {

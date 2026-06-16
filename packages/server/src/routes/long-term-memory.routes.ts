@@ -50,7 +50,7 @@ import {
   readLtmDebugLog,
   recordLtmDebugEvent,
 } from "../services/long-term-memory/debug-log.js";
-import { LongTermMemoryDraftStore } from "../services/long-term-memory/extraction.js";
+import { LongTermMemoryDraftStore } from "../services/long-term-memory/draft-store.js";
 import {
   auditLongTermMemoryReplay,
   checkLongTermMemoryIntegrity,

@@ -1,5 +1,5 @@
 import type { LtmEvidenceUnit, LtmNote } from "@marinara-engine/shared";
-import { type LtmExtractionDiagnostic } from "./validation.js";
+import type { LtmExtractionDiagnostic } from "./diagnostics.js";
 
 const DIALOGUE_BUCKETS = new Set<LtmEvidenceUnit["bucket"]>(["tone"]);
 const RISK_BUCKETS = new Set<LtmEvidenceUnit["bucket"]>(["relationship_conflict"]);

@@ -159,10 +159,6 @@ import { retrieveLongTermMemory } from "../services/long-term-memory/retrieval.j
 import { formatLongTermMemoryBlock } from "../services/long-term-memory/prompt.js";
 import { recordLtmDebugEvent } from "../services/long-term-memory/debug-log.js";
 import { recordLongTermMemoryInjection } from "../services/long-term-memory/usage.js";
-import { runLongTermMemoryExtraction, LongTermMemoryDraftStore } from "../services/long-term-memory/extraction.js";
-import { applyLongTermMemoryDraft, isLowRiskTurnMutation } from "../services/long-term-memory/reconciliation.js";
-import { LongTermMemoryStorage } from "../services/long-term-memory/storage.js";
-import { getLtmExtractionConfig } from "../services/long-term-memory/extraction-config.js";
 import {
   markSummaryEntryForLtmIfEnabled,
   syncChatSummaryEntryToLongTermMemory,
@@ -8323,114 +8319,6 @@ export async function generateRoutes(app: FastifyInstance) {
             if (chatMode === "conversation" && !input.impersonate && !input.regenerateMessageId) {
               recordAssistantActivity(input.chatId, targetCharId ?? undefined);
               conversationAssistantSaved = true;
-            }
-
-            if (
-              chatMeta.longTermMemoryAutoExtract === true &&
-              !input.impersonate &&
-              !input.regenerateMessageId &&
-              savedMsg?.id &&
-              fullResponse.trim()
-            ) {
-              const ltmScope = resolveLtmScope({ id: input.chatId, groupId: chat.groupId, characterIds }, chatMeta);
-              const ltmModes = [ltmModeForChatMode(chatMode)];
-              const ltmSource = {
-                chatId: input.chatId,
-                ...(savedUserMessageId ? { userMessageId: savedUserMessageId } : {}),
-                assistantMessageId: savedMsg.id,
-              };
-              const shouldAutoApplyLowRisk = chatMeta.longTermMemoryAutoApplyLowRisk === true;
-              const shouldAutoAcceptAll = chatMeta.longTermMemoryAutoAcceptAll === true;
-              const ltmUseDefaultAgent = chatMeta.longTermMemoryUseDefaultAgent !== false;
-              const ltmAgentConnectionId =
-                typeof chatMeta.longTermMemoryAgentConnectionId === "string"
-                  ? chatMeta.longTermMemoryAgentConnectionId
-                  : null;
-              void (async () => {
-                try {
-                  const extractionConfig = await getLtmExtractionConfig();
-                  const retrieval = await retrieveLongTermMemory({
-                    queryText: `${input.userMessage ?? ""}\n${fullResponse}`,
-                    recentUserMessage: input.userMessage ?? undefined,
-                    scope: ltmScope,
-                    characterIds,
-                    maxChunks: extractionConfig.existingNoteMaxChunks,
-                    maxTokens: extractionConfig.existingNoteMaxTokens,
-                    embeddingSource: memoryRecallEmbeddingSource ?? undefined,
-                  });
-                  const existingNotes = await Promise.all(
-                    Array.from(new Set(retrieval.chunks.map((result) => result.chunk.noteId))).map((noteId) =>
-                      new LongTermMemoryStorage().getNote(noteId),
-                    ),
-                  );
-                  // Resolve extraction provider/model: agent override -> default
-                  let extractionProvider = provider;
-                  let extractionModel = conn.model;
-                  if (!ltmUseDefaultAgent && ltmAgentConnectionId) {
-                    try {
-                      const agentConn = await connections.getWithKey(ltmAgentConnectionId);
-                      if (agentConn) {
-                        const baseUrl = resolveBaseUrl(agentConn);
-                        if (baseUrl) {
-                          extractionProvider = createLLMProvider(
-                            agentConn.provider,
-                            baseUrl,
-                            agentConn.apiKey,
-                            agentConn.maxContext,
-                            agentConn.openrouterProvider,
-                            agentConn.maxTokensOverride,
-                          );
-                          extractionModel = agentConn.model;
-                        }
-                      }
-                    } catch {
-                      // Fall back to default provider/model
-                    }
-                  }
-                  // Resolve prompt from active template
-                  const activeTemplate = extractionConfig.activePromptTemplateId
-                    ? extractionConfig.promptTemplates.find(
-                        (t: { id: string }) => t.id === extractionConfig.activePromptTemplateId,
-                      )
-                    : null;
-                  const extraction = await runLongTermMemoryExtraction({
-                    provider: extractionProvider,
-                    model: extractionModel,
-                    userMessage: input.userMessage ?? "",
-                    assistantReply: fullResponse,
-                    scope: ltmScope,
-                    modes: ltmModes,
-                    source: ltmSource,
-                    existingNotes: existingNotes.filter((note): note is NonNullable<typeof note> => Boolean(note)),
-                    signal: abortController.signal,
-                    systemPrompt: activeTemplate?.prompt ?? extractionConfig.systemPrompt,
-                    extraInstruction: extractionConfig.extraInstruction,
-                  });
-                  if (extraction.mutations.length === 0) return;
-                  const canAutoApplyDraft =
-                    shouldAutoAcceptAll ||
-                    (shouldAutoApplyLowRisk && extraction.mutations.every(isLowRiskTurnMutation));
-                  const draft = await new LongTermMemoryDraftStore().createDraft({
-                    userMessage: input.userMessage ?? "",
-                    assistantReply: fullResponse,
-                    scope: ltmScope,
-                    modes: ltmModes,
-                    source: ltmSource,
-                    response: extraction,
-                  });
-                  if (canAutoApplyDraft) {
-                    await applyLongTermMemoryDraft(draft.id, {
-                      actor: shouldAutoAcceptAll ? "auto_accept_all" : "auto_low_risk",
-                      autoApplyLowRiskOnly: !shouldAutoAcceptAll,
-                      autoApplyPolicy: "turn",
-                    });
-                  }
-                } catch (err) {
-                  if (!abortController.signal.aborted) {
-                    logger.warn(err, "[ltm] Long-term memory extraction skipped after generation");
-                  }
-                }
-              })();
             }
 
             // Persist thinking/reasoning and generation info

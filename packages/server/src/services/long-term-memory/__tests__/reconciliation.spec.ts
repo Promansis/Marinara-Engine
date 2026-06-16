@@ -14,7 +14,7 @@ import { chunkNotes } from "../chunking.js";
 import { buildLtmMetadataIndex } from "../metadata-index.js";
 import { compileLtmEvidenceUnits } from "../evidence-unit-compiler.js";
 import { applyLtmBudget } from "../budget.js";
-import { LongTermMemoryDraftStore } from "../extraction.js";
+import { LongTermMemoryDraftStore } from "../draft-store.js";
 import { checkLongTermMemoryIntegrity } from "../maintenance.js";
 import { getLongTermMemoryDirectories } from "../paths.js";
 import { formatLongTermMemoryBlock } from "../prompt.js";
@@ -28,6 +28,7 @@ import { retrieveLongTermMemory } from "../retrieval.js";
 import { LongTermMemoryStorage } from "../storage.js";
 import {
   compileEvidenceUnitExtraction,
+  DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
   runLongTermMemoryEvidenceUnitExtraction,
   sourceHashForEvidenceUnitExtraction,
 } from "../evidence-unit-extraction.js";
@@ -43,7 +44,7 @@ test("long-term memory chunks keep prompt text free of index labels", () => {
   const chunks = chunkNotes([
     {
       id: "sample_memory_note",
-      type: "tone",
+      type: "world",
       status: "active",
       modes: ["conversation"],
       scope: {
@@ -57,7 +58,7 @@ test("long-term memory chunks keep prompt text free of index labels", () => {
       updatedAt: timestamp,
       version: 1,
       sections: {
-        social_habits: {
+        facts: {
           text: "A sample instruction remains available for later retrieval.",
           updatedAt: timestamp,
         },
@@ -257,14 +258,19 @@ test("source extraction low-risk policy blocks scene append auto-apply", async (
   }
 });
 
-test("source extraction low-risk policy blocks secret thread auto-apply", () => {
+test("source extraction low-risk policy blocks conflicted thread auto-apply", () => {
   assert.equal(isLowRiskSourceExtractionMutation(threadCreateMutation()), true);
-  assert.equal(
-    isLowRiskSourceExtractionMutation(
-      threadCreateMutation("When the lantern is found, reveal Mira's private secret."),
-    ),
-    false,
-  );
+  const conflicted = threadCreateMutation();
+  conflicted.note.conflicts = [
+    {
+      field: "sections.setup",
+      existing: "When the lantern is found, remember the old promise.",
+      proposed: "When the lantern is found, reveal Mira's private secret.",
+      resolution: "pending",
+      policy: "manual_review",
+    },
+  ];
+  assert.equal(isLowRiskSourceExtractionMutation(conflicted), false);
 });
 
 test("source extraction auto-apply leaves archived resolved memory status pending with content update", async () => {
@@ -731,7 +737,7 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
     assert.equal(defaults.version, 1);
     assert.equal(defaults.reasoningEffort, "low");
     assert.equal(defaults.verbosity, "low");
-    assert.equal(defaults.maxOutputTokens, 3200);
+    assert.equal(defaults.maxOutputTokens, DEFAULT_LTM_EXTRACTION_MAX_TOKENS);
     assert.equal(defaults.maxSourceChars, 24_000);
     assert.equal(defaults.rejectPlaceholderOutput, true);
 
@@ -767,7 +773,7 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
     const reset = await updateLtmExtractionConfig({}, root);
     assert.equal(reset.reasoningEffort, "low");
     assert.equal(reset.verbosity, "low");
-    assert.equal(reset.maxOutputTokens, 3200);
+    assert.equal(reset.maxOutputTokens, DEFAULT_LTM_EXTRACTION_MAX_TOKENS);
     assert.equal(reset.extraInstruction, "");
     assert.equal(reset.rejectPlaceholderOutput, true);
   } finally {
@@ -1126,10 +1132,10 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
   assert(!payloadJson.includes("lowercase_snake_case_scope_id"));
   assert(!payloadJson.includes("target_note_id"));
   assert(!payloadJson.includes("optional note for deterministic compiler"));
-  assert.equal(chatOptions.maxTokens, 3200);
+  assert.equal(chatOptions.maxTokens, DEFAULT_LTM_EXTRACTION_MAX_TOKENS);
   assert.equal(chatOptions.reasoningEffort, "low");
   assert.equal(chatOptions.verbosity, "low");
-  assert.equal(chatOptions.stream, false);
+  assert.equal(chatOptions.stream, true);
 });
 
 test("evidence unit extraction accepts and compiles multiple typed buckets", async () => {
@@ -1794,7 +1800,7 @@ test("evidence unit compiler applies explicit bucket lifecycle rules", () => {
   );
 });
 
-test("evidence unit compiler derives relationship state from existing history plus new events", () => {
+test("evidence unit compiler keeps relationship state unchanged when only new events arrive", () => {
   const existingRelationship: LtmNote = {
     id: "rel_mara_jules",
     type: "relationship",
@@ -1837,14 +1843,31 @@ test("evidence unit compiler derives relationship state from existing history pl
     createdAt: timestamp,
   });
 
-  const state = response.mutations.find(
+  const history = response.mutations.find(
     (mutation) =>
-      mutation.kind === "update_section" && mutation.noteId === "rel_mara_jules" && mutation.sectionKey === "state",
+      mutation.kind === "append_section" && mutation.noteId === "rel_mara_jules" && mutation.sectionKey === "history",
   );
-  assert(state?.kind === "update_section");
-  assert.match(state.section.text, /trust: medium/);
-  assert.match(state.section.text, /tension: medium/);
-  assert.doesNotMatch(state.section.text, /Supporting events:|source_note:|chat:|evidence:|existing_\d+/);
+  assert(history?.kind === "append_section");
+  assert.match(history.text, /Mara trusts Jules again when he protects her and returns the tower archive key/);
+  assert.equal(
+    response.mutations.some(
+      (mutation) =>
+        mutation.kind === "update_section" && mutation.noteId === "rel_mara_jules" && mutation.sectionKey === "state",
+    ),
+    false,
+  );
+});
+
+test("generate route no longer creates live-turn long-term memory drafts", async () => {
+  const generateRouteSource = await readFile(new URL("../../../routes/generate.routes.ts", import.meta.url), "utf8");
+  const sourceExtractionSource = await readFile(new URL("../source-extraction.ts", import.meta.url), "utf8");
+
+  assert.doesNotMatch(
+    generateRouteSource,
+    /LongTermMemoryDraftStore|runLongTermMemoryExtraction|applyLongTermMemoryDraft|createDraft\s*\(/,
+  );
+  assert.match(sourceExtractionSource, /LongTermMemoryDraftStore/);
+  assert.match(sourceExtractionSource, /createDraft\s*\(/);
 });
 
 test("evidence unit compiler derives tone profiles from raw observations", () => {

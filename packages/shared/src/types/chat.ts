@@ -231,10 +231,6 @@ export interface ChatMetadata {
   longTermMemoryIncludeResolved?: boolean;
   /** When true, log/debug local long-term memory prompt injection decisions for this chat. Default: false. */
   longTermMemoryDebug?: boolean;
-  /** When true, save draft long-term memory mutations after generated turns. Default: false. */
-  longTermMemoryAutoExtract?: boolean;
-  /** When true with longTermMemoryAutoExtract, auto-apply only low-risk extraction mutations. Default: false. */
-  longTermMemoryAutoApplyLowRisk?: boolean;
   /** Discord webhook URL to mirror messages to a Discord channel. */
   discordWebhookUrl?: string;
   /** Per-chat ephemeral / enabled overrides for lorebook entries (entryId → state).

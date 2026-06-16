@@ -17,10 +17,10 @@ import { logger } from "../../lib/logger.js";
 import { readJsonFile, writeJsonAtomic } from "./atomic-json.js";
 import { stableJsonHash } from "./chunking.js";
 import { recordLtmDebugEvent } from "./debug-log.js";
+import type { LtmExtractionDiagnostic } from "./diagnostics.js";
 import { compileLtmEvidenceUnits } from "./evidence-unit-compiler.js";
 import { validateLtmEvidenceUnits } from "./evidence-unit-validation.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
-import type { LtmExtractionDiagnostic } from "./validation.js";
 
 export const DEFAULT_LTM_EXTRACTION_PROMPT = [
   "You extract structured long-term memory evidence units from a source note.",
