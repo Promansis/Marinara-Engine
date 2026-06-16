@@ -115,17 +115,6 @@ export interface ChatSummaryEntry {
   tokenEstimate: number;
   createdAt: string;
   updatedAt: string;
-  ltm?: {
-    enabled: boolean;
-    noteId?: string;
-    syncedAt?: string;
-    sourceHash?: string;
-    extractedAt?: string;
-    extractedSourceHash?: string;
-    extractionDraftId?: string;
-    appliedMutationIds?: string[];
-    skippedMutationIds?: string[];
-  };
 }
 
 /** A vectorized recall fragment created from one chat's messages. */
@@ -149,12 +138,6 @@ export interface ChatMetadata {
   summary: string | null;
   /** Structured rolling summary entries. Missing means legacy summary-only metadata. */
   summaryEntries?: ChatSummaryEntry[];
-  /** When true, newly created summary entries are also synced into local long-term memory. */
-  summaryLongTermMemoryEnabled?: boolean;
-  /** When true, summary source notes are also extracted into typed long-term memory drafts. */
-  summaryLongTermMemoryAutoExtract?: boolean;
-  /** When true, low-risk summary extraction drafts are applied automatically. */
-  summaryLongTermMemoryAutoApplyLowRisk?: boolean;
   /** Recent message count used by manual rolling summary generation and the automated summary agent. */
   summaryContextSize?: number;
   /** Chat-scoped manual summary prompt templates. Missing or empty uses the built-in default. */

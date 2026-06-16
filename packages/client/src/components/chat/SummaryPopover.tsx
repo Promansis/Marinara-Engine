@@ -17,7 +17,6 @@ import {
   useBulkSetMessagesHiddenFromAI,
   useDeleteSummaryEntry,
   useGenerateSummary,
-  useToggleSummaryEntryLtm,
   useToggleSummaryEntry,
   useUpdateChatMetadata,
   useUpdateSummaryEntry,
@@ -30,7 +29,6 @@ import {
   PenLine,
   Plus,
   Save,
-  BrainCircuit,
   ScrollText,
   Settings2,
   Sparkles,
@@ -206,7 +204,6 @@ export function SummaryPopover({
   const updateSummaryEntry = useUpdateSummaryEntry();
   const deleteSummaryEntry = useDeleteSummaryEntry();
   const toggleSummaryEntry = useToggleSummaryEntry();
-  const toggleSummaryEntryLtm = useToggleSummaryEntryLtm();
   const entryTextareaRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const scopeSettingsButtonRef = useRef<HTMLButtonElement>(null);
@@ -349,8 +346,7 @@ export function SummaryPopover({
   const entryMutationPending =
     updateSummaryEntry.isPending ||
     deleteSummaryEntry.isPending ||
-    toggleSummaryEntry.isPending ||
-    toggleSummaryEntryLtm.isPending;
+    toggleSummaryEntry.isPending;
 
   const handleSourceModeChange = useCallback(
     (mode: SummarySourceMode) => {
@@ -493,17 +489,6 @@ export function SummaryPopover({
       }
     },
     [chatId, toggleSummaryEntry],
-  );
-
-  const handleToggleEntryLtm = useCallback(
-    async (entry: ChatSummaryEntry, enabled: boolean) => {
-      try {
-        await toggleSummaryEntryLtm.mutateAsync({ chatId, entryId: entry.id, enabled });
-      } catch {
-        toast.error("Could not sync summary to long-term memory.");
-      }
-    },
-    [chatId, toggleSummaryEntryLtm],
   );
 
   const handleToggleAllEntries = useCallback(async () => {
@@ -1023,7 +1008,6 @@ export function SummaryPopover({
                   mutationPending={entryMutationPending}
                   onToggleExpanded={() => handleToggleExpanded(entry.id)}
                   onToggleEnabled={(enabled) => handleToggleEntry(entry, enabled)}
-                  onToggleLtm={(enabled) => handleToggleEntryLtm(entry, enabled)}
                   onStartEdit={() => handleStartEditEntry(entry)}
                   onDraftChange={setDraftEntry}
                   onCancelEdit={handleCancelEditEntry}
@@ -1227,7 +1211,6 @@ interface SummaryEntryRowProps {
   mutationPending: boolean;
   onToggleExpanded: () => void;
   onToggleEnabled: (enabled: boolean) => void;
-  onToggleLtm: (enabled: boolean) => void;
   onStartEdit: () => void;
   onDraftChange: (entry: ChatSummaryEntry | null) => void;
   onCancelEdit: () => void;
@@ -1244,7 +1227,6 @@ function SummaryEntryRow({
   mutationPending,
   onToggleExpanded,
   onToggleEnabled,
-  onToggleLtm,
   onStartEdit,
   onDraftChange,
   onCancelEdit,
@@ -1252,8 +1234,6 @@ function SummaryEntryRow({
   onDelete,
 }: SummaryEntryRowProps) {
   const metaLine = getSummaryEntryMetaLine(entry);
-  const ltmEnabled = entry.ltm?.enabled === true;
-  const ltmStatus = ltmEnabled ? (entry.ltm?.syncedAt ? "LTM synced" : "LTM pending") : "LTM off";
   return (
     <div
       className={cn(
@@ -1301,24 +1281,6 @@ function SummaryEntryRow({
         <div className="flex shrink-0 items-center gap-0.5 rounded-md px-0.5 py-0.5 max-md:opacity-100 md:opacity-55 md:transition-opacity md:group-hover:opacity-100 md:group-focus-within:opacity-100">
           <button
             type="button"
-            onClick={() => onToggleLtm(!ltmEnabled)}
-            disabled={mutationPending}
-            className={cn(
-              "rounded p-1 transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-              ltmEnabled
-                ? "bg-[var(--primary)]/15 text-[var(--primary)] ring-1 ring-[var(--primary)]/30"
-                : "text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-            )}
-            title={ltmStatus}
-            aria-label={
-              ltmEnabled ? "Disable long-term memory for summary entry" : "Use summary entry in long-term memory"
-            }
-            aria-pressed={ltmEnabled}
-          >
-            <BrainCircuit size="0.75rem" />
-          </button>
-          <button
-            type="button"
             onClick={onToggleExpanded}
             className={cn(
               "rounded p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] active:scale-90",
@@ -1353,10 +1315,6 @@ function SummaryEntryRow({
 
       {expanded && (
         <div className="border-t border-[var(--border)]/60 px-2.5 pb-2.5 pt-2">
-          <div className="mb-2 flex items-center justify-between gap-2 rounded-md bg-[var(--secondary)]/20 px-2 py-1 text-[0.625rem] text-[var(--muted-foreground)]">
-            <span>{ltmStatus}</span>
-            {entry.ltm?.noteId && <span className="min-w-0 truncate font-mono">{entry.ltm.noteId}</span>}
-          </div>
           {editing && draftEntry ? (
             <SummaryEntryEditor
               entry={draftEntry}

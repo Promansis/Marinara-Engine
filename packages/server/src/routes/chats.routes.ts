@@ -72,12 +72,6 @@ import {
 } from "../services/memory-recall-embedding.js";
 import { applyRegexScriptsToPromptMessages } from "../services/regex/regex-application.js";
 import { sanitizeGameNpcAvatarUrls } from "../services/game/npc-avatar-utils.js";
-import {
-  createLtmMetadataUpdaterFromPatchMetadata,
-  markSummaryEntryForLtmIfEnabled,
-  syncChatSummaryEntriesToLongTermMemory,
-  syncChatSummaryEntryToLongTermMemory,
-} from "../services/long-term-memory/summary-sync.js";
 
 type TrackerWrapFormat = "xml" | "markdown" | "none";
 type EntryStateOverrides = Record<string, { ephemeral?: number | null; enabled?: boolean }>;
@@ -211,8 +205,7 @@ function sanitizeChatGameNpcAvatars<T extends { metadata?: unknown }>(chat: T): 
 type SummaryEntriesPatchBody =
   | { operation: "replace"; entry: Partial<ChatSummaryEntry> & { id: string; content: string } }
   | { operation: "delete"; entryId: string }
-  | { operation: "toggle"; entryId: string; enabled: boolean }
-  | { operation: "toggle_ltm"; entryId: string; enabled: boolean };
+  | { operation: "toggle"; entryId: string; enabled: boolean };
 
 async function loadLatestChatGameSnapshot(
   app: FastifyInstance,
@@ -403,64 +396,6 @@ function resolveEntryStateOverrides(value: unknown): EntryStateOverrides | undef
 
 export async function chatsRoutes(app: FastifyInstance) {
   const storage = createChatsStorage(app.db);
-
-  const resolveSummaryExtractionOptions = async (
-    chat: { connectionId?: string | null; metadata?: unknown },
-    meta: Record<string, unknown>,
-    fallback?: { provider: BaseLLMProvider; model: string },
-  ) => {
-    if (meta.summaryLongTermMemoryAutoExtract !== true) return undefined;
-    const applyLowRisk = meta.summaryLongTermMemoryAutoApplyLowRisk === true;
-    if (fallback) {
-      return {
-        enabled: true,
-        applyLowRisk,
-        provider: fallback.provider,
-        model: fallback.model,
-      };
-    }
-
-    try {
-      const connections = createConnectionsStorage(app.db);
-      const { createAgentsStorage } = await import("../services/storage/agents.storage.js");
-      const agentsStore = createAgentsStorage(app.db);
-      const summaryAgentCfg = await agentsStore.getByType("chat-summary");
-      const defaultAgentConn = await connections.getDefaultForAgents();
-      let connId = summaryAgentCfg?.connectionId ?? defaultAgentConn?.id ?? chat.connectionId ?? null;
-      if (connId === "random") {
-        const pool = await connections.listRandomPool();
-        connId = pool[Math.floor(Math.random() * pool.length)]?.id ?? null;
-      }
-      if (connId === LOCAL_SIDECAR_CONNECTION_ID) {
-        return {
-          enabled: true,
-          applyLowRisk,
-          provider: getLocalSidecarProvider(),
-          model: LOCAL_SIDECAR_MODEL,
-        };
-      }
-      const defaultConn = connId ? null : await connections.getDefault();
-      const conn = connId ? await connections.getWithKey(connId) : defaultConn ? await connections.getWithKey(defaultConn.id) : null;
-      if (!conn) return undefined;
-      return {
-        enabled: true,
-        applyLowRisk,
-        provider: createLLMProvider(
-          conn.provider,
-          resolveBaseUrl(conn),
-          conn.apiKey,
-          conn.maxContext,
-          conn.openrouterProvider,
-          conn.maxTokensOverride,
-          conn.claudeFastMode === "true",
-        ),
-        model: conn.model,
-      };
-    } catch (err) {
-      logger.warn(err, "[ltm] Summary source extraction provider resolution failed");
-      return undefined;
-    }
-  };
 
   const clearConversationScheduleState = async (chat: Awaited<ReturnType<typeof storage.getById>>) => {
     if (!chat) return;
@@ -696,7 +631,7 @@ export async function chatsRoutes(app: FastifyInstance) {
       if (typeof body.entryId !== "string" || !body.entryId.trim()) {
         return reply.status(400).send({ error: "delete requires entryId" });
       }
-    } else if (body.operation === "toggle" || body.operation === "toggle_ltm") {
+    } else if (body.operation === "toggle") {
       if (typeof body.entryId !== "string" || !body.entryId.trim() || typeof body.enabled !== "boolean") {
         return reply.status(400).send({ error: "toggle requires entryId and enabled" });
       }
@@ -704,8 +639,6 @@ export async function chatsRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: "Unsupported summary entry operation" });
     }
 
-    let entryForLtmSync: ChatSummaryEntry | null = null;
-    const existingChatForLtm = await storage.getById(req.params.id);
     const updated = await storage.patchMetadata(req.params.id, (freshMeta) => {
       const entries = normalizeChatSummaryEntries(freshMeta.summaryEntries, {
         legacySummary: typeof freshMeta.summary === "string" ? freshMeta.summary : null,
@@ -715,57 +648,31 @@ export async function chatsRoutes(app: FastifyInstance) {
       if (body.operation === "replace") {
         const now = new Date().toISOString();
         const existing = entries.find((entry) => entry.id === body.entry.id);
-        const replacement = markSummaryEntryForLtmIfEnabled(
-          freshMeta,
-          createChatSummaryEntry(
-            {
-              ...existing,
-              ...body.entry,
-              id: body.entry.id,
-              content: body.entry.content,
-              updatedAt: now,
-              createdAt: existing?.createdAt ?? body.entry.createdAt ?? now,
-            },
-            { createId: newId, now },
-          ),
+        const replacement = createChatSummaryEntry(
+          {
+            ...existing,
+            ...body.entry,
+            id: body.entry.id,
+            content: body.entry.content,
+            updatedAt: now,
+            createdAt: existing?.createdAt ?? body.entry.createdAt ?? now,
+          },
+          { createId: newId, now },
         );
-        entryForLtmSync = replacement.ltm?.enabled === true ? replacement : null;
         nextEntries = entries.some((entry) => entry.id === replacement.id)
           ? entries.map((entry) => (entry.id === replacement.id ? replacement : entry))
           : [...entries, replacement];
       } else if (body.operation === "delete") {
-        const deleted = entries.find((entry) => entry.id === body.entryId);
-        entryForLtmSync =
-          deleted?.ltm?.noteId || deleted?.ltm?.enabled === true
-            ? ({ ...deleted, ltm: { ...(deleted.ltm ?? {}), enabled: false } } as ChatSummaryEntry)
-            : null;
         nextEntries = entries.filter((entry) => entry.id !== body.entryId);
       } else if (body.operation === "toggle") {
         const now = new Date().toISOString();
         nextEntries = entries.map((entry) => {
           if (entry.id !== body.entryId) return entry;
-          const baseEntry = {
+          return {
             ...entry,
             enabled: body.enabled,
             updatedAt: now,
           };
-          const nextEntry = body.enabled ? markSummaryEntryForLtmIfEnabled(freshMeta, baseEntry) : baseEntry;
-          if (entry.ltm?.noteId || entry.ltm?.enabled === true || nextEntry.ltm?.enabled === true) {
-            entryForLtmSync = nextEntry;
-          }
-          return nextEntry;
-        });
-      } else if (body.operation === "toggle_ltm") {
-        const now = new Date().toISOString();
-        nextEntries = entries.map((entry) => {
-          if (entry.id !== body.entryId) return entry;
-          const nextEntry = {
-            ...entry,
-            ltm: { ...(entry.ltm ?? {}), enabled: body.enabled },
-            updatedAt: now,
-          };
-          entryForLtmSync = nextEntry;
-          return nextEntry;
         });
       } else {
         nextEntries = entries;
@@ -778,61 +685,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     });
 
     if (!updated) return reply.status(404).send({ error: "Chat not found" });
-    if (entryForLtmSync && existingChatForLtm) {
-      const syncChat = { ...existingChatForLtm, metadata: updated.metadata };
-      const syncMeta = parseChatMetadata(syncChat.metadata);
-      try {
-        await syncChatSummaryEntryToLongTermMemory(syncChat, entryForLtmSync, {
-          updateMetadata: createLtmMetadataUpdaterFromPatchMetadata((updater) =>
-            storage.patchMetadata(req.params.id, updater),
-          ),
-          extraction: await resolveSummaryExtractionOptions(syncChat, syncMeta),
-        });
-      } catch (error) {
-        return reply.status(500).send({ error: error instanceof Error ? error.message : "Failed to sync summary LTM" });
-      }
-      return storage.getById(req.params.id);
-    }
     return updated;
-  });
-
-  app.post<{ Params: { id: string } }>("/:id/summary-entries/backfill-ltm", async (req, reply) => {
-    const chat = await storage.getById(req.params.id);
-    if (!chat) return reply.status(404).send({ error: "Chat not found" });
-    const chatMeta = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
-    let entriesToSync: ChatSummaryEntry[] = [];
-    const updated = await storage.patchMetadata(req.params.id, (freshMeta) => {
-      const now = new Date().toISOString();
-      const entries = normalizeChatSummaryEntries(freshMeta.summaryEntries, {
-        legacySummary: typeof freshMeta.summary === "string" ? freshMeta.summary : null,
-      }).map((entry) => ({
-        ...entry,
-        ltm: { ...(entry.ltm ?? {}), enabled: entry.enabled === true },
-        updatedAt: now,
-      }));
-      entriesToSync = entries;
-      return {
-        summaryLongTermMemoryEnabled: true,
-        summaryEntries: entries,
-        summary: compileChatSummaryEntries(entries),
-      };
-    });
-    if (!updated) return reply.status(404).send({ error: "Chat not found" });
-    const syncChat = {
-      ...chat,
-      metadata: {
-        ...chatMeta,
-        ...(typeof updated.metadata === "string" ? JSON.parse(updated.metadata) : updated.metadata),
-      },
-    };
-    await syncChatSummaryEntriesToLongTermMemory(syncChat, entriesToSync, {
-      updateMetadata: createLtmMetadataUpdaterFromPatchMetadata((updater) =>
-        storage.patchMetadata(req.params.id, updater),
-      ),
-      extraction: await resolveSummaryExtractionOptions(syncChat, parseChatMetadata(syncChat.metadata)),
-    });
-    const finalChat = await storage.getById(req.params.id);
-    return { chat: finalChat, synced: entriesToSync.length };
   });
 
   // Generate any missing conversation day/week summaries on demand. This uses
@@ -2841,7 +2694,6 @@ export async function chatsRoutes(app: FastifyInstance) {
         },
         { createId: newId, now },
       );
-      result.entry = markSummaryEntryForLtmIfEnabled(freshMeta, result.entry);
       result.entries = result.entries.map((entry) => (entry.id === result.entry.id ? result.entry : entry));
       result.summary = compileChatSummaryEntries(result.entries);
       combined = result.summary;
@@ -2854,29 +2706,6 @@ export async function chatsRoutes(app: FastifyInstance) {
       };
     });
     if (!updatedChat) return reply.status(404).send({ error: "Chat not found" });
-    const createdEntryForSync = createdEntry as ChatSummaryEntry | null;
-    if (createdEntryForSync?.ltm?.enabled === true) {
-      try {
-        await syncChatSummaryEntryToLongTermMemory({ ...chat, metadata: updatedChat.metadata }, createdEntryForSync, {
-          updateMetadata: createLtmMetadataUpdaterFromPatchMetadata((updater) =>
-            storage.patchMetadata(req.params.id, updater),
-          ),
-          extraction: await resolveSummaryExtractionOptions(
-            { ...chat, metadata: updatedChat.metadata },
-            parseChatMetadata(updatedChat.metadata),
-            { provider, model },
-          ),
-        });
-        const finalChat = await storage.getById(req.params.id);
-        const finalMeta = finalChat ? parseChatMetadata(finalChat.metadata) : {};
-        summaryEntries = Array.isArray(finalMeta.summaryEntries)
-          ? (finalMeta.summaryEntries as ChatSummaryEntry[])
-          : summaryEntries;
-        createdEntry = summaryEntries.find((entry) => entry.id === createdEntryForSync.id) ?? createdEntryForSync;
-      } catch (error) {
-        logger.warn(error, "[ltm] Summary note sync failed after manual summary generation");
-      }
-    }
 
     return {
       summary: combined,

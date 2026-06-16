@@ -518,8 +518,7 @@ export function useUpdateChatSummaries() {
 export type SummaryEntryOperation =
   | { operation: "replace"; entry: Partial<ChatSummaryEntry> & { id: string; content: string } }
   | { operation: "delete"; entryId: string }
-  | { operation: "toggle"; entryId: string; enabled: boolean }
-  | { operation: "toggle_ltm"; entryId: string; enabled: boolean };
+  | { operation: "toggle"; entryId: string; enabled: boolean };
 
 function useSummaryEntryMutation() {
   const qc = useQueryClient();
@@ -568,29 +567,6 @@ export function useToggleSummaryEntry() {
     mutateAsync: (input: { chatId: string; entryId: string; enabled: boolean }) =>
       mutation.mutateAsync({ ...input, operation: "toggle" }),
   };
-}
-
-export function useToggleSummaryEntryLtm() {
-  const mutation = useSummaryEntryMutation();
-  return {
-    ...mutation,
-    mutate: (input: { chatId: string; entryId: string; enabled: boolean }) =>
-      mutation.mutate({ ...input, operation: "toggle_ltm" }),
-    mutateAsync: (input: { chatId: string; entryId: string; enabled: boolean }) =>
-      mutation.mutateAsync({ ...input, operation: "toggle_ltm" }),
-  };
-}
-
-export function useBackfillSummaryEntriesToLtm() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (chatId: string) =>
-      api.post<{ chat: Chat | null; synced: number }>(`/chats/${chatId}/summary-entries/backfill-ltm`, {}),
-    onSuccess: (data, chatId) => {
-      if (data.chat) qc.setQueryData(chatKeys.detail(chatId), data.chat);
-      qc.invalidateQueries({ queryKey: chatKeys.list() });
-    },
-  });
 }
 
 /** Backfill missing conversation day/week summaries via the LLM. */

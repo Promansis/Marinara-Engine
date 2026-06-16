@@ -285,7 +285,6 @@ export const ltmDebugPhaseSchema = z.enum([
   "apply",
   "injection",
   "retrieval",
-  "summary_sync",
   "rebuild",
   "repair",
   "replay",

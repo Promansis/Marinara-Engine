@@ -159,10 +159,6 @@ import { retrieveLongTermMemory } from "../services/long-term-memory/retrieval.j
 import { formatLongTermMemoryBlock } from "../services/long-term-memory/prompt.js";
 import { recordLtmDebugEvent } from "../services/long-term-memory/debug-log.js";
 import { recordLongTermMemoryInjection } from "../services/long-term-memory/usage.js";
-import {
-  markSummaryEntryForLtmIfEnabled,
-  syncChatSummaryEntryToLongTermMemory,
-} from "../services/long-term-memory/summary-sync.js";
 import { postToDiscordWebhook } from "../services/discord-webhook.js";
 import {
   appendGenerationTailMessages,
@@ -9683,7 +9679,6 @@ export async function generateRoutes(app: FastifyInstance) {
                       content: newText,
                       enabled: true,
                     });
-                    result.entry = markSummaryEntryForLtmIfEnabled(currentMeta, result.entry);
                     result.entries = result.entries.map((entry) =>
                       entry.id === result.entry.id ? result.entry : entry,
                     );
@@ -9692,34 +9687,6 @@ export async function generateRoutes(app: FastifyInstance) {
                     summaryEntries = result.entries;
                     return { summary: result.summary, summaryEntries: result.entries };
                   });
-                  const createdEntryForSync = createdEntry as ChatSummaryEntry | null;
-                  if (createdEntryForSync?.ltm?.enabled === true) {
-                    try {
-                      await syncChatSummaryEntryToLongTermMemory(
-                        { ...chat, metadata: { ...chatMeta, ...updatedMeta } },
-                        createdEntryForSync,
-                        {
-                          updateMetadata: updateChatMetadataForTools,
-                          extraction:
-                            chatMeta.summaryLongTermMemoryAutoExtract === true
-                              ? {
-                                  enabled: true,
-                                  applyLowRisk: chatMeta.summaryLongTermMemoryAutoApplyLowRisk === true,
-                                  provider,
-                                  model: conn.model,
-                                }
-                              : undefined,
-                        },
-                      );
-                      summaryEntries = Array.isArray(chatMeta.summaryEntries)
-                        ? (chatMeta.summaryEntries as ChatSummaryEntry[])
-                        : summaryEntries;
-                      createdEntry =
-                        summaryEntries.find((entry) => entry.id === createdEntryForSync.id) ?? createdEntryForSync;
-                    } catch (error) {
-                      logger.warn(error, "[ltm] Summary note sync failed after chat-summary agent result");
-                    }
-                  }
                   const combined = typeof updatedMeta.summary === "string" ? updatedMeta.summary : newText;
                   reply.raw.write(
                     `data: ${JSON.stringify({ type: "chat_summary", data: { summary: combined, entry: createdEntry, entries: summaryEntries } })}\n\n`,

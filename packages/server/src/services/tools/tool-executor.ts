@@ -13,11 +13,6 @@ import {
   compileChatSummaryEntries,
   type ChatSummaryEntry,
 } from "@marinara-engine/shared";
-import {
-  markSummaryEntryForLtmIfEnabled,
-  syncChatSummaryEntryToLongTermMemory,
-  type SummaryLtmChat,
-} from "../long-term-memory/summary-sync.js";
 
 export interface ToolExecutionResult {
   toolCallId: string;
@@ -49,6 +44,15 @@ export interface SpotifyCredentials {
 export type MetadataPatch = Record<string, unknown>;
 export type MetadataUpdater = (current: MetadataPatch) => MetadataPatch | Promise<MetadataPatch>;
 export type MetadataPatchInput = MetadataPatch | MetadataUpdater;
+
+type ToolExecutionChat = {
+  id: string;
+  name?: string;
+  mode?: string;
+  characterIds?: unknown;
+  groupId?: string | null;
+  metadata?: unknown;
+};
 
 const MAX_APPEND_BYTES = 16 * 1024;
 const MAX_CHAT_VARIABLE_KEY_LENGTH = 128;
@@ -131,7 +135,7 @@ const SPOTIFY_MOOD_EXPANSIONS: Array<[RegExp, string[]]> = [
 ];
 
 export interface ToolExecutionContext {
-  chat?: SummaryLtmChat;
+  chat?: ToolExecutionChat;
   gameState?: Record<string, unknown>;
   chatMeta?: Record<string, unknown>;
   onUpdateMetadata?: (patch: MetadataPatchInput) => Promise<MetadataPatch>;
@@ -493,24 +497,11 @@ async function appendChatSummary(
         enabled: true,
       },
     );
-    result.entry = markSummaryEntryForLtmIfEnabled(currentMeta, result.entry);
     result.entries = result.entries.map((entry) => (entry.id === result.entry.id ? result.entry : entry));
     result.summary = compileChatSummaryEntries(result.entries);
     createdEntry = result.entry;
     return { summary: result.summary, summaryEntries: result.entries };
   });
-  const createdEntryForSync = createdEntry as ChatSummaryEntry | null;
-  if (context.chat && createdEntryForSync?.ltm?.enabled === true) {
-    try {
-      await syncChatSummaryEntryToLongTermMemory(
-        { ...context.chat, metadata: { ...(context.chatMeta ?? {}), ...updated } },
-        createdEntryForSync,
-        { updateMetadata: context.onUpdateMetadata },
-      );
-    } catch (error) {
-      logger.warn(error, "[ltm] Summary note sync failed after append_chat_summary");
-    }
-  }
   return { summary: typeof updated.summary === "string" ? updated.summary : sanitizedText };
 }
 
