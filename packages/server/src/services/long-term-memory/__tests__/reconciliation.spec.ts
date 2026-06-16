@@ -547,11 +547,13 @@ test("policy config hides unenforced lifecycle knobs while accepting legacy file
   });
 });
 
-test("ltm scope accepts legacy chatId and multiple chatIds", () => {
+test("ltm scope ignores removed legacy scope keys", () => {
   assert.deepEqual(ltmScopeSchema.parse({ chatId: "chat_legacy" }), { chatId: "chat_legacy" });
   assert.deepEqual(ltmScopeSchema.parse({ chatIds: ["chat_a", "chat_b"] }), {
     chatIds: ["chat_a", "chat_b"],
   });
+  assert.throws(() => ltmScopeSchema.parse({ universe: "legacy_universe" }), /unrecognized_keys/i);
+  assert.throws(() => ltmScopeSchema.parse({ rpId: "legacy_rp" }), /unrecognized_keys/i);
 });
 
 test("ltm metadata index buckets legacy chatId and every chatIds entry", () => {

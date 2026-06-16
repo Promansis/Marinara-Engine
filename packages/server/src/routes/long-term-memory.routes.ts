@@ -329,11 +329,6 @@ function resolveChatLtmScope(chat: {
   characterIds?: unknown;
   metadata?: unknown;
 }) {
-  const meta = parseMetadata(chat.metadata);
-  const configuredScope =
-    meta.longTermMemoryScope && typeof meta.longTermMemoryScope === "object" && !Array.isArray(meta.longTermMemoryScope)
-      ? (meta.longTermMemoryScope as Record<string, unknown>)
-      : {};
   const characterIds = normalizeCharacterIds(chat.characterIds);
   return withMergedLtmScopeLinks(
     {

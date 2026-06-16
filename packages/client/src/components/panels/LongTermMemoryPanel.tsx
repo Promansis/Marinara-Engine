@@ -352,9 +352,7 @@ function NoteRow({
 }
 
 function compactScope(note: LtmNote) {
-  const SKIP_KEYS = new Set(["universe", "rpId"]);
   const scopeEntries = Object.entries(note.scope).flatMap(([key, value]) => {
-    if (SKIP_KEYS.has(key)) return [];
     if (Array.isArray(value)) return value.length ? [[key, value.join(", ")]] : [];
     return typeof value === "string" && value.trim() ? [[key, value]] : [];
   });

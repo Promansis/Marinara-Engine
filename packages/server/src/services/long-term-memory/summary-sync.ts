@@ -94,11 +94,7 @@ function normalizeCharacterIds(value: unknown): string[] {
   }
 }
 
-function resolveChatScope(chat: SummaryLtmChat, meta: Record<string, unknown>): LtmNote["scope"] {
-  const configured =
-    meta.longTermMemoryScope && typeof meta.longTermMemoryScope === "object" && !Array.isArray(meta.longTermMemoryScope)
-      ? (meta.longTermMemoryScope as Record<string, unknown>)
-      : {};
+function resolveChatScope(chat: SummaryLtmChat): LtmNote["scope"] {
   const characterIds = normalizeCharacterIds(chat.characterIds);
   return withMergedLtmScopeLinks(
     {
@@ -141,7 +137,6 @@ function evidenceForEntry(chat: SummaryLtmChat, entry: ChatSummaryEntry) {
 
 function buildSummaryNote(
   chat: SummaryLtmChat,
-  meta: Record<string, unknown>,
   entry: ChatSummaryEntry,
   noteId: string,
 ): LtmNote {
@@ -151,7 +146,7 @@ function buildSummaryNote(
     type: "source",
     status: "active",
     modes: [ltmModeForChatMode(chat.mode)],
-    scope: resolveChatScope(chat, meta),
+    scope: resolveChatScope(chat),
     tags: tagsForEntry(entry),
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -265,7 +260,7 @@ async function syncChatSummaryEntryToLongTermMemoryInner(
       return { noteId, synced: false, mutated };
     }
 
-    const nextNote = buildSummaryNote(chat, meta as Record<string, unknown>, entry, noteId);
+    const nextNote = buildSummaryNote(chat, entry, noteId);
     const existing = await storage.getNote(noteId);
     if (existing) {
       const nextSourceSection = nextNote.sections.source;

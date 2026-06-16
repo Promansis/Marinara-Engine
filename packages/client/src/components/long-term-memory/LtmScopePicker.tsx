@@ -161,7 +161,7 @@ export function LtmScopePicker({ value, onChange }: LtmScopePickerProps) {
         })}
         {!selectedChatIds.length && !selectedCharacterIds.length && (
           <span className="text-[0.6875rem] text-[var(--muted-foreground)]">
-            Available everywhere unless advanced fields are set.
+            Available everywhere unless a chat, group, or character scope is set.
           </span>
         )}
       </div>

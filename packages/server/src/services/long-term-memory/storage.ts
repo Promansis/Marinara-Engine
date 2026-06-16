@@ -296,7 +296,10 @@ export class LongTermMemoryStorage {
 
   private async readNoteFile(path: string, folder: (typeof LTM_VAULT_FOLDERS)[number]) {
     const raw = JSON.parse(await readFile(path, "utf8"));
-    const note = ltmNoteSchema.parse(raw);
+    const note = ltmNoteSchema.parse({
+      ...raw,
+      scope: normalizeStoredScope(raw.scope ?? {}),
+    });
     if (vaultFolderForNoteType(note.type) !== folder) {
       throw new Error(`Long-term memory note ${note.id} has type ${note.type} but is stored in ${folder}.`);
     }

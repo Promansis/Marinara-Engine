@@ -142,8 +142,6 @@ function scopeIsGlobal(scope: LtmScope) {
   return !(
     getLtmScopeChatIds(scope).length ||
     scope.groupId ||
-    scope.rpId ||
-    scope.universe ||
     scope.characterIds?.length
   );
 }

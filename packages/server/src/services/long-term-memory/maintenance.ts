@@ -6,6 +6,7 @@ import {
   ltmExtractionResponseSchema,
   ltmEventSchema,
   ltmNoteSchema,
+  ltmScopeSchema,
   withMergedLtmScopeLinks,
   type ChatSummaryEntry,
   type LtmDraftMutation,
@@ -80,6 +81,13 @@ function chatSummaryImportSourceId(chatId: string, entryId: string) {
 
 function evidenceSafeValue(value: string) {
   return value.trim().replace(/\s+/g, " ").slice(0, 200);
+}
+
+function normalizeLegacyNoteScope(scope: unknown) {
+  const parsed = ltmScopeSchema.parse(
+    scope && typeof scope === "object" && !Array.isArray(scope) ? scope : {},
+  );
+  return withMergedLtmScopeLinks(parsed, {});
 }
 
 export interface LtmIntegrityResult {
@@ -254,7 +262,10 @@ async function checkEventLogIntegrity(root: string, issues: IntegrityIssue[]) {
 }
 
 async function writeReplayNoteExact(root: string, note: LtmNote) {
-  const parsed = ltmNoteSchema.parse(note);
+  const parsed = ltmNoteSchema.parse({
+    ...note,
+    scope: normalizeLegacyNoteScope(note.scope),
+  });
   await writeJsonAtomic(notePathForId(parsed.id, parsed.type, root), parsed);
 }
 
@@ -269,7 +280,11 @@ export async function checkLongTermMemoryIntegrity(root = getLongTermMemoryRoot(
       .split(/[\\/]+/)
       .join("/");
     try {
-      const note = ltmNoteSchema.parse(JSON.parse(await readFile(file.path, "utf8")));
+      const raw = JSON.parse(await readFile(file.path, "utf8"));
+      const note = ltmNoteSchema.parse({
+        ...raw,
+        scope: normalizeLegacyNoteScope(raw.scope),
+      });
       notesById.set(note.id, note);
       if (vaultFolderForNoteType(note.type) !== file.folder) {
         issues.push({
@@ -354,7 +369,14 @@ export async function auditLongTermMemoryReplay(root = getLongTermMemoryRoot()):
           const payload = event.payload ?? {};
           try {
             if (payload.note) {
-              const note = ltmNoteSchema.parse(payload.note);
+              if (typeof payload.note !== "object" || Array.isArray(payload.note)) {
+                continue;
+              }
+              const rawNote = payload.note as Record<string, unknown>;
+              const note = ltmNoteSchema.parse({
+                ...rawNote,
+                scope: normalizeLegacyNoteScope(rawNote.scope),
+              });
               if (event.type.endsWith(".created")) {
                 await replayStorage.createNote(note, {
                   actor: "replay",
@@ -484,7 +506,11 @@ export async function repairLongTermMemory(
         let moved = 0;
         for (const file of await listVaultFiles(root)) {
           try {
-            ltmNoteSchema.parse(JSON.parse(await readFile(file.path, "utf8")));
+            const raw = JSON.parse(await readFile(file.path, "utf8"));
+            ltmNoteSchema.parse({
+              ...raw,
+              scope: normalizeLegacyNoteScope(raw.scope),
+            });
           } catch {
             await mkdir(join(quarantineDir, file.folder), { recursive: true });
             await rename(file.path, join(quarantineDir, file.folder, basename(file.path)));

@@ -217,8 +217,6 @@ export interface ChatMetadata {
   enableMemoryRecall?: boolean;
   /** When true, inject retrieved local long-term memory into generation prompts. Default: false. */
   enableLongTermMemory?: boolean;
-  /** Optional local long-term memory universe/RP scope for this chat. */
-  longTermMemoryScope?: { universe?: string; rpId?: string };
   /** Per-chat token budget for injected local long-term memory. Missing uses server retrieval defaults. */
   longTermMemoryBudgetTokens?: number;
   /** Per-chat maximum selected long-term memory chunks for prompt injection. */

@@ -137,8 +137,6 @@ export const ltmSectionKeySchema = z
 
 export const ltmScopeSchema = z
   .object({
-    universe: ltmIdentifierSchema.optional(),
-    rpId: ltmIdentifierSchema.optional(),
     chatId: z.string().min(1).max(120).optional(),
     chatIds: z.array(z.string().min(1).max(120)).max(100).optional(),
     groupId: z.string().min(1).max(120).optional(),

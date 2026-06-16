@@ -300,12 +300,7 @@ function ltmModeForChatMode(mode: string): "conversation" | "roleplay" | "game" 
 
 function resolveLtmScope(
   chat: { id: string; groupId?: string | null; characterIds?: string[] },
-  chatMeta: Record<string, unknown>,
 ) {
-  const configuredScope =
-    chatMeta.longTermMemoryScope && typeof chatMeta.longTermMemoryScope === "object"
-      ? (chatMeta.longTermMemoryScope as Record<string, unknown>)
-      : {};
   return withMergedLtmScopeLinks(
     {
       chatId: chat.id,
@@ -5309,7 +5304,6 @@ export async function generateRoutes(app: FastifyInstance) {
           const ltmContextMessages = parseLongTermMemoryContextMessages(chatMeta.longTermMemoryRecallContextMessages);
           const ltmScope = resolveLtmScope(
             { id: input.chatId, groupId: chat.groupId, characterIds: promptCharacterIds },
-            chatMeta,
           );
           await recordLtmDebugEvent({
             operationId: ltmInjectionOperationId,
