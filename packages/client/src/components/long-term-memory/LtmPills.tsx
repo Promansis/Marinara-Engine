@@ -17,7 +17,7 @@ export function StatusPill({
         tone === "warn" && "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-200",
         tone === "bad" &&
           "border-[var(--destructive)]/30 bg-[var(--destructive)]/10 text-[var(--destructive)]",
-        tone === "neutral" && "border-[var(--border)] bg-[var(--muted)]/55 text-[var(--muted-foreground)]",
+        tone === "neutral" && "border-[var(--border)] bg-[var(--secondary)]/70 text-[var(--muted-foreground)]",
       )}
     >
       {label}
@@ -44,7 +44,7 @@ export function ToolButton({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition-[background-color,color,box-shadow,transform] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold shadow-sm transition-[background-color,color,box-shadow,transform] hover:shadow-md active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:shadow-sm",
         tone === "primary" &&
           "bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm hover:brightness-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60",
         tone === "secondary" &&

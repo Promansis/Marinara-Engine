@@ -5,11 +5,25 @@ export const microLabelClassName =
 
 export const helperTextClassName = "text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]";
 
-export const sectionCardClassName = "rounded-xl bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]";
+export const sectionCardClassName =
+  "rounded-xl bg-[var(--secondary)]/35 p-3 shadow-sm ring-1 ring-[var(--border)]";
 
-export const insetSectionCardClassName = "rounded-xl bg-[var(--background)]/70 p-3 ring-1 ring-[var(--border)]/80";
+export const insetSectionCardClassName =
+  "rounded-xl bg-[var(--background)]/70 p-3 shadow-inner ring-1 ring-[var(--border)]/80";
 
-export const modalIntroCardClassName = "rounded-xl bg-[var(--secondary)]/25 p-3 ring-1 ring-[var(--border)]";
+export const modalIntroCardClassName =
+  "rounded-2xl bg-[var(--secondary)]/30 p-3 shadow-sm ring-1 ring-[var(--border)]";
+
+export const panelIntroCardClassName =
+  "overflow-hidden rounded-2xl bg-[var(--secondary)]/35 p-3 shadow-sm ring-1 ring-[var(--border)]";
+
+export const listRowClassName =
+  "rounded-xl bg-[var(--card)]/70 p-3 shadow-sm ring-1 ring-[var(--border)] transition-[background-color,box-shadow,transform] hover:bg-[var(--accent)]/35 hover:shadow-md hover:ring-[var(--ring)]/25";
+
+export const selectedListRowClassName = "bg-[var(--accent)]/60 shadow-md ring-[var(--ring)]/35";
+
+export const emptyStateClassName =
+  "rounded-2xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-center text-xs text-[var(--muted-foreground)]";
 
 export const actionRowClassName = "flex flex-wrap items-center gap-2 border-t border-[var(--border)]/60 pt-4";
 
