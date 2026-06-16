@@ -1,5 +1,6 @@
 import type { LtmBudgetedChunk } from "./budget.js";
 import { cleanLongTermMemoryChunkText } from "./chunking.js";
+import type { ChatMessage } from "../llm/base-provider.js";
 
 const NOTE_TYPE_LABELS: Record<string, string> = {
   character: "CHARACTERS",
@@ -40,4 +41,23 @@ export function formatLongTermMemoryBlock(chunks: LtmBudgetedChunk[]) {
   }
 
   return sections.join("\n\n");
+}
+
+export function injectLongTermMemoryPromptBlock(
+  messages: ChatMessage[],
+  chunks: LtmBudgetedChunk[],
+): { block: string; insertAt: number; inserted: boolean } {
+  const block = formatLongTermMemoryBlock(chunks);
+  if (!block) {
+    return { block, insertAt: messages.length, inserted: false };
+  }
+
+  const firstChatIdx = messages.findIndex((message) => message.role === "user" || message.role === "assistant");
+  const insertAt = firstChatIdx >= 0 ? firstChatIdx : messages.length;
+  messages.splice(insertAt, 0, {
+    role: "system",
+    content: block,
+    contextKind: "injection",
+  });
+  return { block, insertAt, inserted: true };
 }

@@ -17,7 +17,11 @@ import { applyLtmBudget } from "../budget.js";
 import { LongTermMemoryDraftStore } from "../draft-store.js";
 import { checkLongTermMemoryIntegrity } from "../maintenance.js";
 import { getLongTermMemoryDirectories } from "../paths.js";
-import { formatLongTermMemoryBlock } from "../prompt.js";
+import { formatLongTermMemoryBlock, injectLongTermMemoryPromptBlock } from "../prompt.js";
+import {
+  applyGenerationLongTermMemoryInjection,
+  buildGenerationLongTermMemoryPlan,
+} from "../generation-injection.js";
 import { rebuildLongTermMemoryIndexes } from "../rebuild.js";
 import {
   applyLongTermMemoryDraft,
@@ -35,6 +39,9 @@ import { getLtmExtractionConfig, updateLtmExtractionConfig } from "../extraction
 import { extractLongTermMemoryFromSourceNote } from "../source-extraction.js";
 import { applyLtmScopeLinksToDerivedNotes } from "../scope-links.js";
 import type { LtmBudgetedChunk } from "../budget.js";
+import type { ChatMessage } from "../../llm/base-provider.js";
+import type { RetrieveLongTermMemoryInput } from "../retrieval.js";
+import { assemblePrompt, type AssemblerInput } from "../../prompt/index.js";
 
 const timestamp = "2026-06-10T00:00:00.000Z";
 const sourceHash = "a".repeat(64);
@@ -121,6 +128,246 @@ test("long-term memory prompt injection contains prose only", () => {
 
   assert.equal(block, "[TONE]\nA sample instruction remains available for later retrieval.");
   assert.doesNotMatch(block, /<long_term_memory>|tier:|reasons:|note:|section:|chat:|group:|characters:|graph:/);
+});
+
+test("long-term memory prompt injection inserts a system message before chat history", () => {
+  const messages: ChatMessage[] = [
+    { role: "system", content: "System prelude", contextKind: "prompt" as const },
+    { role: "user", content: "Where did Mara leave the key?" },
+    { role: "assistant", content: "I think it was near the archive." },
+  ];
+
+  const result = injectLongTermMemoryPromptBlock(messages, [
+    {
+      chunk: {
+        id: "world_archive_key::facts",
+        noteId: "world_archive_key",
+        sectionKey: "facts",
+        text: "Mara hid the archive key behind the clock in the tower foyer.",
+        noteType: "world",
+        status: "active",
+        scope: {},
+        tags: ["typed_memory"],
+        updatedAt: timestamp,
+        sourceHash,
+      },
+      score: 1,
+      reasons: ["bm25"],
+      lanes: ["bm25"],
+      tier: 1,
+      estimatedTokens: 16,
+    } satisfies LtmBudgetedChunk,
+  ]);
+
+  assert.equal(result.inserted, true);
+  assert.equal(result.insertAt, 1);
+  assert.equal(result.block, "[WORLD]\nMara hid the archive key behind the clock in the tower foyer.");
+  assert.deepEqual(messages.map((message) => message.role), ["system", "system", "user", "assistant"]);
+  assert.equal(messages[1]?.contextKind, "injection");
+  assert.equal(messages[1]?.content, result.block);
+});
+
+test("generation long-term memory uses chat retrieval settings and injects after prompt setup before history", async () => {
+  const finalMessages: ChatMessage[] = [
+    { role: "system", content: "<persona>\nMara persona setup\n</persona>", contextKind: "prompt" as const },
+    { role: "system", content: "<output_format>\nReply richly.\n</output_format>", contextKind: "prompt" as const },
+    { role: "user", content: "Where is the archive key?", contextKind: "history" as const },
+    { role: "assistant", content: "I need to think about Mara's habits.", contextKind: "history" as const },
+  ];
+
+  const plan = buildGenerationLongTermMemoryPlan({
+    chatId: "chat_test",
+    chatMode: "roleplay",
+    groupId: "group_test",
+    promptCharacterIds: ["char_mara"],
+    activeCharacterNames: ["Mara"],
+    inputMessages: [
+      { role: "assistant", content: "Earlier archive discussion." },
+      { role: "user", content: "Where is the archive key?" },
+      { role: "assistant", content: "I need to think about Mara's habits." },
+      { role: "user", content: "Did she hide it near the tower?" },
+      { role: "assistant", content: "Maybe." },
+      { role: "user", content: "Check your memory." },
+    ],
+    chatMeta: {
+      enableLongTermMemory: true,
+      longTermMemoryBudgetTokens: 99999,
+      longTermMemoryMaxChunks: 999,
+      longTermMemoryScoreThreshold: 2,
+      longTermMemoryRecallStyle: "story",
+      longTermMemoryRecallContextMessages: 99,
+      longTermMemoryIncludeResolved: true,
+      longTermMemoryDebug: true,
+    },
+    userMessage: "Check your memory.",
+    generationGuide: "Focus on emotional continuity.",
+    lorebookGenerationTriggers: ["chat", "roleplay", "archive"],
+    requestDebug: false,
+    mentionedCharacterNames: ["Jules"],
+  });
+
+  const captured = { current: null as RetrieveLongTermMemoryInput | null };
+  const result = await applyGenerationLongTermMemoryInjection({
+    plan,
+    finalMessages,
+    retrieveLongTermMemoryFn: async (input) => {
+      captured.current = input;
+      return {
+        chunks: [
+          {
+            chunk: {
+              id: "world_archive_key::facts",
+              noteId: "world_archive_key",
+              sectionKey: "facts",
+              text: "Mara hid the archive key behind the clock in the tower foyer.",
+              noteType: "world",
+              status: "active",
+              scope: {},
+              tags: ["typed_memory"],
+              updatedAt: timestamp,
+              sourceHash,
+            },
+            score: 1,
+            reasons: ["bm25"],
+            lanes: ["bm25"],
+            tier: 1,
+            estimatedTokens: 16,
+          },
+        ],
+        usedTokens: 16,
+        maxTokens: 16_384,
+        embeddingsAvailable: false,
+        warnings: [],
+      };
+    },
+  });
+
+  if (!captured.current) {
+    throw new Error("Expected retrieval input to be captured");
+  }
+  const retrievalInput = captured.current;
+  assert.equal(retrievalInput.maxTokens, 16_384);
+  assert.equal(retrievalInput.maxChunks, 100);
+  assert.equal(retrievalInput.minScore, 1);
+  assert.equal(retrievalInput.includeResolved, true);
+  assert.equal(retrievalInput.debug, true);
+  assert.equal(retrievalInput.explain, true);
+  assert.equal(retrievalInput.semanticWeight, 0.45);
+  assert.equal(retrievalInput.lexicalWeight, 0.25);
+  assert.equal(retrievalInput.graphWeight, 0.35);
+  assert.equal(retrievalInput.metadataWeight, 0.8);
+  assert.equal(retrievalInput.scope?.chatId, "chat_test");
+  assert.deepEqual(retrievalInput.scope?.chatIds, ["chat_test"]);
+  assert.equal(retrievalInput.scope?.groupId, "group_test");
+  assert.deepEqual(retrievalInput.scope?.characterIds, ["char_mara"]);
+  assert.deepEqual(retrievalInput.characterIds, ["char_mara"]);
+  assert.deepEqual(retrievalInput.mentionedCharacterNames, ["Mara", "Jules"]);
+  assert.deepEqual(retrievalInput.recentMessages, [
+    "Earlier archive discussion.",
+    "Where is the archive key?",
+    "I need to think about Mara's habits.",
+    "Did she hide it near the tower?",
+    "Maybe.",
+    "Check your memory.",
+  ]);
+  assert.match(retrievalInput.queryText ?? "", /Active characters: Mara/);
+  assert.match(retrievalInput.queryText ?? "", /Generation triggers: chat, roleplay, archive/);
+  assert.match(retrievalInput.queryText ?? "", /Generation guide:\nFocus on emotional continuity\./);
+  assert.equal(result.injection.inserted, true);
+  assert.equal(result.injection.insertAt, 2);
+  assert.equal(result.injection.insertedBeforeRole, "user");
+  assert.deepEqual(finalMessages.map((message) => message.role), ["system", "system", "system", "user", "assistant"]);
+  assert.equal(finalMessages[2]?.contextKind, "injection");
+  assert.equal(finalMessages[2]?.content, "[WORLD]\nMara hid the archive key behind the clock in the tower foyer.");
+});
+
+test("assembler injects long-term memory before chat summary fallback to avoid duplicate context", async () => {
+  const input = {
+    db: {} as AssemblerInput["db"],
+    preset: {
+      id: "preset_test",
+      name: "Test Preset",
+      description: "",
+      sectionOrder: JSON.stringify(["system_section", "history_section"]),
+      groupOrder: JSON.stringify([]),
+      variableGroups: JSON.stringify([]),
+      variableValues: JSON.stringify({}),
+      parameters: JSON.stringify({}),
+      wrapFormat: "xml",
+      defaultChoices: JSON.stringify({}),
+      isDefault: "false",
+      author: "",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    } as AssemblerInput["preset"],
+    sections: [
+      {
+        id: "system_section",
+        presetId: "preset_test",
+        identifier: "system",
+        name: "System",
+        content: "<persona>\nBase system prompt\n</persona>",
+        role: "system",
+        enabled: "true",
+        isMarker: "false",
+        groupId: null,
+        markerConfig: null,
+        injectionPosition: "ordered",
+        injectionDepth: 0,
+        injectionOrder: 100,
+        forbidOverrides: "false",
+      },
+      {
+        id: "history_section",
+        presetId: "preset_test",
+        identifier: "history",
+        name: "History",
+        content: "",
+        role: "user",
+        enabled: "true",
+        isMarker: "true",
+        groupId: null,
+        markerConfig: JSON.stringify({ type: "chat_history" }),
+        injectionPosition: "ordered",
+        injectionDepth: 0,
+        injectionOrder: 100,
+        forbidOverrides: "false",
+      },
+    ] as AssemblerInput["sections"],
+    groups: [],
+    choiceBlocks: [],
+    chatChoices: {},
+    chatId: "chat_test",
+    characterIds: [],
+    personaId: null,
+    personaName: "User",
+    personaDescription: "",
+    personaFields: {},
+    chatMessages: [
+      { role: "user", content: "Where is the archive key?" },
+      { role: "assistant", content: "Let me think." },
+    ],
+    lorebookScanMessages: [],
+    chatSummary: "Summary says Mara hid the archive key behind the clock.",
+    longTermMemoryBlock: "[WORLD]\nMara hid the archive key behind the clock in the tower foyer.",
+    suppressChatSummary: true,
+    enableAgents: false,
+    activeAgentIds: [],
+    activeLorebookIds: [],
+    excludedLorebookIds: [],
+    excludedLorebookSourceAgentIds: [],
+    generationTriggers: ["chat"],
+  } satisfies AssemblerInput & {
+    longTermMemoryBlock: string;
+    suppressChatSummary: boolean;
+  };
+
+  const result = await assemblePrompt(input);
+  const systemPrompt = result.messages.find((message) => message.role === "system")?.content ?? "";
+
+  assert.match(systemPrompt, /\[WORLD\]\nMara hid the archive key behind the clock in the tower foyer\./);
+  assert.doesNotMatch(systemPrompt, /Summary says Mara hid the archive key behind the clock/);
+  assert.deepEqual(result.messages.map((message) => message.role), ["system", "user", "assistant"]);
 });
 
 test("long-term memory budget uses prompt-clean text for legacy chunks", () => {

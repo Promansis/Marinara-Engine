@@ -25,7 +25,6 @@ import {
   compileChatSummaryEntries,
   applyQuestUpdatesToPlayerStats,
   buildQuestJournalData,
-  withMergedLtmScopeLinks,
 } from "@marinara-engine/shared";
 import type {
   AgentContext,
@@ -40,7 +39,6 @@ import type {
   PlayerStats,
   LorebookEntryTimingState,
   ChatSummaryEntry,
-  LongTermMemoryRecallStyle,
 } from "@marinara-engine/shared";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
@@ -155,10 +153,13 @@ import { eq } from "drizzle-orm";
 import { PROFESSOR_MARI_ID } from "@marinara-engine/shared";
 import { chunkAndEmbedMessages, embedMemoryRecallTexts, recallMemories } from "../services/memory-recall.js";
 import { resolveMemoryRecallEmbeddingSource } from "../services/memory-recall-embedding.js";
-import { retrieveLongTermMemory } from "../services/long-term-memory/retrieval.js";
-import { formatLongTermMemoryBlock } from "../services/long-term-memory/prompt.js";
 import { recordLtmDebugEvent } from "../services/long-term-memory/debug-log.js";
 import { recordLongTermMemoryInjection } from "../services/long-term-memory/usage.js";
+import {
+  applyGenerationLongTermMemoryInjection,
+  buildGenerationLongTermMemoryPlan,
+  retrieveGenerationLongTermMemoryBlock,
+} from "../services/long-term-memory/generation-injection.js";
 import { postToDiscordWebhook } from "../services/discord-webhook.js";
 import {
   appendGenerationTailMessages,
@@ -292,78 +293,6 @@ function normalizeLtmIdentifier(value: unknown): string | undefined {
 function ltmModeForChatMode(mode: string): "conversation" | "roleplay" | "game" {
   if (mode === "conversation" || mode === "game") return mode;
   return "roleplay";
-}
-
-function resolveLtmScope(
-  chat: { id: string; groupId?: string | null; characterIds?: string[] },
-) {
-  return withMergedLtmScopeLinks(
-    {
-      chatId: chat.id,
-      ...(chat.groupId ? { groupId: chat.groupId } : {}),
-      ...(chat.characterIds?.length ? { characterIds: chat.characterIds } : {}),
-    },
-    { chatIds: [chat.id] },
-  );
-}
-
-function parseLongTermMemoryBudgetTokens(value: unknown) {
-  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
-  return Math.max(128, Math.min(16_384, Math.floor(value)));
-}
-
-function parseLongTermMemoryMaxChunks(value: unknown) {
-  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
-  return Math.max(1, Math.min(100, Math.floor(value)));
-}
-
-function parseLongTermMemoryScoreThreshold(value: unknown) {
-  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
-  return Math.max(0, Math.min(1, value));
-}
-
-function parseLongTermMemoryContextMessages(value: unknown) {
-  if (typeof value !== "number" || !Number.isFinite(value)) return 4;
-  return Math.max(1, Math.min(20, Math.floor(value)));
-}
-
-const LTM_RECALL_STYLE_WEIGHTS = {
-  balanced: {
-    semanticWeight: 0.6,
-    lexicalWeight: 0.3,
-    graphWeight: 0.1,
-    metadataWeight: 1,
-  },
-  exact: {
-    semanticWeight: 0.15,
-    lexicalWeight: 1,
-    graphWeight: 0,
-    metadataWeight: 0.3,
-  },
-  broad: {
-    semanticWeight: 0.55,
-    lexicalWeight: 0.2,
-    graphWeight: 0.8,
-    metadataWeight: 0.8,
-  },
-  story: {
-    semanticWeight: 0.45,
-    lexicalWeight: 0.25,
-    graphWeight: 0.35,
-    metadataWeight: 0.8,
-  },
-} as const satisfies Record<
-  LongTermMemoryRecallStyle,
-  {
-    semanticWeight: number;
-    lexicalWeight: number;
-    graphWeight: number;
-    metadataWeight: number;
-  }
->;
-
-function parseLongTermMemoryRecallStyle(value: unknown): LongTermMemoryRecallStyle {
-  return value === "exact" || value === "broad" || value === "story" ? value : "balanced";
 }
 
 function parsePromptPresetChoices(value: unknown): Record<string, string | string[]> | null {
@@ -2517,6 +2446,82 @@ export async function generateRoutes(app: FastifyInstance) {
             presets.listGroups(presetId),
             presets.listChoiceBlocksForPreset(presetId),
           ]);
+          const presetGameState = chatMode === "game" ? await selectedGameStateForPrompt() : null;
+          let presetLongTermMemory:
+            | {
+                operationId: string;
+                startedAt: number;
+                plan: ReturnType<typeof buildGenerationLongTermMemoryPlan>;
+                retrieval: Awaited<ReturnType<typeof retrieveGenerationLongTermMemoryBlock>>["retrieval"];
+                block: string;
+              }
+            | null = null;
+          if (chatMeta.enableLongTermMemory === true) {
+            const startedAt = Date.now();
+            const operationId = randomUUID();
+            const plan = buildGenerationLongTermMemoryPlan({
+              chatId: input.chatId,
+              chatMode,
+              groupId: chat.groupId,
+              promptCharacterIds,
+              activeCharacterNames: promptMacroContext.characters,
+              inputMessages: currentInputMessages(),
+              chatMeta,
+              userMessage: input.userMessage ?? undefined,
+              generationGuide: typeof input.generationGuide === "string" ? input.generationGuide : undefined,
+              lorebookGenerationTriggers,
+              gameState: presetGameState,
+              requestDebug,
+              mentionedCharacterNames: (input.mentionedCharacterNames as string[] | undefined) ?? [],
+              embeddingSource: memoryRecallEmbeddingSource ?? undefined,
+            });
+            await recordLtmDebugEvent({
+              operationId,
+              phase: "injection",
+              action: "prompt_injection",
+              status: "started",
+              source: "chat",
+              sourceId: input.chatId,
+              counts: {
+                promptCharacters: finalMessages.reduce((total, message) => total + message.content.length, 0),
+                promptMessages: finalMessages.length,
+              },
+              details: {
+                chatMode,
+                characterIds: promptCharacterIds,
+                budgetTokens: plan.budgetTokens ?? null,
+                maxChunks: plan.maxChunks ?? null,
+                scoreThreshold: plan.scoreThreshold ?? null,
+                recallStyle: plan.recallStyle,
+                contextMessages: plan.contextMessages,
+                scope: plan.scope,
+                promptAssembly: "preset",
+              },
+            });
+            try {
+              const { retrieval, block } = await retrieveGenerationLongTermMemoryBlock({ plan });
+              presetLongTermMemory = {
+                operationId,
+                startedAt,
+                plan,
+                retrieval,
+                block,
+              };
+            } catch (err) {
+              await recordLtmDebugEvent({
+                operationId,
+                phase: "injection",
+                action: "prompt_injection",
+                status: "error",
+                durationMs: Date.now() - startedAt,
+                source: "chat",
+                sourceId: input.chatId,
+                message: "Long-term memory retrieval failed during generation; injection was skipped.",
+                error: err,
+              });
+              logger.warn(err, "[ltm] Retrieval failed during generation; skipping preset long-term memory injection");
+            }
+          }
           for (const section of sections) {
             if (section.enabled !== "true" || section.isMarker !== "true" || !section.markerConfig) continue;
             try {
@@ -2545,6 +2550,7 @@ export async function generateRoutes(app: FastifyInstance) {
               ];
             }),
           );
+          const presetLongTermMemoryBlock = presetLongTermMemory?.block.trim() || "";
 
           const assemblerInput: AssemblerInput = {
             db: app.db,
@@ -2571,6 +2577,8 @@ export async function generateRoutes(app: FastifyInstance) {
             chatMessages: mappedMessages,
             lorebookScanMessages: toLorebookScanMessages(),
             chatSummary: activeChatSummary,
+            longTermMemoryBlock: presetLongTermMemoryBlock || null,
+            suppressChatSummary: presetLongTermMemoryBlock.length > 0,
             enableAgents: chatEnableAgents,
             activeAgentIds: chatActiveAgentIds,
             activeLorebookIds: chatActiveLorebookIds,
@@ -2582,7 +2590,7 @@ export async function generateRoutes(app: FastifyInstance) {
               (chatMeta.entryStateOverrides as Record<string, { ephemeral?: number | null; enabled?: boolean }>) ??
               undefined,
             entryTimingStates: (chatMeta.entryTimingStates as Record<string, LorebookEntryTimingState>) ?? undefined,
-            gameState: chatMode === "game" ? await selectedGameStateForPrompt() : null,
+            gameState: presetGameState,
             generationTriggers: lorebookGenerationTriggers,
             groupScenarioOverrideText:
               typeof chatMeta.groupScenarioText === "string" && (chatMeta.groupScenarioText as string).trim()
@@ -2593,6 +2601,129 @@ export async function generateRoutes(app: FastifyInstance) {
           };
 
           const assembled = await assemblePrompt(assemblerInput);
+          if (presetLongTermMemory) {
+            const { operationId, startedAt, plan, retrieval } = presetLongTermMemory;
+            const baseDecisionDetails = {
+              outcome: retrieval.chunks.length > 0 ? "injected" : "skipped",
+              querySummary: {
+                queryCharacters: plan.queryText.length,
+                recentUserMessageCharacters: plan.lastUserMessageText.length,
+                activeCharacters: plan.activeCharacterNames.slice(0, 20),
+                generationTriggerCount: plan.generationTriggerCount,
+                hasGenerationGuide: plan.hasGenerationGuide,
+                hasGameState: plan.hasGameState,
+              },
+              embeddingsAvailable: retrieval.embeddingsAvailable,
+              weights: retrieval.debug?.weights,
+              funnel: retrieval.debug?.funnel,
+              selectedChunks: retrieval.debug?.selected,
+              rejectedCandidates: retrieval.debug?.rejected,
+              warnings: retrieval.warnings,
+              budget: {
+                usedTokens: retrieval.usedTokens,
+                maxTokens: retrieval.maxTokens,
+              },
+            };
+            const firstHistoryMessage = assembled.messages.find((message) => message.role === "user" || message.role === "assistant");
+            const insertedBeforeRole = firstHistoryMessage?.role ?? null;
+            const systemPromptCount = assembled.messages.filter((message) => message.role === "system").length;
+
+            if (retrieval.chunks.length > 0 && presetLongTermMemoryBlock) {
+              await recordLtmDebugEvent({
+                operationId,
+                phase: "injection",
+                action: "prompt_injection",
+                status: "ok",
+                durationMs: Date.now() - startedAt,
+                source: "chat",
+                sourceId: input.chatId,
+                counts: {
+                  chunks: retrieval.chunks.length,
+                  usedTokens: retrieval.usedTokens,
+                  maxTokens: retrieval.maxTokens,
+                  warnings: retrieval.warnings.length,
+                  insertedAt: 0,
+                  blockCharacters: presetLongTermMemoryBlock.length,
+                },
+                details: {
+                  decision: {
+                    ...baseDecisionDetails,
+                    promptInsertion: {
+                      insertedAt: 0,
+                      insertedBeforeRole,
+                      blockCharacters: presetLongTermMemoryBlock.length,
+                      contextKind: "prompt",
+                      strategy: "assembler_fallback",
+                      suppressedChatSummary: true,
+                      systemPromptCount,
+                    },
+                  },
+                  insertedBeforeRole,
+                  warnings: retrieval.warnings,
+                  chunks: retrieval.chunks.map((chunk) => ({
+                    noteId: chunk.chunk.noteId,
+                    sectionKey: chunk.chunk.sectionKey,
+                    tier: chunk.tier,
+                    estimatedTokens: chunk.estimatedTokens,
+                    reasons: chunk.reasons,
+                    lanes: chunk.lanes,
+                    score: chunk.score,
+                  })),
+                },
+              });
+              try {
+                await recordLongTermMemoryInjection(retrieval.chunks);
+              } catch (err) {
+                logger.warn(err, "[ltm] Failed to record long-term memory usage after prompt assembly");
+              }
+              logger.debug(
+                "[ltm] Injected %d long-term memory chunks (~%d/%d tokens) into preset prompt for chat %s",
+                retrieval.chunks.length,
+                retrieval.usedTokens,
+                retrieval.maxTokens,
+                input.chatId,
+              );
+            } else {
+              await recordLtmDebugEvent({
+                operationId,
+                phase: "injection",
+                action: "prompt_injection",
+                status: "skipped",
+                durationMs: Date.now() - startedAt,
+                source: "chat",
+                sourceId: input.chatId,
+                message: "No long-term memory chunks matched this generation.",
+                counts: {
+                  usedTokens: retrieval.usedTokens,
+                  maxTokens: retrieval.maxTokens,
+                  warnings: retrieval.warnings.length,
+                },
+                details: {
+                  decision: {
+                    ...baseDecisionDetails,
+                    promptInsertion: {
+                      insertedAt: null,
+                      insertedBeforeRole: null,
+                      blockCharacters: 0,
+                      contextKind: "prompt",
+                      strategy: "assembler_fallback",
+                      suppressedChatSummary: false,
+                    },
+                  },
+                  warnings: retrieval.warnings,
+                  queryCharacters: plan.queryText.length,
+                },
+              });
+              if (plan.debugEnabled) {
+                logger.debug(
+                  "[ltm] No long-term memory chunks injected for preset prompt in chat %s%s",
+                  input.chatId,
+                  retrieval.warnings.length > 0 ? `; warnings: ${retrieval.warnings.join("; ")}` : "",
+                );
+              }
+            }
+            logger.debug("[timing] Long-term memory retrieval: %dms", Date.now() - startedAt);
+          }
           presetHandledLorebooks =
             presetHasLorebookMarker(sections) ||
             assembled.lorebookDepthEntriesCount > 0 ||
@@ -5286,21 +5417,26 @@ export async function generateRoutes(app: FastifyInstance) {
         const baseGameStateSnapshot = latestGameState;
         const allowLatestGameStateFallback = !input.regenerateMessageId;
         const gameState = latestGameState ? parseGameStateRow(latestGameState as Record<string, unknown>) : null;
-
         // ── Long-term memory: opt-in local retrieval before final context fitting ──
-        if (chatMeta.enableLongTermMemory === true) {
+        if (chatMeta.enableLongTermMemory === true && !presetId) {
           const _tLtm = Date.now();
           const ltmInjectionOperationId = randomUUID();
-          const ltmBudgetTokens = parseLongTermMemoryBudgetTokens(chatMeta.longTermMemoryBudgetTokens);
-          const ltmMaxChunks = parseLongTermMemoryMaxChunks(chatMeta.longTermMemoryMaxChunks);
-          const ltmScoreThreshold = parseLongTermMemoryScoreThreshold(chatMeta.longTermMemoryScoreThreshold);
-          const ltmRecallStyle = parseLongTermMemoryRecallStyle(chatMeta.longTermMemoryRecallStyle);
-          const ltmRecallWeights = LTM_RECALL_STYLE_WEIGHTS[ltmRecallStyle];
-          const ltmDebugEnabled = chatMeta.longTermMemoryDebug === true || requestDebug;
-          const ltmContextMessages = parseLongTermMemoryContextMessages(chatMeta.longTermMemoryRecallContextMessages);
-          const ltmScope = resolveLtmScope(
-            { id: input.chatId, groupId: chat.groupId, characterIds: promptCharacterIds },
-          );
+          const ltmPlan = buildGenerationLongTermMemoryPlan({
+            chatId: input.chatId,
+            chatMode,
+            groupId: chat.groupId,
+            promptCharacterIds,
+            activeCharacterNames: charInfo.map((character) => character.name),
+            inputMessages: currentInputMessages(),
+            chatMeta,
+            userMessage: input.userMessage ?? undefined,
+            generationGuide: typeof input.generationGuide === "string" ? input.generationGuide : undefined,
+            lorebookGenerationTriggers,
+            gameState,
+            requestDebug,
+            mentionedCharacterNames: (input.mentionedCharacterNames as string[] | undefined) ?? [],
+            embeddingSource: memoryRecallEmbeddingSource ?? undefined,
+          });
           await recordLtmDebugEvent({
             operationId: ltmInjectionOperationId,
             phase: "injection",
@@ -5315,64 +5451,28 @@ export async function generateRoutes(app: FastifyInstance) {
             details: {
               chatMode,
               characterIds: promptCharacterIds,
-              budgetTokens: ltmBudgetTokens ?? null,
-              maxChunks: ltmMaxChunks ?? null,
-              scoreThreshold: ltmScoreThreshold ?? null,
-              recallStyle: ltmRecallStyle,
-              contextMessages: ltmContextMessages,
-              scope: ltmScope,
+              budgetTokens: ltmPlan.budgetTokens ?? null,
+              maxChunks: ltmPlan.maxChunks ?? null,
+              scoreThreshold: ltmPlan.scoreThreshold ?? null,
+              recallStyle: ltmPlan.recallStyle,
+              contextMessages: ltmPlan.contextMessages,
+              scope: ltmPlan.scope,
             },
           });
           try {
-            const lastUserMsg = [...currentInputMessages()].reverse().find((message) => message.role === "user");
-            const generationGuideText =
-              typeof input.generationGuide === "string" && input.generationGuide.trim()
-                ? `Generation guide:\n${input.generationGuide.trim()}`
-                : "";
-            const gameStateQuery =
-              chatMode === "game" && gameState ? `Game state:\n${JSON.stringify(gameState).slice(0, 4_000)}` : "";
-            const ltmQueryText = [
-              lastUserMsg?.content ?? input.userMessage ?? "",
-              charInfo.length > 0 ? `Active characters: ${charInfo.map((character) => character.name).join(", ")}` : "",
-              lorebookGenerationTriggers.length > 0
-                ? `Generation triggers: ${lorebookGenerationTriggers.join(", ")}`
-                : "",
-              generationGuideText,
-              gameStateQuery,
-            ]
-              .filter((part) => part.trim().length > 0)
-              .join("\n\n");
-            const retrieval = await retrieveLongTermMemory({
-              queryText: ltmQueryText,
-              recentUserMessage: lastUserMsg?.content ?? input.userMessage ?? undefined,
-              recentMessages: [...currentInputMessages()]
-                .slice(-ltmContextMessages)
-                .map((m) => m.content)
-                .filter(Boolean),
-              mentionedCharacterNames: [
-                ...charInfo.map((character) => character.name),
-                ...((input.mentionedCharacterNames as string[] | undefined) ?? []),
-              ],
-              scope: ltmScope,
-              characterIds: promptCharacterIds,
-              includeResolved: chatMeta.longTermMemoryIncludeResolved === true,
-              maxChunks: ltmMaxChunks,
-              maxTokens: ltmBudgetTokens,
-              minScore: ltmScoreThreshold,
-              ...ltmRecallWeights,
-              embeddingSource: memoryRecallEmbeddingSource ?? undefined,
-              debug: ltmDebugEnabled,
-              explain: ltmDebugEnabled,
+            const { retrieval, injection } = await applyGenerationLongTermMemoryInjection({
+              plan: ltmPlan,
+              finalMessages,
             });
             const baseDecisionDetails = {
               outcome: retrieval.chunks.length > 0 ? "injected" : "skipped",
               querySummary: {
-                queryCharacters: ltmQueryText.length,
-                recentUserMessageCharacters: (lastUserMsg?.content ?? input.userMessage ?? "").length,
-                activeCharacters: charInfo.map((character) => character.name).slice(0, 20),
-                generationTriggerCount: lorebookGenerationTriggers.length,
-                hasGenerationGuide: Boolean(generationGuideText),
-                hasGameState: Boolean(gameStateQuery),
+                queryCharacters: ltmPlan.queryText.length,
+                recentUserMessageCharacters: ltmPlan.lastUserMessageText.length,
+                activeCharacters: ltmPlan.activeCharacterNames.slice(0, 20),
+                generationTriggerCount: ltmPlan.generationTriggerCount,
+                hasGenerationGuide: ltmPlan.hasGenerationGuide,
+                hasGameState: ltmPlan.hasGameState,
               },
               embeddingsAvailable: retrieval.embeddingsAvailable,
               weights: retrieval.debug?.weights,
@@ -5387,16 +5487,8 @@ export async function generateRoutes(app: FastifyInstance) {
             };
 
             if (retrieval.chunks.length > 0) {
-              const ltmBlock = formatLongTermMemoryBlock(retrieval.chunks);
-              const firstUserIdx = finalMessages.findIndex(
-                (message) => message.role === "user" || message.role === "assistant",
-              );
-              const insertAt = firstUserIdx >= 0 ? firstUserIdx : finalMessages.length;
-              finalMessages.splice(insertAt, 0, {
-                role: "system" as const,
-                content: ltmBlock,
-                contextKind: "injection",
-              });
+              const ltmBlock = injection.block;
+              const insertAt = injection.insertAt ?? finalMessages.length;
               await recordLtmDebugEvent({
                 operationId: ltmInjectionOperationId,
                 phase: "injection",
@@ -5418,12 +5510,12 @@ export async function generateRoutes(app: FastifyInstance) {
                     ...baseDecisionDetails,
                     promptInsertion: {
                       insertedAt: insertAt,
-                      insertedBeforeRole: finalMessages[insertAt + 1]?.role ?? null,
+                      insertedBeforeRole: injection.insertedBeforeRole,
                       blockCharacters: ltmBlock.length,
                       contextKind: "injection",
                     },
                   },
-                  insertedBeforeRole: finalMessages[insertAt + 1]?.role ?? null,
+                  insertedBeforeRole: injection.insertedBeforeRole,
                   warnings: retrieval.warnings,
                   chunks: retrieval.chunks.map((chunk) => ({
                     noteId: chunk.chunk.noteId,
@@ -5474,10 +5566,10 @@ export async function generateRoutes(app: FastifyInstance) {
                     },
                   },
                   warnings: retrieval.warnings,
-                  queryCharacters: ltmQueryText.length,
+                  queryCharacters: ltmPlan.queryText.length,
                 },
               });
-              if (ltmDebugEnabled) {
+              if (ltmPlan.debugEnabled) {
                 logger.debug(
                   "[ltm] No long-term memory chunks injected for chat %s%s",
                   input.chatId,
