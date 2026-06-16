@@ -143,7 +143,6 @@ export class LongTermMemoryStorage {
       mkdir(dirs.indexes, { recursive: true }),
       mkdir(dirs.config, { recursive: true }),
       mkdir(dirs.drafts, { recursive: true }),
-      mkdir(dirs.evidenceUnitDrafts, { recursive: true }),
       ...LTM_VAULT_FOLDERS.map((folder) => mkdir(safeJoin(dirs.vault, folder), { recursive: true })),
     ]);
 

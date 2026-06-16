@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { readFile, readdir } from "node:fs/promises";
 import {
   ltmEvidenceUnitBucketSchema,
   ltmEvidenceUnitExtractionResponseSchema,
@@ -16,14 +15,11 @@ import {
   type LtmScope,
 } from "@marinara-engine/shared";
 import type { BaseLLMProvider, ChatMessage, ChatOptions } from "../llm/base-provider.js";
-import { logger } from "../../lib/logger.js";
-import { readJsonFile, writeJsonAtomic } from "./atomic-json.js";
 import { stableJsonHash } from "./chunking.js";
 import { recordLtmDebugEvent } from "./debug-log.js";
 import type { LtmExtractionDiagnostic } from "./diagnostics.js";
 import { compileLtmEvidenceUnits } from "./evidence-unit-compiler.js";
 import { validateLtmEvidenceUnits } from "./evidence-unit-validation.js";
-import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
 
 export const DEFAULT_LTM_EXTRACTION_PROMPT = [
   "You extract structured long-term memory evidence units from a source note.",
@@ -110,24 +106,11 @@ export interface RunLongTermMemoryEvidenceUnitExtractionOptions {
   allowedBuckets?: LtmEvidenceUnit["bucket"][];
 }
 
-export interface LtmEvidenceUnitDraftArtifact {
-  id: string;
-  sourceNoteId: string;
-  sourceHash: string;
-  createdAt: string;
-  model: string;
-  summary: string;
-  units: LtmEvidenceUnit[];
-  diagnostics: LtmExtractionDiagnostic[];
-  compiledDraftId?: string;
-}
-
 export interface CompileEvidenceUnitExtractionResult {
   unitResponse: LtmEvidenceUnitExtractionResponse;
   compiledResponse: LtmExtractionResponse;
   diagnostics: LtmExtractionDiagnostic[];
   outcome: LtmExtractionOutcome;
-  artifact: LtmEvidenceUnitDraftArtifact;
 }
 
 type ParsedEvidenceUnitPayload = {
@@ -581,7 +564,6 @@ export function compileEvidenceUnitExtraction(options: {
   existingNotes: LtmNote[];
   scope: LtmScope;
   modes: LtmMode[];
-  model: string;
   sourceHash: string;
 }): CompileEvidenceUnitExtractionResult {
   const validated = validateLtmEvidenceUnits({
@@ -614,16 +596,6 @@ export function compileEvidenceUnitExtraction(options: {
     compiledResponse,
     diagnostics: validated.diagnostics,
     outcome,
-    artifact: {
-      id: randomUUID(),
-      sourceNoteId: options.sourceNote.id,
-      sourceHash: options.sourceHash,
-      createdAt: new Date().toISOString(),
-      model: options.model,
-      summary: options.unitResponse.summary,
-      units: keptUnits,
-      diagnostics: validated.diagnostics,
-    },
   };
 }
 
@@ -666,51 +638,6 @@ function summarizeExtractionOutcome(input: {
     droppedUnits,
     droppedCandidates: input.droppedCandidates,
   };
-}
-
-export class LongTermMemoryEvidenceUnitDraftStore {
-  readonly root: string;
-
-  constructor(root = getLongTermMemoryRoot()) {
-    this.root = root;
-  }
-
-  private get dirs() {
-    return getLongTermMemoryDirectories(this.root);
-  }
-
-  async createArtifact(artifact: LtmEvidenceUnitDraftArtifact) {
-    await writeJsonAtomic(safeJoin(this.dirs.evidenceUnitDrafts, `${artifact.id}.json`), artifact);
-    logger.info("[ltm] Stored evidence unit draft %s with %d unit(s)", artifact.id, artifact.units.length);
-    return artifact;
-  }
-
-  async updateArtifact(id: string, patch: Partial<LtmEvidenceUnitDraftArtifact>) {
-    const existing = await this.getArtifact(id);
-    if (!existing) return null;
-    const next = { ...existing, ...patch };
-    await writeJsonAtomic(safeJoin(this.dirs.evidenceUnitDrafts, `${id}.json`), next);
-    return next;
-  }
-
-  async getArtifact(id: string) {
-    return readJsonFile(safeJoin(this.dirs.evidenceUnitDrafts, `${id}.json`), null).then((value) =>
-      value ? (value as LtmEvidenceUnitDraftArtifact) : null,
-    );
-  }
-
-  async listArtifacts() {
-    const entries = await readdir(this.dirs.evidenceUnitDrafts, { withFileTypes: true }).catch((err) => {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
-      throw err;
-    });
-    const artifacts: LtmEvidenceUnitDraftArtifact[] = [];
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-      artifacts.push(JSON.parse(await readFile(safeJoin(this.dirs.evidenceUnitDrafts, entry.name), "utf8")));
-    }
-    return artifacts.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
-  }
 }
 
 export function sourceHashForEvidenceUnitExtraction(note: LtmNote) {

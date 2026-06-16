@@ -12,7 +12,6 @@ import type { BaseLLMProvider } from "../llm/base-provider.js";
 import {
   compileEvidenceUnitExtraction,
   DEFAULT_LTM_EXTRACTION_PROMPT,
-  LongTermMemoryEvidenceUnitDraftStore,
   runLongTermMemoryEvidenceUnitExtraction,
   sourceHashForEvidenceUnitExtraction,
   summarizeCompiledEvidenceUnitExtraction,
@@ -360,7 +359,6 @@ async function extractLongTermMemoryFromSourceNoteInner(
     existingNotes: compilerExistingNotes,
     scope,
     modes,
-    model: options.model,
     sourceHash,
   });
   compiled.diagnostics.push(...targetLookup.diagnostics);
@@ -381,8 +379,6 @@ async function extractLongTermMemoryFromSourceNoteInner(
     },
   });
 
-  const artifactStore = new LongTermMemoryEvidenceUnitDraftStore(options.root);
-  const artifact = await artifactStore.createArtifact(compiled.artifact);
   const draft =
     compiled.compiledResponse.mutations.length > 0
       ? await new LongTermMemoryDraftStore(options.root).createDraft({
@@ -393,7 +389,6 @@ async function extractLongTermMemoryFromSourceNoteInner(
         })
       : null;
 
-  if (draft) await artifactStore.updateArtifact(artifact.id, { compiledDraftId: draft.id });
   await recordLtmDebugEvent({
     operationId: options.operationId,
     root: options.root,
@@ -409,7 +404,6 @@ async function extractLongTermMemoryFromSourceNoteInner(
     },
     diagnostics: compiled.diagnostics.map((diagnostic) => ({ ...diagnostic })),
     details: {
-      artifactId: artifact.id,
       reason: draft ? "created" : compiled.outcome.droppedUnits > 0 ? "dropped_candidates_only" : "no_mutations",
       extractionOutcome: compiled.outcome,
     },

@@ -1256,7 +1256,6 @@ test("evidence unit extraction accepts and compiles multiple typed buckets", asy
     existingNotes: [],
     scope: {},
     modes: ["roleplay"],
-    model: "test-model",
     sourceHash,
   });
   assert.deepEqual(
@@ -1419,7 +1418,6 @@ test("evidence unit extraction validation rejects copied placeholder values", ()
     existingNotes: [],
     scope: {},
     modes: ["roleplay"],
-    model: "test-model",
     sourceHash,
   });
 
@@ -2353,7 +2351,6 @@ test("source extraction updates existing typed note from another source instead 
       existingNotes: [(await storage.getNote("rel_mara_jules"))!],
       scope: {},
       modes: ["roleplay"],
-      model: "test-model",
       sourceHash: sourceHashForEvidenceUnitExtraction(sourceNote),
     });
     assert.deepEqual(
