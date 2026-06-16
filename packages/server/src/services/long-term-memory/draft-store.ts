@@ -13,15 +13,13 @@ import { readJsonFile, writeJsonAtomic } from "./atomic-json.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
 import { LongTermMemoryStorage } from "./storage.js";
 
-export interface LtmExtractionTurnInput {
-  userMessage: string;
-  assistantReply: string;
+export interface CreateLtmExtractionDraftInput {
   scope?: LtmScope;
   modes: LtmMode[];
   source: LtmExtractionDraft["source"];
 }
 
-export interface StoreLtmDraftOptions extends LtmExtractionTurnInput {
+export interface StoreLtmDraftOptions extends CreateLtmExtractionDraftInput {
   root?: string;
   summary?: string;
   response: LtmExtractionResponse;

@@ -226,8 +226,6 @@ test("source extraction low-risk policy blocks scene append auto-apply", async (
     assert.equal(isLowRiskSourceExtractionMutation(mutation), false);
 
     const draft = await new LongTermMemoryDraftStore(root).createDraft({
-      userMessage: "",
-      assistantReply: "",
       scope: {},
       modes: ["roleplay"],
       source: { sourceNoteId: "scene_source_test" },
@@ -334,8 +332,6 @@ test("source extraction auto-apply leaves archived resolved memory status pendin
     assert.equal(isLowRiskSourceExtractionMutation(statusMutation), false);
 
     const draft = await new LongTermMemoryDraftStore(root).createDraft({
-      userMessage: "",
-      assistantReply: "",
       scope: {},
       modes: ["roleplay"],
       source: { sourceNoteId: "scene_source_test" },
@@ -440,8 +436,6 @@ test("source extraction auto-apply skips links to pending timeline notes", async
     };
 
     const draft = await new LongTermMemoryDraftStore(root).createDraft({
-      userMessage: "",
-      assistantReply: "",
       scope: {},
       modes: ["roleplay"],
       source: { sourceNoteId: "scene_source_test" },
@@ -1650,8 +1644,6 @@ test("timeline event units create historical notes and typed memories link to th
     );
 
     const draft = await new LongTermMemoryDraftStore(root).createDraft({
-      userMessage: "Mara confronts Jules in the archive and trusts him with the hidden key.",
-      assistantReply: "",
       scope: {},
       modes: ["roleplay"],
       source: { sourceNoteId: "scene_source_test", sourceHash },
@@ -1877,8 +1869,6 @@ test("draft store rejects drafts that are not tied to a source note", async () =
   try {
     await assert.rejects(
       new LongTermMemoryDraftStore(root).createDraft({
-        userMessage: "",
-        assistantReply: "",
         scope: {},
         modes: ["roleplay"],
         source: { chatId: "chat_test" },
@@ -1982,8 +1972,6 @@ test("source extraction drafts reject scene note mutations from source summaries
     );
 
     const draft = await new LongTermMemoryDraftStore(root).createDraft({
-      userMessage: "Mara and Jules stand inside the tower archive.",
-      assistantReply: "",
       scope: {},
       modes: ["roleplay"],
       source: { sourceNoteId: "scene_source_test", sourceHash },
@@ -2060,8 +2048,6 @@ test("source extraction drafts target existing notes regardless of status", asyn
       createdAt: timestamp,
     });
     const draft = await new LongTermMemoryDraftStore(root).createDraft({
-      userMessage: "Kiseki Academy is a floating school above the old city.",
-      assistantReply: "",
       scope: {},
       modes: ["roleplay"],
       source: { sourceNoteId: "scene_source_test", sourceHash },
@@ -2180,8 +2166,6 @@ test("source extraction updates existing typed note from another source instead 
     );
 
     const draft = await new LongTermMemoryDraftStore(root).createDraft({
-      userMessage: secondSourceText,
-      assistantReply: "",
       scope: {},
       modes: ["roleplay"],
       source: {

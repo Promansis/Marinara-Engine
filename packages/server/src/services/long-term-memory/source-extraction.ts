@@ -332,8 +332,6 @@ async function extractLongTermMemoryFromSourceNoteInner(
   const draft =
     compiled.compiledResponse.mutations.length > 0 && !hasBlockingDiagnostic
       ? await new LongTermMemoryDraftStore(options.root).createDraft({
-          userMessage: sourceText,
-          assistantReply: "",
           scope,
           modes,
           source: sourceMetadataForEvidenceUnitDraft(sourceNote),
