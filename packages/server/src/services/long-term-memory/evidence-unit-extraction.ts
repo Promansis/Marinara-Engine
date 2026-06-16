@@ -205,8 +205,7 @@ function repairTruncatedJson(raw: string): string {
 
 function extractPartialUnits(raw: string): Array<Record<string, unknown>> {
   const units: Array<Record<string, unknown>> = [];
-  let depth = 0;
-  let start = -1;
+  const objectStarts: number[] = [];
   let inString = false;
   let escape = false;
 
@@ -228,11 +227,10 @@ function extractPartialUnits(raw: string): Array<Record<string, unknown>> {
     if (inString) continue;
 
     if (ch === "{") {
-      if (depth === 0) start = i;
-      depth += 1;
+      objectStarts.push(i);
     } else if (ch === "}") {
-      depth -= 1;
-      if (depth === 0 && start >= 0) {
+      const start = objectStarts.pop();
+      if (start !== undefined) {
         try {
           const parsed = JSON.parse(raw.slice(start, i + 1));
           if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
@@ -241,7 +239,6 @@ function extractPartialUnits(raw: string): Array<Record<string, unknown>> {
         } catch {
           // skip unparseable fragments
         }
-        start = -1;
       }
     }
   }

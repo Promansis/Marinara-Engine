@@ -1270,6 +1270,108 @@ test("evidence unit extraction accepts and compiles multiple typed buckets", asy
   assert.deepEqual(new Set(createdTypes), new Set(["relationship", "thread", "world"]));
 });
 
+test("evidence unit extraction recovers a truncated json response", async () => {
+  const sourceNote: LtmNote = {
+    id: "scene_source_test",
+    type: "scene",
+    status: "active",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["source_summary"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      source: {
+        text: "Mara keeps old promises and notices the lantern hum.",
+        updatedAt: timestamp,
+        evidence: ["chat:chat_test"],
+      },
+    },
+    version: 1,
+  };
+
+  const provider = {
+    maxTokensOverrideValue: undefined,
+    chatComplete: async () => ({
+      content:
+        `{"summary":"One compact unit","units":[{"id":"${randomUUID()}","bucket":"character_fact","subjectId":"mara","sectionKey":"facts","text":"Mara keeps old promises.","evidence":["source_note:scene_source_test"],"confidence":0.9,"salience":0.7,"status":"active","links":[],"sourceHash":"${sourceHash}"}`,
+    }),
+  } as any;
+
+  const result = await runLongTermMemoryEvidenceUnitExtraction({
+    sourceNote,
+    sourceText: sourceNote.sections.source!.text,
+    existingNotes: [],
+    provider,
+    model: "test-model",
+    scope: {},
+    modes: ["roleplay"],
+    sourceHash,
+  });
+
+  assert.equal(result.totalCandidates, 1);
+  assert.deepEqual(result.droppedCandidates, []);
+  assert.equal(result.response.summary, "One compact unit");
+  assert.equal(result.response.units.length, 1);
+  assert.equal(result.response.units[0]?.text, "Mara keeps old promises.");
+  assert.equal(result.response.units[0]?.sourceHash, sourceHash);
+});
+
+test("evidence unit extraction recovers valid units from malformed partial json", async () => {
+  const sourceNote: LtmNote = {
+    id: "scene_source_test",
+    type: "scene",
+    status: "active",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["source_summary"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      source: {
+        text: "Mara keeps old promises and the lantern hum should pay off later.",
+        updatedAt: timestamp,
+        evidence: ["chat:chat_test"],
+      },
+    },
+    version: 1,
+  };
+
+  const recoveredUnitId = randomUUID();
+  const provider = {
+    maxTokensOverrideValue: undefined,
+    chatComplete: async () => ({
+      content: [
+        "```json\n",
+        '{"summary":"Broken response","units":[,',
+        "\n```\n",
+        `{"id":"${recoveredUnitId}","bucket":"thread","subjectId":"lantern_hum","sectionKey":"setup","text":"The lantern hum should pay off later.","evidence":["source_note:scene_source_test"],"confidence":0.86,"salience":0.7,"status":"active","links":[],"sourceHash":"${sourceHash}"}`,
+      ].join(""),
+    }),
+  } as any;
+
+  const result = await runLongTermMemoryEvidenceUnitExtraction({
+    sourceNote,
+    sourceText: sourceNote.sections.source!.text,
+    existingNotes: [],
+    provider,
+    model: "test-model",
+    scope: {},
+    modes: ["roleplay"],
+    sourceHash,
+  });
+
+  assert.equal(result.totalCandidates, 1);
+  assert.deepEqual(result.droppedCandidates, []);
+  assert.equal(result.response.summary, "");
+  assert.equal(result.response.units.length, 1);
+  assert.equal(result.response.units[0]?.id, recoveredUnitId);
+  assert.equal(result.response.units[0]?.bucket, "thread");
+  assert.equal(result.response.units[0]?.text, "The lantern hum should pay off later.");
+});
+
 test("evidence unit extraction validation rejects copied placeholder values", () => {
   const sourceNote: LtmNote = {
     id: "scene_source_test",
@@ -1327,6 +1429,76 @@ test("evidence unit extraction validation rejects copied placeholder values", ()
     ["candidate_dropped_placeholder_output"],
   );
   assert.deepEqual(compiled.outcome.droppedCandidates.map((candidate) => candidate.reason), ["placeholder_output"]);
+});
+
+test("source note extraction skips draft creation when every candidate is dropped", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-dropped-candidates-only-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "scene_source_test",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Mara keeps old promises.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const provider = {
+      maxTokensOverrideValue: undefined,
+      chatComplete: async () => ({
+        content: JSON.stringify({
+          summary: "Placeholder leak",
+          units: [
+            {
+              id: "550e8400-e29b-41d4-a716-446655440000",
+              bucket: "character_fact",
+              subjectId: "lowercase_snake_case_scope_id",
+              sectionKey: "lowercase_snake_case",
+              text: "Mara keeps old promises.",
+              evidence: ["source_note:scene_source_test"],
+              confidence: 0.9,
+              salience: 0.7,
+              status: "active",
+              links: [{ target: "target_note_id", relation: "related_to" }],
+              sourceHash: sourceHashForEvidenceUnitExtraction((await storage.getNote("scene_source_test"))!),
+            },
+          ],
+        }),
+      }),
+    } as any;
+
+    const result = await extractLongTermMemoryFromSourceNote({
+      noteId: "scene_source_test",
+      provider,
+      model: "test-model",
+      root,
+      operationId: randomUUID(),
+    });
+
+    assert.equal(result.draft, null);
+    assert.equal(result.response.mutations.length, 0);
+    assert.equal(result.outcome.state, "no_suggestions_created");
+    assert.deepEqual(result.outcome.droppedCandidates.map((candidate) => candidate.reason), ["placeholder_output"]);
+    assert(
+      result.diagnostics.some(
+        (diagnostic) => diagnostic.severity === "error" && diagnostic.code === "candidate_dropped_placeholder_output",
+      ),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 function evidenceUnit(bucket: LtmEvidenceUnit["bucket"], patch: Partial<LtmEvidenceUnit> = {}): LtmEvidenceUnit {
@@ -2424,6 +2596,146 @@ test("source note extraction target lookup updates matching scoped notes only", 
       result.draft.mutations.some(
         (mutation) => mutation.kind === "append_section" && mutation.noteId === "rel_mara_jules",
       ),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source note extraction keeps in-scope targets and drops out-of-scope targets in the same pass", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-target-lookup-mixed-scope-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    const sourceText = "Mara trusts Jules again, and the old city archive still floats above the lantern river.";
+    await storage.createNote(
+      {
+        id: "scene_source_second",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_a" },
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: sourceText,
+            updatedAt: timestamp,
+            evidence: ["chat:chat_a"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "rel_mara_jules",
+        type: "relationship",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_a" },
+        tags: ["typed_memory", "relationship_memory"],
+        links: [],
+        sections: {
+          history: {
+            text: "- Mara first trusted Jules with the hidden key.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_first"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "world_old_city_archive",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_b" },
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: {
+            text: "The old city archive once stood on the riverbank.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_first"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await rebuildLongTermMemoryIndexes({
+      root,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+
+    const provider = {
+      maxTokensOverrideValue: undefined,
+      chatComplete: async () => ({
+        content: JSON.stringify({
+          summary: "Mixed scope update",
+          units: [
+            {
+              id: randomUUID(),
+              bucket: "relationship_event",
+              subjectId: "mara_jules",
+              sectionKey: "history",
+              text: "Mara trusts Jules again.",
+              evidence: ["source_note:scene_source_second"],
+              confidence: 0.9,
+              salience: 0.7,
+              status: "active",
+              links: [],
+              sourceHash: sourceHashForEvidenceUnitExtraction((await storage.getNote("scene_source_second"))!),
+            },
+            {
+              id: randomUUID(),
+              bucket: "world_fact",
+              subjectId: "old_city_archive",
+              sectionKey: "facts",
+              text: "The old city archive still floats above the lantern river.",
+              evidence: ["source_note:scene_source_second"],
+              confidence: 0.85,
+              salience: 0.6,
+              status: "active",
+              links: [],
+              sourceHash: sourceHashForEvidenceUnitExtraction((await storage.getNote("scene_source_second"))!),
+            },
+          ],
+        }),
+      }),
+    } as any;
+
+    const result = await extractLongTermMemoryFromSourceNote({
+      noteId: "scene_source_second",
+      provider,
+      model: "test-model",
+      root,
+      operationId: randomUUID(),
+      embeddingSource: {
+        label: "test",
+        embed: async (texts) => texts.map(() => []),
+      },
+    });
+
+    assert(result.draft);
+    assert.equal(result.outcome.state, "partial_success");
+    assert.deepEqual(result.outcome.droppedCandidates.map((candidate) => candidate.reason), ["target_note_outside_scope"]);
+    assert(
+      result.diagnostics.some(
+        (diagnostic) => diagnostic.severity === "warning" && diagnostic.code === "target_note_scope_mismatch",
+      ),
+    );
+    assert(
+      result.draft.mutations.some(
+        (mutation) => mutation.kind === "append_section" && mutation.noteId === "rel_mara_jules",
+      ),
+    );
+    assert(
+      !result.draft.mutations.some((mutation) => {
+        if (mutation.kind === "create_note") return mutation.note.id === "world_old_city_archive";
+        return mutation.noteId === "world_old_city_archive";
+      }),
     );
   } finally {
     await rm(root, { recursive: true, force: true });
