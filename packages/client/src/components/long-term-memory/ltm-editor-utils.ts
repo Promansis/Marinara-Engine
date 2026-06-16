@@ -2,6 +2,7 @@ import {
   withMergedLtmScopeLinks,
   type ChatMode,
   type LtmExtractionDraft,
+  type LtmLink,
   type LtmMode,
   type LtmNote,
   type LtmNoteType,
@@ -195,6 +196,10 @@ export function createNoteInput(data: {
   tags: string[];
   sectionKey: string;
   sectionText: string;
+  links?: LtmLink[];
+  evidence?: string[];
+  salience?: number;
+  confidence?: number;
 }): CreateLongTermMemoryNoteInput {
   const sectionKey = normalizeIdentifier(data.sectionKey, "section") || defaultSectionKeyForType(data.type);
   return {
@@ -204,9 +209,14 @@ export function createNoteInput(data: {
     modes: data.modes.length > 0 ? data.modes : ["roleplay"],
     scope: data.scope,
     tags: data.tags,
-    links: [],
+    links: data.links ?? [],
     sections: {
-      [sectionKey]: emptySection(data.sectionText.trim()),
+      [sectionKey]: {
+        ...emptySection(data.sectionText.trim()),
+        ...(data.evidence?.length ? { evidence: data.evidence } : {}),
+        ...(data.salience !== undefined ? { salience: data.salience } : {}),
+        ...(data.confidence !== undefined ? { confidence: data.confidence } : {}),
+      },
     },
   };
 }

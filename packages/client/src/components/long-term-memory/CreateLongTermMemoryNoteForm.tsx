@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Loader2, Pencil, Plus, X } from "lucide-react";
-import type { Chat, LtmMode, LtmNote, LtmNoteType } from "@marinara-engine/shared";
+import type { Chat, LtmLink, LtmMode, LtmNote, LtmNoteType } from "@marinara-engine/shared";
 import { useChat } from "../../hooks/use-chats";
 import { useCreateLongTermMemoryNote } from "../../hooks/use-long-term-memory";
 import { useChatStore } from "../../stores/chat.store";
@@ -50,6 +50,11 @@ export type CreateLongTermMemoryNoteDraft = {
   };
   sectionKey: string;
   sectionText: string;
+  tags?: string[];
+  links?: LtmLink[];
+  evidence?: string[];
+  salience?: number;
+  confidence?: number;
 };
 
 function readChatCharacterIds(chat: Chat | null | undefined) {
@@ -175,9 +180,13 @@ export function CreateLongTermMemoryNoteForm({
           status,
           modes,
           scope: emptyScopeFromDraft(scopeDraft),
-          tags: normalizeTagsInput(tagsText),
+          tags: draft.tags ?? normalizeTagsInput(tagsText),
           sectionKey,
           sectionText,
+          links: draft.links,
+          evidence: draft.evidence,
+          salience: draft.salience,
+          confidence: draft.confidence,
         }),
       );
       toast.success("Memory created");

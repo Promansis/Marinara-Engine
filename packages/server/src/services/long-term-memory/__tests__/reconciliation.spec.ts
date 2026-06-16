@@ -730,7 +730,6 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
     assert.equal(defaults.verbosity, "low");
     assert.equal(defaults.maxOutputTokens, DEFAULT_LTM_EXTRACTION_MAX_TOKENS);
     assert.equal(defaults.maxSourceChars, 24_000);
-    assert.equal(defaults.rejectPlaceholderOutput, true);
     assert.deepEqual(defaults.promptTemplates, []);
     assert.equal(defaults.activePromptTemplateId, null);
 
@@ -744,7 +743,6 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
         maxSourceChars: 12_000,
         existingNoteMaxChunks: 8,
         existingNoteMaxTokens: 1600,
-        rejectPlaceholderOutput: false,
         promptTemplates: [
           {
             id: "compact",
@@ -764,7 +762,6 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
     assert.equal(updated.maxSourceChars, 12_000);
     assert.equal(updated.existingNoteMaxChunks, 8);
     assert.equal(updated.existingNoteMaxTokens, 1600);
-    assert.equal(updated.rejectPlaceholderOutput, false);
     assert.equal(updated.systemPrompt, "Use a compact extraction prompt.");
     assert.equal(updated.promptTemplates.length, 1);
     assert.equal(updated.activePromptTemplateId, "compact");
@@ -787,7 +784,6 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
     assert.equal(reset.verbosity, "low");
     assert.equal(reset.maxOutputTokens, DEFAULT_LTM_EXTRACTION_MAX_TOKENS);
     assert.equal(reset.extraInstruction, "");
-    assert.equal(reset.rejectPlaceholderOutput, true);
     assert.equal(reset.activePromptTemplateId, null);
     assert.deepEqual(reset.promptTemplates, []);
   } finally {
@@ -1043,8 +1039,8 @@ test("evidence unit extraction normalizes model-owned ids and source hashes", as
     sourceHash,
   });
 
-  assert.equal(result.units.length, 2);
-  for (const unit of result.units) {
+  assert.equal(result.response.units.length, 2);
+  for (const unit of result.response.units) {
     assert.match(unit.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
     assert.equal(unit.sourceHash, sourceHash);
   }
@@ -1246,13 +1242,15 @@ test("evidence unit extraction accepts and compiles multiple typed buckets", asy
     sourceHash,
   });
 
-  assert.equal(unitResponse.units.length, 3);
-  for (const unit of unitResponse.units) {
+  assert.equal(unitResponse.response.units.length, 3);
+  for (const unit of unitResponse.response.units) {
     assert.equal(ltmEvidenceUnitSchema.safeParse(unit).success, true);
   }
 
   const compiled = compileEvidenceUnitExtraction({
-    unitResponse,
+    unitResponse: unitResponse.response,
+    totalCandidates: unitResponse.totalCandidates,
+    parserDroppedCandidates: unitResponse.droppedCandidates,
     sourceText: sourceNote.sections.source!.text,
     sourceNote,
     existingNotes: [],
@@ -1326,14 +1324,9 @@ test("evidence unit extraction validation rejects copied placeholder values", ()
   assert.equal(compiled.compiledResponse.mutations.length, 0);
   assert.deepEqual(
     compiled.diagnostics.filter((diagnostic) => diagnostic.severity === "error").map((diagnostic) => diagnostic.code),
-    [
-      "placeholder_evidence_unit_id",
-      "placeholder_subject_id",
-      "placeholder_section_key",
-      "placeholder_merge_hint",
-      "placeholder_link_target",
-    ],
+    ["candidate_dropped_placeholder_output"],
   );
+  assert.deepEqual(compiled.outcome.droppedCandidates.map((candidate) => candidate.reason), ["placeholder_output"]);
 });
 
 function evidenceUnit(bucket: LtmEvidenceUnit["bucket"], patch: Partial<LtmEvidenceUnit> = {}): LtmEvidenceUnit {
@@ -2331,9 +2324,11 @@ test("source note extraction target lookup prevents duplicate creates across sou
     assert.equal(result.draft, null);
     assert(
       result.diagnostics.some(
-        (diagnostic) => diagnostic.severity === "error" && diagnostic.code === "target_note_scope_mismatch",
+        (diagnostic) => diagnostic.severity === "warning" && diagnostic.code === "target_note_scope_mismatch",
       ),
     );
+    assert.equal(result.outcome.state, "no_suggestions_created");
+    assert.deepEqual(result.outcome.droppedCandidates.map((candidate) => candidate.reason), ["target_note_outside_scope"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

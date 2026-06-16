@@ -553,6 +553,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
         return {
           draft: applyResult?.draft ?? result.draft,
           diagnostics: result.diagnostics,
+          outcome: result.outcome,
           response: result.response,
           appliedMutationIds: applyResult?.appliedMutationIds ?? [],
           skippedMutationIds: applyResult?.skippedMutationIds ?? [],
@@ -776,6 +777,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
             created: item.created,
             draft: applyResult?.draft ?? result.draft,
             diagnostics: result.diagnostics,
+            outcome: result.outcome,
             appliedMutationIds: applyResult?.appliedMutationIds ?? [],
             skippedMutationIds: applyResult?.skippedMutationIds ?? [],
           };
@@ -798,6 +800,13 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
             created: item.created,
             draft: null,
             diagnostics: [{ severity: "error", code: "extract_failed", message }],
+            outcome: {
+              state: "no_suggestions_created",
+              totalCandidates: 0,
+              keptUnits: 0,
+              droppedUnits: 0,
+              droppedCandidates: [],
+            },
             appliedMutationIds: [],
             skippedMutationIds: [],
           };

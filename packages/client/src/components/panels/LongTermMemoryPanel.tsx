@@ -23,6 +23,7 @@ import {
 import type {
   LtmDraftMutation,
   LtmExtractionDraft,
+  LtmExtractionDroppedCandidate,
   LtmLink,
   LtmNote,
   LtmNoteType,
@@ -52,7 +53,6 @@ import {
 } from "../long-term-memory/CreateLongTermMemoryNoteForm";
 import { LongTermMemoryDebugLogModal } from "../long-term-memory/LongTermMemoryDebugLogModal";
 import { LongTermMemoryExtractionSettingsModal } from "../long-term-memory/LongTermMemoryExtractionSettingsModal";
-import { LongTermMemoryWorkbenchModal } from "../long-term-memory/LongTermMemoryWorkbenchModal";
 import { LongTermMemoryNoteEditor } from "../long-term-memory/LongTermMemoryNoteEditor";
 import {
   friendlyEvidence,
@@ -1917,14 +1917,12 @@ function ImportPreviewRowItem({
 
 function ChatMemorySettings({
   onOpenExtractionSettings,
-  onOpenWorkbench,
   integrity,
   rebuild,
   replay,
   repair,
 }: {
   onOpenExtractionSettings: () => void;
-  onOpenWorkbench: () => void;
   integrity: ReturnType<typeof useLongTermMemoryIntegrity>;
   rebuild: ReturnType<typeof useRebuildLongTermMemory>;
   replay: ReturnType<typeof useReplayLongTermMemory>;
@@ -2300,10 +2298,10 @@ function ChatMemorySettings({
                 checked={debug}
                 onChange={(checked) => patch({ longTermMemoryDebug: checked })}
               />
-              <ToolButton onClick={onOpenWorkbench}>
-                <Search size="0.875rem" />
-                Open LTM Workbench
-              </ToolButton>
+              <p className="text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                Detailed extraction diagnostics now stay in debug surfaces. Use source-memory Suggestions for kept and
+                dropped candidate recovery.
+              </p>
             </div>
           )}
         </>
@@ -2324,7 +2322,6 @@ export function LongTermMemoryPanel() {
   const [activeImportIds, setActiveImportIds] = useState<Set<string>>(() => new Set());
   const [debugLogOpen, setDebugLogOpen] = useState(false);
   const [extractionSettingsOpen, setExtractionSettingsOpen] = useState(false);
-  const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [creatingNote, setCreatingNote] = useState(false);
   const [createNoteDraft, setCreateNoteDraft] = useState<CreateLongTermMemoryNoteDraft | null>(null);
   const [createNoteDirty, setCreateNoteDirty] = useState(false);
@@ -2557,6 +2554,53 @@ export function LongTermMemoryPanel() {
     setCreatingNote(true);
   };
 
+  const openRecoveryDraft = (candidate: LtmExtractionDroppedCandidate, sourceNote: LtmNote) => {
+    const sourceText = candidate.snippet?.trim();
+    if (!sourceText) {
+      toast.error("This dropped candidate does not include a safe snippet to recover.");
+      return;
+    }
+    const recovery = candidate.recovery;
+    const sourceEvidence = [`source_note:${sourceNote.id}`];
+    const existingEvidence = sourceNote.sections.source?.evidence ?? sourceNote.sections.summary?.evidence ?? [];
+    const nextEvidence = Array.from(new Set([...sourceEvidence, ...existingEvidence])).slice(0, 20);
+    const defaultType = recovery?.noteType ?? "scene";
+    const defaultId = recovery?.noteId ?? ({
+      timeline_event: "timeline_",
+      character: "char_",
+      relationship: "rel_",
+      scene: "scene_",
+      thread: "thread_",
+      world: "world_",
+      tone: "tone_",
+      source: "source_",
+    } satisfies Record<LtmNoteType, string>)[defaultType];
+
+    if (!confirmDiscardEditor() || !confirmDiscardCreate()) return;
+    closeEditor();
+    closeViewer();
+    closeSourceViewer();
+    closeDraftViewer();
+    setCreateNoteDraft({
+      type: defaultType,
+      id: defaultId,
+      status: recovery?.status ?? "active",
+      modes: sourceNote.modes,
+      tagsText: "",
+      tags: ["typed_memory"],
+      scopeDraft: {
+        chatIds: sourceNote.scope.chatIds ?? (sourceNote.scope.chatId ? [sourceNote.scope.chatId] : []),
+        groupId: sourceNote.scope.groupId ?? "",
+        characterIds: sourceNote.scope.characterIds ?? [],
+      },
+      sectionKey: recovery?.sectionKey ?? "summary",
+      sectionText: sourceText,
+      links: [{ target: sourceNote.id, relation: "extracted_from" }],
+      evidence: nextEvidence,
+    });
+    setCreatingNote(true);
+  };
+
   const setImportRowSelected = (sourceId: string, selected: boolean) => {
     const key = importRowKey(importSource, sourceId);
     setSelectedImportRows((current) => {
@@ -2592,26 +2636,21 @@ export function LongTermMemoryPanel() {
         sourceIds,
         limit: Math.max(importLimit, sourceIds.length),
       });
-      const errorCount = result.imported.filter((item) =>
-        item.diagnostics.some((diagnostic) => diagnostic.severity === "error"),
-      ).length;
-      const draftCount = result.imported.filter((item) => item.draft).length;
+      const importedCount = result.imported.length;
+      const suggestionCount = result.imported.reduce((sum, item) => sum + item.outcome.keptUnits, 0);
+      const droppedSourceCount = result.imported.filter((item) => item.outcome.droppedUnits > 0).length;
+      const emptySourceCount = result.imported.filter((item) => item.outcome.keptUnits === 0).length;
       const missingCount = result.missingSourceIds.length;
-      if (errorCount || missingCount) {
-        const firstError = result.imported
-          .flatMap((item) => item.diagnostics)
-          .find((diagnostic) => diagnostic.severity === "error");
-        const issueDetails = [
-          firstError?.message,
-          missingCount ? `Missing: ${result.missingSourceIds.slice(0, 3).join(", ")}` : null,
-        ].filter(Boolean);
-        toast.error(
-          `Imported ${result.imported.length} memory source(s), ${draftCount} suggestion(s), ${errorCount + missingCount} issue(s)${
-            issueDetails.length ? `: ${issueDetails.join("; ")}` : ""
-          }`,
-        );
+      const summary = [
+        `${importedCount} source note${importedCount === 1 ? "" : "s"} imported`,
+        `${suggestionCount} suggestion${suggestionCount === 1 ? "" : "s"} created`,
+        `${droppedSourceCount} source${droppedSourceCount === 1 ? "" : "s"} with dropped candidates`,
+        `${emptySourceCount} source${emptySourceCount === 1 ? "" : "s"} with no usable suggestions`,
+      ];
+      if (missingCount > 0) {
+        toast.error(`${summary.join(", ")}. Missing: ${result.missingSourceIds.slice(0, 3).join(", ")}`);
       } else {
-        toast.success(`Imported ${result.imported.length} memory source(s), created ${draftCount} suggestion(s)`);
+        toast.success(summary.join(", "));
       }
       setSelectedImportRows((current) => {
         const next = new Set(current);
@@ -2759,7 +2798,6 @@ export function LongTermMemoryPanel() {
       {tab === "tools" && (
         <ChatMemorySettings
           onOpenExtractionSettings={() => setExtractionSettingsOpen(true)}
-          onOpenWorkbench={() => setWorkbenchOpen(true)}
           integrity={integrity}
           rebuild={rebuild}
           replay={replay}
@@ -2945,6 +2983,7 @@ export function LongTermMemoryPanel() {
               setEditedNoteDirty(false);
               setEditingNoteId(saved.id);
             }}
+            onRecoverDroppedCandidate={openRecoveryDraft}
           />
         )}
       </Modal>
@@ -2964,11 +3003,6 @@ export function LongTermMemoryPanel() {
         open={extractionSettingsOpen}
         onClose={() => setExtractionSettingsOpen(false)}
       />
-      <LongTermMemoryWorkbenchModal
-        open={workbenchOpen}
-        onClose={() => setWorkbenchOpen(false)}
-      />
-
       {(status.isLoading || integrity.isLoading) && (
         <div className="fixed bottom-3 right-3 rounded-full bg-[var(--card)] p-2 shadow-sm ring-1 ring-[var(--border)]">
           <Loader2 size="1rem" className="animate-spin" />

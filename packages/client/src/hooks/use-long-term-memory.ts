@@ -6,6 +6,7 @@ import type {
   LtmDebugPhase,
   LtmDebugStatus,
   LtmExtractionDraft,
+  LtmExtractionOutcome,
   LtmExtractionResponse,
   LtmExtractionSettings as SharedLtmExtractionSettings,
   LtmNote,
@@ -183,6 +184,7 @@ export type ExtractLongTermMemorySourceInput = {
 export type ExtractLongTermMemorySourceResponse = {
   draft: LtmExtractionDraft | null;
   diagnostics: LtmExtractionDiagnostic[];
+  outcome: LtmExtractionOutcome;
   response: LtmExtractionResponse;
   appliedMutationIds: string[];
   skippedMutationIds: string[];
@@ -210,6 +212,7 @@ export type ImportLongTermMemorySourceNotesResponse = {
     created: boolean;
     draft: LtmExtractionDraft | null;
     diagnostics: LtmExtractionDiagnostic[];
+    outcome: LtmExtractionOutcome;
     appliedMutationIds: string[];
     skippedMutationIds: string[];
   }>;

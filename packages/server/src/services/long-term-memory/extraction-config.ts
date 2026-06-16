@@ -30,7 +30,6 @@ export const DEFAULT_LTM_EXTRACTION_CONFIG = ltmResolvedExtractionSettingsSchema
   maxExistingNoteChars: DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS,
   existingNoteMaxChunks: DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS,
   existingNoteMaxTokens: DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
-  rejectPlaceholderOutput: true,
   promptTemplates: [],
   activePromptTemplateId: null,
 });
@@ -75,12 +74,6 @@ function normalizePersistedConfig(input: LtmExtractionSettings): LtmExtractionSe
     input.existingNoteMaxTokens !== DEFAULT_LTM_EXTRACTION_CONFIG.existingNoteMaxTokens
   ) {
     next.existingNoteMaxTokens = input.existingNoteMaxTokens;
-  }
-  if (
-    input.rejectPlaceholderOutput !== undefined &&
-    input.rejectPlaceholderOutput !== DEFAULT_LTM_EXTRACTION_CONFIG.rejectPlaceholderOutput
-  ) {
-    next.rejectPlaceholderOutput = input.rejectPlaceholderOutput;
   }
   if (Array.isArray(input.promptTemplates) && input.promptTemplates.length > 0) {
     next.promptTemplates = input.promptTemplates.slice(0, 50);

@@ -39,7 +39,6 @@ type ExtractionSettingsDraft = {
   maxExistingNoteChars: string;
   existingNoteMaxChunks: string;
   existingNoteMaxTokens: string;
-  rejectPlaceholderOutput: boolean;
 };
 
 const DEFAULT_SETTINGS = {
@@ -51,7 +50,6 @@ const DEFAULT_SETTINGS = {
   maxExistingNoteChars: 12_000,
   existingNoteMaxChunks: 12,
   existingNoteMaxTokens: 2400,
-  rejectPlaceholderOutput: true,
 } as const;
 
 const LEVEL_OPTIONS = ["default", "low", "medium", "high"] as const;
@@ -69,7 +67,6 @@ function draftFromSettings(settings: LtmResolvedExtractionSettings): ExtractionS
     maxExistingNoteChars: String(settings.maxExistingNoteChars),
     existingNoteMaxChunks: String(settings.existingNoteMaxChunks),
     existingNoteMaxTokens: String(settings.existingNoteMaxTokens),
-    rejectPlaceholderOutput: settings.rejectPlaceholderOutput,
   };
 }
 
@@ -114,7 +111,6 @@ function payloadFromDraft(draft: ExtractionSettingsDraft): LtmExtractionSettings
     16_384,
     DEFAULT_SETTINGS.existingNoteMaxTokens,
   );
-  payload.rejectPlaceholderOutput = draft.rejectPlaceholderOutput;
   return payload;
 }
 
@@ -140,7 +136,6 @@ function resolvedFromDraft(draft: ExtractionSettingsDraft, current: LtmResolvedE
       16_384,
       DEFAULT_SETTINGS.existingNoteMaxTokens,
     ),
-    rejectPlaceholderOutput: draft.rejectPlaceholderOutput,
     version: current.version,
   };
 }
@@ -157,8 +152,7 @@ function isDraftDirty(draft: ExtractionSettingsDraft, current: LtmResolvedExtrac
     resolved.maxSourceChars !== current.maxSourceChars ||
     resolved.maxExistingNoteChars !== current.maxExistingNoteChars ||
     resolved.existingNoteMaxChunks !== current.existingNoteMaxChunks ||
-    resolved.existingNoteMaxTokens !== current.existingNoteMaxTokens ||
-    resolved.rejectPlaceholderOutput !== current.rejectPlaceholderOutput
+    resolved.existingNoteMaxTokens !== current.existingNoteMaxTokens
   );
 }
 
@@ -701,15 +695,10 @@ export function LongTermMemoryExtractionSettingsModal({ open, onClose }: { open:
                 onChange={(value) => set("existingNoteMaxTokens", value)}
               />
             </div>
-            <label className="flex min-h-9 items-center justify-between gap-3 rounded-lg bg-[var(--secondary)]/35 px-3 py-2 ring-1 ring-[var(--border)]">
-              <span className="text-xs font-medium text-[var(--foreground)]">Treat placeholder output as an error</span>
-              <input
-                type="checkbox"
-                checked={draft.rejectPlaceholderOutput}
-                onChange={(event) => set("rejectPlaceholderOutput", event.target.checked)}
-                className="h-4 w-4 rounded border-[var(--border)] accent-[var(--primary)]"
-              />
-            </label>
+            <p className="rounded-lg bg-[var(--secondary)]/35 px-3 py-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+              Placeholder-looking extraction output is always rejected internally now. Recovery happens through kept
+              suggestions and dropped-candidate review instead of a user-facing toggle.
+            </p>
           </section>
 
           <div className="flex flex-wrap justify-end gap-2">

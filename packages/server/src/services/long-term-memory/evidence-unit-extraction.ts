@@ -3,9 +3,12 @@ import { readFile, readdir } from "node:fs/promises";
 import {
   ltmEvidenceUnitBucketSchema,
   ltmEvidenceUnitExtractionResponseSchema,
+  ltmEvidenceUnitSchema,
   ltmEvidenceUnitStatusSchema,
   type LtmEvidenceUnit,
   type LtmEvidenceUnitExtractionResponse,
+  type LtmExtractionDroppedCandidate,
+  type LtmExtractionOutcome,
   type LtmExtractionDraft,
   type LtmExtractionResponse,
   type LtmMode,
@@ -123,8 +126,15 @@ export interface CompileEvidenceUnitExtractionResult {
   unitResponse: LtmEvidenceUnitExtractionResponse;
   compiledResponse: LtmExtractionResponse;
   diagnostics: LtmExtractionDiagnostic[];
+  outcome: LtmExtractionOutcome;
   artifact: LtmEvidenceUnitDraftArtifact;
 }
+
+type ParsedEvidenceUnitPayload = {
+  response: LtmEvidenceUnitExtractionResponse;
+  totalCandidates: number;
+  droppedCandidates: LtmExtractionDroppedCandidate[];
+};
 
 function countBy<T extends string>(values: T[]) {
   return values.reduce<Record<string, number>>((counts, value) => {
@@ -258,6 +268,49 @@ function normalizeEvidenceUnitResponse(raw: unknown, expectedSourceHash: string)
   };
 }
 
+function safeSnippet(text: string | undefined) {
+  const value = text?.replace(/\s+/g, " ").trim() ?? "";
+  if (!value || value.length < 12) return undefined;
+  return value.length > 280 ? `${value.slice(0, 277).trim()}...` : value;
+}
+
+function extractCandidateSnippet(candidate: unknown) {
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return undefined;
+  const text = (candidate as Record<string, unknown>).text;
+  return typeof text === "string" ? safeSnippet(text) : undefined;
+}
+
+function parseEvidenceUnitPayload(raw: unknown, expectedSourceHash: string): ParsedEvidenceUnitPayload {
+  const normalized = normalizeEvidenceUnitResponse(raw, expectedSourceHash);
+  const record = normalized && typeof normalized === "object" && !Array.isArray(normalized)
+    ? (normalized as Record<string, unknown>)
+    : {};
+  const summary = typeof record.summary === "string" ? record.summary : "";
+  const rawUnits = Array.isArray(record.units) ? record.units : [];
+  const units: LtmEvidenceUnit[] = [];
+  const droppedCandidates: LtmExtractionDroppedCandidate[] = [];
+
+  for (const [index, candidate] of rawUnits.entries()) {
+    const parsed = ltmEvidenceUnitSchema.safeParse(candidate);
+    if (parsed.success) {
+      units.push(parsed.data);
+      continue;
+    }
+    droppedCandidates.push({
+      index,
+      reason: "invalid_format",
+      message: "Dropped a malformed candidate.",
+      ...(extractCandidateSnippet(candidate) ? { snippet: extractCandidateSnippet(candidate) } : {}),
+    });
+  }
+
+  return {
+    response: ltmEvidenceUnitExtractionResponseSchema.parse({ summary, units }),
+    totalCandidates: rawUnits.length,
+    droppedCandidates,
+  };
+}
+
 function formatExistingNotes(notes: LtmNote[], maxChars = DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS) {
   let used = 0;
   const blocks: string[] = [];
@@ -355,7 +408,7 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
 
 export async function runLongTermMemoryEvidenceUnitExtraction(
   options: RunLongTermMemoryEvidenceUnitExtractionOptions,
-): Promise<LtmEvidenceUnitExtractionResponse> {
+): Promise<ParsedEvidenceUnitPayload> {
   const messages = evidenceUnitMessages(options);
   const promptChars = messages.reduce((total, message) => total + message.content.length, 0);
   const started = Date.now();
@@ -415,33 +468,45 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
         responseSnippet: content.slice(0, 1_500),
       },
     });
-    if (!content) return ltmEvidenceUnitExtractionResponseSchema.parse({ summary: "", units: [] });
+    if (!content) {
+      return {
+        response: ltmEvidenceUnitExtractionResponseSchema.parse({ summary: "", units: [] }),
+        totalCandidates: 0,
+        droppedCandidates: [],
+      };
+    }
     try {
-      const parsed = ltmEvidenceUnitExtractionResponseSchema.parse(
-        normalizeEvidenceUnitResponse(JSON.parse(extractJsonObject(content)), options.sourceHash),
-      );
+      const parsed = parseEvidenceUnitPayload(JSON.parse(extractJsonObject(content)), options.sourceHash);
       await recordLtmDebugEvent({
         operationId: options.operationId,
         phase: "llm",
         action: "evidence_unit_json_parse",
         status: "ok",
         sourceNoteId: options.sourceNote.id,
-        counts: { units: parsed.units.length, responseChars: content.length },
+        counts: {
+          units: parsed.response.units.length,
+          totalCandidates: parsed.totalCandidates,
+          droppedCandidates: parsed.droppedCandidates.length,
+          responseChars: content.length,
+        },
       });
       return parsed;
     } catch (parseErr) {
       try {
         const repaired = repairTruncatedJson(extractJsonObject(content));
-        const parsed = ltmEvidenceUnitExtractionResponseSchema.parse(
-          normalizeEvidenceUnitResponse(JSON.parse(repaired), options.sourceHash),
-        );
+        const parsed = parseEvidenceUnitPayload(JSON.parse(repaired), options.sourceHash);
         await recordLtmDebugEvent({
           operationId: options.operationId,
           phase: "llm",
           action: "evidence_unit_json_parse",
           status: "ok",
           sourceNoteId: options.sourceNote.id,
-          counts: { units: parsed.units.length, responseChars: content.length },
+          counts: {
+            units: parsed.response.units.length,
+            totalCandidates: parsed.totalCandidates,
+            droppedCandidates: parsed.droppedCandidates.length,
+            responseChars: content.length,
+          },
           details: { recovered: "repaired" },
         });
         return parsed;
@@ -461,14 +526,19 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
           options.sourceHash,
         );
         try {
-          const parsed = ltmEvidenceUnitExtractionResponseSchema.parse(syntheticResponse);
+          const parsed = parseEvidenceUnitPayload(syntheticResponse, options.sourceHash);
           await recordLtmDebugEvent({
             operationId: options.operationId,
             phase: "llm",
             action: "evidence_unit_json_parse",
             status: "ok",
             sourceNoteId: options.sourceNote.id,
-            counts: { units: parsed.units.length, responseChars: content.length },
+            counts: {
+              units: parsed.response.units.length,
+              totalCandidates: parsed.totalCandidates,
+              droppedCandidates: parsed.droppedCandidates.length,
+              responseChars: content.length,
+            },
             details: { recovered: "partial" },
           });
           return parsed;
@@ -507,6 +577,8 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
 
 export function compileEvidenceUnitExtraction(options: {
   unitResponse: LtmEvidenceUnitExtractionResponse;
+  totalCandidates?: number;
+  parserDroppedCandidates?: LtmExtractionDroppedCandidate[];
   sourceText: string;
   sourceNote: LtmNote;
   existingNotes: LtmNote[];
@@ -514,30 +586,37 @@ export function compileEvidenceUnitExtraction(options: {
   modes: LtmMode[];
   model: string;
   sourceHash: string;
-  rejectPlaceholderOutput?: boolean;
 }): CompileEvidenceUnitExtractionResult {
-  const diagnostics = validateLtmEvidenceUnits({
+  const validated = validateLtmEvidenceUnits({
     units: options.unitResponse.units,
     sourceText: options.sourceText,
     sourceNote: options.sourceNote,
     existingNotes: options.existingNotes,
     expectedSourceHash: options.sourceHash,
-    rejectPlaceholderOutput: options.rejectPlaceholderOutput,
   });
-  const hasBlockingDiagnostic = diagnostics.some((diagnostic) => diagnostic.severity === "error");
-  const compiledResponse = hasBlockingDiagnostic
-    ? { summary: options.unitResponse.summary, mutations: [] }
-    : compileLtmEvidenceUnits({
-        units: options.unitResponse.units,
+  const keptUnits = validated.keptUnits;
+  const droppedCandidates = [...(options.parserDroppedCandidates ?? []), ...validated.droppedCandidates];
+  const compiledResponse = keptUnits.length
+    ? compileLtmEvidenceUnits({
+        units: keptUnits,
         existingNotes: options.existingNotes,
         scope: options.scope,
         modes: options.modes,
         summary: options.unitResponse.summary,
-      });
+      })
+    : { summary: options.unitResponse.summary, mutations: [] };
+  const totalCandidates = options.totalCandidates ?? options.unitResponse.units.length + droppedCandidates.length;
+  const outcome = summarizeExtractionOutcome({
+    totalCandidates,
+    keptUnits: keptUnits.length,
+    droppedCandidates,
+    mutations: compiledResponse.mutations.length,
+  });
   return {
     unitResponse: options.unitResponse,
     compiledResponse,
-    diagnostics,
+    diagnostics: validated.diagnostics,
+    outcome,
     artifact: {
       id: randomUUID(),
       sourceNoteId: options.sourceNote.id,
@@ -545,8 +624,8 @@ export function compileEvidenceUnitExtraction(options: {
       createdAt: new Date().toISOString(),
       model: options.model,
       summary: options.unitResponse.summary,
-      units: options.unitResponse.units,
-      diagnostics,
+      units: keptUnits,
+      diagnostics: validated.diagnostics,
     },
   };
 }
@@ -557,7 +636,9 @@ export function summarizeCompiledEvidenceUnitExtraction(result: CompileEvidenceU
   );
   return {
     counts: {
-      units: result.unitResponse.units.length,
+      units: result.outcome.keptUnits,
+      totalCandidates: result.outcome.totalCandidates,
+      droppedUnits: result.outcome.droppedUnits,
       diagnostics: result.diagnostics.length,
       blockingDiagnostics: result.diagnostics.filter((diagnostic) => diagnostic.severity === "error").length,
       mutations: result.compiledResponse.mutations.length,
@@ -565,6 +646,28 @@ export function summarizeCompiledEvidenceUnitExtraction(result: CompileEvidenceU
     },
     mutationKinds: countBy(result.compiledResponse.mutations.map((mutation) => mutation.kind)),
     targetNoteIds: Array.from(new Set(targetNoteIds)).slice(0, 80),
+  };
+}
+
+function summarizeExtractionOutcome(input: {
+  totalCandidates: number;
+  keptUnits: number;
+  droppedCandidates: LtmExtractionDroppedCandidate[];
+  mutations: number;
+}): LtmExtractionOutcome {
+  const droppedUnits = input.droppedCandidates.length;
+  const state =
+    input.keptUnits > 0
+      ? droppedUnits > 0
+        ? "partial_success"
+        : "success"
+      : "no_suggestions_created";
+  return {
+    state,
+    totalCandidates: input.totalCandidates,
+    keptUnits: input.keptUnits,
+    droppedUnits,
+    droppedCandidates: input.droppedCandidates,
   };
 }
 

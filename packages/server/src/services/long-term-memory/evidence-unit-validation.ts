@@ -1,4 +1,10 @@
-import type { LtmEvidenceUnit, LtmNote } from "@marinara-engine/shared";
+import type {
+  LtmEvidenceUnit,
+  LtmExtractionDropReason,
+  LtmExtractionDroppedCandidate,
+  LtmExtractionRecoveryHint,
+  LtmNote,
+} from "@marinara-engine/shared";
 import type { LtmExtractionDiagnostic } from "./diagnostics.js";
 
 const DIALOGUE_BUCKETS = new Set<LtmEvidenceUnit["bucket"]>(["tone"]);
@@ -57,22 +63,36 @@ export function riskForEvidenceUnit(unit: LtmEvidenceUnit): "low" | "medium" | "
   return "low";
 }
 
+export type LtmEvidenceUnitValidationResult = {
+  keptUnits: LtmEvidenceUnit[];
+  diagnostics: LtmExtractionDiagnostic[];
+  droppedCandidates: LtmExtractionDroppedCandidate[];
+};
+
+type DroppedCandidateInput = {
+  candidateIndex: number;
+  reason: LtmExtractionDropReason;
+  message: string;
+  unit?: LtmEvidenceUnit;
+  snippet?: string;
+};
+
 export function validateLtmEvidenceUnits({
   units,
   sourceText,
   sourceNote,
   existingNotes,
   expectedSourceHash,
-  rejectPlaceholderOutput = true,
 }: {
   units: LtmEvidenceUnit[];
   sourceText: string;
   sourceNote?: LtmNote;
   existingNotes: LtmNote[];
   expectedSourceHash?: string;
-  rejectPlaceholderOutput?: boolean;
-}) {
+}): LtmEvidenceUnitValidationResult {
   const diagnostics: LtmExtractionDiagnostic[] = [];
+  const droppedCandidates: LtmExtractionDroppedCandidate[] = [];
+  const keptUnits: LtmEvidenceUnit[] = [];
   const sourceEvidence = sourceNote ? `source_note:${sourceNote.id}` : null;
 
   if (sourceNote && !isSourceNote(sourceNote)) {
@@ -84,18 +104,32 @@ export function validateLtmEvidenceUnits({
     });
   }
 
-  for (const unit of units) {
+  for (const [candidateIndex, unit] of units.entries()) {
     const noteId = noteIdForEvidenceUnit(unit);
-    if (rejectPlaceholderOutput) {
-      for (const diagnostic of placeholderDiagnostics(unit, noteId)) {
-        diagnostics.push(diagnostic);
-      }
-    }
-
-    if (unit.evidence.length === 0) {
+    const unitDiagnostics: LtmExtractionDiagnostic[] = [];
+    const drop = (input: DroppedCandidateInput) => {
+      const dropped = droppedCandidate({
+        ...input,
+        unit,
+      });
+      droppedCandidates.push(dropped);
       diagnostics.push({
         severity: "error",
+        code: dropReasonDiagnosticCode(dropped.reason),
+        candidateIndex,
+        mutationId: unit.id,
+        noteId,
+        message: dropped.message,
+      });
+    };
+
+    unitDiagnostics.push(...placeholderDiagnostics(unit, noteId, candidateIndex));
+
+    if (unit.evidence.length === 0) {
+      unitDiagnostics.push({
+        severity: "error",
         code: "missing_evidence",
+        candidateIndex,
         mutationId: unit.id,
         noteId,
         message: "Evidence unit has no evidence reference.",
@@ -103,9 +137,10 @@ export function validateLtmEvidenceUnits({
     }
 
     if (sourceEvidence && !unit.evidence.includes(sourceEvidence)) {
-      diagnostics.push({
+      unitDiagnostics.push({
         severity: "error",
         code: "missing_source_note_evidence",
+        candidateIndex,
         mutationId: unit.id,
         noteId,
         message: "Evidence unit must reference the source note evidence.",
@@ -113,9 +148,10 @@ export function validateLtmEvidenceUnits({
     }
 
     if (expectedSourceHash && unit.sourceHash !== expectedSourceHash) {
-      diagnostics.push({
+      unitDiagnostics.push({
         severity: "error",
         code: "source_hash_mismatch",
+        candidateIndex,
         mutationId: unit.id,
         noteId,
         message: "Evidence unit sourceHash does not match the source note hash.",
@@ -123,9 +159,10 @@ export function validateLtmEvidenceUnits({
     }
 
     if (unit.text.length > 2_000) {
-      diagnostics.push({
+      unitDiagnostics.push({
         severity: "error",
         code: "overlong_evidence_unit",
+        candidateIndex,
         mutationId: unit.id,
         noteId,
         message: "Evidence unit text exceeds the maximum typed-memory length.",
@@ -133,9 +170,10 @@ export function validateLtmEvidenceUnits({
     }
 
     if (isSourceSummaryPayload(unit.text)) {
-      diagnostics.push({
+      unitDiagnostics.push({
         severity: "error",
         code: "source_summary_payload",
+        candidateIndex,
         mutationId: unit.id,
         noteId,
         message: "Evidence unit copies source-summary/transcript structure instead of typed memory.",
@@ -146,6 +184,7 @@ export function validateLtmEvidenceUnits({
       diagnostics.push({
         severity: "warning",
         code: "relationship_state_without_history",
+        candidateIndex,
         mutationId: unit.id,
         noteId,
         message: "Relationship state should be backed by relationship event evidence or existing state.",
@@ -154,9 +193,10 @@ export function validateLtmEvidenceUnits({
 
     for (const quote of DIALOGUE_BUCKETS.has(unit.bucket) ? quotedStrings(unit.text) : []) {
       if (!sourceText.includes(quote)) {
-        diagnostics.push({
+        unitDiagnostics.push({
           severity: "error",
           code: "unsupported_dialogue_quote",
+          candidateIndex,
           mutationId: unit.id,
           noteId,
           message: "Voice/tone quote is not present in the source text.",
@@ -168,17 +208,36 @@ export function validateLtmEvidenceUnits({
       diagnostics.push({
         severity: "warning",
         code: "low_lexical_evidence",
+        candidateIndex,
         mutationId: unit.id,
         noteId,
         message: "Evidence unit has low lexical overlap with the source note.",
       });
     }
+
+    const dropDiagnostic = unitDiagnostics.find((diagnostic) => diagnostic.severity === "error");
+    if (dropDiagnostic) {
+      const reason = diagnosticToDropReason(dropDiagnostic.code);
+      if (reason) {
+        drop({
+          candidateIndex,
+          reason,
+          message: userFacingDropMessage(reason),
+        });
+      } else {
+        diagnostics.push(...unitDiagnostics);
+      }
+      continue;
+    }
+
+    diagnostics.push(...unitDiagnostics);
+    keptUnits.push(unit);
   }
 
-  return diagnostics;
+  return { keptUnits, diagnostics, droppedCandidates };
 }
 
-function placeholderDiagnostics(unit: LtmEvidenceUnit, noteId: string): LtmExtractionDiagnostic[] {
+function placeholderDiagnostics(unit: LtmEvidenceUnit, noteId: string, candidateIndex: number): LtmExtractionDiagnostic[] {
   const diagnostics: LtmExtractionDiagnostic[] = [];
   const hasPlaceholderIdentifier = (value: string) => value.toLowerCase().includes("lowercase_snake_case");
 
@@ -186,6 +245,7 @@ function placeholderDiagnostics(unit: LtmEvidenceUnit, noteId: string): LtmExtra
     diagnostics.push({
       severity: "error",
       code: "placeholder_evidence_unit_id",
+      candidateIndex,
       mutationId: unit.id,
       noteId,
       message: "Evidence unit uses a copied placeholder UUID.",
@@ -196,6 +256,7 @@ function placeholderDiagnostics(unit: LtmEvidenceUnit, noteId: string): LtmExtra
     diagnostics.push({
       severity: "error",
       code: "placeholder_subject_id",
+      candidateIndex,
       mutationId: unit.id,
       noteId,
       message: "Evidence unit subjectId uses a copied placeholder identifier.",
@@ -206,6 +267,7 @@ function placeholderDiagnostics(unit: LtmEvidenceUnit, noteId: string): LtmExtra
     diagnostics.push({
       severity: "error",
       code: "placeholder_section_key",
+      candidateIndex,
       mutationId: unit.id,
       noteId,
       message: "Evidence unit sectionKey uses a copied placeholder identifier.",
@@ -216,6 +278,7 @@ function placeholderDiagnostics(unit: LtmEvidenceUnit, noteId: string): LtmExtra
     diagnostics.push({
       severity: "error",
       code: "placeholder_merge_hint",
+      candidateIndex,
       mutationId: unit.id,
       noteId,
       message: "Evidence unit mergeHint uses copied schema/example text.",
@@ -227,6 +290,7 @@ function placeholderDiagnostics(unit: LtmEvidenceUnit, noteId: string): LtmExtra
       diagnostics.push({
         severity: "error",
         code: "placeholder_link_target",
+        candidateIndex,
         mutationId: unit.id,
         noteId,
         message: "Evidence unit link target uses a copied placeholder note id.",
@@ -258,4 +322,114 @@ function noteIdForAnchor(subjectId: string, sectionKey: string) {
 
 function isSourceSummaryPayload(text: string) {
   return /\b(?:source note|chat summary|transcript|events?:|timeline:|scene summary:)\b/i.test(text);
+}
+
+function droppedCandidate(input: Required<Pick<DroppedCandidateInput, "candidateIndex" | "reason" | "message" | "unit">> & {
+  snippet?: string;
+}): LtmExtractionDroppedCandidate {
+  return {
+    index: input.candidateIndex,
+    reason: input.reason,
+    message: input.message,
+    ...(safeSnippet(input.snippet ?? input.unit.text) ? { snippet: safeSnippet(input.snippet ?? input.unit.text)! } : {}),
+    ...(recoveryHintForUnit(input.unit) ? { recovery: recoveryHintForUnit(input.unit)! } : {}),
+  };
+}
+
+function safeSnippet(text: string | undefined) {
+  const value = text?.replace(/\s+/g, " ").trim() ?? "";
+  if (!value || value.length < 12) return undefined;
+  return value.length > 280 ? `${value.slice(0, 277).trim()}...` : value;
+}
+
+function recoveryHintForUnit(unit: LtmEvidenceUnit): LtmExtractionRecoveryHint {
+  return {
+    noteType: targetNoteTypeForUnit(unit),
+    noteId: noteIdForEvidenceUnit(unit),
+    sectionKey: noteIdSectionKeyForUnit(unit),
+    status: targetStatusForUnit(unit),
+  };
+}
+
+function targetNoteTypeForUnit(unit: LtmEvidenceUnit): LtmNote["type"] {
+  if (unit.bucket.startsWith("relationship_")) return "relationship";
+  if (unit.bucket === "timeline_event") return "timeline_event";
+  if (unit.bucket === "thread") return "thread";
+  if (unit.bucket === "world_fact") return "world";
+  if (unit.bucket === "tone") return "tone";
+  if (unit.bucket === "anchor") return noteIdForEvidenceUnit(unit).startsWith("tone_") ? "tone" : "world";
+  return "character";
+}
+
+function noteIdSectionKeyForUnit(unit: LtmEvidenceUnit) {
+  if (unit.bucket === "timeline_event") return unit.sectionKey || "event";
+  if (unit.bucket === "relationship_event") return "history";
+  if (unit.bucket === "relationship_state") return "state";
+  if (unit.bucket === "character_state") return "current_state";
+  if (unit.bucket === "character_fact") return unit.sectionKey || "facts";
+  if (unit.bucket === "tone") return "observations";
+  if (unit.bucket === "thread" && unit.status === "resolved") return "summary";
+  return unit.sectionKey;
+}
+
+function targetStatusForUnit(unit: LtmEvidenceUnit): LtmNote["status"] {
+  if (unit.status === "archived") return "archived";
+  if (unit.bucket === "thread" && unit.status === "resolved") return "archived";
+  if (unit.status === "resolved") return "resolved";
+  return "active";
+}
+
+function diagnosticToDropReason(code: string): LtmExtractionDropReason | null {
+  if (
+    code === "placeholder_evidence_unit_id" ||
+    code === "placeholder_subject_id" ||
+    code === "placeholder_section_key" ||
+    code === "placeholder_merge_hint" ||
+    code === "placeholder_link_target"
+  ) {
+    return "placeholder_output";
+  }
+  if (code === "unsupported_dialogue_quote") return "quote_not_found_in_source";
+  if (code === "missing_source_note_evidence" || code === "missing_evidence") return "missing_source_evidence";
+  if (code === "source_summary_payload") return "source_summary_payload";
+  if (code === "overlong_evidence_unit") return "too_long_to_keep_safely";
+  return null;
+}
+
+function dropReasonDiagnosticCode(reason: LtmExtractionDropReason) {
+  switch (reason) {
+    case "placeholder_output":
+      return "candidate_dropped_placeholder_output";
+    case "quote_not_found_in_source":
+      return "candidate_dropped_quote_not_found_in_source";
+    case "missing_source_evidence":
+      return "candidate_dropped_missing_source_evidence";
+    case "source_summary_payload":
+      return "candidate_dropped_source_summary_payload";
+    case "target_note_outside_scope":
+      return "candidate_dropped_target_note_outside_scope";
+    case "too_long_to_keep_safely":
+      return "candidate_dropped_too_long_to_keep_safely";
+    case "invalid_format":
+      return "candidate_dropped_invalid_format";
+  }
+}
+
+function userFacingDropMessage(reason: LtmExtractionDropReason) {
+  switch (reason) {
+    case "placeholder_output":
+      return "Dropped copied placeholder output.";
+    case "quote_not_found_in_source":
+      return "Dropped a quote that was not present in the source.";
+    case "missing_source_evidence":
+      return "Dropped a candidate that did not include usable source evidence.";
+    case "source_summary_payload":
+      return "Dropped a candidate that looked like a source-summary transcript instead of a typed memory.";
+    case "target_note_outside_scope":
+      return "Dropped a candidate that targeted a memory outside this source's scope.";
+    case "too_long_to_keep_safely":
+      return "Dropped a candidate that was too long to keep safely.";
+    case "invalid_format":
+      return "Dropped a malformed candidate.";
+  }
 }

@@ -45,7 +45,7 @@ export const ltmExtractionPromptTemplateSchema = z
   })
   .strict();
 
-export const ltmExtractionSettingsSchema = z
+const ltmExtractionSettingsShape = z
   .object({
     version: z.literal(1).default(1),
     systemPrompt: z.string().min(1).max(20_000).optional(),
@@ -58,11 +58,16 @@ export const ltmExtractionSettingsSchema = z
     maxExistingNoteChars: z.number().int().min(1_000).max(100_000).optional(),
     existingNoteMaxChunks: z.number().int().min(1).max(100).optional(),
     existingNoteMaxTokens: z.number().int().min(128).max(16_384).optional(),
-    rejectPlaceholderOutput: z.boolean().optional(),
     promptTemplates: z.array(ltmExtractionPromptTemplateSchema).max(50).optional(),
     activePromptTemplateId: z.string().min(1).max(64).nullable().optional(),
   })
   .strict();
+
+export const ltmExtractionSettingsSchema = z.preprocess((value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const { rejectPlaceholderOutput: _rejectPlaceholderOutput, ...rest } = value as Record<string, unknown>;
+  return rest;
+}, ltmExtractionSettingsShape);
 
 export const ltmResolvedExtractionSettingsSchema = z
   .object({
@@ -77,7 +82,6 @@ export const ltmResolvedExtractionSettingsSchema = z
     maxExistingNoteChars: z.number().int().min(1_000).max(100_000),
     existingNoteMaxChunks: z.number().int().min(1).max(100),
     existingNoteMaxTokens: z.number().int().min(128).max(16_384),
-    rejectPlaceholderOutput: z.boolean(),
     promptTemplates: z.array(ltmExtractionPromptTemplateSchema).max(50),
     activePromptTemplateId: z.string().min(1).max(64).nullable(),
   })
@@ -504,6 +508,47 @@ export const ltmExtractionDraftSchema = z
   })
   .strip();
 
+export const ltmExtractionDropReasonSchema = z.enum([
+  "invalid_format",
+  "placeholder_output",
+  "quote_not_found_in_source",
+  "missing_source_evidence",
+  "source_summary_payload",
+  "target_note_outside_scope",
+  "too_long_to_keep_safely",
+]);
+
+export const ltmExtractionRecoveryHintSchema = z
+  .object({
+    noteType: ltmNoteTypeSchema.optional(),
+    noteId: ltmNoteIdSchema.optional(),
+    sectionKey: ltmSectionKeySchema.optional(),
+    status: ltmStatusSchema.optional(),
+  })
+  .strict();
+
+export const ltmExtractionDroppedCandidateSchema = z
+  .object({
+    index: z.number().int().min(0).max(999),
+    reason: ltmExtractionDropReasonSchema,
+    message: z.string().min(1).max(240),
+    snippet: z.string().min(1).max(280).optional(),
+    recovery: ltmExtractionRecoveryHintSchema.optional(),
+  })
+  .strict();
+
+export const ltmExtractionOutcomeStateSchema = z.enum(["success", "partial_success", "no_suggestions_created"]);
+
+export const ltmExtractionOutcomeSchema = z
+  .object({
+    state: ltmExtractionOutcomeStateSchema,
+    totalCandidates: z.number().int().min(0).max(999),
+    keptUnits: z.number().int().min(0).max(999),
+    droppedUnits: z.number().int().min(0).max(999),
+    droppedCandidates: z.array(ltmExtractionDroppedCandidateSchema).max(80).default([]),
+  })
+  .strict();
+
 export const ltmExtractionResponseSchema = z
   .object({
     summary: z.string().max(2_000).default(""),
@@ -547,6 +592,11 @@ export type LtmDraftSource = z.infer<typeof ltmDraftSourceSchema>;
 export type LtmDraftNoteInput = z.infer<typeof ltmDraftNoteInputSchema>;
 export type LtmDraftMutation = z.infer<typeof ltmDraftMutationSchema>;
 export type LtmExtractionDraft = z.infer<typeof ltmExtractionDraftSchema>;
+export type LtmExtractionDropReason = z.infer<typeof ltmExtractionDropReasonSchema>;
+export type LtmExtractionRecoveryHint = z.infer<typeof ltmExtractionRecoveryHintSchema>;
+export type LtmExtractionDroppedCandidate = z.infer<typeof ltmExtractionDroppedCandidateSchema>;
+export type LtmExtractionOutcomeState = z.infer<typeof ltmExtractionOutcomeStateSchema>;
+export type LtmExtractionOutcome = z.infer<typeof ltmExtractionOutcomeSchema>;
 export type LtmExtractionResponse = z.infer<typeof ltmExtractionResponseSchema>;
 export type LtmEvidenceUnit = z.infer<typeof ltmEvidenceUnitSchema>;
 export type LtmEvidenceUnitExtractionResponse = z.infer<typeof ltmEvidenceUnitExtractionResponseSchema>;

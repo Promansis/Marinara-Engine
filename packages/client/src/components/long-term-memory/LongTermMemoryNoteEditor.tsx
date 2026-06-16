@@ -4,6 +4,7 @@ import { Loader2, Pencil, Plus, RefreshCw, Save, Trash2, X } from "lucide-react"
 import {
   getLtmScopeChatIds,
   withMergedLtmScopeLinks,
+  type LtmExtractionDroppedCandidate,
   type LtmLink,
   type LtmMode,
   type LtmNote,
@@ -41,6 +42,7 @@ type LongTermMemoryNoteEditorProps = {
   onCancel: () => void;
   onDirtyChange?: (dirty: boolean) => void;
   onSaved?: (note: LtmNote) => void;
+  onRecoverDroppedCandidate?: (candidate: LtmExtractionDroppedCandidate, note: LtmNote) => void;
 };
 
 function serializedEditable(note: LtmNote) {
@@ -75,7 +77,13 @@ function isSourceMemory(note: LtmNote) {
   );
 }
 
-export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSaved }: LongTermMemoryNoteEditorProps) {
+export function LongTermMemoryNoteEditor({
+  note,
+  onCancel,
+  onDirtyChange,
+  onSaved,
+  onRecoverDroppedCandidate,
+}: LongTermMemoryNoteEditorProps) {
   const activeChatId = useChatStore((state) => state.activeChatId);
   const cachedActiveChat = useChatStore((state) => state.activeChat);
   const activeChatQuery = useChat(activeChatId);
@@ -294,7 +302,9 @@ export function LongTermMemoryNoteEditor({ note, onCancel, onDirtyChange, onSave
         })}
       </div>
 
-      {activeTab === "suggestions" && <LongTermMemorySuggestionsTab note={savedBaseline} />}
+      {activeTab === "suggestions" && onRecoverDroppedCandidate ? (
+        <LongTermMemorySuggestionsTab note={savedBaseline} onRecoverDroppedCandidate={onRecoverDroppedCandidate} />
+      ) : null}
 
       {activeTab === "details" && (
       <div className="grid gap-3">

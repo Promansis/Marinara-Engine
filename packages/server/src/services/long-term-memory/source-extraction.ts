@@ -1,6 +1,8 @@
 import {
   getLtmScopeChatIds,
+  type LtmExtractionDroppedCandidate,
   type LtmExtractionDraft,
+  type LtmExtractionOutcome,
   type LtmExtractionResponse,
   type LtmMode,
   type LtmNote,
@@ -12,8 +14,8 @@ import {
   DEFAULT_LTM_EXTRACTION_PROMPT,
   LongTermMemoryEvidenceUnitDraftStore,
   runLongTermMemoryEvidenceUnitExtraction,
-  summarizeCompiledEvidenceUnitExtraction,
   sourceHashForEvidenceUnitExtraction,
+  summarizeCompiledEvidenceUnitExtraction,
   sourceMetadataForEvidenceUnitDraft,
 } from "./evidence-unit-extraction.js";
 import { getLtmExtractionConfig } from "./extraction-config.js";
@@ -42,6 +44,7 @@ export type ExtractLongTermMemoryFromSourceNoteResult = {
   response: LtmExtractionResponse;
   draft: LtmExtractionDraft | null;
   diagnostics: LtmExtractionDiagnostic[];
+  outcome: LtmExtractionOutcome;
 };
 
 export function isLtmSourceNote(note: LtmNote) {
@@ -92,11 +95,16 @@ async function getExistingTypedNotesForTargets(options: {
   existingNotes: LtmNote[];
   targetNoteIds: string[];
   scope: LtmScope;
-}): Promise<{ notes: LtmNote[]; diagnostics: LtmExtractionDiagnostic[] }> {
+}): Promise<{
+  notes: LtmNote[];
+  diagnostics: LtmExtractionDiagnostic[];
+  droppedTargetNoteIds: string[];
+}> {
   const existingById = new Map(options.existingNotes.map((note) => [note.id, note]));
   const missingTargetIds = Array.from(new Set(options.targetNoteIds.filter((noteId) => !existingById.has(noteId))));
   const diagnostics: LtmExtractionDiagnostic[] = [];
-  if (missingTargetIds.length === 0) return { notes: options.existingNotes, diagnostics };
+  const droppedTargetNoteIds: string[] = [];
+  if (missingTargetIds.length === 0) return { notes: options.existingNotes, diagnostics, droppedTargetNoteIds };
 
   const targetNotes = await Promise.all(missingTargetIds.map((noteId) => options.storage.getNote(noteId)));
   for (const note of targetNotes) {
@@ -104,16 +112,21 @@ async function getExistingTypedNotesForTargets(options: {
     if (isLtmSourceNote(note)) continue;
     if (!scopeOverlaps(note.scope, options.scope)) {
       diagnostics.push({
-        severity: "error",
+        severity: "warning",
         code: "target_note_scope_mismatch",
         noteId: note.id,
         message: `Evidence targets existing note ${note.id}, but that note belongs to a different scope.`,
       });
+      droppedTargetNoteIds.push(note.id);
       continue;
     }
     existingById.set(note.id, note);
   }
-  return { notes: Array.from(existingById.values()).sort((a, b) => a.id.localeCompare(b.id)), diagnostics };
+  return {
+    notes: Array.from(existingById.values()).sort((a, b) => a.id.localeCompare(b.id)),
+    diagnostics,
+    droppedTargetNoteIds,
+  };
 }
 
 function scopeOverlaps(noteScope: LtmScope, extractionScope: LtmScope) {
@@ -193,7 +206,6 @@ async function extractLongTermMemoryFromSourceNoteInner(
         maxExistingNoteChars: extractionConfig.maxExistingNoteChars,
         existingNoteMaxChunks: extractionConfig.existingNoteMaxChunks,
         existingNoteMaxTokens: extractionConfig.existingNoteMaxTokens,
-        rejectPlaceholderOutput: extractionConfig.rejectPlaceholderOutput,
         activePromptTemplateId: extractionConfig.activePromptTemplateId,
         usesPromptTemplate: Boolean(extractionConfig.activePromptTemplateId),
         hasPromptOverride: extractionConfig.systemPrompt !== DEFAULT_LTM_EXTRACTION_PROMPT,
@@ -259,7 +271,8 @@ async function extractLongTermMemoryFromSourceNoteInner(
     operationId: options.operationId,
   };
 
-  const unitResponse = await runLongTermMemoryEvidenceUnitExtraction(baseExtractionOptions);
+  const extractionPayload = await runLongTermMemoryEvidenceUnitExtraction(baseExtractionOptions);
+  const unitResponse = extractionPayload.response;
   const targetLookup = await getExistingTypedNotesForTargets({
     storage,
     existingNotes,
@@ -284,8 +297,64 @@ async function extractLongTermMemoryFromSourceNoteInner(
       },
     });
   }
+  const scopedUnits = unitResponse.units.filter((unit) => !targetLookup.droppedTargetNoteIds.includes(noteIdForEvidenceUnit(unit)));
+  const droppedScopeCandidates: LtmExtractionDroppedCandidate[] = unitResponse.units
+    .map((unit, index) => ({ unit, index }))
+    .filter(({ unit }) => targetLookup.droppedTargetNoteIds.includes(noteIdForEvidenceUnit(unit)))
+    .map(({ unit, index }) => ({
+      index,
+      reason: "target_note_outside_scope" as const,
+      message: "Dropped a candidate that targeted a memory outside this source's scope.",
+      snippet: unit.text.length > 280 ? `${unit.text.slice(0, 277).trim()}...` : unit.text,
+      recovery: {
+        noteType:
+          unit.bucket.startsWith("relationship_")
+            ? "relationship"
+            : unit.bucket === "timeline_event"
+              ? "timeline_event"
+              : unit.bucket === "thread"
+                ? "thread"
+                : unit.bucket === "world_fact"
+                  ? "world"
+                  : unit.bucket === "tone"
+                    ? "tone"
+                    : unit.bucket === "anchor"
+                      ? noteIdForEvidenceUnit(unit).startsWith("tone_")
+                        ? "tone"
+                        : "world"
+                      : "character",
+        noteId: noteIdForEvidenceUnit(unit),
+        sectionKey:
+          unit.bucket === "timeline_event"
+            ? unit.sectionKey || "event"
+            : unit.bucket === "relationship_event"
+              ? "history"
+              : unit.bucket === "relationship_state"
+                ? "state"
+                : unit.bucket === "character_state"
+                  ? "current_state"
+                  : unit.bucket === "character_fact"
+                    ? unit.sectionKey || "facts"
+                    : unit.bucket === "tone"
+                      ? "observations"
+                      : unit.bucket === "thread" && unit.status === "resolved"
+                        ? "summary"
+                        : unit.sectionKey,
+        status:
+          unit.status === "archived"
+            ? "archived"
+            : unit.status === "resolved"
+              ? "resolved"
+              : "active",
+      },
+    }));
   const compiled = compileEvidenceUnitExtraction({
-    unitResponse,
+    unitResponse: {
+      ...unitResponse,
+      units: scopedUnits,
+    },
+    totalCandidates: extractionPayload.totalCandidates,
+    parserDroppedCandidates: [...extractionPayload.droppedCandidates, ...droppedScopeCandidates],
     sourceText,
     sourceNote,
     existingNotes: compilerExistingNotes,
@@ -293,7 +362,6 @@ async function extractLongTermMemoryFromSourceNoteInner(
     modes,
     model: options.model,
     sourceHash,
-    rejectPlaceholderOutput: extractionConfig.rejectPlaceholderOutput,
   });
   compiled.diagnostics.push(...targetLookup.diagnostics);
   const compiledSummary = summarizeCompiledEvidenceUnitExtraction(compiled);
@@ -315,9 +383,8 @@ async function extractLongTermMemoryFromSourceNoteInner(
 
   const artifactStore = new LongTermMemoryEvidenceUnitDraftStore(options.root);
   const artifact = await artifactStore.createArtifact(compiled.artifact);
-  const hasBlockingDiagnostic = compiled.diagnostics.some((diagnostic) => diagnostic.severity === "error");
   const draft =
-    compiled.compiledResponse.mutations.length > 0 && !hasBlockingDiagnostic
+    compiled.compiledResponse.mutations.length > 0
       ? await new LongTermMemoryDraftStore(options.root).createDraft({
           scope,
           modes,
@@ -332,19 +399,26 @@ async function extractLongTermMemoryFromSourceNoteInner(
     root: options.root,
     phase: "draft",
     action: draft ? "draft_created" : "draft_skipped",
-    status: draft ? "ok" : hasBlockingDiagnostic ? "warning" : "skipped",
+    status: draft ? "ok" : compiled.outcome.droppedUnits > 0 ? "warning" : "skipped",
     sourceNoteId: sourceNote.id,
     draftId: draft?.id,
     counts: {
       mutations: compiled.compiledResponse.mutations.length,
       diagnostics: compiled.diagnostics.length,
-      blockingDiagnostics: compiled.diagnostics.filter((diagnostic) => diagnostic.severity === "error").length,
+      droppedUnits: compiled.outcome.droppedUnits,
     },
     diagnostics: compiled.diagnostics.map((diagnostic) => ({ ...diagnostic })),
     details: {
       artifactId: artifact.id,
-      reason: draft ? "created" : hasBlockingDiagnostic ? "blocking_diagnostics" : "no_mutations",
+      reason: draft ? "created" : compiled.outcome.droppedUnits > 0 ? "dropped_candidates_only" : "no_mutations",
+      extractionOutcome: compiled.outcome,
     },
   });
-  return { sourceNote, response: compiled.compiledResponse, draft, diagnostics: compiled.diagnostics };
+  return {
+    sourceNote,
+    response: compiled.compiledResponse,
+    draft,
+    diagnostics: compiled.diagnostics,
+    outcome: compiled.outcome,
+  };
 }
