@@ -156,7 +156,6 @@ const interopImportBodySchema = z
     instruction: z.string().max(2_000).optional(),
     applyLowRisk: z.boolean().optional(),
     importConcurrency: z.number().int().min(1).max(10).optional(),
-    useGroupedExtraction: z.boolean().optional(),
   })
   .strict();
 
@@ -194,7 +193,6 @@ const extractSourceNoteBodySchema = z
     model: z.string().min(1).max(240).optional(),
     instruction: z.string().max(2_000).optional(),
     applyLowRisk: z.boolean().optional(),
-    useGroupedExtraction: z.boolean().optional(),
   })
   .strict()
   .default({});
@@ -542,7 +540,6 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
           modes: chat ? [ltmModeForChatMode(chat.mode)] : sourceNote.modes,
           instruction: body.instruction,
           operationId,
-          useGroupedExtraction: body.useGroupedExtraction,
         });
         const applyResult =
           body.applyLowRisk && result.draft
@@ -761,7 +758,6 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
             modes: item.note.modes,
             instruction: body.instruction,
             operationId,
-            useGroupedExtraction: body.useGroupedExtraction,
           });
           const applyResult =
             body.applyLowRisk && result.draft

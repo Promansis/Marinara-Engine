@@ -29,7 +29,6 @@ export type SummaryLtmSyncOptions = {
     applyLowRisk?: boolean;
     instruction?: string;
     signal?: AbortSignal;
-    useGroupedExtraction?: boolean;
   };
   operationId?: string;
   concurrency?: number;
@@ -404,7 +403,6 @@ async function syncChatSummaryEntryToLongTermMemoryInner(
           instruction: options.extraction.instruction,
           signal: options.extraction.signal,
           operationId: extractionOperationId,
-          useGroupedExtraction: options.extraction.useGroupedExtraction,
         });
         const applyResult =
           options.extraction.applyLowRisk && result.draft
