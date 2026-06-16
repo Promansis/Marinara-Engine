@@ -100,11 +100,6 @@ const TAB_LABELS: Record<TabId, string> = {
 
 type TabId = "notes" | "tools" | "import";
 type ImportPreviewRow = NonNullable<ReturnType<typeof useLongTermMemoryImportPreview>["data"]>["samples"][number];
-type SourceSummaryGroup = {
-  source: LtmNote;
-  derived: LtmNote[];
-  orphaned: boolean;
-};
 type LtmBucketGroup = {
   type: LtmNoteType;
   notes: LtmNote[];
@@ -503,37 +498,6 @@ function pendingConflictCount(note: LtmNote) {
 
 function isDerivedFromSource(note: LtmNote, sourceNoteId: string) {
   return note.links.some((link) => link.relation === "extracted_from" && link.target === sourceNoteId);
-}
-
-function sourceSummaryGroups(notes: LtmNote[], chatLookup?: Map<string, Chat>): SourceSummaryGroup[] {
-  const sourceNotes = notes.filter(isSourceSummaryNote);
-  const sourceIds = new Set(sourceNotes.map((note) => note.id));
-  const groups = new Map<string, SourceSummaryGroup>();
-  const rows: SourceSummaryGroup[] = [];
-  for (const source of sourceNotes) {
-    const group = { source, derived: [], orphaned: false };
-    groups.set(source.id, group);
-    rows.push(group);
-  }
-  for (const note of notes) {
-    if (isSourceSummaryNote(note)) continue;
-    const sourceLink = note.links.find((link) => link.relation === "extracted_from" && sourceIds.has(link.target));
-    if (sourceLink) groups.get(sourceLink.target)?.derived.push(note);
-    else rows.push({ source: note, derived: [], orphaned: true });
-  }
-  return rows
-    .map((group) => ({
-      ...group,
-      derived: group.derived.sort((left, right) => friendlyNoteTitle(left).localeCompare(friendlyNoteTitle(right))),
-    }))
-    .sort((left, right) => {
-      const leftTime = Date.parse(left.source.updatedAt);
-      const rightTime = Date.parse(right.source.updatedAt);
-      if (!Number.isNaN(leftTime) && !Number.isNaN(rightTime) && leftTime !== rightTime) return rightTime - leftTime;
-      return (left.orphaned ? friendlyNoteTitle(left.source) : sourceNoteTitle(left.source, chatLookup)).localeCompare(
-        right.orphaned ? friendlyNoteTitle(right.source) : sourceNoteTitle(right.source, chatLookup),
-      );
-    });
 }
 
 function groupNotesByType(notes: LtmNote[]): LtmBucketGroup[] {
@@ -2390,10 +2354,6 @@ export function LongTermMemoryPanel() {
     return counts;
   }, [filteredNotes]);
 
-  const archivedDrafts = useMemo(
-    () => (allDrafts.data ?? []).filter((draft) => draft.status !== "pending"),
-    [allDrafts.data],
-  );
   const combinedDrafts = useMemo(() => {
     const byId = new Map<string, LtmExtractionDraft>();
     for (const draft of allDrafts.data ?? []) byId.set(draft.id, draft);
