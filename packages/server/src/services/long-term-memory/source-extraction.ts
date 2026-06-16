@@ -194,6 +194,8 @@ async function extractLongTermMemoryFromSourceNoteInner(
         existingNoteMaxChunks: extractionConfig.existingNoteMaxChunks,
         existingNoteMaxTokens: extractionConfig.existingNoteMaxTokens,
         rejectPlaceholderOutput: extractionConfig.rejectPlaceholderOutput,
+        activePromptTemplateId: extractionConfig.activePromptTemplateId,
+        usesPromptTemplate: Boolean(extractionConfig.activePromptTemplateId),
         hasPromptOverride: extractionConfig.systemPrompt !== DEFAULT_LTM_EXTRACTION_PROMPT,
         hasExtraInstruction: extractionConfig.extraInstruction.length > 0,
       },

@@ -731,6 +731,8 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
     assert.equal(defaults.maxOutputTokens, DEFAULT_LTM_EXTRACTION_MAX_TOKENS);
     assert.equal(defaults.maxSourceChars, 24_000);
     assert.equal(defaults.rejectPlaceholderOutput, true);
+    assert.deepEqual(defaults.promptTemplates, []);
+    assert.equal(defaults.activePromptTemplateId, null);
 
     const updated = await updateLtmExtractionConfig(
       {
@@ -743,6 +745,14 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
         existingNoteMaxChunks: 8,
         existingNoteMaxTokens: 1600,
         rejectPlaceholderOutput: false,
+        promptTemplates: [
+          {
+            id: "compact",
+            name: "Compact",
+            prompt: "Use a compact extraction prompt.",
+          },
+        ],
+        activePromptTemplateId: "compact",
       },
       root,
     );
@@ -755,11 +765,22 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
     assert.equal(updated.existingNoteMaxChunks, 8);
     assert.equal(updated.existingNoteMaxTokens, 1600);
     assert.equal(updated.rejectPlaceholderOutput, false);
+    assert.equal(updated.systemPrompt, "Use a compact extraction prompt.");
+    assert.equal(updated.promptTemplates.length, 1);
+    assert.equal(updated.activePromptTemplateId, "compact");
 
     const dirs = getLongTermMemoryDirectories(root);
     const persisted = JSON.parse(await readFile(join(dirs.config, "extraction.json"), "utf8"));
     assert.equal(persisted.systemPrompt, undefined);
     assert.equal(persisted.extraInstruction, "Prefer threads when source text sets up later payoff.");
+    assert.deepEqual(persisted.promptTemplates, [
+      {
+        id: "compact",
+        name: "Compact",
+        prompt: "Use a compact extraction prompt.",
+      },
+    ]);
+    assert.equal(persisted.activePromptTemplateId, "compact");
 
     const reset = await updateLtmExtractionConfig({}, root);
     assert.equal(reset.reasoningEffort, "low");
@@ -767,6 +788,8 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
     assert.equal(reset.maxOutputTokens, DEFAULT_LTM_EXTRACTION_MAX_TOKENS);
     assert.equal(reset.extraInstruction, "");
     assert.equal(reset.rejectPlaceholderOutput, true);
+    assert.equal(reset.activePromptTemplateId, null);
+    assert.deepEqual(reset.promptTemplates, []);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -798,7 +821,7 @@ test("source note extraction applies saved extraction config to llm request", as
     );
     await updateLtmExtractionConfig(
       {
-        systemPrompt: "Return JSON with compact test units only.",
+        systemPrompt: "Fallback extraction prompt.",
         extraInstruction: "Treat lantern hum as a thread.",
         reasoningEffort: "high",
         verbosity: "medium",
@@ -806,6 +829,14 @@ test("source note extraction applies saved extraction config to llm request", as
         temperature: 0.5,
         maxSourceChars: 1000,
         maxExistingNoteChars: 1000,
+        promptTemplates: [
+          {
+            id: "template_compact",
+            name: "Compact test template",
+            prompt: "Return JSON with compact test units only.",
+          },
+        ],
+        activePromptTemplateId: "template_compact",
       },
       root,
     );
