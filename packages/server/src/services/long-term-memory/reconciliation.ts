@@ -10,7 +10,6 @@ export interface ApplyLtmDraftOptions {
   actor?: string;
   rebuildIndexes?: boolean;
   autoApplyLowRiskOnly?: boolean;
-  autoApplyPolicy?: "turn" | "source_extraction";
   mutationIds?: string[];
   editedMutations?: Array<{ id: string } & Record<string, unknown>>;
   operationId?: string;
@@ -166,20 +165,6 @@ function mutationHasSourceSummaryTag(mutation: LtmDraftMutation) {
   );
 }
 
-export function isLowRiskTurnMutation(mutation: LtmDraftMutation) {
-  if (mutation.risk !== "low") return false;
-  if (mutation.kind === "append_section") {
-    return mutation.noteId.startsWith("scene_") && mutation.confidence >= 0.7;
-  }
-  if (mutation.kind === "add_link") {
-    return mutation.confidence >= 0.75;
-  }
-  if (mutation.kind === "create_note") {
-    return mutation.note.type === "thread" && mutation.confidence >= 0.85 && !mutation.note.conflicts?.length;
-  }
-  return false;
-}
-
 export function isLowRiskSourceExtractionMutation(mutation: LtmDraftMutation) {
   if (mutation.risk !== "low") return false;
   if (mutationTouchesSceneId(mutation) || mutationHasSourceSummaryTag(mutation)) return false;
@@ -193,11 +178,7 @@ export function isLowRiskSourceExtractionMutation(mutation: LtmDraftMutation) {
   return false;
 }
 
-export const isLowRiskAutoApplyMutation = isLowRiskTurnMutation;
-
-function isLowRiskMutationForPolicy(mutation: LtmDraftMutation, policy: ApplyLtmDraftOptions["autoApplyPolicy"]) {
-  return policy === "source_extraction" ? isLowRiskSourceExtractionMutation(mutation) : isLowRiskTurnMutation(mutation);
-}
+export const isLowRiskAutoApplyMutation = isLowRiskSourceExtractionMutation;
 
 async function filterAutoApplyMutationsWithDependencies(storage: LongTermMemoryStorage, mutations: LtmDraftMutation[]) {
   const selectedCreateIds = new Set(
@@ -229,7 +210,6 @@ async function applyMutation(
 ) {
   const eventContext = {
     actor,
-    turn: draft.source.turn,
     cause: `draft.${draft.id}`,
     summary: mutation.summary,
     payload: {
@@ -303,7 +283,6 @@ export async function applyLongTermMemoryDraft(
         actor: options.actor,
         mutationIds: options.mutationIds,
         autoApplyLowRiskOnly: options.autoApplyLowRiskOnly,
-        autoApplyPolicy: options.autoApplyPolicy,
       },
     },
     async (operationId) => applyLongTermMemoryDraftInner(draftId, { ...options, operationId }),
@@ -321,6 +300,9 @@ async function applyLongTermMemoryDraftInner(
   }
   if (draft.status !== "pending") {
     throw new Error(`Long-term memory draft is not pending: ${draftId}`);
+  }
+  if (!draft.source.sourceNoteId) {
+    throw new Error(`Long-term memory draft is not tied to a source note: ${draftId}`);
   }
 
   const storage = new LongTermMemoryStorage(options.root);
@@ -342,10 +324,9 @@ async function applyLongTermMemoryDraftInner(
       return { ...mutation, ...patch } as typeof mutation;
     });
   }
-  const autoApplyPolicy = options.autoApplyPolicy ?? (draft.source.sourceNoteId ? "source_extraction" : "turn");
   const lowRiskMutations = draft.mutations.filter((mutation) => {
     if (selectedMutationIds && !selectedMutationIds.has(mutation.id)) return false;
-    if (options.autoApplyLowRiskOnly && !isLowRiskMutationForPolicy(mutation, autoApplyPolicy)) return false;
+    if (options.autoApplyLowRiskOnly && !isLowRiskSourceExtractionMutation(mutation)) return false;
     return true;
   });
   let mutationsToApply = options.autoApplyLowRiskOnly

@@ -52,7 +52,6 @@ type ImportSourceCandidate = {
   legacySourceNoteIds?: string[];
   sourceTag: string;
   evidence: string[];
-  source?: LtmExtractionDraft["source"];
   scope?: LtmScope;
   modes: LtmMode[];
   response: {
@@ -704,7 +703,6 @@ async function chatImportCandidates(
         sourceTag: "imported_chat",
         evidence,
         modes: mutation.note.modes,
-        source: { chatId: chat.id },
         scope: mutation.note.scope,
         response: makeDraftResponse([mutation], `Import ${title}`),
       };

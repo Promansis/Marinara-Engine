@@ -416,7 +416,6 @@ async function syncChatSummaryEntryToLongTermMemoryInner(
             ? await applyLongTermMemoryDraft(result.draft.id, {
                 actor: "summary_ltm_sync",
                 autoApplyLowRiskOnly: true,
-                autoApplyPolicy: "source_extraction",
                 operationId: extractionOperationId,
               })
             : null;

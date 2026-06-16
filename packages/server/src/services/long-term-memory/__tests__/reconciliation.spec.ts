@@ -22,7 +22,6 @@ import { rebuildLongTermMemoryIndexes } from "../rebuild.js";
 import {
   applyLongTermMemoryDraft,
   isLowRiskSourceExtractionMutation,
-  isLowRiskTurnMutation,
 } from "../reconciliation.js";
 import { retrieveLongTermMemory } from "../retrieval.js";
 import { LongTermMemoryStorage } from "../storage.js";
@@ -224,7 +223,6 @@ test("source extraction low-risk policy blocks scene append auto-apply", async (
     );
 
     const mutation = sceneAppendMutation();
-    assert.equal(isLowRiskTurnMutation(mutation), true);
     assert.equal(isLowRiskSourceExtractionMutation(mutation), false);
 
     const draft = await new LongTermMemoryDraftStore(root).createDraft({
@@ -243,7 +241,6 @@ test("source extraction low-risk policy blocks scene append auto-apply", async (
       root,
       actor: "test",
       autoApplyLowRiskOnly: true,
-      autoApplyPolicy: "source_extraction",
       rebuildIndexes: false,
     });
 
@@ -349,7 +346,6 @@ test("source extraction auto-apply leaves archived resolved memory status pendin
       root,
       actor: "test",
       autoApplyLowRiskOnly: true,
-      autoApplyPolicy: "source_extraction",
       rebuildIndexes: false,
     });
 
@@ -459,7 +455,6 @@ test("source extraction auto-apply skips links to pending timeline notes", async
       root,
       actor: "test",
       autoApplyLowRiskOnly: true,
-      autoApplyPolicy: "source_extraction",
       rebuildIndexes: false,
     });
 
@@ -1860,14 +1855,41 @@ test("evidence unit compiler keeps relationship state unchanged when only new ev
 
 test("generate route no longer creates live-turn long-term memory drafts", async () => {
   const generateRouteSource = await readFile(new URL("../../../routes/generate.routes.ts", import.meta.url), "utf8");
+  const longTermMemoryRouteSource = await readFile(new URL("../../../routes/long-term-memory.routes.ts", import.meta.url), "utf8");
   const sourceExtractionSource = await readFile(new URL("../source-extraction.ts", import.meta.url), "utf8");
 
   assert.doesNotMatch(
     generateRouteSource,
     /LongTermMemoryDraftStore|runLongTermMemoryExtraction|applyLongTermMemoryDraft|createDraft\s*\(/,
   );
+  assert.doesNotMatch(
+    longTermMemoryRouteSource,
+    /app\.post<\{ Body: unknown \}>\("\/drafts"|createDraftBodySchema|Long-term memory draft creation/,
+  );
   assert.match(sourceExtractionSource, /LongTermMemoryDraftStore/);
   assert.match(sourceExtractionSource, /createDraft\s*\(/);
+});
+
+test("draft store rejects drafts that are not tied to a source note", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-source-note-required-"));
+  try {
+    await assert.rejects(
+      new LongTermMemoryDraftStore(root).createDraft({
+        userMessage: "",
+        assistantReply: "",
+        scope: {},
+        modes: ["roleplay"],
+        source: { chatId: "chat_test" },
+        response: {
+          summary: "Invalid draft",
+          mutations: [threadCreateMutation()],
+        },
+      }),
+      /Long-term memory drafts must be tied to a source note/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("evidence unit compiler derives tone profiles from raw observations", () => {

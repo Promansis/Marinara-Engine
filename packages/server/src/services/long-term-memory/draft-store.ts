@@ -18,7 +18,7 @@ export interface LtmExtractionTurnInput {
   assistantReply: string;
   scope?: LtmScope;
   modes: LtmMode[];
-  source?: LtmExtractionDraft["source"];
+  source: LtmExtractionDraft["source"];
 }
 
 export interface StoreLtmDraftOptions extends LtmExtractionTurnInput {
@@ -59,13 +59,16 @@ export class LongTermMemoryDraftStore {
 
   async createDraft(options: StoreLtmDraftOptions) {
     await this.initialize();
+    if (!options.source?.sourceNoteId) {
+      throw new Error("Long-term memory drafts must be tied to a source note.");
+    }
     const timestamp = nowIso();
     const draft = ltmExtractionDraftSchema.parse({
       id: randomUUID(),
       status: "pending",
       createdAt: timestamp,
       updatedAt: timestamp,
-      source: options.source ?? {},
+      source: options.source,
       scope: options.scope ?? {},
       modes: options.modes,
       summary: options.summary ?? options.response.summary ?? "",

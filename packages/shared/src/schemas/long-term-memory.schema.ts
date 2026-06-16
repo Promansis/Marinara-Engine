@@ -385,9 +385,6 @@ export const ltmDraftRiskSchema = z.enum(["low", "medium", "high"]);
 export const ltmDraftSourceSchema = z
   .object({
     chatId: z.string().min(1).max(120).optional(),
-    userMessageId: z.string().min(1).max(120).optional(),
-    assistantMessageId: z.string().min(1).max(120).optional(),
-    turn: z.number().int().min(0).optional(),
     sourceNoteId: ltmNoteIdSchema.optional(),
     summaryEntryId: z.string().min(1).max(120).optional(),
     sourceHash: z
@@ -395,7 +392,10 @@ export const ltmDraftSourceSchema = z
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
   })
-  .strict();
+  .refine((value) => Boolean(value.sourceNoteId), {
+    message: "Long-term memory drafts must be tied to a source note.",
+    path: ["sourceNoteId"],
+  });
 
 export const ltmDraftNoteInputSchema = z
   .object({

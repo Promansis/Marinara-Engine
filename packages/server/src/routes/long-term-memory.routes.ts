@@ -8,7 +8,6 @@ import {
   LOCAL_SIDECAR_CONNECTION_ID,
   ltmConflictSchema,
   ltmDraftMutationSchema,
-  ltmDraftSourceSchema,
   ltmDraftStatusSchema,
   ltmDebugPhaseSchema,
   ltmDebugStatusSchema,
@@ -169,16 +168,6 @@ const listDraftsQuerySchema = z
   .object({
     status: ltmDraftStatusSchema.optional(),
     chatId: z.string().min(1).max(120).optional(),
-  })
-  .strict();
-
-const createDraftBodySchema = z
-  .object({
-    source: ltmDraftSourceSchema.default({}),
-    scope: ltmScopeSchema.default({}),
-    modes: z.array(ltmModeSchema).min(1).max(8),
-    summary: z.string().max(2_000).optional(),
-    response: ltmExtractionResponseSchema,
   })
   .strict();
 
@@ -565,7 +554,6 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
             ? await applyLongTermMemoryDraft(result.draft.id, {
                 actor: "maintenance_api",
                 autoApplyLowRiskOnly: true,
-                autoApplyPolicy: "source_extraction",
                 operationId,
               })
             : null;
@@ -785,7 +773,6 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
               ? await applyLongTermMemoryDraft(result.draft.id, {
                   actor: "maintenance_api",
                   autoApplyLowRiskOnly: true,
-                  autoApplyPolicy: "source_extraction",
                   rebuildIndexes: false,
                   operationId,
                 })
@@ -872,21 +859,6 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     const draft = await draftStore.getDraft(id);
     if (!draft) return reply.status(404).send({ error: "Long-term memory draft not found" });
     return draft;
-  });
-
-  app.post<{ Body: unknown }>("/drafts", { bodyLimit: DRAFT_BODY_LIMIT_BYTES }, async (req, reply) => {
-    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft creation" })) return;
-    const body = createDraftBodySchema.parse(req.body);
-    const draft = await draftStore.createDraft({
-      source: body.source,
-      scope: body.scope,
-      modes: body.modes,
-      summary: body.summary,
-      response: body.response,
-      userMessage: "",
-      assistantReply: "",
-    });
-    return reply.status(201).send(draft);
   });
 
   app.post<{ Params: { id: string } }>("/drafts/:id/restore", async (req, reply) => {
