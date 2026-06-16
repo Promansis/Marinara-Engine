@@ -370,6 +370,116 @@ test("assembler injects long-term memory before chat summary fallback to avoid d
   assert.deepEqual(result.messages.map((message) => message.role), ["system", "user", "assistant"]);
 });
 
+test("assembler places long-term memory at an explicit long_term_memory marker", async () => {
+  const input = {
+    db: {} as AssemblerInput["db"],
+    preset: {
+      id: "preset_test",
+      name: "Test Preset",
+      description: "",
+      sectionOrder: JSON.stringify(["system_section", "ltm_section", "history_section"]),
+      groupOrder: JSON.stringify([]),
+      variableGroups: JSON.stringify([]),
+      variableValues: JSON.stringify({}),
+      parameters: JSON.stringify({}),
+      wrapFormat: "xml",
+      defaultChoices: JSON.stringify({}),
+      isDefault: "false",
+      author: "",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    } as AssemblerInput["preset"],
+    sections: [
+      {
+        id: "system_section",
+        presetId: "preset_test",
+        identifier: "system",
+        name: "System",
+        content: "<persona>\nBase system prompt\n</persona>",
+        role: "system",
+        enabled: "true",
+        isMarker: "false",
+        groupId: null,
+        markerConfig: null,
+        injectionPosition: "ordered",
+        injectionDepth: 0,
+        injectionOrder: 100,
+        forbidOverrides: "false",
+      },
+      {
+        id: "ltm_section",
+        presetId: "preset_test",
+        identifier: "long_term_memory",
+        name: "Long-Term Memory",
+        content: "",
+        role: "system",
+        enabled: "true",
+        isMarker: "true",
+        groupId: null,
+        markerConfig: JSON.stringify({ type: "long_term_memory" }),
+        injectionPosition: "ordered",
+        injectionDepth: 0,
+        injectionOrder: 100,
+        forbidOverrides: "false",
+      },
+      {
+        id: "history_section",
+        presetId: "preset_test",
+        identifier: "history",
+        name: "History",
+        content: "",
+        role: "user",
+        enabled: "true",
+        isMarker: "true",
+        groupId: null,
+        markerConfig: JSON.stringify({ type: "chat_history" }),
+        injectionPosition: "ordered",
+        injectionDepth: 0,
+        injectionOrder: 100,
+        forbidOverrides: "false",
+      },
+    ] as AssemblerInput["sections"],
+    groups: [],
+    choiceBlocks: [],
+    chatChoices: {},
+    chatId: "chat_test",
+    characterIds: [],
+    personaId: null,
+    personaName: "User",
+    personaDescription: "",
+    personaFields: {},
+    chatMessages: [
+      { role: "user", content: "Where is the archive key?" },
+      { role: "assistant", content: "Let me think." },
+    ],
+    lorebookScanMessages: [],
+    chatSummary: "Summary says Mara hid the archive key behind the clock.",
+    longTermMemoryBlock: "[WORLD]\nMara hid the archive key behind the clock in the tower foyer.",
+    suppressChatSummary: true,
+    enableAgents: false,
+    activeAgentIds: [],
+    activeLorebookIds: [],
+    excludedLorebookIds: [],
+    excludedLorebookSourceAgentIds: [],
+    generationTriggers: ["chat"],
+  } satisfies AssemblerInput & {
+    longTermMemoryBlock: string;
+    suppressChatSummary: boolean;
+  };
+
+  const result = await assemblePrompt(input);
+  const systemPrompt = result.messages.find((message) => message.role === "system")?.content ?? "";
+
+  assert.deepEqual(result.messages.map((message) => message.role), ["system", "user", "assistant"]);
+  assert.match(systemPrompt, /<system>\n    <persona>\n    Base system prompt\n    <\/persona>\n<\/system>/);
+  assert.match(
+    systemPrompt,
+    /<long_term_memory>\n    \[WORLD\]\n    Mara hid the archive key behind the clock in the tower foyer\.\n<\/long_term_memory>/,
+  );
+  assert.ok(systemPrompt.indexOf("</system>") < systemPrompt.indexOf("<long_term_memory>"));
+  assert.doesNotMatch(systemPrompt, /Summary says Mara hid the archive key behind the clock/);
+});
+
 test("long-term memory budget uses prompt-clean text for legacy chunks", () => {
   const chunk = {
     id: "sample_memory_note::social_habits",

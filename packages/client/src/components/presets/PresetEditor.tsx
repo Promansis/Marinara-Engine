@@ -112,6 +112,7 @@ const MARKER_LABELS: Record<MarkerType, string> = {
   persona: "Persona",
   chat_history: "Chat History",
   chat_summary: "Chat Summary",
+  long_term_memory: "Long-Term Memory",
   world_info_before: "Lorebook Marker (Before)",
   world_info_after: "Lorebook Marker (After)",
   dialogue_examples: "Dialogue Examples",

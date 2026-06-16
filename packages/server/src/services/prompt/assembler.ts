@@ -291,6 +291,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
     chatMessages: input.chatMessages,
     lorebookScanMessages: input.lorebookScanMessages,
     chatSummary: input.chatSummary ?? null,
+    longTermMemoryBlock: input.longTermMemoryBlock ?? null,
     wrapFormat,
     enableAgents: input.enableAgents ?? true,
     activeAgentIds: input.activeAgentIds ?? [],
@@ -315,6 +316,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
   const depthSections: ResolvedSection[] = [];
   let lorebookDepthEntriesCount = 0;
   let hasChatSummaryMarker = false;
+  let hasLongTermMemoryMarker = false;
   const runtimeAgentTypesUsed = new Set<string>();
 
   for (const sectionId of sectionOrder) {
@@ -333,6 +335,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
       try {
         const mc = JSON.parse(section.markerConfig) as MarkerConfig;
         if (mc.type === "chat_summary") hasChatSummaryMarker = true;
+        if (mc.type === "long_term_memory") hasLongTermMemoryMarker = true;
       } catch {
         /* ignore */
       }
@@ -406,7 +409,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
   // Merge long-term memory into the leading system prompt before summary fallback so
   // both features share the same prompt assembly path without duplicating context.
   const longTermMemoryBlock = input.longTermMemoryBlock?.trim();
-  if (longTermMemoryBlock) {
+  if (longTermMemoryBlock && !hasLongTermMemoryMarker) {
     const firstSystemIdx = messages.findIndex((m) => m.role === "system");
     if (firstSystemIdx >= 0) {
       messages[firstSystemIdx] = {
