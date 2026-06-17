@@ -155,7 +155,7 @@ const rowActionButtonClassName =
 const rowActionGroupClassName = "flex shrink-0 items-center justify-end gap-0.5";
 
 const rowActionOverlayClassName =
-  "absolute right-2 top-1/2 flex shrink-0 -translate-y-1/2 items-center justify-end gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-[var(--border)] transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100";
+  "absolute right-2 bottom-2 flex shrink-0 items-center justify-end gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-[var(--border)] transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100";
 
 const disclosureButtonClassName =
   "flex min-h-11 w-full items-center justify-between gap-3 rounded-xl bg-[var(--secondary)]/35 px-3 py-2 text-left text-xs font-semibold text-[var(--foreground)] ring-1 ring-[var(--border)] transition-[background-color,box-shadow,color] hover:bg-[var(--accent)]/45 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60";
@@ -363,16 +363,14 @@ function NoteRow({
     >
       <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
         <div className={cn("grid min-w-0 gap-2", onSelect && "grid-cols-[auto_minmax(0,1fr)]")}>
-          {onSelect && (
-            <label className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--background)]/55 ring-1 ring-[var(--border)]">
+          {onSelect && (            
               <input
                 type="checkbox"
                 checked={bulkSelected ?? false}
                 onChange={(event) => onSelect(event.target.checked)}
                 className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
                 aria-label={`Select ${displayTitle}`}
-              />
-            </label>
+              />           
           )}
           <div className="min-w-0">
             <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={displayTitle}>
@@ -927,7 +925,7 @@ function TypeMemoryGroups({
                           >
                             {expanded ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
                           </button>
-                          <label className="flex h-7 w-7 shrink-0 self-center items-center justify-center rounded-md bg-[var(--background)]/55 ring-1 ring-[var(--border)]">
+                          
                             <input
                               type="checkbox"
                               checked={selected}
@@ -935,7 +933,7 @@ function TypeMemoryGroups({
                               className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
                               aria-label={`Select ${isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : friendlyNoteTitle(note)}`}
                             />
-                          </label>
+                          
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="min-w-0">
@@ -2072,16 +2070,14 @@ function _ArchivedDraftRow({
     >
       <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
         <div className={cn("grid min-w-0 gap-2", onSelect && "grid-cols-[auto_minmax(0,1fr)]")}>
-          {onSelect && (
-            <label className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--background)]/55 ring-1 ring-[var(--border)]">
+          {onSelect && (           
               <input
                 type="checkbox"
                 checked={bulkSelected ?? false}
                 onChange={(event) => onSelect(event.target.checked)}
                 className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
                 aria-label={`Select suggestion ${draft.id}`}
-              />
-            </label>
+              />            
           )}
           <div className="min-w-0">
             <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={draft.summary || "Untitled suggestion"}>
@@ -2164,7 +2160,6 @@ function ImportPreviewRowItem({
         selected && selectedListRowClassName,
       )}
     >
-      <label className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--background)]/55 ring-1 ring-[var(--border)]">
         <input
           type="checkbox"
           checked={selected}
@@ -2172,8 +2167,7 @@ function ImportPreviewRowItem({
           onChange={(event) => onSelect(event.target.checked)}
           className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
           aria-label={`Select ${sample.title}`}
-        />
-      </label>
+        />      
       <div className="min-w-0 self-center">
         <div className="truncate text-xs font-medium text-[var(--foreground)]" title={sample.title}>
           {sample.title}
@@ -2182,10 +2176,7 @@ function ImportPreviewRowItem({
           <div className="mt-1 truncate text-[10px] leading-relaxed text-[var(--muted-foreground)]" title={sample.snippet}>
             {sample.snippet}
           </div>
-        )}
-        <div className="mt-1 flex flex-wrap gap-1.5">
-          <StatusPill label={`${sample.mutationCount} suggested change${sample.mutationCount === 1 ? "" : "s"}`} />
-        </div>
+        )}        
       </div>
       <div className={rowActionGroupClassName}>
         <button
@@ -2482,11 +2473,7 @@ function ChatMemorySettings({
               <ToolButton onClick={onOpenExtractionSettings}>
                 <SlidersHorizontal size="0.875rem" />
                 Extraction settings
-              </ToolButton>
-              <p className="text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-                Extraction now runs only from imported or created source notes. Generated chat turns no longer create
-                long-term memory drafts automatically.
-              </p>
+              </ToolButton>              
             </div>
           )}
 
@@ -2605,9 +2592,7 @@ export function LongTermMemoryPanel() {
   const [memoryModalMode, setMemoryModalMode] = useState<MemoryModalMode>("view");
   const [memoryModalTab, setMemoryModalTab] = useState<MemoryModalTab>("overview");
   const [editedNoteDirty, setEditedNoteDirty] = useState(false);
-  const [expandedTypeIds, setExpandedTypeIds] = useState<Set<string>>(
-    () => new Set(NOTE_TYPES.filter((t) => t !== "all")),
-  );
+  const [expandedTypeIds, setExpandedTypeIds] = useState<Set<string>>(() => new Set());
   const [expandedMemoryIds, setExpandedMemoryIds] = useState<Set<string>>(() => new Set());
   const [viewingDraftId, setViewingDraftId] = useState<string | null>(null);
 
@@ -3139,7 +3124,7 @@ export function LongTermMemoryPanel() {
               />
             </div>
             <p className={cn("mt-2", helperTextClassName)}>
-              Search, review, and maintain the same typed memory library used to support long-running story continuity.
+              Search, review, and maintain long-term memories.
             </p>
           </div>
 
@@ -3269,7 +3254,7 @@ export function LongTermMemoryPanel() {
               <StatusPill label={status.data?.indexes.embeddingsAvailable ? "Smart search" : "Basic search"} />
             </div>
             <p className={cn("mt-2", helperTextClassName)}>
-              Tune recall, extraction, maintenance, and debug behavior for the active chat without leaving the right panel.
+              Tune recall, extraction, maintenance, and debug behavior.
             </p>
           </div>
           <ChatMemorySettings
@@ -3290,9 +3275,6 @@ export function LongTermMemoryPanel() {
                 <div className="text-sm font-semibold text-[var(--foreground)]">
                   {importPreview.data?.draftable ?? 0} source{importPreview.data?.draftable === 1 ? "" : "s"} ready
                 </div>
-                <p className={cn("mt-2", helperTextClassName)}>
-                  Pull chat summaries, character notes, or lorebook notes into the typed-memory workflow and review the suggestions they create.
-                </p>
               </div>
               {importPreview.isLoading ? <Loader2 className="animate-spin" size="1rem" /> : <FileJson size="1rem" />}
             </div>
