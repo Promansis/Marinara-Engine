@@ -40,6 +40,7 @@ import {
   useRebuildLongTermMemory,
   useRepairLongTermMemory,
   useReplayLongTermMemory,
+  useSearchLongTermMemory,
   type LtmSearchResponse,
   type LtmInteropSource,
 } from "../../hooks/use-long-term-memory";
@@ -1300,6 +1301,11 @@ function NoteViewModalContent({
   chatLookup,
   activeNotesLoading,
   onOpenSourceNote,
+  recallQuery,
+  recallResult,
+  recallPending,
+  onRecallQueryChange,
+  onRunRecall,
 }: {
   note: LtmNote;
   activeNotes: LtmNote[];
@@ -1307,6 +1313,11 @@ function NoteViewModalContent({
   chatLookup?: Map<string, Chat>;
   activeNotesLoading: boolean;
   onOpenSourceNote?: (noteId: string) => void;
+  recallQuery?: string;
+  recallResult?: LtmSearchResponse | null;
+  recallPending?: boolean;
+  onRecallQueryChange?: (query: string) => void;
+  onRunRecall?: () => void;
 }) {
   const isSourceNote = isSourceSummaryNote(note);
 
@@ -1348,6 +1359,20 @@ function NoteViewModalContent({
         <h3 className="text-xs font-semibold text-[var(--foreground)]">Related Memories</h3>
         <GraphLinks links={note.links} noteLookup={noteLookup} chatLookup={chatLookup} />
       </section>
+
+      {!isSourceNote && onRunRecall && onRecallQueryChange && (
+        <section className="space-y-2">
+          <h3 className="text-xs font-semibold text-[var(--foreground)]">Recall Tester</h3>
+          <MemoryRecallPanel
+            note={note}
+            result={recallResult ?? null}
+            pending={recallPending ?? false}
+            query={recallQuery ?? ""}
+            onQueryChange={onRecallQueryChange}
+            onRun={onRunRecall}
+          />
+        </section>
+      )}
 
       {isSourceNote && (
         <DerivedActiveMemories
@@ -2331,6 +2356,9 @@ export function LongTermMemoryPanel() {
   const replay = useReplayLongTermMemory();
   const repair = useRepairLongTermMemory();
   const importSourceNotes = useImportLongTermMemorySourceNotes();
+  const searchMemory = useSearchLongTermMemory();
+  const [recallQueryByNoteId, setRecallQueryByNoteId] = useState<Record<string, string>>({});
+  const [recallResultByNoteId, setRecallResultByNoteId] = useState<Record<string, LtmSearchResponse | null>>({});
 
   const filteredNotes = useMemo(() => {
     const list = (notes.data ?? []).filter((note) => {
@@ -2416,6 +2444,8 @@ export function LongTermMemoryPanel() {
   const editedNoteFilteredOut = Boolean(editingNote && !filteredNotes.some((note) => note.id === editingNote.id));
   const editingNoteHiddenByFilters = Boolean(editedNoteFilteredOut && editingNote);
   const activeListViewingNoteId = sourceViewerNoteId ?? viewingNoteId;
+  const viewingRecallQuery = viewingNote ? (recallQueryByNoteId[viewingNote.id] ?? "") : "";
+  const viewingRecallResult = viewingNote ? (recallResultByNoteId[viewingNote.id] ?? null) : null;
 
   const closeEditor = () => {
     setEditingNoteId(null);
@@ -2519,6 +2549,27 @@ export function LongTermMemoryPanel() {
     closeSourceViewer();
     closeDraftViewer();
     setCreatingNote(true);
+  };
+
+  const runViewingNoteRecall = async () => {
+    if (!viewingNote) return;
+    const recallQuery = viewingRecallQuery.trim();
+    if (!recallQuery) return;
+    try {
+      const result = await searchMemory.mutateAsync({
+        queryText: recallQuery,
+        noteIds: [viewingNote.id],
+        scope: viewingNote.scope,
+        characterIds: viewingNote.scope.characterIds,
+        includeResolved: true,
+        maxChunks: 8,
+        maxTokens: 2048,
+        debug: true,
+      });
+      setRecallResultByNoteId((current) => ({ ...current, [viewingNote.id]: result }));
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
   };
 
   const openRecoveryDraft = (candidate: LtmExtractionDroppedCandidate, sourceNote: LtmNote) => {
@@ -2941,6 +2992,13 @@ export function LongTermMemoryPanel() {
             chatLookup={chatLookup}
             activeNotesLoading={activeNotes.isLoading}
             onOpenSourceNote={openSourceNote}
+            recallQuery={viewingRecallQuery}
+            recallResult={viewingRecallResult}
+            recallPending={searchMemory.isPending}
+            onRecallQueryChange={(next) =>
+              setRecallQueryByNoteId((current) => ({ ...current, [viewingNote.id]: next }))
+            }
+            onRunRecall={runViewingNoteRecall}
           />
         )}
       </Modal>
