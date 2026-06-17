@@ -752,7 +752,7 @@ function SourceInfoPopover({
           event.stopPropagation();
           setOpen((current) => !current);
         }}
-        className="inline-flex items-center gap-1 rounded-full bg-[var(--secondary)]/70 px-2 py-0.5 text-[0.625rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
+        className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-[var(--secondary)]/70 px-2 py-0.5 text-[0.625rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
         aria-expanded={open}
         aria-label={`Show ${uniqueSourceIds.length} memory source${uniqueSourceIds.length === 1 ? "" : "s"}`}
       >
@@ -914,99 +914,104 @@ function TypeMemoryGroups({
                       )}
                     >
                       <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                        <div className="flex min-w-0 items-start gap-2">
-                          <label className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[var(--background)]/55 ring-1 ring-[var(--border)]">
-                            <input
-                              type="checkbox"
-                              checked={selected}
-                              onChange={(event) => onSelect(note.id, event.target.checked)}
-                              className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-                              aria-label={`Select ${isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : friendlyNoteTitle(note)}`}
-                            />
-                          </label>
-                          <button
-                            type="button"
-                            onClick={() => onToggleMemory(note.id)}
-                            className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                            aria-label={expanded ? "Hide source details" : "Show source details"}
-                            aria-expanded={expanded}
-                          >
-                            {expanded ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
-                          </button>
-                          <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 truncate">
-                            <span
-                              className="truncate text-xs font-semibold text-[var(--foreground)]"
-                              title={isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : friendlyNoteTitle(note)}
+                        <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-2">
+                          <div className="grid min-h-16 w-7 shrink-0 grid-rows-[auto_1fr] justify-items-center">
+                            <button
+                              type="button"
+                              onClick={() => onToggleMemory(note.id)}
+                              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                              aria-label={expanded ? "Hide source details" : "Show source details"}
+                              aria-expanded={expanded}
                             >
-                              {isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : friendlyNoteTitle(note)}
-                            </span>
-                            {isSourceSummaryNote(note) && derivedCount > 0 && (
-                              <span className="shrink-0 rounded bg-[var(--muted-foreground)]/10 px-1.5 py-0.5 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                                &rarr;{derivedCount}
-                              </span>
-                            )}
-                          </div>
-                          {note.type !== "source" && (
-                            <p className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-                              {noteTextPreview(note) || "No summary text."}
-                            </p>
-                          )}
-                          <div className="mt-1 flex flex-wrap gap-1.5">
-                            {note.type === "source" ? (
-                              <StatusPill label={sourceTypeLabel(note)} />
-                            ) : (
-                              <StatusPill
-                                label={friendlyStatus(note.status)}
-                                tone={note.status === "active" ? "good" : "neutral"}
+                              {expanded ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
+                            </button>
+                            <label className="flex h-7 w-7 shrink-0 self-center items-center justify-center rounded-md bg-[var(--background)]/55 ring-1 ring-[var(--border)]">
+                              <input
+                                type="checkbox"
+                                checked={selected}
+                                onChange={(event) => onSelect(note.id, event.target.checked)}
+                                className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+                                aria-label={`Select ${isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : friendlyNoteTitle(note)}`}
                               />
-                            )}
-                            {sourcesCount === 0 && note.type !== "source" && <StatusPill label="Manual" />}
+                            </label>
                           </div>
-                          <EvidencePills note={note} noteLookup={noteLookup} chatLookup={chatLookup} onOpenSource={onOpenSource} />
-                          {expanded && (
-                            <div className="mt-2 space-y-1.5 rounded-lg bg-[var(--background)]/35 p-2 ring-1 ring-[var(--border)]/70">
-                              {sourcesCount === 0 ? (
-                                <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
-                                  No source evidence is linked to this memory.
-                                </p>
-                              ) : (
-                                sourceLinkIds(note).map((sourceId) => {
-                                  const source = noteLookup.get(sourceId);
-                                  return (
-                                    <button
-                                      key={sourceId}
-                                      type="button"
-                                      onClick={() => onOpen(sourceId)}
-                                      className="w-full rounded-md bg-[var(--secondary)]/45 p-2 text-left ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
-                                    >
-                                      <div className="flex flex-wrap items-center gap-1.5">
-                                        <span className="min-w-0 truncate text-xs font-medium text-[var(--foreground)]">
-                                          {sourceReferenceLabel(sourceId, noteLookup, chatLookup)}
-                                        </span>
-                                        {source && <StatusPill label={friendlyStatus(source.status)} tone="neutral" />}
-                                      </div>
-                                      {source && (
-                                        <p className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-                                          {noteTextPreview(source) || "Source has no summary text."}
-                                        </p>
-                                      )}
-                                    </button>
-                                  );
-                                })
-                              )}
-                              {(note.conflicts ?? [])
-                                .filter((conflict) => conflict.resolution === "pending")
-                                .map((conflict) => (
-                                  <div
-                                    key={`${conflict.field}:${conflict.policy}`}
-                                    className="rounded-md bg-amber-500/10 p-2 text-[0.6875rem] leading-relaxed text-amber-100 ring-1 ring-amber-400/30"
-                                  >
-                                    Needs review: {sentenceCaseIdentifier(conflict.field)}
-                                  </div>
-                                ))}
+                          <div className="min-w-0 flex-1">
+                            <div className="min-w-0">
+                              <div
+                                className="truncate text-xs font-semibold text-[var(--foreground)]"
+                                title={isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : friendlyNoteTitle(note)}
+                              >
+                                {isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : friendlyNoteTitle(note)}
+                              </div>
                             </div>
-                          )}
+                            {note.type !== "source" && (
+                              <p className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                                {noteTextPreview(note) || "No summary text."}
+                              </p>
+                            )}
+                            <div className="mt-1 flex flex-wrap gap-1.5">
+                              {note.type === "source" ? (
+                                <StatusPill label={sourceTypeLabel(note)} />
+                              ) : (
+                                <StatusPill
+                                  label={friendlyStatus(note.status)}
+                                  tone={note.status === "active" ? "good" : "neutral"}
+                                />
+                              )}
+                              {sourcesCount === 0 && note.type !== "source" && <StatusPill label="Manual" />}
+                              {isSourceSummaryNote(note) && derivedCount > 0 && (
+                                <StatusPill label={`${derivedCount} typed memor${derivedCount === 1 ? "y" : "ies"}`} />
+                              )}
+                            </div>
+                            <EvidencePills
+                              note={note}
+                              noteLookup={noteLookup}
+                              chatLookup={chatLookup}
+                              onOpenSource={onOpenSource}
+                            />
+                            {expanded && (
+                              <div className="mt-2 space-y-1.5 rounded-lg bg-[var(--background)]/35 p-2 ring-1 ring-[var(--border)]/70">
+                                {sourcesCount === 0 ? (
+                                  <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
+                                    No source evidence is linked to this memory.
+                                  </p>
+                                ) : (
+                                  sourceLinkIds(note).map((sourceId) => {
+                                    const source = noteLookup.get(sourceId);
+                                    return (
+                                      <button
+                                        key={sourceId}
+                                        type="button"
+                                        onClick={() => onOpen(sourceId)}
+                                        className="w-full rounded-md bg-[var(--secondary)]/45 p-2 text-left ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+                                      >
+                                        <div className="flex flex-wrap items-center gap-1.5">
+                                          <span className="min-w-0 truncate text-xs font-medium text-[var(--foreground)]">
+                                            {sourceReferenceLabel(sourceId, noteLookup, chatLookup)}
+                                          </span>
+                                          {source && <StatusPill label={friendlyStatus(source.status)} tone="neutral" />}
+                                        </div>
+                                        {source && (
+                                          <p className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                                            {noteTextPreview(source) || "Source has no summary text."}
+                                          </p>
+                                        )}
+                                      </button>
+                                    );
+                                  })
+                                )}
+                                {(note.conflicts ?? [])
+                                  .filter((conflict) => conflict.resolution === "pending")
+                                  .map((conflict) => (
+                                    <div
+                                      key={`${conflict.field}:${conflict.policy}`}
+                                      className="rounded-md bg-amber-500/10 p-2 text-[0.6875rem] leading-relaxed text-amber-100 ring-1 ring-amber-400/30"
+                                    >
+                                      Needs review: {sentenceCaseIdentifier(conflict.field)}
+                                    </div>
+                                  ))}
+                              </div>
+                            )}
                           </div>
                         </div>
                         <div className={rowActionGroupClassName}>
@@ -1087,23 +1092,27 @@ function _ArchivedSourceSummaryGroupRow({
   const sourceTitle = sourceNoteTitle(group.source, chatLookup);
   return (
     <article className={listRowClassName}>
-      <div className="flex items-start gap-2">
-        <label className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--background)]/55 ring-1 ring-[var(--border)]">
-          <input
-            type="checkbox"
-            checked={allSelected}
-            onChange={(event) => onSelect(groupIds, event.target.checked)}
-            className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-            aria-label={`Select ${sourceTitle} group`}
-          />
-        </label>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={sourceTitle}>
-            {sourceTitle}
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+        <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-2">
+          <div className="grid min-h-12 w-8 shrink-0 justify-items-center">
+            <label className="flex h-8 w-8 shrink-0 self-center items-center justify-center rounded-lg bg-[var(--background)]/55 ring-1 ring-[var(--border)]">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={(event) => onSelect(groupIds, event.target.checked)}
+                className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+                aria-label={`Select ${sourceTitle} group`}
+              />
+            </label>
           </div>
-          <div className="mt-1 flex flex-wrap gap-1.5">
-            <StatusPill label={isChatSummarySourceNote(group.source) ? "Source summary" : "Source note"} />
-            <StatusPill label={`${group.derived.length} typed memor${group.derived.length === 1 ? "y" : "ies"}`} />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={sourceTitle}>
+              {sourceTitle}
+            </div>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              <StatusPill label={isChatSummarySourceNote(group.source) ? "Source summary" : "Source note"} />
+              <StatusPill label={`${group.derived.length} typed memor${group.derived.length === 1 ? "y" : "ies"}`} />
+            </div>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 shadow-sm ring-1 ring-[var(--border)]">
