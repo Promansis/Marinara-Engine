@@ -251,6 +251,11 @@ export type UpdateLongTermMemoryNoteInput = Partial<
   Omit<LtmNote, "id" | "type" | "createdAt" | "updatedAt" | "version" | "previousHash">
 >;
 
+export type DeleteLongTermMemoryNotesResponse = {
+  deletedIds: string[];
+  failedIds: string[];
+};
+
 function qs(params: Record<string, string | undefined>) {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -323,6 +328,33 @@ export function useDeleteLongTermMemoryNote() {
     mutationFn: (id: string) => api.delete<{ deleted: true; id: string }>(`/long-term-memory/notes/${id}/permanent`),
     onSuccess: (_, id) => {
       qc.removeQueries({ queryKey: longTermMemoryKeys.note(id) });
+      qc.invalidateQueries({ queryKey: longTermMemoryKeys.all });
+    },
+  });
+}
+
+export function useDeleteLongTermMemoryNotes() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (ids: string[]) => {
+      const results = await Promise.allSettled(
+        ids.map((id) => api.delete<{ deleted: true; id: string }>(`/long-term-memory/notes/${id}/permanent`)),
+      );
+      const deletedIds: string[] = [];
+      const failedIds: string[] = [];
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled") {
+          deletedIds.push(result.value.id);
+        } else {
+          failedIds.push(ids[index]);
+        }
+      });
+      return { deletedIds, failedIds } satisfies DeleteLongTermMemoryNotesResponse;
+    },
+    onSuccess: (result) => {
+      for (const id of result.deletedIds) {
+        qc.removeQueries({ queryKey: longTermMemoryKeys.note(id) });
+      }
       qc.invalidateQueries({ queryKey: longTermMemoryKeys.all });
     },
   });

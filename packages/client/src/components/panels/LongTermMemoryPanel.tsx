@@ -32,6 +32,7 @@ import type {
 } from "@marinara-engine/shared";
 import {
   useImportLongTermMemorySourceNotes,
+  useDeleteLongTermMemoryNotes,
   useLongTermMemoryDrafts,
   useLongTermMemoryImportPreview,
   useLongTermMemoryIntegrity,
@@ -528,6 +529,16 @@ function isDerivedFromSource(note: LtmNote, sourceNoteId: string) {
   return note.links.some((link) => link.relation === "extracted_from" && link.target === sourceNoteId);
 }
 
+function derivedNoteIdsForSources(notes: LtmNote[], sourceIds: Set<string>) {
+  return notes
+    .filter((note) => [...sourceIds].some((sourceId) => note.id !== sourceId && isDerivedFromSource(note, sourceId)))
+    .map((note) => note.id);
+}
+
+function uniqueNoteIds(ids: string[]) {
+  return [...new Set(ids)];
+}
+
 function groupNotesByType(notes: LtmNote[]): LtmBucketGroup[] {
   const groups = new Map<LtmNoteType, LtmNote[]>();
   for (const note of notes) {
@@ -779,11 +790,14 @@ function TypeMemoryGroups({
   expandedMemoryIds,
   expandedTypeIds,
   openNoteId,
+  selectedNoteIds,
   derivedCountBySource,
   onToggleMemory,
   onToggleType,
   onOpen,
   onOpenSource,
+  onSelect,
+  onDelete,
   chatLookup,
 }: {
   groups: LtmBucketGroup[];
@@ -791,11 +805,14 @@ function TypeMemoryGroups({
   expandedMemoryIds: Set<string>;
   expandedTypeIds: Set<string>;
   openNoteId: string | null;
+  selectedNoteIds: Set<string>;
   derivedCountBySource: Map<string, number>;
   onToggleMemory: (id: string) => void;
   onToggleType: (type: string) => void;
   onOpen: (id: string) => void;
   onOpenSource: (id: string) => void;
+  onSelect: (id: string, selected: boolean) => void;
+  onDelete: (note: LtmNote) => void;
   chatLookup?: Map<string, Chat>;
 }) {
   if (groups.length === 0) {
@@ -847,17 +864,27 @@ function TypeMemoryGroups({
                   const expanded = expandedMemoryIds.has(note.id);
                   const sourcesCount = sourceLinkIds(note).length;
                   const derivedCount = derivedCountBySource.get(note.id) ?? 0;
+                  const selected = selectedNoteIds.has(note.id);
                   return (
                     <article
                       key={note.id}
                       className={cn(
                         "group",
                         listRowClassName,
-                        openNoteId === note.id && selectedListRowClassName,
+                        (openNoteId === note.id || selected) && selectedListRowClassName,
                       )}
                     >
                       <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
                         <div className="flex min-w-0 items-start gap-2">
+                          <label className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[var(--background)]/55 ring-1 ring-[var(--border)]">
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={(event) => onSelect(note.id, event.target.checked)}
+                              className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+                              aria-label={`Select ${isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : friendlyNoteTitle(note)}`}
+                            />
+                          </label>
                           <button
                             type="button"
                             onClick={() => onToggleMemory(note.id)}
@@ -955,6 +982,18 @@ function TypeMemoryGroups({
                             title="Open memory"
                           >
                             <Eye size="0.875rem" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onDelete(note)}
+                            className={cn(
+                              rowActionButtonClassName,
+                              "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]",
+                            )}
+                            aria-label={`Delete ${isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : friendlyNoteTitle(note)}`}
+                            title="Delete memory"
+                          >
+                            <Trash2 size="0.875rem" />
                           </button>
                         </div>
                       </div>
@@ -2492,6 +2531,7 @@ export function LongTermMemoryPanel() {
   const [importSource, setImportSource] = useState<LtmInteropSource>("chats");
   const [importLimit, setImportLimit] = useState(25);
   const [importChatId, setImportChatId] = useState<string>("");
+  const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(() => new Set());
   const [selectedImportRows, setSelectedImportRows] = useState<Set<string>>(() => new Set());
   const [activeImportIds, setActiveImportIds] = useState<Set<string>>(() => new Set());
   const [debugLogOpen, setDebugLogOpen] = useState(false);
@@ -2532,6 +2572,7 @@ export function LongTermMemoryPanel() {
   const rebuild = useRebuildLongTermMemory();
   const replay = useReplayLongTermMemory();
   const repair = useRepairLongTermMemory();
+  const deleteNotes = useDeleteLongTermMemoryNotes();
   const importSourceNotes = useImportLongTermMemorySourceNotes();
   const searchMemory = useSearchLongTermMemory();
   const [recallQueryByNoteId, setRecallQueryByNoteId] = useState<Record<string, string>>({});
@@ -2554,6 +2595,13 @@ export function LongTermMemoryPanel() {
     );
   }, [noteStatus, noteType, notes.data, query]);
   const groupedBucketNotes = useMemo(() => groupNotesByType(filteredNotes), [filteredNotes]);
+  const visibleNoteIds = useMemo(() => filteredNotes.map((note) => note.id), [filteredNotes]);
+  const selectedVisibleNoteIds = useMemo(
+    () => visibleNoteIds.filter((id) => selectedNoteIds.has(id)),
+    [selectedNoteIds, visibleNoteIds],
+  );
+  const allVisibleNotesSelected =
+    visibleNoteIds.length > 0 && visibleNoteIds.every((id) => selectedNoteIds.has(id));
   const derivedCountBySource = useMemo(() => {
     const counts = new Map<string, number>();
     for (const note of filteredNotes) {
@@ -2618,6 +2666,14 @@ export function LongTermMemoryPanel() {
         : [],
     [combinedDrafts, openNote],
   );
+
+  useEffect(() => {
+    const availableIds = new Set((notes.data ?? []).map((note) => note.id));
+    setSelectedNoteIds((current) => {
+      const next = new Set([...current].filter((id) => availableIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [notes.data]);
 
   const closeMemoryModal = () => {
     setOpenNoteId(null);
@@ -2768,6 +2824,90 @@ export function LongTermMemoryPanel() {
       evidence: nextEvidence,
     });
     setCreatingNote(true);
+  };
+
+  const setNoteSelected = (id: string, selected: boolean) => {
+    setSelectedNoteIds((current) => {
+      const next = new Set(current);
+      if (selected) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const setAllVisibleNotesSelected = (selected: boolean) => {
+    setSelectedNoteIds((current) => {
+      const next = new Set(current);
+      for (const id of visibleNoteIds) {
+        if (selected) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  };
+
+  const deleteMemoriesById = async (ids: string[]) => {
+    const uniqueIds = uniqueNoteIds(ids);
+    if (uniqueIds.length === 0) return;
+
+    try {
+      const result = await deleteNotes.mutateAsync(uniqueIds);
+      setSelectedNoteIds((current) => {
+        const next = new Set(current);
+        for (const id of result.deletedIds) next.delete(id);
+        return next;
+      });
+      setExpandedMemoryIds((current) => {
+        const next = new Set(current);
+        for (const id of result.deletedIds) next.delete(id);
+        return next;
+      });
+      if (openNoteId && result.deletedIds.includes(openNoteId)) {
+        closeMemoryModal();
+      }
+
+      if (result.failedIds.length > 0) {
+        toast.error(
+          `${result.deletedIds.length} memor${result.deletedIds.length === 1 ? "y" : "ies"} deleted, ${result.failedIds.length} failed.`,
+        );
+      } else {
+        toast.success(`${result.deletedIds.length} memor${result.deletedIds.length === 1 ? "y" : "ies"} deleted`);
+      }
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
+  const confirmDerivedDeleteIds = (ids: string[]) => {
+    const selectedIds = new Set(ids);
+    const sourceIds = new Set(
+      ids.filter((id) => {
+        const note = noteLookup.get(id);
+        return note ? isSourceSummaryNote(note) : false;
+      }),
+    );
+    const unselectedDerivedIds = derivedNoteIdsForSources(combinedNotes, sourceIds).filter((id) => !selectedIds.has(id));
+    if (unselectedDerivedIds.length === 0) return ids;
+
+    const includeDerived = confirm(
+      `${sourceIds.size} selected source memor${sourceIds.size === 1 ? "y has" : "ies have"} ${unselectedDerivedIds.length} derived memor${unselectedDerivedIds.length === 1 ? "y" : "ies"}. Delete derived memories too?`,
+    );
+    return includeDerived ? uniqueNoteIds([...ids, ...unselectedDerivedIds]) : ids;
+  };
+
+  const deleteMemory = (note: LtmNote) => {
+    const title = isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : friendlyNoteTitle(note);
+    if (!confirm(`Permanently delete "${title}"? This cannot be undone.`)) return;
+    void deleteMemoriesById(confirmDerivedDeleteIds([note.id]));
+  };
+
+  const deleteSelectedMemories = () => {
+    const ids = selectedVisibleNoteIds;
+    if (ids.length === 0) return;
+    if (!confirm(`Permanently delete ${ids.length} selected memor${ids.length === 1 ? "y" : "ies"}? This cannot be undone.`)) {
+      return;
+    }
+    void deleteMemoriesById(confirmDerivedDeleteIds(ids));
   };
 
   const setImportRowSelected = (sourceId: string, selected: boolean) => {
@@ -2934,6 +3074,48 @@ export function LongTermMemoryPanel() {
                 ))}
               </select>
             </div>
+            {filteredNotes.length > 0 && (
+              <div className={cn(sectionCardClassName, "flex flex-wrap items-center gap-2")}>
+                <label className="flex min-h-8 items-center gap-2 rounded-lg px-2 text-xs text-[var(--foreground)]">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleNotesSelected}
+                    disabled={visibleNoteIds.length === 0 || deleteNotes.isPending}
+                    onChange={(event) => setAllVisibleNotesSelected(event.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+                  />
+                  Select visible
+                </label>
+                <StatusPill
+                  label={`${selectedVisibleNoteIds.length} selected`}
+                  tone={selectedVisibleNoteIds.length > 0 ? "warn" : "neutral"}
+                />
+                {selectedVisibleNoteIds.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setAllVisibleNotesSelected(false)}
+                    disabled={deleteNotes.isPending}
+                    className="rounded-lg px-2 py-1.5 text-xs font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Clear selection
+                  </button>
+                )}
+                <div className="ml-auto">
+                  <ToolButton
+                    onClick={deleteSelectedMemories}
+                    disabled={selectedVisibleNoteIds.length === 0 || deleteNotes.isPending}
+                    tone="danger"
+                  >
+                    {deleteNotes.isPending ? (
+                      <Loader2 size="0.875rem" className="animate-spin" />
+                    ) : (
+                      <Trash2 size="0.875rem" />
+                    )}
+                    Delete selected
+                  </ToolButton>
+                </div>
+              </div>
+            )}
             <div className="space-y-2">
               {notes.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
               {!notes.isLoading && filteredNotes.length === 0 && (
@@ -2947,11 +3129,14 @@ export function LongTermMemoryPanel() {
                   expandedMemoryIds={expandedMemoryIds}
                   expandedTypeIds={expandedTypeIds}
                   openNoteId={openNoteId}
+                  selectedNoteIds={selectedNoteIds}
                   derivedCountBySource={derivedCountBySource}
                   onToggleMemory={toggleExpandedMemory}
                   onToggleType={toggleExpandedType}
                   onOpen={(id) => openMemory(id, { mode: "view" })}
                   onOpenSource={(id) => openMemory(id, { mode: "view" })}
+                  onSelect={setNoteSelected}
+                  onDelete={deleteMemory}
                 />
               )}
             </div>
