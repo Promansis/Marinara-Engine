@@ -1,5 +1,6 @@
 import {
   withMergedLtmScopeLinks,
+  type Chat,
   type ChatMode,
   type LtmExtractionDraft,
   type LtmLink,
@@ -114,6 +115,48 @@ export function friendlyIdentifier(value: string) {
 
 export function friendlyNoteTitle(note: Pick<LtmNote, "id" | "type">) {
   return `${friendlyNoteType(note.type)}: ${friendlyIdentifier(note.id)}`;
+}
+
+export function humanMemoryTitle(note: Pick<LtmNote, "id" | "type" | "sections" | "scope" | "tags">, chatLookup?: Map<string, Chat>) {
+  const sourceEvidence = note.sections.source?.evidence ?? [];
+  const chatName =
+    sourceEvidence.find((entry) => entry.startsWith("chat_name:"))?.slice("chat_name:".length).trim() ||
+    chatLookup?.get(note.scope.chatId ?? "")?.name;
+  const messageRange = sourceEvidence.find((entry) => entry.startsWith("message_range:"))?.slice("message_range:".length).trim();
+
+  if (note.type === "source" && chatName) {
+    return messageRange ? `${chatName}, messages ${messageRange}` : chatName;
+  }
+
+  if (note.type === "source") return "Imported source";
+  return friendlyNoteTitle(note);
+}
+
+export function humanScopeLabel(note: Pick<LtmNote, "scope">, chatLookup?: Map<string, Chat>) {
+  const chatIds = [
+    ...(note.scope.chatIds ?? []),
+    ...(note.scope.chatId ? [note.scope.chatId] : []),
+  ].filter((id, index, ids) => ids.indexOf(id) === index);
+  const chatLabels = chatIds.map((id) => chatLookup?.get(id)?.name).filter(Boolean);
+  const parts = [
+    ...chatLabels,
+    ...(note.scope.characterIds?.length ? [`${note.scope.characterIds.length} character link${note.scope.characterIds.length === 1 ? "" : "s"}`] : []),
+    ...(note.scope.groupId ? ["Group chat"] : []),
+  ];
+  return parts.length ? parts.join(", ") : "Available everywhere";
+}
+
+export function humanRelationLabel(relation: string) {
+  if (relation === "extracted_from") return "Source";
+  if (relation === "timeline_event" || relation.includes("timeline")) return "Timeline";
+  if (relation === "source" || relation === "source_note") return "Source";
+  return "Related memory";
+}
+
+export function humanScoreLabel(value: number) {
+  if (value >= 0.75) return "High";
+  if (value >= 0.45) return "Medium";
+  return "Low";
 }
 
 export function friendlySectionKey(key: string) {
@@ -241,9 +284,23 @@ export function isAllowedNoteId(type: LtmNoteType, id: string) {
 export function friendlyEvidence(entry: string) {
   const colonIdx = entry.indexOf(":");
   if (colonIdx > 0) {
-    const prefix = sentenceCaseIdentifier(entry.slice(0, colonIdx));
+    const rawPrefix = entry.slice(0, colonIdx);
     const value = friendlyIdentifier(entry.slice(colonIdx + 1));
-    return `${prefix}: ${value}`;
+    if (rawPrefix === "chat_name") return value;
+    if (rawPrefix === "message_range") return `messages ${entry.slice(colonIdx + 1).trim()}`;
+    if (rawPrefix === "source_note") return `Source: ${value || "Imported source"}`;
+    return `${sentenceCaseIdentifier(rawPrefix)}: ${value}`;
   }
   return friendlyIdentifier(entry);
+}
+
+export function humanEvidenceLabel(entry: string, chatLookup?: Map<string, Chat>) {
+  const colonIdx = entry.indexOf(":");
+  if (colonIdx <= 0) return friendlyEvidence(entry);
+  const prefix = entry.slice(0, colonIdx);
+  const value = entry.slice(colonIdx + 1).trim();
+  if (prefix === "chat_name") return value || "Unknown chat";
+  if (prefix === "message_range") return value ? `messages ${value}` : "Unknown messages";
+  if (prefix === "source_note") return "Source memory";
+  return chatLookup?.get(value)?.name ?? friendlyEvidence(entry);
 }
