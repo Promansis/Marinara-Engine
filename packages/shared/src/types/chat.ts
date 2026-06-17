@@ -206,6 +206,8 @@ export interface ChatMetadata {
   longTermMemoryMaxChunks?: number;
   /** Normalized 0-1 retrieval score threshold. 0 keeps all ranked candidates; higher values require stronger matches. */
   longTermMemoryScoreThreshold?: number;
+  /** Number of recent chat messages to include when building recall searches. */
+  longTermMemoryRecallContextMessages?: number;
   /** Recall weighting profile for prompt-injected local long-term memory. */
   longTermMemoryRecallStyle?: LongTermMemoryRecallStyle;
   /** When true, resolved thread memories may be recalled during prompt injection. Default: false. */

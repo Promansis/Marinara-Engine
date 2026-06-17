@@ -1,4 +1,10 @@
-import { withMergedLtmScopeLinks, type LongTermMemoryRecallStyle, type LtmScope } from "@marinara-engine/shared";
+import {
+  LTM_RECALL_STYLE_WEIGHTS,
+  parseLongTermMemoryRecallStyle,
+  withMergedLtmScopeLinks,
+  type LongTermMemoryRecallStyle,
+  type LtmScope,
+} from "@marinara-engine/shared";
 import type { ChatMessage } from "../llm/base-provider.js";
 import type { MemoryRecallEmbeddingSource } from "../memory-recall.js";
 import {
@@ -7,41 +13,6 @@ import {
   type RetrieveLongTermMemoryResult,
 } from "./retrieval.js";
 import { formatLongTermMemoryBlock, injectLongTermMemoryPromptBlock } from "./prompt.js";
-
-const LTM_RECALL_STYLE_WEIGHTS = {
-  balanced: {
-    semanticWeight: 0.6,
-    lexicalWeight: 0.3,
-    graphWeight: 0.1,
-    metadataWeight: 1,
-  },
-  exact: {
-    semanticWeight: 0.15,
-    lexicalWeight: 1,
-    graphWeight: 0,
-    metadataWeight: 0.3,
-  },
-  broad: {
-    semanticWeight: 0.55,
-    lexicalWeight: 0.2,
-    graphWeight: 0.8,
-    metadataWeight: 0.8,
-  },
-  story: {
-    semanticWeight: 0.45,
-    lexicalWeight: 0.25,
-    graphWeight: 0.35,
-    metadataWeight: 0.8,
-  },
-} as const satisfies Record<
-  LongTermMemoryRecallStyle,
-  {
-    semanticWeight: number;
-    lexicalWeight: number;
-    graphWeight: number;
-    metadataWeight: number;
-  }
->;
 
 type GenerationPromptInputMessage = Pick<ChatMessage, "role" | "content">;
 
@@ -141,10 +112,6 @@ export function parseLongTermMemoryScoreThreshold(value: unknown) {
 export function parseLongTermMemoryContextMessages(value: unknown) {
   if (typeof value !== "number" || !Number.isFinite(value)) return 4;
   return Math.max(1, Math.min(20, Math.floor(value)));
-}
-
-export function parseLongTermMemoryRecallStyle(value: unknown): LongTermMemoryRecallStyle {
-  return value === "exact" || value === "broad" || value === "story" ? value : "balanced";
 }
 
 export function buildGenerationLongTermMemoryPlan(

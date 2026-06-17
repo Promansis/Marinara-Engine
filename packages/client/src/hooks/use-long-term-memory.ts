@@ -143,9 +143,7 @@ export type LtmSearchResponse = {
       semantic: number;
       lexical: number;
       graph: number;
-      always?: number;
-      metadata?: number;
-      typedPriority?: number;
+      metadata: number;
     };
     funnel?: Record<string, number>;
     selected?: LtmSearchDebugCandidate[];

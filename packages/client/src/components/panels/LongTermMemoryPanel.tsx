@@ -32,6 +32,7 @@ import type {
   LtmNoteType,
   LtmStatus,
 } from "@marinara-engine/shared";
+import { LTM_RECALL_STYLE_WEIGHTS, parseLongTermMemoryRecallStyle } from "@marinara-engine/shared";
 import {
   useImportLongTermMemorySourceNotes,
   useDeleteLongTermMemoryNotes,
@@ -50,7 +51,7 @@ import {
   type LtmSourceExtractionMode,
 } from "../../hooks/use-long-term-memory";
 import { useChatStore } from "../../stores/chat.store";
-import { useChat, useChats, useUpdateChatMetadata } from "../../hooks/use-chats";
+import { useChat, useChatMessages, useChats, useUpdateChatMetadata } from "../../hooks/use-chats";
 import { useConnections } from "../../hooks/use-connections";
 import { cn } from "../../lib/utils";
 import {
@@ -145,6 +146,7 @@ const LTM_RECALL_STYLES: Array<{ id: LtmRecallStyle; label: string; description:
 const DEFAULT_LTM_BUDGET_TOKENS = 2048;
 const DEFAULT_LTM_MAX_CHUNKS = 12;
 const DEFAULT_LTM_SCORE_THRESHOLD = 0;
+const DEFAULT_LTM_CONTEXT_MESSAGES = 4;
 const DEFAULT_IMPORT_CONCURRENCY = 3;
 
 const rowActionButtonClassName =
@@ -219,8 +221,7 @@ function SettingGroup({ label, children }: { label: string; children: ReactNode 
 }
 
 function readRecallStyle(metadata: Record<string, unknown>): LtmRecallStyle {
-  const value = metadata.longTermMemoryRecallStyle;
-  return value === "exact" || value === "broad" || value === "story" ? value : "balanced";
+  return parseLongTermMemoryRecallStyle(metadata.longTermMemoryRecallStyle);
 }
 
 function readNumberSetting(metadata: Record<string, unknown>, key: string, fallback: number, min: number, max: number) {
@@ -228,6 +229,31 @@ function readNumberSetting(metadata: Record<string, unknown>, key: string, fallb
   return typeof value === "number" && Number.isFinite(value)
     ? Math.max(min, Math.min(max, Math.floor(value)))
     : fallback;
+}
+
+function readScoreThresholdSetting(metadata: Record<string, unknown>) {
+  const value = metadata.longTermMemoryScoreThreshold;
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.min(1, value))
+    : DEFAULT_LTM_SCORE_THRESHOLD;
+}
+
+function readLongTermMemoryRecallSearchSettings(metadata: Record<string, unknown>) {
+  const recallStyle = readRecallStyle(metadata);
+  return {
+    maxTokens: readNumberSetting(metadata, "longTermMemoryBudgetTokens", DEFAULT_LTM_BUDGET_TOKENS, 128, 16_384),
+    maxChunks: readNumberSetting(metadata, "longTermMemoryMaxChunks", DEFAULT_LTM_MAX_CHUNKS, 1, 100),
+    minScore: readScoreThresholdSetting(metadata),
+    includeResolved: metadata.longTermMemoryIncludeResolved === true,
+    contextMessages: readNumberSetting(
+      metadata,
+      "longTermMemoryRecallContextMessages",
+      DEFAULT_LTM_CONTEXT_MESSAGES,
+      1,
+      20,
+    ),
+    ...LTM_RECALL_STYLE_WEIGHTS[recallStyle],
+  };
 }
 
 function compactLtmText(text: string | undefined, limit = 260) {
@@ -2193,15 +2219,19 @@ function ChatMemorySettings({
   const metadata = useMemo(() => parseMetadata(activeChat?.metadata), [activeChat?.metadata]);
   const enabled = metadata.enableLongTermMemory === true;
   const debug = metadata.longTermMemoryDebug === true;
-  const budgetValue = readNumberSetting(metadata, "longTermMemoryBudgetTokens", DEFAULT_LTM_BUDGET_TOKENS, 128, 16_384);
-  const maxChunksValue = readNumberSetting(metadata, "longTermMemoryMaxChunks", DEFAULT_LTM_MAX_CHUNKS, 1, 100);
-  const scoreThresholdValue =
-    typeof metadata.longTermMemoryScoreThreshold === "number" && Number.isFinite(metadata.longTermMemoryScoreThreshold)
-      ? Math.max(0, Math.min(1, metadata.longTermMemoryScoreThreshold))
-      : DEFAULT_LTM_SCORE_THRESHOLD;
+  const recallSearchSettings = readLongTermMemoryRecallSearchSettings(metadata);
+  const budgetValue = recallSearchSettings.maxTokens;
+  const maxChunksValue = recallSearchSettings.maxChunks;
+  const scoreThresholdValue = recallSearchSettings.minScore;
   const recallStyle = readRecallStyle(metadata);
   const includeResolved = metadata.longTermMemoryIncludeResolved === true;
-  const contextMessagesValue = readNumberSetting(metadata, "longTermMemoryRecallContextMessages", 4, 1, 20);
+  const contextMessagesValue = readNumberSetting(
+    metadata,
+    "longTermMemoryRecallContextMessages",
+    DEFAULT_LTM_CONTEXT_MESSAGES,
+    1,
+    20,
+  );
   const [budgetDraft, setBudgetDraft] = useState(String(budgetValue));
   const [maxChunksDraft, setMaxChunksDraft] = useState(String(maxChunksValue));
   const [scoreThresholdDraft, setScoreThresholdDraft] = useState(scoreThresholdValue);
@@ -2250,7 +2280,9 @@ function ChatMemorySettings({
 
   const commitContextMessages = (value: string) => {
     const numeric = Number(value);
-    const next = Number.isFinite(numeric) ? Math.max(1, Math.min(20, Math.floor(numeric))) : 4;
+    const next = Number.isFinite(numeric)
+      ? Math.max(1, Math.min(20, Math.floor(numeric)))
+      : DEFAULT_LTM_CONTEXT_MESSAGES;
     setContextMessagesDraft(String(next));
     if (next === contextMessagesValue) return Promise.resolve();
     return patch({ longTermMemoryRecallContextMessages: next });
@@ -2268,10 +2300,12 @@ function ChatMemorySettings({
     setBudgetDraft(String(DEFAULT_LTM_BUDGET_TOKENS));
     setMaxChunksDraft(String(DEFAULT_LTM_MAX_CHUNKS));
     setScoreThresholdDraft(DEFAULT_LTM_SCORE_THRESHOLD);
+    setContextMessagesDraft(String(DEFAULT_LTM_CONTEXT_MESSAGES));
     return patch({
       longTermMemoryBudgetTokens: DEFAULT_LTM_BUDGET_TOKENS,
       longTermMemoryMaxChunks: DEFAULT_LTM_MAX_CHUNKS,
       longTermMemoryScoreThreshold: DEFAULT_LTM_SCORE_THRESHOLD,
+      longTermMemoryRecallContextMessages: DEFAULT_LTM_CONTEXT_MESSAGES,
       longTermMemoryRecallStyle: "balanced",
       longTermMemoryIncludeResolved: false,
     });
@@ -2572,6 +2606,16 @@ export function LongTermMemoryPanel() {
   const { data: chats } = useChats();
   const { data: connections } = useConnections();
   const chatLookup = useMemo(() => new Map((chats as Chat[] | undefined)?.map((c) => [c.id, c])), [chats]);
+  const activeChatId = useChatStore((s) => s.activeChatId);
+  const cachedActiveChat = useChatStore((s) => s.activeChat);
+  const activeChatQuery = useChat(activeChatId);
+  const activeChat = activeChatQuery.data ?? cachedActiveChat;
+  const activeChatMetadata = useMemo(() => parseMetadata(activeChat?.metadata), [activeChat?.metadata]);
+  const activeRecallSettings = useMemo(
+    () => readLongTermMemoryRecallSearchSettings(activeChatMetadata),
+    [activeChatMetadata],
+  );
+  const activeChatMessages = useChatMessages(activeChatId, activeRecallSettings.contextMessages, Boolean(openNoteId));
   const textConnections = useMemo(
     () =>
       ((connections as APIConnection[] | undefined) ?? [])
@@ -2685,6 +2729,14 @@ export function LongTermMemoryPanel() {
   const editingNoteHiddenByFilters = Boolean(editedNoteFilteredOut && openNote && memoryModalMode === "edit");
   const viewingRecallQuery = openNote ? (recallQueryByNoteId[openNote.id] ?? "") : "";
   const viewingRecallResult = openNote ? (recallResultByNoteId[openNote.id] ?? null) : null;
+  const recentRecallMessages = useMemo(
+    () =>
+      (activeChatMessages.data?.pages.flat() ?? [])
+        .slice(-activeRecallSettings.contextMessages)
+        .map((message) => message.content)
+        .filter(Boolean),
+    [activeChatMessages.data?.pages, activeRecallSettings.contextMessages],
+  );
   const pendingDraftsForOpenNote = useMemo(
     () =>
       openNote
@@ -2795,12 +2847,18 @@ export function LongTermMemoryPanel() {
     try {
       const result = await searchMemory.mutateAsync({
         queryText: recallQuery,
+        recentMessages: recentRecallMessages,
         noteIds: [openNote.id],
         scope: openNote.scope,
         characterIds: openNote.scope.characterIds,
-        includeResolved: true,
-        maxChunks: 8,
-        maxTokens: 2048,
+        includeResolved: activeRecallSettings.includeResolved,
+        maxChunks: activeRecallSettings.maxChunks,
+        maxTokens: activeRecallSettings.maxTokens,
+        minScore: activeRecallSettings.minScore,
+        semanticWeight: activeRecallSettings.semanticWeight,
+        lexicalWeight: activeRecallSettings.lexicalWeight,
+        graphWeight: activeRecallSettings.graphWeight,
+        metadataWeight: activeRecallSettings.metadataWeight,
         debug: true,
       });
       setRecallResultByNoteId((current) => ({ ...current, [openNote.id]: result }));
