@@ -1597,7 +1597,6 @@ function MemoryNoteModal({
   onModeChange,
   onTabChange,
   onOpenNote,
-  _onViewDraft,
   onRecallQueryChange,
   onRunRecall,
   onEditorDirtyChange,
@@ -1621,7 +1620,6 @@ function MemoryNoteModal({
   onModeChange: (mode: MemoryModalMode) => void;
   onTabChange: (tab: MemoryModalTab) => void;
   onOpenNote: (noteId: string) => void;
-  _onViewDraft: (draftId: string) => void;
   onRecallQueryChange: (query: string) => void;
   onRunRecall: () => void;
   onEditorDirtyChange: (dirty: boolean) => void;
@@ -1674,7 +1672,7 @@ function MemoryNoteModal({
                 </ToolButton>
               ) : (
                 <ToolButton onClick={() => onModeChange("view")}>
-                  Done
+                  Cancel
                 </ToolButton>
               )}
             </div>
@@ -1738,6 +1736,7 @@ function MemoryNoteModal({
               onDirtyChange={onEditorDirtyChange}
               onSaved={onSaved}
               onRecoverDroppedCandidate={onRecoverDroppedCandidate}
+              embedded
             />
           )}
         </div>
@@ -2990,7 +2989,6 @@ export function LongTermMemoryPanel() {
         onModeChange={setMemoryModeWithGuard}
         onTabChange={setMemoryModalTab}
         onOpenNote={(id) => openMemory(id, { mode: "view" })}
-        onViewDraft={setViewingDraftId}
         onRecallQueryChange={(next) => {
           if (!openNote) return;
           setRecallQueryByNoteId((current) => ({ ...current, [openNote.id]: next }));

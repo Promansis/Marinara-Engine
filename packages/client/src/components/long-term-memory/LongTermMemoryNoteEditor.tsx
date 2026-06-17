@@ -25,7 +25,6 @@ import {
   compactInputClassName,
   helperTextClassName,
   insetSectionCardClassName,
-  modalIntroCardClassName,
   sectionCardClassName,
   SettingField,
   textareaClassName,
@@ -40,6 +39,7 @@ import {
   friendlyMode,
   friendlySectionKey,
   friendlyStatus,
+  humanRelationLabel,
   modeOptions,
   normalizeIdentifier,
   normalizeTagsInput,
@@ -52,6 +52,7 @@ type LongTermMemoryNoteEditorProps = {
   onDirtyChange?: (dirty: boolean) => void;
   onSaved?: (note: LtmNote) => void;
   onRecoverDroppedCandidate?: (candidate: LtmExtractionDroppedCandidate, note: LtmNote) => void;
+  embedded?: boolean;
 };
 
 function serializedEditable(note: LtmNote) {
@@ -92,6 +93,7 @@ export function LongTermMemoryNoteEditor({
   onDirtyChange,
   onSaved,
   onRecoverDroppedCandidate,
+  embedded = false,
 }: LongTermMemoryNoteEditorProps) {
   const activeChatId = useChatStore((state) => state.activeChatId);
   const cachedActiveChat = useChatStore((state) => state.activeChat);
@@ -111,6 +113,7 @@ export function LongTermMemoryNoteEditor({
     setSavedBaseline(note);
     setDraft(note);
     setTagsText(note.tags.join(", "));
+    setActiveTab("details");
   }, [note]);
 
   const dirty = useMemo(() => serializedEditable(draft) !== serializedEditable(savedBaseline), [draft, savedBaseline]);
@@ -277,26 +280,29 @@ export function LongTermMemoryNoteEditor({
 
   return (
     <div className="grid gap-4">
-      <div className={modalIntroCardClassName}>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-sm font-semibold text-[var(--foreground)]">{friendlyIdentifier(draft.id)}</div>
-            <div className="mt-2 text-[0.625rem] text-[var(--muted-foreground)]">
-              {friendlyStatus(draft.status)} · version {draft.version} · updated {new Date(draft.updatedAt).toLocaleString()}
+      {!embedded && (
+        <div className="rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-[var(--foreground)]">{friendlyIdentifier(draft.id)}</div>
+              <div className="mt-2 text-[0.625rem] text-[var(--muted-foreground)]">
+                {friendlyStatus(draft.status)} · updated {new Date(draft.updatedAt).toLocaleString()}
+              </div>
             </div>
+            {dirty ? (
+              <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-amber-600 dark:text-amber-200">
+                Unsaved
+              </span>
+            ) : null}
           </div>
-          {dirty ? (
-            <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-amber-600 dark:text-amber-200">
-              Unsaved
-            </span>
-          ) : null}
+          <p className={cn("mt-2", helperTextClassName)}>
+            Keep the note structure, scope, and supporting evidence aligned with the rest of the memory library.
+          </p>
         </div>
-        <p className={cn("mt-2", helperTextClassName)}>
-          Keep the note structure, scope, and supporting evidence aligned with the rest of the memory library.
-        </p>
-      </div>
+      )}
 
-      <div className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--secondary)]/45 p-1 ring-1 ring-[var(--border)]">
+      {!embedded && (
+        <div className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--secondary)]/45 p-1 ring-1 ring-[var(--border)]">
         {(["details", "suggestions"] as const).map((tab) => {
           const disabled = tab === "suggestions" && !sourceMemory;
           return (
@@ -316,13 +322,14 @@ export function LongTermMemoryNoteEditor({
             </button>
           );
         })}
-      </div>
+        </div>
+      )}
 
-      {activeTab === "suggestions" && onRecoverDroppedCandidate ? (
+      {!embedded && activeTab === "suggestions" && onRecoverDroppedCandidate ? (
         <LongTermMemorySuggestionsTab note={savedBaseline} onRecoverDroppedCandidate={onRecoverDroppedCandidate} />
       ) : null}
 
-      {activeTab === "details" && (
+      {(embedded || activeTab === "details") && (
       <div className="grid gap-4">
         <div className="grid gap-2 sm:grid-cols-2">
           <SettingField label="Status">
@@ -583,10 +590,15 @@ export function LongTermMemoryNoteEditor({
           {draft.links.map((link, index) => (
             <div
               key={`${link.target}-${link.relation}-${index}`}
-              className="grid grid-cols-[1fr_auto] items-center gap-2 text-xs"
+              className="grid grid-cols-[1fr_auto] items-center gap-2 rounded-lg bg-[var(--background)]/45 px-3 py-2 text-xs ring-1 ring-[var(--border)]/70"
             >
-              <div className="truncate text-[var(--muted-foreground)]">
-                {friendlyIdentifier(link.relation)} &gt; {friendlyIdentifier(link.target)}
+              <div className="min-w-0">
+                <div className="text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+                  {humanRelationLabel(link.relation)}
+                </div>
+                <div className="mt-0.5 truncate text-[var(--foreground)]">
+                  {friendlyIdentifier(link.target)}
+                </div>
               </div>
               <button
                 type="button"
