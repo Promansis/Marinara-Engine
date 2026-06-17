@@ -46,7 +46,7 @@ type SuggestionRowModel = {
 
 type SuggestionGroup = "new" | "rewrite";
 
-type LatestExtractionResult = Pick<ExtractLongTermMemorySourceResponse, "draft" | "outcome">;
+type LatestExtractionResult = Pick<ExtractLongTermMemorySourceResponse, "diagnostics" | "draft" | "outcome">;
 
 const rewriteKinds = new Set<LtmDraftMutation["kind"]>([
   "append_section",
@@ -143,8 +143,11 @@ function outcomeLabel(outcome: LtmExtractionOutcome) {
 }
 
 function outcomeSummary(outcome: LtmExtractionOutcome) {
+  const createdSuggestions = outcome.suggestionCap?.returned ?? outcome.keptUnits;
   if (outcome.state === "success") {
-    return outcome.keptUnits === 1 ? "Created 1 suggestion from this source." : `Created ${outcome.keptUnits} suggestions from this source.`;
+    return createdSuggestions === 1
+      ? "Created 1 suggestion from this source."
+      : `Created ${createdSuggestions} suggestions from this source.`;
   }
   if (outcome.state === "partial_success") {
     return `Kept ${outcome.keptUnits} candidate${outcome.keptUnits === 1 ? "" : "s"} and dropped ${outcome.droppedUnits}.`;
@@ -156,11 +159,14 @@ function outcomeSummary(outcome: LtmExtractionOutcome) {
 }
 
 function toastForOutcome(outcome: LtmExtractionOutcome) {
+  const createdSuggestions = outcome.suggestionCap?.returned ?? outcome.keptUnits;
   if (outcome.state === "success") {
-    return outcome.keptUnits === 1 ? "Created 1 typed memory suggestion" : `Created ${outcome.keptUnits} typed memory suggestions`;
+    return createdSuggestions === 1
+      ? "Created 1 typed memory suggestion"
+      : `Created ${createdSuggestions} typed memory suggestions`;
   }
   if (outcome.state === "partial_success") {
-    return `Kept ${outcome.keptUnits} suggestion${outcome.keptUnits === 1 ? "" : "s"} and dropped ${outcome.droppedUnits}`;
+    return `Kept ${outcome.keptUnits} candidate${outcome.keptUnits === 1 ? "" : "s"} and dropped ${outcome.droppedUnits}`;
   }
   if (outcome.droppedUnits > 0) {
     return `No suggestions created, but ${outcome.droppedUnits} dropped candidate${outcome.droppedUnits === 1 ? "" : "s"} can be reviewed`;
@@ -227,6 +233,7 @@ export function LongTermMemorySuggestionsTab({
                   setLatestResult({
                     draft: result.draft,
                     outcome: result.outcome,
+                    diagnostics: result.diagnostics,
                   });
                   toast.success(toastForOutcome(result.outcome));
                 })
@@ -283,6 +290,7 @@ export function LongTermMemorySuggestionsTab({
         <ExtractionOutcomePanel
           note={note}
           outcome={latestResult.outcome}
+          diagnostics={latestResult.diagnostics}
           onRecoverDroppedCandidate={onRecoverDroppedCandidate}
         />
       ) : null}
@@ -309,13 +317,20 @@ export function LongTermMemorySuggestionsTab({
 function ExtractionOutcomePanel({
   note,
   outcome,
+  diagnostics,
   onRecoverDroppedCandidate,
 }: {
   note: LtmNote;
   outcome: LtmExtractionOutcome;
+  diagnostics?: ExtractLongTermMemorySourceResponse["diagnostics"];
   onRecoverDroppedCandidate: (candidate: LtmExtractionDroppedCandidate, note: LtmNote) => void;
 }) {
   const [showAllDropped, setShowAllDropped] = useState(false);
+  const suggestionCapWarning = outcome.suggestionCap?.capped
+    ? `Created ${outcome.suggestionCap.returned} of ${outcome.suggestionCap.generated} suggested changes.`
+    : diagnostics?.some((diagnostic) => diagnostic.code === "suggestions_capped")
+      ? "Some suggestions were capped at 25."
+      : null;
   const readableDropped = outcome.droppedCandidates.filter((candidate) => candidate.snippet);
   const visibleDropped = showAllDropped ? readableDropped : readableDropped.slice(0, 3);
   const hiddenCount = readableDropped.length - visibleDropped.length;
@@ -331,6 +346,9 @@ function ExtractionOutcomePanel({
             <StatusPill label={`${outcome.droppedUnits} dropped`} tone={outcome.droppedUnits > 0 ? "warn" : "neutral"} />
           </div>
           <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">{outcomeSummary(outcome)}</p>
+          {suggestionCapWarning ? (
+            <p className="text-xs leading-relaxed text-amber-300">{suggestionCapWarning}</p>
+          ) : null}
         </div>
         {outcome.droppedUnits > 0 ? (
           <div className="text-[0.6875rem] text-[var(--muted-foreground)]">

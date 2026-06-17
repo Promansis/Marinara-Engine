@@ -403,6 +403,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
       mutationKinds: compiledSummary.mutationKinds,
       targetNoteIds: compiledSummary.targetNoteIds,
       summary: compiled.compiledResponse.summary,
+      suggestionCap: compiled.outcome.suggestionCap,
     },
   });
 
@@ -424,11 +425,14 @@ async function extractLongTermMemoryFromSourceNoteInner(
     status: draft ? "ok" : compiled.outcome.droppedUnits > 0 ? "warning" : "skipped",
     sourceNoteId: sourceNote.id,
     draftId: draft?.id,
-    counts: {
-      mutations: compiled.compiledResponse.mutations.length,
-      diagnostics: compiled.diagnostics.length,
-      droppedUnits: compiled.outcome.droppedUnits,
-    },
+      counts: {
+        mutations: compiled.compiledResponse.mutations.length,
+        diagnostics: compiled.diagnostics.length,
+        droppedUnits: compiled.outcome.droppedUnits,
+        generatedMutations: compiled.outcome.suggestionCap?.generated ?? compiled.compiledResponse.mutations.length,
+        returnedMutations: compiled.outcome.suggestionCap?.returned ?? compiled.compiledResponse.mutations.length,
+        cappedMutations: compiled.outcome.suggestionCap?.capped ?? 0,
+      },
     diagnostics: compiled.diagnostics.map((diagnostic) => ({ ...diagnostic })),
     details: {
       reason: draft ? "created" : compiled.outcome.droppedUnits > 0 ? "dropped_candidates_only" : "no_mutations",

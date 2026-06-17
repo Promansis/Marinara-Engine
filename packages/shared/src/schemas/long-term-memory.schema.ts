@@ -2,6 +2,7 @@
 // Long-Term Memory Zod Schemas
 // ──────────────────────────────────────────────
 import { z } from "zod";
+import { LTM_DRAFT_MUTATION_LIMIT } from "../constants/long-term-memory.js";
 
 export const ltmNoteTypeSchema = z.enum([
   "source",
@@ -502,7 +503,7 @@ export const ltmExtractionDraftSchema = z
     scope: ltmScopeSchema.default({}),
     modes: z.array(ltmModeSchema).min(1).max(8),
     summary: z.string().max(2_000).default(""),
-    mutations: z.array(ltmDraftMutationSchema).min(1).max(25),
+    mutations: z.array(ltmDraftMutationSchema).min(1).max(LTM_DRAFT_MUTATION_LIMIT),
     rejectedReason: z.string().max(1_000).optional(),
     appliedAt: ltmIsoTimestampSchema.optional(),
     appliedMutationIds: z.array(z.string().uuid()).max(25).optional(),
@@ -548,13 +549,22 @@ export const ltmExtractionOutcomeSchema = z
     keptUnits: z.number().int().min(0).max(999),
     droppedUnits: z.number().int().min(0).max(999),
     droppedCandidates: z.array(ltmExtractionDroppedCandidateSchema).max(80).default([]),
+    suggestionCap: z
+      .object({
+        limit: z.number().int().min(1).max(999),
+        generated: z.number().int().min(0).max(999),
+        returned: z.number().int().min(0).max(999),
+        capped: z.number().int().min(0).max(999),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
 export const ltmExtractionResponseSchema = z
   .object({
     summary: z.string().max(2_000).default(""),
-    mutations: z.array(ltmDraftMutationSchema).max(25).default([]),
+    mutations: z.array(ltmDraftMutationSchema).max(LTM_DRAFT_MUTATION_LIMIT).default([]),
   })
   .strict();
 

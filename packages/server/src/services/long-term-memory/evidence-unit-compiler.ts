@@ -11,6 +11,7 @@ import type {
   LtmSection,
   LtmStatus,
 } from "@marinara-engine/shared";
+import { LTM_DRAFT_MUTATION_LIMIT } from "@marinara-engine/shared";
 import { noteIdForEvidenceUnit, riskForEvidenceUnit } from "./evidence-unit-validation.js";
 
 export interface CompileLtmEvidenceUnitsOptions {
@@ -21,6 +22,17 @@ export interface CompileLtmEvidenceUnitsOptions {
   createdAt?: string;
   summary?: string;
 }
+
+export type LtmSuggestionCapMetadata = {
+  limit: number;
+  generated: number;
+  returned: number;
+  capped: number;
+};
+
+export type CompiledLtmEvidenceUnits = LtmExtractionResponse & {
+  suggestionCap: LtmSuggestionCapMetadata;
+};
 
 type UnitTarget = {
   noteId: string;
@@ -48,7 +60,7 @@ const LTM_BUCKET_LIFECYCLE: Record<LtmEvidenceUnit["bucket"], LtmCompilerLifecyc
   anchor: "cumulative",
 };
 
-export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions): LtmExtractionResponse {
+export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions): CompiledLtmEvidenceUnits {
   const timestamp = options.createdAt ?? new Date().toISOString();
   const existingById = new Map(options.existingNotes.map((note) => [note.id, note]));
   const mutations: LtmDraftMutation[] = [];
@@ -155,11 +167,18 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
     }
   }
 
+  const returnedMutations = mutations.slice(0, LTM_DRAFT_MUTATION_LIMIT);
   return {
     summary:
       options.summary ??
       `Compiled ${options.units.length} evidence unit(s) into ${mutations.length} draft mutation(s).`,
-    mutations: mutations.slice(0, 25),
+    mutations: returnedMutations,
+    suggestionCap: {
+      limit: LTM_DRAFT_MUTATION_LIMIT,
+      generated: mutations.length,
+      returned: returnedMutations.length,
+      capped: Math.max(0, mutations.length - returnedMutations.length),
+    },
   };
 }
 

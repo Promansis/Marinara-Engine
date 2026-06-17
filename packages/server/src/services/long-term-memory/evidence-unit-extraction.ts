@@ -5,6 +5,7 @@ import {
   DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
   DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
   DEFAULT_LTM_EXTRACTION_VERBOSITY,
+  LTM_DRAFT_MUTATION_LIMIT,
   ltmEvidenceUnitBucketSchema,
   ltmEvidenceUnitExtractionResponseSchema,
   ltmEvidenceUnitSchema,
@@ -24,6 +25,7 @@ import { stableJsonHash } from "./chunking.js";
 import { recordLtmDebugEvent } from "./debug-log.js";
 import type { LtmExtractionDiagnostic } from "./diagnostics.js";
 import { compileLtmEvidenceUnits } from "./evidence-unit-compiler.js";
+import type { LtmSuggestionCapMetadata } from "./evidence-unit-compiler.js";
 import { validateLtmEvidenceUnits } from "./evidence-unit-validation.js";
 
 export const DEFAULT_LTM_EXTRACTION_PROMPT = [
@@ -111,6 +113,7 @@ export interface CompileEvidenceUnitExtractionResult {
   compiledResponse: LtmExtractionResponse;
   diagnostics: LtmExtractionDiagnostic[];
   outcome: LtmExtractionOutcome;
+  suggestionCap: LtmSuggestionCapMetadata;
 }
 
 type ParsedEvidenceUnitPayload = {
@@ -575,7 +578,7 @@ export function compileEvidenceUnitExtraction(options: {
   });
   const keptUnits = validated.keptUnits;
   const droppedCandidates = [...(options.parserDroppedCandidates ?? []), ...validated.droppedCandidates];
-  const compiledResponse = keptUnits.length
+  const compiled = keptUnits.length
     ? compileLtmEvidenceUnits({
         units: keptUnits,
         existingNotes: options.existingNotes,
@@ -583,19 +586,34 @@ export function compileEvidenceUnitExtraction(options: {
         modes: options.modes,
         summary: options.unitResponse.summary,
       })
-    : { summary: options.unitResponse.summary, mutations: [] };
+    : {
+        summary: options.unitResponse.summary,
+        mutations: [],
+        suggestionCap: { limit: LTM_DRAFT_MUTATION_LIMIT, generated: 0, returned: 0, capped: 0 },
+      };
+  const { suggestionCap, ...compiledResponse } = compiled;
+  const diagnostics = [...validated.diagnostics];
+  if (suggestionCap.capped > 0) {
+    diagnostics.push({
+      severity: "warning",
+      code: "suggestions_capped",
+      message: `Created ${suggestionCap.returned} of ${suggestionCap.generated} suggested changes. Extract again on a smaller source or split the source note to review more.`,
+    });
+  }
   const totalCandidates = options.totalCandidates ?? options.unitResponse.units.length + droppedCandidates.length;
   const outcome = summarizeExtractionOutcome({
     totalCandidates,
     keptUnits: keptUnits.length,
     droppedCandidates,
     mutations: compiledResponse.mutations.length,
+    suggestionCap,
   });
   return {
     unitResponse: options.unitResponse,
     compiledResponse,
-    diagnostics: validated.diagnostics,
+    diagnostics,
     outcome,
+    suggestionCap,
   };
 }
 
@@ -611,6 +629,9 @@ export function summarizeCompiledEvidenceUnitExtraction(result: CompileEvidenceU
       diagnostics: result.diagnostics.length,
       blockingDiagnostics: result.diagnostics.filter((diagnostic) => diagnostic.severity === "error").length,
       mutations: result.compiledResponse.mutations.length,
+      generatedMutations: result.suggestionCap.generated,
+      returnedMutations: result.suggestionCap.returned,
+      cappedMutations: result.suggestionCap.capped,
       targetNotes: new Set(targetNoteIds).size,
     },
     mutationKinds: countBy(result.compiledResponse.mutations.map((mutation) => mutation.kind)),
@@ -623,6 +644,7 @@ function summarizeExtractionOutcome(input: {
   keptUnits: number;
   droppedCandidates: LtmExtractionDroppedCandidate[];
   mutations: number;
+  suggestionCap?: LtmSuggestionCapMetadata;
 }): LtmExtractionOutcome {
   const droppedUnits = input.droppedCandidates.length;
   const state =
@@ -637,6 +659,7 @@ function summarizeExtractionOutcome(input: {
     keptUnits: input.keptUnits,
     droppedUnits,
     droppedCandidates: input.droppedCandidates,
+    ...(input.suggestionCap && input.suggestionCap.capped > 0 ? { suggestionCap: input.suggestionCap } : {}),
   };
 }
 

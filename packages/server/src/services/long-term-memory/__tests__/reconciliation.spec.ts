@@ -1991,6 +1991,64 @@ test("evidence unit extraction validation rejects copied placeholder values", ()
   assert.deepEqual(compiled.outcome.droppedCandidates.map((candidate) => candidate.reason), ["placeholder_output"]);
 });
 
+test("evidence unit compiler reports when suggested changes exceed the draft cap", () => {
+  const sourceNote: LtmNote = {
+    id: "scene_source_test",
+    type: "scene",
+    status: "active",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["source_summary"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      source: {
+        text: Array.from({ length: 30 }, (_, index) => `Memory fact ${index + 1} is durable.`).join("\n"),
+        updatedAt: timestamp,
+        evidence: ["chat:chat_test"],
+      },
+    },
+    version: 1,
+  };
+  const units = Array.from({ length: 30 }, (_, index) =>
+    evidenceUnit("world_fact", {
+      subjectId: `cap_test_${index + 1}`,
+      sectionKey: "facts",
+      text: `Memory fact ${index + 1} is durable.`,
+      evidence: ["source_note:scene_source_test"],
+      sourceHash,
+    }),
+  );
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse: {
+      summary: "Many durable facts",
+      units,
+    },
+    totalCandidates: units.length,
+    sourceText: sourceNote.sections.source!.text,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    sourceHash,
+  });
+
+  assert.equal(compiled.compiledResponse.mutations.length, 25);
+  assert.deepEqual(compiled.outcome.suggestionCap, {
+    limit: 25,
+    generated: 30,
+    returned: 25,
+    capped: 5,
+  });
+  assert(
+    compiled.diagnostics.some(
+      (diagnostic) => diagnostic.severity === "warning" && diagnostic.code === "suggestions_capped",
+    ),
+  );
+});
+
 test("source note extraction skips draft creation when every candidate is dropped", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-dropped-candidates-only-"));
   try {
