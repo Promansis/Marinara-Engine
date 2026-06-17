@@ -4095,3 +4095,87 @@ test("retrieval does not double-count character scope metadata", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("retrieval score threshold excludes weak vector-only candidates", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-retrieval-vector-threshold-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.initializeLtmStore();
+
+    await storage.createNote(
+      {
+        id: "world_needle_archive",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_vector_threshold" },
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: {
+            text: "The silver needle is sealed inside the archive reliquary.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    for (const index of [1, 2, 3]) {
+      await storage.createNote(
+        {
+          id: `world_soft_positive_${index}`,
+          type: "world",
+          status: "active",
+          modes: ["roleplay"],
+          scope: { chatId: "chat_vector_threshold" },
+          tags: ["typed_memory"],
+          links: [],
+          sections: {
+            facts: {
+              text: `A background memory about market weather and old lanterns ${index}.`,
+              updatedAt: timestamp,
+            },
+          },
+        },
+        { suppressEvent: true },
+      );
+    }
+
+    const embedder = async (texts: string[]) =>
+      texts.map((text) => {
+        if (text.includes("silver needle") || text.includes("needle archive")) return [1, 0];
+        return [0.1, Math.sqrt(0.99)];
+      });
+
+    await rebuildLongTermMemoryIndexes({
+      root,
+      localEmbedder: embedder,
+    });
+
+    const result = await retrieveLongTermMemory({
+      root,
+      queryText: "needle archive",
+      scope: { chatId: "chat_vector_threshold" },
+      maxChunks: 10,
+      maxTokens: 1000,
+      minScore: 0.2,
+      semanticWeight: 1,
+      lexicalWeight: 0,
+      graphWeight: 0,
+      metadataWeight: 0,
+      debug: true,
+      localEmbedder: embedder,
+    });
+
+    assert.deepEqual(
+      result.chunks.map((chunk) => chunk.chunk.id),
+      ["world_needle_archive::facts"],
+    );
+    assert.equal(result.debug?.funnel.vectorCandidates, 4);
+    assert.equal(result.debug?.funnel.scoreThresholdSkippedCandidates, 3);
+    assert(result.debug?.rejected.every((candidate) => candidate.normalizedScore === 0.1));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

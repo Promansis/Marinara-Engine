@@ -4,6 +4,7 @@ import type { LtmRankedCandidate } from "./ranking.js";
 export interface LtmBudgetedChunk {
   chunk: LtmMemoryChunk;
   score: number;
+  normalizedScore?: number;
   reasons: string[];
   lanes: string[];
   laneScores?: Record<string, number>;
@@ -25,6 +26,7 @@ export interface LtmBudgetRejectedCandidate {
   noteId?: string;
   sectionKey?: string;
   score: number;
+  normalizedScore?: number;
   reasons: string[];
   lanes: string[];
   laneScores?: Record<string, number>;
@@ -62,11 +64,10 @@ export function applyLtmBudget(
   const rejected: LtmBudgetRejectedCandidate[] = [];
   const rejectedLimit = Math.max(0, options.rejectedLimit ?? 20);
   const scoreThreshold = Math.max(0, Math.min(1, options.normalizedScoreThreshold ?? 0));
-  const topScore = candidates[0]?.score ?? 0;
   let usedTokens = 0;
 
   for (const candidate of candidates) {
-    if (scoreThreshold > 0 && topScore > 0 && candidate.score / topScore < scoreThreshold) {
+    if (scoreThreshold > 0 && candidate.normalizedScore !== undefined && candidate.normalizedScore < scoreThreshold) {
       if (options.explain && rejected.length < rejectedLimit) {
         const chunk = chunksById.get(candidate.chunkId);
         rejected.push({
@@ -74,6 +75,7 @@ export function applyLtmBudget(
           noteId: chunk?.noteId,
           sectionKey: chunk?.sectionKey,
           score: candidate.score,
+          normalizedScore: candidate.normalizedScore,
           reasons: candidate.reasons,
           lanes: candidate.lanes,
           laneScores: candidate.laneScores,
@@ -93,6 +95,7 @@ export function applyLtmBudget(
           noteId: chunk?.noteId,
           sectionKey: chunk?.sectionKey,
           score: candidate.score,
+          normalizedScore: candidate.normalizedScore,
           reasons: candidate.reasons,
           lanes: candidate.lanes,
           laneScores: candidate.laneScores,
@@ -110,6 +113,7 @@ export function applyLtmBudget(
         rejected.push({
           chunkId: candidate.chunkId,
           score: candidate.score,
+          normalizedScore: candidate.normalizedScore,
           reasons: candidate.reasons,
           lanes: candidate.lanes,
           laneScores: candidate.laneScores,
@@ -128,6 +132,7 @@ export function applyLtmBudget(
           noteId: chunk.noteId,
           sectionKey: chunk.sectionKey,
           score: candidate.score,
+          normalizedScore: candidate.normalizedScore,
           reasons: candidate.reasons,
           lanes: candidate.lanes,
           laneScores: candidate.laneScores,
@@ -142,6 +147,7 @@ export function applyLtmBudget(
     selected.push({
       chunk,
       score: candidate.score,
+      normalizedScore: candidate.normalizedScore,
       reasons: candidate.reasons,
       lanes: candidate.lanes,
       laneScores: candidate.laneScores,
@@ -164,6 +170,7 @@ export function applyLtmBudget(
         noteId: chunk?.noteId,
         sectionKey: chunk?.sectionKey,
         score: candidate.score,
+        normalizedScore: candidate.normalizedScore,
         reasons: candidate.reasons,
         lanes: candidate.lanes,
         laneScores: candidate.laneScores,

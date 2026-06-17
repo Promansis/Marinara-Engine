@@ -2520,7 +2520,7 @@ function ChatMemorySettings({
                       />
                     </div>
                     <p className="mt-1 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-                      0 keeps all ranked matches. Higher values keep only memories close to the strongest match.
+                      0 keeps all ranked matches. Higher values drop memories with lower raw relevance scores.
                     </p>
                   </SettingGroup>
                   <SettingGroup label="Lane weights">

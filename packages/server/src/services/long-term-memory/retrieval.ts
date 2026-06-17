@@ -50,6 +50,7 @@ export interface LtmRetrievalDebugCandidate {
   noteType?: string;
   status?: string;
   score: number;
+  normalizedScore?: number;
   lanes: string[];
   reasons: string[];
   laneScores?: Record<string, number>;
@@ -318,6 +319,8 @@ function formatSelectedCandidate(candidate: LtmBudgetedChunk): LtmRetrievalDebug
     noteType: candidate.chunk.noteType,
     status: candidate.chunk.status,
     score: Number(candidate.score.toFixed(6)),
+    normalizedScore:
+      candidate.normalizedScore === undefined ? undefined : Number(candidate.normalizedScore.toFixed(6)),
     lanes: candidate.lanes,
     reasons: candidate.reasons,
     laneScores: compactScoreMap(candidate.laneScores),
@@ -340,6 +343,8 @@ function formatRejectedCandidate(
     noteType: chunk?.noteType,
     status: chunk?.status,
     score: Number(candidate.score.toFixed(6)),
+    normalizedScore:
+      candidate.normalizedScore === undefined ? undefined : Number(candidate.normalizedScore.toFixed(6)),
     lanes: candidate.lanes,
     reasons: candidate.reasons,
     laneScores: compactScoreMap(candidate.laneScores),

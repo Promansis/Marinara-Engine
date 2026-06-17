@@ -204,7 +204,7 @@ export interface ChatMetadata {
   longTermMemoryBudgetTokens?: number;
   /** Per-chat maximum selected long-term memory chunks for prompt injection. */
   longTermMemoryMaxChunks?: number;
-  /** Normalized 0-1 retrieval score threshold. 0 keeps all ranked candidates; higher values require stronger matches. */
+  /** Normalized 0-1 relevance threshold. 0 keeps all ranked candidates; higher values require stronger raw lane matches. */
   longTermMemoryScoreThreshold?: number;
   /** Number of recent chat messages to include when building recall searches. */
   longTermMemoryRecallContextMessages?: number;

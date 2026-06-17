@@ -4,6 +4,7 @@ import {
   parseLongTermMemoryRecallStyle,
   withMergedLtmScopeLinks,
   type LongTermMemoryRecallStyle,
+  type LtmRecallWeights,
   type LtmScope,
 } from "@marinara-engine/shared";
 import type { ChatMessage } from "../llm/base-provider.js";
@@ -40,7 +41,7 @@ export interface GenerationLongTermMemoryPlan {
   maxChunks?: number;
   scoreThreshold?: number;
   recallStyle: LongTermMemoryRecallStyle;
-  weights: (typeof LTM_RECALL_STYLE_WEIGHTS)[LongTermMemoryRecallStyle];
+  weights: LtmRecallWeights;
   debugEnabled: boolean;
   contextMessages: number;
   includeResolved: boolean;
