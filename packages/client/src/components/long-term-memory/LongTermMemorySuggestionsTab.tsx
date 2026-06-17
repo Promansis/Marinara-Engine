@@ -372,17 +372,17 @@ function SuggestionDrawer({
   rows: SuggestionRowModel[];
   noteLookup: Map<string, LtmNote>;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   return (
     <section className="overflow-hidden rounded-xl bg-[var(--secondary)]/25 ring-1 ring-[var(--border)]">
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
-        className="flex min-h-11 w-full items-center justify-between gap-2 px-3 py-2.5 text-left transition-colors hover:bg-[var(--accent)]/45"
+        className="flex min-h-11 w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-[var(--accent)]/45"
       >
-        <span className="flex items-center gap-2 text-xs font-semibold text-[var(--foreground)]">
+        <span className="flex min-w-0 flex-1 items-center gap-2 text-xs font-semibold text-[var(--foreground)]">
           {open ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
-          {title}
+          <span className="truncate">{title}</span>
         </span>
         <StatusPill label={`${rows.length}`} tone={rows.length ? "warn" : "neutral"} />
       </button>

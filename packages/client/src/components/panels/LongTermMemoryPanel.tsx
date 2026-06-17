@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -495,16 +496,6 @@ function sourceLinkIds(note: LtmNote) {
   return note.links.filter((link) => link.relation === "extracted_from").map((link) => link.target);
 }
 
-function abbreviateSourceTitle(title: string): string {
-  const parts = title.split(", msgs ");
-  if (parts.length === 2) {
-    const chatName = parts[0].replace(/\s+Chat$/i, "").trim();
-    const range = parts[1].trim();
-    return chatName.length > 12 ? `${chatName.slice(0, 10)}… ${range}` : `${chatName} ${range}`;
-  }
-  return title.length > 18 ? `${title.slice(0, 16)}…` : title;
-}
-
 function buildNoteLookup(notes: LtmNote[]) {
   return new Map(notes.map((note) => [note.id, note] as const));
 }
@@ -593,29 +584,13 @@ function EvidencePills({
 
   return (
     <div className="mt-1 flex flex-wrap gap-1.5">
-      {sourceIds.slice(0, 4).map((sourceId) => {
-        const sourceTitle = sourceReferenceLabel(sourceId, noteLookup, chatLookup);
-        const tag = abbreviateSourceTitle(sourceTitle);
-        const pill = (
-          <StatusPill key={sourceId} label={tag} />
-        );
-        if (onOpenSource) {
-          return (
-            <button
-              key={sourceId}
-              type="button"
-              onClick={(e) => { e.stopPropagation(); onOpenSource(sourceId); }}
-              className="transition-opacity hover:opacity-75"
-              title={sourceTitle}
-            >
-              {pill}
-            </button>
-          );
-        }
-        return pill;
-      })}
-      {sourceIds.length > 4 && (
-        <StatusPill label={`+${sourceIds.length - 4}`} />
+      {sourceIds.length > 0 && (
+        <SourceInfoPopover
+          sourceIds={sourceIds}
+          noteLookup={noteLookup}
+          chatLookup={chatLookup}
+          onOpenSource={onOpenSource}
+        />
       )}
       {timelineLinks.slice(0, 2).map((link, index) => (
         <StatusPill
@@ -628,6 +603,169 @@ function EvidencePills({
       {archivedSourceCount > 0 && <StatusPill label="Archived evidence" tone="warn" />}
       {missingSourceCount > 0 && <StatusPill label="Missing source" tone="warn" />}
     </div>
+  );
+}
+
+function SourceInfoPopover({
+  sourceIds,
+  noteLookup,
+  chatLookup,
+  onOpenSource,
+}: {
+  sourceIds: string[];
+  noteLookup: Map<string, LtmNote>;
+  chatLookup?: Map<string, Chat>;
+  onOpenSource?: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const closeTimerRef = useRef<number | null>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; ready: boolean }>({ top: 0, left: 0, ready: false });
+  const uniqueSourceIds = [...new Set(sourceIds)];
+
+  const cancelClose = () => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  };
+
+  const scheduleClose = () => {
+    cancelClose();
+    closeTimerRef.current = window.setTimeout(() => {
+      setOpen(false);
+      closeTimerRef.current = null;
+    }, 120);
+  };
+
+  useEffect(() => () => cancelClose(), []);
+
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current || !popoverRef.current) {
+      setPos({ top: 0, left: 0, ready: false });
+      return;
+    }
+    const trigger = triggerRef.current.getBoundingClientRect();
+    const popover = popoverRef.current.getBoundingClientRect();
+    const pad = 8;
+    let top = trigger.bottom + 6;
+    let left = trigger.left;
+
+    left = Math.max(pad, Math.min(left, window.innerWidth - pad - popover.width));
+    if (top + popover.height > window.innerHeight - pad) {
+      top = trigger.top - 6 - popover.height;
+    }
+    top = Math.max(pad, Math.min(top, window.innerHeight - pad - popover.height));
+
+    setPos({ top, left, ready: true });
+  }, [open, uniqueSourceIds.length]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (triggerRef.current?.contains(target) || popoverRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <span
+      ref={triggerRef}
+      className="relative inline-flex"
+      onMouseEnter={() => {
+        cancelClose();
+        setOpen(true);
+      }}
+      onMouseLeave={scheduleClose}
+    >
+      <button
+        type="button"
+        onPointerDown={(event) => {
+          event.stopPropagation();
+        }}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen((current) => !current);
+        }}
+        className="inline-flex items-center gap-1 rounded-full bg-[var(--secondary)]/70 px-2 py-0.5 text-[0.625rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
+        aria-expanded={open}
+        aria-label={`Show ${uniqueSourceIds.length} memory source${uniqueSourceIds.length === 1 ? "" : "s"}`}
+      >
+        <Info size="0.6875rem" />
+        {uniqueSourceIds.length} source{uniqueSourceIds.length === 1 ? "" : "s"}
+      </button>
+      {open &&
+        createPortal(
+          <div
+            ref={popoverRef}
+            onMouseEnter={cancelClose}
+            onMouseLeave={scheduleClose}
+            className="fixed z-[9999] w-[min(20rem,calc(100vw-1rem))] rounded-lg bg-[var(--popover)] p-2 text-[0.6875rem] text-[var(--popover-foreground)] shadow-xl ring-1 ring-[var(--border)]"
+            style={{ top: pos.top, left: pos.left, visibility: pos.ready ? "visible" : "hidden" }}
+          >
+            <div className="mb-1.5 px-1 text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+              Sources
+            </div>
+            <div className="grid gap-1">
+              {uniqueSourceIds.map((sourceId) => {
+                const source = noteLookup.get(sourceId);
+                const title = sourceReferenceLabel(sourceId, noteLookup, chatLookup);
+                const content = (
+                  <>
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <span className="min-w-0 flex-1 truncate font-medium text-[var(--foreground)]">{title}</span>
+                      {source && <StatusPill label={friendlyStatus(source.status)} tone="neutral" />}
+                    </div>
+                    <p className="mt-0.5 line-clamp-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+                      {source ? noteTextPreview(source) || "Source has no summary text." : sourceId}
+                    </p>
+                  </>
+                );
+
+                if (!onOpenSource) {
+                  return (
+                    <div key={sourceId} className="rounded-md bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]/70">
+                      {content}
+                    </div>
+                  );
+                }
+
+                return (
+                  <button
+                    key={sourceId}
+                    type="button"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setOpen(false);
+                      onOpenSource(sourceId);
+                    }}
+                    className="rounded-md bg-[var(--secondary)]/35 p-2 text-left ring-1 ring-[var(--border)]/70 transition-colors hover:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
+                  >
+                    {content}
+                  </button>
+                );
+              })}
+            </div>
+          </div>,
+          document.body,
+        )}
+    </span>
   );
 }
 
