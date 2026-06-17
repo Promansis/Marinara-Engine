@@ -1,5 +1,6 @@
 import {
   LTM_RECALL_STYLE_WEIGHTS,
+  readLtmRecallWeightOverrides,
   parseLongTermMemoryRecallStyle,
   withMergedLtmScopeLinks,
   type LongTermMemoryRecallStyle,
@@ -121,7 +122,7 @@ export function buildGenerationLongTermMemoryPlan(
   const maxChunks = parseLongTermMemoryMaxChunks(input.chatMeta.longTermMemoryMaxChunks);
   const scoreThreshold = parseLongTermMemoryScoreThreshold(input.chatMeta.longTermMemoryScoreThreshold);
   const recallStyle = parseLongTermMemoryRecallStyle(input.chatMeta.longTermMemoryRecallStyle);
-  const weights = LTM_RECALL_STYLE_WEIGHTS[recallStyle];
+  const weights = readLtmRecallWeightOverrides(input.chatMeta, LTM_RECALL_STYLE_WEIGHTS[recallStyle]);
   const debugEnabled = input.chatMeta.longTermMemoryDebug === true || input.requestDebug === true;
   const contextMessages = parseLongTermMemoryContextMessages(input.chatMeta.longTermMemoryRecallContextMessages);
   const scope = resolveGenerationLongTermMemoryScope({

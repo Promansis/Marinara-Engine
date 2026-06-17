@@ -210,6 +210,14 @@ export interface ChatMetadata {
   longTermMemoryRecallContextMessages?: number;
   /** Recall weighting profile for prompt-injected local long-term memory. */
   longTermMemoryRecallStyle?: LongTermMemoryRecallStyle;
+  /** Optional per-chat override for how much semantic similarity should matter during LTM recall. Null clears the override. */
+  longTermMemorySemanticWeight?: number | null;
+  /** Optional per-chat override for how much lexical matching should matter during LTM recall. Null clears the override. */
+  longTermMemoryLexicalWeight?: number | null;
+  /** Optional per-chat override for how much graph expansion should matter during LTM recall. Null clears the override. */
+  longTermMemoryGraphWeight?: number | null;
+  /** Optional per-chat override for how much metadata matching should matter during LTM recall. Null clears the override. */
+  longTermMemoryMetadataWeight?: number | null;
   /** When true, resolved thread memories may be recalled during prompt injection. Default: false. */
   longTermMemoryIncludeResolved?: boolean;
   /** When true, log/debug local long-term memory prompt injection decisions for this chat. Default: false. */

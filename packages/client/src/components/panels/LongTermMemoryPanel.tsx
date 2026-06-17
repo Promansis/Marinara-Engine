@@ -32,7 +32,11 @@ import type {
   LtmNoteType,
   LtmStatus,
 } from "@marinara-engine/shared";
-import { LTM_RECALL_STYLE_WEIGHTS, parseLongTermMemoryRecallStyle } from "@marinara-engine/shared";
+import {
+  LTM_RECALL_STYLE_WEIGHTS,
+  parseLongTermMemoryRecallStyle,
+  readLtmRecallWeightOverrides,
+} from "@marinara-engine/shared";
 import {
   useImportLongTermMemorySourceNotes,
   useDeleteLongTermMemoryNotes,
@@ -148,6 +152,9 @@ const DEFAULT_LTM_MAX_CHUNKS = 12;
 const DEFAULT_LTM_SCORE_THRESHOLD = 0;
 const DEFAULT_LTM_CONTEXT_MESSAGES = 4;
 const DEFAULT_IMPORT_CONCURRENCY = 3;
+const LTM_WEIGHT_MIN = 0;
+const LTM_WEIGHT_MAX = 2;
+const LTM_WEIGHT_STEP = 0.05;
 
 const rowActionButtonClassName =
   "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-45";
@@ -243,6 +250,8 @@ function readScoreThresholdSetting(metadata: Record<string, unknown>) {
 
 function readLongTermMemoryRecallSearchSettings(metadata: Record<string, unknown>) {
   const recallStyle = readRecallStyle(metadata);
+  const styleWeights = LTM_RECALL_STYLE_WEIGHTS[recallStyle];
+  const weights = readLtmRecallWeightOverrides(metadata, styleWeights);
   return {
     maxTokens: readNumberSetting(metadata, "longTermMemoryBudgetTokens", DEFAULT_LTM_BUDGET_TOKENS, 128, 16_384),
     maxChunks: readNumberSetting(metadata, "longTermMemoryMaxChunks", DEFAULT_LTM_MAX_CHUNKS, 1, 100),
@@ -255,7 +264,7 @@ function readLongTermMemoryRecallSearchSettings(metadata: Record<string, unknown
       1,
       20,
     ),
-    ...LTM_RECALL_STYLE_WEIGHTS[recallStyle],
+    ...weights,
   };
 }
 
@@ -2224,6 +2233,10 @@ function ChatMemorySettings({
   const scoreThresholdValue = recallSearchSettings.minScore;
   const recallStyle = readRecallStyle(metadata);
   const includeResolved = metadata.longTermMemoryIncludeResolved === true;
+  const weights = useMemo(
+    () => readLtmRecallWeightOverrides(metadata, LTM_RECALL_STYLE_WEIGHTS[recallStyle]),
+    [metadata, recallStyle],
+  );
   const contextMessagesValue = readNumberSetting(
     metadata,
     "longTermMemoryRecallContextMessages",
@@ -2235,6 +2248,10 @@ function ChatMemorySettings({
   const [maxChunksDraft, setMaxChunksDraft] = useState(String(maxChunksValue));
   const [scoreThresholdDraft, setScoreThresholdDraft] = useState(scoreThresholdValue);
   const [contextMessagesDraft, setContextMessagesDraft] = useState(String(contextMessagesValue));
+  const [semanticWeightDraft, setSemanticWeightDraft] = useState(String(weights.semanticWeight));
+  const [lexicalWeightDraft, setLexicalWeightDraft] = useState(String(weights.lexicalWeight));
+  const [graphWeightDraft, setGraphWeightDraft] = useState(String(weights.graphWeight));
+  const [metadataWeightDraft, setMetadataWeightDraft] = useState(String(weights.metadataWeight));
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [recallOpen, setRecallOpen] = useState(true);
   const [extractionOpen, setExtractionOpen] = useState(false);
@@ -2249,7 +2266,21 @@ function ChatMemorySettings({
     setMaxChunksDraft(String(maxChunksValue));
     setScoreThresholdDraft(scoreThresholdValue);
     setContextMessagesDraft(String(contextMessagesValue));
-  }, [activeChat?.id, budgetValue, maxChunksValue, scoreThresholdValue, contextMessagesValue]);
+    setSemanticWeightDraft(String(weights.semanticWeight));
+    setLexicalWeightDraft(String(weights.lexicalWeight));
+    setGraphWeightDraft(String(weights.graphWeight));
+    setMetadataWeightDraft(String(weights.metadataWeight));
+  }, [
+    activeChat?.id,
+    budgetValue,
+    contextMessagesValue,
+    maxChunksValue,
+    scoreThresholdValue,
+    weights.graphWeight,
+    weights.lexicalWeight,
+    weights.metadataWeight,
+    weights.semanticWeight,
+  ]);
 
   const patch = (next: Record<string, unknown>) => {
     if (!activeChat) return Promise.resolve();
@@ -2295,6 +2326,38 @@ function ChatMemorySettings({
     return patch({ longTermMemoryScoreThreshold: next });
   };
 
+  const readWeightDraft = (value: string, fallback: number, max = LTM_WEIGHT_MAX) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? Math.max(LTM_WEIGHT_MIN, Math.min(max, Number(numeric.toFixed(2)))) : fallback;
+  };
+
+  const weightPatchKeyMap = {
+    semantic: "longTermMemorySemanticWeight",
+    lexical: "longTermMemoryLexicalWeight",
+    graph: "longTermMemoryGraphWeight",
+    metadata: "longTermMemoryMetadataWeight",
+  } as const;
+
+  const commitWeight = (key: "semantic" | "lexical" | "graph" | "metadata", value: string) => {
+    const fallback = weights[`${key}Weight` as const];
+    const next = readWeightDraft(value, fallback, key === "metadata" ? 2 : 1);
+    if (next === fallback) return Promise.resolve();
+    return patch({ [weightPatchKeyMap[key]]: next });
+  };
+
+  const resetWeightOverrides = () => {
+    setSemanticWeightDraft(String(LTM_RECALL_STYLE_WEIGHTS[recallStyle].semanticWeight));
+    setLexicalWeightDraft(String(LTM_RECALL_STYLE_WEIGHTS[recallStyle].lexicalWeight));
+    setGraphWeightDraft(String(LTM_RECALL_STYLE_WEIGHTS[recallStyle].graphWeight));
+    setMetadataWeightDraft(String(LTM_RECALL_STYLE_WEIGHTS[recallStyle].metadataWeight));
+    return patch({
+      longTermMemorySemanticWeight: null,
+      longTermMemoryLexicalWeight: null,
+      longTermMemoryGraphWeight: null,
+      longTermMemoryMetadataWeight: null,
+    });
+  };
+
   const resetRecallDefaults = () => {
     setBudgetDraft(String(DEFAULT_LTM_BUDGET_TOKENS));
     setMaxChunksDraft(String(DEFAULT_LTM_MAX_CHUNKS));
@@ -2306,6 +2369,10 @@ function ChatMemorySettings({
       longTermMemoryScoreThreshold: DEFAULT_LTM_SCORE_THRESHOLD,
       longTermMemoryRecallContextMessages: DEFAULT_LTM_CONTEXT_MESSAGES,
       longTermMemoryRecallStyle: "balanced",
+      longTermMemorySemanticWeight: null,
+      longTermMemoryLexicalWeight: null,
+      longTermMemoryGraphWeight: null,
+      longTermMemoryMetadataWeight: null,
       longTermMemoryIncludeResolved: false,
     });
   };
@@ -2455,6 +2522,84 @@ function ChatMemorySettings({
                     <p className="mt-1 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
                       0 keeps all ranked matches. Higher values keep only memories close to the strongest match.
                     </p>
+                  </SettingGroup>
+                  <SettingGroup label="Lane weights">
+                    <div className="space-y-2">
+                      {[
+                        {
+                          label: "Semantic",
+                          draft: semanticWeightDraft,
+                          setDraft: setSemanticWeightDraft,
+                          fallback: weights.semanticWeight,
+                          max: 1,
+                          key: "semantic" as const,
+                        },
+                        {
+                          label: "Lexical",
+                          draft: lexicalWeightDraft,
+                          setDraft: setLexicalWeightDraft,
+                          fallback: weights.lexicalWeight,
+                          max: 1,
+                          key: "lexical" as const,
+                        },
+                        {
+                          label: "Graph",
+                          draft: graphWeightDraft,
+                          setDraft: setGraphWeightDraft,
+                          fallback: weights.graphWeight,
+                          max: 1,
+                          key: "graph" as const,
+                        },
+                        {
+                          label: "Metadata",
+                          draft: metadataWeightDraft,
+                          setDraft: setMetadataWeightDraft,
+                          fallback: weights.metadataWeight,
+                          max: 2,
+                          key: "metadata" as const,
+                        },
+                      ].map((item) => {
+                        const inputId = `ltm-${item.key}-weight`;
+                        return (
+                          <div key={item.key} className="grid grid-cols-[4.5rem_1fr_4.75rem] items-center gap-3">
+                            <label htmlFor={inputId} className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+                              {item.label}
+                            </label>
+                            <input
+                              id={inputId}
+                              type="range"
+                              min={LTM_WEIGHT_MIN}
+                              max={item.max}
+                              step={LTM_WEIGHT_STEP}
+                              value={item.draft}
+                              onChange={(event) => item.setDraft(event.target.value)}
+                              onPointerUp={(event) => commitWeight(item.key, (event.target as HTMLInputElement).value)}
+                              onBlur={(event) => commitWeight(item.key, event.target.value)}
+                              className="min-w-0 accent-[var(--primary)]"
+                            />
+                            <input
+                              type="number"
+                              min={LTM_WEIGHT_MIN}
+                              max={item.max}
+                              step={LTM_WEIGHT_STEP}
+                              value={item.draft}
+                              onChange={(event) => item.setDraft(event.target.value)}
+                              onBlur={(event) => commitWeight(item.key, event.target.value)}
+                              className={compactInputClassName}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-1 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                      The selected recall style sets the default mix. These overrides let you bias one lane up or down for this chat.
+                    </p>
+                    <div className="mt-2">
+                      <ToolButton onClick={resetWeightOverrides}>
+                        <RotateCcw size="0.875rem" />
+                        Reset lane weights
+                      </ToolButton>
+                    </div>
                   </SettingGroup>
                   <div>
                     <ToolButton onClick={resetRecallDefaults}>

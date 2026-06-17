@@ -300,6 +300,10 @@ test("generation long-term memory uses chat retrieval settings and injects after
       longTermMemoryMaxChunks: 999,
       longTermMemoryScoreThreshold: 2,
       longTermMemoryRecallStyle: "story",
+      longTermMemorySemanticWeight: 0.2,
+      longTermMemoryLexicalWeight: 0.75,
+      longTermMemoryGraphWeight: 0.15,
+      longTermMemoryMetadataWeight: 0.25,
       longTermMemoryRecallContextMessages: 99,
       longTermMemoryIncludeResolved: true,
       longTermMemoryDebug: true,
@@ -357,10 +361,10 @@ test("generation long-term memory uses chat retrieval settings and injects after
   assert.equal(retrievalInput.includeResolved, true);
   assert.equal(retrievalInput.debug, true);
   assert.equal(retrievalInput.explain, true);
-  assert.equal(retrievalInput.semanticWeight, 0.45);
-  assert.equal(retrievalInput.lexicalWeight, 0.25);
-  assert.equal(retrievalInput.graphWeight, 0.35);
-  assert.equal(retrievalInput.metadataWeight, 0.8);
+  assert.equal(retrievalInput.semanticWeight, 0.2);
+  assert.equal(retrievalInput.lexicalWeight, 0.75);
+  assert.equal(retrievalInput.graphWeight, 0.15);
+  assert.equal(retrievalInput.metadataWeight, 0.25);
   assert.equal(retrievalInput.scope?.chatId, "chat_test");
   assert.deepEqual(retrievalInput.scope?.chatIds, ["chat_test"]);
   assert.equal(retrievalInput.scope?.groupId, "group_test");
@@ -4034,6 +4038,59 @@ test("retrieval accepts legacy enabled config, per-chat weights, chunk limits, a
     assert(ids.includes("char_mara::core"));
     assert(ids.includes("thread_archive_key::summary"));
     assert.equal(withAdvanced.debug, undefined);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("retrieval does not double-count character scope metadata", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-retrieval-character-metadata-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.initializeLtmStore();
+
+    await storage.createNote(
+      {
+        id: "char_rika",
+        type: "character",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_a", groupId: "group_x", characterIds: ["rika"] },
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          current_state: {
+            text: "Rika is waiting at the night train platform with a brass ticket.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    await rebuildLongTermMemoryIndexes({
+      root,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+
+    const result = await retrieveLongTermMemory({
+      root,
+      queryText: "night train platform brass ticket",
+      scope: { chatId: "chat_a", groupId: "group_x", characterIds: ["rika"] },
+      characterIds: ["rika"],
+      maxChunks: 1,
+      maxTokens: 1000,
+      debug: true,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+
+    const selected = result.debug?.selected.find((candidate) => candidate.chunkId === "char_rika::current_state");
+    assert(selected);
+    assert.equal(selected.rawLaneScores?.metadata, 2.5);
+    assert.equal(
+      selected.reasons.join(",").match(/character:rika/g)?.length,
+      1,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

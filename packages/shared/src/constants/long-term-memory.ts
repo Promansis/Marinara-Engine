@@ -48,6 +48,28 @@ export const LTM_RECALL_STYLE_WEIGHTS = {
   }
 >;
 
+export type LtmRecallWeights = {
+  semanticWeight: number;
+  lexicalWeight: number;
+  graphWeight: number;
+  metadataWeight: number;
+};
+
+export function clampLtmRecallWeight(value: unknown, fallback: number, min = 0, max = 2) {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
+}
+
+export function readLtmRecallWeightOverrides(metadata: Record<string, unknown>, fallback: LtmRecallWeights): LtmRecallWeights {
+  const read = (value: unknown, defaultValue: number, min: number, max: number) =>
+    typeof value === "number" && Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : defaultValue;
+  return {
+    semanticWeight: read(metadata.longTermMemorySemanticWeight, fallback.semanticWeight, 0, 1),
+    lexicalWeight: read(metadata.longTermMemoryLexicalWeight, fallback.lexicalWeight, 0, 1),
+    graphWeight: read(metadata.longTermMemoryGraphWeight, fallback.graphWeight, 0, 1),
+    metadataWeight: read(metadata.longTermMemoryMetadataWeight, fallback.metadataWeight, 0, 2),
+  };
+}
+
 export function parseLongTermMemoryRecallStyle(value: unknown): LongTermMemoryRecallStyle {
   return value === "exact" || value === "broad" || value === "story" ? value : DEFAULT_LTM_RECALL_STYLE;
 }

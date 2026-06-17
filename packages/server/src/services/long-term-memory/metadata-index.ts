@@ -102,7 +102,8 @@ export function getLtmMetadataMatches(
   if (scope?.groupId) {
     for (const chunkId of index.byScope.groupId[scope.groupId] ?? []) add(chunkId, 0.8, `group:${scope.groupId}`);
   }
-  for (const characterId of [...(scope?.characterIds ?? []), ...(query.characterIds ?? [])]) {
+  const characterIds = Array.from(new Set([...(scope?.characterIds ?? []), ...(query.characterIds ?? [])]));
+  for (const characterId of characterIds) {
     for (const chunkId of index.byScope.characterId[characterId] ?? []) add(chunkId, 0.7, `character:${characterId}`);
   }
 
