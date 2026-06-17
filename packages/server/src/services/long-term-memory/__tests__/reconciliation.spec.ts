@@ -48,6 +48,10 @@ import { assemblePrompt, type AssemblerInput } from "../../prompt/index.js";
 const timestamp = "2026-06-10T00:00:00.000Z";
 const sourceHash = "a".repeat(64);
 
+async function readJsonText(path: string) {
+  return readFile(path, "utf8");
+}
+
 test("long-term memory extraction mode schema accepts only public presets", () => {
   assert.equal(ltmExtractionModeSchema.parse("fast"), "fast");
   assert.equal(ltmExtractionModeSchema.parse("balanced"), "balanced");
@@ -2159,6 +2163,151 @@ test("source notes are excluded from normal chunks and kept for source audit chu
   );
 });
 
+test("typed rebuild updates typed indexes without rewriting source audit indexes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-typed-rebuild-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "char_typed_rebuild",
+        type: "character",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: {
+            text: "Typed rebuild seed.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "scene_source_rebuild",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary", "chat_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Source rebuild seed.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
+    const dirs = getLongTermMemoryDirectories(root);
+    const sourceBefore = await readJsonText(join(dirs.indexes, "source-metadata.json"));
+
+    await storage.updateNote(
+      "char_typed_rebuild",
+      {
+        sections: {
+          facts: {
+            text: "Typed rebuild seed updated.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    await rebuildLongTermMemoryIndexes({ root, scope: "typed", localEmbedder: async (texts) => texts.map(() => []) });
+    const sourceAfter = await readJsonText(join(dirs.indexes, "source-metadata.json"));
+    const typedAfter = JSON.parse(await readJsonText(join(dirs.indexes, "metadata.json"))) as {
+      chunks: Record<string, { noteId: string }>;
+    };
+
+    assert.equal(sourceAfter, sourceBefore);
+    assert(Object.values(typedAfter.chunks).some((chunk) => chunk.noteId === "char_typed_rebuild"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source rebuild refreshes source audit indexes without changing typed metadata", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-source-rebuild-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "char_source_rebuild",
+        type: "character",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: {
+            text: "Typed source rebuild seed.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "scene_source_refresh",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary", "chat_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Source refresh seed.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
+    const dirs = getLongTermMemoryDirectories(root);
+    const typedBefore = await readJsonText(join(dirs.indexes, "metadata.json"));
+
+    await storage.updateNote(
+      "scene_source_refresh",
+      {
+        sections: {
+          source: {
+            text: "Source refresh seed updated.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    await rebuildLongTermMemoryIndexes({ root, scope: "source", localEmbedder: async (texts) => texts.map(() => []) });
+    const typedAfter = await readJsonText(join(dirs.indexes, "metadata.json"));
+    const sourceAfter = JSON.parse(await readJsonText(join(dirs.indexes, "source-metadata.json"))) as {
+      chunks: Record<string, { noteId: string }>;
+    };
+
+    assert.equal(typedAfter, typedBefore);
+    assert(Object.values(sourceAfter.chunks).some((chunk) => chunk.noteId === "scene_source_refresh"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("archived notes remain chunked regardless of status", () => {
   const archivedNote: LtmNote = {
     id: "world_kiseki_academy",
@@ -2290,6 +2439,103 @@ test("archived notes are retrievable via normal list/get and can be reactivated"
       (await storage.listNotes({ status: "archived" })).map((n) => n.id),
       [],
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("draft apply rebuilds typed indexes and keeps source audit indexes intact", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-draft-typed-rebuild-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "thread_typed_rebuild",
+        type: "thread",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          setup: {
+            text: "Typed draft seed.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "scene_source_rebuild_draft",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary", "chat_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Draft source seed.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
+    await retrieveLongTermMemory({
+      root,
+      queryText: "Typed draft seed.",
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+    const dirs = getLongTermMemoryDirectories(root);
+    const sourceBefore = await readJsonText(join(dirs.indexes, "source-metadata.json"));
+
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_source_rebuild_draft" },
+      response: {
+        summary: "Typed draft apply",
+        mutations: [
+          {
+            id: randomUUID(),
+            kind: "update_section",
+            noteId: "thread_typed_rebuild",
+            sectionKey: "setup",
+            section: {
+              text: "Typed draft seed updated.",
+              updatedAt: timestamp,
+            },
+            evidence: ["source_note:scene_source_rebuild_draft"],
+            confidence: 0.9,
+            risk: "low",
+            summary: "Update typed draft seed",
+          } satisfies Extract<LtmDraftMutation, { kind: "update_section" }>,
+        ],
+      },
+    });
+
+    const result = await applyLongTermMemoryDraft(draft.id, {
+      root,
+      actor: "test",
+      rebuildIndexes: true,
+    });
+
+    const sourceAfter = await readJsonText(join(dirs.indexes, "source-metadata.json"));
+    const typedSearch = await retrieveLongTermMemory({
+      root,
+      queryText: "Typed draft seed updated.",
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+
+    assert.deepEqual(result.appliedMutationIds.length, 1);
+    assert.equal(sourceAfter, sourceBefore);
+    assert(typedSearch.chunks.some((chunk) => chunk.chunk.noteId === "thread_typed_rebuild"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

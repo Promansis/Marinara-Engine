@@ -40,8 +40,10 @@ export interface LtmRebuildResult {
 export interface LtmRebuildOptions extends MemoryRecallEmbeddingOptions {
   root?: string;
   generatedAt?: string;
-  includeSourceNotes?: boolean;
+  scope?: LtmRebuildScope;
 }
+
+export type LtmRebuildScope = "all" | "typed" | "source";
 
 async function listFiles(root: string): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true }).catch((err) => {
@@ -107,23 +109,64 @@ async function buildEmbeddingIndex(chunks: LtmMemoryChunk[], options: MemoryReca
   } satisfies LtmEmbeddingIndex;
 }
 
+function includesTypedIndexes(scope: LtmRebuildScope) {
+  return scope === "all" || scope === "typed";
+}
+
+function includesSourceIndexes(scope: LtmRebuildScope) {
+  return scope === "all" || scope === "source";
+}
+
+async function writeTypedIndexes(root: string, notes: Awaited<ReturnType<LongTermMemoryStorage["listNotes"]>>, options: MemoryRecallEmbeddingOptions) {
+  const chunks = chunkNotes(notes);
+  const embeddings = await buildEmbeddingIndex(chunks, options);
+  const bm25 = buildLtmBm25Index(chunks);
+  const graph = buildLtmGraphIndex(notes, chunks);
+  const metadata = buildLtmMetadataIndex(chunks);
+  const dirs = getLongTermMemoryDirectories(root);
+
+  await writeJsonAtomic(safeJoin(dirs.indexes, "embeddings.json"), embeddings);
+  await writeJsonAtomic(safeJoin(dirs.indexes, "bm25.json"), bm25 satisfies LtmBm25Index);
+  await writeJsonAtomic(safeJoin(dirs.indexes, "graph.json"), graph satisfies LtmGraphIndex);
+  await writeJsonAtomic(safeJoin(dirs.indexes, "metadata.json"), metadata satisfies LtmMetadataIndex);
+
+  return { chunks, embeddings };
+}
+
+async function writeSourceIndexes(
+  root: string,
+  notes: Awaited<ReturnType<LongTermMemoryStorage["listNotes"]>>,
+  options: MemoryRecallEmbeddingOptions,
+) {
+  const chunks = chunkNotes(notes, { sourceNotesOnly: true });
+  const embeddings = await buildEmbeddingIndex(chunks, options);
+  const bm25 = buildLtmBm25Index(chunks);
+  const graph = buildLtmGraphIndex(notes, chunks);
+  const metadata = buildLtmMetadataIndex(chunks);
+  const dirs = getLongTermMemoryDirectories(root);
+
+  await writeJsonAtomic(safeJoin(dirs.indexes, "source-embeddings.json"), embeddings);
+  await writeJsonAtomic(safeJoin(dirs.indexes, "source-bm25.json"), bm25 satisfies LtmBm25Index);
+  await writeJsonAtomic(safeJoin(dirs.indexes, "source-graph.json"), graph satisfies LtmGraphIndex);
+  await writeJsonAtomic(safeJoin(dirs.indexes, "source-metadata.json"), metadata satisfies LtmMetadataIndex);
+
+  return { chunks, embeddings };
+}
+
 export async function rebuildLongTermMemoryIndexes(options: LtmRebuildOptions = {}): Promise<LtmRebuildResult> {
   const root = options.root ?? getLongTermMemoryRoot();
   const generatedAt = options.generatedAt ?? new Date().toISOString();
+  const scope = options.scope ?? "all";
   const storage = new LongTermMemoryStorage(root);
   await storage.initializeLtmStore();
 
   const notes = await storage.listNotes();
-  const chunks = chunkNotes(notes, { includeSourceNotes: options.includeSourceNotes === true });
+  const typedChunks = chunkNotes(notes);
   const sourceChunks = chunkNotes(notes, { sourceNotesOnly: true });
-  const embeddings = await buildEmbeddingIndex(chunks, options);
-  const sourceEmbeddings = await buildEmbeddingIndex(sourceChunks, options);
-  const bm25 = buildLtmBm25Index(chunks);
-  const sourceBm25 = buildLtmBm25Index(sourceChunks);
-  const graph = buildLtmGraphIndex(notes, chunks);
-  const sourceGraph = buildLtmGraphIndex(notes, sourceChunks);
-  const metadata = buildLtmMetadataIndex(chunks);
-  const sourceMetadata = buildLtmMetadataIndex(sourceChunks);
+  const typedResult = includesTypedIndexes(scope) ? await writeTypedIndexes(root, notes, options) : null;
+  if (includesSourceIndexes(scope)) {
+    await writeSourceIndexes(root, notes, options);
+  }
   const sourceFiles = await hashSourceFiles(root);
   const sourceHash = stableJsonHash(sourceFiles);
   const manifest: LtmIndexMetadata = {
@@ -131,38 +174,35 @@ export async function rebuildLongTermMemoryIndexes(options: LtmRebuildOptions = 
     generatedAt,
     sourceHash,
     noteCount: notes.length,
-    chunkCount: chunks.length,
+    chunkCount: typedChunks.length,
     files: sourceFiles,
   };
 
   const dirs = getLongTermMemoryDirectories(root);
-  await writeJsonAtomic(safeJoin(dirs.indexes, "embeddings.json"), embeddings);
-  await writeJsonAtomic(safeJoin(dirs.indexes, "bm25.json"), bm25 satisfies LtmBm25Index);
-  await writeJsonAtomic(safeJoin(dirs.indexes, "graph.json"), graph satisfies LtmGraphIndex);
-  await writeJsonAtomic(safeJoin(dirs.indexes, "metadata.json"), metadata satisfies LtmMetadataIndex);
-  await writeJsonAtomic(safeJoin(dirs.indexes, "source-embeddings.json"), sourceEmbeddings);
-  await writeJsonAtomic(safeJoin(dirs.indexes, "source-bm25.json"), sourceBm25 satisfies LtmBm25Index);
-  await writeJsonAtomic(safeJoin(dirs.indexes, "source-graph.json"), sourceGraph satisfies LtmGraphIndex);
-  await writeJsonAtomic(safeJoin(dirs.indexes, "source-metadata.json"), sourceMetadata satisfies LtmMetadataIndex);
   await writeJsonAtomic(safeJoin(dirs.indexes, "manifest.json"), manifest);
-  invalidateLongTermMemoryRetrievalCache(root);
+  if (scope === "all") {
+    invalidateLongTermMemoryRetrievalCache(root);
+  } else {
+    invalidateLongTermMemoryRetrievalCache(root, scope === "source");
+  }
 
   logger.info(
-    "[ltm] Rebuilt long-term memory indexes: %d note(s), %d typed chunk(s), %d source chunk(s), %d embedded typed chunk(s)",
+    "[ltm] Rebuilt %s long-term memory indexes: %d note(s), %d typed chunk(s), %d source chunk(s), %d embedded typed chunk(s)",
+    scope,
     notes.length,
-    chunks.length,
+    typedChunks.length,
     sourceChunks.length,
-    embeddings.embeddedChunkCount,
+    typedResult?.embeddings.embeddedChunkCount ?? 0,
   );
 
   return {
     root,
     generatedAt,
     noteCount: notes.length,
-    chunkCount: chunks.length,
+    chunkCount: typedChunks.length,
     sourceChunkCount: sourceChunks.length,
-    embeddedChunkCount: embeddings.embeddedChunkCount,
-    embeddingsAvailable: embeddings.embeddedChunkCount > 0,
+    embeddedChunkCount: typedResult?.embeddings.embeddedChunkCount ?? 0,
+    embeddingsAvailable: Boolean(typedResult?.embeddings.embeddedChunkCount),
     manifest,
   };
 }

@@ -440,7 +440,7 @@ async function applyLongTermMemoryDraftInner(
   }
 
   if (appliedMutationIds.length > 0 && options.rebuildIndexes !== false) {
-    await rebuildLongTermMemoryIndexes({ root: options.root });
+    await rebuildLongTermMemoryIndexes({ root: options.root, scope: "typed" });
     await recordLtmDebugEvent({
       root: options.root,
       operationId: options.operationId,
@@ -449,6 +449,7 @@ async function applyLongTermMemoryDraftInner(
       status: "ok",
       draftId,
       counts: { appliedMutations: appliedMutationIds.length },
+      details: { scope: "typed" },
     });
   }
 

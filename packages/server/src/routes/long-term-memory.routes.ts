@@ -739,6 +739,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
         scope: body.scope,
         operationId,
       });
+      const importedSourceNoteCount = imported.imported.length;
       const results = [];
       const { provider, model } = await resolveExtractionProvider(body);
       await recordLtmDebugEvent({
@@ -822,9 +823,26 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
         results.push(result);
       }
 
+      if (importedSourceNoteCount > 0) {
+        const sourceRebuildResult = await rebuildLongTermMemoryIndexes({ scope: "source" });
+        await recordLtmDebugEvent({
+          root: undefined,
+          operationId,
+          phase: "rebuild",
+          action: "import_batch_source_rebuild",
+          status: "ok",
+          counts: {
+            sourceNotes: importedSourceNoteCount,
+            notes: sourceRebuildResult.noteCount,
+            sourceChunks: sourceRebuildResult.sourceChunkCount,
+          },
+          details: { scope: "source" },
+        });
+      }
+
       const totalApplied = results.reduce((sum, result) => sum + result.appliedMutationIds.length, 0);
       if (totalApplied > 0) {
-        const rebuildResult = await rebuildLongTermMemoryIndexes();
+        const rebuildResult = await rebuildLongTermMemoryIndexes({ scope: "typed" });
         await recordLtmDebugEvent({
           root: undefined,
           operationId,
@@ -832,6 +850,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
           action: "import_batch_rebuild",
           status: "ok",
           counts: { appliedMutations: totalApplied, notes: rebuildResult.noteCount, chunks: rebuildResult.chunkCount },
+          details: { scope: "typed" },
         });
       }
 

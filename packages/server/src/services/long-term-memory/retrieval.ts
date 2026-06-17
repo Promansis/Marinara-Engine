@@ -145,9 +145,13 @@ function retrievalBundleCacheKey(root: string, includeSourceNotes: boolean) {
   return `${root}\0${includeSourceNotes ? "source" : "typed"}`;
 }
 
-export function invalidateLongTermMemoryRetrievalCache(root?: string) {
+export function invalidateLongTermMemoryRetrievalCache(root?: string, includeSourceNotes?: boolean) {
   if (!root) {
     retrievalBundleCache.clear();
+    return;
+  }
+  if (typeof includeSourceNotes === "boolean") {
+    retrievalBundleCache.delete(retrievalBundleCacheKey(root, includeSourceNotes));
     return;
   }
   for (const key of retrievalBundleCache.keys()) {
