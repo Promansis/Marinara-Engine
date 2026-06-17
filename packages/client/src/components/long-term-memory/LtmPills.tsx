@@ -10,8 +10,9 @@ export function StatusPill({
 }) {
   return (
     <span
+      title={label}
       className={cn(
-        "inline-flex items-center rounded-full border px-2 py-1 text-[0.625rem] font-semibold uppercase leading-none tracking-[0.14em]",
+        "inline-flex max-w-full min-w-0 items-center truncate rounded-md border px-1.5 py-0.5 text-[0.625rem] font-medium leading-tight",
         tone === "good" &&
           "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-200",
         tone === "warn" && "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-200",
@@ -44,7 +45,7 @@ export function ToolButton({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold shadow-sm transition-[background-color,color,box-shadow,transform] hover:shadow-md active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:shadow-sm",
+        "inline-flex min-h-8 max-w-full min-w-0 items-center justify-center gap-1.5 overflow-hidden whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs font-semibold shadow-sm transition-[background-color,color,box-shadow,transform] hover:shadow-md active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:shadow-sm",
         tone === "primary" &&
           "bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm hover:brightness-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60",
         tone === "secondary" &&

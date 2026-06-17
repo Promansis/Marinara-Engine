@@ -133,11 +133,10 @@ const DEFAULT_LTM_BUDGET_TOKENS = 2048;
 const DEFAULT_LTM_MAX_CHUNKS = 12;
 const DEFAULT_LTM_SCORE_THRESHOLD = 0;
 
-const rowActionPillClassName =
-  "absolute right-3 top-3 flex shrink-0 items-center gap-0.5 rounded-lg bg-[var(--sidebar)]/95 px-1 py-0.5 shadow-sm ring-1 ring-[var(--border)] opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100";
-
 const rowActionButtonClassName =
-  "inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] active:scale-90 disabled:cursor-not-allowed disabled:opacity-45";
+  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-45";
+
+const rowActionGroupClassName = "flex shrink-0 items-center justify-end gap-0.5";
 
 const disclosureButtonClassName =
   "flex min-h-11 w-full items-center justify-between gap-3 rounded-xl bg-[var(--secondary)]/35 px-3 py-2 text-left text-xs font-semibold text-[var(--foreground)] ring-1 ring-[var(--border)] transition-[background-color,box-shadow,color] hover:bg-[var(--accent)]/45 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60";
@@ -263,9 +262,11 @@ function DisclosureHeader({
           </span>
         )}
       </span>
-      <span className="flex shrink-0 items-center gap-2">
+      <span className="flex min-w-0 shrink items-center justify-end gap-1 overflow-hidden">
         {children}
-        {open ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
+        <span className="shrink-0">
+          {open ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
+        </span>
       </span>
     </button>
   );
@@ -310,85 +311,83 @@ function NoteRow({
   const showSourceSummary = isSourceSummaryNote(note);
   return (
     <article
-      className={cn("group relative", listRowClassName, (editing || bulkSelected) && selectedListRowClassName)}
+      className={cn("group", listRowClassName, (editing || bulkSelected) && selectedListRowClassName)}
     >
-      {onSelect && (
-        <label className="absolute left-2 top-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--background)]/55 ring-1 ring-[var(--border)]">
-          <input
-            type="checkbox"
-            checked={bulkSelected ?? false}
-            onChange={(event) => onSelect(event.target.checked)}
-            className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-            aria-label={`Select ${displayTitle}`}
-          />
-        </label>
-      )}
-      <div
-        className={cn(
-          "min-w-0 transition-[padding] group-hover:pr-28 max-md:pr-28",
-          onDelete && "group-hover:pr-36 max-md:pr-36",
-          onSelect && "pl-10",
-        )}
-      >
-        <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={displayTitle}>
-          {displayTitle}
-        </div>
-        {primaryText && !showSourceSummary && (
-          <div className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-            {primaryText}
-          </div>
-        )}
-        <div className="mt-1 flex flex-wrap gap-1.5">
-          <StatusPill label={primaryLabel ?? (showSourceSummary ? "Source summary" : friendlyNoteType(note.type))} />
-          {!showSourceSummary && (
-            <StatusPill label={friendlyStatus(note.status)} tone={note.status === "active" ? "good" : "neutral"} />
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+        <div className={cn("grid min-w-0 gap-2", onSelect && "grid-cols-[auto_minmax(0,1fr)]")}>
+          {onSelect && (
+            <label className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--background)]/55 ring-1 ring-[var(--border)]">
+              <input
+                type="checkbox"
+                checked={bulkSelected ?? false}
+                onChange={(event) => onSelect(event.target.checked)}
+                className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+                aria-label={`Select ${displayTitle}`}
+              />
+            </label>
           )}
-          {note.extracted && <StatusPill label="Extracted" />}
-          {sectionCount > 1 && <StatusPill label={`${sectionCount} details`} />}
+          <div className="min-w-0">
+            <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={displayTitle}>
+              {displayTitle}
+            </div>
+            {primaryText && !showSourceSummary && (
+              <div className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                {primaryText}
+              </div>
+            )}
+            <div className="mt-1 flex min-w-0 flex-wrap gap-1">
+              <StatusPill label={primaryLabel ?? (showSourceSummary ? "Source summary" : friendlyNoteType(note.type))} />
+              {!showSourceSummary && (
+                <StatusPill label={friendlyStatus(note.status)} tone={note.status === "active" ? "good" : "neutral"} />
+              )}
+              {note.extracted && <StatusPill label="Extracted" />}
+              {sectionCount > 1 && <StatusPill label={`${sectionCount} details`} />}
+            </div>
+            {children}
+          </div>
         </div>
-        {children}
-      </div>
-      <div className={rowActionPillClassName}>
-        <button
-          type="button"
-          onClick={onView}
-          className={cn(rowActionButtonClassName, viewing && "bg-[var(--accent)] text-[var(--foreground)]")}
-          aria-label={`View ${displayTitle}`}
-          title="View memory"
-        >
-          <Eye size="0.875rem" />
-        </button>
-        {onRestore && (
+        <div className={rowActionGroupClassName}>
           <button
             type="button"
-            onClick={onRestore}
-            className={cn(rowActionButtonClassName, "hover:bg-emerald-500/10 hover:text-emerald-200")}
-            aria-label={`Restore ${displayTitle}`}
-            title="Restore memory"
+            onClick={onView}
+            className={cn(rowActionButtonClassName, viewing && "bg-[var(--accent)] text-[var(--foreground)]")}
+            aria-label={`View ${displayTitle}`}
+            title="View memory"
           >
-            <RotateCcw size="0.875rem" />
+            <Eye size="0.875rem" />
           </button>
-        )}
-        {onDelete && (
+          {onRestore && (
+            <button
+              type="button"
+              onClick={onRestore}
+              className={cn(rowActionButtonClassName, "hover:bg-emerald-500/10 hover:text-emerald-200")}
+              aria-label={`Restore ${displayTitle}`}
+              title="Restore memory"
+            >
+              <RotateCcw size="0.875rem" />
+            </button>
+          )}
+          {onDelete && (
+            <button
+              type="button"
+              onClick={onDelete}
+              className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
+              aria-label={`Delete ${displayTitle}`}
+              title="Delete memory"
+            >
+              <Trash2 size="0.875rem" />
+            </button>
+          )}
           <button
             type="button"
-            onClick={onDelete}
-            className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
-            aria-label={`Delete ${displayTitle}`}
-            title="Delete memory"
+            onClick={onEdit}
+            className={cn(rowActionButtonClassName, editing && "bg-[var(--accent)] text-[var(--foreground)]")}
+            aria-label={`Edit ${displayTitle}`}
+            title="Edit memory"
           >
-            <Trash2 size="0.875rem" />
+            <Pencil size="0.875rem" />
           </button>
-        )}
-        <button
-          type="button"
-          onClick={onEdit}
-          className={cn(rowActionButtonClassName, editing && "bg-[var(--accent)] text-[var(--foreground)]")}
-          aria-label={`Edit ${displayTitle}`}
-          title="Edit memory"
-        >
-          <Pencil size="0.875rem" />
-        </button>
+        </div>
       </div>
       {!hideTags && note.tags.length > 0 && (
         <div className="mt-2 truncate text-[0.625rem] text-[var(--muted-foreground)]" title={note.id}>
@@ -733,22 +732,23 @@ function TypeMemoryGroups({
                     <article
                       key={note.id}
                       className={cn(
-                        "group relative",
+                        "group",
                         listRowClassName,
                         (viewingNoteId === note.id || editingNoteId === note.id) && selectedListRowClassName,
                       )}
                     >
-                      <div className="flex min-w-0 items-start gap-2 pr-28 max-md:pr-28">
-                        <button
-                          type="button"
-                          onClick={() => onToggleMemory(note.id)}
-                          className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                          aria-label={expanded ? "Hide source details" : "Show source details"}
-                          aria-expanded={expanded}
-                        >
-                          {expanded ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
-                        </button>
-                        <div className="min-w-0 flex-1">
+                      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                        <div className="flex min-w-0 items-start gap-2">
+                          <button
+                            type="button"
+                            onClick={() => onToggleMemory(note.id)}
+                            className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                            aria-label={expanded ? "Hide source details" : "Show source details"}
+                            aria-expanded={expanded}
+                          >
+                            {expanded ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
+                          </button>
+                          <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 truncate">
                             <span className="truncate text-xs font-semibold text-[var(--foreground)]" title={note.id}>
                               {isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : friendlyNoteTitle(note)}
@@ -819,33 +819,34 @@ function TypeMemoryGroups({
                                 ))}
                             </div>
                           )}
+                          </div>
                         </div>
-                      </div>
-                      <div className={rowActionPillClassName}>
-                        <button
-                          type="button"
-                          onClick={() => onView(note.id)}
-                          className={cn(
-                            rowActionButtonClassName,
-                            viewingNoteId === note.id && "bg-[var(--accent)] text-[var(--foreground)]",
-                          )}
-                          aria-label={`View ${friendlyNoteTitle(note)}`}
-                          title="View memory"
-                        >
-                          <Eye size="0.875rem" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onEdit(note.id)}
-                          className={cn(
-                            rowActionButtonClassName,
-                            editingNoteId === note.id && "bg-[var(--accent)] text-[var(--foreground)]",
-                          )}
-                          aria-label={`Edit ${friendlyNoteTitle(note)}`}
-                          title="Edit memory"
-                        >
-                          <Pencil size="0.875rem" />
-                        </button>
+                        <div className={rowActionGroupClassName}>
+                          <button
+                            type="button"
+                            onClick={() => onView(note.id)}
+                            className={cn(
+                              rowActionButtonClassName,
+                              viewingNoteId === note.id && "bg-[var(--accent)] text-[var(--foreground)]",
+                            )}
+                            aria-label={`View ${friendlyNoteTitle(note)}`}
+                            title="View memory"
+                          >
+                            <Eye size="0.875rem" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onEdit(note.id)}
+                            className={cn(
+                              rowActionButtonClassName,
+                              editingNoteId === note.id && "bg-[var(--accent)] text-[var(--foreground)]",
+                            )}
+                            aria-label={`Edit ${friendlyNoteTitle(note)}`}
+                            title="Edit memory"
+                          >
+                            <Pencil size="0.875rem" />
+                          </button>
+                        </div>
                       </div>
                     </article>
                   );
@@ -1811,68 +1812,72 @@ function ArchivedDraftRow({
 }) {
   return (
     <article
-      className={cn("group relative", listRowClassName, (selected || bulkSelected) && selectedListRowClassName)}
+      className={cn("group", listRowClassName, (selected || bulkSelected) && selectedListRowClassName)}
     >
-      {onSelect && (
-        <label className="absolute left-2 top-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--background)]/55 ring-1 ring-[var(--border)]">
-          <input
-            type="checkbox"
-            checked={bulkSelected ?? false}
-            onChange={(event) => onSelect(event.target.checked)}
-            className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-            aria-label={`Select suggestion ${draft.id}`}
-          />
-        </label>
-      )}
-      <div className={cn("min-w-0 transition-[padding] group-hover:pr-36 max-md:pr-36", onSelect && "pl-10")}>
-        <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={draft.summary || draft.id}>
-          {draft.summary || draft.id}
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+        <div className={cn("grid min-w-0 gap-2", onSelect && "grid-cols-[auto_minmax(0,1fr)]")}>
+          {onSelect && (
+            <label className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--background)]/55 ring-1 ring-[var(--border)]">
+              <input
+                type="checkbox"
+                checked={bulkSelected ?? false}
+                onChange={(event) => onSelect(event.target.checked)}
+                className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+                aria-label={`Select suggestion ${draft.id}`}
+              />
+            </label>
+          )}
+          <div className="min-w-0">
+            <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={draft.summary || draft.id}>
+              {draft.summary || draft.id}
+            </div>
+            <div className="mt-1 flex min-w-0 flex-wrap gap-1">
+              <StatusPill label={draftStatusLabel(draft.status)} tone={draftStatusTone(draft.status)} />
+              <StatusPill label={`${draft.mutations.length} suggested change${draft.mutations.length === 1 ? "" : "s"}`} />
+            </div>
+            <DraftMetadataPills draft={draft} noteLookup={noteLookup} chatLookup={chatLookup} onOpenSourceNote={onOpenSourceNote} />
+            <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]/80">Internal ID: {draft.id}</div>
+          </div>
         </div>
-        <div className="mt-1 flex flex-wrap gap-1.5">
-          <StatusPill label={draftStatusLabel(draft.status)} tone={draftStatusTone(draft.status)} />
-          <StatusPill label={`${draft.mutations.length} suggested change${draft.mutations.length === 1 ? "" : "s"}`} />
+        <div className={rowActionGroupClassName}>
+          <button
+            type="button"
+            onClick={onView}
+            className={cn(rowActionButtonClassName, selected && "bg-[var(--accent)] text-[var(--foreground)]")}
+            aria-label={`View suggestion ${draft.id}`}
+            title="View suggestion"
+          >
+            <Eye size="0.875rem" />
+          </button>
+          <button
+            type="button"
+            onClick={onEdit}
+            className={rowActionButtonClassName}
+            aria-label={`Edit suggestion ${draft.id}`}
+            title="Edit raw suggestion"
+          >
+            <Pencil size="0.875rem" />
+          </button>
+          <button
+            type="button"
+            onClick={onRestore}
+            disabled={draft.status !== "rejected"}
+            className={cn(rowActionButtonClassName, "hover:bg-emerald-500/10 hover:text-emerald-200")}
+            aria-label={`Restore suggestion ${draft.id}`}
+            title={draft.status === "rejected" ? "Restore suggestion" : "Kept suggestions cannot be restored"}
+          >
+            <RotateCcw size="0.875rem" />
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
+            aria-label={`Delete suggestion ${draft.id}`}
+            title="Delete suggestion"
+          >
+            <Trash2 size="0.875rem" />
+          </button>
         </div>
-        <DraftMetadataPills draft={draft} noteLookup={noteLookup} chatLookup={chatLookup} onOpenSourceNote={onOpenSourceNote} />
-        <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]/80">Internal ID: {draft.id}</div>
-      </div>
-      <div className={rowActionPillClassName}>
-        <button
-          type="button"
-          onClick={onView}
-          className={cn(rowActionButtonClassName, selected && "bg-[var(--accent)] text-[var(--foreground)]")}
-          aria-label={`View suggestion ${draft.id}`}
-          title="View suggestion"
-        >
-          <Eye size="0.875rem" />
-        </button>
-        <button
-          type="button"
-          onClick={onEdit}
-          className={rowActionButtonClassName}
-          aria-label={`Edit suggestion ${draft.id}`}
-          title="Edit raw suggestion"
-        >
-          <Pencil size="0.875rem" />
-        </button>
-        <button
-          type="button"
-          onClick={onRestore}
-          disabled={draft.status !== "rejected"}
-          className={cn(rowActionButtonClassName, "hover:bg-emerald-500/10 hover:text-emerald-200")}
-          aria-label={`Restore suggestion ${draft.id}`}
-          title={draft.status === "rejected" ? "Restore suggestion" : "Kept suggestions cannot be restored"}
-        >
-          <RotateCcw size="0.875rem" />
-        </button>
-        <button
-          type="button"
-          onClick={onDelete}
-          className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
-          aria-label={`Delete suggestion ${draft.id}`}
-          title="Delete suggestion"
-        >
-          <Trash2 size="0.875rem" />
-        </button>
       </div>
       <div className="mt-2 truncate text-[0.625rem] text-[var(--muted-foreground)]">
         Updated {new Date(draft.updatedAt).toLocaleString()}
@@ -1898,7 +1903,11 @@ function ImportPreviewRowItem({
 }) {
   return (
     <article
-      className={cn("group relative grid grid-cols-[auto_minmax(0,1fr)] gap-3", listRowClassName, selected && selectedListRowClassName)}
+      className={cn(
+        "group grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3",
+        listRowClassName,
+        selected && selectedListRowClassName,
+      )}
     >
       <label className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--background)]/55 ring-1 ring-[var(--border)]">
         <input
@@ -1910,7 +1919,7 @@ function ImportPreviewRowItem({
           aria-label={`Select ${sample.title}`}
         />
       </label>
-      <div className="min-w-0 self-center transition-[padding] group-hover:pr-20 max-md:pr-20">
+      <div className="min-w-0 self-center">
         <div className="truncate text-xs font-medium text-[var(--foreground)]" title={sample.title}>
           {sample.title}
         </div>
@@ -1923,7 +1932,7 @@ function ImportPreviewRowItem({
           <StatusPill label={`${sample.mutationCount} suggested change${sample.mutationCount === 1 ? "" : "s"}`} />
         </div>
       </div>
-      <div className={rowActionPillClassName}>
+      <div className={rowActionGroupClassName}>
         <button
           type="button"
           onClick={onImport}
@@ -2057,7 +2066,7 @@ function ChatMemorySettings({
         <>
           <DisclosureHeader title="Recall" open={recallOpen} onToggle={() => setRecallOpen((c) => !c)} />
           {recallOpen && (
-            <div className="grid gap-2 rounded-2xl bg-[var(--secondary)]/35 p-3 shadow-sm ring-1 ring-[var(--border)]">
+            <div className={sectionCardClassName}>
               <SettingToggle
                 label="Use memory in prompts"
                 checked={enabled}
@@ -2206,7 +2215,7 @@ function ChatMemorySettings({
 
           <DisclosureHeader title="Extraction" open={extractionOpen} onToggle={() => setExtractionOpen((c) => !c)} />
           {extractionOpen && (
-            <div className="grid gap-2 rounded-2xl bg-[var(--secondary)]/35 p-3 shadow-sm ring-1 ring-[var(--border)]">
+            <div className={sectionCardClassName}>
               <ToolButton onClick={onOpenExtractionSettings}>
                 <SlidersHorizontal size="0.875rem" />
                 Extraction settings
@@ -2224,7 +2233,7 @@ function ChatMemorySettings({
             onToggle={() => setMaintenanceOpen((c) => !c)}
           />
           {maintenanceOpen && (
-            <div className="grid gap-2 rounded-2xl bg-[var(--secondary)]/35 p-3 shadow-sm ring-1 ring-[var(--border)]">
+            <div className={sectionCardClassName}>
               <ToolButton
                 onClick={() =>
                   rebuild
@@ -2288,7 +2297,7 @@ function ChatMemorySettings({
 
           <DisclosureHeader title="Debug" open={debugOpen} onToggle={() => setDebugOpen((c) => !c)} />
           {debugOpen && (
-            <div className="grid gap-2 rounded-2xl bg-[var(--secondary)]/35 p-3 shadow-sm ring-1 ring-[var(--border)]">
+            <div className={sectionCardClassName}>
               <SettingToggle
                 label="Debug retrieval logs"
                 checked={debug}
@@ -2687,18 +2696,18 @@ export function LongTermMemoryPanel() {
   };
 
   return (
-    <div className="flex min-h-full flex-col gap-3 bg-[radial-gradient(circle_at_top_right,color-mix(in_oklab,var(--primary)_12%,transparent),transparent_34%)] p-3 text-[var(--foreground)]">
+    <div className="flex min-h-full flex-col gap-3 p-3 text-[var(--foreground)]">
       <div className="sticky top-0 z-10 -mx-3 bg-[var(--background)]/95 px-3 py-2 backdrop-blur-sm">
         <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-          <div className="grid grid-cols-3 gap-1 rounded-2xl bg-[var(--secondary)]/45 p-1 shadow-sm ring-1 ring-[var(--border)]/80">
+          <div className="grid grid-cols-3 gap-1 rounded-xl bg-[var(--secondary)]/35 p-1 ring-1 ring-[var(--border)]/80">
             {(["notes", "tools", "import"] as TabId[]).map((id) => (
               <button
                 key={id}
                 onClick={() => setTabWithGuards(id)}
                 className={cn(
-                  "min-w-0 rounded-xl px-3 py-2 text-xs font-semibold transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60",
+                  "min-w-0 truncate rounded-lg px-2 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60",
                   tab === id
-                    ? "bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm"
+                    ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
                     : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
                 )}
               >
@@ -2709,7 +2718,7 @@ export function LongTermMemoryPanel() {
           <button
             type="button"
             onClick={() => setDebugLogOpen(true)}
-            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--secondary)] text-[var(--muted-foreground)] shadow-sm ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
             aria-label="Open memory debug log"
             title="Debug log"
           >
