@@ -1,4 +1,12 @@
-import type { LtmDraftMutation, LtmExtractionDraft, LtmLink, LtmNote, LtmSection } from "@marinara-engine/shared";
+import {
+  getLtmScopeChatIds,
+  withMergedLtmScopeLinks,
+  type LtmDraftMutation,
+  type LtmExtractionDraft,
+  type LtmLink,
+  type LtmNote,
+  type LtmSection,
+} from "@marinara-engine/shared";
 import { logger } from "../../lib/logger.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import { LongTermMemoryDraftStore } from "./draft-store.js";
@@ -69,6 +77,35 @@ function appendSection(
   );
 }
 
+function appendText(existing: string | undefined, incoming: string) {
+  const trimmedIncoming = incoming.trim();
+  const trimmedExisting = existing?.trim();
+  if (!trimmedIncoming) return trimmedExisting ?? "";
+  if (!trimmedExisting) return trimmedIncoming;
+  if (trimmedExisting.includes(trimmedIncoming)) return trimmedExisting;
+  return `${trimmedExisting}\n\n${trimmedIncoming}`;
+}
+
+function shouldAppendCreateNoteSection(note: Pick<LtmNote, "type" | "tags">, sectionKey: string) {
+  if (note.type === "timeline_event") return true;
+  if (note.type === "relationship" && sectionKey === "history") return true;
+  if (note.type === "tone" && sectionKey === "observations") return true;
+  if (note.tags.includes("anchor")) return true;
+  return false;
+}
+
+function mergeSection(existing: LtmSection | undefined, incoming: LtmSection, append: boolean): LtmSection {
+  return withEvidence(
+    {
+      text: append ? appendText(existing?.text, incoming.text) : incoming.text.trim(),
+      updatedAt: nowIso(),
+      salience: Math.max(existing?.salience ?? 0, incoming.salience ?? 0) || undefined,
+      confidence: Math.max(existing?.confidence ?? 0, incoming.confidence ?? 0) || undefined,
+    },
+    [...(existing?.evidence ?? []), ...(incoming.evidence ?? [])],
+  );
+}
+
 function uniqueLinks(links: LtmLink[]) {
   const seen = new Set<string>();
   return links.filter((link) => {
@@ -89,6 +126,20 @@ function withSourceLink(noteId: string, links: LtmLink[], draft: LtmExtractionDr
   return uniqueLinks([...links, sourceLink]);
 }
 
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
+}
+
+function mergeScopes(existing: LtmNote["scope"], incoming: LtmNote["scope"]) {
+  return {
+    ...withMergedLtmScopeLinks(existing, {
+      chatIds: getLtmScopeChatIds(incoming),
+      characterIds: incoming.characterIds ?? [],
+    }),
+    groupId: existing.groupId ?? incoming.groupId,
+  };
+}
+
 function isSourceSummaryNote(note: Pick<LtmNote, "type" | "tags">) {
   return note.type === "source" || note.tags.includes("source_summary") || note.tags.includes("chat_summary");
 }
@@ -97,11 +148,10 @@ async function preflightDraftMutations(
   storage: LongTermMemoryStorage,
   draft: LtmExtractionDraft,
   mutations: LtmDraftMutation[],
-): Promise<Set<string>> {
+): Promise<void> {
   const createIds = new Set<string>();
   const requiredNoteIds = new Set<string>();
   const sourceExtractionDraft = Boolean(draft.source.sourceNoteId);
-  const redundantMutationIds = new Set<string>();
   const sourceLikeMutationIds = new Set<string>();
 
   for (const mutation of mutations) {
@@ -131,28 +181,8 @@ async function preflightDraftMutations(
     }
   }
 
-  const existingCreateNotes = await storage.getNotesByIds(Array.from(createIds));
-  for (const noteId of createIds) {
-    if (existingCreateNotes.has(noteId)) {
-      for (const m of mutations) {
-        if (m.kind === "create_note" && m.note.id === noteId) {
-          redundantMutationIds.add(m.id);
-        }
-      }
-    }
-  }
-
-  for (const id of redundantMutationIds) {
-    const mutation = mutations.find((m) => m.id === id);
-    if (mutation && mutation.kind === "create_note") {
-      createIds.delete(mutation.note.id);
-    }
-  }
-
   // Notes with status "archived" are returned by getNote/listNotes — nothing to check.
   void requiredNoteIds;
-
-  return redundantMutationIds;
 }
 
 function mutationTouchesSceneId(mutation: LtmDraftMutation) {
@@ -227,10 +257,39 @@ async function applyMutation(
   };
 
   if (mutation.kind === "create_note") {
-    await storage.createNote(
+    const existing = await storage.getNote(mutation.note.id);
+    if (!existing) {
+      await storage.createNote(
+        {
+          ...mutation.note,
+          links: withSourceLink(mutation.note.id, mutation.note.links, draft),
+        },
+        eventContext,
+      );
+      return;
+    }
+
+    const sections: LtmNote["sections"] = { ...existing.sections };
+    for (const [sectionKey, section] of Object.entries(mutation.note.sections)) {
+      sections[sectionKey] = mergeSection(
+        existing.sections[sectionKey],
+        section,
+        shouldAppendCreateNoteSection(mutation.note, sectionKey),
+      );
+    }
+
+    await storage.updateNote(
+      existing.id,
       {
-        ...mutation.note,
-        links: withSourceLink(mutation.note.id, mutation.note.links, draft),
+        status: existing.status === "archived" ? existing.status : mutation.note.status,
+        modes: uniqueStrings([...existing.modes, ...mutation.note.modes]) as LtmNote["modes"],
+        scope: mergeScopes(existing.scope, mutation.note.scope),
+        tags: uniqueStrings([...existing.tags, ...mutation.note.tags]),
+        links: withSourceLink(existing.id, uniqueLinks([...existing.links, ...mutation.note.links]), draft),
+        sections,
+        conflicts: mutation.note.conflicts?.length
+          ? [...(existing.conflicts ?? []), ...mutation.note.conflicts]
+          : existing.conflicts,
       },
       eventContext,
     );
@@ -401,13 +460,7 @@ async function applyLongTermMemoryDraftInner(
     throw new Error(`Long-term memory draft has no mutations selected for apply: ${draftId}`);
   }
 
-  const redundantMutationIds = await preflightDraftMutations(storage, draft, mutationsToApply);
-  if (redundantMutationIds.size > 0) {
-    mutationsToApply = mutationsToApply.filter((m) => !redundantMutationIds.has(m.id));
-    if (mutationsToApply.length === 0) {
-      return { draft, appliedMutationIds, skippedMutationIds, autoIncludedMutationIds };
-    }
-  }
+  await preflightDraftMutations(storage, draft, mutationsToApply);
 
   const groups = groupMutationsByNote(mutationsToApply);
   const groupResults = await Promise.all(

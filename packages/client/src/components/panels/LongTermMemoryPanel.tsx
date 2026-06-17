@@ -3045,7 +3045,7 @@ export function LongTermMemoryPanel() {
       const appliedCount = result.imported.reduce((sum, item) => sum + item.appliedMutationIds.length, 0);
       const skippedApplyCount = result.imported.reduce((sum, item) => sum + item.skippedMutationIds.length, 0);
       const droppedSourceCount = result.imported.filter((item) => item.outcome.droppedUnits > 0).length;
-      const cappedSourceCount = result.imported.filter((item) => item.outcome.suggestionCap?.capped > 0).length;
+      const cappedSourceCount = result.imported.filter((item) => (item.outcome.suggestionCap?.capped ?? 0) > 0).length;
       const emptySourceCount = result.imported.filter((item) => item.outcome.keptUnits === 0).length;
       const missingCount = result.missingSourceIds.length;
       const summary = [

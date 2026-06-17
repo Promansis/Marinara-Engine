@@ -88,6 +88,7 @@ export type LtmInteropPreview = {
 export type LtmSearchInput = {
   queryText?: string;
   recentUserMessage?: string;
+  recentMessages?: string[];
   mentionedCharacterNames?: string[];
   noteIds?: string[];
   tags?: string[];

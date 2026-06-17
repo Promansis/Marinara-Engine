@@ -730,6 +730,181 @@ test("source extraction low-risk policy blocks conflicted thread auto-apply", ()
   assert.equal(isLowRiskSourceExtractionMutation(conflicted), false);
 });
 
+test("source extraction accepts duplicate new note drafts by merging into the created note", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-duplicate-new-note-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "scene_source_test",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Mara has a silver scar and senses old magic as a hum.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const firstResponse = compileLtmEvidenceUnits({
+      units: [
+        evidenceUnit("character_fact", {
+          subjectId: "mara",
+          sectionKey: "facts",
+          text: "Mara has a silver scar.",
+        }),
+      ],
+      existingNotes: [],
+      scope: {},
+      modes: ["roleplay"],
+      createdAt: timestamp,
+    });
+    const secondResponse = compileLtmEvidenceUnits({
+      units: [
+        evidenceUnit("character_fact", {
+          subjectId: "mara",
+          sectionKey: "facts",
+          text: "Mara senses old magic as a hum.",
+        }),
+      ],
+      existingNotes: [],
+      scope: {},
+      modes: ["roleplay"],
+      createdAt: timestamp,
+    });
+
+    const store = new LongTermMemoryDraftStore(root);
+    const firstDraft = await store.createDraft({
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_source_test", sourceHash },
+      response: firstResponse,
+    });
+    const secondDraft = await store.createDraft({
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_source_test", sourceHash },
+      response: secondResponse,
+    });
+
+    const firstResult = await applyLongTermMemoryDraft(firstDraft.id, {
+      root,
+      actor: "test",
+      rebuildIndexes: false,
+    });
+    const secondResult = await applyLongTermMemoryDraft(secondDraft.id, {
+      root,
+      actor: "test",
+      rebuildIndexes: false,
+    });
+
+    const note = await storage.getNote("char_mara");
+    assert.equal(firstResult.appliedMutationIds.length, 1);
+    assert.equal(firstResult.draft.status, "accepted");
+    assert.equal(secondResult.appliedMutationIds.length, 1);
+    assert.equal(secondResult.draft.status, "accepted");
+    assert.equal(note?.sections.facts?.text, "Mara senses old magic as a hum.");
+    assert.equal(note?.sections.facts?.evidence?.includes("source_note:scene_source_test"), true);
+    assert(note?.links.some((link) => link.target === "scene_source_test" && link.relation === "extracted_from"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source extraction duplicate new state drafts replace superseding sections and merge scope", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-duplicate-state-scope-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "scene_source_test",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Mara is wounded, then steadies herself.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const firstResponse = compileLtmEvidenceUnits({
+      units: [
+        evidenceUnit("character_state", {
+          subjectId: "mara",
+          text: "Mara is wounded.",
+        }),
+      ],
+      existingNotes: [],
+      scope: { chatId: "chat_a", characterIds: ["char_a"] },
+      modes: ["roleplay"],
+      createdAt: timestamp,
+    });
+    const secondResponse = compileLtmEvidenceUnits({
+      units: [
+        evidenceUnit("character_state", {
+          subjectId: "mara",
+          text: "Mara steadies herself.",
+        }),
+      ],
+      existingNotes: [],
+      scope: { chatId: "chat_b", characterIds: ["char_b"] },
+      modes: ["roleplay"],
+      createdAt: timestamp,
+    });
+
+    const store = new LongTermMemoryDraftStore(root);
+    const firstDraft = await store.createDraft({
+      scope: { chatId: "chat_a", characterIds: ["char_a"] },
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_source_test", sourceHash },
+      response: firstResponse,
+    });
+    const secondDraft = await store.createDraft({
+      scope: { chatId: "chat_b", characterIds: ["char_b"] },
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_source_test", sourceHash },
+      response: secondResponse,
+    });
+
+    await applyLongTermMemoryDraft(firstDraft.id, {
+      root,
+      actor: "test",
+      rebuildIndexes: false,
+    });
+    const secondResult = await applyLongTermMemoryDraft(secondDraft.id, {
+      root,
+      actor: "test",
+      rebuildIndexes: false,
+    });
+
+    const note = await storage.getNote("char_mara");
+    assert.equal(secondResult.appliedMutationIds.length, 1);
+    assert.equal(secondResult.draft.status, "accepted");
+    assert.equal(note?.sections.current_state?.text, "Mara steadies herself.");
+    assert.deepEqual(note?.scope.chatIds, ["chat_a", "chat_b"]);
+    assert.equal(note?.scope.chatId, "chat_a");
+    assert.deepEqual(note?.scope.characterIds, ["char_a", "char_b"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("source extraction auto-apply leaves archived resolved memory status pending with content update", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-resolved-status-pending-"));
   try {
