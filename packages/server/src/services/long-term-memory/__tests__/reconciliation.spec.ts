@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import type { LtmDraftMutation, LtmEvidenceUnit, LtmNote } from "@marinara-engine/shared";
 import { DEFAULT_LTM_EXTRACTION_MAX_TOKENS } from "@marinara-engine/shared";
 import {
+  ltmExtractionModeSchema,
   ltmEvidenceUnitSchema,
   ltmPoliciesConfigSchema,
   ltmScopeSchema,
@@ -38,6 +39,7 @@ import {
 import { getLtmExtractionConfig, updateLtmExtractionConfig } from "../extraction-config.js";
 import { extractLongTermMemoryFromSourceNote } from "../source-extraction.js";
 import { applyLtmScopeLinksToDerivedNotes } from "../scope-links.js";
+import { readLtmDebugLog } from "../debug-log.js";
 import type { LtmBudgetedChunk } from "../budget.js";
 import type { ChatMessage } from "../../llm/base-provider.js";
 import type { RetrieveLongTermMemoryInput } from "../retrieval.js";
@@ -45,6 +47,12 @@ import { assemblePrompt, type AssemblerInput } from "../../prompt/index.js";
 
 const timestamp = "2026-06-10T00:00:00.000Z";
 const sourceHash = "a".repeat(64);
+
+test("long-term memory extraction mode schema accepts only public presets", () => {
+  assert.equal(ltmExtractionModeSchema.parse("fast"), "fast");
+  assert.equal(ltmExtractionModeSchema.parse("balanced"), "balanced");
+  assert.throws(() => ltmExtractionModeSchema.parse("deep"));
+});
 
 test("long-term memory chunks keep prompt text free of index labels", () => {
   const chunks = chunkNotes([
@@ -1415,6 +1423,106 @@ test("source note extraction includes relevant typed notes from other source not
     const userPayload = JSON.parse(messages.find((message) => message.role === "user")!.content);
     assert.match(userPayload.existingTypedNotes, /id: world_kiseki_academy/);
     assert.match(userPayload.existingTypedNotes, /Kiseki Academy is a floating school with moonlit archives/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source note extraction fast mode skips existing typed note retrieval", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-source-fast-extraction-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    const sourceText = "Kiseki Academy floats above the old city and keeps moonlit archives.";
+    await storage.createNote(
+      {
+        id: "scene_source_original",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: sourceText,
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "scene_source_reimport",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: sourceText,
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "world_kiseki_academy",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [{ target: "scene_source_original", relation: "extracted_from" }],
+        sections: {
+          facts: {
+            text: "Kiseki Academy is a floating school with moonlit archives.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_original"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    let messages: Array<{ role: string; content: string }> = [];
+    const provider = {
+      maxTokensOverrideValue: undefined,
+      chatComplete: async (nextMessages: Array<{ role: string; content: string }>) => {
+        messages = nextMessages;
+        return { content: JSON.stringify({ summary: "No units", units: [] }) };
+      },
+    } as any;
+    const operationId = randomUUID();
+
+    await extractLongTermMemoryFromSourceNote({
+      noteId: "scene_source_reimport",
+      provider,
+      model: "test-model",
+      root,
+      operationId,
+      extractionMode: "fast",
+      embeddingSource: {
+        label: "test",
+        embed: async () => {
+          throw new Error("Fast extraction should not request embeddings.");
+        },
+      },
+    });
+
+    const userPayload = JSON.parse(messages.find((message) => message.role === "user")!.content);
+    assert.equal(userPayload.existingTypedNotes, "(no relevant typed notes)");
+    assert.doesNotMatch(userPayload.existingTypedNotes, /world_kiseki_academy/);
+
+    const events = await readLtmDebugLog({ operationId }, root);
+    assert(events.some((event) => event.action === "existing_notes_skipped" && event.status === "skipped"));
+    assert(!events.some((event) => event.action === "existing_notes_loaded"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

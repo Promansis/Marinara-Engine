@@ -2,6 +2,7 @@ import {
   getLtmScopeChatIds,
   type LtmExtractionDroppedCandidate,
   type LtmExtractionDraft,
+  type LtmExtractionMode,
   type LtmExtractionOutcome,
   type LtmExtractionResponse,
   type LtmMode,
@@ -33,6 +34,7 @@ export type ExtractLongTermMemoryFromSourceNoteOptions = {
   scope?: LtmScope;
   modes?: LtmMode[];
   instruction?: string;
+  extractionMode?: LtmExtractionMode;
   signal?: AbortSignal;
   embeddingSource?: RetrieveLongTermMemoryInput["embeddingSource"];
   operationId?: string;
@@ -182,6 +184,8 @@ async function extractLongTermMemoryFromSourceNoteInner(
   const scope = options.scope ?? sourceNote.scope;
   const modes = options.modes?.length ? options.modes : sourceNote.modes;
   const extractionConfig = await getLtmExtractionConfig(options.root);
+  const extractionMode = options.extractionMode ?? "balanced";
+  const includeExistingNotes = extractionMode === "balanced";
   await recordLtmDebugEvent({
     operationId: options.operationId,
     root: options.root,
@@ -197,6 +201,8 @@ async function extractLongTermMemoryFromSourceNoteInner(
     details: {
       scope,
       tags: sourceNote.tags,
+      extractionMode,
+      includeExistingNotes,
       extractionSettings: {
         reasoningEffort: extractionConfig.reasoningEffort,
         verbosity: extractionConfig.verbosity,
@@ -219,25 +225,45 @@ async function extractLongTermMemoryFromSourceNoteInner(
     sourceNoteId: sourceNote.id,
     sourceText,
     scope,
-    includeExistingNotes: true,
+    includeExistingNotes,
     maxChunks: extractionConfig.existingNoteMaxChunks,
     maxTokens: extractionConfig.existingNoteMaxTokens,
     embeddingSource: options.embeddingSource,
   });
-  await recordLtmDebugEvent({
-    operationId: options.operationId,
-    root: options.root,
-    phase: "retrieval",
-    action: "existing_notes_loaded",
-    status: "ok",
-    sourceNoteId: sourceNote.id,
-    counts: {
-      existingNotes: existingNotes.length,
-    },
-    details: {
-      noteIds: existingNotes.map((note) => note.id).slice(0, 80),
-    },
-  });
+  if (includeExistingNotes) {
+    await recordLtmDebugEvent({
+      operationId: options.operationId,
+      root: options.root,
+      phase: "retrieval",
+      action: "existing_notes_loaded",
+      status: "ok",
+      sourceNoteId: sourceNote.id,
+      counts: {
+        existingNotes: existingNotes.length,
+      },
+      details: {
+        extractionMode,
+        includeExistingNotes,
+        noteIds: existingNotes.map((note) => note.id).slice(0, 80),
+      },
+    });
+  } else {
+    await recordLtmDebugEvent({
+      operationId: options.operationId,
+      root: options.root,
+      phase: "retrieval",
+      action: "existing_notes_skipped",
+      status: "skipped",
+      sourceNoteId: sourceNote.id,
+      counts: {
+        existingNotes: 0,
+      },
+      details: {
+        extractionMode,
+        includeExistingNotes,
+      },
+    });
+  }
   const sourceHash = sourceHashForEvidenceUnitExtraction(sourceNote);
   await recordLtmDebugEvent({
     operationId: options.operationId,

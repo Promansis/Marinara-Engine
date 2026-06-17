@@ -37,6 +37,8 @@ export const ltmExtractionReasoningEffortSchema = z.enum(["low", "medium", "high
 
 export const ltmExtractionVerbositySchema = z.enum(["low", "medium", "high"]);
 
+export const ltmExtractionModeSchema = z.enum(["fast", "balanced"]);
+
 export const ltmExtractionPromptTemplateSchema = z
   .object({
     id: z.string().min(1),
@@ -569,6 +571,7 @@ export type LtmEvidenceUnitStatus = z.infer<typeof ltmEvidenceUnitStatusSchema>;
 export type LtmEvidenceUnitBucket = z.infer<typeof ltmEvidenceUnitBucketSchema>;
 export type LtmExtractionReasoningEffort = z.infer<typeof ltmExtractionReasoningEffortSchema>;
 export type LtmExtractionVerbosity = z.infer<typeof ltmExtractionVerbositySchema>;
+export type LtmExtractionMode = z.infer<typeof ltmExtractionModeSchema>;
 export type LtmExtractionSettings = z.infer<typeof ltmExtractionSettingsSchema>;
 export type LtmResolvedExtractionSettings = z.infer<typeof ltmResolvedExtractionSettingsSchema>;
 export type LtmMode = z.infer<typeof ltmModeSchema>;

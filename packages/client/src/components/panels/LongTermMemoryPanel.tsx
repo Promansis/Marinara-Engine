@@ -45,6 +45,7 @@ import {
   useSearchLongTermMemory,
   type LtmSearchResponse,
   type LtmInteropSource,
+  type LtmSourceExtractionMode,
 } from "../../hooks/use-long-term-memory";
 import type { Chat } from "@marinara-engine/shared";
 import { useChatStore } from "../../stores/chat.store";
@@ -2530,6 +2531,7 @@ export function LongTermMemoryPanel() {
   const [query, setQuery] = useState("");
   const [importSource, setImportSource] = useState<LtmInteropSource>("chats");
   const [importLimit, setImportLimit] = useState(25);
+  const [importExtractionMode, setImportExtractionMode] = useState<LtmSourceExtractionMode>("fast");
   const [importChatId, setImportChatId] = useState<string>("");
   const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(() => new Set());
   const [selectedImportRows, setSelectedImportRows] = useState<Set<string>>(() => new Set());
@@ -2944,6 +2946,7 @@ export function LongTermMemoryPanel() {
         source: importSource,
         sourceIds,
         limit: Math.max(importLimit, sourceIds.length),
+        extractionMode: importExtractionMode,
       });
       const importedCount = result.imported.length;
       const suggestionCount = result.imported.reduce((sum, item) => sum + item.outcome.keptUnits, 0);
@@ -3181,7 +3184,7 @@ export function LongTermMemoryPanel() {
             </div>
           </div>
 
-          <div className="grid grid-cols-[1fr_auto] gap-2">
+          <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
             <select
               value={importSource}
               onChange={(event) => { setImportSource(event.target.value as LtmInteropSource); setImportChatId(""); }}
@@ -3201,6 +3204,16 @@ export function LongTermMemoryPanel() {
               onChange={(event) => setImportLimit(Number(event.target.value))}
               className={cn(compactInputClassName, "w-24")}
             />
+          </div>
+          <div className="mt-2">
+            <select
+              value={importExtractionMode}
+              onChange={(event) => setImportExtractionMode(event.target.value as LtmSourceExtractionMode)}
+              className={compactInputClassName}
+            >
+              <option value="fast">Fast extraction - skip memory lookup</option>
+              <option value="balanced">Balanced extraction - merge-aware</option>
+            </select>
           </div>
           {importSource === "chats" && (
             <div className="mt-2">

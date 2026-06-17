@@ -27,6 +27,7 @@ import {
   useLongTermMemoryNotes,
   useRejectLongTermMemoryDraft,
   type ExtractLongTermMemorySourceResponse,
+  type LtmSourceExtractionMode,
 } from "../../hooks/use-long-term-memory";
 import { cn } from "../../lib/utils";
 import { actionRowClassName, helperTextClassName, insetSectionCardClassName, sectionCardClassName } from "./LtmFields";
@@ -179,6 +180,7 @@ export function LongTermMemorySuggestionsTab({
   const noteLookup = useMemo(() => new Map((notes.data ?? []).map((n) => [n.id, n])), [notes.data]);
   const extractSourceNote = useExtractLongTermMemorySourceNote();
   const [autoApplySafeChanges, setAutoApplySafeChanges] = useState(false);
+  const [extractionMode, setExtractionMode] = useState<LtmSourceExtractionMode>("balanced");
   const [latestResult, setLatestResult] = useState<LatestExtractionResult | null>(null);
   const sourceMemory = isSourceMemory(note);
   const rows = useMemo<SuggestionRowModel[]>(() => {
@@ -219,6 +221,7 @@ export function LongTermMemorySuggestionsTab({
                 .mutateAsync({
                   noteId: note.id,
                   applyLowRisk: autoApplySafeChanges,
+                  extractionMode,
                 })
                 .then((result) => {
                   setLatestResult({
@@ -241,6 +244,23 @@ export function LongTermMemorySuggestionsTab({
           </ToolButton>
         </div>
         <div className="mt-3 grid gap-2">
+          <label
+            className={cn(
+              "grid gap-1 rounded-lg p-2 text-xs text-[var(--foreground)] transition-colors hover:bg-[var(--accent)]/60",
+              extractSourceNote.isPending && "pointer-events-none opacity-45",
+            )}
+          >
+            <span className="font-medium">Extraction mode</span>
+            <select
+              value={extractionMode}
+              disabled={extractSourceNote.isPending}
+              onChange={(event) => setExtractionMode(event.target.value as LtmSourceExtractionMode)}
+              className="min-h-8 rounded-md bg-[var(--card)] px-2 text-xs text-[var(--foreground)] ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+            >
+              <option value="balanced">Balanced - merge-aware</option>
+              <option value="fast">Fast - skip memory lookup</option>
+            </select>
+          </label>
           <label
             className={cn(
               "flex items-center gap-2 rounded-lg p-2 text-xs text-[var(--foreground)] transition-colors hover:bg-[var(--accent)]/60",

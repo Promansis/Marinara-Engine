@@ -6,6 +6,7 @@ import type {
   LtmDebugPhase,
   LtmDebugStatus,
   LtmExtractionDraft,
+  LtmExtractionMode,
   LtmExtractionOutcome,
   LtmExtractionResponse,
   LtmExtractionSettings as SharedLtmExtractionSettings,
@@ -75,6 +76,7 @@ export type LtmRepairResponse = {
 };
 
 export type LtmInteropSource = "characters" | "lorebooks" | "chats";
+export type LtmSourceExtractionMode = LtmExtractionMode;
 
 export type LtmInteropPreview = {
   source: LtmInteropSource;
@@ -179,6 +181,14 @@ export type ExtractLongTermMemorySourceInput = {
   model?: string;
   instruction?: string;
   applyLowRisk?: boolean;
+  extractionMode?: LtmSourceExtractionMode;
+};
+
+export type ImportLongTermMemorySourceNotesInput = {
+  source: LtmInteropSource;
+  sourceIds: string[];
+  limit: number;
+  extractionMode?: LtmSourceExtractionMode;
 };
 
 export type ExtractLongTermMemorySourceResponse = {
@@ -463,11 +473,12 @@ export function useRepairLongTermMemory() {
 export function useImportLongTermMemorySourceNotes() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ source, sourceIds, limit }: { source: LtmInteropSource; sourceIds: string[]; limit: number }) =>
+    mutationFn: ({ source, sourceIds, limit, extractionMode }: ImportLongTermMemorySourceNotesInput) =>
       api.post<ImportLongTermMemorySourceNotesResponse>("/long-term-memory/import/source-notes", {
         source,
         sourceIds,
         limit,
+        extractionMode,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
   });
