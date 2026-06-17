@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import type { LtmDraftMutation, LtmEvidenceUnit, LtmNote } from "@marinara-engine/shared";
+import { DEFAULT_LTM_EXTRACTION_MAX_TOKENS } from "@marinara-engine/shared";
 import {
   ltmEvidenceUnitSchema,
   ltmPoliciesConfigSchema,
@@ -31,7 +32,6 @@ import { retrieveLongTermMemory } from "../retrieval.js";
 import { LongTermMemoryStorage } from "../storage.js";
 import {
   compileEvidenceUnitExtraction,
-  DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
   runLongTermMemoryEvidenceUnitExtraction,
   sourceHashForEvidenceUnitExtraction,
 } from "../evidence-unit-extraction.js";
@@ -165,6 +165,99 @@ test("long-term memory prompt injection inserts a system message before chat his
   assert.deepEqual(messages.map((message) => message.role), ["system", "system", "user", "assistant"]);
   assert.equal(messages[1]?.contextKind, "injection");
   assert.equal(messages[1]?.content, result.block);
+});
+
+test("long-term memory storage reads individual notes without listing the vault", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-direct-lookup-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "world_direct_lookup",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: {
+            text: "The archive door only opens at moonrise.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    storage.listNotes = async () => {
+      throw new Error("getNote should not list the whole vault");
+    };
+
+    const note = await storage.getNote("world_direct_lookup");
+    assert.equal(note?.id, "world_direct_lookup");
+    assert.equal(note?.type, "world");
+    assert.equal(await storage.getNote("world_missing_lookup"), null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("long-term memory storage batch lookup returns existing notes and skips missing ids", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-batch-lookup-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "world_batch_lookup",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: {
+            text: "The tower key is hidden behind the portrait.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "thread_batch_lookup",
+        type: "thread",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          setup: {
+            text: "Pay off the portrait key when Mara returns to the tower.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const notes = await storage.getNotesByIds([
+      "world_batch_lookup",
+      "world_batch_lookup",
+      "thread_batch_lookup",
+      "world_missing_lookup",
+    ]);
+
+    assert.equal(notes.size, 2);
+    assert.equal(notes.get("world_batch_lookup")?.type, "world");
+    assert.equal(notes.get("thread_batch_lookup")?.type, "thread");
+    assert.equal(notes.has("world_missing_lookup"), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("generation long-term memory uses chat retrieval settings and injects after prompt setup before history", async () => {

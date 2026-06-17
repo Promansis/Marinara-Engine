@@ -54,6 +54,7 @@ export * from "./constants/image-generation-defaults.js";
 export * from "./constants/image-style-profiles.js";
 export * from "./constants/security.js";
 export * from "./constants/game-assets.js";
+export * from "./constants/long-term-memory.js";
 
 // Utils
 export * from "./utils/macro-engine.js";

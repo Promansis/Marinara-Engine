@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, unlink } from "node:fs/promises";
 import {
   ltmEventSchema,
+  ltmNoteIdSchema,
   ltmNoteSchema,
   ltmPoliciesConfigSchema,
   ltmRetrievalConfigSchema,
@@ -181,8 +182,34 @@ export class LongTermMemoryStorage {
 
   async getNote(id: string) {
     await this.initializeLtmStore();
-    const notes = await this.listNotes();
-    return notes.find((note) => note.id === id) ?? null;
+    const noteId = ltmNoteIdSchema.parse(id);
+    for (const folder of LTM_VAULT_FOLDERS) {
+      const note = await this.readNoteByIdInFolder(noteId, folder);
+      if (note) return note;
+    }
+    return null;
+  }
+
+  async getNotesByIds(ids: string[]) {
+    await this.initializeLtmStore();
+    const wantedIds = new Set(ids.map((id) => ltmNoteIdSchema.parse(id)));
+    const notes = new Map<string, LtmNote>();
+    if (wantedIds.size === 0) return notes;
+
+    for (const folder of LTM_VAULT_FOLDERS) {
+      const folderPath = safeJoin(this.dirs.vault, folder);
+      const entries = await readdir(folderPath, { withFileTypes: true });
+      const matchingEntries = entries.filter(
+        (entry) => entry.isFile() && entry.name.endsWith(".json") && wantedIds.has(entry.name.slice(0, -5)),
+      );
+      for (const entry of matchingEntries) {
+        const note = await this.readNoteFile(safeJoin(folderPath, entry.name), folder);
+        if (!notes.has(note.id)) notes.set(note.id, note);
+      }
+      if (notes.size === wantedIds.size) break;
+    }
+
+    return notes;
   }
 
   async createNote(input: CreateLtmNoteInput, eventContext: LtmEventContext = {}) {
@@ -303,6 +330,15 @@ export class LongTermMemoryStorage {
       throw new Error(`Long-term memory note ${note.id} has type ${note.type} but is stored in ${folder}.`);
     }
     return note;
+  }
+
+  private async readNoteByIdInFolder(id: string, folder: (typeof LTM_VAULT_FOLDERS)[number]) {
+    try {
+      return await this.readNoteFile(safeJoin(this.dirs.vault, `${folder}/${id}.json`), folder);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw err;
+    }
   }
 
   private async writeNotePatch(

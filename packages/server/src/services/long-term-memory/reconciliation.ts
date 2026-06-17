@@ -102,6 +102,7 @@ async function preflightDraftMutations(
   const requiredNoteIds = new Set<string>();
   const sourceExtractionDraft = Boolean(draft.source.sourceNoteId);
   const redundantMutationIds = new Set<string>();
+  const sourceLikeMutationIds = new Set<string>();
 
   for (const mutation of mutations) {
     if (mutation.kind === "create_note") {
@@ -117,19 +118,22 @@ async function preflightDraftMutations(
       continue;
     }
     if (sourceExtractionDraft && (mutation.noteId.startsWith("source_") || mutation.noteId.startsWith("scene_"))) {
-      const existing = await storage.getNote(mutation.noteId);
-      if (!existing || isSourceSummaryNote(existing) || existing.type === "scene") {
-        throw new Error(
-          `Long-term memory source extraction draft cannot mutate scene/source notes: ${mutation.noteId}`,
-        );
-      }
+      sourceLikeMutationIds.add(mutation.noteId);
     }
     requiredNoteIds.add(mutation.noteId);
   }
 
+  const sourceLikeNotes = await storage.getNotesByIds(Array.from(sourceLikeMutationIds));
+  for (const noteId of sourceLikeMutationIds) {
+    const existing = sourceLikeNotes.get(noteId);
+    if (!existing || isSourceSummaryNote(existing) || existing.type === "scene") {
+      throw new Error(`Long-term memory source extraction draft cannot mutate scene/source notes: ${noteId}`);
+    }
+  }
+
+  const existingCreateNotes = await storage.getNotesByIds(Array.from(createIds));
   for (const noteId of createIds) {
-    const existing = await storage.getNote(noteId);
-    if (existing) {
+    if (existingCreateNotes.has(noteId)) {
       for (const m of mutations) {
         if (m.kind === "create_note" && m.note.id === noteId) {
           redundantMutationIds.add(m.id);
@@ -188,12 +192,14 @@ async function filterAutoApplyMutationsWithDependencies(storage: LongTermMemoryS
   if (linkMutations.length === 0) return mutations;
 
   const targetExists = new Map<string, boolean>();
-  for (const target of Array.from(new Set(linkMutations.map((mutation) => mutation.link.target)))) {
+  const targets = Array.from(new Set(linkMutations.map((mutation) => mutation.link.target)));
+  const existingTargets = await storage.getNotesByIds(targets.filter((target) => !selectedCreateIds.has(target)));
+  for (const target of targets) {
     if (selectedCreateIds.has(target)) {
       targetExists.set(target, true);
       continue;
     }
-    targetExists.set(target, Boolean(await storage.getNote(target)));
+    targetExists.set(target, existingTargets.has(target));
   }
 
   return mutations.filter((mutation) => {
@@ -353,11 +359,8 @@ async function applyLongTermMemoryDraftInner(
       (m) => !selectedSet.has(m.id) && targetNoteIds.has(m.note.id),
     );
     if (depCreateMutations.length > 0) {
-      const toInclude: typeof depCreateMutations = [];
-      for (const m of depCreateMutations) {
-        const exists = await storage.getNote(m.note.id);
-        if (!exists) toInclude.push(m);
-      }
+      const existingDepNotes = await storage.getNotesByIds(depCreateMutations.map((m) => m.note.id));
+      const toInclude = depCreateMutations.filter((m) => !existingDepNotes.has(m.note.id));
       if (toInclude.length > 0) {
         autoIncludedMutationIds.push(...toInclude.map((m) => m.id));
         mutationsToApply = [...toInclude, ...mutationsToApply];

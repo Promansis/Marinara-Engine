@@ -13,7 +13,18 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
-import type { LtmExtractionReasoningEffort, LtmExtractionVerbosity } from "@marinara-engine/shared";
+import {
+  DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS,
+  DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
+  DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS,
+  DEFAULT_LTM_EXTRACTION_MAX_SOURCE_CHARS,
+  DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
+  DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
+  DEFAULT_LTM_EXTRACTION_TEMPERATURE,
+  DEFAULT_LTM_EXTRACTION_VERBOSITY,
+  type LtmExtractionReasoningEffort,
+  type LtmExtractionVerbosity,
+} from "@marinara-engine/shared";
 import {
   useLongTermMemoryExtractionSettings,
   useUpdateLongTermMemoryExtractionSettings,
@@ -51,14 +62,14 @@ type ExtractionSettingsDraft = {
 };
 
 const DEFAULT_SETTINGS = {
-  reasoningEffort: "low",
-  verbosity: "low",
-  maxOutputTokens: 3200,
-  temperature: 0,
-  maxSourceChars: 24_000,
-  maxExistingNoteChars: 12_000,
-  existingNoteMaxChunks: 12,
-  existingNoteMaxTokens: 2400,
+  reasoningEffort: DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
+  verbosity: DEFAULT_LTM_EXTRACTION_VERBOSITY,
+  maxOutputTokens: DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
+  temperature: DEFAULT_LTM_EXTRACTION_TEMPERATURE,
+  maxSourceChars: DEFAULT_LTM_EXTRACTION_MAX_SOURCE_CHARS,
+  maxExistingNoteChars: DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS,
+  existingNoteMaxChunks: DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS,
+  existingNoteMaxTokens: DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
 } as const;
 
 const LEVEL_OPTIONS = ["default", "low", "medium", "high"] as const;

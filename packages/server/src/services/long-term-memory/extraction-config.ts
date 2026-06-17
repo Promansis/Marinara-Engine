@@ -1,22 +1,20 @@
 import {
+  DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS,
+  DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
+  DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS,
+  DEFAULT_LTM_EXTRACTION_MAX_SOURCE_CHARS,
+  DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
+  DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
+  DEFAULT_LTM_EXTRACTION_TEMPERATURE,
+  DEFAULT_LTM_EXTRACTION_VERBOSITY,
   ltmExtractionSettingsSchema,
   ltmResolvedExtractionSettingsSchema,
   type LtmExtractionSettings,
   type LtmResolvedExtractionSettings,
 } from "@marinara-engine/shared";
 import { readJsonFile, writeJsonAtomic } from "./atomic-json.js";
-import {
-  DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
-  DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS,
-  DEFAULT_LTM_EXTRACTION_MAX_SOURCE_CHARS,
-  DEFAULT_LTM_EXTRACTION_PROMPT,
-  DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
-  DEFAULT_LTM_EXTRACTION_VERBOSITY,
-} from "./evidence-unit-extraction.js";
+import { DEFAULT_LTM_EXTRACTION_PROMPT } from "./evidence-unit-extraction.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
-
-export const DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS = 12;
-export const DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS = 2_400;
 
 export const DEFAULT_LTM_EXTRACTION_CONFIG = ltmResolvedExtractionSettingsSchema.parse({
   version: 1,
@@ -25,7 +23,7 @@ export const DEFAULT_LTM_EXTRACTION_CONFIG = ltmResolvedExtractionSettingsSchema
   reasoningEffort: DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
   verbosity: DEFAULT_LTM_EXTRACTION_VERBOSITY,
   maxOutputTokens: DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
-  temperature: 0,
+  temperature: DEFAULT_LTM_EXTRACTION_TEMPERATURE,
   maxSourceChars: DEFAULT_LTM_EXTRACTION_MAX_SOURCE_CHARS,
   maxExistingNoteChars: DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS,
   existingNoteMaxChunks: DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS,

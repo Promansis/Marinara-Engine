@@ -80,8 +80,8 @@ async function getExistingTypedNotes(options: {
     embeddingSource: options.embeddingSource,
   });
   const noteIds = Array.from(new Set(retrieval.chunks.map((chunk) => chunk.chunk.noteId)));
-  const notes = await Promise.all(noteIds.map((noteId) => options.storage.getNote(noteId)));
-  return notes.filter((note): note is LtmNote => {
+  const notesById = await options.storage.getNotesByIds(noteIds);
+  return noteIds.map((noteId) => notesById.get(noteId)).filter((note): note is LtmNote => {
     if (!note) return false;
     if (isLtmSourceNote(note)) return false;
     if (!scopeOverlaps(note.scope, options.scope)) return false;
@@ -105,7 +105,8 @@ async function getExistingTypedNotesForTargets(options: {
   const droppedTargetNoteIds: string[] = [];
   if (missingTargetIds.length === 0) return { notes: options.existingNotes, diagnostics, droppedTargetNoteIds };
 
-  const targetNotes = await Promise.all(missingTargetIds.map((noteId) => options.storage.getNote(noteId)));
+  const targetNotesById = await options.storage.getNotesByIds(missingTargetIds);
+  const targetNotes = missingTargetIds.map((noteId) => targetNotesById.get(noteId)).filter(Boolean);
   for (const note of targetNotes) {
     if (!note) continue;
     if (isLtmSourceNote(note)) continue;

@@ -760,10 +760,13 @@ export async function previewLongTermMemoryInterop(
 ): Promise<LtmInteropPreview> {
   const candidates = await interopImportCandidates(db, source, limit);
   const storage = new LongTermMemoryStorage(root ?? getLongTermMemoryRoot());
+  const existingNotes = await storage.getNotesByIds(
+    candidates.flatMap((candidate) => [candidate.sourceNoteId, ...(candidate.legacySourceNoteIds ?? [])]),
+  );
   const deduped: typeof candidates = [];
   for (const c of candidates) {
     const ids = [c.sourceNoteId, ...(c.legacySourceNoteIds ?? [])];
-    const exists = (await Promise.all(ids.map((id) => storage.getNote(id)))).some((n) => n !== null);
+    const exists = ids.some((id) => existingNotes.has(id));
     if (!exists) deduped.push(c);
   }
   return {
@@ -807,6 +810,9 @@ export async function createLongTermMemoryInteropSourceNotes(
       const candidates = (await interopImportCandidates(db, source, limit, selected)).filter((candidate) =>
         selected.has(candidate.sourceId),
       );
+      const existingNotes = await storage.getNotesByIds(
+        candidates.flatMap((candidate) => [...(candidate.legacySourceNoteIds ?? []), candidate.sourceNoteId]),
+      );
       const imported: LtmInteropSourceNoteImport[] = [];
       await recordLtmDebugEvent({
         root,
@@ -846,9 +852,7 @@ export async function createLongTermMemoryInteropSourceNotes(
           },
         };
         const noteIds = [...(candidate.legacySourceNoteIds ?? []), candidate.sourceNoteId];
-        const existing = (await Promise.all(noteIds.map((noteId) => storage.getNote(noteId)))).find(
-          (note): note is LtmNote => note !== null,
-        );
+        const existing = noteIds.map((noteId) => existingNotes.get(noteId)).find((note): note is LtmNote => Boolean(note));
         if (existing) {
           const note = await storage.updateNote(
             existing.id,

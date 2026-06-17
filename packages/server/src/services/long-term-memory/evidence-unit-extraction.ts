@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
 import {
+  DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS,
+  DEFAULT_LTM_EXTRACTION_MAX_SOURCE_CHARS,
+  DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
+  DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
+  DEFAULT_LTM_EXTRACTION_VERBOSITY,
   ltmEvidenceUnitBucketSchema,
   ltmEvidenceUnitExtractionResponseSchema,
   ltmEvidenceUnitSchema,
@@ -65,11 +70,6 @@ export const DEFAULT_LTM_EXTRACTION_PROMPT = [
   "Do not emit current scene, relationship arc, boundary, or preference memories from source-summary extraction.",
   "For enum fields, choose exactly one string from the allowed arrays. Do not join multiple values with |.",
 ].join("\n");
-export const DEFAULT_LTM_EXTRACTION_REASONING_EFFORT = "low" satisfies NonNullable<ChatOptions["reasoningEffort"]>;
-export const DEFAULT_LTM_EXTRACTION_VERBOSITY = "low" satisfies NonNullable<ChatOptions["verbosity"]>;
-export const DEFAULT_LTM_EXTRACTION_MAX_TOKENS = 8192;
-export const DEFAULT_LTM_EXTRACTION_MAX_SOURCE_CHARS = 24_000;
-export const DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS = 12_000;
 const LTM_EXTRACTION_BUCKET_SCAN_ORDER = [
   "timeline_event",
   "relationship_event",
