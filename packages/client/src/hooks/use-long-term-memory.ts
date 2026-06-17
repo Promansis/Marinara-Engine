@@ -188,6 +188,12 @@ export type ImportLongTermMemorySourceNotesInput = {
   source: LtmInteropSource;
   sourceIds: string[];
   limit: number;
+  scope?: LtmScope;
+  connectionId?: string;
+  model?: string;
+  instruction?: string;
+  applyLowRisk?: boolean;
+  importConcurrency?: number;
   extractionMode?: LtmSourceExtractionMode;
 };
 
@@ -473,11 +479,28 @@ export function useRepairLongTermMemory() {
 export function useImportLongTermMemorySourceNotes() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ source, sourceIds, limit, extractionMode }: ImportLongTermMemorySourceNotesInput) =>
+    mutationFn: ({
+      source,
+      sourceIds,
+      limit,
+      scope,
+      connectionId,
+      model,
+      instruction,
+      applyLowRisk,
+      importConcurrency,
+      extractionMode,
+    }: ImportLongTermMemorySourceNotesInput) =>
       api.post<ImportLongTermMemorySourceNotesResponse>("/long-term-memory/import/source-notes", {
         source,
         sourceIds,
         limit,
+        scope,
+        connectionId,
+        model,
+        instruction,
+        applyLowRisk,
+        importConcurrency,
         extractionMode,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),

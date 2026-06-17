@@ -22,6 +22,8 @@ import {
   Trash2,
 } from "lucide-react";
 import type {
+  APIConnection,
+  Chat,
   LtmDraftMutation,
   LtmExtractionDraft,
   LtmExtractionDroppedCandidate,
@@ -47,9 +49,9 @@ import {
   type LtmInteropSource,
   type LtmSourceExtractionMode,
 } from "../../hooks/use-long-term-memory";
-import type { Chat } from "@marinara-engine/shared";
 import { useChatStore } from "../../stores/chat.store";
 import { useChat, useChats, useUpdateChatMetadata } from "../../hooks/use-chats";
+import { useConnections } from "../../hooks/use-connections";
 import { cn } from "../../lib/utils";
 import {
   CreateLongTermMemoryNoteForm,
@@ -143,6 +145,7 @@ const LTM_RECALL_STYLES: Array<{ id: LtmRecallStyle; label: string; description:
 const DEFAULT_LTM_BUDGET_TOKENS = 2048;
 const DEFAULT_LTM_MAX_CHUNKS = 12;
 const DEFAULT_LTM_SCORE_THRESHOLD = 0;
+const DEFAULT_IMPORT_CONCURRENCY = 3;
 
 const rowActionButtonClassName =
   "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-45";
@@ -154,6 +157,15 @@ const disclosureButtonClassName =
 
 function importRowKey(source: LtmInteropSource, sourceId: string) {
   return `${source}:${sourceId}`;
+}
+
+function optionalTrimmedText(value: string) {
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function clampImportConcurrency(value: number) {
+  return Number.isFinite(value) ? Math.max(1, Math.min(10, Math.floor(value))) : DEFAULT_IMPORT_CONCURRENCY;
 }
 
 function parseMetadata(raw: unknown): Record<string, unknown> {
@@ -2532,6 +2544,12 @@ export function LongTermMemoryPanel() {
   const [importSource, setImportSource] = useState<LtmInteropSource>("chats");
   const [importLimit, setImportLimit] = useState(25);
   const [importExtractionMode, setImportExtractionMode] = useState<LtmSourceExtractionMode>("fast");
+  const [importConcurrency, setImportConcurrency] = useState(DEFAULT_IMPORT_CONCURRENCY);
+  const [importApplyLowRisk, setImportApplyLowRisk] = useState(false);
+  const [importConnectionId, setImportConnectionId] = useState("");
+  const [importModel, setImportModel] = useState("");
+  const [importInstruction, setImportInstruction] = useState("");
+  const [importControlsOpen, setImportControlsOpen] = useState(true);
   const [importChatId, setImportChatId] = useState<string>("");
   const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(() => new Set());
   const [selectedImportRows, setSelectedImportRows] = useState<Set<string>>(() => new Set());
@@ -2552,7 +2570,15 @@ export function LongTermMemoryPanel() {
   const [viewingDraftId, setViewingDraftId] = useState<string | null>(null);
 
   const { data: chats } = useChats();
+  const { data: connections } = useConnections();
   const chatLookup = useMemo(() => new Map((chats as Chat[] | undefined)?.map((c) => [c.id, c])), [chats]);
+  const textConnections = useMemo(
+    () =>
+      ((connections as APIConnection[] | undefined) ?? [])
+        .filter((connection) => connection.provider !== "image_generation")
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    [connections],
+  );
 
   const status = useLongTermMemoryStatus();
   const integrity = useLongTermMemoryIntegrity();
@@ -2946,10 +2972,17 @@ export function LongTermMemoryPanel() {
         source: importSource,
         sourceIds,
         limit: Math.max(importLimit, sourceIds.length),
+        connectionId: optionalTrimmedText(importConnectionId),
+        model: optionalTrimmedText(importModel),
+        instruction: optionalTrimmedText(importInstruction),
+        applyLowRisk: importApplyLowRisk || undefined,
+        importConcurrency: clampImportConcurrency(importConcurrency),
         extractionMode: importExtractionMode,
       });
       const importedCount = result.imported.length;
       const suggestionCount = result.imported.reduce((sum, item) => sum + item.outcome.keptUnits, 0);
+      const appliedCount = result.imported.reduce((sum, item) => sum + item.appliedMutationIds.length, 0);
+      const skippedApplyCount = result.imported.reduce((sum, item) => sum + item.skippedMutationIds.length, 0);
       const droppedSourceCount = result.imported.filter((item) => item.outcome.droppedUnits > 0).length;
       const emptySourceCount = result.imported.filter((item) => item.outcome.keptUnits === 0).length;
       const missingCount = result.missingSourceIds.length;
@@ -2959,6 +2992,12 @@ export function LongTermMemoryPanel() {
         `${droppedSourceCount} source${droppedSourceCount === 1 ? "" : "s"} with dropped candidates`,
         `${emptySourceCount} source${emptySourceCount === 1 ? "" : "s"} with no usable suggestions`,
       ];
+      if (importApplyLowRisk) {
+        summary.push(
+          `${appliedCount} low-risk change${appliedCount === 1 ? "" : "s"} applied`,
+          `${skippedApplyCount} change${skippedApplyCount === 1 ? "" : "s"} left for review`,
+        );
+      }
       if (missingCount > 0) {
         toast.error(`${summary.join(", ")}. Missing: ${result.missingSourceIds.slice(0, 3).join(", ")}`);
       } else {
@@ -3214,6 +3253,77 @@ export function LongTermMemoryPanel() {
               <option value="fast">Fast extraction - skip memory lookup</option>
               <option value="balanced">Balanced extraction - merge-aware</option>
             </select>
+          </div>
+          <div className="mt-2 space-y-2">
+            <DisclosureHeader
+              title="Import controls"
+              description={`${clampImportConcurrency(importConcurrency)} at once${
+                importApplyLowRisk ? ", low-risk auto-apply" : ""
+              }`}
+              open={importControlsOpen}
+              onToggle={() => setImportControlsOpen((current) => !current)}
+            />
+            {importControlsOpen && (
+              <div className={cn(sectionCardClassName, "space-y-3")}>
+                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_7rem]">
+                  <select
+                    value={importConnectionId}
+                    onChange={(event) => setImportConnectionId(event.target.value)}
+                    className={compactInputClassName}
+                  >
+                    <option value="">Default extraction model</option>
+                    <option value="random">Random pool</option>
+                    {textConnections.map((connection) => (
+                      <option key={connection.id} value={connection.id}>
+                        {connection.name}
+                        {connection.model ? ` - ${connection.model}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={importConcurrency}
+                    onChange={(event) => setImportConcurrency(Number(event.target.value))}
+                    onBlur={() => setImportConcurrency((value) => clampImportConcurrency(value))}
+                    className={compactInputClassName}
+                    aria-label="Import concurrency"
+                    title="How many source notes Marinara extracts at once"
+                  />
+                </div>
+                <input
+                  value={importModel}
+                  onChange={(event) => setImportModel(event.target.value)}
+                  placeholder="Optional model override"
+                  className={compactInputClassName}
+                />
+                <textarea
+                  value={importInstruction}
+                  onChange={(event) => setImportInstruction(event.target.value)}
+                  maxLength={2000}
+                  rows={2}
+                  placeholder="Optional instruction for this import"
+                  className={cn(inputClassName, "min-h-16 resize-y text-xs")}
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <SettingToggle
+                    label="Apply low-risk suggestions after import"
+                    checked={importApplyLowRisk}
+                    onChange={setImportApplyLowRisk}
+                  />
+                  <StatusPill
+                    label={importExtractionMode === "fast" ? "Lower cost" : "Merge-aware"}
+                    tone={importExtractionMode === "fast" ? "good" : "warn"}
+                  />
+                  {importApplyLowRisk && <StatusPill label="Review remains for riskier changes" tone="warn" />}
+                </div>
+                <p className={helperTextClassName}>
+                  Higher concurrency can finish faster but may cost more at once. Low-risk auto-apply only accepts
+                  suggestions already marked safe by extraction.
+                </p>
+              </div>
+            )}
           </div>
           {importSource === "chats" && (
             <div className="mt-2">
