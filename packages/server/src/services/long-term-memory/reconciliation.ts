@@ -201,14 +201,8 @@ function mutationHasSourceSummaryTag(mutation: LtmDraftMutation) {
 export function isLowRiskSourceExtractionMutation(mutation: LtmDraftMutation) {
   if (mutation.risk !== "low") return false;
   if (mutationTouchesSceneId(mutation) || mutationHasSourceSummaryTag(mutation)) return false;
-  if (mutation.kind === "append_section") return false;
-  if (mutation.kind === "create_note") {
-    return mutation.note.type === "thread" && mutation.confidence >= 0.85 && !mutation.note.conflicts?.length;
-  }
-  if (mutation.kind === "add_link") {
-    return mutation.confidence >= 0.75;
-  }
-  return false;
+  if (mutation.kind === "create_note" && mutation.note.conflicts?.length) return false;
+  return true;
 }
 
 export const isLowRiskAutoApplyMutation = isLowRiskSourceExtractionMutation;
@@ -218,10 +212,13 @@ async function filterAutoApplyMutationsWithDependencies(storage: LongTermMemoryS
     mutations.flatMap((mutation) => (mutation.kind === "create_note" ? [mutation.note.id] : [])),
   );
   const linkMutations = mutations.filter((mutation) => mutation.kind === "add_link");
-  if (linkMutations.length === 0) return mutations;
+  const createLinks = mutations.flatMap((mutation) =>
+    mutation.kind === "create_note" ? mutation.note.links.map((link) => link.target) : [],
+  );
+  if (linkMutations.length === 0 && createLinks.length === 0) return mutations;
 
   const targetExists = new Map<string, boolean>();
-  const targets = Array.from(new Set(linkMutations.map((mutation) => mutation.link.target)));
+  const targets = Array.from(new Set([...linkMutations.map((mutation) => mutation.link.target), ...createLinks]));
   const existingTargets = await storage.getNotesByIds(targets.filter((target) => !selectedCreateIds.has(target)));
   for (const target of targets) {
     if (selectedCreateIds.has(target)) {
@@ -231,10 +228,25 @@ async function filterAutoApplyMutationsWithDependencies(storage: LongTermMemoryS
     targetExists.set(target, existingTargets.has(target));
   }
 
-  return mutations.filter((mutation) => {
-    if (mutation.kind !== "add_link") return true;
-    return targetExists.get(mutation.link.target) === true;
-  });
+  let selected = mutations;
+  while (true) {
+    const selectedCreates = new Set(
+      selected.flatMap((mutation) => (mutation.kind === "create_note" ? [mutation.note.id] : [])),
+    );
+    const next = selected.filter((mutation) => {
+      if (mutation.kind === "add_link") {
+        return targetExists.get(mutation.link.target) === true || selectedCreates.has(mutation.link.target);
+      }
+      if (mutation.kind === "create_note") {
+        return mutation.note.links.every(
+          (link) => targetExists.get(link.target) === true || selectedCreates.has(link.target),
+        );
+      }
+      return true;
+    });
+    if (next.length === selected.length) return selected;
+    selected = next;
+  }
 }
 
 async function applyMutation(

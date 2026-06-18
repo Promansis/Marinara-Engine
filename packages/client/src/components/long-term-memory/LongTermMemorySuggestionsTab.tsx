@@ -29,6 +29,10 @@ import {
   type ExtractLongTermMemorySourceResponse,
   type LtmSourceExtractionMode,
 } from "../../hooks/use-long-term-memory";
+import {
+  readRememberedLtmAutoApplyLowRisk,
+  rememberLtmAutoApplyLowRisk,
+} from "../../lib/long-term-memory-preferences";
 import { cn } from "../../lib/utils";
 import { actionRowClassName, helperTextClassName, insetSectionCardClassName, sectionCardClassName } from "./LtmFields";
 import { StatusPill, ToolButton } from "./LtmPills";
@@ -174,6 +178,16 @@ function toastForOutcome(outcome: LtmExtractionOutcome) {
   return "No typed memories extracted";
 }
 
+function toastForExtractionResult(result: ExtractLongTermMemorySourceResponse, applyLowRisk: boolean) {
+  const base = toastForOutcome(result.outcome);
+  if (!applyLowRisk) return base;
+  const applied = result.appliedMutationIds.length;
+  const skipped = result.skippedMutationIds.length;
+  return `${base}; ${applied} low-risk change${applied === 1 ? "" : "s"} applied, ${skipped} change${
+    skipped === 1 ? "" : "s"
+  } left for review`;
+}
+
 export function LongTermMemorySuggestionsTab({
   note,
   onRecoverDroppedCandidate,
@@ -185,7 +199,7 @@ export function LongTermMemorySuggestionsTab({
   const notes = useLongTermMemoryNotes();
   const noteLookup = useMemo(() => new Map((notes.data ?? []).map((n) => [n.id, n])), [notes.data]);
   const extractSourceNote = useExtractLongTermMemorySourceNote();
-  const [autoApplySafeChanges, setAutoApplySafeChanges] = useState(false);
+  const [autoApplyLowRisk, setAutoApplyLowRisk] = useState(readRememberedLtmAutoApplyLowRisk);
   const [extractionMode, setExtractionMode] = useState<LtmSourceExtractionMode>("balanced");
   const [latestResult, setLatestResult] = useState<LatestExtractionResult | null>(null);
   const sourceMemory = isSourceMemory(note);
@@ -226,7 +240,7 @@ export function LongTermMemorySuggestionsTab({
               extractSourceNote
                 .mutateAsync({
                   noteId: note.id,
-                  applyLowRisk: autoApplySafeChanges,
+                  applyLowRisk: autoApplyLowRisk,
                   extractionMode,
                 })
                 .then((result) => {
@@ -235,7 +249,7 @@ export function LongTermMemorySuggestionsTab({
                     outcome: result.outcome,
                     diagnostics: result.diagnostics,
                   });
-                  toast.success(toastForOutcome(result.outcome));
+                  toast.success(toastForExtractionResult(result, autoApplyLowRisk));
                 })
                 .catch((err: Error) => toast.error(err.message))
             }
@@ -276,12 +290,15 @@ export function LongTermMemorySuggestionsTab({
           >
             <input
               type="checkbox"
-              checked={autoApplySafeChanges}
+              checked={autoApplyLowRisk}
               disabled={extractSourceNote.isPending}
-              onChange={(event) => setAutoApplySafeChanges(event.target.checked)}
+              onChange={(event) => {
+                setAutoApplyLowRisk(event.target.checked);
+                rememberLtmAutoApplyLowRisk(event.target.checked);
+              }}
               className="h-3.5 w-3.5 shrink-0 rounded border-[var(--border)] accent-[var(--primary)]"
             />
-            <span className="min-w-0 flex-1">Auto-apply safe changes</span>
+            <span className="min-w-0 flex-1">Apply low-risk suggestions</span>
           </label>
         </div>
       </div>

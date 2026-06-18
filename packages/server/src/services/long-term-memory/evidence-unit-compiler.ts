@@ -78,28 +78,32 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
     const existing = existingById.get(noteId);
     const sections = sectionsForUnits(units, existing, timestamp);
     const links = uniqueLinks(units.flatMap((unit) => unit.links).filter((link) => link.target !== noteId));
-    const risk = maxRisk(units.map(riskForEvidenceUnit));
     const evidence = uniqueStrings(units.flatMap((unit) => unit.evidence)).slice(0, 20);
     const confidence = Math.min(...units.map((unit) => unit.confidence));
 
     if (!existing) {
+      const note = {
+        id: noteId,
+        type: target.noteType,
+        status: target.status,
+        modes: options.modes,
+        scope: options.scope,
+        tags: target.tags,
+        links,
+        sections,
+      };
       mutations.push({
         id: randomUUID(),
         kind: "create_note",
-        risk,
+        risk: riskForCompiledMutation({
+          units,
+          confidence,
+          note,
+        }),
         confidence,
         summary: `Create ${target.noteType} memory ${noteId}`,
         evidence,
-        note: {
-          id: noteId,
-          type: target.noteType,
-          status: target.status,
-          modes: options.modes,
-          scope: options.scope,
-          tags: target.tags,
-          links,
-          sections,
-        },
+        note,
       });
       continue;
     }
@@ -108,10 +112,16 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
       const existingText = existing.sections[sectionKey]?.text.trim();
       const lifecycle = lifecycleForSection(units, sectionKey);
       if (shouldAppend(lifecycle, sectionKey, existing)) {
+        const sectionUnits = unitsForSection(units, sectionKey);
         mutations.push({
           id: randomUUID(),
           kind: "append_section",
-          risk,
+          risk: riskForCompiledMutation({
+            units: sectionUnits,
+            confidence,
+            note: existing,
+            sourceBacked: Boolean(section.evidence?.length),
+          }),
           confidence,
           summary: `Append ${noteId}.${sectionKey}`,
           evidence: section.evidence ?? evidence,
@@ -121,10 +131,16 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
           salience: section.salience,
         });
       } else {
+        const sectionUnits = unitsForSection(units, sectionKey);
         mutations.push({
           id: randomUUID(),
           kind: "update_section",
-          risk,
+          risk: riskForCompiledMutation({
+            units: sectionUnits,
+            confidence,
+            note: existing,
+            sourceBacked: Boolean(section.evidence?.length),
+          }),
           confidence,
           summary: `Update ${noteId}.${sectionKey}`,
           evidence: section.evidence ?? evidence,
@@ -140,7 +156,11 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
       mutations.push({
         id: randomUUID(),
         kind: "set_status",
-        risk,
+        risk: riskForCompiledMutation({
+          units,
+          confidence,
+          note: existing,
+        }),
         confidence,
         summary: `Set ${noteId} status to ${nextStatus}`,
         evidence,
@@ -156,7 +176,11 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
         mutations.push({
           id: randomUUID(),
           kind: "add_link",
-          risk: "low",
+          risk: riskForCompiledMutation({
+            units,
+            confidence,
+            note: existing,
+          }),
           confidence,
           summary: `Link ${noteId} to ${link.target}`,
           evidence,
@@ -371,6 +395,39 @@ function shouldSetStatus(units: LtmEvidenceUnit[], existingStatus: LtmStatus, ne
 
 function isResolvedLoopUnit(unit: LtmEvidenceUnit) {
   return unit.bucket === "thread" && unit.status === "resolved";
+}
+
+function unitsForSection(units: LtmEvidenceUnit[], sectionKey: string) {
+  return units.filter((unit) => sectionKeyForUnit(unit) === sectionKey);
+}
+
+function isTypedMemoryNote(note: Pick<LtmNote, "type" | "tags">) {
+  if (note.type === "source" || note.type === "scene") return false;
+  return !note.tags.includes("source_summary") && !note.tags.includes("chat_summary");
+}
+
+function hasSourceEvidence(units: LtmEvidenceUnit[]) {
+  return units.every((unit) => unit.evidence.some((evidence) => evidence.startsWith("source_note:")));
+}
+
+function riskForCompiledMutation({
+  units,
+  confidence,
+  note,
+  sourceBacked = true,
+}: {
+  units: LtmEvidenceUnit[];
+  confidence: number;
+  note: Pick<LtmNote, "type" | "tags" | "conflicts">;
+  sourceBacked?: boolean;
+}): LtmDraftRisk {
+  const baseRisk = maxRisk(units.map(riskForEvidenceUnit));
+  if (baseRisk !== "low") return baseRisk;
+  if (confidence < 0.85) return "medium";
+  if (!isTypedMemoryNote(note)) return "medium";
+  if (note.conflicts?.length) return "medium";
+  if (!sourceBacked || !hasSourceEvidence(units)) return "medium";
+  return "low";
 }
 
 function maxRisk(risks: LtmDraftRisk[]): LtmDraftRisk {

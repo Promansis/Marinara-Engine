@@ -59,6 +59,10 @@ import { useChat, useChatMessages, useChats, useUpdateChatMetadata } from "../..
 import { useConnections } from "../../hooks/use-connections";
 import { cn } from "../../lib/utils";
 import {
+  readRememberedLtmAutoApplyLowRisk,
+  rememberLtmAutoApplyLowRisk,
+} from "../../lib/long-term-memory-preferences";
+import {
   CreateLongTermMemoryNoteForm,
   type CreateLongTermMemoryNoteDraft,
 } from "../long-term-memory/CreateLongTermMemoryNoteForm";
@@ -2706,7 +2710,7 @@ export function LongTermMemoryPanel() {
   const [importLimit, setImportLimit] = useState(25);
   const [importExtractionMode, setImportExtractionMode] = useState<LtmSourceExtractionMode>("fast");
   const [importConcurrency, setImportConcurrency] = useState(DEFAULT_IMPORT_CONCURRENCY);
-  const [importApplyLowRisk, setImportApplyLowRisk] = useState(false);
+  const [importApplyLowRisk, setImportApplyLowRisk] = useState(readRememberedLtmAutoApplyLowRisk);
   const [importConnectionId, setImportConnectionId] = useState("");
   const [importModel, setImportModel] = useState("");
   const [importInstruction, setImportInstruction] = useState("");
@@ -3499,7 +3503,10 @@ export function LongTermMemoryPanel() {
                   <SettingToggle
                     label="Apply low-risk suggestions after import"
                     checked={importApplyLowRisk}
-                    onChange={setImportApplyLowRisk}
+                    onChange={(checked) => {
+                      setImportApplyLowRisk(checked);
+                      rememberLtmAutoApplyLowRisk(checked);
+                    }}
                   />
                   <StatusPill
                     label={importExtractionMode === "fast" ? "Lower cost" : "Merge-aware"}

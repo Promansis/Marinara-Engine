@@ -758,7 +758,7 @@ function threadCreateMutation(
   };
 }
 
-test("source extraction low-risk policy blocks scene append auto-apply", async () => {
+test("source extraction auto-apply still blocks source note mutations even when marked low risk", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-reconciliation-"));
   try {
     const storage = new LongTermMemoryStorage(root);
@@ -831,6 +831,438 @@ test("source extraction low-risk policy blocks conflicted thread auto-apply", ()
     },
   ];
   assert.equal(isLowRiskSourceExtractionMutation(conflicted), false);
+});
+
+test("source extraction auto-applies all low-risk typed-memory mutation kinds", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-auto-apply-low-risk-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "scene_source_test",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Mara found the key, promised Jules help, and resolved the lantern thread.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "thread_lantern",
+        type: "thread",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          setup: {
+            text: "The lantern hum should pay off later.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_old"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "rel_mara_jules",
+        type: "relationship",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory", "relationship_memory"],
+        links: [],
+        sections: {
+          history: {
+            text: "- Mara and Jules guarded the archive together.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_old"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "world_archive",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: {
+            text: "The archive has a hidden clock door.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_old"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const createTimelineMutation: Extract<LtmDraftMutation, { kind: "create_note" }> = {
+      id: randomUUID(),
+      kind: "create_note",
+      risk: "low",
+      confidence: 0.95,
+      summary: "Create timeline event",
+      evidence: ["source_note:scene_source_test"],
+      note: {
+        id: "timeline_archive_confrontation",
+        type: "timeline_event",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory", "timeline_event"],
+        links: [],
+        sections: {
+          event: {
+            text: "Mara found the hidden archive key.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_test"],
+          },
+        },
+      },
+    };
+    const updateMutation: Extract<LtmDraftMutation, { kind: "update_section" }> = {
+      id: randomUUID(),
+      kind: "update_section",
+      risk: "low",
+      confidence: 0.95,
+      summary: "Update world fact",
+      evidence: ["source_note:scene_source_test"],
+      noteId: "world_archive",
+      sectionKey: "facts",
+      section: {
+        text: "The archive has a hidden clock door opened by Mara's key.",
+        updatedAt: timestamp,
+        evidence: ["source_note:scene_source_test"],
+      },
+    };
+    const appendMutation: Extract<LtmDraftMutation, { kind: "append_section" }> = {
+      id: randomUUID(),
+      kind: "append_section",
+      risk: "low",
+      confidence: 0.95,
+      summary: "Append relationship history",
+      evidence: ["source_note:scene_source_test"],
+      noteId: "rel_mara_jules",
+      sectionKey: "history",
+      text: "- Mara promised Jules help after the archive confrontation.",
+    };
+    const statusMutation: Extract<LtmDraftMutation, { kind: "set_status" }> = {
+      id: randomUUID(),
+      kind: "set_status",
+      risk: "low",
+      confidence: 0.95,
+      summary: "Archive resolved thread",
+      evidence: ["source_note:scene_source_test"],
+      noteId: "thread_lantern",
+      status: "archived",
+    };
+    const addLinkMutation: Extract<LtmDraftMutation, { kind: "add_link" }> = {
+      id: randomUUID(),
+      kind: "add_link",
+      risk: "low",
+      confidence: 0.95,
+      summary: "Link relationship to timeline",
+      evidence: ["source_note:scene_source_test"],
+      noteId: "rel_mara_jules",
+      link: { target: "timeline_archive_confrontation", relation: "occurred_in" },
+    };
+
+    const mutations = [createTimelineMutation, updateMutation, appendMutation, statusMutation, addLinkMutation];
+    assert(mutations.every(isLowRiskSourceExtractionMutation));
+
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_source_test" },
+      response: {
+        summary: "Low-risk typed memory draft",
+        mutations,
+      },
+    });
+
+    const result = await applyLongTermMemoryDraft(draft.id, {
+      root,
+      actor: "test",
+      autoApplyLowRiskOnly: true,
+      rebuildIndexes: false,
+    });
+
+    assert.deepEqual(new Set(result.appliedMutationIds), new Set(mutations.map((mutation) => mutation.id)));
+    assert.deepEqual(result.skippedMutationIds, []);
+    assert.equal(result.draft.status, "auto_applied");
+
+    assert.equal((await storage.getNote("timeline_archive_confrontation"))?.type, "timeline_event");
+    assert.equal(
+      (await storage.getNote("world_archive"))?.sections.facts?.text,
+      "The archive has a hidden clock door opened by Mara's key.",
+    );
+    assert.equal(
+      (await storage.getNote("rel_mara_jules"))?.sections.history?.text.includes("promised Jules help"),
+      true,
+    );
+    assert.equal((await storage.getNote("thread_lantern"))?.status, "archived");
+    assert.equal(
+      (await storage.getNote("rel_mara_jules"))?.links.some(
+        (link) => link.target === "timeline_archive_confrontation" && link.relation === "occurred_in",
+      ),
+      true,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source extraction auto-apply keeps medium-risk mutations pending in mixed drafts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-auto-apply-mixed-risk-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "scene_source_test",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Mara found the key and her relationship with Jules changed.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const lowMutation = threadCreateMutation();
+    const mediumMutation: Extract<LtmDraftMutation, { kind: "create_note" }> = {
+      ...threadCreateMutation("Mara and Jules are cautious allies after the archive."),
+      risk: "medium",
+      note: {
+        ...threadCreateMutation().note,
+        id: "rel_mara_jules",
+        type: "relationship",
+        tags: ["typed_memory", "relationship_memory"],
+        sections: {
+          state: {
+            text: "Mara and Jules are cautious allies after the archive.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_test"],
+          },
+        },
+      },
+    };
+
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_source_test" },
+      response: {
+        summary: "Mixed risk draft",
+        mutations: [lowMutation, mediumMutation],
+      },
+    });
+
+    const result = await applyLongTermMemoryDraft(draft.id, {
+      root,
+      actor: "test",
+      autoApplyLowRiskOnly: true,
+      rebuildIndexes: false,
+    });
+
+    assert.deepEqual(result.appliedMutationIds, [lowMutation.id]);
+    assert.deepEqual(result.skippedMutationIds, [mediumMutation.id]);
+    assert.equal(result.draft.status, "pending");
+    assert.deepEqual(result.draft.mutations.map((mutation) => mutation.id), [mediumMutation.id]);
+    assert.equal((await storage.getNote(lowMutation.note.id))?.type, "thread");
+    assert.equal(await storage.getNote("rel_mara_jules"), null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source extraction auto-apply skips low-risk creates with embedded links to missing targets", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-auto-apply-missing-create-link-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "scene_source_test",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Mara remembered the key and an absent event.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const baseMutation = threadCreateMutation("Mara remembered the key during the absent event.");
+    const mutation: Extract<LtmDraftMutation, { kind: "create_note" }> = {
+      ...baseMutation,
+      note: {
+        ...baseMutation.note,
+        id: "thread_missing_link_target",
+        links: [{ target: "timeline_absent_event", relation: "occurred_in" }],
+        sections: {
+          setup: {
+            text: "Mara remembered the key during the absent event.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_test"],
+          },
+        },
+      },
+    };
+
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_source_test" },
+      response: {
+        summary: "Missing embedded link target draft",
+        mutations: [mutation],
+      },
+    });
+
+    const result = await applyLongTermMemoryDraft(draft.id, {
+      root,
+      actor: "test",
+      autoApplyLowRiskOnly: true,
+      rebuildIndexes: false,
+    });
+
+    assert.deepEqual(result.appliedMutationIds, []);
+    assert.deepEqual(result.skippedMutationIds, [mutation.id]);
+    assert.equal(result.draft.status, "pending");
+    assert.equal(await storage.getNote("thread_missing_link_target"), null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source extraction auto-apply allows low-risk creates with embedded links to same-draft creates", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-auto-apply-same-draft-create-link-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "scene_source_test",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Mara remembered the key during the archive confrontation.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const timelineMutation: Extract<LtmDraftMutation, { kind: "create_note" }> = {
+      id: randomUUID(),
+      kind: "create_note",
+      risk: "low",
+      confidence: 0.95,
+      summary: "Create timeline event",
+      evidence: ["source_note:scene_source_test"],
+      note: {
+        id: "timeline_archive_confrontation",
+        type: "timeline_event",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory", "timeline_event"],
+        links: [],
+        sections: {
+          event: {
+            text: "Mara remembered the key during the archive confrontation.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_test"],
+          },
+        },
+      },
+    };
+    const baseThreadMutation = threadCreateMutation("Mara should follow up on the archive key.");
+    const threadMutation: Extract<LtmDraftMutation, { kind: "create_note" }> = {
+      ...baseThreadMutation,
+      note: {
+        ...baseThreadMutation.note,
+        id: "thread_archive_key",
+        links: [{ target: "timeline_archive_confrontation", relation: "triggered_by" }],
+        sections: {
+          setup: {
+            text: "Mara should follow up on the archive key.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_test"],
+          },
+        },
+      },
+    };
+
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_source_test" },
+      response: {
+        summary: "Same-draft embedded link target draft",
+        mutations: [timelineMutation, threadMutation],
+      },
+    });
+
+    const result = await applyLongTermMemoryDraft(draft.id, {
+      root,
+      actor: "test",
+      autoApplyLowRiskOnly: true,
+      rebuildIndexes: false,
+    });
+
+    assert.deepEqual(new Set(result.appliedMutationIds), new Set([timelineMutation.id, threadMutation.id]));
+    assert.deepEqual(result.skippedMutationIds, []);
+    assert.equal(result.draft.status, "auto_applied");
+    assert.equal((await storage.getNote("timeline_archive_confrontation"))?.type, "timeline_event");
+    assert.equal(
+      (await storage.getNote("thread_archive_key"))?.links.some(
+        (link) => link.target === "timeline_archive_confrontation" && link.relation === "triggered_by",
+      ),
+      true,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("source extraction accepts duplicate new note drafts by merging into the created note", async () => {
@@ -1008,7 +1440,7 @@ test("source extraction duplicate new state drafts replace superseding sections 
   }
 });
 
-test("source extraction auto-apply leaves archived resolved memory status pending with content update", async () => {
+test("source extraction auto-applies low-risk archived resolved memory status with content update", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-resolved-status-pending-"));
   try {
     const storage = new LongTermMemoryStorage(root);
@@ -1069,7 +1501,7 @@ test("source extraction auto-apply leaves archived resolved memory status pendin
     const statusMutation = response.mutations.find((mutation) => mutation.kind === "set_status");
     assert(statusMutation);
     assert.equal(statusMutation.kind === "set_status" ? statusMutation.status : undefined, "archived");
-    assert.equal(isLowRiskSourceExtractionMutation(statusMutation), false);
+    assert.equal(isLowRiskSourceExtractionMutation(statusMutation), true);
 
     const draft = await new LongTermMemoryDraftStore(root).createDraft({
       scope: {},
@@ -1085,19 +1517,19 @@ test("source extraction auto-apply leaves archived resolved memory status pendin
       rebuildIndexes: false,
     });
 
-    assert.deepEqual(result.appliedMutationIds, []);
-    assert.deepEqual(new Set(result.skippedMutationIds), new Set(response.mutations.map((mutation) => mutation.id)));
-    assert.equal(result.draft.status, "pending");
+    assert.deepEqual(new Set(result.appliedMutationIds), new Set(response.mutations.map((mutation) => mutation.id)));
+    assert.deepEqual(result.skippedMutationIds, []);
+    assert.equal(result.draft.status, "auto_applied");
 
     const thread = await storage.getNote("thread_lantern");
-    assert.equal(thread?.status, "active");
-    assert.equal(thread?.sections.setup?.text, "The lantern hum should pay off later.");
+    assert.equal(thread?.status, "archived");
+    assert.equal(thread?.sections.summary?.text, "The lantern hum paid off when it revealed the archive door.");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("source extraction auto-apply skips links to pending timeline notes", async () => {
+test("source extraction auto-apply includes low-risk link targets created in the same draft", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-pending-timeline-link-"));
   try {
     const storage = new LongTermMemoryStorage(root);
@@ -1192,17 +1624,17 @@ test("source extraction auto-apply skips links to pending timeline notes", async
       rebuildIndexes: false,
     });
 
-    assert.deepEqual(result.appliedMutationIds, []);
     assert.deepEqual(
-      new Set(result.skippedMutationIds),
+      new Set(result.appliedMutationIds),
       new Set([createTimelineMutation.id, addTimelineLinkMutation.id]),
     );
-    assert.equal(result.draft.status, "pending");
-    assert.equal(await storage.getNote("timeline_archive_confrontation"), null);
+    assert.deepEqual(result.skippedMutationIds, []);
+    assert.equal(result.draft.status, "auto_applied");
+    assert.equal((await storage.getNote("timeline_archive_confrontation"))?.type, "timeline_event");
 
     const relationship = await storage.getNote("rel_mara_jules");
     assert(
-      !relationship?.links.some(
+      relationship?.links.some(
         (link) => link.target === "timeline_archive_confrontation" && link.relation === "occurred_in",
       ),
     );
@@ -3338,6 +3770,74 @@ test("evidence unit compiler maps buckets to typed memory draft mutations", () =
       assert.equal(mutation.note.type, expectedType);
     }
   }
+});
+
+test("evidence unit compiler gates low-risk typed-memory suggestions by confidence and bucket risk", () => {
+  const lowConfidence = compileLtmEvidenceUnits({
+    units: [
+      evidenceUnit("world_fact", {
+        subjectId: "veil",
+        confidence: 0.84,
+      }),
+    ],
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    createdAt: timestamp,
+  });
+  assert.equal(lowConfidence.mutations[0]?.risk, "medium");
+
+  const relationshipState = compileLtmEvidenceUnits({
+    units: [
+      evidenceUnit("relationship_state", {
+        subjectId: "mara_jules",
+        sectionKey: "state",
+        text: "Mara and Jules trust one another.",
+        confidence: 0.95,
+      }),
+    ],
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    createdAt: timestamp,
+  });
+  assert.equal(relationshipState.mutations[0]?.risk, "medium");
+
+  const sourceBackedUpdate = compileLtmEvidenceUnits({
+    units: [
+      evidenceUnit("world_fact", {
+        subjectId: "veil",
+        text: "The veil opens only under moonlight.",
+        confidence: 0.9,
+      }),
+    ],
+    existingNotes: [
+      {
+        id: "world_veil",
+        type: "world",
+        status: "active",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        version: 1,
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: {
+            text: "The veil opens under old magic.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_old"],
+          },
+        },
+      },
+    ],
+    scope: {},
+    modes: ["roleplay"],
+    createdAt: timestamp,
+  });
+  assert.equal(sourceBackedUpdate.mutations[0]?.kind, "update_section");
+  assert.equal(sourceBackedUpdate.mutations[0]?.risk, "low");
 });
 
 test("timeline event units create historical notes and typed memories link to them", async () => {
