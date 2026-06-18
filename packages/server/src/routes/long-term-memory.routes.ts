@@ -361,6 +361,10 @@ function summarizeNotes(notes: LtmNote[]) {
   };
 }
 
+function rebuildScopeForNote(note: LtmNote) {
+  return isLtmSourceNote(note) ? "source" : "typed";
+}
+
 class LtmExtractionRouteError extends Error {
   constructor(
     message: string,
@@ -596,6 +600,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
       cause: "api.create",
       summary: "Created via long-term memory maintenance API",
     });
+    await rebuildLongTermMemoryIndexes({ scope: rebuildScopeForNote(note) });
     return reply.status(201).send(note);
   });
 
@@ -609,11 +614,13 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
       const existing = await storage.getNote(id);
       if (!existing) return reply.status(404).send({ error: "Long-term memory note not found" });
 
-      return storage.updateNote(id, patch, {
+      const note = await storage.updateNote(id, patch, {
         actor: "maintenance_api",
         cause: "api.patch",
         summary: "Updated via long-term memory maintenance API",
       });
+      await rebuildLongTermMemoryIndexes({ scope: rebuildScopeForNote(note) });
+      return note;
     },
   );
 
@@ -664,6 +671,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
       cause: "api.delete",
       summary: "Deleted via long-term memory maintenance API",
     });
+    await rebuildLongTermMemoryIndexes({ scope: rebuildScopeForNote(note) });
     return { deleted: true, id: note.id };
   });
 

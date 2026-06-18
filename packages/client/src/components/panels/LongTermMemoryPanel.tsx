@@ -2251,7 +2251,6 @@ function ChatMemorySettings({
   const [semanticWeightDraft, setSemanticWeightDraft] = useState(String(weights.semanticWeight));
   const [lexicalWeightDraft, setLexicalWeightDraft] = useState(String(weights.lexicalWeight));
   const [graphWeightDraft, setGraphWeightDraft] = useState(String(weights.graphWeight));
-  const [metadataWeightDraft, setMetadataWeightDraft] = useState(String(weights.metadataWeight));
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [recallOpen, setRecallOpen] = useState(true);
   const [extractionOpen, setExtractionOpen] = useState(false);
@@ -2269,7 +2268,6 @@ function ChatMemorySettings({
     setSemanticWeightDraft(String(weights.semanticWeight));
     setLexicalWeightDraft(String(weights.lexicalWeight));
     setGraphWeightDraft(String(weights.graphWeight));
-    setMetadataWeightDraft(String(weights.metadataWeight));
   }, [
     activeChat?.id,
     budgetValue,
@@ -2278,7 +2276,6 @@ function ChatMemorySettings({
     scoreThresholdValue,
     weights.graphWeight,
     weights.lexicalWeight,
-    weights.metadataWeight,
     weights.semanticWeight,
   ]);
 
@@ -2335,12 +2332,11 @@ function ChatMemorySettings({
     semantic: "longTermMemorySemanticWeight",
     lexical: "longTermMemoryLexicalWeight",
     graph: "longTermMemoryGraphWeight",
-    metadata: "longTermMemoryMetadataWeight",
   } as const;
 
-  const commitWeight = (key: "semantic" | "lexical" | "graph" | "metadata", value: string) => {
+  const commitWeight = (key: "semantic" | "lexical" | "graph", value: string) => {
     const fallback = weights[`${key}Weight` as const];
-    const next = readWeightDraft(value, fallback, key === "metadata" ? 2 : 1);
+    const next = readWeightDraft(value, fallback, 1);
     if (next === fallback) return Promise.resolve();
     return patch({ [weightPatchKeyMap[key]]: next });
   };
@@ -2349,7 +2345,6 @@ function ChatMemorySettings({
     setSemanticWeightDraft(String(LTM_RECALL_STYLE_WEIGHTS[recallStyle].semanticWeight));
     setLexicalWeightDraft(String(LTM_RECALL_STYLE_WEIGHTS[recallStyle].lexicalWeight));
     setGraphWeightDraft(String(LTM_RECALL_STYLE_WEIGHTS[recallStyle].graphWeight));
-    setMetadataWeightDraft(String(LTM_RECALL_STYLE_WEIGHTS[recallStyle].metadataWeight));
     return patch({
       longTermMemorySemanticWeight: null,
       longTermMemoryLexicalWeight: null,
@@ -2480,7 +2475,7 @@ function ChatMemorySettings({
                 />
               </SettingField>
               <p className="mt-1 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-                How many recent chat messages to use for searching the database. Default 4 (last 2 exchanges).
+                Search uses recent chat text plus scope filters. Max memories is only a ceiling; relevance still decides what appears.
               </p>
               <DisclosureHeader
                 title="Advanced recall"
@@ -2520,7 +2515,7 @@ function ChatMemorySettings({
                       />
                     </div>
                     <p className="mt-1 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-                      0 keeps all ranked matches. Higher values drop memories with lower raw relevance scores.
+                      0 keeps all ranked matches. Higher values drop memories whose final weighted relevance is lower.
                     </p>
                   </SettingGroup>
                   <SettingGroup label="Lane weights">
@@ -2549,14 +2544,6 @@ function ChatMemorySettings({
                           fallback: weights.graphWeight,
                           max: 1,
                           key: "graph" as const,
-                        },
-                        {
-                          label: "Metadata",
-                          draft: metadataWeightDraft,
-                          setDraft: setMetadataWeightDraft,
-                          fallback: weights.metadataWeight,
-                          max: 2,
-                          key: "metadata" as const,
                         },
                       ].map((item) => {
                         const inputId = `ltm-${item.key}-weight`;
@@ -2592,7 +2579,7 @@ function ChatMemorySettings({
                       })}
                     </div>
                     <p className="mt-1 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-                      The selected recall style sets the default mix. These overrides let you bias one lane up or down for this chat.
+                      The selected recall style sets the default mix. Set all three weights to 0 to disable LTM prompt injection. Metadata scopes only filter eligible memories.
                     </p>
                     <div className="mt-2">
                       <ToolButton onClick={resetWeightOverrides}>

@@ -2,10 +2,12 @@ export interface LtmRankedCandidate {
   chunkId: string;
   score: number;
   normalizedScore?: number;
+  finalNormalizedScore?: number;
   reasons: string[];
   lanes: string[];
   laneScores?: Record<string, number>;
   rawLaneScores?: Record<string, number>;
+  cooldownPenalty?: number;
 }
 
 export interface LtmRankLaneItem {
@@ -20,12 +22,20 @@ export interface LtmRankLane {
   items: LtmRankLaneItem[];
 }
 
+export type LtmRankCooldown = {
+  chunkId: string;
+  penalty: number;
+  reason: string;
+};
+
 const RRF_K = 60;
 
-export function reciprocalRankFuse(lanes: LtmRankLane[]) {
+export function reciprocalRankFuse(lanes: LtmRankLane[], options: { cooldowns?: LtmRankCooldown[] } = {}) {
   const candidates = new Map<string, LtmRankedCandidate>();
 
   for (const lane of lanes) {
+    if (lane.weight <= 0) continue;
+
     const rawScores = lane.items
       .map((item) => item.rawScore)
       .filter((score): score is number => typeof score === "number" && Number.isFinite(score) && score > 0);
@@ -33,11 +43,12 @@ export function reciprocalRankFuse(lanes: LtmRankLane[]) {
 
     lane.items.forEach((item, index) => {
       const rank = index + 1;
-      const score = lane.weight * (1 / (RRF_K + rank));
-      const rawScoreBoost = (item.rawScore ?? 0) * 0.001 * lane.weight;
       const rawScore = typeof item.rawScore === "number" && Number.isFinite(item.rawScore) ? item.rawScore : 0;
       const normalizedRawScore =
         lane.name === "vector" ? Math.max(0, Math.min(1, rawScore)) : topRawScore > 0 ? rawScore / topRawScore : 0;
+      const rawFactor = typeof item.rawScore === "number" ? normalizedRawScore : 1;
+      const score = lane.weight * (1 / (RRF_K + rank)) * rawFactor;
+      const rawScoreBoost = rawScore * 0.001 * lane.weight;
       const candidate =
         candidates.get(item.chunkId) ??
         ({
@@ -57,10 +68,30 @@ export function reciprocalRankFuse(lanes: LtmRankLane[]) {
         candidate.rawLaneScores[lane.name] = Math.max(candidate.rawLaneScores[lane.name] ?? 0, item.rawScore);
       }
       candidate.reasons.push(item.reason);
+      if (normalizedRawScore > 0) {
+        candidate.reasons.push(`${lane.name}:normalized:${normalizedRawScore.toFixed(3)}`);
+      }
       if (!candidate.lanes.includes(lane.name)) candidate.lanes.push(lane.name);
       candidates.set(item.chunkId, candidate);
     });
   }
 
-  return Array.from(candidates.values()).sort((a, b) => b.score - a.score || a.chunkId.localeCompare(b.chunkId));
+  const cooldowns = new Map(options.cooldowns?.map((cooldown) => [cooldown.chunkId, cooldown]) ?? []);
+  for (const candidate of candidates.values()) {
+    const cooldown = cooldowns.get(candidate.chunkId);
+    if (!cooldown) continue;
+    candidate.cooldownPenalty = cooldown.penalty;
+    candidate.score *= cooldown.penalty;
+    candidate.reasons.push(cooldown.reason);
+  }
+
+  const ranked = Array.from(candidates.values()).sort((a, b) => b.score - a.score || a.chunkId.localeCompare(b.chunkId));
+  const topScore = ranked[0]?.score ?? 0;
+  for (const candidate of ranked) {
+    const finalNormalizedScore = topScore > 0 ? candidate.score / topScore : 0;
+    candidate.finalNormalizedScore = finalNormalizedScore;
+    candidate.normalizedScore = finalNormalizedScore;
+  }
+
+  return ranked;
 }

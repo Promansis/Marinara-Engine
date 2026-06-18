@@ -55,6 +55,11 @@ function normalizeUsageIndex(value: unknown): LtmUsageIndex {
   };
 }
 
+export async function readLongTermMemoryUsage(root = getLongTermMemoryRoot()) {
+  const path = usagePathForRoot(root);
+  return normalizeUsageIndex(await readJsonFile<unknown>(path, { version: 1, chunks: {} }));
+}
+
 export async function recordLongTermMemoryInjection(chunks: LtmBudgetedChunk[], root = getLongTermMemoryRoot()) {
   if (chunks.length === 0) return;
 

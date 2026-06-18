@@ -12,7 +12,7 @@ import {
   ltmPoliciesConfigSchema,
   ltmScopeSchema,
 } from "../../../../../shared/src/schemas/long-term-memory.schema.js";
-import { chunkNotes } from "../chunking.js";
+import { chunkNotes, type LtmMemoryChunk } from "../chunking.js";
 import { buildLtmMetadataIndex } from "../metadata-index.js";
 import { compileLtmEvidenceUnits } from "../evidence-unit-compiler.js";
 import { applyLtmBudget } from "../budget.js";
@@ -365,6 +365,9 @@ test("generation long-term memory uses chat retrieval settings and injects after
   assert.equal(retrievalInput.lexicalWeight, 0.75);
   assert.equal(retrievalInput.graphWeight, 0.15);
   assert.equal(retrievalInput.metadataWeight, 0.25);
+  assert.equal(retrievalInput.metadataMode, "filter_only");
+  assert.equal(retrievalInput.dedupeExactText, true);
+  assert.equal(retrievalInput.applyUsageCooldown, true);
   assert.equal(retrievalInput.scope?.chatId, "chat_test");
   assert.deepEqual(retrievalInput.scope?.chatIds, ["chat_test"]);
   assert.equal(retrievalInput.scope?.groupId, "group_test");
@@ -613,6 +616,86 @@ test("long-term memory budget uses prompt-clean text for legacy chunks", () => {
   assert.equal(result.usedTokens, 4);
   assert.equal(result.chunks[0]?.estimatedTokens, 4);
 });
+
+test("long-term memory prompt and budget dedupe exact normalized chunk text", () => {
+  const duplicateText = "The archive key is under the clock.";
+  const chunks = new Map<string, LtmMemoryChunk>([
+    [
+      "world_archive_key::facts",
+      {
+        id: "world_archive_key::facts",
+        noteId: "world_archive_key",
+        sectionKey: "facts",
+        text: duplicateText,
+        noteType: "world",
+        status: "active",
+        scope: {},
+        tags: ["typed_memory"],
+        updatedAt: timestamp,
+        sourceHash,
+      },
+    ],
+    [
+      "thread_archive_key::summary",
+      {
+        id: "thread_archive_key::summary",
+        noteId: "thread_archive_key",
+        sectionKey: "summary",
+        text: ` ${duplicateText.replaceAll(" ", "  ")} `,
+        noteType: "thread",
+        status: "active",
+        scope: {},
+        tags: ["typed_memory"],
+        updatedAt: timestamp,
+        sourceHash,
+      },
+    ],
+  ]);
+
+  const budgeted = applyLtmBudget(
+    [
+      {
+        chunkId: "world_archive_key::facts",
+        score: 1,
+        normalizedScore: 1,
+        finalNormalizedScore: 1,
+        reasons: ["bm25"],
+        lanes: ["bm25"],
+      },
+      {
+        chunkId: "thread_archive_key::summary",
+        score: 0.9,
+        normalizedScore: 0.9,
+        finalNormalizedScore: 0.9,
+        reasons: ["bm25"],
+        lanes: ["bm25"],
+      },
+    ],
+    chunks,
+    {
+      maxChunks: 10,
+      maxTokens: 1000,
+      explain: true,
+      dedupeExactText: true,
+    },
+  );
+
+  assert.deepEqual(
+    budgeted.chunks.map((chunk) => chunk.chunk.id),
+    ["world_archive_key::facts"],
+  );
+  assert.equal(budgeted.rejected[0]?.rejectionReason, "duplicate_text");
+
+  const block = formatLongTermMemoryBlock([
+    budgeted.chunks[0]!,
+    {
+      ...budgeted.chunks[0]!,
+      chunk: chunks.get("thread_archive_key::summary")!,
+    },
+  ]);
+  assert.equal(block.match(/archive key is under the clock/gi)?.length, 1);
+});
+
 
 function sceneAppendMutation(): Extract<LtmDraftMutation, { kind: "append_section" }> {
   return {
@@ -3374,6 +3457,8 @@ test("generate route no longer creates live-turn long-term memory drafts", async
   );
   assert.match(sourceExtractionSource, /LongTermMemoryDraftStore/);
   assert.match(sourceExtractionSource, /createDraft\s*\(/);
+  assert.match(longTermMemoryRouteSource, /function rebuildScopeForNote\(note: LtmNote\)/);
+  assert.match(longTermMemoryRouteSource, /rebuildLongTermMemoryIndexes\(\{ scope: rebuildScopeForNote\(note\) \}\)/);
 });
 
 test("draft store rejects drafts that are not tied to a source note", async () => {
@@ -4373,6 +4458,186 @@ test("retrieval does not double-count character scope metadata", async () => {
   }
 });
 
+test("generation retrieval treats metadata as filter only and honors zero-weight lanes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-generation-filter-only-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.initializeLtmStore();
+
+    await storage.createNote(
+      {
+        id: "world_scope_only",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_filter_only" },
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: {
+            text: "A scoped but unrelated memory about blue porcelain cups.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "world_relevant_lantern",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_filter_only" },
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: {
+            text: "The red lantern opens the archive gate.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    await rebuildLongTermMemoryIndexes({
+      root,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+
+    const allZero = await retrieveLongTermMemory({
+      root,
+      queryText: "red lantern archive gate",
+      scope: { chatId: "chat_filter_only" },
+      maxChunks: 10,
+      maxTokens: 1000,
+      semanticWeight: 0,
+      lexicalWeight: 0,
+      graphWeight: 0,
+      metadataWeight: 2,
+      metadataMode: "filter_only",
+      debug: true,
+      localEmbedder: async () => {
+        throw new Error("semantic lane should not run when disabled");
+      },
+    });
+
+    assert.deepEqual(allZero.chunks, []);
+    assert.deepEqual(allZero.debug?.activeLanes, []);
+    assert.deepEqual(allZero.debug?.skippedLanes.sort(), [
+      "bm25:zero_weight",
+      "graph:zero_weight",
+      "metadata:filter_only",
+      "vector:zero_weight",
+    ]);
+    assert.equal(allZero.debug?.metadataMode, "filter_only");
+
+    const lexicalOnly = await retrieveLongTermMemory({
+      root,
+      queryText: "red lantern archive gate",
+      scope: { chatId: "chat_filter_only" },
+      maxChunks: 10,
+      maxTokens: 1000,
+      semanticWeight: 0,
+      lexicalWeight: 1,
+      graphWeight: 0,
+      metadataWeight: 2,
+      metadataMode: "filter_only",
+      debug: true,
+      localEmbedder: async () => {
+        throw new Error("semantic lane should not run when disabled");
+      },
+    });
+
+    assert.deepEqual(
+      lexicalOnly.chunks.map((chunk) => chunk.chunk.id),
+      ["world_relevant_lantern::facts"],
+    );
+    assert.equal(lexicalOnly.debug?.funnel.metadataCandidates, 0);
+    assert.equal(lexicalOnly.debug?.funnel.vectorCandidates, 0);
+    assert.equal(lexicalOnly.debug?.funnel.graphCandidates, 0);
+    assert.equal(lexicalOnly.debug?.funnel.bm25Candidates, 1);
+    assert.deepEqual(lexicalOnly.debug?.activeLanes, ["bm25"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("generation graph recall is not seeded by scope-only metadata", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-generation-graph-scope-seed-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.initializeLtmStore();
+
+    await storage.createNote(
+      {
+        id: "world_scope_anchor",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_graph_filter_only" },
+        tags: ["typed_memory"],
+        links: [{ target: "world_graph_neighbor", relation: "related" }],
+        sections: {
+          facts: {
+            text: "A scoped anchor about porcelain cups.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "world_graph_neighbor",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_graph_filter_only" },
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: {
+            text: "A neighboring graph memory about blue ceramic shelves.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    await rebuildLongTermMemoryIndexes({
+      root,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+
+    const result = await retrieveLongTermMemory({
+      root,
+      queryText: "unrelated search text",
+      scope: { chatId: "chat_graph_filter_only" },
+      maxChunks: 10,
+      maxTokens: 1000,
+      semanticWeight: 0,
+      lexicalWeight: 0,
+      graphWeight: 1,
+      metadataWeight: 2,
+      metadataMode: "filter_only",
+      debug: true,
+      localEmbedder: async () => {
+        throw new Error("semantic lane should not run when disabled");
+      },
+    });
+
+    assert.deepEqual(result.chunks, []);
+    assert.equal(result.debug?.funnel.metadataCandidates, 0);
+    assert.equal(result.debug?.funnel.graphCandidates, 0);
+    assert.deepEqual(result.debug?.activeLanes, ["graph"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("retrieval score threshold excludes weak vector-only candidates", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-retrieval-vector-threshold-"));
   try {
@@ -4451,7 +4716,7 @@ test("retrieval score threshold excludes weak vector-only candidates", async () 
     );
     assert.equal(result.debug?.funnel.vectorCandidates, 4);
     assert.equal(result.debug?.funnel.scoreThresholdSkippedCandidates, 3);
-    assert(result.debug?.rejected.every((candidate) => candidate.normalizedScore === 0.1));
+    assert(result.debug?.rejected.every((candidate) => (candidate.finalNormalizedScore ?? 1) < 0.2));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

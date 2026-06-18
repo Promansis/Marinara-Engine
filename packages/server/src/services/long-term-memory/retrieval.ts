@@ -19,6 +19,7 @@ import { getLtmMetadataMatches } from "./metadata-index.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
 import { applyLtmBudget, type LtmBudgetedChunk, type LtmBudgetRejectedCandidate } from "./budget.js";
 import { reciprocalRankFuse, type LtmRankLane } from "./ranking.js";
+import { readLongTermMemoryUsage } from "./usage.js";
 
 export interface RetrieveLongTermMemoryInput extends MemoryRecallEmbeddingOptions {
   root?: string;
@@ -41,6 +42,9 @@ export interface RetrieveLongTermMemoryInput extends MemoryRecallEmbeddingOption
   lexicalWeight?: number;
   graphWeight?: number;
   metadataWeight?: number;
+  metadataMode?: "filter_only" | "rank";
+  dedupeExactText?: boolean;
+  applyUsageCooldown?: boolean;
 }
 
 export interface LtmRetrievalDebugCandidate {
@@ -51,10 +55,12 @@ export interface LtmRetrievalDebugCandidate {
   status?: string;
   score: number;
   normalizedScore?: number;
+  finalNormalizedScore?: number;
   lanes: string[];
   reasons: string[];
   laneScores?: Record<string, number>;
   rawLaneScores?: Record<string, number>;
+  cooldownPenalty?: number;
   tier?: 1 | 2 | 3;
   estimatedTokens?: number;
   budgetIncluded?: boolean;
@@ -78,6 +84,9 @@ export interface LtmRetrievalDebugInfo {
     graph: number;
     metadata: number;
   };
+  activeLanes: string[];
+  skippedLanes: string[];
+  metadataMode: "filter_only" | "rank";
   funnel: Record<string, number>;
   selected: LtmRetrievalDebugCandidate[];
   rejected: LtmRetrievalDebugCandidate[];
@@ -195,14 +204,6 @@ function resolveRetrievalWeights(config: LtmRetrievalConfig, input: RetrieveLong
   const lexical = input.lexicalWeight ?? config.lexicalWeight;
   const graph = input.graphWeight ?? config.graphWeight;
   const metadata = input.metadataWeight ?? 1;
-  if (semantic + lexical + graph + metadata <= 0) {
-    return {
-      semantic: config.semanticWeight,
-      lexical: config.lexicalWeight,
-      graph: config.graphWeight,
-      metadata: 1,
-    };
-  }
   return { semantic, lexical, graph, metadata };
 }
 
@@ -311,6 +312,31 @@ function compactScoreMap(scores: Record<string, number> | undefined) {
   return Object.fromEntries(Object.entries(scores).map(([key, value]) => [key, Number(value.toFixed(6))]));
 }
 
+function activeRelevanceLanes(weights: { semantic: number; lexical: number; graph: number; metadata: number }, metadataMode: "filter_only" | "rank") {
+  return [
+    ...(weights.semantic > 0 ? ["vector"] : []),
+    ...(weights.lexical > 0 ? ["bm25"] : []),
+    ...(weights.graph > 0 ? ["graph"] : []),
+    ...(metadataMode === "rank" && weights.metadata > 0 ? ["metadata"] : []),
+  ];
+}
+
+function skippedRelevanceLanes(
+  weights: { semantic: number; lexical: number; graph: number; metadata: number },
+  metadataMode: "filter_only" | "rank",
+) {
+  return [
+    ...(weights.semantic <= 0 ? ["vector:zero_weight"] : []),
+    ...(weights.lexical <= 0 ? ["bm25:zero_weight"] : []),
+    ...(weights.graph <= 0 ? ["graph:zero_weight"] : []),
+    ...(metadataMode === "filter_only"
+      ? ["metadata:filter_only"]
+      : weights.metadata <= 0
+        ? ["metadata:zero_weight"]
+        : []),
+  ];
+}
+
 function formatSelectedCandidate(candidate: LtmBudgetedChunk): LtmRetrievalDebugCandidate {
   return {
     chunkId: candidate.chunk.id,
@@ -321,10 +347,14 @@ function formatSelectedCandidate(candidate: LtmBudgetedChunk): LtmRetrievalDebug
     score: Number(candidate.score.toFixed(6)),
     normalizedScore:
       candidate.normalizedScore === undefined ? undefined : Number(candidate.normalizedScore.toFixed(6)),
+    finalNormalizedScore:
+      candidate.finalNormalizedScore === undefined ? undefined : Number(candidate.finalNormalizedScore.toFixed(6)),
     lanes: candidate.lanes,
     reasons: candidate.reasons,
     laneScores: compactScoreMap(candidate.laneScores),
     rawLaneScores: compactScoreMap(candidate.rawLaneScores),
+    cooldownPenalty:
+      candidate.cooldownPenalty === undefined ? undefined : Number(candidate.cooldownPenalty.toFixed(6)),
     tier: candidate.tier,
     estimatedTokens: candidate.estimatedTokens,
     budgetIncluded: true,
@@ -345,10 +375,14 @@ function formatRejectedCandidate(
     score: Number(candidate.score.toFixed(6)),
     normalizedScore:
       candidate.normalizedScore === undefined ? undefined : Number(candidate.normalizedScore.toFixed(6)),
+    finalNormalizedScore:
+      candidate.finalNormalizedScore === undefined ? undefined : Number(candidate.finalNormalizedScore.toFixed(6)),
     lanes: candidate.lanes,
     reasons: candidate.reasons,
     laneScores: compactScoreMap(candidate.laneScores),
     rawLaneScores: compactScoreMap(candidate.rawLaneScores),
+    cooldownPenalty:
+      candidate.cooldownPenalty === undefined ? undefined : Number(candidate.cooldownPenalty.toFixed(6)),
     estimatedTokens: candidate.estimatedTokens,
     budgetIncluded: false,
     rejectionReason: candidate.rejectionReason,
@@ -398,10 +432,14 @@ export async function retrieveLongTermMemory(
 ): Promise<RetrieveLongTermMemoryResult> {
   const root = input.root ?? getLongTermMemoryRoot();
   const includeDebug = input.debug === true || input.explain === true;
+  const metadataMode = input.metadataMode ?? "rank";
   const bundle = await loadRetrievalBundle(root, input.includeSourceNotes === true);
   const { metadata, bm25, graph, embeddings, config } = bundle;
   const warnings = [...bundle.warnings];
   const weights = resolveRetrievalWeights(config, input);
+  const activeLanes = activeRelevanceLanes(weights, metadataMode);
+  const skippedLanes = skippedRelevanceLanes(weights, metadataMode);
+  const generationLanesDisabled = activeLanes.length === 0;
 
   if (!metadata) {
     const maxTokens = input.maxTokens ?? config.maxTokens;
@@ -430,6 +468,9 @@ export async function retrieveLongTermMemory(
                 graph: weights.graph,
                 metadata: weights.metadata,
               },
+              activeLanes,
+              skippedLanes,
+              metadataMode,
               funnel: {
                 totalChunks: 0,
                 sourceSummariesSkipped: 0,
@@ -457,6 +498,59 @@ export async function retrieveLongTermMemory(
   const chunksById = new Map(Object.entries(metadata.chunks));
   const allChunks = Object.values(metadata.chunks);
   const filterCounts = includeDebug ? summarizeCandidateFilters(allChunks, input, config, characterIds) : null;
+  if (generationLanesDisabled) {
+    warnings.push("No active long-term memory relevance lanes; retrieval returned no chunks.");
+    return {
+      chunks: [],
+      usedTokens: 0,
+      maxTokens: input.maxTokens ?? config.maxTokens,
+      embeddingsAvailable: false,
+      warnings,
+      ...(includeDebug
+        ? {
+            debug: {
+              querySummary: {
+                queryCharacters: signals.queryText.length,
+                recentUserMessageCharacters: (input.recentUserMessage ?? "").length,
+                mentionedCharacterCount: input.mentionedCharacterNames?.length ?? 0,
+                noteIdCount: signals.noteIds.length,
+                tagCount: signals.tags.length,
+                characterIdCount: characterIds.length,
+                scopeKeys: Object.keys(input.scope ?? {}).sort(),
+              },
+              embeddingsAvailable: false,
+              weights: {
+                semantic: weights.semantic,
+                lexical: weights.lexical,
+                graph: weights.graph,
+                metadata: weights.metadata,
+              },
+              activeLanes,
+              skippedLanes,
+              metadataMode,
+              funnel: {
+                totalChunks: allChunks.length,
+                sourceSummariesSkipped: filterCounts?.sourceSummariesSkipped ?? 0,
+                scopeFiltered: filterCounts?.scopeFiltered ?? 0,
+                statusFiltered: filterCounts?.resolvedFiltered ?? 0,
+                metadataCandidates: 0,
+                vectorCandidates: 0,
+                bm25Candidates: 0,
+                graphCandidates: 0,
+                rankedCandidates: 0,
+                selectedCandidates: 0,
+                tokenBudgetSkippedCandidates: 0,
+                scoreThresholdSkippedCandidates: 0,
+                duplicateTextSkippedCandidates: 0,
+                cooldownPenalizedCandidates: 0,
+              },
+              selected: [],
+              rejected: [],
+            },
+          }
+        : {}),
+    };
+  }
   if (!input.includeSourceNotes && input.debug) {
     const skippedSourceChunks = filterCounts?.sourceSummariesSkipped ?? allChunks.filter(isSourceSummaryChunk).length;
     if (skippedSourceChunks > 0) {
@@ -477,15 +571,34 @@ export async function retrieveLongTermMemory(
     return chunk ? candidateAllowed(chunk, input, config, characterIds) : false;
   });
 
+  const vector =
+    weights.semantic > 0
+      ? await vectorLane(embeddings, signals.queryText, input, config, chunksById, characterIds)
+      : { items: [], available: Boolean(embeddings?.embeddedChunkCount) };
+  const bm25Items =
+    bm25 && signals.queryText.trim().length > 0
+      ? searchLtmBm25(bm25, signals.queryText).flatMap((match) => {
+          const chunk = chunksById.get(match.chunkId);
+          return chunk && candidateAllowed(chunk, input, config, characterIds)
+            ? [{ chunkId: match.chunkId, reason: "bm25", rawScore: match.score }]
+            : [];
+        })
+      : [];
+  const metadataGraphSeedMatches =
+    metadataMode === "rank"
+      ? metadataMatches
+      : metadataMatches.filter((match) =>
+          match.reasons.some((reason) => reason.startsWith("note:") || reason.startsWith("tag:")),
+        );
   const graphSeeds = uniqueSorted([
     ...signals.noteIds,
-    ...metadataMatches.slice(0, 10).map((candidate) => chunksById.get(candidate.chunkId)?.noteId ?? ""),
+    ...metadataGraphSeedMatches.slice(0, 10).map((candidate) => chunksById.get(candidate.chunkId)?.noteId ?? ""),
+    ...vector.items.slice(0, 10).map((candidate) => chunksById.get(candidate.chunkId)?.noteId ?? ""),
+    ...bm25Items.slice(0, 10).map((candidate) => chunksById.get(candidate.chunkId)?.noteId ?? ""),
   ]);
-
-  const vector = await vectorLane(embeddings, signals.queryText, input, config, chunksById, characterIds);
   const lanes: LtmRankLane[] = [];
 
-  if (weights.metadata > 0) {
+  if (metadataMode === "rank" && weights.metadata > 0) {
     lanes.push({
       name: "metadata",
       weight: weights.metadata,
@@ -497,24 +610,19 @@ export async function retrieveLongTermMemory(
     });
   }
 
-  if (vector.items.length > 0) {
+  if (weights.semantic > 0 && vector.items.length > 0) {
     lanes.push({ name: "vector", weight: weights.semantic, items: vector.items });
   }
 
-  if (bm25 && signals.queryText.trim().length > 0) {
+  if (weights.lexical > 0 && bm25 && signals.queryText.trim().length > 0) {
     lanes.push({
       name: "bm25",
       weight: weights.lexical,
-      items: searchLtmBm25(bm25, signals.queryText).flatMap((match) => {
-        const chunk = chunksById.get(match.chunkId);
-        return chunk && candidateAllowed(chunk, input, config, characterIds)
-          ? [{ chunkId: match.chunkId, reason: "bm25", rawScore: match.score }]
-          : [];
-      }),
+      items: bm25Items,
     });
   }
 
-  if (graph && graphSeeds.length > 0) {
+  if (weights.graph > 0 && graph && graphSeeds.length > 0) {
     lanes.push({
       name: "graph",
       weight: weights.graph,
@@ -527,13 +635,38 @@ export async function retrieveLongTermMemory(
     });
   }
 
-  const ranked = reciprocalRankFuse(lanes);
+  const usage =
+    input.applyUsageCooldown === true
+      ? await readLongTermMemoryUsage(root).catch((err) => {
+          logger.debug(err, "[ltm] Failed to read long-term memory usage for retrieval cooldown");
+          return null;
+        })
+      : null;
+  const now = Date.now();
+  const cooldowns = usage
+    ? Object.values(usage.chunks).flatMap((entry) => {
+        const injectedAt = Date.parse(entry.lastInjectedAt);
+        if (!Number.isFinite(injectedAt)) return [];
+        const ageMinutes = (now - injectedAt) / 60_000;
+        if (ageMinutes < 0 || ageMinutes > 30) return [];
+        const penalty = ageMinutes < 5 ? 0.65 : ageMinutes < 15 ? 0.8 : 0.9;
+        return [
+          {
+            chunkId: entry.chunkId,
+            penalty,
+            reason: `cooldown:${Math.round(ageMinutes)}m:${penalty.toFixed(2)}`,
+          },
+        ];
+      })
+    : [];
+  const ranked = reciprocalRankFuse(lanes, { cooldowns });
   const budgeted = applyLtmBudget(ranked, chunksById, {
     maxChunks: input.maxChunks ?? config.maxChunks,
     maxTokens: input.maxTokens ?? config.maxTokens,
     normalizedScoreThreshold: input.minScore,
     explain: includeDebug,
     rejectedLimit: 20,
+    dedupeExactText: input.dedupeExactText === true,
   });
   const laneCount = (name: string) => lanes.find((lane) => lane.name === name)?.items.length ?? 0;
   const debug: LtmRetrievalDebugInfo | undefined = includeDebug
@@ -554,6 +687,9 @@ export async function retrieveLongTermMemory(
           graph: weights.graph,
           metadata: weights.metadata,
         },
+        activeLanes,
+        skippedLanes,
+        metadataMode,
         funnel: {
           totalChunks: allChunks.length,
           sourceSummariesSkipped: filterCounts?.sourceSummariesSkipped ?? 0,
@@ -571,6 +707,10 @@ export async function retrieveLongTermMemory(
           scoreThresholdSkippedCandidates: budgeted.rejected.filter(
             (candidate) => candidate.rejectionReason === "score_threshold",
           ).length,
+          duplicateTextSkippedCandidates: budgeted.rejected.filter(
+            (candidate) => candidate.rejectionReason === "duplicate_text",
+          ).length,
+          cooldownPenalizedCandidates: ranked.filter((candidate) => candidate.cooldownPenalty !== undefined).length,
         },
         selected: budgeted.chunks.map(formatSelectedCandidate),
         rejected: budgeted.rejected.map((candidate) => formatRejectedCandidate(candidate, chunksById)),
