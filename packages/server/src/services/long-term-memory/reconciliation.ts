@@ -7,7 +7,6 @@ import {
   type LtmNote,
   type LtmSection,
 } from "@marinara-engine/shared";
-import { logger } from "../../lib/logger.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import { LongTermMemoryDraftStore } from "./draft-store.js";
 import { rebuildLongTermMemoryIndexes } from "./rebuild.js";
@@ -505,13 +504,6 @@ async function applyLongTermMemoryDraftInner(
       details: { scope: "typed" },
     });
   }
-
-  logger.info(
-    "[ltm] Applied draft %s (%d applied, %d skipped)",
-    draft.id,
-    appliedMutationIds.length,
-    skippedMutationIds.length,
-  );
 
   return { draft: updated, appliedMutationIds, skippedMutationIds, autoIncludedMutationIds };
 }

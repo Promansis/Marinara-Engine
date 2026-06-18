@@ -12,7 +12,6 @@ import {
   type LtmNote,
   type LtmNoteType,
 } from "@marinara-engine/shared";
-import { logger } from "../../lib/logger.js";
 import { appendJsonLineAtomic, createJsonFileExclusive, readJsonFile, writeJsonAtomic } from "./atomic-json.js";
 import { DEFAULT_LTM_POLICIES, DEFAULT_LTM_RETRIEVAL_CONFIG } from "./default-config.js";
 import {
@@ -156,7 +155,6 @@ export class LongTermMemoryStorage {
 
     await writeJsonIfChanged(policiesPath, existingPolicies);
     await writeJsonIfChanged(retrievalPath, existingRetrieval);
-    logger.debug("[ltm] Initialized inert long-term memory store at %s", this.root);
   }
 
   async listNotes(filter: LtmListNotesFilter = {}) {

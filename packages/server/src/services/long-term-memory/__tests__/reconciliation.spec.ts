@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -51,6 +51,21 @@ const sourceHash = "a".repeat(64);
 
 async function readJsonText(path: string) {
   return readFile(path, "utf8");
+}
+
+async function listSourceFiles(root: URL): Promise<URL[]> {
+  const entries = await readdir(root, { withFileTypes: true });
+  const files: URL[] = [];
+  for (const entry of entries) {
+    if (entry.name === "__tests__") continue;
+    const child = new URL(`${entry.name}${entry.isDirectory() ? "/" : ""}`, root);
+    if (entry.isDirectory()) {
+      files.push(...(await listSourceFiles(child)));
+    } else if (entry.isFile() && /\.(ts|tsx)$/.test(entry.name)) {
+      files.push(child);
+    }
+  }
+  return files;
 }
 
 test("long-term memory extraction mode schema accepts only public presets", () => {
@@ -3651,6 +3666,28 @@ test("generate route no longer creates live-turn long-term memory drafts", async
   assert.match(sourceExtractionSource, /createDraft\s*\(/);
   assert.match(longTermMemoryRouteSource, /function rebuildScopeForNote\(note: LtmNote\)/);
   assert.match(longTermMemoryRouteSource, /rebuildLongTermMemoryIndexes\(\{ scope: rebuildScopeForNote\(note\) \}\)/);
+});
+
+test("long-term memory diagnostics stay out of process console", async () => {
+  const serviceFiles = await listSourceFiles(new URL("../", import.meta.url));
+  for (const file of serviceFiles) {
+    const source = await readFile(file, "utf8");
+    assert.doesNotMatch(source, /\blogger\./, `${file.pathname} should not write through the server logger`);
+    assert.doesNotMatch(source, /\bconsole\./, `${file.pathname} should not write to the console`);
+  }
+
+  const clientFiles = [
+    ...(await listSourceFiles(new URL("../../../../../client/src/components/long-term-memory/", import.meta.url))),
+    new URL("../../../../../client/src/hooks/use-long-term-memory.ts", import.meta.url),
+  ];
+  for (const file of clientFiles) {
+    const source = await readFile(file, "utf8");
+    assert.doesNotMatch(source, /\bconsole\./, `${file.pathname} should not write to the console`);
+  }
+
+  const generateRouteSource = await readFile(new URL("../../../routes/generate.routes.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(generateRouteSource, /logger\.\w+\([\s\S]*?\[ltm\][\s\S]*?\)/);
+  assert.doesNotMatch(generateRouteSource, /logger\.debug\([^\n]*Long-term memory retrieval[^\n]*\)/);
 });
 
 test("draft store rejects drafts that are not tied to a source note", async () => {

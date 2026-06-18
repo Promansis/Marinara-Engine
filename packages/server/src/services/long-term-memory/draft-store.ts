@@ -8,7 +8,6 @@ import {
   type LtmMode,
   type LtmScope,
 } from "@marinara-engine/shared";
-import { logger } from "../../lib/logger.js";
 import { readJsonFile, writeJsonAtomic } from "./atomic-json.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
 import { LongTermMemoryStorage } from "./storage.js";
@@ -73,7 +72,6 @@ export class LongTermMemoryDraftStore {
       mutations: options.response.mutations,
     });
     await writeJsonAtomic(draftPathForId(draft.id, this.root), draft);
-    logger.info("[ltm] Stored extraction draft %s with %d mutation(s)", draft.id, draft.mutations.length);
     return draft;
   }
 
@@ -86,7 +84,6 @@ export class LongTermMemoryDraftStore {
       const raw = JSON.parse(await readFile(safeJoin(this.dirs.drafts, entry.name), "utf8"));
       const parsed = ltmExtractionDraftSchema.safeParse(raw);
       if (!parsed.success) {
-        logger.warn("Skipping invalid draft %s", entry.name);
         continue;
       }
       const draft = parsed.data;

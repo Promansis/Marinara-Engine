@@ -2519,7 +2519,6 @@ export async function generateRoutes(app: FastifyInstance) {
                 message: "Long-term memory retrieval failed during generation; injection was skipped.",
                 error: err,
               });
-              logger.warn(err, "[ltm] Retrieval failed during generation; skipping preset long-term memory injection");
             }
           }
           for (const section of sections) {
@@ -2673,16 +2672,9 @@ export async function generateRoutes(app: FastifyInstance) {
               });
               try {
                 await recordLongTermMemoryInjection(retrieval.chunks);
-              } catch (err) {
-                logger.warn(err, "[ltm] Failed to record long-term memory usage after prompt assembly");
+              } catch {
+                /* usage cooldown persistence is best-effort */
               }
-              logger.debug(
-                "[ltm] Injected %d long-term memory chunks (~%d/%d tokens) into preset prompt for chat %s",
-                retrieval.chunks.length,
-                retrieval.usedTokens,
-                retrieval.maxTokens,
-                input.chatId,
-              );
             } else {
               await recordLtmDebugEvent({
                 operationId,
@@ -2714,15 +2706,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   queryCharacters: plan.queryText.length,
                 },
               });
-              if (plan.debugEnabled) {
-                logger.debug(
-                  "[ltm] No long-term memory chunks injected for preset prompt in chat %s%s",
-                  input.chatId,
-                  retrieval.warnings.length > 0 ? `; warnings: ${retrieval.warnings.join("; ")}` : "",
-                );
-              }
             }
-            logger.debug("[timing] Long-term memory retrieval: %dms", Date.now() - startedAt);
           }
           presetHandledLorebooks =
             presetHasLorebookMarker(sections) ||
@@ -5530,16 +5514,9 @@ export async function generateRoutes(app: FastifyInstance) {
               });
               try {
                 await recordLongTermMemoryInjection(retrieval.chunks);
-              } catch (err) {
-                logger.warn(err, "[ltm] Failed to record long-term memory usage after prompt injection");
+              } catch {
+                /* usage cooldown persistence is best-effort */
               }
-              logger.debug(
-                "[ltm] Injected %d long-term memory chunks (~%d/%d tokens) into chat %s",
-                retrieval.chunks.length,
-                retrieval.usedTokens,
-                retrieval.maxTokens,
-                input.chatId,
-              );
             } else {
               await recordLtmDebugEvent({
                 operationId: ltmInjectionOperationId,
@@ -5569,13 +5546,6 @@ export async function generateRoutes(app: FastifyInstance) {
                   queryCharacters: ltmPlan.queryText.length,
                 },
               });
-              if (ltmPlan.debugEnabled) {
-                logger.debug(
-                  "[ltm] No long-term memory chunks injected for chat %s%s",
-                  input.chatId,
-                  retrieval.warnings.length > 0 ? `; warnings: ${retrieval.warnings.join("; ")}` : "",
-                );
-              }
             }
           } catch (err) {
             await recordLtmDebugEvent({
@@ -5589,9 +5559,7 @@ export async function generateRoutes(app: FastifyInstance) {
               message: "Long-term memory retrieval failed during generation; injection was skipped.",
               error: err,
             });
-            logger.warn(err, "[ltm] Retrieval failed during generation; skipping long-term memory injection");
           }
-          logger.debug("[timing] Long-term memory retrieval: %dms", Date.now() - _tLtm);
         }
 
         // Build base agent context (without mainResponse — that comes after generation)

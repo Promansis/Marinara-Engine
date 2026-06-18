@@ -5,7 +5,6 @@ import {
   type LtmRetrievalConfig,
   type LtmScope,
 } from "@marinara-engine/shared";
-import { logger } from "../../lib/logger.js";
 import { embedMemoryRecallTexts, type MemoryRecallEmbeddingOptions } from "../memory-recall.js";
 import { DEFAULT_LTM_RETRIEVAL_CONFIG } from "./default-config.js";
 import type { LtmBm25Index } from "./bm25.js";
@@ -123,18 +122,17 @@ async function readIndexFile<T>(path: string, warnings: string[]): Promise<T | n
       warnings.push(`Missing index ${path}`);
       return null;
     }
-    logger.warn(err, "[ltm] Failed to read long-term memory index %s", path);
     warnings.push(`Failed to read index ${path}`);
     return null;
   }
 }
 
-async function readConfig<T>(path: string, fallback: T, parse: (value: unknown) => T) {
+async function readConfig<T>(path: string, fallback: T, parse: (value: unknown) => T, warnings: string[]) {
   try {
     return parse(JSON.parse(await readFile(path, "utf8")));
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      logger.warn(err, "[ltm] Falling back to default long-term memory config for %s", path);
+      warnings.push(`Failed to read retrieval config ${path}; using defaults`);
     }
     return fallback;
   }
@@ -183,8 +181,11 @@ async function loadRetrievalBundle(root: string, includeSourceNotes: boolean): P
       readIndexFile<LtmBm25Index>(safeJoin(dirs.indexes, `${indexPrefix}bm25.json`), warnings),
       readIndexFile<LtmGraphIndex>(safeJoin(dirs.indexes, `${indexPrefix}graph.json`), warnings),
       readIndexFile<LtmEmbeddingIndex>(safeJoin(dirs.indexes, `${indexPrefix}embeddings.json`), warnings),
-      readConfig(safeJoin(dirs.config, "retrieval.json"), DEFAULT_LTM_RETRIEVAL_CONFIG, (value) =>
-        ltmRetrievalConfigSchema.parse(value),
+      readConfig(
+        safeJoin(dirs.config, "retrieval.json"),
+        DEFAULT_LTM_RETRIEVAL_CONFIG,
+        (value) => ltmRetrievalConfigSchema.parse(value),
+        warnings,
       ),
     ]);
     return { metadata, bm25, graph, embeddings, config, warnings };
@@ -402,20 +403,11 @@ async function vectorLane(
   const queryEmbedding = (await embedMemoryRecallTexts([queryText], input))[0];
   if (!queryEmbedding || queryEmbedding.length === 0) return { items: [], available: false };
 
-  let dimensionMismatchLogged = false;
   const items = embeddings.chunks
     .flatMap((entry) => {
       const chunk = chunksById.get(entry.chunkId);
       if (!entry.vector || !chunk || !candidateAllowed(chunk, input, config, characterIds)) return [];
       if (entry.vector.length !== queryEmbedding.length) {
-        if (!dimensionMismatchLogged) {
-          dimensionMismatchLogged = true;
-          logger.warn(
-            "[ltm] Skipping long-term memory vectors with dimensions that do not match query vector (%d vs %d)",
-            entry.vector.length,
-            queryEmbedding.length,
-          );
-        }
         return [];
       }
       const score = cosineSimilarity(queryEmbedding, entry.vector);
@@ -637,8 +629,7 @@ export async function retrieveLongTermMemory(
 
   const usage =
     input.applyUsageCooldown === true
-      ? await readLongTermMemoryUsage(root).catch((err) => {
-          logger.debug(err, "[ltm] Failed to read long-term memory usage for retrieval cooldown");
+      ? await readLongTermMemoryUsage(root).catch(() => {
           return null;
         })
       : null;

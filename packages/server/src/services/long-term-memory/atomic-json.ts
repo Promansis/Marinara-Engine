@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { link, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
-import { logger } from "../../lib/logger.js";
 
 async function fsyncPath(path: string) {
   let handle;
@@ -63,7 +62,6 @@ export async function readJsonFile<T>(path: string, fallback: T): Promise<T> {
     return JSON.parse(await readFile(path, "utf8")) as T;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return fallback;
-    logger.error(err, "[ltm] Failed to read JSON file %s", path);
     throw err;
   }
 }

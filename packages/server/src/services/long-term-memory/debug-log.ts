@@ -7,7 +7,6 @@ import {
   type LtmDebugPhase,
   type LtmDebugStatus,
 } from "@marinara-engine/shared";
-import { logger } from "../../lib/logger.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot } from "./paths.js";
 
 const MAX_DEBUG_LOG_BYTES = 2 * 1024 * 1024;
@@ -147,8 +146,7 @@ export async function recordLtmDebugEvent(input: LtmDebugEventInput): Promise<Lt
     await rotateIfNeeded(path);
     await appendFile(path, `${JSON.stringify(event)}\n`, "utf8");
     return event;
-  } catch (err) {
-    logger.debug(err, "[ltm] Debug log write failed");
+  } catch {
     return null;
   }
 }

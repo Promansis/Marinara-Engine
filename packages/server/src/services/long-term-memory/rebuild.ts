@@ -1,7 +1,6 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import type { LtmIndexMetadata } from "@marinara-engine/shared";
-import { logger } from "../../lib/logger.js";
 import { embedMemoryRecallTexts, type MemoryRecallEmbeddingOptions } from "../memory-recall.js";
 import { writeJsonAtomic } from "./atomic-json.js";
 import { buildLtmBm25Index, type LtmBm25Index } from "./bm25.js";
@@ -96,9 +95,6 @@ async function buildEmbeddingIndex(chunks: LtmMemoryChunk[], options: MemoryReca
   });
 
   const embeddedChunkCount = entries.filter((entry) => entry.vector && entry.vector.length > 0).length;
-  if (chunks.length > 0 && embeddedChunkCount === 0) {
-    logger.warn("[ltm] Rebuilt long-term memory indexes without embeddings; retrieval will use lexical and metadata lanes.");
-  }
 
   return {
     version: 1,
@@ -185,15 +181,6 @@ export async function rebuildLongTermMemoryIndexes(options: LtmRebuildOptions = 
   } else {
     invalidateLongTermMemoryRetrievalCache(root, scope === "source");
   }
-
-  logger.info(
-    "[ltm] Rebuilt %s long-term memory indexes: %d note(s), %d typed chunk(s), %d source chunk(s), %d embedded typed chunk(s)",
-    scope,
-    notes.length,
-    typedChunks.length,
-    sourceChunks.length,
-    typedResult?.embeddings.embeddedChunkCount ?? 0,
-  );
 
   return {
     root,

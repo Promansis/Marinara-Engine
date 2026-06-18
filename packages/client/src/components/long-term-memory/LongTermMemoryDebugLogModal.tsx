@@ -3,7 +3,9 @@ import {
   Bug,
   ChevronDown,
   ChevronRight,
+  Check,
   Clipboard,
+  Copy,
   Download,
   Loader2,
   RefreshCw,
@@ -11,7 +13,7 @@ import {
 } from "lucide-react";
 import type { LtmDebugEvent, LtmDebugPhase, LtmDebugStatus } from "@marinara-engine/shared";
 import { toast } from "sonner";
-import { cn } from "../../lib/utils";
+import { cn, copyToClipboard } from "../../lib/utils";
 import {
   useClearLongTermMemoryDebugLog,
   useExportLongTermMemoryDebugLog,
@@ -25,13 +27,18 @@ import { labelLtmTier, labelRejectionReason, summarizeLtmCandidateSignals } from
 const PHASE_FILTERS: Array<"all" | LtmDebugPhase | "errors"> = [
   "all",
   "import",
+  "source_note",
   "extraction",
   "llm",
   "compiler",
   "draft",
   "apply",
   "injection",
+  "retrieval",
   "rebuild",
+  "repair",
+  "replay",
+  "diagnostic",
   "errors",
 ];
 
@@ -129,6 +136,42 @@ function detailsForEvent(event: LtmDebugEvent) {
   };
 }
 
+function CopyableJsonBlock({ value, className }: { value: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    const ok = await copyToClipboard(value);
+    if (!ok) {
+      toast.error("Could not copy JSON");
+      return;
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1200);
+  };
+
+  return (
+    <div className="group relative">
+      <button
+        type="button"
+        onClick={() => void handleCopy()}
+        title="Copy"
+        aria-label="Copy JSON"
+        className="absolute right-1.5 top-1.5 z-10 inline-flex h-7 w-7 items-center justify-center rounded-md bg-[var(--card)]/95 text-[var(--muted-foreground)] opacity-100 shadow-sm ring-1 ring-[var(--border)] transition-all hover:bg-[var(--secondary)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
+      >
+        {copied ? <Check size="0.75rem" /> : <Copy size="0.75rem" />}
+      </button>
+      <pre
+        className={cn(
+          "overflow-auto whitespace-pre-wrap rounded-md bg-[var(--background)] pb-3 pl-3 pr-12 pt-10 text-[0.6875rem] leading-relaxed text-[var(--foreground)] ring-1 ring-[var(--border)] sm:pt-3",
+          className,
+        )}
+      >
+        {value}
+      </pre>
+    </div>
+  );
+}
+
 function isRecord(value: unknown): value is DebugRecord {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -157,6 +200,10 @@ function getString(value: unknown, key: string): string | undefined {
   return typeof child === "string" ? child : undefined;
 }
 
+function getStringArray(value: unknown, key: string): string[] {
+  return getArray(value, key).filter((item): item is string => typeof item === "string");
+}
+
 function getWarnings(event: LtmDebugEvent | undefined) {
   const detailWarnings = getArray(event?.details, "warnings").filter((item): item is string => typeof item === "string");
   const decisionWarnings = getArray(getRecord(event?.details, "decision"), "warnings").filter(
@@ -167,6 +214,12 @@ function getWarnings(event: LtmDebugEvent | undefined) {
 
 function latestInjectionEvent(events: LtmDebugEvent[]) {
   return [...events].find((event) => event.phase === "injection" && event.action === "prompt_injection" && event.status !== "started");
+}
+
+function latestEvent(events: LtmDebugEvent[], phase: LtmDebugPhase, action?: string) {
+  return [...events]
+    .reverse()
+    .find((event) => event.phase === phase && (action === undefined || event.action === action));
 }
 
 function aggregateOperation(operationId: string, events: LtmDebugEvent[]): OperationSummary {
@@ -277,9 +330,7 @@ function EventRow({ event }: { event: LtmDebugEvent }) {
       </button>
       {expanded && (
         <div className="border-t border-[var(--border)]/70 px-3 py-2">
-          <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-[var(--background)] p-2 text-[0.6875rem] leading-relaxed text-[var(--foreground)] ring-1 ring-[var(--border)]">
-            {JSON.stringify(detailsForEvent(event), null, 2)}
-          </pre>
+          <CopyableJsonBlock value={JSON.stringify(detailsForEvent(event), null, 2)} className="max-h-72" />
         </div>
       )}
     </article>
@@ -414,6 +465,54 @@ function InjectionDecisionSummary({ summary }: { summary: OperationSummary }) {
   );
 }
 
+function DraftApplySummary({ summary }: { summary: OperationSummary }) {
+  const draftEvent =
+    latestEvent(summary.events, "draft", "draft_created") ?? latestEvent(summary.events, "draft", "draft_skipped");
+  const selectionEvent = latestEvent(summary.events, "apply", "mutations_selected");
+  const skippedMutationIds = getStringArray(selectionEvent?.details, "skippedMutationIds");
+  const selectedMutationIds = selectionEvent?.mutationIds ?? [];
+  const draftState = draftEvent
+    ? draftEvent.action === "draft_created"
+      ? "Created"
+      : "Skipped"
+    : selectionEvent
+      ? "Existing"
+      : null;
+  const draftReason = getString(draftEvent?.details, "reason");
+  const selectedCount = selectionEvent?.counts?.selectedMutations ?? selectedMutationIds.length;
+  const skippedCount = selectionEvent?.counts?.skippedMutations ?? skippedMutationIds.length;
+  const totalMutations = selectionEvent?.counts?.totalMutations ?? draftEvent?.counts?.mutations;
+  const remainingPending = skippedCount > 0 ? skippedCount : 0;
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-2 sm:grid-cols-5">
+        <Metric label="Draft" value={draftState} />
+        <Metric label="Total mutations" value={totalMutations} />
+        <Metric label="Selected" value={selectionEvent ? selectedCount : null} />
+        <Metric label="Skipped" value={selectionEvent ? skippedCount : null} />
+        <Metric label="Pending" value={selectionEvent ? remainingPending : null} />
+      </div>
+
+      <div className="flex flex-wrap gap-1.5">
+        {draftEvent?.draftId && <StatusPill label={`Draft ${draftEvent.draftId.slice(0, 8)}`} />}
+        {draftReason && <StatusPill label={phaseLabel(draftReason)} />}
+        {selectedMutationIds.length > 0 && <StatusPill label={`${selectedMutationIds.length} selected id${selectedMutationIds.length === 1 ? "" : "s"}`} />}
+        {skippedMutationIds.length > 0 && <StatusPill label={`${skippedMutationIds.length} skipped id${skippedMutationIds.length === 1 ? "" : "s"}`} tone="warn" />}
+      </div>
+
+      {skippedMutationIds.length > 0 && (
+        <section className="space-y-2">
+          <div className="text-xs font-semibold text-[var(--foreground)]">Skipped mutation IDs</div>
+          <div className="rounded-lg bg-[var(--background)] px-3 py-2 font-mono text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]/70">
+            {skippedMutationIds.join(", ")}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
 function GenericOperationSummary({ summary }: { summary: OperationSummary }) {
   return (
     <div className="space-y-3">
@@ -444,6 +543,7 @@ function OperationDrawer({ summary, defaultOpen }: { summary: OperationSummary; 
   const [open, setOpen] = useState(defaultOpen);
   const [tab, setTab] = useState<OperationTab>("summary");
   const isInjection = summary.phases.includes("injection");
+  const isDraftApply = summary.phases.some((phase) => phase === "draft" || phase === "apply");
   const duration = formatDuration(summary.totalDurationMs);
   const chips = importantCountChips(summary);
 
@@ -495,7 +595,14 @@ function OperationDrawer({ summary, defaultOpen }: { summary: OperationSummary; 
             ))}
           </div>
 
-          {tab === "summary" && (isInjection ? <InjectionDecisionSummary summary={summary} /> : <GenericOperationSummary summary={summary} />)}
+          {tab === "summary" &&
+            (isInjection ? (
+              <InjectionDecisionSummary summary={summary} />
+            ) : isDraftApply ? (
+              <DraftApplySummary summary={summary} />
+            ) : (
+              <GenericOperationSummary summary={summary} />
+            ))}
           {tab === "events" && (
             <div className="space-y-1.5">
               {summary.events.map((event) => (
@@ -504,9 +611,7 @@ function OperationDrawer({ summary, defaultOpen }: { summary: OperationSummary; 
             </div>
           )}
           {tab === "raw" && (
-            <pre className="max-h-[28rem] overflow-auto whitespace-pre-wrap rounded-md bg-[var(--background)] p-3 text-[0.6875rem] leading-relaxed text-[var(--foreground)] ring-1 ring-[var(--border)]">
-              {JSON.stringify(summary.events, null, 2)}
-            </pre>
+            <CopyableJsonBlock value={JSON.stringify(summary.events, null, 2)} className="max-h-[28rem]" />
           )}
         </div>
       )}
@@ -542,7 +647,11 @@ export function LongTermMemoryDebugLogModal({ open, onClose }: { open: boolean; 
   const latestAlertOperationId = grouped.find((group) => group.hasError || group.hasWarning)?.operationId;
 
   const copyVisible = async () => {
-    await navigator.clipboard.writeText(events.map((event) => JSON.stringify(event)).join("\n"));
+    const ok = await copyToClipboard(events.map((event) => JSON.stringify(event)).join("\n"));
+    if (!ok) {
+      toast.error("Could not copy debug log");
+      return;
+    }
     toast.success("Debug log copied");
   };
 
