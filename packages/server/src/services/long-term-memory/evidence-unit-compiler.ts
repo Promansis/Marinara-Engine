@@ -218,6 +218,9 @@ function sectionsForUnits(units: LtmEvidenceUnit[], existing: LtmNote | undefine
     const existingSection = existing?.sections[sectionKey];
     const lifecycle = LTM_BUCKET_LIFECYCLE[unit.bucket];
     const text = lifecycle === "cumulative" ? cumulativeLine(unit) : unit.text.trim();
+    if (lifecycle === "cumulative" && isDuplicateCumulativeLine(existingSection?.text, text)) {
+      continue;
+    }
     const baseText = sections[sectionKey]?.text;
     sections[sectionKey] = {
       text: mergeSectionText(baseText, text, lifecycle === "cumulative"),
@@ -290,8 +293,28 @@ function cumulativeLine(unit: LtmEvidenceUnit) {
 function mergeSectionText(existing: string | undefined, incoming: string, append: boolean) {
   if (!existing?.trim()) return incoming.trim();
   if (!append) return incoming.trim();
-  if (existing.includes(incoming.trim())) return existing.trim();
+  if (isDuplicateCumulativeLine(existing, incoming)) return existing.trim();
   return `${existing.trim()}\n${incoming.trim()}`;
+}
+
+function isDuplicateCumulativeLine(existing: string | undefined, incoming: string) {
+  const normalizedIncoming = normalizeCumulativeLine(incoming);
+  if (!normalizedIncoming) return false;
+  return cumulativeLines(existing).some((line) => normalizeCumulativeLine(line) === normalizedIncoming);
+}
+
+function cumulativeLines(text: string | undefined) {
+  if (!text?.trim()) return [];
+  return text.split(/\r?\n+/).map((line) => line.trim()).filter(Boolean);
+}
+
+function normalizeCumulativeLine(text: string) {
+  return text
+    .trim()
+    .replace(/^[-*]\s*/, "")
+    .replace(/\s+/g, " ")
+    .replace(/[.。]+$/u, "")
+    .toLowerCase();
 }
 
 function examplesFromSection(text: string | undefined) {

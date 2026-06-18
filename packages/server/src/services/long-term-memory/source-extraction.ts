@@ -7,6 +7,7 @@ import {
   type LtmExtractionResponse,
   type LtmMode,
   type LtmNote,
+  type LtmEvidenceUnit,
   type LtmScope,
 } from "@marinara-engine/shared";
 import type { BaseLLMProvider } from "../llm/base-provider.js";
@@ -25,6 +26,18 @@ import { LongTermMemoryDraftStore } from "./draft-store.js";
 import { noteIdForEvidenceUnit } from "./evidence-unit-validation.js";
 import { retrieveLongTermMemory, type RetrieveLongTermMemoryInput } from "./retrieval.js";
 import { LongTermMemoryStorage } from "./storage.js";
+
+const SOURCE_SUMMARY_ALLOWED_EVIDENCE_BUCKETS: LtmEvidenceUnit["bucket"][] = [
+  "timeline_event",
+  "character_fact",
+  "relationship_event",
+  "relationship_state",
+  "relationship_conflict",
+  "world_fact",
+  "thread",
+  "tone",
+  "anchor",
+];
 
 export type ExtractLongTermMemoryFromSourceNoteOptions = {
   noteId: string;
@@ -295,6 +308,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
     maxExistingNoteChars: extractionConfig.maxExistingNoteChars,
     signal: options.signal,
     operationId: options.operationId,
+    allowedBuckets: SOURCE_SUMMARY_ALLOWED_EVIDENCE_BUCKETS,
   };
 
   const extractionPayload = await runLongTermMemoryEvidenceUnitExtraction(baseExtractionOptions);

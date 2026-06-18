@@ -1873,7 +1873,6 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
   assert.deepEqual(userPayload.allowedBuckets, [
     "timeline_event",
     "character_fact",
-    "character_state",
     "relationship_event",
     "relationship_state",
     "relationship_conflict",
@@ -1885,6 +1884,8 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
   const payloadJson = JSON.stringify(userPayload);
   assert(!payloadJson.includes("relationship_arc"));
   assert(!payloadJson.includes("current_scene"));
+  assert(!payloadJson.includes("current_state"));
+  assert(!payloadJson.includes("character_state"));
   assert(!payloadJson.includes("boundary"));
   assert(!payloadJson.includes("preference"));
   assert(!payloadJson.includes("550e8400-e29b-41d4-a716-446655440000"));
@@ -2168,6 +2169,243 @@ test("evidence unit extraction validation rejects copied placeholder values", ()
     ["candidate_dropped_placeholder_output"],
   );
   assert.deepEqual(compiled.outcome.droppedCandidates.map((candidate) => candidate.reason), ["placeholder_output"]);
+});
+
+test("source-summary extraction validation drops transient character state candidates", () => {
+  const sourceNote: LtmNote = {
+    id: "scene_source_test",
+    type: "scene",
+    status: "active",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["source_summary"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      source: {
+        text: "Mara is wounded but steadies herself before entering the archive.",
+        updatedAt: timestamp,
+        evidence: ["chat:chat_test"],
+      },
+    },
+    version: 1,
+  };
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse: {
+      summary: "Transient condition",
+      units: [
+        evidenceUnit("character_state", {
+          subjectId: "mara",
+          sectionKey: "current_state",
+          text: "Mara is wounded but steadies herself before entering the archive.",
+          evidence: ["source_note:scene_source_test"],
+        }),
+      ],
+    },
+    sourceText: sourceNote.sections.source!.text,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    sourceHash,
+  });
+
+  assert.equal(compiled.compiledResponse.mutations.length, 0);
+  assert.deepEqual(compiled.outcome.droppedCandidates.map((candidate) => candidate.reason), ["unsupported_bucket"]);
+  assert(
+    compiled.diagnostics.some(
+      (diagnostic) =>
+        diagnostic.severity === "error" && diagnostic.code === "candidate_dropped_unsupported_bucket",
+    ),
+  );
+});
+
+test("source-summary extraction validation drops event-shaped character facts but keeps developments", () => {
+  const sourceNote: LtmNote = {
+    id: "scene_source_test",
+    type: "scene",
+    status: "active",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["source_summary"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      source: {
+        text: "Mara entered the archive. Mara permanently lost her left eye.",
+        updatedAt: timestamp,
+        evidence: ["chat:chat_test"],
+      },
+    },
+    version: 1,
+  };
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse: {
+      summary: "Action and development",
+      units: [
+        evidenceUnit("character_fact", {
+          subjectId: "mara",
+          sectionKey: "facts",
+          text: "Mara entered the archive.",
+          evidence: ["source_note:scene_source_test"],
+        }),
+        evidenceUnit("character_fact", {
+          subjectId: "mara",
+          sectionKey: "developments",
+          text: "Mara permanently lost her left eye.",
+          evidence: ["source_note:scene_source_test"],
+        }),
+      ],
+    },
+    sourceText: sourceNote.sections.source!.text,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    sourceHash,
+  });
+
+  assert.deepEqual(compiled.outcome.droppedCandidates.map((candidate) => candidate.reason), ["unsupported_bucket"]);
+  const createCharacter = compiled.compiledResponse.mutations.find(
+    (mutation) => mutation.kind === "create_note" && mutation.note.id === "char_mara",
+  );
+  assert(createCharacter?.kind === "create_note");
+  assert.equal(createCharacter.note.sections.developments?.text, "Mara permanently lost her left eye.");
+  assert.equal(createCharacter.note.sections.facts, undefined);
+});
+
+test("relationship state candidates require relationship history support", () => {
+  const sourceNote: LtmNote = {
+    id: "scene_source_test",
+    type: "scene",
+    status: "active",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["source_summary"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      source: {
+        text: "Mara trusts Jules after he returns the archive key.",
+        updatedAt: timestamp,
+        evidence: ["chat:chat_test"],
+      },
+    },
+    version: 1,
+  };
+
+  const unsupported = compileEvidenceUnitExtraction({
+    unitResponse: {
+      summary: "Unsupported state",
+      units: [
+        evidenceUnit("relationship_state", {
+          subjectId: "mara_jules",
+          sectionKey: "state",
+          text: "Mara and Jules are rebuilding trust.",
+          evidence: ["source_note:scene_source_test"],
+        }),
+      ],
+    },
+    sourceText: sourceNote.sections.source!.text,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    sourceHash,
+  });
+  assert.equal(unsupported.compiledResponse.mutations.length, 0);
+  assert.deepEqual(unsupported.outcome.droppedCandidates.map((candidate) => candidate.reason), ["unsupported_bucket"]);
+
+  const supported = compileEvidenceUnitExtraction({
+    unitResponse: {
+      summary: "Supported state",
+      units: [
+        evidenceUnit("relationship_event", {
+          subjectId: "mara_jules",
+          sectionKey: "history",
+          text: "Mara trusted Jules after he returned the archive key.",
+          evidence: ["source_note:scene_source_test"],
+        }),
+        evidenceUnit("relationship_state", {
+          subjectId: "mara_jules",
+          sectionKey: "state",
+          text: "Mara and Jules are rebuilding trust.",
+          evidence: ["source_note:scene_source_test"],
+        }),
+      ],
+    },
+    sourceText: sourceNote.sections.source!.text,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    sourceHash,
+  });
+  assert.deepEqual(supported.outcome.droppedCandidates, []);
+  const createRelationship = supported.compiledResponse.mutations.find(
+    (mutation) => mutation.kind === "create_note" && mutation.note.id === "rel_mara_jules",
+  );
+  assert(createRelationship?.kind === "create_note");
+  assert.equal(createRelationship.note.sections.state?.text, "Mara and Jules are rebuilding trust.");
+});
+
+test("relationship state support ignores same-pass events dropped during validation", () => {
+  const sourceNote: LtmNote = {
+    id: "scene_source_test",
+    type: "scene",
+    status: "active",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["source_summary"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      source: {
+        text: "Mara trusts Jules after he returns the archive key.",
+        updatedAt: timestamp,
+        evidence: ["chat:chat_test"],
+      },
+    },
+    version: 1,
+  };
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse: {
+      summary: "Invalid support",
+      units: [
+        evidenceUnit("relationship_event", {
+          subjectId: "mara_jules",
+          sectionKey: "history",
+          text: "Mara trusted Jules after he returned the archive key.",
+          evidence: ["source_note:wrong_source"],
+        }),
+        evidenceUnit("relationship_state", {
+          subjectId: "mara_jules",
+          sectionKey: "state",
+          text: "Mara and Jules are rebuilding trust.",
+          evidence: ["source_note:scene_source_test"],
+        }),
+      ],
+    },
+    sourceText: sourceNote.sections.source!.text,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    sourceHash,
+  });
+
+  assert.equal(compiled.compiledResponse.mutations.length, 0);
+  assert.deepEqual(compiled.outcome.droppedCandidates.map((candidate) => candidate.reason), [
+    "missing_source_evidence",
+    "unsupported_bucket",
+  ]);
 });
 
 test("evidence unit compiler reports when suggested changes exceed the draft cap", () => {
@@ -3080,6 +3318,45 @@ test("evidence unit compiler keeps relationship state unchanged when only new ev
     ),
     false,
   );
+});
+
+test("evidence unit compiler skips duplicate cumulative lines from overlapping summaries", () => {
+  const existingRelationship: LtmNote = {
+    id: "rel_mara_jules",
+    type: "relationship",
+    status: "active",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["typed_memory", "relationship_memory"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      history: {
+        text: "- Mara trusted Jules after he returned the archive key.",
+        updatedAt: timestamp,
+        evidence: ["source_note:scene_source_1"],
+      },
+    },
+    version: 1,
+  };
+
+  const response = compileLtmEvidenceUnits({
+    units: [
+      evidenceUnit("relationship_event", {
+        subjectId: "mara_jules",
+        sectionKey: "history",
+        text: "mara trusted jules after he returned the archive key",
+        evidence: ["source_note:scene_source_2", "message_range:50-100"],
+      }),
+    ],
+    existingNotes: [existingRelationship],
+    scope: {},
+    modes: ["roleplay"],
+    createdAt: timestamp,
+  });
+
+  assert.deepEqual(response.mutations, []);
 });
 
 test("generate route no longer creates live-turn long-term memory drafts", async () => {

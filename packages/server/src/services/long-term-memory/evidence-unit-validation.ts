@@ -11,6 +11,14 @@ const DIALOGUE_BUCKETS = new Set<LtmEvidenceUnit["bucket"]>(["tone"]);
 const RISK_BUCKETS = new Set<LtmEvidenceUnit["bucket"]>(["relationship_conflict"]);
 const PLACEHOLDER_UUID = "550e8400-e29b-41d4-a716-446655440000";
 const PLACEHOLDER_MERGE_HINT = "optional note for deterministic compiler";
+const SOURCE_EXTRACTION_DISALLOWED_BUCKETS = new Set<LtmEvidenceUnit["bucket"]>(["character_state"]);
+const CHARACTER_FACT_EVENT_SECTION_KEYS = new Set(["facts", "core", "profile"]);
+const CHARACTER_FACT_DURABLE_SECTION_KEYS = new Set(["developments", "abilities", "items", "voice"]);
+const EVENT_SHAPED_CHARACTER_FACT_PATTERN =
+  /\b(?:arrived|departed|entered|left|went|came|returned|walked|ran|fled|attacked|fought|killed|died|met|spoke|told|asked|answered|promised|decided|agreed|refused|accepted|rejected|gave|took|found|discovered|revealed|learned|opened|closed|escaped|rescued|betrayed|confronted|warned|saved|stopped)\b/i;
+const THREAD_RESOLUTION_PATTERN =
+  /\b(?:resolve|resolved|resolution|would resolve|will resolve|until|when|if|requires|needs|awaits|pending|unresolved|open question|pay off|payoff|future|goal|must|should)\b/i;
+const SCENE_ONLY_TONE_PATTERN = /\b(?:this scene|single scene|momentarily|for the scene|scene tone|currently|right now)\b/i;
 
 function tokenize(value: string) {
   return new Set(
@@ -93,6 +101,7 @@ export function validateLtmEvidenceUnits({
   const diagnostics: LtmExtractionDiagnostic[] = [];
   const droppedCandidates: LtmExtractionDroppedCandidate[] = [];
   const keptUnits: LtmEvidenceUnit[] = [];
+  const keptCandidateIndexes = new Map<LtmEvidenceUnit, number>();
   const sourceEvidence = sourceNote ? `source_note:${sourceNote.id}` : null;
 
   if (sourceNote && !isSourceNote(sourceNote)) {
@@ -180,14 +189,47 @@ export function validateLtmEvidenceUnits({
       });
     }
 
-    if (!hasRelationshipSupport(unit, units, existingNotes)) {
-      diagnostics.push({
-        severity: "warning",
-        code: "relationship_state_without_history",
+    if (sourceNote && isSourceNote(sourceNote) && SOURCE_EXTRACTION_DISALLOWED_BUCKETS.has(unit.bucket)) {
+      unitDiagnostics.push({
+        severity: "error",
+        code: "unsupported_source_extraction_bucket",
         candidateIndex,
         mutationId: unit.id,
         noteId,
-        message: "Relationship state should be backed by relationship event evidence or existing state.",
+        message: "Source-summary extraction does not support this typed-memory bucket.",
+      });
+    }
+
+    if (isEventShapedCharacterFact(unit)) {
+      unitDiagnostics.push({
+        severity: "error",
+        code: "event_shaped_character_fact",
+        candidateIndex,
+        mutationId: unit.id,
+        noteId,
+        message: "Character fact candidates must not capture ordinary scene actions or timeline beats.",
+      });
+    }
+
+    if (isVagueThread(unit)) {
+      unitDiagnostics.push({
+        severity: "error",
+        code: "vague_thread",
+        candidateIndex,
+        mutationId: unit.id,
+        noteId,
+        message: "Thread candidates must describe an unresolved condition and what would resolve it.",
+      });
+    }
+
+    if (isSceneOnlyToneOrAnchor(unit)) {
+      unitDiagnostics.push({
+        severity: "error",
+        code: "scene_only_tone_or_anchor",
+        candidateIndex,
+        mutationId: unit.id,
+        noteId,
+        message: "Tone and anchor candidates must describe durable atmosphere, motifs, or callbacks.",
       });
     }
 
@@ -232,9 +274,35 @@ export function validateLtmEvidenceUnits({
 
     diagnostics.push(...unitDiagnostics);
     keptUnits.push(unit);
+    keptCandidateIndexes.set(unit, candidateIndex);
   }
 
-  return { keptUnits, diagnostics, droppedCandidates };
+  const finalKeptUnits: LtmEvidenceUnit[] = [];
+  for (const unit of keptUnits) {
+    if (hasRelationshipSupport(unit, keptUnits, existingNotes)) {
+      finalKeptUnits.push(unit);
+      continue;
+    }
+    const candidateIndex = keptCandidateIndexes.get(unit) ?? 0;
+    const noteId = noteIdForEvidenceUnit(unit);
+    const dropped = droppedCandidate({
+      candidateIndex,
+      reason: "unsupported_bucket",
+      message: userFacingDropMessage("unsupported_bucket"),
+      unit,
+    });
+    droppedCandidates.push(dropped);
+    diagnostics.push({
+      severity: "error",
+      code: dropReasonDiagnosticCode(dropped.reason),
+      candidateIndex,
+      mutationId: unit.id,
+      noteId,
+      message: dropped.message,
+    });
+  }
+
+  return { keptUnits: finalKeptUnits, diagnostics, droppedCandidates };
 }
 
 function placeholderDiagnostics(unit: LtmEvidenceUnit, noteId: string, candidateIndex: number): LtmExtractionDiagnostic[] {
@@ -299,6 +367,23 @@ function placeholderDiagnostics(unit: LtmEvidenceUnit, noteId: string, candidate
   }
 
   return diagnostics;
+}
+
+function isEventShapedCharacterFact(unit: LtmEvidenceUnit) {
+  if (unit.bucket !== "character_fact") return false;
+  if (CHARACTER_FACT_DURABLE_SECTION_KEYS.has(unit.sectionKey)) return false;
+  if (!CHARACTER_FACT_EVENT_SECTION_KEYS.has(unit.sectionKey)) return false;
+  return EVENT_SHAPED_CHARACTER_FACT_PATTERN.test(unit.text);
+}
+
+function isVagueThread(unit: LtmEvidenceUnit) {
+  if (unit.bucket !== "thread") return false;
+  return !THREAD_RESOLUTION_PATTERN.test(unit.text);
+}
+
+function isSceneOnlyToneOrAnchor(unit: LtmEvidenceUnit) {
+  if (unit.bucket !== "tone" && unit.bucket !== "anchor") return false;
+  return SCENE_ONLY_TONE_PATTERN.test(unit.text);
 }
 
 export function noteIdForEvidenceUnit(unit: Pick<LtmEvidenceUnit, "bucket" | "subjectId" | "sectionKey">) {
@@ -392,6 +477,15 @@ function diagnosticToDropReason(code: string): LtmExtractionDropReason | null {
   if (code === "unsupported_dialogue_quote") return "quote_not_found_in_source";
   if (code === "missing_source_note_evidence" || code === "missing_evidence") return "missing_source_evidence";
   if (code === "source_summary_payload") return "source_summary_payload";
+  if (
+    code === "unsupported_source_extraction_bucket" ||
+    code === "relationship_state_without_history" ||
+    code === "event_shaped_character_fact" ||
+    code === "vague_thread" ||
+    code === "scene_only_tone_or_anchor"
+  ) {
+    return "unsupported_bucket";
+  }
   if (code === "overlong_evidence_unit") return "too_long_to_keep_safely";
   return null;
 }
@@ -406,6 +500,8 @@ function dropReasonDiagnosticCode(reason: LtmExtractionDropReason) {
       return "candidate_dropped_missing_source_evidence";
     case "source_summary_payload":
       return "candidate_dropped_source_summary_payload";
+    case "unsupported_bucket":
+      return "candidate_dropped_unsupported_bucket";
     case "target_note_outside_scope":
       return "candidate_dropped_target_note_outside_scope";
     case "too_long_to_keep_safely":
@@ -425,6 +521,8 @@ function userFacingDropMessage(reason: LtmExtractionDropReason) {
       return "Dropped a candidate that did not include usable source evidence.";
     case "source_summary_payload":
       return "Dropped a candidate that looked like a source-summary transcript instead of a typed memory.";
+    case "unsupported_bucket":
+      return "Dropped a candidate that used the wrong typed-memory bucket for source-summary extraction.";
     case "target_note_outside_scope":
       return "Dropped a candidate that targeted a memory outside this source's scope.";
     case "too_long_to_keep_safely":

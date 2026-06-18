@@ -6,7 +6,6 @@ import {
   DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
   DEFAULT_LTM_EXTRACTION_VERBOSITY,
   LTM_DRAFT_MUTATION_LIMIT,
-  ltmEvidenceUnitBucketSchema,
   ltmEvidenceUnitExtractionResponseSchema,
   ltmEvidenceUnitSchema,
   ltmEvidenceUnitStatusSchema,
@@ -35,7 +34,10 @@ export const DEFAULT_LTM_EXTRACTION_PROMPT = [
   "Do not output source summaries, transcript summaries, or final write operations.",
   "Extract every distinct durable memory unit supported by the source.",
   "Emit zero or more units per bucket. Prefer a few substantial units that capture the complete fact over many fragmentary observations.",
-  "Scan bucket groups explicitly: timeline beats (timeline_event); relationships (relationship_event, relationship_state, relationship_conflict); open loops (thread); character facts and state (character_fact, character_state); world facts (world_fact); style and motifs (tone, anchor).",
+  "Scan bucket groups explicitly: timeline beats (timeline_event); relationships (relationship_event, relationship_state, relationship_conflict); open loops (thread); character facts (character_fact); world facts (world_fact); style and motifs (tone, anchor).",
+  "Use one best bucket per fact. If a detail fits both a timeline and character/relationship bucket, emit the plot-changing action as timeline_event or relationship_event and reserve character_fact for durable identity, backstory, permanent development, ability, item, or exact voice evidence.",
+  "Do not duplicate the same fact across buckets or sections.",
+  "Write source-derived memories in past-tense/outcome phrasing unless the fact is a durable present-tense rule or trait.",
 
   "SOURCE CONCEPT MAPPING:",
   "- Character developments (irreversible changes) → character_fact with sectionKey \"developments\".",
@@ -46,16 +48,15 @@ export const DEFAULT_LTM_EXTRACTION_PROMPT = [
   "- Callbacks → thread. Prepend [CALLBACK] in the text. Include planted element, payoff target, and status.",
 
   "SECTION KEY CONVENTIONS:",
-  "- character_fact: facts, developments, abilities, voice, or items.",
-  "- character_state: current_state.",
+  "- character_fact: facts, developments, abilities, voice, or items. Never use it for ordinary actions, scene beats, decisions, arrivals, departures, promises, discoveries, relationship moments, moods, wounds, resources, aims, or location.",
   "- relationship_event: history.",
-  "- relationship_state: state.",
+  "- relationship_state: state, only when backed by a same-pass relationship_event or existing relationship note.",
   "- relationship_conflict: conflict.",
   "- world_fact: facts or items.",
   "- timeline_event: event.",
-  "- thread: summary.",
-  "- tone: observations.",
-  "- anchor: the source section key.",
+  "- thread: summary. The text must describe an unresolved situation and what would resolve it.",
+  "- tone: observations. World/session-level atmospheric register only, not one-scene mood.",
+  "- anchor: the source section key. Recurring motif or planted callback only.",
 
   "Each unit must be typed and useful for future continuity.",
   "Every unit must include at least one supplied evidence string, including source_note:<id>.",
@@ -69,7 +70,7 @@ export const DEFAULT_LTM_EXTRACTION_PROMPT = [
   "Use sourceHash exactly as supplied.",
   "Set confidence and salience from 0 to 1.",
   "For voice/tone quotes, quote only exact text present in the source.",
-  "Do not emit current scene, relationship arc, boundary, or preference memories from source-summary extraction.",
+  "Do not emit current scene, current state, character_state, relationship arc, boundary, or preference memories from source-summary extraction.",
   "For enum fields, choose exactly one string from the allowed arrays. Do not join multiple values with |.",
 ].join("\n");
 const LTM_EXTRACTION_BUCKET_SCAN_ORDER = [
@@ -84,6 +85,17 @@ const LTM_EXTRACTION_BUCKET_SCAN_ORDER = [
   "tone",
   "anchor",
 ] as const;
+export const DEFAULT_LTM_EVIDENCE_UNIT_ALLOWED_BUCKETS = [
+  "timeline_event",
+  "character_fact",
+  "relationship_event",
+  "relationship_state",
+  "relationship_conflict",
+  "world_fact",
+  "thread",
+  "tone",
+  "anchor",
+] as const satisfies LtmEvidenceUnit["bucket"][];
 
 export interface RunLongTermMemoryEvidenceUnitExtractionOptions {
   sourceNote: LtmNote;
@@ -316,19 +328,19 @@ function formatExistingNotes(notes: LtmNote[], maxChars = DEFAULT_LTM_EXTRACTION
 }
 
 function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOptions): ChatMessage[] {
-  const allowedBuckets = options.allowedBuckets ?? ltmEvidenceUnitBucketSchema.options;
+  const allowedBuckets = options.allowedBuckets ?? DEFAULT_LTM_EVIDENCE_UNIT_ALLOWED_BUCKETS;
   const filteredScanOrder = LTM_EXTRACTION_BUCKET_SCAN_ORDER.filter((bucket) => allowedBuckets.includes(bucket));
   const allBucketDescriptions: Record<string, string> = {
-    timeline_event: "historical source-summary scene or beat; not the live current scene",
-    character_fact: "stable character fact",
-    character_state: "current character condition, aim, mood, capability, or position",
-    relationship_event: "evidence-backed relationship history item",
-    relationship_state: "current reduced relationship state",
+    timeline_event: "source-summary scene/plot pivot, decision, action, discovery, fight outcome, promise, arrival, or departure; not the live current scene",
+    character_fact: "durable character identity/trait/role/affiliation/backstory/belief/permanent status/development/ability/item/exact voice quote; not ordinary scene action or transient condition",
+    character_state: "legacy/manual current character condition only; source-summary extraction must not use this bucket",
+    relationship_event: "evidence-backed interpersonal event or history item",
+    relationship_state: "current reduced relationship state backed by same-pass relationship_event or existing relationship note",
     relationship_conflict: "unresolved contradiction or instability",
     world_fact: "stable world/lore fact",
-    thread: "unresolved situation, question, tension, or goal",
-    tone: "durable tone or scene tone",
-    anchor: "recurring motif/anchor",
+    thread: "unresolved situation, question, tension, or goal with a clear future resolver",
+    tone: "durable world/session atmospheric register or recurring style only",
+    anchor: "recurring motif, planted callback, or continuity anchor",
   };
   const filteredBucketDescriptions: Record<string, string> = {};
   for (const bucket of allowedBuckets) {

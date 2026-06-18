@@ -517,6 +517,7 @@ export const ltmExtractionDropReasonSchema = z.enum([
   "quote_not_found_in_source",
   "missing_source_evidence",
   "source_summary_payload",
+  "unsupported_bucket",
   "target_note_outside_scope",
   "too_long_to_keep_safely",
 ]);
