@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Eye,
   FileJson,
+  GitBranch,
   Hammer,
   History,
   Info,
@@ -30,6 +31,7 @@ import type {
   LtmLink,
   LtmNote,
   LtmNoteType,
+  LtmScope,
   LtmStatus,
 } from "@marinara-engine/shared";
 import {
@@ -56,6 +58,7 @@ import {
 } from "../../hooks/use-long-term-memory";
 import { useChatStore } from "../../stores/chat.store";
 import { useChat, useChatMessages, useChats, useUpdateChatMetadata } from "../../hooks/use-chats";
+import { useCharacters } from "../../hooks/use-characters";
 import { useConnections } from "../../hooks/use-connections";
 import { cn } from "../../lib/utils";
 import {
@@ -143,6 +146,20 @@ type SourceSummaryGroup = {
 type MemoryModalMode = "view" | "edit";
 type MemoryModalTab = "overview" | "content" | "links" | "recall" | "suggestions";
 type LtmRecallStyle = "balanced" | "exact" | "broad" | "story";
+type LtmNavigatorSelection = {
+  groupId: string | null;
+  chatId: string | null;
+};
+type LtmNavigatorThread = {
+  id: string;
+  groupId: string | null;
+  title: string;
+  chats: Chat[];
+  representative: Chat;
+  characterIds: string[];
+  searchText: string;
+};
+type CharacterLookup = Map<string, { name: string }>;
 
 const LTM_RECALL_STYLES: Array<{ id: LtmRecallStyle; label: string; description: string }> = [
   { id: "balanced", label: "Balanced", description: "Mixes meaning, exact wording, and linked story notes." },
@@ -193,6 +210,30 @@ function parseMetadata(raw: unknown): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function uniqueStrings(values: Array<string | null | undefined>) {
+  return [...new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value)))];
+}
+
+function normalizeChatCharacterIds(value: unknown) {
+  if (Array.isArray(value)) return uniqueStrings(value.filter((item): item is string => typeof item === "string"));
+  if (typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? uniqueStrings(parsed.filter((item): item is string => typeof item === "string"))
+      : [];
+  } catch {
+    return value.trim() ? [value.trim()] : [];
+  }
+}
+
+function characterNameFromRow(row: unknown) {
+  const record = row && typeof row === "object" ? (row as Record<string, unknown>) : {};
+  const data = record.data;
+  const parsed = typeof data === "string" ? parseMetadata(data) : parseMetadata(data);
+  return typeof parsed.name === "string" && parsed.name.trim() ? parsed.name.trim() : "Unknown";
 }
 
 function SettingToggle({
@@ -288,6 +329,98 @@ function noteTextPreview(note: LtmNote, limit = 220) {
   );
 }
 
+function buildNavigatorThreads(chats: Chat[] | undefined, characters: CharacterLookup): LtmNavigatorThread[] {
+  const byThread = new Map<string, Chat[]>();
+  for (const chat of chats ?? []) {
+    const key = chat.groupId ? `group:${chat.groupId}` : `chat:${chat.id}`;
+    byThread.set(key, [...(byThread.get(key) ?? []), chat]);
+  }
+
+  return [...byThread.entries()]
+    .map(([id, groupChats]) => {
+      const sortedChats = [...groupChats].sort((left, right) => {
+        const updated = new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+        return updated || (right.name || "").localeCompare(left.name || "");
+      });
+      const representative = sortedChats[0]!;
+      const characterIds = uniqueStrings(sortedChats.flatMap((chat) => normalizeChatCharacterIds(chat.characterIds)));
+      const characterNames = characterIds.map((id) => characters.get(id)?.name ?? "").filter(Boolean);
+      return {
+        id,
+        groupId: representative.groupId,
+        title: representative.name || "Untitled chat",
+        chats: sortedChats,
+        representative,
+        characterIds,
+        searchText: uniqueStrings([
+          representative.name,
+          representative.id,
+          representative.groupId ?? undefined,
+          ...sortedChats.flatMap((chat) => [chat.id, chat.name]),
+          ...characterNames,
+        ])
+          .join(" ")
+          .toLowerCase(),
+      };
+    })
+    .sort((left, right) => new Date(right.representative.updatedAt).getTime() - new Date(left.representative.updatedAt).getTime());
+}
+
+function findNavigatorThread(threads: LtmNavigatorThread[], selection: LtmNavigatorSelection) {
+  if (selection.groupId) return threads.find((thread) => thread.groupId === selection.groupId) ?? null;
+  if (selection.chatId) return threads.find((thread) => thread.chats.some((chat) => chat.id === selection.chatId)) ?? null;
+  return null;
+}
+
+function selectedNavigatorChat(thread: LtmNavigatorThread | null, selection: LtmNavigatorSelection) {
+  if (!thread) return null;
+  return selection.chatId ? (thread.chats.find((chat) => chat.id === selection.chatId) ?? null) : null;
+}
+
+function scopeFromNavigatorSelection(thread: LtmNavigatorThread | null, selection: LtmNavigatorSelection): LtmScope {
+  if (!thread) return {};
+  const branch = selectedNavigatorChat(thread, selection);
+  if (branch) {
+    const characterIds = normalizeChatCharacterIds(branch.characterIds);
+    return {
+      chatId: branch.id,
+      chatIds: [branch.id],
+      ...(branch.groupId ? { groupId: branch.groupId } : {}),
+      ...(characterIds.length ? { characterIds } : {}),
+    };
+  }
+  if (thread.groupId) {
+    return {
+      groupId: thread.groupId,
+      ...(thread.characterIds.length ? { characterIds: thread.characterIds } : {}),
+    };
+  }
+  const chat = thread.representative;
+  const characterIds = normalizeChatCharacterIds(chat.characterIds);
+  return {
+    chatId: chat.id,
+    chatIds: [chat.id],
+    ...(characterIds.length ? { characterIds } : {}),
+  };
+}
+
+function noteFilterFromNavigatorScope(scope: LtmScope) {
+  return {
+    scopeChatIds: scope.chatIds ?? (scope.chatId ? [scope.chatId] : undefined),
+    scopeGroupId: scope.groupId,
+    scopeCharacterIds: scope.characterIds,
+    includeGlobal: true,
+  };
+}
+
+function scopeDraftFromLtmScope(scope: LtmScope) {
+  return {
+    chatIds: scope.chatIds ?? (scope.chatId ? [scope.chatId] : []),
+    groupId: scope.groupId ?? "",
+    characterIds: scope.characterIds ?? [],
+  };
+}
+
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="space-y-3">
@@ -334,6 +467,94 @@ function DisclosureHeader({
         </span>
       </span>
     </button>
+  );
+}
+
+function LtmContextNavigator({
+  threads,
+  selection,
+  activeChatId,
+  scopeLabel,
+  query,
+  onQueryChange,
+  onSelect,
+}: {
+  threads: LtmNavigatorThread[];
+  selection: LtmNavigatorSelection;
+  activeChatId: string | null;
+  scopeLabel: string;
+  query: string;
+  onQueryChange: (query: string) => void;
+  onSelect: (selection: LtmNavigatorSelection) => void;
+}) {
+  const filteredThreads = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return threads;
+    return threads.filter((thread) => thread.searchText.includes(needle));
+  }, [threads, query]);
+  const selectedThread = findNavigatorThread(threads, selection);
+  const selectedThreadId = selectedThread?.id ?? "";
+  const selectedBranchId = selection.chatId ?? "";
+  const followsActive = Boolean(activeChatId && selectedBranchId === activeChatId);
+
+  return (
+    <div className={cn(sectionCardClassName, "space-y-2")}>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <StatusPill label={followsActive ? "Following active chat" : "Panel scope"} tone={followsActive ? "good" : "warn"} />
+        <StatusPill label={scopeLabel} />
+      </div>
+      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)]">
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2 rounded-lg bg-[var(--secondary)] px-2.5 py-2 ring-1 ring-[var(--border)] focus-within:ring-2 focus-within:ring-[var(--ring)]/60">
+            <Search size="0.8125rem" className="shrink-0 text-[var(--muted-foreground)]" />
+            <input
+              value={query}
+              onChange={(event) => onQueryChange(event.target.value)}
+              placeholder="Find chat, branch, ID, or character"
+              className="min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]/60"
+            />
+          </div>
+          <select
+            value={selectedThreadId}
+            onChange={(event) => {
+              const thread = threads.find((item) => item.id === event.target.value);
+              if (thread) onSelect({ groupId: thread.groupId, chatId: thread.groupId ? null : thread.representative.id });
+            }}
+            className={compactInputClassName}
+          >
+            {filteredThreads.length === 0 && <option value={selectedThreadId}>No chats match</option>}
+            {filteredThreads.map((thread) => (
+              <option key={thread.id} value={thread.id}>
+                {thread.title} {thread.chats.length > 1 ? `(${thread.chats.length} branches)` : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-1.5">
+          <div className="flex min-h-9 items-center gap-2 rounded-lg bg-[var(--secondary)]/45 px-2.5 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+            <GitBranch size="0.8125rem" className="shrink-0" />
+            <span className="truncate">Branch</span>
+          </div>
+          <select
+            value={selectedBranchId}
+            onChange={(event) => {
+              if (!selectedThread) return;
+              const chatId = event.target.value || null;
+              onSelect({ groupId: selectedThread.groupId, chatId });
+            }}
+            disabled={!selectedThread || selectedThread.chats.length <= 1}
+            className={compactInputClassName}
+          >
+            {selectedThread?.groupId && <option value="">All branches</option>}
+            {selectedThread?.chats.map((chat) => (
+              <option key={chat.id} value={chat.id}>
+                {chat.name || "Untitled"} · {chat.id}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -2715,7 +2936,6 @@ export function LongTermMemoryPanel() {
   const [importModel, setImportModel] = useState("");
   const [importInstruction, setImportInstruction] = useState("");
   const [importControlsOpen, setImportControlsOpen] = useState(true);
-  const [importChatId, setImportChatId] = useState<string>("");
   const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(() => new Set());
   const [selectedImportRows, setSelectedImportRows] = useState<Set<string>>(() => new Set());
   const [activeImportIds, setActiveImportIds] = useState<Set<string>>(() => new Set());
@@ -2731,14 +2951,43 @@ export function LongTermMemoryPanel() {
   const [expandedTypeIds, setExpandedTypeIds] = useState<Set<string>>(() => new Set());
   const [expandedMemoryIds, setExpandedMemoryIds] = useState<Set<string>>(() => new Set());
   const [viewingDraftId, setViewingDraftId] = useState<string | null>(null);
+  const [navigatorSelection, setNavigatorSelection] = useState<LtmNavigatorSelection>({ groupId: null, chatId: null });
+  const [navigatorQuery, setNavigatorQuery] = useState("");
 
   const { data: chats } = useChats();
+  const { data: characters } = useCharacters();
   const { data: connections } = useConnections();
   const chatLookup = useMemo(() => new Map((chats as Chat[] | undefined)?.map((c) => [c.id, c])), [chats]);
+  const characterLookup = useMemo(() => {
+    const map: CharacterLookup = new Map();
+    for (const character of (characters ?? []) as Array<{ id?: unknown; data?: unknown }>) {
+      if (typeof character.id === "string") map.set(character.id, { name: characterNameFromRow(character) });
+    }
+    return map;
+  }, [characters]);
+  const navigatorThreads = useMemo(
+    () => buildNavigatorThreads(chats as Chat[] | undefined, characterLookup),
+    [characterLookup, chats],
+  );
   const activeChatId = useChatStore((s) => s.activeChatId);
   const cachedActiveChat = useChatStore((s) => s.activeChat);
   const activeChatQuery = useChat(activeChatId);
   const activeChat = activeChatQuery.data ?? cachedActiveChat;
+  const selectedNavigatorThread = useMemo(
+    () => findNavigatorThread(navigatorThreads, navigatorSelection),
+    [navigatorSelection, navigatorThreads],
+  );
+  const navigatorScope = useMemo(
+    () => scopeFromNavigatorSelection(selectedNavigatorThread, navigatorSelection),
+    [navigatorSelection, selectedNavigatorThread],
+  );
+  const navigatorNoteFilter = useMemo(() => noteFilterFromNavigatorScope(navigatorScope), [navigatorScope]);
+  const navigatorScopeLabel = useMemo(() => {
+    const branch = selectedNavigatorChat(selectedNavigatorThread, navigatorSelection);
+    if (branch) return branch.name || branch.id;
+    if (selectedNavigatorThread?.groupId) return `${selectedNavigatorThread.title}, all branches`;
+    return selectedNavigatorThread?.title ?? "No chat selected";
+  }, [navigatorSelection, selectedNavigatorThread]);
   const activeChatMetadata = useMemo(() => parseMetadata(activeChat?.metadata), [activeChat?.metadata]);
   const activeRecallSettings = useMemo(
     () => readLongTermMemoryRecallSearchSettings(activeChatMetadata),
@@ -2755,9 +3004,9 @@ export function LongTermMemoryPanel() {
 
   const status = useLongTermMemoryStatus();
   const integrity = useLongTermMemoryIntegrity();
-  const notes = useLongTermMemoryNotes();
+  const notes = useLongTermMemoryNotes(navigatorNoteFilter, { enabled: Boolean(selectedNavigatorThread) });
   const activeNotes = useLongTermMemoryNotes(
-    { status: "active" },
+    { ...navigatorNoteFilter, status: "active" },
     { enabled: tab === "notes" || Boolean(openNoteId) },
   );
   const allDrafts = useLongTermMemoryDrafts(
@@ -2769,7 +3018,11 @@ export function LongTermMemoryPanel() {
     },
   );
   const exactViewingNote = useLongTermMemoryNote(openNoteId ?? undefined);
-  const importPreview = useLongTermMemoryImportPreview(importSource, importLimit);
+  const importPreview = useLongTermMemoryImportPreview(
+    importSource,
+    importLimit,
+    importSource === "chats" ? navigatorScope : undefined,
+  );
   const rebuild = useRebuildLongTermMemory();
   const replay = useReplayLongTermMemory();
   const repair = useRepairLongTermMemory();
@@ -2778,6 +3031,11 @@ export function LongTermMemoryPanel() {
   const searchMemory = useSearchLongTermMemory();
   const [recallQueryByNoteId, setRecallQueryByNoteId] = useState<Record<string, string>>({});
   const [recallResultByNoteId, setRecallResultByNoteId] = useState<Record<string, LtmSearchResponse | null>>({});
+
+  useEffect(() => {
+    if (!activeChatId) return;
+    setNavigatorSelection({ groupId: activeChat?.groupId ?? null, chatId: activeChatId });
+  }, [activeChat?.groupId, activeChatId]);
 
   const filteredNotes = useMemo(() => {
     const list = (notes.data ?? []).filter((note) => {
@@ -2822,10 +3080,24 @@ export function LongTermMemoryPanel() {
   }, [allDrafts.data]);
   const importRows = useMemo(() => importPreview.data?.samples ?? [], [importPreview.data?.samples]);
   const visibleImportRows = useMemo(
-    () => importSource === "chats" && importChatId
-      ? importRows.filter((sample) => sample.sourceId.startsWith(`${importChatId}:`))
-      : importRows,
-    [importRows, importSource, importChatId],
+    () => {
+      if (importSource !== "chats") return importRows;
+      const scopeChatIds = navigatorScope.chatIds ?? (navigatorScope.chatId ? [navigatorScope.chatId] : []);
+      if (scopeChatIds.length > 0) {
+        const chatIds = new Set(scopeChatIds);
+        return importRows.filter((sample) => chatIds.has(sample.sourceId.split(":")[0] ?? ""));
+      }
+      if (navigatorScope.groupId) {
+        const groupChatIds = new Set(
+          ((chats as Chat[] | undefined) ?? [])
+            .filter((chat) => chat.groupId === navigatorScope.groupId)
+            .map((chat) => chat.id),
+        );
+        return importRows.filter((sample) => groupChatIds.has(sample.sourceId.split(":")[0] ?? ""));
+      }
+      return importRows;
+    },
+    [chats, importRows, importSource, navigatorScope.chatId, navigatorScope.chatIds, navigatorScope.groupId],
   );
   const selectedVisibleImportRows = useMemo(
     () => visibleImportRows.filter((sample) => selectedImportRows.has(importRowKey(importSource, sample.sourceId))),
@@ -3159,6 +3431,7 @@ export function LongTermMemoryPanel() {
         source: importSource,
         sourceIds,
         limit: Math.max(importLimit, sourceIds.length),
+        scope: importSource === "chats" ? navigatorScope : undefined,
         connectionId: optionalTrimmedText(importConnectionId),
         model: optionalTrimmedText(importModel),
         instruction: optionalTrimmedText(importInstruction),
@@ -3263,6 +3536,16 @@ export function LongTermMemoryPanel() {
               Search, review, and maintain long-term memories.
             </p>
           </div>
+
+          <LtmContextNavigator
+            threads={navigatorThreads}
+            selection={navigatorSelection}
+            activeChatId={activeChatId}
+            scopeLabel={navigatorScopeLabel}
+            query={navigatorQuery}
+            onQueryChange={setNavigatorQuery}
+            onSelect={setNavigatorSelection}
+          />
 
           {editingNoteHiddenByFilters && (
             <div className="mb-3 rounded-xl bg-amber-500/10 p-3 ring-1 ring-amber-500/30">
@@ -3416,10 +3699,22 @@ export function LongTermMemoryPanel() {
             </div>
           </div>
 
+          {importSource === "chats" && (
+            <LtmContextNavigator
+              threads={navigatorThreads}
+              selection={navigatorSelection}
+              activeChatId={activeChatId}
+              scopeLabel={navigatorScopeLabel}
+              query={navigatorQuery}
+              onQueryChange={setNavigatorQuery}
+              onSelect={setNavigatorSelection}
+            />
+          )}
+
           <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
             <select
               value={importSource}
-              onChange={(event) => { setImportSource(event.target.value as LtmInteropSource); setImportChatId(""); }}
+              onChange={(event) => setImportSource(event.target.value as LtmInteropSource)}
               className={compactInputClassName}
             >
               {IMPORT_SOURCES.map((source) => (
@@ -3521,25 +3816,6 @@ export function LongTermMemoryPanel() {
               </div>
             )}
           </div>
-          {importSource === "chats" && (
-            <div className="mt-2">
-              <select
-                value={importChatId}
-                onChange={(event) => setImportChatId(event.target.value)}
-                className={compactInputClassName}
-              >
-                <option value="">All chats ({importRows.length})</option>
-                {(chats as Chat[] | undefined)
-                  ?.filter((c) => importRows.some((row) => row.sourceId.startsWith(`${c.id}:`)))
-                  .sort((a, b) => (a.name || "Untitled").localeCompare(b.name || "Untitled"))
-                  .map((chat) => (
-                    <option key={chat.id} value={chat.id}>
-                      {chat.name || "Untitled"} — {importRows.filter((row) => row.sourceId.startsWith(`${chat.id}:`)).length}
-                    </option>
-                  ))}
-              </select>
-            </div>
-          )}
           <div className={cn(sectionCardClassName, "mt-3")}>
             <div className="flex flex-wrap items-center gap-2">
               <label className="flex min-h-8 items-center gap-2 rounded-lg px-2 text-xs text-[var(--foreground)]">
@@ -3600,6 +3876,7 @@ export function LongTermMemoryPanel() {
       >
         <CreateLongTermMemoryNoteForm
           initialDraft={createNoteDraft}
+          defaultScopeDraft={scopeDraftFromLtmScope(navigatorScope)}
           onCancel={() => {
             if (!confirmDiscardCreate()) return;
             closeCreateForm();

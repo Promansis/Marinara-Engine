@@ -1,5 +1,6 @@
 import {
-  getLtmScopeChatIds,
+  isGlobalLtmScope,
+  ltmScopesOverlap,
   type LtmExtractionDroppedCandidate,
   type LtmExtractionDraft,
   type LtmExtractionMode,
@@ -145,25 +146,8 @@ async function getExistingTypedNotesForTargets(options: {
 }
 
 function scopeOverlaps(noteScope: LtmScope, extractionScope: LtmScope) {
-  if (scopeIsGlobal(noteScope) || scopeIsGlobal(extractionScope)) return true;
-  const noteChatIds = new Set(getLtmScopeChatIds(noteScope));
-  const extractionChatIds = getLtmScopeChatIds(extractionScope);
-  if (extractionChatIds.some((chatId) => noteChatIds.has(chatId))) return true;
-
-  const noteCharacters = new Set(noteScope.characterIds ?? []);
-  if (extractionScope.characterIds?.some((characterId) => noteCharacters.has(characterId))) return true;
-
-  return Boolean(
-    (noteScope.groupId && noteScope.groupId === extractionScope.groupId),
-  );
-}
-
-function scopeIsGlobal(scope: LtmScope) {
-  return !(
-    getLtmScopeChatIds(scope).length ||
-    scope.groupId ||
-    scope.characterIds?.length
-  );
+  if (isGlobalLtmScope(noteScope) || isGlobalLtmScope(extractionScope)) return true;
+  return ltmScopesOverlap(noteScope, extractionScope);
 }
 
 export async function extractLongTermMemoryFromSourceNote(

@@ -7,6 +7,7 @@ import {
   ltmEventSchema,
   ltmNoteSchema,
   ltmScopeSchema,
+  getLtmScopeChatIds,
   withMergedLtmScopeLinks,
   type ChatSummaryEntry,
   type LtmDraftMutation,
@@ -675,9 +676,17 @@ async function chatImportCandidates(
   db: DB,
   limit: number,
   sourceIds?: Set<string>,
+  scope?: LtmScope,
 ): Promise<ImportSourceCandidate[]> {
   const chats = await createChatsStorage(db).list();
-  const rows = sourceIds ? chats : chats.slice(0, limit);
+  const scopeChatIds = new Set(getLtmScopeChatIds(scope));
+  const scopedChats = scopeChatIds.size || scope?.groupId
+    ? chats.filter((chat) => {
+        if (scopeChatIds.size) return scopeChatIds.has(chat.id);
+        return Boolean(scope?.groupId && chat.groupId === scope.groupId);
+      })
+    : chats;
+  const rows = sourceIds ? scopedChats : scopedChats.slice(0, limit);
   const candidates = rows.flatMap((chat) => {
     const metadata = readJsonObject(chat.metadata);
     const summary = typeof metadata.summary === "string" ? metadata.summary.trim() : "";
@@ -744,12 +753,18 @@ async function chatImportCandidates(
   return sourceIds ? deduped.filter((candidate) => sourceIds.has(candidate.sourceId)) : deduped.slice(0, limit);
 }
 
-async function interopImportCandidates(db: DB, source: LtmInteropSource, limit: number, sourceIds?: Set<string>) {
+async function interopImportCandidates(
+  db: DB,
+  source: LtmInteropSource,
+  limit: number,
+  sourceIds?: Set<string>,
+  scope?: LtmScope,
+) {
   return source === "characters"
     ? characterImportCandidates(db, limit, sourceIds)
     : source === "lorebooks"
       ? lorebookImportCandidates(db, limit, sourceIds)
-      : chatImportCandidates(db, limit, sourceIds);
+      : chatImportCandidates(db, limit, sourceIds, scope);
 }
 
 export async function previewLongTermMemoryInterop(
@@ -757,8 +772,9 @@ export async function previewLongTermMemoryInterop(
   source: LtmInteropSource,
   limit = 25,
   root?: string,
+  scope?: LtmScope,
 ): Promise<LtmInteropPreview> {
-  const candidates = await interopImportCandidates(db, source, limit);
+  const candidates = await interopImportCandidates(db, source, limit, undefined, source === "chats" ? scope : undefined);
   const storage = new LongTermMemoryStorage(root ?? getLongTermMemoryRoot());
   const existingNotes = await storage.getNotesByIds(
     candidates.flatMap((candidate) => [candidate.sourceNoteId, ...(candidate.legacySourceNoteIds ?? [])]),
@@ -807,7 +823,7 @@ export async function createLongTermMemoryInteropSourceNotes(
       const selected = new Set(options.sourceIds);
       const limit = Math.max(options.limit ?? options.sourceIds.length, options.sourceIds.length, 1);
       const storage = new LongTermMemoryStorage(root);
-      const candidates = (await interopImportCandidates(db, source, limit, selected)).filter((candidate) =>
+      const candidates = (await interopImportCandidates(db, source, limit, selected, source === "chats" ? options.scope : undefined)).filter((candidate) =>
         selected.has(candidate.sourceId),
       );
       const existingNotes = await storage.getNotesByIds(

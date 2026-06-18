@@ -84,11 +84,26 @@ const ltmIdentifierSchema = z
   .max(120)
   .regex(/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/, "Identifier must be lowercase snake_case.");
 
+const scopedListIdsSchema = z.preprocess((value) => {
+  const values = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
+  return values.map((item) => String(item).trim()).filter(Boolean);
+}, z.array(z.string().min(1).max(120)).max(100).optional());
+
+const queryBooleanSchema = z.preprocess((value) => {
+  if (value === "false") return false;
+  if (value === "true") return true;
+  return value;
+}, z.boolean().optional());
+
 const listNotesQuerySchema = z
   .object({
     type: ltmNoteTypeSchema.optional(),
     status: ltmStatusSchema.optional(),
     tag: ltmIdentifierSchema.optional(),
+    scopeChatIds: scopedListIdsSchema,
+    scopeGroupId: z.string().min(1).max(120).optional(),
+    scopeCharacterIds: scopedListIdsSchema,
+    includeGlobal: queryBooleanSchema,
   })
   .strict();
 
@@ -501,7 +516,22 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
 
   app.get<{ Querystring: unknown }>("/notes", async (req) => {
     const query = listNotesQuerySchema.parse(req.query);
-    return storage.listNotes(query);
+    const scope =
+      query.scopeChatIds?.length || query.scopeGroupId || query.scopeCharacterIds?.length
+        ? {
+            ...(query.scopeChatIds?.length ? { chatIds: query.scopeChatIds, chatId: query.scopeChatIds[0] } : {}),
+            ...(query.scopeGroupId ? { groupId: query.scopeGroupId } : {}),
+            ...(query.scopeCharacterIds?.length ? { characterIds: query.scopeCharacterIds } : {}),
+          }
+        : undefined;
+    return storage.listNotes({
+      type: query.type,
+      status: query.status,
+      tag: query.tag,
+      scope,
+      characterIds: query.scopeCharacterIds,
+      includeGlobal: query.includeGlobal,
+    });
   });
 
   app.get<{ Params: { id: string } }>("/notes/:id", async (req, reply) => {
@@ -731,7 +761,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
 
   app.post<{ Body: unknown }>("/import/preview", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req) => {
     const body = interopBodySchema.parse(req.body);
-    return previewLongTermMemoryInterop(app.db, body.source as LtmInteropSource, body.limit, getLongTermMemoryRoot());
+    return previewLongTermMemoryInterop(app.db, body.source as LtmInteropSource, body.limit, getLongTermMemoryRoot(), body.scope);
   });
 
   app.post<{ Body: unknown }>(

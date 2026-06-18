@@ -1,7 +1,8 @@
 import { readFile } from "node:fs/promises";
 import {
   ltmRetrievalConfigSchema,
-  getLtmScopeChatIds,
+  isGlobalLtmScope,
+  matchesLtmScope,
   type LtmRetrievalConfig,
   type LtmScope,
 } from "@marinara-engine/shared";
@@ -238,25 +239,11 @@ function extractQuerySignals(input: RetrieveLongTermMemoryInput) {
 }
 
 function scopeMatches(chunk: LtmMemoryChunk, scope: LtmScope | undefined, characterIds: string[]) {
-  const activeCharacters = new Set(characterIds);
-  const activeChatIds = new Set(getLtmScopeChatIds(scope));
-  const chunkChatIds = getLtmScopeChatIds(chunk.scope);
-  const hasCallerScope =
-    Boolean(activeChatIds.size || scope?.groupId || scope?.characterIds?.length) ||
-    activeCharacters.size > 0;
-  const chunkHasScope = Boolean(
-    chunkChatIds.length ||
-    chunk.scope.groupId ||
-    chunk.scope.characterIds?.length,
+  const hasCallerScope = !isGlobalLtmScope(scope) || characterIds.length > 0;
+  return matchesLtmScope(
+    { id: chunk.noteId, type: chunk.noteType, scope: chunk.scope },
+    hasCallerScope ? { scope, characterIds, includeGlobal: true } : { scope: {}, includeGlobal: true },
   );
-
-  if (!hasCallerScope) return !chunkHasScope;
-
-  if (chunkChatIds.some((chatId) => activeChatIds.has(chatId))) return true;
-  if (chunk.scope.groupId && chunk.scope.groupId === scope?.groupId) return true;
-  if (chunk.scope.characterIds?.some((id) => activeCharacters.has(id))) return true;
-  if (chunk.noteType === "character" && activeCharacters.has(chunk.noteId)) return true;
-  return !chunkHasScope;
 }
 
 function isSourceSummaryChunk(chunk: LtmMemoryChunk) {

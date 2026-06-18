@@ -5,7 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import type { LtmDraftMutation, LtmEvidenceUnit, LtmNote } from "@marinara-engine/shared";
-import { DEFAULT_LTM_EXTRACTION_MAX_TOKENS } from "@marinara-engine/shared";
+import { DEFAULT_LTM_EXTRACTION_MAX_TOKENS, matchesLtmScope } from "@marinara-engine/shared";
 import {
   ltmExtractionModeSchema,
   ltmEvidenceUnitSchema,
@@ -102,6 +102,112 @@ test("long-term memory chunks keep prompt text free of index labels", () => {
 
   assert.equal(chunks[0]?.text, "A sample instruction remains available for later retrieval.");
   assert.doesNotMatch(chunks[0]?.text ?? "", /note:|type:|section:|status:|chat:|group:|characters:/);
+});
+
+test("long-term memory scope matcher includes global, chat, thread, group, and character overlaps", () => {
+  const note = (id: string, type: LtmNote["type"], scope: LtmNote["scope"]) => ({ id, type, scope });
+  const scopedView = {
+    scope: {
+      chatId: "branch_a",
+      chatIds: ["branch_a"],
+      groupId: "thread_alpha",
+      characterIds: ["char_mara"],
+    },
+    characterIds: ["char_mara"],
+  };
+
+  assert.equal(matchesLtmScope(note("world_global", "world", {}), scopedView), true);
+  assert.equal(matchesLtmScope(note("scene_exact_chat", "scene", { chatId: "branch_a" }), scopedView), true);
+  assert.equal(matchesLtmScope(note("thread_all_branches", "thread", { groupId: "thread_alpha" }), scopedView), true);
+  assert.equal(matchesLtmScope(note("world_group", "world", { groupId: "thread_alpha" }), scopedView), true);
+  assert.equal(matchesLtmScope(note("char_mara", "character", { characterIds: ["char_mara"] }), scopedView), true);
+  assert.equal(matchesLtmScope(note("world_elsewhere", "world", { chatId: "branch_b", characterIds: ["char_jules"] }), scopedView), false);
+  assert.equal(matchesLtmScope(note("world_global", "world", {}), { ...scopedView, includeGlobal: false }), false);
+});
+
+test("long-term memory note list filters compose scope with type status and tag filters", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-list-scope-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    const base = {
+      modes: ["roleplay" as const],
+      links: [],
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      version: 1,
+      sections: {
+        summary: {
+          text: "Scoped list filter fixture.",
+          updatedAt: timestamp,
+        },
+      },
+    };
+    await storage.createNote(
+      {
+        ...base,
+        id: "world_global_scope_list",
+        type: "world",
+        status: "active",
+        scope: {},
+        tags: ["typed_memory"],
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        ...base,
+        id: "thread_branch_a_scope_list",
+        type: "thread",
+        status: "active",
+        scope: { chatId: "branch_a", groupId: "thread_alpha", characterIds: ["char_mara"] },
+        tags: ["typed_memory", "story_arc"],
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        ...base,
+        id: "thread_group_scope_list",
+        type: "thread",
+        status: "resolved",
+        scope: { groupId: "thread_alpha", characterIds: ["char_mara"] },
+        tags: ["typed_memory", "story_arc"],
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        ...base,
+        id: "thread_elsewhere_scope_list",
+        type: "thread",
+        status: "active",
+        scope: { chatId: "branch_b", groupId: "thread_beta", characterIds: ["char_jules"] },
+        tags: ["typed_memory", "story_arc"],
+      },
+      { suppressEvent: true },
+    );
+
+    const scoped = await storage.listNotes({
+      scope: { chatId: "branch_a", chatIds: ["branch_a"], groupId: "thread_alpha", characterIds: ["char_mara"] },
+    });
+    assert.deepEqual(
+      scoped.map((note) => note.id),
+      ["thread_branch_a_scope_list", "thread_group_scope_list", "world_global_scope_list"],
+    );
+
+    const activeThreadScoped = await storage.listNotes({
+      type: "thread",
+      status: "active",
+      tag: "story_arc",
+      scope: { chatId: "branch_a", chatIds: ["branch_a"], groupId: "thread_alpha", characterIds: ["char_mara"] },
+    });
+    assert.deepEqual(
+      activeThreadScoped.map((note) => note.id),
+      ["thread_branch_a_scope_list"],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("long-term memory chunks strip legacy inline evidence labels", () => {

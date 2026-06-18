@@ -6,6 +6,7 @@ import {
   ltmNoteSchema,
   ltmPoliciesConfigSchema,
   ltmRetrievalConfigSchema,
+  matchesLtmScope,
   withMergedLtmScopeLinks,
   type LtmScope,
   type LtmEvent,
@@ -39,6 +40,9 @@ export type LtmListNotesFilter = {
   type?: LtmNoteType;
   status?: LtmNote["status"];
   tag?: string;
+  scope?: LtmScope;
+  characterIds?: string[];
+  includeGlobal?: boolean;
 };
 
 export type CreateLtmNoteInput = Omit<LtmNote, "createdAt" | "updatedAt" | "version" | "previousHash"> &
@@ -171,6 +175,17 @@ export class LongTermMemoryStorage {
         const note = await this.readNoteFile(safeJoin(folderPath, entry.name), folder);
         if (filter.status && note.status !== filter.status) continue;
         if (filter.tag && !note.tags.includes(filter.tag)) continue;
+        if (filter.scope || filter.characterIds?.length || filter.includeGlobal === false) {
+          if (
+            !matchesLtmScope(note, {
+              scope: filter.scope,
+              characterIds: filter.characterIds,
+              includeGlobal: filter.includeGlobal,
+            })
+          ) {
+            continue;
+          }
+        }
         notes.push(note);
       }
     }

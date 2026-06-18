@@ -38,6 +38,7 @@ import {
 
 type CreateLongTermMemoryNoteFormProps = {
   initialDraft?: CreateLongTermMemoryNoteDraft | null;
+  defaultScopeDraft?: CreateLongTermMemoryNoteDraft["scopeDraft"];
   onCancel: () => void;
   onCreated?: (note: LtmNote) => void;
   onDirtyChange?: (dirty: boolean) => void;
@@ -109,6 +110,7 @@ function serializedCreateDraft(draft: CreateLongTermMemoryNoteDraft) {
 
 export function CreateLongTermMemoryNoteForm({
   initialDraft,
+  defaultScopeDraft,
   onCancel,
   onCreated,
   onDirtyChange,
@@ -121,8 +123,11 @@ export function CreateLongTermMemoryNoteForm({
   const createNote = useCreateLongTermMemoryNote();
   const defaultMode = defaultModeFromChatMode(activeChat?.mode);
   const defaultDraft = useMemo(
-    () => createDefaultDraft({ activeChat, defaultMode }),
-    [activeChat, defaultMode],
+    () => ({
+      ...createDefaultDraft({ activeChat, defaultMode }),
+      ...(defaultScopeDraft ? { scopeDraft: defaultScopeDraft } : {}),
+    }),
+    [activeChat, defaultMode, defaultScopeDraft],
   );
   const [draft, setDraft] = useState<CreateLongTermMemoryNoteDraft>(initialDraft ?? defaultDraft);
   const [summaryEditorOpen, setSummaryEditorOpen] = useState(false);

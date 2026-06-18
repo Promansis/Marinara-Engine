@@ -242,8 +242,8 @@ export const longTermMemoryKeys = {
   notes: (filter?: LtmNoteFilter) => [...longTermMemoryKeys.all, "notes", filter ?? {}] as const,
   note: (id: string) => [...longTermMemoryKeys.all, "notes", id] as const,
   drafts: (filter?: LtmDraftFilter) => [...longTermMemoryKeys.all, "drafts", filter ?? {}] as const,
-  importPreview: (source: LtmInteropSource, limit: number) =>
-    [...longTermMemoryKeys.all, "import-preview", source, limit] as const,
+  importPreview: (source: LtmInteropSource, limit: number, scope?: LtmScope) =>
+    [...longTermMemoryKeys.all, "import-preview", source, limit, scope ?? {}] as const,
   extractionSettings: () => [...longTermMemoryKeys.all, "extraction-settings"] as const,
   debugLogs: () => [...longTermMemoryKeys.all, "debug-log"] as const,
   debugLog: (filter?: LtmDebugLogFilter) => [...longTermMemoryKeys.all, "debug-log", filter ?? {}] as const,
@@ -253,6 +253,10 @@ export type LtmNoteFilter = {
   type?: LtmNoteType;
   status?: LtmStatus;
   tag?: string;
+  scopeChatIds?: string[];
+  scopeGroupId?: string;
+  scopeCharacterIds?: string[];
+  includeGlobal?: boolean;
 };
 
 export type LtmDraftFilter = {
@@ -281,6 +285,18 @@ function qs(params: Record<string, string | undefined>) {
   return text ? `?${text}` : "";
 }
 
+function noteFilterQuery(filter: LtmNoteFilter) {
+  return qs({
+    type: filter.type,
+    status: filter.status,
+    tag: filter.tag,
+    scopeChatIds: filter.scopeChatIds?.length ? filter.scopeChatIds.join(",") : undefined,
+    scopeGroupId: filter.scopeGroupId,
+    scopeCharacterIds: filter.scopeCharacterIds?.length ? filter.scopeCharacterIds.join(",") : undefined,
+    includeGlobal: filter.includeGlobal === false ? "false" : undefined,
+  });
+}
+
 export function useLongTermMemoryStatus() {
   return useQuery({
     queryKey: longTermMemoryKeys.status(),
@@ -300,7 +316,7 @@ export function useLongTermMemoryIntegrity() {
 export function useLongTermMemoryNotes(filter: LtmNoteFilter = {}, options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: longTermMemoryKeys.notes(filter),
-    queryFn: () => api.get<LtmNote[]>(`/long-term-memory/notes${qs(filter)}`),
+    queryFn: () => api.get<LtmNote[]>(`/long-term-memory/notes${noteFilterQuery(filter)}`),
     enabled: options.enabled ?? true,
     staleTime: 30_000,
   });
@@ -385,10 +401,10 @@ export function useLongTermMemoryDrafts(filter: LtmDraftFilter = {}, options: { 
   });
 }
 
-export function useLongTermMemoryImportPreview(source: LtmInteropSource, limit: number) {
+export function useLongTermMemoryImportPreview(source: LtmInteropSource, limit: number, scope?: LtmScope) {
   return useQuery({
-    queryKey: longTermMemoryKeys.importPreview(source, limit),
-    queryFn: () => api.post<LtmInteropPreview>("/long-term-memory/import/preview", { source, limit }),
+    queryKey: longTermMemoryKeys.importPreview(source, limit, scope),
+    queryFn: () => api.post<LtmInteropPreview>("/long-term-memory/import/preview", { source, limit, scope }),
     staleTime: 30_000,
   });
 }
