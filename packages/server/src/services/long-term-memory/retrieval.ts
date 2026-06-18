@@ -251,11 +251,11 @@ function scopeMatches(chunk: LtmMemoryChunk, scope: LtmScope | undefined, charac
 
   if (!hasCallerScope) return !chunkHasScope;
 
-  if (chunkChatIds.length) return chunkChatIds.some((chatId) => activeChatIds.has(chatId));
-  if (chunk.scope.groupId) return chunk.scope.groupId === scope?.groupId;
-  if (chunk.scope.characterIds?.length) return chunk.scope.characterIds.some((id) => activeCharacters.has(id));
+  if (chunkChatIds.some((chatId) => activeChatIds.has(chatId))) return true;
+  if (chunk.scope.groupId && chunk.scope.groupId === scope?.groupId) return true;
+  if (chunk.scope.characterIds?.some((id) => activeCharacters.has(id))) return true;
   if (chunk.noteType === "character" && activeCharacters.has(chunk.noteId)) return true;
-  return true;
+  return !chunkHasScope;
 }
 
 function isSourceSummaryChunk(chunk: LtmMemoryChunk) {

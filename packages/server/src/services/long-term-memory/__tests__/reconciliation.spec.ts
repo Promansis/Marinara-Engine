@@ -4650,6 +4650,96 @@ test("retrieval does not double-count character scope metadata", async () => {
   }
 });
 
+test("generation retrieval allows old-chat memories with matching group and character scope", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-generation-cross-chat-scope-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.initializeLtmStore();
+
+    await storage.createNote(
+      {
+        id: "thread_practice_room",
+        type: "thread",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {
+          chatId: "old_chat",
+          chatIds: ["old_chat"],
+          groupId: "group_rika",
+          characterIds: ["char_rika"],
+        },
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          summary: {
+            text: "Rika and Damo have a Tuesday practice-room plan around the three-note mystery.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "thread_other_group",
+        type: "thread",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {
+          chatId: "old_chat",
+          chatIds: ["old_chat"],
+          groupId: "group_elsewhere",
+          characterIds: ["char_elsewhere"],
+        },
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          summary: {
+            text: "An unrelated Tuesday practice-room rumor from a different group.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    await rebuildLongTermMemoryIndexes({
+      root,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+
+    const result = await retrieveLongTermMemory({
+      root,
+      queryText: "Tuesday practice-room three-note mystery",
+      scope: {
+        chatId: "new_chat",
+        chatIds: ["new_chat"],
+        groupId: "group_rika",
+        characterIds: ["char_rika"],
+      },
+      characterIds: ["char_rika"],
+      maxChunks: 10,
+      maxTokens: 1000,
+      semanticWeight: 0,
+      lexicalWeight: 1,
+      graphWeight: 0,
+      metadataMode: "filter_only",
+      debug: true,
+      localEmbedder: async () => {
+        throw new Error("semantic lane should not run when disabled");
+      },
+    });
+
+    assert.equal(result.debug?.funnel.scopeFiltered, 1);
+    assert.deepEqual(
+      result.chunks.map((chunk) => chunk.chunk.id),
+      ["thread_practice_room::summary"],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("generation retrieval treats metadata as filter only and honors zero-weight lanes", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-generation-filter-only-"));
   try {
