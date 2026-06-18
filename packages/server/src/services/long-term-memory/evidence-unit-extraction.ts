@@ -30,6 +30,7 @@ import { validateLtmEvidenceUnits } from "./evidence-unit-validation.js";
 export const DEFAULT_LTM_EXTRACTION_PROMPT = [
   "You extract structured long-term memory evidence units from a source note.",
   "Return strict JSON only. Do not explain.",
+  "Do not include thinking, analysis, markdown, or <think> tags. Output JSON object only.",
   "Source notes are audit evidence, not active recall memory.",
   "Do not output source summaries, transcript summaries, or final write operations.",
   "Extract every distinct durable memory unit supported by the source.",
@@ -133,6 +134,8 @@ type ParsedEvidenceUnitPayload = {
   totalCandidates: number;
   droppedCandidates: LtmExtractionDroppedCandidate[];
 };
+
+type LtmEvidenceUnitChatOptions = ChatOptions & { reasoningEffort: NonNullable<ChatOptions["reasoningEffort"]> };
 
 function countBy<T extends string>(values: T[]) {
   return values.reduce<Record<string, number>>((counts, value) => {
@@ -242,6 +245,50 @@ function extractPartialUnits(raw: string): Array<Record<string, unknown>> {
   }
 
   return units;
+}
+
+function isReasoningNoneUnsupportedError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    /\b(?:reasoning|reasoning_effort|effort|thinking|enable_thinking)\b/i.test(message) &&
+    /\b(?:none|unsupported|invalid|unrecognized|not supported|bad request|400)\b/i.test(message)
+  );
+}
+
+async function chatCompleteWithReasoningFallback({
+  messages,
+  chatOptions,
+  extractionOptions,
+}: {
+  messages: ChatMessage[];
+  chatOptions: LtmEvidenceUnitChatOptions;
+  extractionOptions: RunLongTermMemoryEvidenceUnitExtractionOptions;
+}) {
+  try {
+    return await extractionOptions.provider.chatComplete(messages, chatOptions);
+  } catch (err) {
+    if (chatOptions.reasoningEffort !== "none" || !isReasoningNoneUnsupportedError(err)) {
+      throw err;
+    }
+    await recordLtmDebugEvent({
+      operationId: extractionOptions.operationId,
+      phase: "llm",
+      action: "evidence_unit_reasoning_fallback",
+      status: "warning",
+      sourceNoteId: extractionOptions.sourceNote.id,
+      provider: extractionOptions.provider.constructor.name,
+      model: extractionOptions.model,
+      error: err,
+      details: {
+        requestedReasoningEffort: "none",
+        appliedReasoningEffort: DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
+      },
+    });
+    return extractionOptions.provider.chatComplete(messages, {
+      ...chatOptions,
+      reasoningEffort: DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
+    });
+  }
 }
 
 function normalizeEvidenceUnitResponse(raw: unknown, expectedSourceHash: string): unknown {
@@ -407,6 +454,16 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
   const messages = evidenceUnitMessages(options);
   const promptChars = messages.reduce((total, message) => total + message.content.length, 0);
   const started = Date.now();
+  const requestedReasoningEffort = options.reasoningEffort ?? DEFAULT_LTM_EXTRACTION_REASONING_EFFORT;
+  const chatOptions: LtmEvidenceUnitChatOptions = {
+    model: options.model,
+    temperature: options.temperature ?? 0,
+    maxTokens: options.maxOutputTokens ?? options.provider.maxTokensOverrideValue ?? DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
+    reasoningEffort: requestedReasoningEffort,
+    verbosity: options.verbosity ?? DEFAULT_LTM_EXTRACTION_VERBOSITY,
+    stream: true,
+    signal: options.signal,
+  };
   await recordLtmDebugEvent({
     operationId: options.operationId,
     phase: "llm",
@@ -424,21 +481,17 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
         maxExistingNoteChars: options.maxExistingNoteChars ?? DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS,
       },
       details: {
-        reasoningEffort: options.reasoningEffort ?? DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
+        reasoningEffort: requestedReasoningEffort,
         verbosity: options.verbosity ?? DEFAULT_LTM_EXTRACTION_VERBOSITY,
         maxOutputTokens: options.maxOutputTokens ?? options.provider.maxTokensOverrideValue ?? DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
         temperature: options.temperature ?? 0,
       },
     });
   try {
-    const result = await options.provider.chatComplete(messages, {
-      model: options.model,
-      temperature: options.temperature ?? 0,
-      maxTokens: options.maxOutputTokens ?? options.provider.maxTokensOverrideValue ?? DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
-      reasoningEffort: options.reasoningEffort ?? DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
-      verbosity: options.verbosity ?? DEFAULT_LTM_EXTRACTION_VERBOSITY,
-      stream: true,
-      signal: options.signal,
+    const result = await chatCompleteWithReasoningFallback({
+      messages,
+      chatOptions,
+      extractionOptions: options,
     });
 
     const content = result.content?.trim() ?? "";

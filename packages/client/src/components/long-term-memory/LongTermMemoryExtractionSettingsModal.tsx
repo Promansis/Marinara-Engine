@@ -72,7 +72,7 @@ const DEFAULT_SETTINGS = {
   existingNoteMaxTokens: DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
 } as const;
 
-const LEVEL_OPTIONS = ["default", "low", "medium", "high"] as const;
+const LEVEL_OPTIONS = ["default", "none", "low", "medium", "high"] as const;
 
 function draftFromSettings(settings: LtmResolvedExtractionSettings): ExtractionSettingsDraft {
   return {

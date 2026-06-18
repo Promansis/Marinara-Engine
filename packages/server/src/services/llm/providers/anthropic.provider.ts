@@ -106,6 +106,8 @@ export class AnthropicProvider extends BaseLLMProvider {
       delete body.top_p;
     }
 
+    const reasoningEffort = options.reasoningEffort === "none" ? undefined : options.reasoningEffort;
+
     // Enable extended thinking for reasoning models
     if (options.enableThinking) {
       if (isAdaptiveOnly) {
@@ -117,13 +119,13 @@ export class AnthropicProvider extends BaseLLMProvider {
           thinking.display = "summarized";
         }
         body.thinking = thinking;
-        body.output_config = { effort: options.reasoningEffort ?? "high" };
+        body.output_config = { effort: reasoningEffort ?? "high" };
       } else {
         // Opus 4.6 / Sonnet 4.6: prefer adaptive thinking (budget_tokens deprecated).
         const supportsAdaptive = /claude-(opus|sonnet)-4-[56]/.test(modelLower);
         if (supportsAdaptive) {
           body.thinking = { type: "adaptive" };
-          body.output_config = { effort: options.reasoningEffort ?? "high" };
+          body.output_config = { effort: reasoningEffort ?? "high" };
           // Cannot use temperature with extended thinking
           delete body.temperature;
         } else {

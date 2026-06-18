@@ -33,6 +33,7 @@ import { retrieveLongTermMemory } from "../retrieval.js";
 import { LongTermMemoryStorage } from "../storage.js";
 import {
   compileEvidenceUnitExtraction,
+  DEFAULT_LTM_EXTRACTION_PROMPT,
   runLongTermMemoryEvidenceUnitExtraction,
   sourceHashForEvidenceUnitExtraction,
 } from "../evidence-unit-extraction.js";
@@ -1515,6 +1516,20 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
   }
 });
 
+test("ltm extraction config accepts reasoning effort none", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-extraction-config-none-"));
+  try {
+    const updated = await updateLtmExtractionConfig({ reasoningEffort: "none" }, root);
+    assert.equal(updated.reasoningEffort, "none");
+
+    const dirs = getLongTermMemoryDirectories(root);
+    const persisted = JSON.parse(await readFile(join(dirs.config, "extraction.json"), "utf8"));
+    assert.equal(persisted.reasoningEffort, "none");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("source note extraction applies saved extraction config to llm request", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-extraction-config-wire-"));
   try {
@@ -1893,9 +1908,11 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
 
   let userPayload: any;
   let chatOptions: any;
+  let systemPrompt = "";
   const provider = {
     maxTokensOverrideValue: undefined,
     chatComplete: async (messages: Array<{ role: string; content: string }>, options: any) => {
+      systemPrompt = messages.find((message) => message.role === "system")!.content;
       userPayload = JSON.parse(messages.find((message) => message.role === "user")!.content);
       chatOptions = options;
       return {
@@ -1975,10 +1992,72 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
   assert(!payloadJson.includes("lowercase_snake_case_scope_id"));
   assert(!payloadJson.includes("target_note_id"));
   assert(!payloadJson.includes("optional note for deterministic compiler"));
+  assert(
+    systemPrompt.includes("Do not include thinking, analysis, markdown, or <think> tags. Output JSON object only."),
+  );
   assert.equal(chatOptions.maxTokens, DEFAULT_LTM_EXTRACTION_MAX_TOKENS);
   assert.equal(chatOptions.reasoningEffort, "low");
   assert.equal(chatOptions.verbosity, "low");
   assert.equal(chatOptions.stream, true);
+});
+
+test("default ltm extraction prompt forbids thinking and non-json wrapper text", () => {
+  assert(
+    DEFAULT_LTM_EXTRACTION_PROMPT.includes(
+      "Do not include thinking, analysis, markdown, or <think> tags. Output JSON object only.",
+    ),
+  );
+});
+
+test("evidence unit extraction retries reasoning none with low when provider rejects it", async () => {
+  const sourceNote: LtmNote = {
+    id: "scene_source_test",
+    type: "scene",
+    status: "active",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["source_summary"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      source: {
+        text: "Mara kept the archive key as a future problem.",
+        updatedAt: timestamp,
+        evidence: ["chat:chat_test"],
+      },
+    },
+    version: 1,
+  };
+  const reasoningEfforts: string[] = [];
+  const provider = {
+    maxTokensOverrideValue: undefined,
+    chatComplete: async (_messages: ChatMessage[], options: any) => {
+      reasoningEfforts.push(options.reasoningEffort);
+      if (options.reasoningEffort === "none") {
+        throw new Error("OpenAI API error 400: unsupported reasoning_effort none");
+      }
+      return {
+        content: JSON.stringify({ summary: "No units", units: [] }),
+      };
+    },
+  } as any;
+
+  const parsed = await runLongTermMemoryEvidenceUnitExtraction({
+    sourceNote,
+    sourceText: sourceNote.sections.source!.text,
+    existingNotes: [],
+    provider,
+    model: "test-model",
+    scope: {},
+    modes: ["roleplay"],
+    sourceHash,
+    reasoningEffort: "none",
+    operationId: randomUUID(),
+  });
+
+  assert.deepEqual(reasoningEfforts, ["none", "low"]);
+  assert.deepEqual(parsed.response.units, []);
 });
 
 test("evidence unit extraction accepts and compiles multiple typed buckets", async () => {
@@ -2489,6 +2568,119 @@ test("relationship state support ignores same-pass events dropped during validat
     "missing_source_evidence",
     "unsupported_bucket",
   ]);
+});
+
+test("source-summary thread validation accepts explicit resolver phrasing", () => {
+  const sourceNote: LtmNote = {
+    id: "scene_source_test",
+    type: "scene",
+    status: "active",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["source_summary"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      source: {
+        text: [
+          "The standing next-week library date still needed a follow-up; the resolver was the repeat meeting.",
+          "Rika's emotional fixation on Damo kept intensifying; the resolver was the fallout cooling or a confession.",
+          "The hallway gossip chain about Rika and Damo was still spreading; the resolver was the rumor being confronted or dying down.",
+          "Mika's barrage of texts could keep amplifying the social fallout; the resolver was a calmer explanation or update.",
+        ].join(" "),
+        updatedAt: timestamp,
+        evidence: ["chat:chat_test"],
+      },
+    },
+    version: 1,
+  };
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse: {
+      summary: "Callbacks",
+      units: [
+        evidenceUnit("thread", {
+          subjectId: "damo_rika",
+          sectionKey: "next_week_date",
+          text: "[CALLBACK] The standing next-week library date still needed a follow-up; the resolver was the repeat meeting.",
+          evidence: ["source_note:scene_source_test"],
+        }),
+        evidenceUnit("thread", {
+          subjectId: "rika_mika_fallout",
+          sectionKey: "emotional_fallout",
+          text: "[CALLBACK] Rika's emotional fixation on Damo kept intensifying; the resolver was the fallout cooling or a confession.",
+          evidence: ["source_note:scene_source_test"],
+        }),
+        evidenceUnit("thread", {
+          subjectId: "hallway_gossip",
+          sectionKey: "rumor_chain",
+          text: "[CALLBACK] The hallway gossip chain about Rika and Damo was still spreading; the resolver was the rumor being confronted or dying down.",
+          evidence: ["source_note:scene_source_test"],
+        }),
+        evidenceUnit("thread", {
+          subjectId: "mika_texts",
+          sectionKey: "text_barrage",
+          text: "[CALLBACK] Mika's barrage of texts could keep amplifying the social fallout; the resolver was a calmer explanation or update.",
+          evidence: ["source_note:scene_source_test"],
+        }),
+      ],
+    },
+    sourceText: sourceNote.sections.source!.text,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    sourceHash,
+  });
+
+  assert.deepEqual(compiled.outcome.droppedCandidates, []);
+  assert.equal(compiled.compiledResponse.mutations.length, 4);
+});
+
+test("source-summary thread validation still drops unresolved threads without a resolver", () => {
+  const sourceNote: LtmNote = {
+    id: "scene_source_test",
+    type: "scene",
+    status: "active",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["source_summary"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      source: {
+        text: "The library date lingered.",
+        updatedAt: timestamp,
+        evidence: ["chat:chat_test"],
+      },
+    },
+    version: 1,
+  };
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse: {
+      summary: "Vague thread",
+      units: [
+        evidenceUnit("thread", {
+          subjectId: "damo_rika",
+          sectionKey: "next_week_date",
+          text: "The library date lingered.",
+          evidence: ["source_note:scene_source_test"],
+        }),
+      ],
+    },
+    sourceText: sourceNote.sections.source!.text,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    sourceHash,
+  });
+
+  assert.equal(compiled.compiledResponse.mutations.length, 0);
+  assert.deepEqual(compiled.outcome.droppedCandidates.map((candidate) => candidate.reason), ["unsupported_bucket"]);
 });
 
 test("evidence unit compiler reports when suggested changes exceed the draft cap", () => {

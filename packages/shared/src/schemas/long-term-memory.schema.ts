@@ -34,7 +34,7 @@ export const ltmEvidenceUnitBucketSchema = z.enum([
 
 export const ltmModeSchema = z.enum(["roleplay", "conversation", "game"]);
 
-export const ltmExtractionReasoningEffortSchema = z.enum(["low", "medium", "high"]);
+export const ltmExtractionReasoningEffortSchema = z.enum(["none", "low", "medium", "high"]);
 
 export const ltmExtractionVerbositySchema = z.enum(["low", "medium", "high"]);
 
