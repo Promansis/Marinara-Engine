@@ -20,6 +20,7 @@ import {
   ltmLinkSchema,
   ltmModeSchema,
   ltmNoteIdSchema,
+  ltmNoteTitleSchema,
   ltmNoteTypeSchema,
   ltmScopeSchema,
   ltmSectionKeySchema,
@@ -110,6 +111,7 @@ const listNotesQuerySchema = z
 const createNoteBodySchema = z
   .object({
     id: ltmNoteIdSchema,
+    title: ltmNoteTitleSchema.optional(),
     type: ltmNoteTypeSchema,
     status: ltmStatusSchema,
     modes: z.array(ltmModeSchema).min(1).max(8),
@@ -128,8 +130,15 @@ const createNoteBodySchema = z
   })
   .strict();
 
-const updateNoteBodySchema = z
+const updateNoteBodySchema = z.preprocess((value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const body = { ...(value as Record<string, unknown>) };
+  if (body.title === null || body.title === "") body.title = undefined;
+  return body;
+}, z
   .object({
+    title: ltmNoteTitleSchema.optional(),
+    type: ltmNoteTypeSchema.optional(),
     status: ltmStatusSchema.optional(),
     modes: z.array(ltmModeSchema).min(1).max(8).optional(),
     scope: ltmScopeSchema.optional(),
@@ -139,7 +148,7 @@ const updateNoteBodySchema = z
     conflicts: z.array(ltmConflictSchema).max(250).optional(),
   })
   .strict()
-  .refine((value) => Object.keys(value).length > 0, "Patch body must include at least one updatable field.");
+  .refine((value) => Object.keys(value).length > 0, "Patch body must include at least one updatable field."));
 
 const rebuildBodySchema = z.object({}).strict().default({});
 
@@ -649,7 +658,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
         cause: "api.patch",
         summary: "Updated via long-term memory maintenance API",
       });
-      await rebuildLongTermMemoryIndexes({ scope: rebuildScopeForNote(note) });
+      await rebuildLongTermMemoryIndexes({ scope: rebuildScopeForNote(existing) === "source" ? "source" : rebuildScopeForNote(note) });
       return note;
     },
   );

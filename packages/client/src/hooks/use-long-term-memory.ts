@@ -268,8 +268,8 @@ export type CreateLongTermMemoryNoteInput = Omit<LtmNote, "createdAt" | "updated
   Partial<Pick<LtmNote, "createdAt" | "updatedAt" | "version" | "previousHash">>;
 
 export type UpdateLongTermMemoryNoteInput = Partial<
-  Omit<LtmNote, "id" | "type" | "createdAt" | "updatedAt" | "version" | "previousHash">
->;
+  Omit<LtmNote, "id" | "title" | "createdAt" | "updatedAt" | "version" | "previousHash">
+> & { title?: string | null };
 
 export type DeleteLongTermMemoryNotesResponse = {
   deletedIds: string[];

@@ -74,6 +74,7 @@ import { LongTermMemoryExtractionSettingsModal } from "../long-term-memory/LongT
 import { LongTermMemoryNoteEditor } from "../long-term-memory/LongTermMemoryNoteEditor";
 import { LongTermMemorySuggestionsTab } from "../long-term-memory/LongTermMemorySuggestionsTab";
 import {
+  displayNoteTitle,
   friendlyEvidence,
   friendlyIdentifier,
   friendlyMode,
@@ -764,6 +765,7 @@ function sourceSummaryTitle(note: LtmNote, chatLookup?: Map<string, Chat>) {
 }
 
 function sourceNoteTitle(note: LtmNote, chatLookup?: Map<string, Chat>) {
+  if (note.title?.trim()) return note.title.trim();
   return isChatSummarySourceNote(note) ? sourceSummaryTitle(note, chatLookup) : friendlyNoteTitle(note);
 }
 
@@ -778,12 +780,16 @@ function buildNoteLookup(notes: LtmNote[]) {
 function noteReferenceLabel(noteId: string, noteLookup: Map<string, LtmNote>, chatLookup?: Map<string, Chat>) {
   const note = noteLookup.get(noteId);
   if (!note) return "Unknown Memory";
-  return isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : friendlyNoteTitle(note);
+  return isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : displayNoteTitle(note);
 }
 
 function sourceReferenceLabel(sourceNoteId: string, noteLookup: Map<string, LtmNote>, chatLookup?: Map<string, Chat>) {
   const note = noteLookup.get(sourceNoteId);
   return note ? sourceNoteTitle(note, chatLookup) : "Unknown Source";
+}
+
+function memoryRowTitle(note: LtmNote, chatLookup?: Map<string, Chat>) {
+  return isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : displayNoteTitle(note);
 }
 
 const TIMELINE_LINK_RELATIONS = new Set(["occurred_in", "triggered_by", "resolved_in", "evidenced_by"]);
@@ -823,7 +829,7 @@ function groupNotesByType(notes: LtmNote[]): LtmBucketGroup[] {
   return [...groups.entries()]
     .map(([type, groupNotes]) => ({
       type,
-      notes: groupNotes.sort((left, right) => friendlyNoteTitle(left).localeCompare(friendlyNoteTitle(right))),
+      notes: groupNotes.sort((left, right) => displayNoteTitle(left).localeCompare(displayNoteTitle(right))),
     }))
     .sort(
       (left, right) =>
@@ -1165,7 +1171,7 @@ function TypeMemoryGroups({
                               checked={selected}
                               onChange={(event) => onSelect(note.id, event.target.checked)}
                               className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-                              aria-label={`Select ${isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : friendlyNoteTitle(note)}`}
+                              aria-label={`Select ${memoryRowTitle(note, chatLookup)}`}
                             />
                           
                         </div>
@@ -1173,9 +1179,9 @@ function TypeMemoryGroups({
                           <div className="min-w-0">
                             <div
                               className="truncate text-xs font-semibold text-[var(--foreground)]"
-                              title={isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : friendlyNoteTitle(note)}
+                              title={memoryRowTitle(note, chatLookup)}
                             >
-                              {isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : friendlyNoteTitle(note)}
+                              {memoryRowTitle(note, chatLookup)}
                             </div>
                           </div>
                           {note.type !== "source" && (
@@ -1256,7 +1262,7 @@ function TypeMemoryGroups({
                             rowActionButtonClassName,
                             openNoteId === note.id && "bg-[var(--accent)] text-[var(--foreground)]",
                           )}
-                          aria-label={`Open ${isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : friendlyNoteTitle(note)}`}
+                          aria-label={`Open ${memoryRowTitle(note, chatLookup)}`}
                           title="Open memory"
                         >
                           <Eye size="0.875rem" />
@@ -1268,7 +1274,7 @@ function TypeMemoryGroups({
                             rowActionButtonClassName,
                             "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]",
                           )}
-                          aria-label={`Delete ${isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : friendlyNoteTitle(note)}`}
+                          aria-label={`Delete ${memoryRowTitle(note, chatLookup)}`}
                           title="Delete memory"
                         >
                           <Trash2 size="0.875rem" />
@@ -1392,12 +1398,12 @@ function _ArchivedSourceSummaryGroupRow({
                   checked={selectedNoteIds.has(derivedNote.id)}
                   onChange={(event) => onSelect([derivedNote.id], event.target.checked)}
                   className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-                  aria-label={`Select ${friendlyNoteTitle(derivedNote)}`}
+                  aria-label={`Select ${displayNoteTitle(derivedNote)}`}
                 />
               </label>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-xs font-medium text-[var(--foreground)]">
-                  {friendlyNoteTitle(derivedNote)}
+                  {displayNoteTitle(derivedNote)}
                 </div>
                 <p className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
                   {derivedNote.sections.summary?.text.trim() ||
@@ -1418,7 +1424,7 @@ function _ArchivedSourceSummaryGroupRow({
                     rowActionButtonClassName,
                     openNoteId === derivedNote.id && "bg-[var(--accent)] text-[var(--foreground)]",
                   )}
-                  aria-label={`Open ${friendlyNoteTitle(derivedNote)}`}
+                  aria-label={`Open ${displayNoteTitle(derivedNote)}`}
                   title="Open memory"
                 >
                   <Eye size="0.875rem" />
@@ -1427,7 +1433,7 @@ function _ArchivedSourceSummaryGroupRow({
                   type="button"
                   onClick={() => onRestore(derivedNote)}
                   className={cn(rowActionButtonClassName, "hover:bg-emerald-500/10 hover:text-emerald-200")}
-                  aria-label={`Restore ${friendlyNoteTitle(derivedNote)}`}
+                  aria-label={`Restore ${displayNoteTitle(derivedNote)}`}
                   title="Restore memory"
                 >
                   <RotateCcw size="0.875rem" />
@@ -1439,7 +1445,7 @@ function _ArchivedSourceSummaryGroupRow({
                     rowActionButtonClassName,
                     "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]",
                   )}
-                  aria-label={`Delete ${friendlyNoteTitle(derivedNote)}`}
+                  aria-label={`Delete ${displayNoteTitle(derivedNote)}`}
                   title="Delete memory"
                 >
                   <Trash2 size="0.875rem" />
@@ -1464,7 +1470,7 @@ function derivedSourceGroups(notes: LtmNote[]) {
   return [...groups.values()]
     .map((group) => ({
       ...group,
-      notes: group.notes.sort((left, right) => friendlyNoteTitle(left).localeCompare(friendlyNoteTitle(right))),
+      notes: group.notes.sort((left, right) => displayNoteTitle(left).localeCompare(displayNoteTitle(right))),
     }))
     .sort(
       (left, right) =>
@@ -1706,7 +1712,7 @@ function DerivedActiveMemories({
                     className="w-full rounded-lg bg-[var(--card)] p-3 text-left ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] disabled:cursor-default disabled:hover:bg-[var(--card)]"
                   >
                     <div className="truncate text-xs font-medium text-[var(--foreground)]">
-                      {friendlyNoteTitle(derivedNote)}
+                      {displayNoteTitle(derivedNote)}
                     </div>
                     <p className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
                       {noteTextPreview(derivedNote) || "No summary text."}
@@ -3048,6 +3054,7 @@ export function LongTermMemoryPanel() {
     return list.filter(
       (note) =>
         note.id.toLowerCase().includes(needle) ||
+        note.title?.toLowerCase().includes(needle) ||
         (isSourceSummaryNote(note) && sourceNoteTitle(note).toLowerCase().includes(needle)) ||
         note.tags.some((tag) => tag.toLowerCase().includes(needle)) ||
         Object.values(note.sections).some((section) => section.text.toLowerCase().includes(needle)),
@@ -3296,6 +3303,7 @@ export function LongTermMemoryPanel() {
     setCreateNoteDraft({
       type: defaultType,
       id: defaultId,
+      title: "",
       status: recovery?.status ?? "active",
       modes: sourceNote.modes,
       tagsText: "",
@@ -3383,7 +3391,7 @@ export function LongTermMemoryPanel() {
   };
 
   const deleteMemory = (note: LtmNote) => {
-    const title = isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : friendlyNoteTitle(note);
+    const title = memoryRowTitle(note, chatLookup);
     if (!confirm(`Permanently delete "${title}"? This cannot be undone.`)) return;
     void deleteMemoriesById(confirmDerivedDeleteIds([note.id]));
   };

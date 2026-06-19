@@ -48,6 +48,7 @@ type CreateLongTermMemoryNoteFormProps = {
 export type CreateLongTermMemoryNoteDraft = {
   type: LtmNoteType;
   id: string;
+  title: string;
   status: LtmNote["status"];
   modes: LtmMode[];
   tagsText: string;
@@ -91,6 +92,7 @@ function createDefaultDraft({
   return {
     type: "scene",
     id: "scene_",
+    title: "",
     status: "active",
     modes: [defaultMode],
     tagsText: "",
@@ -135,7 +137,7 @@ export function CreateLongTermMemoryNoteForm({
     () => serializedCreateDraft(draft) !== serializedCreateDraft(defaultDraft),
     [defaultDraft, draft],
   );
-  const { type, id, status, modes, tagsText, scopeDraft, sectionKey, sectionText } = draft;
+  const { type, id, title, status, modes, tagsText, scopeDraft, sectionKey, sectionText } = draft;
 
   useEffect(() => {
     if (initialDraft) return;
@@ -188,6 +190,7 @@ export function CreateLongTermMemoryNoteForm({
       const note = await createNote.mutateAsync(
         createNoteInput({
           id: normalizedId,
+          title,
           type,
           status,
           modes,
@@ -254,12 +257,21 @@ export function CreateLongTermMemoryNoteForm({
           </SettingField>
         </div>
 
-        <SettingField label="Memory title">
+        <SettingField label="Title">
+          <input
+            value={title}
+            onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
+            placeholder="Poppy chapel promise"
+            className={compactInputClassName}
+          />
+        </SettingField>
+
+        <SettingField label="Internal ID">
           <div className="space-y-1">
             <input
               value={id}
               onChange={(event) => setDraft((current) => ({ ...current, id: event.target.value }))}
-              placeholder="poppy chapel promise"
+              placeholder="poppy_chapel_promise"
               className={compactInputClassName}
             />
             <p className="text-[0.625rem] text-[var(--muted-foreground)]">{friendlyInternalIdHelp(prefixes)}</p>

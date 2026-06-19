@@ -15,6 +15,8 @@ export const ltmNoteTypeSchema = z.enum([
   "tone",
 ]);
 
+export const ltmNoteTitleSchema = z.string().trim().min(1).max(240);
+
 export const ltmStatusSchema = z.enum(["active", "resolved", "archived"]);
 
 export const ltmEvidenceUnitStatusSchema = z.enum(["active", "resolved", "archived", "developing"]);
@@ -112,7 +114,7 @@ export const LTM_NOTE_TYPE_TO_VAULT_FOLDER = {
   tone: "tone",
 } as const satisfies Record<z.infer<typeof ltmNoteTypeSchema>, z.infer<typeof ltmVaultFolderSchema>>;
 
-const idPrefixesByType = {
+export const LTM_NOTE_ID_PREFIXES_BY_TYPE = {
   source: ["source_", "scene_summary_"],
   timeline_event: ["timeline_"],
   character: ["char_"],
@@ -211,6 +213,7 @@ export const ltmConflictSchema = z
 export const ltmNoteSchema = z
   .object({
     id: ltmNoteIdSchema,
+    title: ltmNoteTitleSchema.optional(),
     type: ltmNoteTypeSchema,
     status: ltmStatusSchema,
     modes: z.array(ltmModeSchema).min(1).max(8),
@@ -230,7 +233,7 @@ export const ltmNoteSchema = z
   })
   .strict()
   .superRefine((note, ctx) => {
-    const allowedPrefixes = idPrefixesByType[note.type];
+    const allowedPrefixes = LTM_NOTE_ID_PREFIXES_BY_TYPE[note.type];
     if (!allowedPrefixes.some((prefix) => note.id === prefix || note.id.startsWith(prefix))) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -416,6 +419,7 @@ export const ltmDraftSourceSchema = z
 export const ltmDraftNoteInputSchema = z
   .object({
     id: ltmNoteIdSchema,
+    title: ltmNoteTitleSchema.optional(),
     type: ltmNoteTypeSchema,
     status: ltmStatusSchema.default("active"),
     modes: z.array(ltmModeSchema).min(1).max(8),
@@ -435,7 +439,7 @@ export const ltmDraftNoteInputSchema = z
   })
   .strip()
   .superRefine((note, ctx) => {
-    const allowedPrefixes = idPrefixesByType[note.type];
+    const allowedPrefixes = LTM_NOTE_ID_PREFIXES_BY_TYPE[note.type];
     if (!allowedPrefixes.some((prefix) => note.id === prefix || note.id.startsWith(prefix))) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

@@ -8,6 +8,7 @@ import {
   type LtmLink,
   type LtmMode,
   type LtmNote,
+  type LtmNoteType,
   type LtmSection,
 } from "@marinara-engine/shared";
 import {
@@ -37,12 +38,14 @@ import {
   emptySection,
   friendlyIdentifier,
   friendlyMode,
+  friendlyNoteType,
   friendlySectionKey,
   friendlyStatus,
   humanRelationLabel,
   modeOptions,
   normalizeIdentifier,
   normalizeTagsInput,
+  noteTypeOptions,
   statusOptions,
 } from "./ltm-editor-utils";
 
@@ -83,7 +86,7 @@ function readChatCharacterIds(value: unknown) {
 function isSourceMemory(note: LtmNote) {
   return (
     note.type === "source" ||
-    (note.type === "scene" && note.tags.some((tag) => tag === "source_summary" || tag === "chat_summary"))
+    (note.type === "scene" && note.tags.some((tag) => tag.includes("source_summary") || tag.includes("chat_summary")))
   );
 }
 
@@ -101,6 +104,7 @@ export function LongTermMemoryNoteEditor({
   const activeChat = activeChatQuery.data ?? cachedActiveChat;
   const [savedBaseline, setSavedBaseline] = useState(note);
   const [draft, setDraft] = useState(note);
+  const [titleText, setTitleText] = useState(note.title ?? "");
   const [tagsText, setTagsText] = useState(note.tags.join(", "));
   const [linkDraft, setLinkDraft] = useState<LtmLink>({ target: "", relation: "" });
   const [floatingSectionKey, setFloatingSectionKey] = useState<string | null>(null);
@@ -112,6 +116,7 @@ export function LongTermMemoryNoteEditor({
   useEffect(() => {
     setSavedBaseline(note);
     setDraft(note);
+    setTitleText(note.title ?? "");
     setTagsText(note.tags.join(", "));
     setActiveTab("details");
   }, [note]);
@@ -119,6 +124,7 @@ export function LongTermMemoryNoteEditor({
   const dirty = useMemo(() => serializedEditable(draft) !== serializedEditable(savedBaseline), [draft, savedBaseline]);
   const busy = updateNote.isPending || rebuild.isPending || applyScopeToDerived.isPending;
   const sourceMemory = isSourceMemory(draft);
+  const typedNoteTypeOptions = noteTypeOptions.filter((type) => type !== "source");
 
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -331,7 +337,46 @@ export function LongTermMemoryNoteEditor({
 
       {(embedded || activeTab === "details") && (
       <div className="grid gap-4">
+        <SettingField label="Title">
+          <input
+            value={titleText}
+            onChange={(event) => {
+              const nextTitle = event.target.value;
+              setTitleText(nextTitle);
+              setDraft((current) => ({ ...current, title: nextTitle.trim() ? nextTitle : undefined }));
+            }}
+            placeholder={friendlyIdentifier(draft.id)}
+            className={compactInputClassName}
+          />
+        </SettingField>
+
         <div className="grid gap-2 sm:grid-cols-2">
+          <SettingField label="Type">
+            {sourceMemory ? (
+              <div className="grid gap-1">
+                <div className={cn(compactInputClassName, "flex items-center")}>
+                  {draft.type === "source" ? "Source" : friendlyNoteType(draft.type)}
+                </div>
+                <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                  Source memories keep their type so extraction history stays linked.
+                </p>
+              </div>
+            ) : (
+              <select
+                value={draft.type}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, type: event.target.value as LtmNoteType }))
+                }
+                className={compactInputClassName}
+              >
+                {typedNoteTypeOptions.map((type) => (
+                  <option key={type} value={type}>
+                    {friendlyNoteType(type)}
+                  </option>
+                ))}
+              </select>
+            )}
+          </SettingField>
           <SettingField label="Status">
             <select
               value={draft.status}

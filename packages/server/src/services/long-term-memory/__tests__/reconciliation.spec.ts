@@ -3747,6 +3747,340 @@ test("archived notes are retrievable via normal list/get and can be reactivated"
   }
 });
 
+test("typed note type changes move vault file and preserve display title", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-type-move-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "world_poppy_promise",
+        title: "Poppy chapel promise",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: {
+            text: "The promise matters later.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const updated = await storage.updateNote(
+      "world_poppy_promise",
+      { type: "thread" },
+      { suppressEvent: true },
+    );
+
+    assert.equal(updated.id, "thread_poppy_promise");
+    assert.equal(updated.type, "thread");
+    assert.equal(updated.title, "Poppy chapel promise");
+    assert.equal(updated.version, 2);
+    assert.equal(await storage.getNote("world_poppy_promise"), null);
+    assert.equal((await storage.getNote("thread_poppy_promise"))?.sections.facts?.text, "The promise matters later.");
+    const dirs = getLongTermMemoryDirectories(root);
+    assert.rejects(() => readFile(join(dirs.vault, "world", "world_poppy_promise.json"), "utf8"));
+    assert(JSON.parse(await readFile(join(dirs.vault, "threads", "thread_poppy_promise.json"), "utf8")));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("typed note type changes derive valid ids for special world ids", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-type-rules-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "rules",
+        title: "Table rules",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: {
+            text: "Use table rules.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const updated = await storage.updateNote("rules", { type: "thread" }, { suppressEvent: true });
+
+    assert.equal(updated.id, "thread_rules");
+    assert.equal(updated.type, "thread");
+    assert.equal(await storage.getNote("rules"), null);
+    assert.equal((await storage.getNote("thread_rules"))?.title, "Table rules");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("typed note type changes rewrite note links and pending draft references", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-type-reference-move-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    const draftStore = new LongTermMemoryDraftStore(root);
+    await storage.createNote(
+      {
+        id: "scene_source_test",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary", "chat_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Source note for pending draft.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "world_reference_target",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: {
+            text: "The reference target.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "char_reference_holder",
+        type: "character",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [{ target: "world_reference_target", relation: "related_to" }],
+        sections: {
+          facts: {
+            text: "Holds a link.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    const draft = await draftStore.createDraft({
+      source: { sourceNoteId: "scene_source_test" },
+      modes: ["roleplay"],
+      response: {
+        summary: "Pending mutation references the target.",
+        mutations: [
+          {
+            id: randomUUID(),
+            kind: "append_section",
+            noteId: "world_reference_target",
+            sectionKey: "facts",
+            text: "Pending text.",
+            risk: "medium",
+            confidence: 0.7,
+            summary: "Append target",
+            evidence: ["source_note:scene_source_test"],
+          },
+          {
+            id: randomUUID(),
+            kind: "add_link",
+            noteId: "char_reference_holder",
+            link: { target: "world_reference_target", relation: "related_to" },
+            risk: "medium",
+            confidence: 0.7,
+            summary: "Link target",
+            evidence: ["source_note:scene_source_test"],
+          },
+        ],
+      },
+    });
+
+    await storage.updateNote("world_reference_target", { type: "thread" }, { suppressEvent: true });
+
+    const holder = await storage.getNote("char_reference_holder");
+    assert.deepEqual(holder?.links, [{ target: "thread_reference_target", relation: "related_to" }]);
+    const rewrittenDraft = await draftStore.getDraft(draft.id);
+    assert.equal(rewrittenDraft?.mutations[0]?.kind, "append_section");
+    assert.equal(
+      rewrittenDraft?.mutations[0]?.kind === "append_section" ? rewrittenDraft.mutations[0].noteId : null,
+      "thread_reference_target",
+    );
+    assert.equal(rewrittenDraft?.mutations[1]?.kind, "add_link");
+    assert.equal(
+      rewrittenDraft?.mutations[1]?.kind === "add_link" ? rewrittenDraft.mutations[1].link.target : null,
+      "thread_reference_target",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("typed note type change preflights affected drafts before moving files", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-type-draft-preflight-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    const dirs = getLongTermMemoryDirectories(root);
+    await storage.createNote(
+      {
+        id: "scene_source_test",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary", "chat_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Source note for malformed pending draft.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "world_preflight_target",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: {
+            text: "The target should not move.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await writeFile(
+      join(dirs.drafts, `${randomUUID()}.json`),
+      JSON.stringify({
+        id: randomUUID(),
+        status: "pending",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        source: { sourceNoteId: "scene_source_test" },
+        scope: {},
+        modes: ["roleplay"],
+        summary: "Malformed affected draft",
+        mutations: [
+          {
+            id: randomUUID(),
+            kind: "append_section",
+            noteId: "world_preflight_target",
+            sectionKey: "facts",
+            text: "Would be rewritten.",
+            risk: "medium",
+            confidence: 0.7,
+            summary: "Append target",
+            evidence: [],
+          },
+        ],
+      }),
+    );
+
+    await assert.rejects(
+      () => storage.updateNote("world_preflight_target", { type: "thread" }, { suppressEvent: true }),
+      /evidence/i,
+    );
+    assert.equal((await storage.getNote("world_preflight_target"))?.type, "world");
+    assert.equal(await storage.getNote("thread_preflight_target"), null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source-like notes reject type changes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-source-type-reject-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "scene_source_locked",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary", "chat_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Source-like memory.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    await assert.rejects(
+      () => storage.updateNote("scene_source_locked", { type: "thread" }, { suppressEvent: true }),
+      /source notes cannot change type/,
+    );
+    assert.equal((await storage.getNote("scene_source_locked"))?.type, "scene");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("imported chat summary scene notes reject type changes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-imported-chat-summary-type-reject-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "scene_imported_chat_summary_locked",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["imported_chat_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Imported chat summary.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    await assert.rejects(
+      () => storage.updateNote("scene_imported_chat_summary_locked", { type: "thread" }, { suppressEvent: true }),
+      /source notes cannot change type/,
+    );
+    assert.equal((await storage.getNote("scene_imported_chat_summary_locked"))?.type, "scene");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("draft apply rebuilds typed indexes and keeps source audit indexes intact", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-draft-typed-rebuild-"));
   try {

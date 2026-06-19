@@ -1,9 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, unlink } from "node:fs/promises";
 import {
+  LTM_NOTE_ID_PREFIXES_BY_TYPE,
   ltmEventSchema,
+  ltmExtractionDraftSchema,
   ltmNoteIdSchema,
   ltmNoteSchema,
+  ltmNoteTypeSchema,
   ltmPoliciesConfigSchema,
   ltmRetrievalConfigSchema,
   matchesLtmScope,
@@ -33,6 +36,11 @@ type LtmEventContext = {
   suppressEvent?: boolean;
 };
 
+type PreparedDraftRewrite = {
+  path: string;
+  draft: unknown;
+};
+
 const noteWriteLocks = new Map<string, Promise<void>>();
 const initLocks = new Map<string, Promise<void>>();
 
@@ -48,9 +56,7 @@ export type LtmListNotesFilter = {
 export type CreateLtmNoteInput = Omit<LtmNote, "createdAt" | "updatedAt" | "version" | "previousHash"> &
   Partial<Pick<LtmNote, "createdAt" | "updatedAt" | "version" | "previousHash">>;
 
-export type UpdateLtmNotePatch = Partial<
-  Omit<LtmNote, "id" | "type" | "createdAt" | "updatedAt" | "version" | "previousHash">
->;
+export type UpdateLtmNotePatch = Partial<Omit<LtmNote, "id" | "createdAt" | "updatedAt" | "version" | "previousHash">>;
 
 function nowIso() {
   return new Date().toISOString();
@@ -64,11 +70,60 @@ function normalizeStoredScope(scope: LtmScope) {
   return withMergedLtmScopeLinks(scope, {});
 }
 
+function normalizePatch(patch: UpdateLtmNotePatch) {
+  const next = { ...patch };
+  if ("title" in next && !next.title?.trim()) {
+    delete next.title;
+  }
+  return next;
+}
+
 function isSourceLikeNote(note: LtmNote) {
   return (
     note.type === "source" ||
-    (note.type === "scene" && (note.tags.includes("source_summary") || note.tags.includes("chat_summary")))
+    (note.type === "scene" && note.tags.some((tag) => tag.includes("source_summary") || tag.includes("chat_summary")))
   );
+}
+
+function firstIdPrefixForType(type: LtmNoteType) {
+  return LTM_NOTE_ID_PREFIXES_BY_TYPE[type][0];
+}
+
+function stripKnownIdPrefix(id: string) {
+  const prefixes = Object.values(LTM_NOTE_ID_PREFIXES_BY_TYPE).flat();
+  const matchingPrefix = prefixes
+    .slice()
+    .sort((left, right) => right.length - left.length)
+    .find((prefix) => id === prefix || id.startsWith(prefix));
+  if (!matchingPrefix) return id;
+  if (!matchingPrefix.endsWith("_")) return id;
+  return id.slice(matchingPrefix.length);
+}
+
+function idForChangedType(id: string, type: LtmNoteType) {
+  return ltmNoteIdSchema.parse(`${firstIdPrefixForType(type)}${stripKnownIdPrefix(id)}`);
+}
+
+function rewriteLinks(links: LtmNote["links"], fromId: string, toId: string) {
+  return links.map((link) => (link.target === fromId ? { ...link, target: toId } : link));
+}
+
+function rewriteDraftMutationNoteIds(mutation: unknown, fromId: string, toId: string) {
+  if (!mutation || typeof mutation !== "object" || Array.isArray(mutation)) return mutation;
+  const record = { ...(mutation as Record<string, unknown>) };
+  if (record.noteId === fromId) record.noteId = toId;
+  if (record.kind === "create_note" && record.note && typeof record.note === "object" && !Array.isArray(record.note)) {
+    const note = { ...(record.note as Record<string, unknown>) };
+    if (note.id === fromId) note.id = toId;
+    if (Array.isArray(note.links)) note.links = rewriteLinks(note.links as LtmNote["links"], fromId, toId);
+    record.note = note;
+  }
+  if (record.kind === "add_link" && record.link && typeof record.link === "object" && !Array.isArray(record.link)) {
+    const link = { ...(record.link as Record<string, unknown>) };
+    if (link.target === fromId) link.target = toId;
+    record.link = link;
+  }
+  return record;
 }
 
 function eventFor(
@@ -253,6 +308,10 @@ export class LongTermMemoryStorage {
   async updateNote(id: string, patch: UpdateLtmNotePatch, eventContext: LtmEventContext = {}) {
     await this.initializeLtmStore();
     const existing = await this.getRequiredNote(id);
+    if (patch.type && patch.type !== existing.type) {
+      const { type, ...restPatch } = patch;
+      return this.changeNoteType(existing, type, restPatch, eventContext);
+    }
     return this.writeNotePatch(existing, patch, `${existing.type}.updated`, eventContext);
   }
 
@@ -364,24 +423,156 @@ export class LongTermMemoryStorage {
     return withNoteWriteLock(path, async () => {
       const current = await this.getRequiredNote(existing.id);
       const timestamp = nowIso();
+      const normalizedPatch = normalizePatch(patch);
+      const titlePatch = "title" in patch ? { title: normalizedPatch.title } : {};
       const next = ltmNoteSchema.parse({
         ...current,
-        ...patch,
-        scope: normalizeStoredScope(patch.scope ?? current.scope),
-        links: patch.links ?? current.links,
-        sections: patch.sections ?? current.sections,
-        conflicts: patch.conflicts ?? current.conflicts,
+        ...normalizedPatch,
+        ...titlePatch,
+        scope: normalizeStoredScope(normalizedPatch.scope ?? current.scope),
+        links: normalizedPatch.links ?? current.links,
+        sections: normalizedPatch.sections ?? current.sections,
+        conflicts: normalizedPatch.conflicts ?? current.conflicts,
         updatedAt: timestamp,
         version: current.version + 1,
         previousHash: hashNote(current),
       });
 
       if (!eventContext.suppressEvent) {
-        await this.appendEvent(eventFor(eventType, existing.id, eventContext, { patch, note: next }));
+        await this.appendEvent(eventFor(eventType, existing.id, eventContext, { patch: normalizedPatch, note: next }));
       }
       await writeJsonAtomic(path, next);
       return next;
     });
+  }
+
+  private async changeNoteType(
+    existing: LtmNote,
+    type: LtmNoteType,
+    patch: Omit<UpdateLtmNotePatch, "type">,
+    eventContext: LtmEventContext,
+  ) {
+    const nextType = ltmNoteTypeSchema.parse(type);
+    if (isSourceLikeNote(existing) || nextType === "source") {
+      throw new Error("Long-term memory source notes cannot change type.");
+    }
+    const nextId = idForChangedType(existing.id, nextType);
+    if (nextId !== existing.id && (await this.getNote(nextId))) {
+      throw new Error(`Long-term memory note already exists: ${nextId}`);
+    }
+
+    const oldPath = notePathForId(existing.id, existing.type, this.root);
+    const newPath = notePathForId(nextId, nextType, this.root);
+    const [firstPath, secondPath] = oldPath < newPath ? [oldPath, newPath] : [newPath, oldPath];
+    return withNoteWriteLock(firstPath, () =>
+      withNoteWriteLock(secondPath, async () => {
+        const current = await this.getRequiredNote(existing.id);
+        if (isSourceLikeNote(current)) {
+          throw new Error("Long-term memory source notes cannot change type.");
+        }
+        const timestamp = nowIso();
+        const normalizedPatch = normalizePatch(patch);
+        const titlePatch = "title" in patch ? { title: normalizedPatch.title } : {};
+        const next = ltmNoteSchema.parse({
+          ...current,
+          ...normalizedPatch,
+          ...titlePatch,
+          id: nextId,
+          type: nextType,
+          scope: normalizeStoredScope(normalizedPatch.scope ?? current.scope),
+          links: normalizedPatch.links
+            ? rewriteLinks(normalizedPatch.links, current.id, nextId)
+            : rewriteLinks(current.links, current.id, nextId),
+          sections: normalizedPatch.sections ?? current.sections,
+          conflicts: normalizedPatch.conflicts ?? current.conflicts,
+          updatedAt: timestamp,
+          version: current.version + 1,
+          previousHash: hashNote(current),
+        });
+        const draftRewrites = await this.prepareDraftReferenceRewrites(current.id, next.id);
+
+        await createJsonFileExclusive(newPath, next);
+        await unlink(oldPath);
+        await this.writePreparedDraftRewrites(draftRewrites);
+
+        if (!eventContext.suppressEvent) {
+          const moveContext = {
+            ...eventContext,
+            payload: {
+              ...(eventContext.payload ?? {}),
+              previousNoteId: current.id,
+              previousType: current.type,
+              draftRewriteCount: draftRewrites.length,
+            },
+          };
+          await this.appendEvent(eventFor(`${current.type}.deleted`, current.id, moveContext, { note: current }));
+          await this.appendEvent(
+            eventFor(`${next.type}.created`, next.id, moveContext, {
+              note: next,
+              patch: { ...normalizedPatch, type: nextType },
+            }),
+          );
+        }
+        await this.rewriteNoteReferences(current.id, next.id, eventContext);
+        return next;
+      }),
+    );
+  }
+
+  private async rewriteNoteReferences(fromId: string, toId: string, eventContext: LtmEventContext) {
+    const notes = await this.listNotes();
+    let count = 0;
+    for (const note of notes) {
+      if (note.id === toId) continue;
+      const links = rewriteLinks(note.links, fromId, toId);
+      if (links.every((link, index) => link.target === note.links[index]?.target)) continue;
+      await this.writeNotePatch(note, { links }, `${note.type}.updated`, {
+        ...eventContext,
+        summary: eventContext.summary ?? `Updated links for moved memory ${fromId}`,
+        payload: {
+          ...(eventContext.payload ?? {}),
+          movedNoteId: fromId,
+          replacementNoteId: toId,
+        },
+      });
+      count += 1;
+    }
+    return count;
+  }
+
+  private async prepareDraftReferenceRewrites(fromId: string, toId: string): Promise<PreparedDraftRewrite[]> {
+    const entries = await readdir(this.dirs.drafts, { withFileTypes: true });
+    const rewrites: PreparedDraftRewrite[] = [];
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      const path = safeJoin(this.dirs.drafts, entry.name);
+      const raw = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+      let changed = false;
+      const next = { ...raw };
+      if (next.source && typeof next.source === "object" && !Array.isArray(next.source)) {
+        const source = { ...(next.source as Record<string, unknown>) };
+        if (source.sourceNoteId === fromId) {
+          source.sourceNoteId = toId;
+          next.source = source;
+          changed = true;
+        }
+      }
+      if (Array.isArray(next.mutations)) {
+        const mutations = next.mutations.map((mutation) => rewriteDraftMutationNoteIds(mutation, fromId, toId));
+        changed ||= JSON.stringify(mutations) !== JSON.stringify(next.mutations);
+        next.mutations = mutations;
+      }
+      if (!changed) continue;
+      const parsed = ltmExtractionDraftSchema.parse({ ...next, updatedAt: nowIso() });
+      rewrites.push({ path, draft: parsed });
+    }
+    return rewrites;
+  }
+
+  private async writePreparedDraftRewrites(rewrites: PreparedDraftRewrite[]) {
+    for (const rewrite of rewrites) {
+      await writeJsonAtomic(rewrite.path, rewrite.draft);
+    }
   }
 }
 

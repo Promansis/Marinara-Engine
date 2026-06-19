@@ -117,7 +117,12 @@ export function friendlyNoteTitle(note: Pick<LtmNote, "id" | "type">) {
   return `${friendlyNoteType(note.type)}: ${friendlyIdentifier(note.id)}`;
 }
 
-export function humanMemoryTitle(note: Pick<LtmNote, "id" | "type" | "sections" | "scope" | "tags">, chatLookup?: Map<string, Chat>) {
+export function displayNoteTitle(note: Pick<LtmNote, "id" | "type" | "title">) {
+  return note.title?.trim() || friendlyNoteTitle(note);
+}
+
+export function humanMemoryTitle(note: Pick<LtmNote, "id" | "type" | "title" | "sections" | "scope" | "tags">, chatLookup?: Map<string, Chat>) {
+  if (note.title?.trim()) return note.title.trim();
   const sourceEvidence = note.sections.source?.evidence ?? [];
   const chatName =
     sourceEvidence.find((entry) => entry.startsWith("chat_name:"))?.slice("chat_name:".length).trim() ||
@@ -129,7 +134,7 @@ export function humanMemoryTitle(note: Pick<LtmNote, "id" | "type" | "sections" 
   }
 
   if (note.type === "source") return "Imported source";
-  return friendlyNoteTitle(note);
+  return displayNoteTitle(note);
 }
 
 export function humanScopeLabel(note: Pick<LtmNote, "scope">, chatLookup?: Map<string, Chat>) {
@@ -232,6 +237,7 @@ export function emptyScopeFromDraft(draft: {
 
 export function createNoteInput(data: {
   id: string;
+  title?: string;
   type: LtmNoteType;
   status: LtmStatus;
   modes: LtmMode[];
@@ -247,6 +253,7 @@ export function createNoteInput(data: {
   const sectionKey = normalizeIdentifier(data.sectionKey, "section") || defaultSectionKeyForType(data.type);
   return {
     id: normalizeIdentifier(data.id, allowedIdPrefixesByType[data.type][0].replace(/_$/, "")),
+    title: data.title?.trim() || undefined,
     type: data.type,
     status: data.status,
     modes: data.modes.length > 0 ? data.modes : ["roleplay"],
@@ -267,6 +274,8 @@ export function createNoteInput(data: {
 export function editablePatchFromDraft(draft: LtmNote): UpdateLongTermMemoryNoteInput {
   return {
     status: draft.status,
+    title: draft.title?.trim() || null,
+    type: draft.type,
     modes: draft.modes,
     scope: draft.scope,
     tags: draft.tags,

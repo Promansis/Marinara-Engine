@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rename, rm } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, unlink } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import {
   normalizeChatSummaryEntries,
@@ -385,6 +385,10 @@ export async function auditLongTermMemoryReplay(root = getLongTermMemoryRoot()):
                   summary: event.summary,
                   payload: { sourceEventId: event.id },
                   suppressEvent: true,
+                });
+              } else if (event.type.endsWith(".deleted")) {
+                await unlink(notePathForId(note.id, note.type, replayRoot)).catch((err) => {
+                  if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
                 });
               } else {
                 await writeReplayNoteExact(replayRoot, note);
