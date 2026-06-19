@@ -37,6 +37,29 @@ function draftPathForId(id: string, root = getLongTermMemoryRoot()) {
   return safeJoin(getLongTermMemoryDirectories(root).drafts, `${id}.json`);
 }
 
+const draftWriteLocks = new Map<string, Promise<void>>();
+
+async function withDraftWriteLock<T>(path: string, operation: () => Promise<T>): Promise<T> {
+  const previous = draftWriteLocks.get(path) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(
+    () => current,
+    () => current,
+  );
+  draftWriteLocks.set(path, tail);
+
+  try {
+    await previous.catch(() => {});
+    return await operation();
+  } finally {
+    release();
+    if (draftWriteLocks.get(path) === tail) draftWriteLocks.delete(path);
+  }
+}
+
 export class LongTermMemoryDraftStore {
   readonly root: string;
   private readonly storage: LongTermMemoryStorage;
@@ -52,6 +75,11 @@ export class LongTermMemoryDraftStore {
 
   async initialize() {
     await this.storage.initializeLtmStore();
+  }
+
+  async withDraftLock<T>(id: string, operation: () => Promise<T>): Promise<T> {
+    await this.initialize();
+    return withDraftWriteLock(draftPathForId(id, this.root), operation);
   }
 
   async createDraft(options: StoreLtmDraftOptions) {
@@ -118,21 +146,15 @@ export class LongTermMemoryDraftStore {
   async updateDraft(id: string, patch: Partial<Omit<LtmExtractionDraft, "id" | "createdAt" | "updatedAt">>) {
     const draft = await this.getDraft(id);
     if (!draft) return null;
-    if (patch.status === "pending" && draft.status !== "pending" && draft.status !== "rejected") {
-      throw new Error(`Long-term memory draft cannot be restored from ${draft.status}: ${id}`);
-    }
     const next = ltmExtractionDraftSchema.parse({
       ...draft,
       ...patch,
       id: draft.id,
       createdAt: draft.createdAt,
       updatedAt: nowIso(),
-      rejectedReason: patch.status === "pending" ? undefined : (patch.rejectedReason ?? draft.rejectedReason),
-      appliedAt: patch.status === "pending" ? undefined : (patch.appliedAt ?? draft.appliedAt),
-      appliedMutationIds:
-        patch.status === "pending" ? undefined : (patch.appliedMutationIds ?? draft.appliedMutationIds),
-      skippedMutationIds:
-        patch.status === "pending" ? undefined : (patch.skippedMutationIds ?? draft.skippedMutationIds),
+      appliedAt: patch.appliedAt ?? draft.appliedAt,
+      appliedMutationIds: patch.appliedMutationIds ?? draft.appliedMutationIds,
+      skippedMutationIds: patch.skippedMutationIds ?? draft.skippedMutationIds,
     });
     await writeJsonAtomic(draftPathForId(id, this.root), next);
     return next;
@@ -147,5 +169,19 @@ export class LongTermMemoryDraftStore {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
       throw err;
     }
+  }
+
+  async deleteDraftMutation(id: string, mutationId: string) {
+    const draft = await this.getDraft(id);
+    if (!draft) return { draft: null, deleted: false as const, reason: "not_found" as const };
+    if (draft.status !== "pending") return { draft, deleted: false as const, reason: "not_pending" as const };
+    const nextMutations = draft.mutations.filter((mutation) => mutation.id !== mutationId);
+    if (nextMutations.length === draft.mutations.length) return { draft, deleted: false as const, reason: "not_found" as const };
+    if (nextMutations.length === 0) {
+      await this.deleteDraft(id);
+      return { draft: null, deleted: true as const };
+    }
+    const next = await this.updateDraft(id, { mutations: nextMutations });
+    return { draft: next, deleted: true as const };
   }
 }

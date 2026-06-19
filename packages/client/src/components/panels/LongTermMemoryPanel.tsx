@@ -2244,14 +2244,12 @@ function MemoryNoteModal({
 function draftStatusTone(statusId: LtmExtractionDraft["status"]) {
   if (statusId === "pending") return "warn";
   if (statusId === "accepted" || statusId === "auto_applied") return "good";
-  return "neutral";
 }
 
 function draftStatusLabel(statusId: LtmExtractionDraft["status"]) {
   if (statusId === "pending") return "Needs review";
   if (statusId === "accepted") return "Kept";
-  if (statusId === "auto_applied") return "Kept automatically";
-  return "Skipped";
+  return "Kept automatically";
 }
 
 function DraftDetails({
@@ -2294,11 +2292,6 @@ function DraftDetails({
         <div className="text-[0.625rem] text-[var(--muted-foreground)]">
           Created {new Date(draft.createdAt).toLocaleString()} · updated {new Date(draft.updatedAt).toLocaleString()}
         </div>
-        {draft.rejectedReason && (
-          <div className="mt-2 rounded-md bg-[var(--background)]/70 p-2 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-            {draft.rejectedReason}
-          </div>
-        )}
       </div>
 
       {draft.summary && <p className="text-xs leading-relaxed text-[var(--foreground)]">{draft.summary}</p>}
@@ -2310,104 +2303,6 @@ function DraftDetails({
         ))}
       </section>
     </div>
-  );
-}
-
-function _ArchivedDraftRow({
-  draft,
-  noteLookup,
-  chatLookup,
-  selected,
-  bulkSelected,
-  onView,
-  onEdit,
-  onRestore,
-  onDelete,
-  onSelect,
-  onOpenSourceNote,
-}: {
-  draft: LtmExtractionDraft;
-  noteLookup?: Map<string, LtmNote>;
-  chatLookup?: Map<string, Chat>;
-  selected: boolean;
-  bulkSelected?: boolean;
-  onView: () => void;
-  onEdit: () => void;
-  onRestore: () => void;
-  onDelete: () => void;
-  onSelect?: (selected: boolean) => void;
-  onOpenSourceNote?: (noteId: string) => void;
-}) {
-  return (
-    <article
-      className={cn("group", listRowClassName, (selected || bulkSelected) && selectedListRowClassName)}
-    >
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-        <div className={cn("grid min-w-0 gap-2", onSelect && "grid-cols-[auto_minmax(0,1fr)]")}>
-          {onSelect && (           
-              <input
-                type="checkbox"
-                checked={bulkSelected ?? false}
-                onChange={(event) => onSelect(event.target.checked)}
-                className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-                aria-label={`Select suggestion ${draft.id}`}
-              />            
-          )}
-          <div className="min-w-0">
-            <div className="truncate text-xs font-semibold text-[var(--foreground)]" title={draft.summary || "Untitled suggestion"}>
-              {draft.summary || "Untitled suggestion"}
-            </div>
-            <div className="mt-1 flex min-w-0 flex-wrap gap-1">
-              <StatusPill label={draftStatusLabel(draft.status)} tone={draftStatusTone(draft.status)} />
-              <StatusPill label={`${draft.mutations.length} suggested change${draft.mutations.length === 1 ? "" : "s"}`} />
-            </div>
-            <DraftMetadataPills draft={draft} noteLookup={noteLookup} chatLookup={chatLookup} onOpenSourceNote={onOpenSourceNote} />
-          </div>
-        </div>
-        <div className={rowActionGroupClassName}>
-          <button
-            type="button"
-            onClick={onView}
-            className={cn(rowActionButtonClassName, selected && "bg-[var(--accent)] text-[var(--foreground)]")}
-            aria-label={`View suggestion ${draft.id}`}
-            title="View suggestion"
-          >
-            <Eye size="0.875rem" />
-          </button>
-          <button
-            type="button"
-            onClick={onEdit}
-            className={rowActionButtonClassName}
-            aria-label={`Edit suggestion ${draft.id}`}
-            title="Edit raw suggestion"
-          >
-            <Pencil size="0.875rem" />
-          </button>
-          <button
-            type="button"
-            onClick={onRestore}
-            disabled={draft.status !== "rejected"}
-            className={cn(rowActionButtonClassName, "hover:bg-emerald-500/10 hover:text-emerald-200")}
-            aria-label={`Restore suggestion ${draft.id}`}
-            title={draft.status === "rejected" ? "Restore suggestion" : "Kept suggestions cannot be restored"}
-          >
-            <RotateCcw size="0.875rem" />
-          </button>
-          <button
-            type="button"
-            onClick={onDelete}
-            className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
-            aria-label={`Delete suggestion ${draft.id}`}
-            title="Delete suggestion"
-          >
-            <Trash2 size="0.875rem" />
-          </button>
-        </div>
-      </div>
-      <div className="mt-2 truncate text-[0.625rem] text-[var(--muted-foreground)]">
-        Updated {new Date(draft.updatedAt).toLocaleString()}
-      </div>
-    </article>
   );
 }
 

@@ -369,187 +369,154 @@ async function applyLongTermMemoryDraftInner(
   options: ApplyLtmDraftOptions & { operationId: string },
 ): Promise<ApplyLtmDraftResult> {
   const store = new LongTermMemoryDraftStore(options.root);
-  const draft = await store.getDraft(draftId);
-  if (!draft) {
-    throw new Error(`Long-term memory draft not found: ${draftId}`);
-  }
-  if (draft.status !== "pending") {
-    throw new Error(`Long-term memory draft is not pending: ${draftId}`);
-  }
-  if (!draft.source.sourceNoteId) {
-    throw new Error(`Long-term memory draft is not tied to a source note: ${draftId}`);
-  }
+  return store.withDraftLock(draftId, async () => {
+    const draft = await store.getDraft(draftId);
+    if (!draft) {
+      throw new Error(`Long-term memory draft not found: ${draftId}`);
+    }
+    if (draft.status !== "pending") {
+      throw new Error(`Long-term memory draft is not pending: ${draftId}`);
+    }
+    if (!draft.source.sourceNoteId) {
+      throw new Error(`Long-term memory draft is not tied to a source note: ${draftId}`);
+    }
 
-  const storage = new LongTermMemoryStorage(options.root);
-  const actor = options.actor ?? (options.autoApplyLowRiskOnly ? "auto_low_risk" : "maintenance_api");
-  const appliedMutationIds: string[] = [];
-  const selectedMutationIds = options.mutationIds ? new Set(options.mutationIds) : null;
-  const unknownMutationIds = options.mutationIds?.filter(
-    (mutationId) => !draft.mutations.some((mutation) => mutation.id === mutationId),
-  );
-  if (unknownMutationIds?.length) {
-    throw new Error(`Long-term memory draft mutation not found: ${unknownMutationIds.join(", ")}`);
-  }
-  if (options.editedMutations?.length) {
-    const editedById = new Map(options.editedMutations.map((edit) => [edit.id as string, edit]));
-    draft.mutations = draft.mutations.map((mutation) => {
-      const edit = editedById.get(mutation.id);
-      if (!edit) return mutation;
-      const { id, kind, ...patch } = edit;
-      return { ...mutation, ...patch } as typeof mutation;
+    const storage = new LongTermMemoryStorage(options.root);
+    const actor = options.actor ?? (options.autoApplyLowRiskOnly ? "auto_low_risk" : "maintenance_api");
+    const appliedMutationIds: string[] = [];
+    const selectedMutationIds = options.mutationIds ? new Set(options.mutationIds) : null;
+    const unknownMutationIds = options.mutationIds?.filter(
+      (mutationId) => !draft.mutations.some((mutation) => mutation.id === mutationId),
+    );
+    if (unknownMutationIds?.length) {
+      throw new Error(`Long-term memory draft mutation not found: ${unknownMutationIds.join(", ")}`);
+    }
+    if (options.editedMutations?.length) {
+      const editedById = new Map(options.editedMutations.map((edit) => [edit.id as string, edit]));
+      draft.mutations = draft.mutations.map((mutation) => {
+        const edit = editedById.get(mutation.id);
+        if (!edit) return mutation;
+        const { id, kind, ...patch } = edit;
+        return { ...mutation, ...patch } as typeof mutation;
+      });
+    }
+    const lowRiskMutations = draft.mutations.filter((mutation) => {
+      if (selectedMutationIds && !selectedMutationIds.has(mutation.id)) return false;
+      if (options.autoApplyLowRiskOnly && !isLowRiskSourceExtractionMutation(mutation)) return false;
+      return true;
     });
-  }
-  const lowRiskMutations = draft.mutations.filter((mutation) => {
-    if (selectedMutationIds && !selectedMutationIds.has(mutation.id)) return false;
-    if (options.autoApplyLowRiskOnly && !isLowRiskSourceExtractionMutation(mutation)) return false;
-    return true;
-  });
-  let mutationsToApply = options.autoApplyLowRiskOnly
-    ? await filterAutoApplyMutationsWithDependencies(storage, lowRiskMutations)
-    : lowRiskMutations;
+    let mutationsToApply = options.autoApplyLowRiskOnly
+      ? await filterAutoApplyMutationsWithDependencies(storage, lowRiskMutations)
+      : lowRiskMutations;
 
-  const autoIncludedMutationIds: string[] = [];
-  if (
-    options.mutationIds &&
-    options.mutationIds.length > 0 &&
-    !options.autoApplyLowRiskOnly
-  ) {
-    const selectedSet = new Set(options.mutationIds);
-    const targetNoteIds = new Set(
-      mutationsToApply
-        .filter((m) => m.kind !== "create_note")
-        .map((m) => (m as { noteId: string }).noteId),
-    );
-    const depCreateMutations = (
-      draft.mutations.filter(
-        (m) => m.kind === "create_note",
-      ) as Extract<LtmDraftMutation, { kind: "create_note" }>[]
-    ).filter(
-      (m) => !selectedSet.has(m.id) && targetNoteIds.has(m.note.id),
-    );
-    if (depCreateMutations.length > 0) {
-      const existingDepNotes = await storage.getNotesByIds(depCreateMutations.map((m) => m.note.id));
-      const toInclude = depCreateMutations.filter((m) => !existingDepNotes.has(m.note.id));
-      if (toInclude.length > 0) {
-        autoIncludedMutationIds.push(...toInclude.map((m) => m.id));
-        mutationsToApply = [...toInclude, ...mutationsToApply];
+    const autoIncludedMutationIds: string[] = [];
+    if (
+      options.mutationIds &&
+      options.mutationIds.length > 0 &&
+      !options.autoApplyLowRiskOnly
+    ) {
+      const selectedSet = new Set(options.mutationIds);
+      const targetNoteIds = new Set(
+        mutationsToApply
+          .filter((m) => m.kind !== "create_note")
+          .map((m) => (m as { noteId: string }).noteId),
+      );
+      const depCreateMutations = (
+        draft.mutations.filter(
+          (m) => m.kind === "create_note",
+        ) as Extract<LtmDraftMutation, { kind: "create_note" }>[]
+      ).filter(
+        (m) => !selectedSet.has(m.id) && targetNoteIds.has(m.note.id),
+      );
+      if (depCreateMutations.length > 0) {
+        const existingDepNotes = await storage.getNotesByIds(depCreateMutations.map((m) => m.note.id));
+        const toInclude = depCreateMutations.filter((m) => !existingDepNotes.has(m.note.id));
+        if (toInclude.length > 0) {
+          autoIncludedMutationIds.push(...toInclude.map((m) => m.id));
+          mutationsToApply = [...toInclude, ...mutationsToApply];
+        }
       }
     }
-  }
 
-  const skippedMutationIds = draft.mutations
-    .filter((mutation) => !mutationsToApply.some((candidate) => candidate.id === mutation.id))
-    .map((mutation) => mutation.id);
-  await recordLtmDebugEvent({
-    root: options.root,
-    operationId: options.operationId,
-    phase: "apply",
-    action: "mutations_selected",
-    status: mutationsToApply.length > 0 ? "ok" : options.autoApplyLowRiskOnly ? "skipped" : "warning",
-    draftId,
-    sourceNoteId: draft.source.sourceNoteId,
-    mutationIds: mutationsToApply.map((mutation) => mutation.id),
-    counts: {
-      totalMutations: draft.mutations.length,
-      selectedMutations: mutationsToApply.length,
-      skippedMutations: skippedMutationIds.length,
-    },
-    details: {
-      skippedMutationIds,
-      selectedKinds: mutationsToApply.reduce<Record<string, number>>((counts, mutation) => {
-        counts[mutation.kind] = (counts[mutation.kind] ?? 0) + 1;
-        return counts;
-      }, {}),
-    },
-  });
-
-  if (mutationsToApply.length === 0) {
-    if (options.autoApplyLowRiskOnly) {
-      return { draft, appliedMutationIds, skippedMutationIds, autoIncludedMutationIds };
-    }
-    throw new Error(`Long-term memory draft has no mutations selected for apply: ${draftId}`);
-  }
-
-  await preflightDraftMutations(storage, draft, mutationsToApply);
-
-  const groups = groupMutationsByNote(mutationsToApply);
-  const groupResults = await Promise.all(
-    groups.map(async (group) => {
-      const ids: string[] = [];
-      for (const mutation of group) {
-        await applyMutation(storage, draft, mutation, actor);
-        ids.push(mutation.id);
-      }
-      return ids;
-    }),
-  );
-  for (const ids of groupResults) {
-    appliedMutationIds.push(...ids);
-  }
-
-  const partialApply = skippedMutationIds.length > 0;
-  const status = options.autoApplyLowRiskOnly && !partialApply ? "auto_applied" : partialApply ? "pending" : "accepted";
-  const remainingMutations = partialApply
-    ? draft.mutations.filter((mutation) => skippedMutationIds.includes(mutation.id))
-    : draft.mutations;
-  const updated = await store.updateDraftStatus(draft.id, status, {
-    appliedAt: appliedMutationIds.length > 0 ? nowIso() : undefined,
-    mutations: remainingMutations,
-    appliedMutationIds: Array.from(new Set([...(draft.appliedMutationIds ?? []), ...appliedMutationIds])),
-    skippedMutationIds,
-  });
-  if (!updated) {
-    throw new Error(`Long-term memory draft disappeared during apply: ${draftId}`);
-  }
-
-  if (appliedMutationIds.length > 0 && options.rebuildIndexes !== false) {
-    await rebuildLongTermMemoryIndexes({ root: options.root, scope: "typed" });
+    const skippedMutationIds = draft.mutations
+      .filter((mutation) => !mutationsToApply.some((candidate) => candidate.id === mutation.id))
+      .map((mutation) => mutation.id);
     await recordLtmDebugEvent({
       root: options.root,
       operationId: options.operationId,
-      phase: "rebuild",
-      action: "apply_rebuild_indexes",
-      status: "ok",
+      phase: "apply",
+      action: "mutations_selected",
+      status: mutationsToApply.length > 0 ? "ok" : options.autoApplyLowRiskOnly ? "skipped" : "warning",
       draftId,
-      counts: { appliedMutations: appliedMutationIds.length },
-      details: { scope: "typed" },
+      sourceNoteId: draft.source.sourceNoteId,
+      mutationIds: mutationsToApply.map((mutation) => mutation.id),
+      counts: {
+        totalMutations: draft.mutations.length,
+        selectedMutations: mutationsToApply.length,
+        skippedMutations: skippedMutationIds.length,
+      },
+      details: {
+        skippedMutationIds,
+        selectedKinds: mutationsToApply.reduce<Record<string, number>>((counts, mutation) => {
+          counts[mutation.kind] = (counts[mutation.kind] ?? 0) + 1;
+          return counts;
+        }, {}),
+      },
     });
-  }
 
-  return { draft: updated, appliedMutationIds, skippedMutationIds, autoIncludedMutationIds };
-}
+    if (mutationsToApply.length === 0) {
+      if (options.autoApplyLowRiskOnly) {
+        return { draft, appliedMutationIds, skippedMutationIds, autoIncludedMutationIds };
+      }
+      throw new Error(`Long-term memory draft has no mutations selected for apply: ${draftId}`);
+    }
 
-export async function rejectLongTermMemoryDraft(
-  draftId: string,
-  options: { root?: string; reason?: string; operationId?: string } = {},
-) {
-  return withLtmDebugOperation(
-    {
-      root: options.root,
-      operationId: options.operationId,
-      phase: "draft",
-      action: "reject_draft",
-      draftId,
-      details: { reason: options.reason },
-    },
-    async () => rejectLongTermMemoryDraftInner(draftId, options),
-  );
-}
+    await preflightDraftMutations(storage, draft, mutationsToApply);
 
-async function rejectLongTermMemoryDraftInner(draftId: string, options: { root?: string; reason?: string } = {}) {
-  const store = new LongTermMemoryDraftStore(options.root);
-  const draft = await store.getDraft(draftId);
-  if (!draft) {
-    throw new Error(`Long-term memory draft not found: ${draftId}`);
-  }
-  if (draft.status !== "pending") {
-    throw new Error(`Long-term memory draft is not pending: ${draftId}`);
-  }
-  const updated = await store.updateDraftStatus(draftId, "rejected", {
-    rejectedReason: options.reason,
+    const groups = groupMutationsByNote(mutationsToApply);
+    const groupResults = await Promise.all(
+      groups.map(async (group) => {
+        const ids: string[] = [];
+        for (const mutation of group) {
+          await applyMutation(storage, draft, mutation, actor);
+          ids.push(mutation.id);
+        }
+        return ids;
+      }),
+    );
+    for (const ids of groupResults) {
+      appliedMutationIds.push(...ids);
+    }
+
+    const partialApply = skippedMutationIds.length > 0;
+    const status = options.autoApplyLowRiskOnly && !partialApply ? "auto_applied" : partialApply ? "pending" : "accepted";
+    const remainingMutations = partialApply
+      ? draft.mutations.filter((mutation) => skippedMutationIds.includes(mutation.id))
+      : draft.mutations;
+    const updated = await store.updateDraftStatus(draft.id, status, {
+      appliedAt: appliedMutationIds.length > 0 ? nowIso() : undefined,
+      mutations: remainingMutations,
+      appliedMutationIds: Array.from(new Set([...(draft.appliedMutationIds ?? []), ...appliedMutationIds])),
+      skippedMutationIds,
+    });
+    if (!updated) {
+      throw new Error(`Long-term memory draft disappeared during apply: ${draftId}`);
+    }
+
+    if (appliedMutationIds.length > 0 && options.rebuildIndexes !== false) {
+      await rebuildLongTermMemoryIndexes({ root: options.root, scope: "typed" });
+      await recordLtmDebugEvent({
+        root: options.root,
+        operationId: options.operationId,
+        phase: "rebuild",
+        action: "apply_rebuild_indexes",
+        status: "ok",
+        draftId,
+        counts: { appliedMutations: appliedMutationIds.length },
+        details: { scope: "typed" },
+      });
+    }
+
+    return { draft: updated, appliedMutationIds, skippedMutationIds, autoIncludedMutationIds };
   });
-  if (!updated) {
-    throw new Error(`Long-term memory draft not found: ${draftId}`);
-  }
-  return updated;
 }

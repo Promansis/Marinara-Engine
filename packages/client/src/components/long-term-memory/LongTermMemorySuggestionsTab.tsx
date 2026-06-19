@@ -8,7 +8,6 @@ import {
   ChevronRight,
   Loader2,
   Save,
-  Trash2,
   Wrench,
   X,
 } from "lucide-react";
@@ -22,11 +21,10 @@ import type {
 import { isLtmSourceLikeNote } from "@marinara-engine/shared";
 import {
   useAcceptLongTermMemoryDraft,
-  useDeleteLongTermMemoryDraft,
+  useDeleteLongTermMemoryDraftMutation,
   useExtractLongTermMemorySourceNote,
   useLongTermMemoryDrafts,
   useLongTermMemoryNotes,
-  useRejectLongTermMemoryDraft,
   type ExtractLongTermMemorySourceResponse,
 } from "../../hooks/use-long-term-memory";
 import { useUIStore } from "../../stores/ui.store";
@@ -95,8 +93,7 @@ function mutationRiskTone(risk: LtmDraftMutation["risk"]) {
 function draftStatusLabel(statusId: LtmExtractionDraft["status"]) {
   if (statusId === "pending") return "Needs review";
   if (statusId === "accepted") return "Kept";
-  if (statusId === "auto_applied") return "Kept automatically";
-  return "Skipped";
+  return "Kept automatically";
 }
 
 function referenceLabel(count: number) {
@@ -431,17 +428,15 @@ function SuggestionDrawer({
 function SuggestionRow({ row, noteLookup }: { row: SuggestionRowModel; noteLookup: Map<string, LtmNote> }) {
   const { draft, mutation } = row;
   const accept = useAcceptLongTermMemoryDraft();
-  const reject = useRejectLongTermMemoryDraft();
-  const deleteDraft = useDeleteLongTermMemoryDraft();
+  const deleteMutation = useDeleteLongTermMemoryDraftMutation();
   const [editing, setEditing] = useState(false);
   const [editedMutation, setEditedMutation] = useState<LtmDraftMutation | null>(null);
-  const busy = accept.isPending || reject.isPending || deleteDraft.isPending;
+  const busy = accept.isPending || deleteMutation.isPending;
 
-  const deleteOne = async () => {
-    if (!confirm("Delete this suggestion?")) return;
+  const skipOne = async () => {
     try {
-      await deleteDraft.mutateAsync(draft.id);
-      toast.success("Suggestion deleted");
+      await deleteMutation.mutateAsync({ id: draft.id, mutationId: mutation.id });
+      toast.success("Suggestion skipped");
     } catch (err) {
       toast.error((err as Error).message);
     }
@@ -503,21 +498,9 @@ function SuggestionRow({ row, noteLookup }: { row: SuggestionRowModel; noteLooku
             <Check size="0.875rem" />
             Keep
           </ToolButton>
-          <ToolButton
-            onClick={() =>
-              reject
-                .mutateAsync({ id: draft.id, reason: "Rejected from suggestions panel" })
-                .then(() => toast.success("Suggestion skipped"))
-                .catch((err: Error) => toast.error(err.message))
-            }
-            disabled={busy}
-          >
+          <ToolButton onClick={skipOne} disabled={busy}>
             <X size="0.875rem" />
             Skip
-          </ToolButton>
-          <ToolButton onClick={deleteOne} disabled={busy} tone="danger">
-            <Trash2 size="0.875rem" />
-            Delete
           </ToolButton>
         </div>
       </div>

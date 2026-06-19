@@ -410,7 +410,7 @@ export const ltmIndexMetadataSchema = z
   })
   .strict();
 
-export const ltmDraftStatusSchema = z.enum(["pending", "accepted", "rejected", "auto_applied"]);
+export const ltmDraftStatusSchema = z.enum(["pending", "accepted", "auto_applied"]);
 
 export const ltmDraftRiskSchema = z.enum(["low", "medium", "high"]);
 
@@ -521,7 +521,6 @@ export const ltmExtractionDraftSchema = z
     modes: z.array(ltmModeSchema).min(1).max(8),
     summary: z.string().max(2_000).default(""),
     mutations: z.array(ltmDraftMutationSchema).min(1).max(LTM_DRAFT_MUTATION_LIMIT),
-    rejectedReason: z.string().max(1_000).optional(),
     appliedAt: ltmIsoTimestampSchema.optional(),
     appliedMutationIds: z.array(z.string().uuid()).max(25).optional(),
     skippedMutationIds: z.array(z.string().uuid()).max(25).optional(),

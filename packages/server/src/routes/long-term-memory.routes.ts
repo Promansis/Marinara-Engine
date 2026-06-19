@@ -62,7 +62,7 @@ import {
   type LtmRepairAction,
 } from "../services/long-term-memory/maintenance.js";
 import { rebuildLongTermMemoryIndexes, type LtmEmbeddingIndex } from "../services/long-term-memory/rebuild.js";
-import { applyLongTermMemoryDraft, rejectLongTermMemoryDraft } from "../services/long-term-memory/reconciliation.js";
+import { applyLongTermMemoryDraft } from "../services/long-term-memory/reconciliation.js";
 import { retrieveLongTermMemory } from "../services/long-term-memory/retrieval.js";
 import {
   extractLongTermMemoryFromSourceNote,
@@ -186,7 +186,7 @@ const interopImportBodySchema = z
   .strict();
 
 const draftIdParamSchema = z.object({ id: z.string().uuid() }).strict();
-const draftMutationParamsSchema = z.object({ id: z.string().uuid(), mutationId: z.string().uuid() }).strict();
+const draftMutationParamSchema = z.object({ id: z.string().uuid(), mutationId: z.string().uuid() }).strict();
 const noteIdParamSchema = z.object({ id: ltmNoteIdSchema }).strict();
 
 const listDraftsQuerySchema = z
@@ -195,13 +195,6 @@ const listDraftsQuerySchema = z
     chatId: z.string().min(1).max(120).optional(),
   })
   .strict();
-
-const rejectDraftBodySchema = z
-  .object({
-    reason: z.string().max(1_000).optional(),
-  })
-  .strict()
-  .default({});
 
 const acceptDraftBodySchema = z
   .object({
@@ -932,19 +925,6 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     return draft;
   });
 
-  app.post<{ Params: { id: string } }>("/drafts/:id/restore", async (req, reply) => {
-    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft restore" })) return;
-    const { id } = draftIdParamSchema.parse(req.params);
-    try {
-      const draft = await draftStore.updateDraft(id, { status: "pending" });
-      if (!draft) return reply.status(404).send({ error: "Long-term memory draft not found" });
-      return draft;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to restore draft";
-      return reply.status(message.includes("cannot be restored") ? 409 : 400).send({ error: message });
-    }
-  });
-
   app.post<{ Params: { id: string }; Body: unknown }>("/drafts/:id/accept", async (req, reply) => {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft acceptance" })) return;
     const { id } = draftIdParamSchema.parse(req.params);
@@ -964,27 +944,25 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     }
   });
 
-  app.post<{ Params: { id: string }; Body: unknown }>(
-    "/drafts/:id/reject",
-    { bodyLimit: REBUILD_BODY_LIMIT_BYTES },
-    async (req, reply) => {
-      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft rejection" })) return;
-      const { id } = draftIdParamSchema.parse(req.params);
-      const body = rejectDraftBodySchema.parse(req.body ?? {});
-      try {
-        return await rejectLongTermMemoryDraft(id, { reason: body.reason, operationId: randomUUID() });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to reject long-term memory draft";
-        const status = message.includes("not found") ? 404 : message.includes("not pending") ? 409 : 400;
-        return reply.status(status).send({ error: message });
-      }
-    },
-  );
+  app.delete<{ Params: { id: string; mutationId: string } }>("/drafts/:id/mutations/:mutationId", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft mutation deletion" })) return;
+    const { id, mutationId } = draftMutationParamSchema.parse(req.params);
+    const result = await draftStore.withDraftLock(id, () => draftStore.deleteDraftMutation(id, mutationId));
+    if (!result.deleted) {
+      const status = result.reason === "not_pending" ? 409 : 404;
+      const error =
+        result.reason === "not_pending"
+          ? "Long-term memory draft mutation can only be removed from pending drafts"
+          : "Long-term memory draft mutation not found";
+      return reply.status(status).send({ error });
+    }
+    return { deleted: true, draftId: id, mutationId, draft: result.draft };
+  });
 
   app.delete<{ Params: { id: string } }>("/drafts/:id", async (req, reply) => {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft deletion" })) return;
     const { id } = draftIdParamSchema.parse(req.params);
-    const deleted = await draftStore.deleteDraft(id);
+    const deleted = await draftStore.withDraftLock(id, () => draftStore.deleteDraft(id));
     if (!deleted) return reply.status(404).send({ error: "Long-term memory draft not found" });
     return { deleted: true, id };
   });
