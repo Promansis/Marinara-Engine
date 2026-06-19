@@ -18,7 +18,6 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
-  SlidersHorizontal,
   ShieldCheck,
   Trash2,
 } from "lucide-react";
@@ -71,7 +70,7 @@ import {
   type CreateLongTermMemoryNoteDraft,
 } from "../long-term-memory/CreateLongTermMemoryNoteForm";
 import { LongTermMemoryDebugLogModal } from "../long-term-memory/LongTermMemoryDebugLogModal";
-import { LongTermMemoryExtractionSettingsModal } from "../long-term-memory/LongTermMemoryExtractionSettingsModal";
+import { LongTermMemoryExtractionSettingsEditor } from "../long-term-memory/LongTermMemoryExtractionSettingsModal";
 import { LongTermMemoryNoteEditor } from "../long-term-memory/LongTermMemoryNoteEditor";
 import { LongTermMemorySuggestionsTab } from "../long-term-memory/LongTermMemorySuggestionsTab";
 import {
@@ -2472,13 +2471,11 @@ function ImportPreviewRowItem({
 }
 
 function ChatMemorySettings({
-  onOpenExtractionSettings,
   integrity,
   rebuild,
   replay,
   repair,
 }: {
-  onOpenExtractionSettings: () => void;
   integrity: ReturnType<typeof useLongTermMemoryIntegrity>;
   rebuild: ReturnType<typeof useRebuildLongTermMemory>;
   replay: ReturnType<typeof useReplayLongTermMemory>;
@@ -2517,7 +2514,7 @@ function ChatMemorySettings({
   const [lexicalWeightDraft, setLexicalWeightDraft] = useState(String(weights.lexicalWeight));
   const [graphWeightDraft, setGraphWeightDraft] = useState(String(weights.graphWeight));
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [recallOpen, setRecallOpen] = useState(true);
+  const [recallOpen, setRecallOpen] = useState(false);
   const [extractionOpen, setExtractionOpen] = useState(false);
   const [maintenanceOpen, setMaintenanceOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
@@ -2866,12 +2863,7 @@ function ChatMemorySettings({
 
           <DisclosureHeader title="Extraction" open={extractionOpen} onToggle={() => setExtractionOpen((c) => !c)} />
           {extractionOpen && (
-            <div className={sectionCardClassName}>
-              <ToolButton onClick={onOpenExtractionSettings}>
-                <SlidersHorizontal size="0.875rem" />
-                Extraction settings
-              </ToolButton>              
-            </div>
+            <LongTermMemoryExtractionSettingsEditor enabled={extractionOpen} />
           )}
 
           <DisclosureHeader
@@ -2980,7 +2972,6 @@ export function LongTermMemoryPanel() {
   const [selectedImportRows, setSelectedImportRows] = useState<Set<string>>(() => new Set());
   const [activeImportIds, setActiveImportIds] = useState<Set<string>>(() => new Set());
   const [debugLogOpen, setDebugLogOpen] = useState(false);
-  const [extractionSettingsOpen, setExtractionSettingsOpen] = useState(false);
   const [creatingNote, setCreatingNote] = useState(false);
   const [createNoteDraft, setCreateNoteDraft] = useState<CreateLongTermMemoryNoteDraft | null>(null);
   const [createNoteDirty, setCreateNoteDirty] = useState(false);
@@ -3724,7 +3715,6 @@ export function LongTermMemoryPanel() {
             </p>
           </div>
           <ChatMemorySettings
-            onOpenExtractionSettings={() => setExtractionSettingsOpen(true)}
             integrity={integrity}
             rebuild={rebuild}
             replay={replay}
@@ -3988,10 +3978,6 @@ export function LongTermMemoryPanel() {
         )}
       </Modal>
       <LongTermMemoryDebugLogModal open={debugLogOpen} onClose={() => setDebugLogOpen(false)} />
-      <LongTermMemoryExtractionSettingsModal
-        open={extractionSettingsOpen}
-        onClose={() => setExtractionSettingsOpen(false)}
-      />
       {(status.isLoading || integrity.isLoading) && (
         <div className="fixed bottom-3 right-3 rounded-full bg-[var(--card)] p-2 shadow-sm ring-1 ring-[var(--border)]">
           <Loader2 size="1rem" className="animate-spin" />
