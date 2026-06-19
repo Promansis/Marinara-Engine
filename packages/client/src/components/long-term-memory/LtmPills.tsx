@@ -4,13 +4,15 @@ import { cn } from "../../lib/utils";
 export function StatusPill({
   label,
   tone = "neutral",
+  title,
 }: {
   label: string;
   tone?: "neutral" | "good" | "warn" | "bad";
+  title?: string;
 }) {
   return (
     <span
-      title={label}
+      title={title ?? label}
       className={cn(
         "inline-flex max-w-full min-w-0 items-center truncate rounded-md border px-1.5 py-0.5 text-[0.625rem] font-medium leading-tight",
         tone === "good" &&

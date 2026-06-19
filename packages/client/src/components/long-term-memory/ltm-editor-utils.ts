@@ -13,6 +13,14 @@ import {
 } from "@marinara-engine/shared";
 import type { CreateLongTermMemoryNoteInput, UpdateLongTermMemoryNoteInput } from "../../hooks/use-long-term-memory";
 
+export type LtmGroupLookup = Map<string, { label: string; rawId?: string }>;
+export type LtmNoteLookup = Map<string, LtmNote>;
+export type LtmDisplayLookupContext = {
+  chats?: Map<string, Chat>;
+  notes?: LtmNoteLookup;
+  groups?: LtmGroupLookup;
+};
+
 export const noteTypeOptions: LtmNoteType[] = [
   "source",
   "timeline_event",
@@ -137,7 +145,12 @@ export function humanMemoryTitle(note: Pick<LtmNote, "id" | "type" | "title" | "
   return displayNoteTitle(note);
 }
 
-export function humanScopeLabel(note: Pick<LtmNote, "scope">, chatLookup?: Map<string, Chat>) {
+function lookupGroupLabel(groupId: string | undefined, context?: LtmDisplayLookupContext) {
+  if (!groupId) return null;
+  return context?.groups?.get(groupId)?.label ?? "Grouped chat";
+}
+
+export function humanScopeLabel(note: Pick<LtmNote, "scope">, chatLookup?: Map<string, Chat>, groupLookup?: LtmGroupLookup) {
   const chatIds = [
     ...(note.scope.chatIds ?? []),
     ...(note.scope.chatId ? [note.scope.chatId] : []),
@@ -146,7 +159,7 @@ export function humanScopeLabel(note: Pick<LtmNote, "scope">, chatLookup?: Map<s
   const parts = [
     ...chatLabels,
     ...(note.scope.characterIds?.length ? [`${note.scope.characterIds.length} character link${note.scope.characterIds.length === 1 ? "" : "s"}`] : []),
-    ...(note.scope.groupId ? ["Group chat"] : []),
+    ...(note.scope.groupId ? [groupLookup?.get(note.scope.groupId)?.label ?? "Grouped chat"] : []),
   ];
   return parts.length ? parts.join(", ") : "Available everywhere";
 }
@@ -291,25 +304,116 @@ export function isAllowedNoteId(type: LtmNoteType, id: string) {
 }
 
 export function friendlyEvidence(entry: string) {
-  const colonIdx = entry.indexOf(":");
-  if (colonIdx > 0) {
-    const rawPrefix = entry.slice(0, colonIdx);
-    const value = friendlyIdentifier(entry.slice(colonIdx + 1));
-    if (rawPrefix === "chat_name") return value;
-    if (rawPrefix === "message_range") return `messages ${entry.slice(colonIdx + 1).trim()}`;
-    if (rawPrefix === "source_note") return `Source: ${value || "Imported source"}`;
-    return `${sentenceCaseIdentifier(rawPrefix)}: ${value}`;
-  }
-  return friendlyIdentifier(entry);
+  const resolved = resolveEvidenceDisplay(entry);
+  return resolved.label;
 }
 
-export function humanEvidenceLabel(entry: string, chatLookup?: Map<string, Chat>) {
+type LtmResolvedEvidence = {
+  label: string;
+  rawValue?: string;
+  tooltip?: string;
+  sourceNoteId?: string;
+  kind: "chat" | "chat_name" | "message_range" | "source_note" | "summary_entry" | "generic";
+};
+
+export function resolveEvidenceDisplay(entry: string, context?: LtmDisplayLookupContext): LtmResolvedEvidence {
   const colonIdx = entry.indexOf(":");
-  if (colonIdx <= 0) return friendlyEvidence(entry);
+  if (colonIdx <= 0) {
+    return {
+      kind: "generic",
+      label: friendlyIdentifier(entry),
+      rawValue: entry,
+      tooltip: entry,
+    };
+  }
+
   const prefix = entry.slice(0, colonIdx);
   const value = entry.slice(colonIdx + 1).trim();
-  if (prefix === "chat_name") return value || "Unknown chat";
-  if (prefix === "message_range") return value ? `messages ${value}` : "Unknown messages";
-  if (prefix === "source_note") return "Source memory";
-  return chatLookup?.get(value)?.name ?? friendlyEvidence(entry);
+
+  if (prefix === "chat_name") {
+    return {
+      kind: "chat_name",
+      label: value || "Unknown chat",
+      rawValue: value,
+      tooltip: value || undefined,
+    };
+  }
+
+  if (prefix === "chat") {
+    const chat = context?.chats?.get(value);
+    return {
+      kind: "chat",
+      label: chat?.name?.trim() || "Unknown chat",
+      rawValue: value,
+      tooltip: value || undefined,
+    };
+  }
+
+  if (prefix === "message_range") {
+    return {
+      kind: "message_range",
+      label: value ? `messages ${value}` : "Unknown messages",
+      rawValue: value,
+      tooltip: value || undefined,
+    };
+  }
+
+  if (prefix === "source_note") {
+    const note = context?.notes?.get(value);
+    return {
+      kind: "source_note",
+      label: note ? humanMemoryTitle(note, context?.chats) : "Source memory",
+      rawValue: value,
+      tooltip: value || undefined,
+      sourceNoteId: value,
+    };
+  }
+
+  if (prefix === "summary_entry") {
+    const sourceNote = [...(context?.notes?.values() ?? [])].find((candidate) =>
+      (candidate.sections.source?.evidence ?? []).includes(entry),
+    );
+    if (sourceNote) {
+      return {
+        kind: "summary_entry",
+        label: `Chat summary: ${humanMemoryTitle(sourceNote, context?.chats)}`,
+        rawValue: value,
+        tooltip: value || undefined,
+        sourceNoteId: sourceNote.id,
+      };
+    }
+    return {
+      kind: "summary_entry",
+      label: "Chat summary",
+      rawValue: value,
+      tooltip: value || undefined,
+    };
+  }
+
+  const friendlyValue = friendlyIdentifier(value);
+  return {
+    kind: "generic",
+    label: `${sentenceCaseIdentifier(prefix)}: ${friendlyValue}`,
+    rawValue: value,
+    tooltip: value || undefined,
+  };
+}
+
+export function humanEvidenceLabel(entry: string, chatLookup?: Map<string, Chat>, noteLookup?: LtmNoteLookup) {
+  return resolveEvidenceDisplay(entry, { chats: chatLookup, notes: noteLookup }).label;
+}
+
+export function dedupeEvidenceEntries(entries: string[], context?: LtmDisplayLookupContext) {
+  const seen = new Set<string>();
+  return entries.filter((entry) => {
+    const resolved = resolveEvidenceDisplay(entry, context);
+    const key = resolved.label.trim().toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export function groupScopeLabel(groupId: string | undefined, context?: LtmDisplayLookupContext) {
+  return lookupGroupLabel(groupId, context);
 }

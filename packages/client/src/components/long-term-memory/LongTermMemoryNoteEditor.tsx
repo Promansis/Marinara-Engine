@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Loader2, Pencil, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
+import { Check, Loader2, Pencil, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
 import {
   getLtmScopeChatIds,
   withMergedLtmScopeLinks,
@@ -28,12 +28,12 @@ import {
   insetSectionCardClassName,
   sectionCardClassName,
   SettingField,
-  textareaClassName,
 } from "./LtmFields";
 import { LtmScopePicker } from "./LtmScopePicker";
 import { LongTermMemorySuggestionsTab } from "./LongTermMemorySuggestionsTab";
 import { ToolButton } from "./LtmPills";
 import {
+  dedupeEvidenceEntries,
   editablePatchFromDraft,
   emptySection,
   friendlyIdentifier,
@@ -41,12 +41,15 @@ import {
   friendlyNoteType,
   friendlySectionKey,
   friendlyStatus,
+  groupScopeLabel,
   humanRelationLabel,
   modeOptions,
   normalizeIdentifier,
   normalizeTagsInput,
   noteTypeOptions,
+  resolveEvidenceDisplay,
   statusOptions,
+  type LtmDisplayLookupContext,
 } from "./ltm-editor-utils";
 
 type LongTermMemoryNoteEditorProps = {
@@ -56,6 +59,7 @@ type LongTermMemoryNoteEditorProps = {
   onSaved?: (note: LtmNote) => void;
   onRecoverDroppedCandidate?: (candidate: LtmExtractionDroppedCandidate, note: LtmNote) => void;
   embedded?: boolean;
+  displayContext?: LtmDisplayLookupContext;
 };
 
 function serializedEditable(note: LtmNote) {
@@ -97,6 +101,7 @@ export function LongTermMemoryNoteEditor({
   onSaved,
   onRecoverDroppedCandidate,
   embedded = false,
+  displayContext,
 }: LongTermMemoryNoteEditorProps) {
   const activeChatId = useChatStore((state) => state.activeChatId);
   const cachedActiveChat = useChatStore((state) => state.activeChat);
@@ -239,10 +244,19 @@ export function LongTermMemoryNoteEditor({
     setLinkDraft({ target: "", relation: "" });
   };
 
-  const setLinkedScope = (next: { chatIds: string[]; characterIds: string[] }) => {
+  const setLinkedScope = (next: { chatIds: string[]; characterIds: string[]; groupId?: string }) => {
     setDraft((current) => {
-      const { chatId: _chatId, chatIds: _chatIds, characterIds: _characterIds, ...restScope } = current.scope;
-      return { ...current, scope: withMergedLtmScopeLinks(restScope, next) };
+      const { chatId: _chatId, chatIds: _chatIds, characterIds: _characterIds, groupId: _groupId, ...restScope } = current.scope;
+      return {
+        ...current,
+        scope: withMergedLtmScopeLinks(
+          {
+            ...restScope,
+            groupId: next.groupId?.trim() || undefined,
+          },
+          { chatIds: next.chatIds, characterIds: next.characterIds },
+        ),
+      };
     });
   };
 
@@ -283,6 +297,19 @@ export function LongTermMemoryNoteEditor({
   };
 
   const floatingSection = floatingSectionKey ? draft.sections[floatingSectionKey] : null;
+  const [advancedEvidenceKey, setAdvancedEvidenceKey] = useState<string | null>(null);
+  const [advancedEvidenceValue, setAdvancedEvidenceValue] = useState("");
+
+  const addEvidenceEntry = (sectionKey: string) => {
+    const nextEntry = advancedEvidenceValue.trim();
+    if (!nextEntry) return;
+    setSection(sectionKey, (current) => ({
+      ...current,
+      evidence: dedupeEvidenceEntries([...(current.evidence ?? []), nextEntry], displayContext),
+    }));
+    setAdvancedEvidenceValue("");
+    setAdvancedEvidenceKey(null);
+  };
 
   return (
     <div className="grid gap-4">
@@ -455,22 +482,18 @@ export function LongTermMemoryNoteEditor({
             </button>
           </div>
           <LtmScopePicker
-            value={{ chatIds: getLtmScopeChatIds(draft.scope), characterIds: draft.scope.characterIds ?? [] }}
+            value={{
+              chatIds: getLtmScopeChatIds(draft.scope),
+              characterIds: draft.scope.characterIds ?? [],
+              groupId: draft.scope.groupId,
+            }}
             onChange={setLinkedScope}
           />
-          <div className="grid gap-2">
-            <input
-              value={draft.scope.groupId ?? ""}
-              onChange={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  scope: { ...current.scope, groupId: event.target.value || undefined },
-                }))
-              }
-              placeholder="group"
-              className={compactInputClassName}
-            />
-          </div>
+          {draft.scope.groupId && (
+            <div className="text-[0.625rem] text-[var(--muted-foreground)]">
+              Grouped chat: {groupScopeLabel(draft.scope.groupId, displayContext) ?? "Grouped chat"}
+            </div>
+          )}
           {sourceMemory && (
             <div className={cn(insetSectionCardClassName, "flex flex-wrap items-center justify-between gap-2")}>
               <span className={helperTextClassName}>Push these chat and character links to extracted memories.</span>
@@ -587,20 +610,74 @@ export function LongTermMemoryNoteEditor({
                     size="0.625rem"
                   />
                 </span>
-                <textarea
-                  value={section.evidence?.join("\n") ?? ""}
-                  onChange={(event) =>
-                    setSection(key, (current) => ({
-                      ...current,
-                      evidence: event.target.value
-                        .split("\n")
-                        .map((line) => line.trim())
-                        .filter(Boolean),
-                    }))
-                  }
-                  placeholder="One reason per line"
-                  className={cn(textareaClassName, "min-h-16")}
-                />
+                <div className="grid gap-2 rounded-xl bg-[var(--background)]/45 p-2 ring-1 ring-[var(--border)]/70">
+                  {(section.evidence?.length ?? 0) > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {dedupeEvidenceEntries(section.evidence ?? [], displayContext).map((entry) => {
+                        const resolved = resolveEvidenceDisplay(entry, displayContext);
+                        return (
+                          <span
+                            key={`${key}-${entry}`}
+                            title={resolved.tooltip}
+                            className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-[var(--secondary)]/60 px-2 py-1 text-[0.6875rem] text-[var(--foreground)] ring-1 ring-[var(--border)]"
+                          >
+                            <span className="truncate">{resolved.label}</span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSection(key, (current) => ({
+                                  ...current,
+                                  evidence: (current.evidence ?? []).filter((candidate) => candidate !== entry),
+                                }))
+                              }
+                              className="rounded p-0.5 hover:bg-[var(--accent)]"
+                              aria-label={`Remove ${resolved.label}`}
+                            >
+                              <X size="0.7rem" />
+                            </button>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-[0.6875rem] text-[var(--muted-foreground)]">No supporting evidence yet.</p>
+                  )}
+                  {advancedEvidenceKey === key ? (
+                    <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+                      <input
+                        value={advancedEvidenceValue}
+                        onChange={(event) => setAdvancedEvidenceValue(event.target.value)}
+                        placeholder="Advanced token, for example source_note:..."
+                        className={compactInputClassName}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => addEvidenceEntry(key)}
+                        className="rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+                      >
+                        <Check size="0.75rem" className="inline-block align-[-0.12rem]" /> Save
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAdvancedEvidenceKey(null);
+                          setAdvancedEvidenceValue("");
+                        }}
+                        className="rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setAdvancedEvidenceKey(key)}
+                      className="justify-self-start rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                    >
+                      Add Advanced Evidence
+                    </button>
+                  )}
+                </div>
               </label>
             </section>
           ))}

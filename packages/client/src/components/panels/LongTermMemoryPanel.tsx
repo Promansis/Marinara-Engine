@@ -74,6 +74,7 @@ import { LongTermMemoryExtractionSettingsModal } from "../long-term-memory/LongT
 import { LongTermMemoryNoteEditor } from "../long-term-memory/LongTermMemoryNoteEditor";
 import { LongTermMemorySuggestionsTab } from "../long-term-memory/LongTermMemorySuggestionsTab";
 import {
+  dedupeEvidenceEntries,
   displayNoteTitle,
   friendlyEvidence,
   friendlyIdentifier,
@@ -82,12 +83,14 @@ import {
   friendlyNoteType,
   friendlySectionKey,
   friendlyStatus,
-  humanEvidenceLabel,
   humanMemoryTitle,
   humanRelationLabel,
   humanScopeLabel,
   humanScoreLabel,
+  resolveEvidenceDisplay,
   sentenceCaseIdentifier,
+  type LtmDisplayLookupContext,
+  type LtmGroupLookup,
 } from "../long-term-memory/ltm-editor-utils";
 import {
   compactInputClassName,
@@ -365,6 +368,20 @@ function buildNavigatorThreads(chats: Chat[] | undefined, characters: CharacterL
       };
     })
     .sort((left, right) => new Date(right.representative.updatedAt).getTime() - new Date(left.representative.updatedAt).getTime());
+}
+
+function buildGroupLookup(threads: LtmNavigatorThread[]): LtmGroupLookup {
+  return new Map(
+    threads
+      .filter((thread) => thread.groupId)
+      .map((thread) => [
+        thread.groupId!,
+        {
+          label: `${thread.title}, all branches`,
+          rawId: thread.groupId ?? undefined,
+        },
+      ]),
+  );
 }
 
 function findNavigatorThread(threads: LtmNavigatorThread[], selection: LtmNavigatorSelection) {
@@ -1734,6 +1751,7 @@ function MemoryOverviewPanel({
   activeNotes,
   noteLookup,
   chatLookup,
+  displayContext,
   activeNotesLoading,
   pendingSuggestionCount,
   onOpenNote,
@@ -1742,6 +1760,7 @@ function MemoryOverviewPanel({
   activeNotes: LtmNote[];
   noteLookup: Map<string, LtmNote>;
   chatLookup?: Map<string, Chat>;
+  displayContext: LtmDisplayLookupContext;
   activeNotesLoading: boolean;
   pendingSuggestionCount: number;
   onOpenNote: (noteId: string) => void;
@@ -1770,7 +1789,7 @@ function MemoryOverviewPanel({
           {conflictCount > 0 && <StatusPill label={`${conflictCount} needs review`} tone="warn" />}
         </div>
         <div className="mt-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-          {humanScopeLabel(note, chatLookup)} · updated {new Date(note.updatedAt).toLocaleString()}
+          {humanScopeLabel(note, chatLookup, displayContext.groups)} · updated {new Date(note.updatedAt).toLocaleString()}
         </div>
       </div>
 
@@ -1828,7 +1847,13 @@ function MemoryOverviewPanel({
   );
 }
 
-function MemoryContentsPanel({ note, chatLookup }: { note: LtmNote; chatLookup?: Map<string, Chat> }) {
+function MemoryContentsPanel({
+  note,
+  displayContext,
+}: {
+  note: LtmNote;
+  displayContext: LtmDisplayLookupContext;
+}) {
   return (
     <div className="space-y-2">
       {Object.entries(note.sections).map(([key, section]) => (
@@ -1847,7 +1872,13 @@ function MemoryContentsPanel({ note, chatLookup }: { note: LtmNote; chatLookup?:
           <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-[var(--foreground)]">{section.text}</p>
           {(section.evidence ?? []).length > 0 && (
             <div className="mt-2 rounded-md bg-[var(--background)]/55 p-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-              Evidence: {section.evidence?.map((entry) => humanEvidenceLabel(entry, chatLookup)).join(", ")}
+              <div className="mb-1 font-medium text-[var(--foreground)]">Evidence</div>
+              <div className="flex flex-wrap gap-1.5">
+                {dedupeEvidenceEntries(section.evidence ?? [], displayContext).map((entry) => {
+                  const resolved = resolveEvidenceDisplay(entry, displayContext);
+                  return <StatusPill key={`${key}-${entry}`} label={resolved.label} title={resolved.tooltip ?? resolved.label} />;
+                })}
+              </div>
             </div>
           )}
         </details>
@@ -2049,6 +2080,7 @@ function MemoryNoteModal({
   activeNotes,
   noteLookup,
   chatLookup,
+  displayContext,
   activeNotesLoading,
   pendingDrafts,
   recallQuery,
@@ -2072,6 +2104,7 @@ function MemoryNoteModal({
   activeNotes: LtmNote[];
   noteLookup: Map<string, LtmNote>;
   chatLookup?: Map<string, Chat>;
+  displayContext: LtmDisplayLookupContext;
   activeNotesLoading: boolean;
   pendingDrafts: LtmExtractionDraft[];
   recallQuery: string;
@@ -2166,12 +2199,13 @@ function MemoryNoteModal({
                   activeNotes={activeNotes}
                   noteLookup={noteLookup}
                   chatLookup={chatLookup}
+                  displayContext={displayContext}
                   activeNotesLoading={activeNotesLoading}
                   pendingSuggestionCount={pendingDrafts.length}
                   onOpenNote={onOpenNote}
                 />
               )}
-              {safeActiveTab === "content" && <MemoryContentsPanel note={note} chatLookup={chatLookup} />}
+              {safeActiveTab === "content" && <MemoryContentsPanel note={note} displayContext={displayContext} />}
               {safeActiveTab === "links" && (
                 <GraphLinks links={note.links} noteLookup={noteLookup} chatLookup={chatLookup} onOpenNote={onOpenNote} />
               )}
@@ -2199,6 +2233,7 @@ function MemoryNoteModal({
               onSaved={onSaved}
               onRecoverDroppedCandidate={onRecoverDroppedCandidate}
               embedded
+              displayContext={displayContext}
             />
           )}
         </div>
@@ -2975,6 +3010,7 @@ export function LongTermMemoryPanel() {
     () => buildNavigatorThreads(chats as Chat[] | undefined, characterLookup),
     [characterLookup, chats],
   );
+  const groupLookup = useMemo(() => buildGroupLookup(navigatorThreads), [navigatorThreads]);
   const activeChatId = useChatStore((s) => s.activeChatId);
   const cachedActiveChat = useChatStore((s) => s.activeChat);
   const activeChatQuery = useChat(activeChatId);
@@ -3120,6 +3156,10 @@ export function LongTermMemoryPanel() {
     return [...byId.values()];
   }, [exactViewingNote.data, notes.data]);
   const noteLookup = useMemo(() => buildNoteLookup(combinedNotes), [combinedNotes]);
+  const displayContext = useMemo<LtmDisplayLookupContext>(
+    () => ({ chats: chatLookup, notes: noteLookup, groups: groupLookup }),
+    [chatLookup, noteLookup, groupLookup],
+  );
   const statusTone = integrity.data?.ok ? "good" : integrity.data ? "bad" : "neutral";
   const openNote = useMemo(
     () =>
@@ -3885,6 +3925,7 @@ export function LongTermMemoryPanel() {
         <CreateLongTermMemoryNoteForm
           initialDraft={createNoteDraft}
           defaultScopeDraft={scopeDraftFromLtmScope(navigatorScope)}
+          displayContext={displayContext}
           onCancel={() => {
             if (!confirmDiscardCreate()) return;
             closeCreateForm();
@@ -3906,6 +3947,7 @@ export function LongTermMemoryPanel() {
         activeNotes={activeNotes.data ?? []}
         noteLookup={noteLookup}
         chatLookup={chatLookup}
+        displayContext={displayContext}
         activeNotesLoading={activeNotes.isLoading}
         pendingDrafts={pendingDraftsForOpenNote}
         recallQuery={viewingRecallQuery}

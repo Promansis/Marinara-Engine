@@ -28,12 +28,14 @@ import {
   friendlyNoteType,
   friendlySectionKey,
   friendlyStatus,
+  groupScopeLabel,
   isAllowedNoteId,
   modeOptions,
   normalizeIdentifier,
   normalizeTagsInput,
   noteTypeOptions,
   statusOptions,
+  type LtmDisplayLookupContext,
 } from "./ltm-editor-utils";
 
 type CreateLongTermMemoryNoteFormProps = {
@@ -43,6 +45,7 @@ type CreateLongTermMemoryNoteFormProps = {
   onCreated?: (note: LtmNote) => void;
   onDirtyChange?: (dirty: boolean) => void;
   onDraftChange?: (draft: CreateLongTermMemoryNoteDraft) => void;
+  displayContext?: LtmDisplayLookupContext;
 };
 
 export type CreateLongTermMemoryNoteDraft = {
@@ -117,6 +120,7 @@ export function CreateLongTermMemoryNoteForm({
   onCreated,
   onDirtyChange,
   onDraftChange,
+  displayContext,
 }: CreateLongTermMemoryNoteFormProps) {
   const activeChatId = useChatStore((state) => state.activeChatId);
   const cachedActiveChat = useChatStore((state) => state.activeChat);
@@ -335,27 +339,24 @@ export function CreateLongTermMemoryNoteForm({
             </button>
           </div>
           <LtmScopePicker
-            value={{ chatIds: scopeDraft.chatIds, characterIds: scopeDraft.characterIds }}
+            value={{ chatIds: scopeDraft.chatIds, characterIds: scopeDraft.characterIds, groupId: scopeDraft.groupId || undefined }}
             onChange={(next) =>
               setDraft((current) => ({
                 ...current,
-                scopeDraft: { ...current.scopeDraft, chatIds: next.chatIds, characterIds: next.characterIds },
+                scopeDraft: {
+                  ...current.scopeDraft,
+                  chatIds: next.chatIds,
+                  characterIds: next.characterIds,
+                  groupId: next.groupId ?? "",
+                },
               }))
             }
-            />
-           <div className="grid gap-2">
-            <input
-              value={scopeDraft.groupId}
-              onChange={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  scopeDraft: { ...current.scopeDraft, groupId: event.target.value },
-                }))
-              }
-              placeholder="group"
-              className={compactInputClassName}
-            />
-          </div>
+          />
+          {scopeDraft.groupId ? (
+            <div className="text-[0.625rem] text-[var(--muted-foreground)]">
+              Grouped chat: {groupScopeLabel(scopeDraft.groupId, displayContext) ?? "Grouped chat"}
+            </div>
+          ) : null}
         </div>
 
         <div className={sectionCardClassName}>

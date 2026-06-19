@@ -10,6 +10,7 @@ import { helperTextClassName, insetSectionCardClassName } from "./LtmFields";
 export type LtmScopePickerValue = {
   chatIds: string[];
   characterIds: string[];
+  groupId?: string;
 };
 
 type LtmScopePickerProps = {
@@ -24,6 +25,11 @@ type CharacterRow = {
 };
 
 type PickerKind = "chat" | "character";
+export type LtmScopeGroupOption = {
+  id: string;
+  label: string;
+  searchText: string;
+};
 
 function uniqueIds(values: string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
@@ -58,7 +64,30 @@ export function LtmScopePicker({ value, onChange }: LtmScopePickerProps) {
 
   const selectedChatIds = uniqueIds(value.chatIds);
   const selectedCharacterIds = uniqueIds(value.characterIds);
+  const selectedGroupId = value.groupId?.trim() || "";
   const normalizedQuery = query.trim().toLowerCase();
+
+  const groupOptions = useMemo(() => {
+    const groups = new Map<string, Chat[]>();
+    for (const chat of chats as Chat[]) {
+      if (!chat.groupId) continue;
+      groups.set(chat.groupId, [...(groups.get(chat.groupId) ?? []), chat]);
+    }
+    return [...groups.entries()]
+      .map(([id, groupChats]) => {
+        const sorted = [...groupChats].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+        const representative = sorted[0];
+        const label = representative ? `${representative.name || "Grouped chat"} (${groupChats.length} branch${groupChats.length === 1 ? "" : "es"})` : "Grouped chat";
+        return {
+          id,
+          label,
+          searchText: `${label} ${id} ${groupChats.map((chat) => chat.name).join(" ")}`.toLowerCase(),
+        } satisfies LtmScopeGroupOption;
+      })
+      .sort((left, right) => left.label.localeCompare(right.label));
+  }, [chats]);
+
+  const selectedGroup = groupOptions.find((group) => group.id === selectedGroupId);
 
   const filteredChats = useMemo(
     () =>
@@ -88,6 +117,7 @@ export function LtmScopePicker({ value, onChange }: LtmScopePickerProps) {
     onChange({
       chatIds: kind === "chat" ? uniqueIds([...selectedChatIds, id]) : selectedChatIds,
       characterIds: kind === "character" ? uniqueIds([...selectedCharacterIds, id]) : selectedCharacterIds,
+      groupId: selectedGroupId || undefined,
     });
     setQuery("");
   };
@@ -97,6 +127,15 @@ export function LtmScopePicker({ value, onChange }: LtmScopePickerProps) {
       chatIds: kind === "chat" ? selectedChatIds.filter((chatId) => chatId !== id) : selectedChatIds,
       characterIds:
         kind === "character" ? selectedCharacterIds.filter((characterId) => characterId !== id) : selectedCharacterIds,
+      groupId: selectedGroupId || undefined,
+    });
+  };
+
+  const setGroup = (groupId: string) => {
+    onChange({
+      chatIds: selectedChatIds,
+      characterIds: selectedCharacterIds,
+      groupId: groupId || undefined,
     });
   };
 
@@ -110,6 +149,27 @@ export function LtmScopePicker({ value, onChange }: LtmScopePickerProps) {
   return (
     <div className="grid gap-2">
       <div className="flex flex-wrap gap-1.5">
+        {selectedGroupId && (
+          <span
+            className={cn(
+              "inline-flex max-w-full items-center gap-1.5 rounded-full bg-[var(--background)] px-2.5 py-1.5 text-[0.6875rem] ring-1 ring-[var(--border)]",
+              !selectedGroup && "text-[var(--muted-foreground)]",
+            )}
+            title={selectedGroupId}
+          >
+            <MessageCircle size="0.75rem" className="shrink-0 text-[var(--primary)]" />
+            <span className="truncate">{selectedGroup?.label ?? "Grouped chat"}</span>
+            {!selectedGroup && <span className="text-[0.625rem]">(missing)</span>}
+            <button
+              type="button"
+              onClick={() => setGroup("")}
+              className="rounded p-0.5 hover:bg-[var(--secondary)]"
+              aria-label={`Remove ${selectedGroupId}`}
+            >
+              <X size="0.7rem" />
+            </button>
+          </span>
+        )}
         {selectedChatIds.map((id) => {
           const chat = chatMap.get(id);
           return (
@@ -160,7 +220,7 @@ export function LtmScopePicker({ value, onChange }: LtmScopePickerProps) {
             </span>
           );
         })}
-        {!selectedChatIds.length && !selectedCharacterIds.length && (
+        {!selectedGroupId && !selectedChatIds.length && !selectedCharacterIds.length && (
           <span className={helperTextClassName}>
             Available everywhere unless a chat, group, or character scope is set.
           </span>
@@ -168,6 +228,21 @@ export function LtmScopePicker({ value, onChange }: LtmScopePickerProps) {
       </div>
 
       <div className="flex flex-wrap gap-1.5">
+        <label className="min-w-[14rem] max-w-full">
+          <span className="mb-1 block text-[0.625rem] font-medium text-[var(--muted-foreground)]">Grouped chat</span>
+          <select
+            value={selectedGroupId}
+            onChange={(event) => setGroup(event.target.value)}
+            className="w-full rounded-md bg-[var(--secondary)] py-1.5 pl-2 pr-2 text-xs outline-none ring-1 ring-[var(--border)] focus:ring-2 focus:ring-[var(--primary)]"
+          >
+            <option value="">No grouped chat scope</option>
+            {groupOptions.map((group) => (
+              <option key={group.id} value={group.id}>
+                {group.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <button
           type="button"
           onClick={() => openPicker("character")}
