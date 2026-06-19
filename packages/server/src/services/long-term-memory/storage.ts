@@ -9,6 +9,7 @@ import {
   ltmNoteTypeSchema,
   ltmPoliciesConfigSchema,
   ltmRetrievalConfigSchema,
+  isLtmSourceLikeNote,
   matchesLtmScope,
   withMergedLtmScopeLinks,
   type LtmScope,
@@ -76,13 +77,6 @@ function normalizePatch(patch: UpdateLtmNotePatch) {
     delete next.title;
   }
   return next;
-}
-
-function isSourceLikeNote(note: LtmNote) {
-  return (
-    note.type === "source" ||
-    (note.type === "scene" && note.tags.some((tag) => tag.includes("source_summary") || tag.includes("chat_summary")))
-  );
 }
 
 function firstIdPrefixForType(type: LtmNoteType) {
@@ -322,7 +316,7 @@ export class LongTermMemoryStorage {
   async archiveSourceNoteWithDerived(id: string, eventContext: LtmEventContext = {}) {
     await this.initializeLtmStore();
     const existing = await this.getRequiredNote(id);
-    const relatedNotes = isSourceLikeNote(existing) ? await this.listNotes() : [];
+    const relatedNotes = isLtmSourceLikeNote(existing) ? await this.listNotes() : [];
     const derived = relatedNotes.filter(
       (note) =>
         note.id !== id &&
@@ -453,7 +447,7 @@ export class LongTermMemoryStorage {
     eventContext: LtmEventContext,
   ) {
     const nextType = ltmNoteTypeSchema.parse(type);
-    if (isSourceLikeNote(existing) || nextType === "source") {
+    if (isLtmSourceLikeNote(existing) || nextType === "source") {
       throw new Error("Long-term memory source notes cannot change type.");
     }
     const nextId = idForChangedType(existing.id, nextType);
@@ -467,7 +461,7 @@ export class LongTermMemoryStorage {
     return withNoteWriteLock(firstPath, () =>
       withNoteWriteLock(secondPath, async () => {
         const current = await this.getRequiredNote(existing.id);
-        if (isSourceLikeNote(current)) {
+        if (isLtmSourceLikeNote(current)) {
           throw new Error("Long-term memory source notes cannot change type.");
         }
         const timestamp = nowIso();
@@ -491,10 +485,6 @@ export class LongTermMemoryStorage {
         });
         const draftRewrites = await this.prepareDraftReferenceRewrites(current.id, next.id);
 
-        await createJsonFileExclusive(newPath, next);
-        await unlink(oldPath);
-        await this.writePreparedDraftRewrites(draftRewrites);
-
         if (!eventContext.suppressEvent) {
           const moveContext = {
             ...eventContext,
@@ -513,6 +503,9 @@ export class LongTermMemoryStorage {
             }),
           );
         }
+        await createJsonFileExclusive(newPath, next);
+        await unlink(oldPath);
+        await this.writePreparedDraftRewrites(draftRewrites);
         await this.rewriteNoteReferences(current.id, next.id, eventContext);
         return next;
       }),

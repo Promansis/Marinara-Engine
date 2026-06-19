@@ -1,4 +1,5 @@
 import {
+  isLtmSourceLikeNote,
   isGlobalLtmScope,
   ltmScopesOverlap,
   type LtmExtractionDroppedCandidate,
@@ -63,10 +64,7 @@ export type ExtractLongTermMemoryFromSourceNoteResult = {
 };
 
 export function isLtmSourceNote(note: LtmNote) {
-  return (
-    note.type === "source" ||
-    (note.type === "scene" && (note.tags.includes("source_summary") || note.tags.includes("chat_summary")))
-  );
+  return isLtmSourceLikeNote(note);
 }
 
 export function getLtmSourceNoteText(note: LtmNote) {

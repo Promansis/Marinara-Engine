@@ -36,6 +36,7 @@ import type {
 } from "@marinara-engine/shared";
 import {
   LTM_RECALL_STYLE_WEIGHTS,
+  isLtmSourceLikeNote,
   parseLongTermMemoryRecallStyle,
   readLtmRecallWeightOverrides,
 } from "@marinara-engine/shared";
@@ -766,9 +767,7 @@ function isChatSummarySourceNote(note: LtmNote) {
       sourceSummaryEvidence(note).some((entry) => entry.startsWith("chat_name:") || entry.startsWith("message_range:"))
     );
   }
-  return (
-    note.type === "scene" && note.tags.some((tag) => tag.includes("source_summary") || tag.includes("chat_summary"))
-  );
+  return isLtmSourceLikeNote(note);
 }
 
 function isSourceSummaryNote(note: LtmNote) {

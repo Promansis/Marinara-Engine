@@ -125,6 +125,19 @@ export const LTM_NOTE_ID_PREFIXES_BY_TYPE = {
   tone: ["tone_"],
 } as const satisfies Record<z.infer<typeof ltmNoteTypeSchema>, readonly string[]>;
 
+const LTM_SOURCE_SUMMARY_SCENE_TAGS = ["source_summary", "chat_summary"] as const;
+
+export function hasLtmSourceSummarySceneTag(tags: readonly string[]) {
+  return LTM_SOURCE_SUMMARY_SCENE_TAGS.some((tag) => tags.includes(tag));
+}
+
+export function isLtmSourceLikeNote(note: {
+  type: z.infer<typeof ltmNoteTypeSchema>;
+  tags: readonly string[];
+}) {
+  return note.type === "source" || (note.type === "scene" && hasLtmSourceSummarySceneTag(note.tags));
+}
+
 export const ltmIsoTimestampSchema = z
   .string()
   .datetime({ offset: true })

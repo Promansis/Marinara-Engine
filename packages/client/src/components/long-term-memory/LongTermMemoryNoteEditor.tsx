@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Check, Loader2, Pencil, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
 import {
   getLtmScopeChatIds,
+  isLtmSourceLikeNote,
   withMergedLtmScopeLinks,
   type LtmExtractionDroppedCandidate,
   type LtmLink,
@@ -88,10 +89,7 @@ function readChatCharacterIds(value: unknown) {
 }
 
 function isSourceMemory(note: LtmNote) {
-  return (
-    note.type === "source" ||
-    (note.type === "scene" && note.tags.some((tag) => tag.includes("source_summary") || tag.includes("chat_summary")))
-  );
+  return isLtmSourceLikeNote(note);
 }
 
 export function LongTermMemoryNoteEditor({

@@ -1,5 +1,7 @@
 import {
   getLtmScopeChatIds,
+  hasLtmSourceSummarySceneTag,
+  isLtmSourceLikeNote,
   withMergedLtmScopeLinks,
   type LtmDraftMutation,
   type LtmExtractionDraft,
@@ -140,7 +142,7 @@ function mergeScopes(existing: LtmNote["scope"], incoming: LtmNote["scope"]) {
 }
 
 function isSourceSummaryNote(note: Pick<LtmNote, "type" | "tags">) {
-  return note.type === "source" || note.tags.includes("source_summary") || note.tags.includes("chat_summary");
+  return isLtmSourceLikeNote(note);
 }
 
 async function preflightDraftMutations(
@@ -192,10 +194,7 @@ function mutationTouchesSceneId(mutation: LtmDraftMutation) {
 }
 
 function mutationHasSourceSummaryTag(mutation: LtmDraftMutation) {
-  return (
-    mutation.kind === "create_note" &&
-    (mutation.note.tags.includes("source_summary") || mutation.note.tags.includes("chat_summary"))
-  );
+  return mutation.kind === "create_note" && hasLtmSourceSummarySceneTag(mutation.note.tags);
 }
 
 export function isLowRiskSourceExtractionMutation(mutation: LtmDraftMutation) {

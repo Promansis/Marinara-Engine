@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { type LtmNote, type LtmNoteType, type LtmScope, type LtmStatus } from "@marinara-engine/shared";
+import {
+  isLtmSourceLikeNote,
+  type LtmNote,
+  type LtmNoteType,
+  type LtmScope,
+  type LtmStatus,
+} from "@marinara-engine/shared";
 
 export interface LtmMemoryChunk {
   id: string;
@@ -46,10 +52,7 @@ export function stableStringify(value: unknown): string {
 }
 
 export function isLtmSourceSummaryNote(note: Pick<LtmNote, "type" | "tags">) {
-  return (
-    note.type === "source" ||
-    (note.type === "scene" && (note.tags.includes("source_summary") || note.tags.includes("chat_summary")))
-  );
+  return isLtmSourceLikeNote(note);
 }
 
 export function chunkNoteSections(note: LtmNote): LtmMemoryChunk[] {

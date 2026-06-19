@@ -19,6 +19,7 @@ import type {
   LtmExtractionOutcome,
   LtmNote,
 } from "@marinara-engine/shared";
+import { isLtmSourceLikeNote } from "@marinara-engine/shared";
 import {
   useAcceptLongTermMemoryDraft,
   useDeleteLongTermMemoryDraft,
@@ -60,10 +61,7 @@ const rewriteKinds = new Set<LtmDraftMutation["kind"]>([
 ]);
 
 function isSourceMemory(note: LtmNote) {
-  return (
-    note.type === "source" ||
-    (note.type === "scene" && note.tags.some((tag) => tag === "source_summary" || tag === "chat_summary"))
-  );
+  return isLtmSourceLikeNote(note);
 }
 
 function mutationGroup(mutation: LtmDraftMutation): SuggestionGroup {

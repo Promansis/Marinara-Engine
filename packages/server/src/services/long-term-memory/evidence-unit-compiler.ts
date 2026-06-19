@@ -11,7 +11,7 @@ import type {
   LtmSection,
   LtmStatus,
 } from "@marinara-engine/shared";
-import { LTM_DRAFT_MUTATION_LIMIT } from "@marinara-engine/shared";
+import { isLtmSourceLikeNote, LTM_DRAFT_MUTATION_LIMIT } from "@marinara-engine/shared";
 import { noteIdForEvidenceUnit, riskForEvidenceUnit } from "./evidence-unit-validation.js";
 
 export interface CompileLtmEvidenceUnitsOptions {
@@ -402,8 +402,7 @@ function unitsForSection(units: LtmEvidenceUnit[], sectionKey: string) {
 }
 
 function isTypedMemoryNote(note: Pick<LtmNote, "type" | "tags">) {
-  if (note.type === "source" || note.type === "scene") return false;
-  return !note.tags.includes("source_summary") && !note.tags.includes("chat_summary");
+  return !isLtmSourceLikeNote(note) && note.type !== "scene";
 }
 
 function hasSourceEvidence(units: LtmEvidenceUnit[]) {

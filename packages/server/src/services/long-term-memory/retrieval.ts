@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import {
+  isLtmSourceLikeNote,
   ltmRetrievalConfigSchema,
   isGlobalLtmScope,
   matchesLtmScope,
@@ -247,7 +248,7 @@ function scopeMatches(chunk: LtmMemoryChunk, scope: LtmScope | undefined, charac
 }
 
 function isSourceSummaryChunk(chunk: LtmMemoryChunk) {
-  return chunk.noteType === "source" || chunk.tags.includes("source_summary") || chunk.tags.includes("chat_summary");
+  return isLtmSourceLikeNote({ type: chunk.noteType, tags: chunk.tags });
 }
 
 function shouldFilterResolvedChunk(chunk: LtmMemoryChunk, input: RetrieveLongTermMemoryInput) {

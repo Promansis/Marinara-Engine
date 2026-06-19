@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import type { LtmDraftMutation, LtmEvidenceUnit, LtmNote } from "@marinara-engine/shared";
 import { DEFAULT_LTM_EXTRACTION_MAX_TOKENS, matchesLtmScope } from "@marinara-engine/shared";
 import {
+  isLtmSourceLikeNote,
   ltmExtractionModeSchema,
   ltmEvidenceUnitSchema,
   ltmPoliciesConfigSchema,
@@ -72,6 +73,14 @@ test("long-term memory extraction mode schema accepts only public presets", () =
   assert.equal(ltmExtractionModeSchema.parse("fast"), "fast");
   assert.equal(ltmExtractionModeSchema.parse("balanced"), "balanced");
   assert.throws(() => ltmExtractionModeSchema.parse("deep"));
+});
+
+test("source-like note detection uses exact summary tags only", () => {
+  assert.equal(isLtmSourceLikeNote({ type: "source", tags: [] }), true);
+  assert.equal(isLtmSourceLikeNote({ type: "scene", tags: ["source_summary"] }), true);
+  assert.equal(isLtmSourceLikeNote({ type: "scene", tags: ["chat_summary"] }), true);
+  assert.equal(isLtmSourceLikeNote({ type: "scene", tags: ["imported_chat_summary"] }), false);
+  assert.equal(isLtmSourceLikeNote({ type: "scene", tags: ["chat_summary_cleanup"] }), false);
 });
 
 test("long-term memory chunks keep prompt text free of index labels", () => {
@@ -4048,8 +4057,8 @@ test("source-like notes reject type changes", async () => {
   }
 });
 
-test("imported chat summary scene notes reject type changes", async () => {
-  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-imported-chat-summary-type-reject-"));
+test("imported chat summary scene notes remain editable typed memories", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-imported-chat-summary-type-editable-"));
   try {
     const storage = new LongTermMemoryStorage(root);
     await storage.createNote(
@@ -4071,11 +4080,15 @@ test("imported chat summary scene notes reject type changes", async () => {
       { suppressEvent: true },
     );
 
-    await assert.rejects(
-      () => storage.updateNote("scene_imported_chat_summary_locked", { type: "thread" }, { suppressEvent: true }),
-      /source notes cannot change type/,
+    const updated = await storage.updateNote(
+      "scene_imported_chat_summary_locked",
+      { type: "thread" },
+      { suppressEvent: true },
     );
-    assert.equal((await storage.getNote("scene_imported_chat_summary_locked"))?.type, "scene");
+    assert.equal(updated.id, "thread_imported_chat_summary_locked");
+    assert.equal(updated.type, "thread");
+    assert.equal(await storage.getNote("scene_imported_chat_summary_locked"), null);
+    assert.equal((await storage.getNote("thread_imported_chat_summary_locked"))?.type, "thread");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

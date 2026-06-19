@@ -5,6 +5,7 @@ import type {
   LtmExtractionRecoveryHint,
   LtmNote,
 } from "@marinara-engine/shared";
+import { isLtmSourceLikeNote } from "@marinara-engine/shared";
 import type { LtmExtractionDiagnostic } from "./diagnostics.js";
 
 const DIALOGUE_BUCKETS = new Set<LtmEvidenceUnit["bucket"]>(["tone"]);
@@ -57,10 +58,7 @@ function hasRelationshipSupport(unit: LtmEvidenceUnit, units: LtmEvidenceUnit[],
 }
 
 function isSourceNote(note: LtmNote) {
-  return (
-    note.type === "source" ||
-    (note.type === "scene" && (note.tags.includes("source_summary") || note.tags.includes("chat_summary")))
-  );
+  return isLtmSourceLikeNote(note);
 }
 
 export function riskForEvidenceUnit(unit: LtmEvidenceUnit): "low" | "medium" | "high" {
