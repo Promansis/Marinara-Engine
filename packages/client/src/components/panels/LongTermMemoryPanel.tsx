@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import {
@@ -22,7 +22,6 @@ import {
   Trash2,
 } from "lucide-react";
 import type {
-  APIConnection,
   Chat,
   LtmDraftMutation,
   LtmExtractionDraft,
@@ -54,17 +53,13 @@ import {
   useSearchLongTermMemory,
   type LtmSearchResponse,
   type LtmInteropSource,
-  type LtmSourceExtractionMode,
 } from "../../hooks/use-long-term-memory";
 import { useChatStore } from "../../stores/chat.store";
+import { useUIStore } from "../../stores/ui.store";
 import { useChat, useChatMessages, useChats, useUpdateChatMetadata } from "../../hooks/use-chats";
 import { useCharacters } from "../../hooks/use-characters";
-import { useConnections } from "../../hooks/use-connections";
+import { api } from "../../lib/api-client";
 import { cn } from "../../lib/utils";
-import {
-  readRememberedLtmAutoApplyLowRisk,
-  rememberLtmAutoApplyLowRisk,
-} from "../../lib/long-term-memory-preferences";
 import {
   CreateLongTermMemoryNoteForm,
   type CreateLongTermMemoryNoteDraft,
@@ -105,6 +100,7 @@ import {
 } from "../long-term-memory/LtmFields";
 import { StatusPill, ToolButton } from "../long-term-memory/LtmPills";
 import { Modal } from "../ui/Modal";
+import { useShallow } from "zustand/react/shallow";
 
 const NOTE_TYPES: Array<"all" | LtmNoteType> = [
   "all",
@@ -180,6 +176,11 @@ const DEFAULT_IMPORT_CONCURRENCY = 3;
 const LTM_WEIGHT_MIN = 0;
 const LTM_WEIGHT_MAX = 2;
 const LTM_WEIGHT_STEP = 0.05;
+const LTM_WEIGHT_PATCH_KEY_MAP = {
+  semantic: "longTermMemorySemanticWeight",
+  lexical: "longTermMemoryLexicalWeight",
+  graph: "longTermMemoryGraphWeight",
+} as const;
 
 const rowActionButtonClassName =
   "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-45";
@@ -2513,11 +2514,25 @@ function ChatMemorySettings({
   const [semanticWeightDraft, setSemanticWeightDraft] = useState(String(weights.semanticWeight));
   const [lexicalWeightDraft, setLexicalWeightDraft] = useState(String(weights.lexicalWeight));
   const [graphWeightDraft, setGraphWeightDraft] = useState(String(weights.graphWeight));
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [recallOpen, setRecallOpen] = useState(false);
-  const [extractionOpen, setExtractionOpen] = useState(false);
-  const [maintenanceOpen, setMaintenanceOpen] = useState(false);
-  const [debugOpen, setDebugOpen] = useState(false);
+  const {
+    advancedOpen,
+    debugOpen,
+    extractionOpen,
+    maintenanceOpen,
+    recallOpen,
+    setLtmPanelPreferences,
+  } = useUIStore(
+    useShallow((state) => ({
+      advancedOpen: state.ltmPanelPreferences.advancedOpen,
+      debugOpen: state.ltmPanelPreferences.debugOpen,
+      extractionOpen: state.ltmPanelPreferences.extractionOpen,
+      maintenanceOpen: state.ltmPanelPreferences.maintenanceOpen,
+      recallOpen: state.ltmPanelPreferences.recallOpen,
+      setLtmPanelPreferences: state.setLtmPanelPreferences,
+    })),
+  );
+  const patchTimersRef = useRef<Partial<Record<"budget" | "maxChunks" | "contextMessages" | "scoreThreshold" | "semantic" | "lexical" | "graph", ReturnType<typeof setTimeout>>>>({});
+  const latestPatchValueRef = useRef<Partial<Record<"budget" | "maxChunks" | "contextMessages" | "scoreThreshold" | "semantic" | "lexical" | "graph", string | number>>>({});
   const sliderBudget = Number.isFinite(Number(budgetDraft))
     ? Math.max(128, Math.min(16_384, Math.floor(Number(budgetDraft))))
     : budgetValue;
@@ -2541,15 +2556,65 @@ function ChatMemorySettings({
     weights.semanticWeight,
   ]);
 
-  const patch = (next: Record<string, unknown>) => {
+  const patch = useCallback((next: Record<string, unknown>) => {
     if (!activeChat) return Promise.resolve();
     return updateMeta
       .mutateAsync({ id: activeChat.id, ...next })
       .then(() => toast.success("Chat memory settings updated"))
       .catch((err: Error) => toast.error(err.message));
-  };
+  }, [activeChat, updateMeta]);
 
-  const commitBudget = (value: string) => {
+  const clearPatchTimer = useCallback(
+    (key: keyof typeof latestPatchValueRef.current) => {
+      const timer = patchTimersRef.current[key];
+      if (timer) {
+        clearTimeout(timer);
+        delete patchTimersRef.current[key];
+      }
+    },
+    [],
+  );
+
+  const schedulePatch = useCallback(
+    (
+      key: keyof typeof latestPatchValueRef.current,
+      value: string | number,
+      commit: (nextValue: string | number) => Promise<unknown>,
+    ) => {
+      latestPatchValueRef.current[key] = value;
+      clearPatchTimer(key);
+      patchTimersRef.current[key] = setTimeout(() => {
+        delete patchTimersRef.current[key];
+        const nextValue = latestPatchValueRef.current[key];
+        if (nextValue === undefined) return;
+        void commit(nextValue);
+      }, 450);
+    },
+    [clearPatchTimer],
+  );
+
+  const flushPatch = useCallback(
+    (
+      key: keyof typeof latestPatchValueRef.current,
+      commit: (nextValue: string | number) => Promise<unknown>,
+    ) => {
+      clearPatchTimer(key);
+      const nextValue = latestPatchValueRef.current[key];
+      if (nextValue === undefined) return;
+      void commit(nextValue);
+    },
+    [clearPatchTimer],
+  );
+
+  const dispatchKeepaliveMetadataPatch = useCallback(
+    (patchData: Record<string, unknown>) => {
+      if (!activeChat) return;
+      api.patchKeepalive(`/chats/${activeChat.id}/metadata`, patchData);
+    },
+    [activeChat],
+  );
+
+  const commitBudget = useCallback((value: string) => {
     const numeric = Number(value);
     const next = Number.isFinite(numeric)
       ? Math.max(128, Math.min(16_384, Math.floor(numeric)))
@@ -2557,17 +2622,17 @@ function ChatMemorySettings({
     setBudgetDraft(String(next));
     if (next === budgetValue) return Promise.resolve();
     return patch({ longTermMemoryBudgetTokens: next });
-  };
+  }, [budgetValue, patch]);
 
-  const commitMaxChunks = (value: string) => {
+  const commitMaxChunks = useCallback((value: string) => {
     const numeric = Number(value);
     const next = Number.isFinite(numeric) ? Math.max(1, Math.min(100, Math.floor(numeric))) : DEFAULT_LTM_MAX_CHUNKS;
     setMaxChunksDraft(String(next));
     if (next === maxChunksValue) return Promise.resolve();
     return patch({ longTermMemoryMaxChunks: next });
-  };
+  }, [maxChunksValue, patch]);
 
-  const commitContextMessages = (value: string) => {
+  const commitContextMessages = useCallback((value: string) => {
     const numeric = Number(value);
     const next = Number.isFinite(numeric)
       ? Math.max(1, Math.min(20, Math.floor(numeric)))
@@ -2575,33 +2640,112 @@ function ChatMemorySettings({
     setContextMessagesDraft(String(next));
     if (next === contextMessagesValue) return Promise.resolve();
     return patch({ longTermMemoryRecallContextMessages: next });
-  };
+  }, [contextMessagesValue, patch]);
 
-  const commitScoreThreshold = (value: number) => {
+  const commitScoreThreshold = useCallback((value: number) => {
     const numeric = Number.isFinite(value) ? value : DEFAULT_LTM_SCORE_THRESHOLD;
     const next = Math.max(0, Math.min(1, Number(numeric.toFixed(2))));
     setScoreThresholdDraft(next);
     if (next === scoreThresholdValue) return Promise.resolve();
     return patch({ longTermMemoryScoreThreshold: next });
-  };
+  }, [patch, scoreThresholdValue]);
 
   const readWeightDraft = (value: string, fallback: number, max = LTM_WEIGHT_MAX) => {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? Math.max(LTM_WEIGHT_MIN, Math.min(max, Number(numeric.toFixed(2)))) : fallback;
   };
 
-  const weightPatchKeyMap = {
-    semantic: "longTermMemorySemanticWeight",
-    lexical: "longTermMemoryLexicalWeight",
-    graph: "longTermMemoryGraphWeight",
-  } as const;
-
-  const commitWeight = (key: "semantic" | "lexical" | "graph", value: string) => {
+  const commitWeight = useCallback((key: "semantic" | "lexical" | "graph", value: string) => {
     const fallback = weights[`${key}Weight` as const];
     const next = readWeightDraft(value, fallback, 1);
     if (next === fallback) return Promise.resolve();
-    return patch({ [weightPatchKeyMap[key]]: next });
-  };
+    return patch({ [LTM_WEIGHT_PATCH_KEY_MAP[key]]: next });
+  }, [patch, weights]);
+
+  useEffect(() => {
+    const flushPending = () => {
+      flushPatch("budget", (value) => commitBudget(String(value)));
+      flushPatch("maxChunks", (value) => commitMaxChunks(String(value)));
+      flushPatch("contextMessages", (value) => commitContextMessages(String(value)));
+      flushPatch("scoreThreshold", (value) => commitScoreThreshold(Number(value)));
+      flushPatch("semantic", (value) => commitWeight("semantic", String(value)));
+      flushPatch("lexical", (value) => commitWeight("lexical", String(value)));
+      flushPatch("graph", (value) => commitWeight("graph", String(value)));
+    };
+
+    const flushKeepalive = () => {
+      const patchData: Record<string, unknown> = {};
+      const budget = latestPatchValueRef.current.budget;
+      if (budget !== undefined) {
+        patchData.longTermMemoryBudgetTokens = Math.max(
+          128,
+          Math.min(16_384, Math.floor(Number(budget) || DEFAULT_LTM_BUDGET_TOKENS)),
+        );
+      }
+      const maxChunks = latestPatchValueRef.current.maxChunks;
+      if (maxChunks !== undefined) {
+        patchData.longTermMemoryMaxChunks = Number.isFinite(Number(maxChunks))
+          ? Math.max(1, Math.min(100, Math.floor(Number(maxChunks))))
+          : DEFAULT_LTM_MAX_CHUNKS;
+      }
+      const contextMessages = latestPatchValueRef.current.contextMessages;
+      if (contextMessages !== undefined) {
+        patchData.longTermMemoryRecallContextMessages = Number.isFinite(Number(contextMessages))
+          ? Math.max(1, Math.min(20, Math.floor(Number(contextMessages))))
+          : DEFAULT_LTM_CONTEXT_MESSAGES;
+      }
+      const scoreThreshold = latestPatchValueRef.current.scoreThreshold;
+      if (scoreThreshold !== undefined) {
+        const numeric = Number.isFinite(Number(scoreThreshold)) ? Number(scoreThreshold) : DEFAULT_LTM_SCORE_THRESHOLD;
+        patchData.longTermMemoryScoreThreshold = Math.max(0, Math.min(1, Number(numeric.toFixed(2))));
+      }
+      const semantic = latestPatchValueRef.current.semantic;
+      if (semantic !== undefined) {
+        patchData[LTM_WEIGHT_PATCH_KEY_MAP.semantic] = readWeightDraft(String(semantic), weights.semanticWeight, 1);
+      }
+      const lexical = latestPatchValueRef.current.lexical;
+      if (lexical !== undefined) {
+        patchData[LTM_WEIGHT_PATCH_KEY_MAP.lexical] = readWeightDraft(String(lexical), weights.lexicalWeight, 1);
+      }
+      const graph = latestPatchValueRef.current.graph;
+      if (graph !== undefined) {
+        patchData[LTM_WEIGHT_PATCH_KEY_MAP.graph] = readWeightDraft(String(graph), weights.graphWeight, 1);
+      }
+      if (Object.keys(patchData).length > 0) {
+        dispatchKeepaliveMetadataPatch(patchData);
+      }
+    };
+
+    const handleBeforeUnload = () => {
+      flushKeepalive();
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        flushKeepalive();
+        flushPending();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      flushPending();
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [
+    commitBudget,
+    commitContextMessages,
+    commitMaxChunks,
+    commitScoreThreshold,
+    commitWeight,
+    dispatchKeepaliveMetadataPatch,
+    flushPatch,
+    weights.graphWeight,
+    weights.lexicalWeight,
+    weights.semanticWeight,
+  ]);
 
   const resetWeightOverrides = () => {
     setSemanticWeightDraft(String(LTM_RECALL_STYLE_WEIGHTS[recallStyle].semanticWeight));
@@ -2642,7 +2786,11 @@ function ChatMemorySettings({
 
       {activeChat && (
         <>
-          <DisclosureHeader title="Recall" open={recallOpen} onToggle={() => setRecallOpen((c) => !c)} />
+          <DisclosureHeader
+            title="Recall"
+            open={recallOpen}
+            onToggle={() => setLtmPanelPreferences({ recallOpen: !recallOpen })}
+          />
           {recallOpen && (
             <div className={sectionCardClassName}>
               <SettingToggle
@@ -2694,7 +2842,10 @@ function ChatMemorySettings({
                       max={16384}
                       step={128}
                       value={sliderBudget}
-                      onChange={(event) => setBudgetDraft(event.target.value)}
+                      onChange={(event) => {
+                        setBudgetDraft(event.target.value);
+                        schedulePatch("budget", event.target.value, (value) => commitBudget(String(value)));
+                      }}
                       onPointerUp={(event) => commitBudget((event.target as HTMLInputElement).value)}
                       onBlur={(event) => commitBudget(event.target.value)}
                       className="min-w-0 accent-[var(--primary)]"
@@ -2705,7 +2856,10 @@ function ChatMemorySettings({
                       max={16384}
                       step={128}
                       value={budgetDraft}
-                      onChange={(event) => setBudgetDraft(event.target.value)}
+                      onChange={(event) => {
+                        setBudgetDraft(event.target.value);
+                        schedulePatch("budget", event.target.value, (value) => commitBudget(String(value)));
+                      }}
                       onBlur={(event) => commitBudget(event.target.value)}
                       className={compactInputClassName}
                     />
@@ -2718,7 +2872,10 @@ function ChatMemorySettings({
                     max={100}
                     step={1}
                     value={maxChunksDraft}
-                    onChange={(event) => setMaxChunksDraft(event.target.value)}
+                    onChange={(event) => {
+                      setMaxChunksDraft(event.target.value);
+                      schedulePatch("maxChunks", event.target.value, (value) => commitMaxChunks(String(value)));
+                    }}
                     onBlur={(event) => commitMaxChunks(event.target.value)}
                     className={compactInputClassName}
                   />
@@ -2731,7 +2888,10 @@ function ChatMemorySettings({
                   max={20}
                   step={1}
                   value={contextMessagesDraft}
-                  onChange={(event) => setContextMessagesDraft(event.target.value)}
+                  onChange={(event) => {
+                    setContextMessagesDraft(event.target.value);
+                    schedulePatch("contextMessages", event.target.value, (value) => commitContextMessages(String(value)));
+                  }}
                   onBlur={(event) => commitContextMessages(event.target.value)}
                   className={compactInputClassName}
                 />
@@ -2743,7 +2903,7 @@ function ChatMemorySettings({
                 title="Advanced recall"
                 description="Resolved threads and score threshold"
                 open={advancedOpen}
-                onToggle={() => setAdvancedOpen((current) => !current)}
+                onToggle={() => setLtmPanelPreferences({ advancedOpen: !advancedOpen })}
               />
               {advancedOpen && (
                 <div className="grid gap-2 rounded-xl bg-[var(--background)]/75 p-2 shadow-inner ring-1 ring-[var(--border)]">
@@ -2760,7 +2920,11 @@ function ChatMemorySettings({
                         max={1}
                         step={0.05}
                         value={scoreThresholdDraft}
-                        onChange={(event) => setScoreThresholdDraft(Number(event.target.value))}
+                        onChange={(event) => {
+                          const nextValue = Number(event.target.value);
+                          setScoreThresholdDraft(nextValue);
+                          schedulePatch("scoreThreshold", nextValue, (value) => commitScoreThreshold(Number(value)));
+                        }}
                         onPointerUp={(event) => commitScoreThreshold(Number((event.target as HTMLInputElement).value))}
                         onBlur={(event) => commitScoreThreshold(Number(event.target.value))}
                         className="min-w-0 accent-[var(--primary)]"
@@ -2771,7 +2935,11 @@ function ChatMemorySettings({
                         max={1}
                         step={0.05}
                         value={scoreThresholdDraft}
-                        onChange={(event) => setScoreThresholdDraft(Number(event.target.value))}
+                        onChange={(event) => {
+                          const nextValue = Number(event.target.value);
+                          setScoreThresholdDraft(nextValue);
+                          schedulePatch("scoreThreshold", nextValue, (value) => commitScoreThreshold(Number(value)));
+                        }}
                         onBlur={(event) => commitScoreThreshold(Number(event.target.value))}
                         className={compactInputClassName}
                       />
@@ -2821,7 +2989,10 @@ function ChatMemorySettings({
                               max={item.max}
                               step={LTM_WEIGHT_STEP}
                               value={item.draft}
-                              onChange={(event) => item.setDraft(event.target.value)}
+                              onChange={(event) => {
+                                item.setDraft(event.target.value);
+                                schedulePatch(item.key, event.target.value, (value) => commitWeight(item.key, String(value)));
+                              }}
                               onPointerUp={(event) => commitWeight(item.key, (event.target as HTMLInputElement).value)}
                               onBlur={(event) => commitWeight(item.key, event.target.value)}
                               className="min-w-0 accent-[var(--primary)]"
@@ -2832,7 +3003,10 @@ function ChatMemorySettings({
                               max={item.max}
                               step={LTM_WEIGHT_STEP}
                               value={item.draft}
-                              onChange={(event) => item.setDraft(event.target.value)}
+                              onChange={(event) => {
+                                item.setDraft(event.target.value);
+                                schedulePatch(item.key, event.target.value, (value) => commitWeight(item.key, String(value)));
+                              }}
                               onBlur={(event) => commitWeight(item.key, event.target.value)}
                               className={compactInputClassName}
                             />
@@ -2861,15 +3035,17 @@ function ChatMemorySettings({
             </div>
           )}
 
-          <DisclosureHeader title="Extraction" open={extractionOpen} onToggle={() => setExtractionOpen((c) => !c)} />
-          {extractionOpen && (
-            <LongTermMemoryExtractionSettingsEditor enabled={extractionOpen} />
-          )}
+          <DisclosureHeader
+            title="Extraction"
+            open={extractionOpen}
+            onToggle={() => setLtmPanelPreferences({ extractionOpen: !extractionOpen })}
+          />
+          {extractionOpen && <LongTermMemoryExtractionSettingsEditor enabled={extractionOpen} />}
 
           <DisclosureHeader
             title="Maintenance"
             open={maintenanceOpen}
-            onToggle={() => setMaintenanceOpen((c) => !c)}
+            onToggle={() => setLtmPanelPreferences({ maintenanceOpen: !maintenanceOpen })}
           />
           {maintenanceOpen && (
             <div className={sectionCardClassName}>
@@ -2934,7 +3110,11 @@ function ChatMemorySettings({
             </div>
           )}
 
-          <DisclosureHeader title="Debug" open={debugOpen} onToggle={() => setDebugOpen((c) => !c)} />
+          <DisclosureHeader
+            title="Debug"
+            open={debugOpen}
+            onToggle={() => setLtmPanelPreferences({ debugOpen: !debugOpen })}
+          />
           {debugOpen && (
             <div className={sectionCardClassName}>
               <SettingToggle
@@ -2959,15 +3139,6 @@ export function LongTermMemoryPanel() {
   const [noteType, setNoteType] = useState<"all" | LtmNoteType>("all");
   const [noteStatus, setNoteStatus] = useState<"all" | LtmStatus>("all");
   const [query, setQuery] = useState("");
-  const [importSource, setImportSource] = useState<LtmInteropSource>("chats");
-  const [importLimit, setImportLimit] = useState(25);
-  const [importExtractionMode, setImportExtractionMode] = useState<LtmSourceExtractionMode>("fast");
-  const [importConcurrency, setImportConcurrency] = useState(DEFAULT_IMPORT_CONCURRENCY);
-  const [importApplyLowRisk, setImportApplyLowRisk] = useState(readRememberedLtmAutoApplyLowRisk);
-  const [importConnectionId, setImportConnectionId] = useState("");
-  const [importModel, setImportModel] = useState("");
-  const [importInstruction, setImportInstruction] = useState("");
-  const [importControlsOpen, setImportControlsOpen] = useState(true);
   const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(() => new Set());
   const [selectedImportRows, setSelectedImportRows] = useState<Set<string>>(() => new Set());
   const [activeImportIds, setActiveImportIds] = useState<Set<string>>(() => new Set());
@@ -2978,6 +3149,29 @@ export function LongTermMemoryPanel() {
   const [openNoteId, setOpenNoteId] = useState<string | null>(null);
   const [memoryModalMode, setMemoryModalMode] = useState<MemoryModalMode>("view");
   const [memoryModalTab, setMemoryModalTab] = useState<MemoryModalTab>("overview");
+  const {
+    autoApplyLowRisk: importApplyLowRisk,
+    connectionId: importConnectionId,
+    extractionMode: importExtractionMode,
+    importConcurrency,
+    importLimit,
+    importSource,
+    instruction: importInstruction,
+    model: importModel,
+    setLtmPanelPreferences,
+  } = useUIStore(
+    useShallow((state) => ({
+      autoApplyLowRisk: state.ltmPanelPreferences.autoApplyLowRisk,
+      connectionId: state.ltmPanelPreferences.connectionId,
+      extractionMode: state.ltmPanelPreferences.extractionMode,
+      importConcurrency: state.ltmPanelPreferences.importConcurrency,
+      importLimit: state.ltmPanelPreferences.importLimit,
+      importSource: state.ltmPanelPreferences.importSource,
+      instruction: state.ltmPanelPreferences.instruction,
+      model: state.ltmPanelPreferences.model,
+      setLtmPanelPreferences: state.setLtmPanelPreferences,
+    })),
+  );
   const [editedNoteDirty, setEditedNoteDirty] = useState(false);
   const [expandedTypeIds, setExpandedTypeIds] = useState<Set<string>>(() => new Set());
   const [expandedMemoryIds, setExpandedMemoryIds] = useState<Set<string>>(() => new Set());
@@ -2987,7 +3181,6 @@ export function LongTermMemoryPanel() {
 
   const { data: chats } = useChats();
   const { data: characters } = useCharacters();
-  const { data: connections } = useConnections();
   const chatLookup = useMemo(() => new Map((chats as Chat[] | undefined)?.map((c) => [c.id, c])), [chats]);
   const characterLookup = useMemo(() => {
     const map: CharacterLookup = new Map();
@@ -3026,14 +3219,6 @@ export function LongTermMemoryPanel() {
     [activeChatMetadata],
   );
   const activeChatMessages = useChatMessages(activeChatId, activeRecallSettings.contextMessages, Boolean(openNoteId));
-  const textConnections = useMemo(
-    () =>
-      ((connections as APIConnection[] | undefined) ?? [])
-        .filter((connection) => connection.provider !== "image_generation")
-        .sort((left, right) => left.name.localeCompare(right.name)),
-    [connections],
-  );
-
   const status = useLongTermMemoryStatus();
   const integrity = useLongTermMemoryIntegrity();
   const notes = useLongTermMemoryNotes(navigatorNoteFilter, { enabled: Boolean(selectedNavigatorThread) });
@@ -3751,7 +3936,7 @@ export function LongTermMemoryPanel() {
           <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
             <select
               value={importSource}
-              onChange={(event) => setImportSource(event.target.value as LtmInteropSource)}
+              onChange={(event) => setLtmPanelPreferences({ importSource: event.target.value as LtmInteropSource })}
               className={compactInputClassName}
             >
               {IMPORT_SOURCES.map((source) => (
@@ -3765,93 +3950,23 @@ export function LongTermMemoryPanel() {
               min={1}
               max={100}
               value={importLimit}
-              onChange={(event) => setImportLimit(Number(event.target.value))}
+              onChange={(event) => setLtmPanelPreferences({ importLimit: Number(event.target.value) })}
               className={cn(compactInputClassName, "w-24")}
             />
           </div>
-          <div className="mt-2">
-            <select
-              value={importExtractionMode}
-              onChange={(event) => setImportExtractionMode(event.target.value as LtmSourceExtractionMode)}
-              className={compactInputClassName}
-            >
-              <option value="fast">Fast extraction - skip memory lookup</option>
-              <option value="balanced">Balanced extraction - merge-aware</option>
-            </select>
-          </div>
-          <div className="mt-2 space-y-2">
-            <DisclosureHeader
-              title="Import controls"
-              description={`${clampImportConcurrency(importConcurrency)} at once${
-                importApplyLowRisk ? ", low-risk auto-apply" : ""
-              }`}
-              open={importControlsOpen}
-              onToggle={() => setImportControlsOpen((current) => !current)}
-            />
-            {importControlsOpen && (
-              <div className={cn(sectionCardClassName, "space-y-3")}>
-                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_7rem]">
-                  <select
-                    value={importConnectionId}
-                    onChange={(event) => setImportConnectionId(event.target.value)}
-                    className={compactInputClassName}
-                  >
-                    <option value="">Default extraction model</option>
-                    <option value="random">Random pool</option>
-                    {textConnections.map((connection) => (
-                      <option key={connection.id} value={connection.id}>
-                        {connection.name}
-                        {connection.model ? ` - ${connection.model}` : ""}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    type="number"
-                    min={1}
-                    max={10}
-                    value={importConcurrency}
-                    onChange={(event) => setImportConcurrency(Number(event.target.value))}
-                    onBlur={() => setImportConcurrency((value) => clampImportConcurrency(value))}
-                    className={compactInputClassName}
-                    aria-label="Import concurrency"
-                    title="How many source notes Marinara extracts at once"
-                  />
-                </div>
-                <input
-                  value={importModel}
-                  onChange={(event) => setImportModel(event.target.value)}
-                  placeholder="Optional model override"
-                  className={compactInputClassName}
-                />
-                <textarea
-                  value={importInstruction}
-                  onChange={(event) => setImportInstruction(event.target.value)}
-                  maxLength={2000}
-                  rows={2}
-                  placeholder="Optional instruction for this import"
-                  className={cn(inputClassName, "min-h-16 resize-y text-xs")}
-                />
-                <div className="flex flex-wrap items-center gap-2">
-                  <SettingToggle
-                    label="Apply low-risk suggestions after import"
-                    checked={importApplyLowRisk}
-                    onChange={(checked) => {
-                      setImportApplyLowRisk(checked);
-                      rememberLtmAutoApplyLowRisk(checked);
-                    }}
-                  />
-                  <StatusPill
-                    label={importExtractionMode === "fast" ? "Lower cost" : "Merge-aware"}
-                    tone={importExtractionMode === "fast" ? "good" : "warn"}
-                  />
-                  {importApplyLowRisk && <StatusPill label="Review remains for riskier changes" tone="warn" />}
-                </div>
-                <p className={helperTextClassName}>
-                  Higher concurrency can finish faster but may cost more at once. Low-risk auto-apply only accepts
-                  suggestions already marked safe by extraction.
-                </p>
-              </div>
-            )}
+          <div className={cn(sectionCardClassName, "mt-2")}>
+            <div className="flex flex-wrap gap-1.5">
+              <StatusPill
+                label={importExtractionMode === "fast" ? "Fast extraction" : "Balanced extraction"}
+                tone={importExtractionMode === "fast" ? "good" : "warn"}
+              />
+              <StatusPill label={`${clampImportConcurrency(importConcurrency)} at once`} />
+              {importApplyLowRisk ? <StatusPill label="Low-risk auto-apply" tone="warn" /> : null}
+            </div>
+            <p className={cn("mt-2", helperTextClassName)}>
+              Import uses the shared extraction defaults from the Tools tab, including connection, model, instruction,
+              and low-risk auto-apply.
+            </p>
           </div>
           <div className={cn(sectionCardClassName, "mt-3")}>
             <div className="flex flex-wrap items-center gap-2">

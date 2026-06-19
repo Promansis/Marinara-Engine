@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BrainCircuit,
   ChevronRight,
@@ -31,6 +31,9 @@ import {
   type LtmExtractionSettings,
   type LtmResolvedExtractionSettings,
 } from "../../hooks/use-long-term-memory";
+import { useConnections } from "../../hooks/use-connections";
+import { api } from "../../lib/api-client";
+import { useUIStore } from "../../stores/ui.store";
 import { cn, generateClientId } from "../../lib/utils";
 import { Modal } from "../ui/Modal";
 import {
@@ -246,14 +249,26 @@ export function LongTermMemoryExtractionSettingsEditor({
 }: LongTermMemoryExtractionSettingsEditorProps) {
   const settings = useLongTermMemoryExtractionSettings({ enabled });
   const updateSettings = useUpdateLongTermMemoryExtractionSettings();
+  const connectionsQuery = useConnections();
+  const ltmPanelPreferences = useUIStore((state) => state.ltmPanelPreferences);
+  const setLtmPanelPreferences = useUIStore((state) => state.setLtmPanelPreferences);
   const [draft, setDraft] = useState<ExtractionSettingsDraft | null>(null);
   const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
   const [templateSelectOpen, setTemplateSelectOpen] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [templateNameDraft, setTemplateNameDraft] = useState("");
   const [templatePromptDraft, setTemplatePromptDraft] = useState("");
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSavedPayloadRef = useRef<string | null>(null);
 
   const promptTemplates = useMemo(() => settings.data?.promptTemplates ?? [], [settings.data?.promptTemplates]);
+  const textConnections = useMemo(
+    () =>
+      ((connectionsQuery.data as Array<{ id: string; name: string; model?: string | null; provider?: string }> | undefined) ?? [])
+        .filter((connection) => connection.provider !== "image_generation")
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    [connectionsQuery.data],
+  );
   const activePromptTemplateId = settings.data?.activePromptTemplateId ?? null;
   const activePromptTemplate = promptTemplates.find((template) => template.id === activePromptTemplateId) ?? null;
   const isEditingExistingTemplate = Boolean(editingTemplateId);
@@ -284,17 +299,72 @@ export function LongTermMemoryExtractionSettingsEditor({
   );
 
   const persistSettings = useCallback(
-    (patch: Record<string, unknown>) => {
+    (patch: Record<string, unknown>, options?: { quiet?: boolean }) => {
       updateSettings
         .mutateAsync(patch as LtmExtractionSettings)
         .then((next) => {
           setDraft(draftFromSettings(next));
-          toast.success("Extraction settings saved");
+          lastSavedPayloadRef.current = JSON.stringify(payloadFromDraft(draftFromSettings(next)));
+          if (!options?.quiet) toast.success("Extraction settings saved");
         })
         .catch((err: Error) => toast.error(err.message));
     },
     [updateSettings],
   );
+
+  const flushAutosave = useCallback(() => {
+    if (!draft || !settings.data) return;
+    const payload = payloadFromDraft(draft);
+    const serialized = JSON.stringify(payload);
+    if (serialized === lastSavedPayloadRef.current || !isDraftDirty(draft, settings.data)) return;
+    persistSettings(payload, { quiet: true });
+  }, [draft, persistSettings, settings.data]);
+
+  const dispatchKeepaliveSettingsSave = useCallback(() => {
+    if (!draft || !settings.data) return;
+    const payload = payloadFromDraft(draft);
+    const serialized = JSON.stringify(payload);
+    if (serialized === lastSavedPayloadRef.current || !isDraftDirty(draft, settings.data)) return;
+    const result = api.putKeepalive("/long-term-memory/extraction-settings", payload);
+    if (result.dispatched) {
+      lastSavedPayloadRef.current = serialized;
+    }
+  }, [draft, settings.data]);
+
+  useEffect(() => {
+    if (!enabled || !draft || !settings.data) return;
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = setTimeout(() => {
+      flushAutosave();
+      autosaveTimerRef.current = null;
+    }, 500);
+    return () => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+    };
+  }, [draft, enabled, flushAutosave, settings.data]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        dispatchKeepaliveSettingsSave();
+        flushAutosave();
+      }
+    };
+    const handleBeforeUnload = () => {
+      dispatchKeepaliveSettingsSave();
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      flushAutosave();
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [dispatchKeepaliveSettingsSave, enabled, flushAutosave]);
 
   const handleSelectPromptTemplate = useCallback(
     (templateId: string | null) => {
@@ -426,7 +496,7 @@ export function LongTermMemoryExtractionSettingsEditor({
           <div className="flex items-center gap-2">
             <BrainCircuit size="1rem" className="text-[var(--primary)]" />
             <span className="text-sm font-semibold text-[var(--foreground)]">Source note extractor</span>
-            {dirty ? <StatusPill label="Unsaved" tone="warn" /> : <StatusPill label="Saved" tone="good" />}
+            {dirty ? <StatusPill label="Autosaving" tone="warn" /> : <StatusPill label="Saved" tone="good" />}
           </div>
           <button
             type="button"
@@ -442,6 +512,77 @@ export function LongTermMemoryExtractionSettingsEditor({
           Tune how source notes become typed memories while keeping the same dense settings vocabulary used elsewhere in Marinara.
         </p>
       </div>
+
+      <section className={cn("space-y-3", sectionCardClassName)}>
+        <div className="text-xs font-semibold text-[var(--foreground)]">Shared run defaults</div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <SettingField label="Extraction mode">
+            <select
+              value={ltmPanelPreferences.extractionMode}
+              onChange={(event) => setLtmPanelPreferences({ extractionMode: event.target.value as "fast" | "balanced" })}
+              className={compactInputClassName}
+            >
+              <option value="fast">Fast - skip memory lookup</option>
+              <option value="balanced">Balanced - merge-aware</option>
+            </select>
+          </SettingField>
+          <SettingField label="Import concurrency">
+            <input
+              type="number"
+              min={1}
+              max={10}
+              value={ltmPanelPreferences.importConcurrency}
+              onChange={(event) => setLtmPanelPreferences({ importConcurrency: Number(event.target.value) })}
+              className={compactInputClassName}
+            />
+          </SettingField>
+          <SettingField label="Connection override">
+            <select
+              value={ltmPanelPreferences.connectionId}
+              onChange={(event) => setLtmPanelPreferences({ connectionId: event.target.value })}
+              className={compactInputClassName}
+            >
+              <option value="">Default extraction model</option>
+              <option value="random">Random pool</option>
+              {textConnections.map((connection) => (
+                <option key={connection.id} value={connection.id}>
+                  {connection.name}
+                  {connection.model ? ` - ${connection.model}` : ""}
+                </option>
+              ))}
+            </select>
+          </SettingField>
+          <SettingField label="Apply low-risk suggestions">
+            <label className="flex min-h-8 items-center gap-2 rounded-md bg-[var(--card)] px-2 text-xs ring-1 ring-[var(--border)]">
+              <input
+                type="checkbox"
+                checked={ltmPanelPreferences.autoApplyLowRisk}
+                onChange={(event) => setLtmPanelPreferences({ autoApplyLowRisk: event.target.checked })}
+                className="h-3.5 w-3.5 shrink-0 rounded border-[var(--border)] accent-[var(--primary)]"
+              />
+              <span className="min-w-0 flex-1">Automatically keep low-risk changes</span>
+            </label>
+          </SettingField>
+        </div>
+        <SettingField label="Model override">
+          <input
+            value={ltmPanelPreferences.model}
+            onChange={(event) => setLtmPanelPreferences({ model: event.target.value })}
+            placeholder="Optional model override"
+            className={compactInputClassName}
+          />
+        </SettingField>
+        <SettingField label="Instruction override">
+          <textarea
+            value={ltmPanelPreferences.instruction}
+            onChange={(event) => setLtmPanelPreferences({ instruction: event.target.value })}
+            maxLength={2000}
+            rows={3}
+            placeholder="Optional instruction for imports and source-note extraction"
+            className={cn(textareaClassName, "min-h-24")}
+          />
+        </SettingField>
+      </section>
 
       <section className={cn("space-y-3", sectionCardClassName)}>
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -764,7 +905,7 @@ export function LongTermMemoryExtractionSettingsEditor({
           ) : (
             <Save size="0.875rem" />
           )}
-          Save
+          Save now
         </ToolButton>
       </div>
     </div>

@@ -52,6 +52,23 @@ export interface SummaryPopoverSettings {
   hideSummarisedMessages: boolean;
   collapseHiddenMessages: boolean;
 }
+export type LtmImportSource = "characters" | "lorebooks" | "chats";
+export type LtmExtractionRunMode = "fast" | "balanced";
+export interface LtmPanelPreferences {
+  importSource: LtmImportSource;
+  importLimit: number;
+  extractionMode: LtmExtractionRunMode;
+  importConcurrency: number;
+  autoApplyLowRisk: boolean;
+  connectionId: string;
+  model: string;
+  instruction: string;
+  recallOpen: boolean;
+  advancedOpen: boolean;
+  extractionOpen: boolean;
+  maintenanceOpen: boolean;
+  debugOpen: boolean;
+}
 export const APP_LANGUAGE_OPTIONS = [{ id: "en", label: "English" }] as const;
 export type AppLanguage = (typeof APP_LANGUAGE_OPTIONS)[number]["id"];
 
@@ -114,6 +131,22 @@ const DEFAULT_SUMMARY_POPOVER_SETTINGS: SummaryPopoverSettings = {
   rangeEnd: null,
   hideSummarisedMessages: false,
   collapseHiddenMessages: false,
+};
+const LEGACY_LTM_AUTO_APPLY_LOW_RISK_STORAGE_KEY = "ltm:auto-apply-low-risk";
+const DEFAULT_LTM_PANEL_PREFERENCES: LtmPanelPreferences = {
+  importSource: "chats",
+  importLimit: 25,
+  extractionMode: "fast",
+  importConcurrency: 3,
+  autoApplyLowRisk: false,
+  connectionId: "",
+  model: "",
+  instruction: "",
+  recallOpen: false,
+  advancedOpen: false,
+  extractionOpen: false,
+  maintenanceOpen: false,
+  debugOpen: false,
 };
 
 function clampImageDimension(value: number) {
@@ -185,6 +218,51 @@ function normalizeSummaryPopoverSettings(value: unknown): SummaryPopoverSettings
     rangeEnd: numberOrNull(raw.rangeEnd),
     hideSummarisedMessages: raw.hideSummarisedMessages === true,
     collapseHiddenMessages: raw.collapseHiddenMessages === true,
+  };
+}
+
+function readLegacyLtmAutoApplyLowRisk() {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(LEGACY_LTM_AUTO_APPLY_LOW_RISK_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function normalizeLtmImportSource(value: unknown): LtmImportSource {
+  return value === "characters" || value === "lorebooks" || value === "chats" ? value : "chats";
+}
+
+function normalizeLtmExtractionRunMode(value: unknown): LtmExtractionRunMode {
+  return value === "balanced" || value === "fast" ? value : "fast";
+}
+
+function normalizeLtmPanelPreferences(value: unknown): LtmPanelPreferences {
+  const raw = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+
+  return {
+    importSource: normalizeLtmImportSource(raw.importSource),
+    importLimit:
+      typeof raw.importLimit === "number" && Number.isFinite(raw.importLimit)
+        ? Math.max(1, Math.min(100, Math.round(raw.importLimit)))
+        : DEFAULT_LTM_PANEL_PREFERENCES.importLimit,
+    extractionMode: normalizeLtmExtractionRunMode(raw.extractionMode),
+    importConcurrency:
+      typeof raw.importConcurrency === "number" && Number.isFinite(raw.importConcurrency)
+        ? Math.max(1, Math.min(10, Math.round(raw.importConcurrency)))
+        : DEFAULT_LTM_PANEL_PREFERENCES.importConcurrency,
+    autoApplyLowRisk:
+      raw.autoApplyLowRisk === true ||
+      (raw.autoApplyLowRisk === undefined && readLegacyLtmAutoApplyLowRisk()),
+    connectionId: typeof raw.connectionId === "string" ? raw.connectionId : DEFAULT_LTM_PANEL_PREFERENCES.connectionId,
+    model: typeof raw.model === "string" ? raw.model : DEFAULT_LTM_PANEL_PREFERENCES.model,
+    instruction: typeof raw.instruction === "string" ? raw.instruction : DEFAULT_LTM_PANEL_PREFERENCES.instruction,
+    recallOpen: raw.recallOpen === true,
+    advancedOpen: raw.advancedOpen === true,
+    extractionOpen: raw.extractionOpen === true,
+    maintenanceOpen: raw.maintenanceOpen === true,
+    debugOpen: raw.debugOpen === true,
   };
 }
 
@@ -377,6 +455,8 @@ interface UIState {
   editLastMessageOnArrowUp: boolean;
   /** Persisted controls shown in the Chat Summary popover settings window. */
   summaryPopoverSettings: SummaryPopoverSettings;
+  /** Browser-local LTM panel behavior defaults and disclosure state. */
+  ltmPanelPreferences: LtmPanelPreferences;
 
   // ── Text Appearance ──
   /** Color for narrator text in RP mode (empty = default amber) */
@@ -590,6 +670,7 @@ interface UIState {
   setIntuitiveSwipeRerollLatest: (v: boolean) => void;
   setEditLastMessageOnArrowUp: (v: boolean) => void;
   setSummaryPopoverSettings: (settings: Partial<SummaryPopoverSettings>) => void;
+  setLtmPanelPreferences: (settings: Partial<LtmPanelPreferences>) => void;
   setNarrationFontColor: (v: string) => void;
   setNarrationOpacity: (v: number) => void;
   setChatFontColor: (v: string) => void;
@@ -855,6 +936,7 @@ export const useUIStore = create<UIState>()(
       intuitiveSwipeRerollLatest: false,
       editLastMessageOnArrowUp: true,
       summaryPopoverSettings: DEFAULT_SUMMARY_POPOVER_SETTINGS,
+      ltmPanelPreferences: normalizeLtmPanelPreferences(null),
       narrationFontColor: "",
       narrationOpacity: 80,
       chatFontColor: "",
@@ -1317,6 +1399,13 @@ export const useUIStore = create<UIState>()(
             ...settings,
           }),
         })),
+      setLtmPanelPreferences: (settings) =>
+        set((state) => ({
+          ltmPanelPreferences: normalizeLtmPanelPreferences({
+            ...state.ltmPanelPreferences,
+            ...settings,
+          }),
+        })),
       setNarrationFontColor: (v) => set({ narrationFontColor: v }),
       setNarrationOpacity: (v) => set({ narrationOpacity: Math.max(0, Math.min(100, v)) }),
       setChatFontColor: (v) => set({ chatFontColor: v }),
@@ -1418,7 +1507,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: "marinara-engine-ui",
-      version: 39,
+      version: 40,
       // Debounce localStorage writes to avoid sync I/O on every state change
       storage: createJSONStorage(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
@@ -1748,6 +1837,10 @@ export const useUIStore = create<UIState>()(
         if (version <= 38 && persisted.conversationBrowserNotifications === undefined) {
           persisted.conversationBrowserNotifications = false;
         }
+        if (version <= 39) {
+          persisted.ltmPanelPreferences = normalizeLtmPanelPreferences(persisted.ltmPanelPreferences);
+        }
+        persisted.ltmPanelPreferences = normalizeLtmPanelPreferences(persisted.ltmPanelPreferences);
         delete persisted.trackerPanelWidth;
         return persisted;
       },
@@ -1814,6 +1907,7 @@ export const useUIStore = create<UIState>()(
         intuitiveSwipeRerollLatest: state.intuitiveSwipeRerollLatest,
         editLastMessageOnArrowUp: state.editLastMessageOnArrowUp,
         summaryPopoverSettings: state.summaryPopoverSettings,
+        ltmPanelPreferences: state.ltmPanelPreferences,
         narrationFontColor: state.narrationFontColor,
         narrationOpacity: state.narrationOpacity,
         chatFontColor: state.chatFontColor,

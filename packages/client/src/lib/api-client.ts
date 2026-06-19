@@ -25,6 +25,11 @@ export class ApiError extends Error {
   }
 }
 
+type KeepaliveRequestResult = {
+  dispatched: boolean;
+  response?: Promise<Response>;
+};
+
 export type JsonRepairKind = "game_setup" | "session_conclusion" | "campaign_progression";
 
 export type JsonRepairRequest = {
@@ -106,6 +111,34 @@ async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   });
 }
 
+function keepaliveFetch(path: string, init?: RequestInit): KeepaliveRequestResult {
+  const headers = new Headers(init?.headers);
+  for (const [name, value] of Object.entries(getAdminSecretHeader())) {
+    headers.set(name, value);
+  }
+  const method = (init?.method ?? "GET").toUpperCase();
+  if (UNSAFE_METHODS.has(method)) {
+    headers.set(CSRF_HEADER, CSRF_HEADER_VALUE);
+  }
+  if (typeof init?.body === "string" && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  try {
+    return {
+      dispatched: true,
+      response: fetch(`${BASE}${path}`, {
+        ...init,
+        headers,
+        cache: "no-store",
+        keepalive: true,
+      }),
+    };
+  } catch {
+    return { dispatched: false };
+  }
+}
+
 export const api = {
   raw: (path: string, init?: RequestInit) => apiFetch(path, init),
 
@@ -126,6 +159,20 @@ export const api = {
 
   patch: <T>(path: string, body?: unknown, init?: RequestInit) =>
     request<T>(path, {
+      ...init,
+      method: "PATCH",
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    }),
+
+  putKeepalive: (path: string, body?: unknown, init?: RequestInit) =>
+    keepaliveFetch(path, {
+      ...init,
+      method: "PUT",
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    }),
+
+  patchKeepalive: (path: string, body?: unknown, init?: RequestInit) =>
+    keepaliveFetch(path, {
       ...init,
       method: "PATCH",
       body: body !== undefined ? JSON.stringify(body) : undefined,

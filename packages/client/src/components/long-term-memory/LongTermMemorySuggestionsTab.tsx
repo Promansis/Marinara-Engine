@@ -28,12 +28,8 @@ import {
   useLongTermMemoryNotes,
   useRejectLongTermMemoryDraft,
   type ExtractLongTermMemorySourceResponse,
-  type LtmSourceExtractionMode,
 } from "../../hooks/use-long-term-memory";
-import {
-  readRememberedLtmAutoApplyLowRisk,
-  rememberLtmAutoApplyLowRisk,
-} from "../../lib/long-term-memory-preferences";
+import { useUIStore } from "../../stores/ui.store";
 import { cn } from "../../lib/utils";
 import { actionRowClassName, helperTextClassName, insetSectionCardClassName, sectionCardClassName } from "./LtmFields";
 import { StatusPill, ToolButton } from "./LtmPills";
@@ -43,6 +39,7 @@ import {
   friendlyStatus,
   isTypedSuggestionDraft,
 } from "./ltm-editor-utils";
+import { useShallow } from "zustand/react/shallow";
 
 type SuggestionRowModel = {
   draft: LtmExtractionDraft;
@@ -197,8 +194,15 @@ export function LongTermMemorySuggestionsTab({
   const notes = useLongTermMemoryNotes();
   const noteLookup = useMemo(() => new Map((notes.data ?? []).map((n) => [n.id, n])), [notes.data]);
   const extractSourceNote = useExtractLongTermMemorySourceNote();
-  const [autoApplyLowRisk, setAutoApplyLowRisk] = useState(readRememberedLtmAutoApplyLowRisk);
-  const [extractionMode, setExtractionMode] = useState<LtmSourceExtractionMode>("balanced");
+  const { autoApplyLowRisk, connectionId, extractionMode, instruction, model } = useUIStore(
+    useShallow((state) => ({
+      autoApplyLowRisk: state.ltmPanelPreferences.autoApplyLowRisk,
+      connectionId: state.ltmPanelPreferences.connectionId,
+      extractionMode: state.ltmPanelPreferences.extractionMode,
+      instruction: state.ltmPanelPreferences.instruction,
+      model: state.ltmPanelPreferences.model,
+    })),
+  );
   const [latestResult, setLatestResult] = useState<LatestExtractionResult | null>(null);
   const sourceMemory = isSourceMemory(note);
   const rows = useMemo<SuggestionRowModel[]>(() => {
@@ -239,7 +243,10 @@ export function LongTermMemorySuggestionsTab({
                 .mutateAsync({
                   noteId: note.id,
                   applyLowRisk: autoApplyLowRisk,
+                  connectionId: connectionId.trim() || undefined,
                   extractionMode,
+                  instruction: instruction.trim() || undefined,
+                  model: model.trim() || undefined,
                 })
                 .then((result) => {
                   setLatestResult({
@@ -262,43 +269,10 @@ export function LongTermMemorySuggestionsTab({
             Extract typed memories
           </ToolButton>
         </div>
-        <div className="mt-3 grid gap-2">
-          <label
-            className={cn(
-              "grid gap-1 rounded-lg p-2 text-xs text-[var(--foreground)] transition-colors hover:bg-[var(--accent)]/60",
-              extractSourceNote.isPending && "pointer-events-none opacity-45",
-            )}
-          >
-            <span className="font-medium">Extraction mode</span>
-            <select
-              value={extractionMode}
-              disabled={extractSourceNote.isPending}
-              onChange={(event) => setExtractionMode(event.target.value as LtmSourceExtractionMode)}
-              className="min-h-8 rounded-md bg-[var(--card)] px-2 text-xs text-[var(--foreground)] ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-            >
-              <option value="balanced">Balanced - merge-aware</option>
-              <option value="fast">Fast - skip memory lookup</option>
-            </select>
-          </label>
-          <label
-            className={cn(
-              "flex items-center gap-2 rounded-lg p-2 text-xs text-[var(--foreground)] transition-colors hover:bg-[var(--accent)]/60",
-              extractSourceNote.isPending && "pointer-events-none opacity-45",
-            )}
-          >
-            <input
-              type="checkbox"
-              checked={autoApplyLowRisk}
-              disabled={extractSourceNote.isPending}
-              onChange={(event) => {
-                setAutoApplyLowRisk(event.target.checked);
-                rememberLtmAutoApplyLowRisk(event.target.checked);
-              }}
-              className="h-3.5 w-3.5 shrink-0 rounded border-[var(--border)] accent-[var(--primary)]"
-            />
-            <span className="min-w-0 flex-1">Apply low-risk suggestions</span>
-          </label>
-        </div>
+        <p className={cn("mt-3", helperTextClassName)}>
+          Uses the shared extraction defaults from the Tools tab, including mode, model overrides, and low-risk
+          auto-apply.
+        </p>
       </div>
 
       {latestResult?.outcome ? (
