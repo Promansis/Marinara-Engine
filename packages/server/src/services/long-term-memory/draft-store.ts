@@ -172,11 +172,23 @@ export class LongTermMemoryDraftStore {
   }
 
   async deleteDraftMutation(id: string, mutationId: string) {
+    const result = await this.deleteDraftMutations(id, [mutationId]);
+    if (!result.deleted) return result;
+    return { draft: result.draft, deleted: true as const };
+  }
+
+  async deleteDraftMutations(id: string, mutationIds: string[]) {
     const draft = await this.getDraft(id);
     if (!draft) return { draft: null, deleted: false as const, reason: "not_found" as const };
     if (draft.status !== "pending") return { draft, deleted: false as const, reason: "not_pending" as const };
-    const nextMutations = draft.mutations.filter((mutation) => mutation.id !== mutationId);
-    if (nextMutations.length === draft.mutations.length) return { draft, deleted: false as const, reason: "not_found" as const };
+    const uniqueMutationIds = Array.from(new Set(mutationIds));
+    const draftMutationIds = new Set(draft.mutations.map((mutation) => mutation.id));
+    if (uniqueMutationIds.some((mutationId) => !draftMutationIds.has(mutationId))) {
+      return { draft, deleted: false as const, reason: "not_found" as const };
+    }
+
+    const mutationIdSet = new Set(uniqueMutationIds);
+    const nextMutations = draft.mutations.filter((mutation) => !mutationIdSet.has(mutation.id));
     if (nextMutations.length === 0) {
       await this.deleteDraft(id);
       return { draft: null, deleted: true as const };

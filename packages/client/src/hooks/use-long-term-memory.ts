@@ -219,6 +219,32 @@ export type ApplyLongTermMemoryScopeToDerivedResponse = {
   rebuild: unknown | null;
 };
 
+export type AcceptLongTermMemoryDraftInput = {
+  id: string;
+  mutationIds?: string[];
+  lowRiskOnly?: boolean;
+  editedMutations?: LtmDraftMutation[];
+};
+
+export type AcceptLongTermMemoryDraftResponse = {
+  draft: LtmExtractionDraft;
+  appliedMutationIds: string[];
+  skippedMutationIds: string[];
+  autoIncludedMutationIds: string[];
+};
+
+export type SkipLongTermMemoryDraftInput = {
+  id: string;
+  mutationIds: string[];
+};
+
+export type SkipLongTermMemoryDraftResponse = {
+  deleted: true;
+  draftId: string;
+  mutationIds: string[];
+  draft: LtmExtractionDraft | null;
+};
+
 export type ImportLongTermMemorySourceNotesResponse = {
   source: LtmInteropSource;
   imported: Array<{
@@ -526,8 +552,21 @@ export function useImportLongTermMemorySourceNotes() {
 export function useAcceptLongTermMemoryDraft() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, mutationIds, lowRiskOnly, editedMutations }: { id: string; mutationIds?: string[]; lowRiskOnly?: boolean; editedMutations?: LtmDraftMutation[] }) =>
-      api.post(`/long-term-memory/drafts/${id}/accept`, { mutationIds, lowRiskOnly, editedMutations }),
+    mutationFn: ({ id, mutationIds, lowRiskOnly, editedMutations }: AcceptLongTermMemoryDraftInput) =>
+      api.post<AcceptLongTermMemoryDraftResponse>(`/long-term-memory/drafts/${id}/accept`, {
+        mutationIds,
+        lowRiskOnly,
+        editedMutations,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
+  });
+}
+
+export function useSkipLongTermMemoryDraftMutations() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, mutationIds }: SkipLongTermMemoryDraftInput) =>
+      api.post<SkipLongTermMemoryDraftResponse>(`/long-term-memory/drafts/${id}/skip`, { mutationIds }),
     onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
   });
 }

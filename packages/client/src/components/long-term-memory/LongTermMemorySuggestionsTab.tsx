@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   AlertCircle,
@@ -6,6 +6,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ListChecks,
   Loader2,
   Save,
   Wrench,
@@ -25,11 +26,19 @@ import {
   useExtractLongTermMemorySourceNote,
   useLongTermMemoryDrafts,
   useLongTermMemoryNotes,
+  useSkipLongTermMemoryDraftMutations,
+  type AcceptLongTermMemoryDraftResponse,
   type ExtractLongTermMemorySourceResponse,
 } from "../../hooks/use-long-term-memory";
 import { useUIStore } from "../../stores/ui.store";
 import { cn } from "../../lib/utils";
-import { actionRowClassName, helperTextClassName, insetSectionCardClassName, sectionCardClassName } from "./LtmFields";
+import {
+  actionRowClassName,
+  helperTextClassName,
+  insetSectionCardClassName,
+  sectionCardClassName,
+  selectedListRowClassName,
+} from "./LtmFields";
 import { StatusPill, ToolButton } from "./LtmPills";
 import {
   friendlyIdentifier,
@@ -45,7 +54,7 @@ type SuggestionRowModel = {
 };
 
 type SuggestionGroup = "new" | "rewrite";
-
+type BatchAction = "keep" | "skip";
 type LatestExtractionResult = Pick<ExtractLongTermMemorySourceResponse, "diagnostics" | "draft" | "outcome">;
 
 const rewriteKinds = new Set<LtmDraftMutation["kind"]>([
@@ -180,6 +189,35 @@ function toastForExtractionResult(result: ExtractLongTermMemorySourceResponse, a
   } left for review`;
 }
 
+function suggestionRowKey(draftId: string, mutationId: string) {
+  return `${draftId}:${mutationId}`;
+}
+
+function suggestionRowKeyFor(row: SuggestionRowModel) {
+  return suggestionRowKey(row.draft.id, row.mutation.id);
+}
+
+function summarizeBulkKeep(keptCount: number, failedDraftCount: number, autoIncludedCount: number) {
+  const summary = `Kept ${keptCount} suggestion${keptCount === 1 ? "" : "s"}`;
+  const dependencySummary = autoIncludedCount
+    ? ` Included ${autoIncludedCount} dependency create${autoIncludedCount === 1 ? "" : "s"}.`
+    : "";
+  if (failedDraftCount === 0) return { tone: "success" as const, message: `${summary}.${dependencySummary}`.trim() };
+  return {
+    tone: "error" as const,
+    message: `${summary}; ${failedDraftCount} draft${failedDraftCount === 1 ? "" : "s"} failed.${dependencySummary}`.trim(),
+  };
+}
+
+function summarizeBulkSkip(skippedCount: number, failedDraftCount: number) {
+  const summary = `Skipped ${skippedCount} suggestion${skippedCount === 1 ? "" : "s"}`;
+  if (failedDraftCount === 0) return { tone: "success" as const, message: `${summary}.` };
+  return {
+    tone: "error" as const,
+    message: `${summary}; ${failedDraftCount} draft${failedDraftCount === 1 ? "" : "s"} failed.`,
+  };
+}
+
 export function LongTermMemorySuggestionsTab({
   note,
   onRecoverDroppedCandidate,
@@ -190,7 +228,10 @@ export function LongTermMemorySuggestionsTab({
   const drafts = useLongTermMemoryDrafts({}, { enabled: isSourceMemory(note) });
   const notes = useLongTermMemoryNotes();
   const noteLookup = useMemo(() => new Map((notes.data ?? []).map((n) => [n.id, n])), [notes.data]);
+  const acceptDraft = useAcceptLongTermMemoryDraft();
+  const deleteDraftMutation = useDeleteLongTermMemoryDraftMutation();
   const extractSourceNote = useExtractLongTermMemorySourceNote();
+  const skipDraftMutations = useSkipLongTermMemoryDraftMutations();
   const { autoApplyLowRisk, connectionId, extractionMode, instruction, model } = useUIStore(
     useShallow((state) => ({
       autoApplyLowRisk: state.ltmPanelPreferences.autoApplyLowRisk,
@@ -201,6 +242,11 @@ export function LongTermMemorySuggestionsTab({
     })),
   );
   const [latestResult, setLatestResult] = useState<LatestExtractionResult | null>(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<Set<string>>(() => new Set());
+  const [editedMutations, setEditedMutations] = useState<Record<string, LtmDraftMutation>>({});
+  const [activeBatchAction, setActiveBatchAction] = useState<BatchAction | null>(null);
+  const keepSkipLockRef = useRef(false);
   const sourceMemory = isSourceMemory(note);
   const rows = useMemo<SuggestionRowModel[]>(() => {
     if (!sourceMemory) return [];
@@ -212,6 +258,227 @@ export function LongTermMemorySuggestionsTab({
   }, [drafts.data, note.id, sourceMemory]);
   const newRows = rows.filter((row) => mutationGroup(row.mutation) === "new");
   const rewriteRows = rows.filter((row) => rewriteKinds.has(row.mutation.kind));
+  const allRowKeys = useMemo(() => rows.map((row) => suggestionRowKeyFor(row)), [rows]);
+  const selectedRows = useMemo(
+    () => rows.filter((row) => selectedRowKeys.has(suggestionRowKeyFor(row))),
+    [rows, selectedRowKeys],
+  );
+  const allRowsSelected = rows.length > 0 && selectedRows.length === rows.length;
+  const rowActionsDisabled =
+    activeBatchAction !== null ||
+    acceptDraft.isPending ||
+    deleteDraftMutation.isPending ||
+    extractSourceNote.isPending ||
+    skipDraftMutations.isPending;
+
+  useEffect(() => {
+    setLatestResult(null);
+    setSelectMode(false);
+    setSelectedRowKeys(new Set());
+    setEditedMutations({});
+  }, [note.id]);
+
+  useEffect(() => {
+    const liveKeys = new Set(allRowKeys);
+    setSelectedRowKeys((current) => {
+      if (current.size === 0) return current;
+      const next = new Set(Array.from(current).filter((key) => liveKeys.has(key)));
+      return next.size === current.size ? current : next;
+    });
+    setEditedMutations((current) => {
+      const nextEntries = Object.entries(current).filter(([key]) => liveKeys.has(key));
+      if (nextEntries.length === Object.keys(current).length) return current;
+      return Object.fromEntries(nextEntries);
+    });
+  }, [allRowKeys]);
+
+  const setRowsSelected = useCallback((keys: string[], selected: boolean) => {
+    setSelectedRowKeys((current) => {
+      const next = new Set(current);
+      for (const key of keys) {
+        if (selected) next.add(key);
+        else next.delete(key);
+      }
+      return next;
+    });
+  }, []);
+
+  const clearEditedMutations = useCallback((keys: string[]) => {
+    setEditedMutations((current) => {
+      const next = { ...current };
+      let changed = false;
+      for (const key of keys) {
+        if (!(key in next)) continue;
+        changed = true;
+        delete next[key];
+      }
+      return changed ? next : current;
+    });
+  }, []);
+
+  const withKeepSkipLock = useCallback(async <T,>(action: () => Promise<T>) => {
+    if (keepSkipLockRef.current) return null;
+    keepSkipLockRef.current = true;
+    try {
+      return await action();
+    } finally {
+      keepSkipLockRef.current = false;
+    }
+  }, []);
+
+  const keepOne = useCallback(
+    async (row: SuggestionRowModel) => {
+      const rowKey = suggestionRowKeyFor(row);
+      const editedMutation = editedMutations[rowKey];
+      await withKeepSkipLock(async () => {
+        try {
+          const result = await acceptDraft.mutateAsync({
+            id: row.draft.id,
+            mutationIds: [row.mutation.id],
+            editedMutations: editedMutation ? [editedMutation] : undefined,
+          });
+          const autoCount = result.autoIncludedMutationIds.length;
+          const suffix = autoCount
+            ? ` (also created ${autoCount} note${autoCount > 1 ? "s" : ""} to support this change)`
+            : "";
+          toast.success(editedMutation ? `Edited suggestion kept${suffix}` : `Suggestion kept${suffix}`);
+          clearEditedMutations([rowKey]);
+          setSelectedRowKeys((current) => {
+            if (!current.has(rowKey)) return current;
+            const next = new Set(current);
+            next.delete(rowKey);
+            return next;
+          });
+        } catch (err) {
+          toast.error((err as Error).message);
+        }
+      });
+    },
+    [acceptDraft, clearEditedMutations, editedMutations, withKeepSkipLock],
+  );
+
+  const skipOne = useCallback(
+    async (row: SuggestionRowModel) => {
+      const rowKey = suggestionRowKeyFor(row);
+      await withKeepSkipLock(async () => {
+        try {
+          await deleteDraftMutation.mutateAsync({ id: row.draft.id, mutationId: row.mutation.id });
+          toast.success("Suggestion skipped");
+          clearEditedMutations([rowKey]);
+          setSelectedRowKeys((current) => {
+            if (!current.has(rowKey)) return current;
+            const next = new Set(current);
+            next.delete(rowKey);
+            return next;
+          });
+        } catch (err) {
+          toast.error((err as Error).message);
+        }
+      });
+    },
+    [clearEditedMutations, deleteDraftMutation, withKeepSkipLock],
+  );
+
+  const runBulkKeep = useCallback(async () => {
+    const snapshot = rows.filter((row) => selectedRowKeys.has(suggestionRowKeyFor(row)));
+    if (snapshot.length === 0) return;
+
+    const groups = new Map<string, SuggestionRowModel[]>();
+    for (const row of snapshot) {
+      const existing = groups.get(row.draft.id);
+      if (existing) existing.push(row);
+      else groups.set(row.draft.id, [row]);
+    }
+
+    let keptCount = 0;
+    let failedDraftCount = 0;
+    let autoIncludedCount = 0;
+    const successfulKeys: string[] = [];
+    const failedKeys: string[] = [];
+
+    const completed = await withKeepSkipLock(async () => {
+      setActiveBatchAction("keep");
+      try {
+        for (const [draftId, draftRows] of groups) {
+          const mutationIds = draftRows.map((row) => row.mutation.id);
+          const rowKeys = draftRows.map((row) => suggestionRowKeyFor(row));
+          const savedEdits = draftRows
+            .map((row) => editedMutations[suggestionRowKeyFor(row)])
+            .filter((mutation): mutation is LtmDraftMutation => Boolean(mutation));
+          try {
+            const result: AcceptLongTermMemoryDraftResponse = await acceptDraft.mutateAsync({
+              id: draftId,
+              mutationIds,
+              editedMutations: savedEdits.length > 0 ? savedEdits : undefined,
+            });
+            keptCount += draftRows.length;
+            autoIncludedCount += result.autoIncludedMutationIds.length;
+            successfulKeys.push(...rowKeys);
+          } catch (err) {
+            failedDraftCount += 1;
+            failedKeys.push(...rowKeys);
+            void err;
+          }
+        }
+      } finally {
+        setActiveBatchAction(null);
+      }
+    });
+    if (completed === null) return;
+
+    clearEditedMutations(successfulKeys);
+    setSelectedRowKeys(new Set(failedKeys));
+
+    const summary = summarizeBulkKeep(keptCount, failedDraftCount, autoIncludedCount);
+    if (summary.tone === "success") toast.success(summary.message);
+    else toast.error(summary.message);
+  }, [acceptDraft, clearEditedMutations, editedMutations, rows, selectedRowKeys, withKeepSkipLock]);
+
+  const runBulkSkip = useCallback(async () => {
+    const snapshot = rows.filter((row) => selectedRowKeys.has(suggestionRowKeyFor(row)));
+    if (snapshot.length === 0) return;
+
+    const groups = new Map<string, SuggestionRowModel[]>();
+    for (const row of snapshot) {
+      const existing = groups.get(row.draft.id);
+      if (existing) existing.push(row);
+      else groups.set(row.draft.id, [row]);
+    }
+
+    let skippedCount = 0;
+    let failedDraftCount = 0;
+    const successfulKeys: string[] = [];
+    const failedKeys: string[] = [];
+
+    const completed = await withKeepSkipLock(async () => {
+      setActiveBatchAction("skip");
+      try {
+        for (const [draftId, draftRows] of groups) {
+          const mutationIds = draftRows.map((row) => row.mutation.id);
+          const rowKeys = draftRows.map((row) => suggestionRowKeyFor(row));
+          try {
+            await skipDraftMutations.mutateAsync({ id: draftId, mutationIds });
+            skippedCount += draftRows.length;
+            successfulKeys.push(...rowKeys);
+          } catch (err) {
+            failedDraftCount += 1;
+            failedKeys.push(...rowKeys);
+            void err;
+          }
+        }
+      } finally {
+        setActiveBatchAction(null);
+      }
+    });
+    if (completed === null) return;
+
+    clearEditedMutations(successfulKeys);
+    setSelectedRowKeys(new Set(failedKeys));
+
+    const summary = summarizeBulkSkip(skippedCount, failedDraftCount);
+    if (summary.tone === "success") toast.success(summary.message);
+    else toast.error(summary.message);
+  }, [clearEditedMutations, rows, selectedRowKeys, skipDraftMutations, withKeepSkipLock]);
 
   if (!sourceMemory) {
     return (
@@ -229,42 +496,61 @@ export function LongTermMemorySuggestionsTab({
             <div className="flex flex-wrap gap-1.5">
               <StatusPill label="Source memory" tone="good" />
               <StatusPill label={`${rows.length} pending suggestion${rows.length === 1 ? "" : "s"}`} />
+              {selectMode ? (
+                <StatusPill label={`${selectedRows.length} selected`} tone={selectedRows.length > 0 ? "warn" : "neutral"} />
+              ) : null}
             </div>
             <p className={helperTextClassName}>
               Extract typed memories from this source note, then keep, skip, or manually recover anything useful.
             </p>
           </div>
-          <ToolButton
-            onClick={() =>
-              extractSourceNote
-                .mutateAsync({
-                  noteId: note.id,
-                  applyLowRisk: autoApplyLowRisk,
-                  connectionId: connectionId.trim() || undefined,
-                  extractionMode,
-                  instruction: instruction.trim() || undefined,
-                  model: model.trim() || undefined,
-                })
-                .then((result) => {
-                  setLatestResult({
-                    draft: result.draft,
-                    outcome: result.outcome,
-                    diagnostics: result.diagnostics,
-                  });
-                  toast.success(toastForExtractionResult(result, autoApplyLowRisk));
-                })
-                .catch((err: Error) => toast.error(err.message))
-            }
-            disabled={extractSourceNote.isPending}
-            tone="primary"
-          >
-            {extractSourceNote.isPending ? (
-              <Loader2 size="0.875rem" className="animate-spin" />
-            ) : (
-              <BrainCircuit size="0.875rem" />
-            )}
-            Extract typed memories
-          </ToolButton>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <ToolButton
+              onClick={() => {
+                if (selectMode) {
+                  setSelectMode(false);
+                  setSelectedRowKeys(new Set());
+                  return;
+                }
+                setSelectMode(true);
+              }}
+              disabled={(!selectMode && rows.length === 0) || rowActionsDisabled}
+            >
+              {selectMode ? <X size="0.875rem" /> : <ListChecks size="0.875rem" />}
+              {selectMode ? "Cancel" : "Select"}
+            </ToolButton>
+            <ToolButton
+              onClick={() =>
+                extractSourceNote
+                  .mutateAsync({
+                    noteId: note.id,
+                    applyLowRisk: autoApplyLowRisk,
+                    connectionId: connectionId.trim() || undefined,
+                    extractionMode,
+                    instruction: instruction.trim() || undefined,
+                    model: model.trim() || undefined,
+                  })
+                  .then((result) => {
+                    setLatestResult({
+                      draft: result.draft,
+                      outcome: result.outcome,
+                      diagnostics: result.diagnostics,
+                    });
+                    toast.success(toastForExtractionResult(result, autoApplyLowRisk));
+                  })
+                  .catch((err: Error) => toast.error(err.message))
+              }
+              disabled={rowActionsDisabled}
+              tone="primary"
+            >
+              {extractSourceNote.isPending ? (
+                <Loader2 size="0.875rem" className="animate-spin" />
+              ) : (
+                <BrainCircuit size="0.875rem" />
+              )}
+              Extract typed memories
+            </ToolButton>
+          </div>
         </div>
         <p className={cn("mt-3", helperTextClassName)}>
           Uses the shared extraction defaults from the Tools tab, including mode, model overrides, and low-risk
@@ -281,6 +567,44 @@ export function LongTermMemorySuggestionsTab({
         />
       ) : null}
 
+      {selectMode ? (
+        <div className={cn(sectionCardClassName, "flex flex-wrap items-center gap-2")}>
+          <label className="flex min-h-8 items-center gap-2 rounded-lg px-2 text-xs text-[var(--foreground)]">
+            <input
+              type="checkbox"
+              checked={allRowsSelected}
+              disabled={rows.length === 0 || rowActionsDisabled}
+              onChange={(event) => setRowsSelected(allRowKeys, event.target.checked)}
+              className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+            />
+            Select all
+          </label>
+          <StatusPill label={`${selectedRows.length} selected`} tone={selectedRows.length > 0 ? "warn" : "neutral"} />
+          <button
+            type="button"
+            onClick={() => setSelectedRowKeys(new Set())}
+            disabled={selectedRowKeys.size === 0 || rowActionsDisabled}
+            className="rounded-lg px-2 py-1.5 text-xs font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Clear
+          </button>
+          <div className="ml-auto flex flex-wrap gap-1.5">
+            <ToolButton
+              onClick={() => void runBulkKeep()}
+              disabled={selectedRows.length === 0 || rowActionsDisabled}
+              tone="primary"
+            >
+              {activeBatchAction === "keep" ? <Loader2 size="0.875rem" className="animate-spin" /> : <Check size="0.875rem" />}
+              Keep selected
+            </ToolButton>
+            <ToolButton onClick={() => void runBulkSkip()} disabled={selectedRows.length === 0 || rowActionsDisabled}>
+              {activeBatchAction === "skip" ? <Loader2 size="0.875rem" className="animate-spin" /> : <X size="0.875rem" />}
+              Skip selected
+            </ToolButton>
+          </div>
+        </div>
+      ) : null}
+
       {drafts.isLoading ? (
         <div className="flex items-center justify-center rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-3 text-xs text-[var(--muted-foreground)]">
           <Loader2 className="mr-2 animate-spin" size="0.875rem" />
@@ -292,8 +616,36 @@ export function LongTermMemorySuggestionsTab({
         </p>
       ) : (
         <div className="space-y-3">
-          <SuggestionDrawer title="New" rows={newRows} noteLookup={noteLookup} />
-          <SuggestionDrawer title="Rewrite" rows={rewriteRows} noteLookup={noteLookup} />
+          <SuggestionDrawer
+            title="New"
+            rows={newRows}
+            noteLookup={noteLookup}
+            selectMode={selectMode}
+            selectedRowKeys={selectedRowKeys}
+            editedMutations={editedMutations}
+            busy={rowActionsDisabled}
+            onSelectRows={setRowsSelected}
+            onMutationEdited={(rowKey, mutation) =>
+              setEditedMutations((current) => ({ ...current, [rowKey]: mutation }))
+            }
+            onKeep={keepOne}
+            onSkip={skipOne}
+          />
+          <SuggestionDrawer
+            title="Rewrite"
+            rows={rewriteRows}
+            noteLookup={noteLookup}
+            selectMode={selectMode}
+            selectedRowKeys={selectedRowKeys}
+            editedMutations={editedMutations}
+            busy={rowActionsDisabled}
+            onSelectRows={setRowsSelected}
+            onMutationEdited={(rowKey, mutation) =>
+              setEditedMutations((current) => ({ ...current, [rowKey]: mutation }))
+            }
+            onKeep={keepOne}
+            onSkip={skipOne}
+          />
         </div>
       )}
     </div>
@@ -391,25 +743,72 @@ function SuggestionDrawer({
   title,
   rows,
   noteLookup,
+  selectMode,
+  selectedRowKeys,
+  editedMutations,
+  busy,
+  onSelectRows,
+  onMutationEdited,
+  onKeep,
+  onSkip,
 }: {
   title: "New" | "Rewrite";
   rows: SuggestionRowModel[];
   noteLookup: Map<string, LtmNote>;
+  selectMode: boolean;
+  selectedRowKeys: Set<string>;
+  editedMutations: Record<string, LtmDraftMutation>;
+  busy: boolean;
+  onSelectRows: (keys: string[], selected: boolean) => void;
+  onMutationEdited: (rowKey: string, mutation: LtmDraftMutation) => void;
+  onKeep: (row: SuggestionRowModel) => void;
+  onSkip: (row: SuggestionRowModel) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const rowKeys = rows.map((row) => suggestionRowKeyFor(row));
+  const selectedCount = rowKeys.filter((key) => selectedRowKeys.has(key)).length;
+  const allSelected = rows.length > 0 && selectedCount === rows.length;
+
   return (
     <section className="overflow-hidden rounded-xl bg-[var(--secondary)]/25 ring-1 ring-[var(--border)]">
-      <button
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        className="flex min-h-11 w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-[var(--accent)]/45"
-      >
-        <span className="flex min-w-0 flex-1 items-center gap-2 text-xs font-semibold text-[var(--foreground)]">
-          {open ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
-          <span className="truncate">{title}</span>
-        </span>
-        <StatusPill label={`${rows.length}`} tone={rows.length ? "warn" : "neutral"} />
-      </button>
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2.5">
+        <button
+          type="button"
+          onClick={() => setOpen((current) => !current)}
+          className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left transition-colors hover:text-[var(--foreground)]"
+        >
+          <span className="flex min-w-0 flex-1 items-center gap-2 text-xs font-semibold text-[var(--foreground)]">
+            {open ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
+            <span className="truncate">{title}</span>
+          </span>
+        </button>
+        {selectMode ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <label className="flex min-h-8 items-center gap-2 rounded-lg bg-[var(--background)]/45 px-2 text-[0.6875rem] text-[var(--foreground)] ring-1 ring-[var(--border)]">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                disabled={rows.length === 0 || busy}
+                onChange={(event) => onSelectRows(rowKeys, event.target.checked)}
+                className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+              />
+              Select all
+            </label>
+            <button
+              type="button"
+              onClick={() => onSelectRows(rowKeys, false)}
+              disabled={selectedCount === 0 || busy}
+              className="rounded-lg px-2 py-1.5 text-[0.6875rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Clear
+            </button>
+          </div>
+        ) : null}
+        <StatusPill
+          label={selectMode ? `${selectedCount}/${rows.length}` : `${rows.length}`}
+          tone={rows.length ? "warn" : "neutral"}
+        />
+      </div>
       {open ? (
         <div className="space-y-2 border-t border-[var(--border)]/45 p-3">
           {rows.length === 0 ? (
@@ -417,7 +816,24 @@ function SuggestionDrawer({
               No {title.toLowerCase()} suggestions.
             </p>
           ) : (
-            rows.map((row) => <SuggestionRow key={`${row.draft.id}:${row.mutation.id}`} row={row} noteLookup={noteLookup} />)
+            rows.map((row) => {
+              const rowKey = suggestionRowKeyFor(row);
+              return (
+                <SuggestionRow
+                  key={rowKey}
+                  row={row}
+                  noteLookup={noteLookup}
+                  selectMode={selectMode}
+                  selected={selectedRowKeys.has(rowKey)}
+                  editedMutation={editedMutations[rowKey]}
+                  busy={busy}
+                  onSelect={(selected) => onSelectRows([rowKey], selected)}
+                  onMutationEdited={(mutation) => onMutationEdited(rowKey, mutation)}
+                  onKeep={() => onKeep(row)}
+                  onSkip={() => onSkip(row)}
+                />
+              );
+            })
           )}
         </div>
       ) : null}
@@ -425,88 +841,107 @@ function SuggestionDrawer({
   );
 }
 
-function SuggestionRow({ row, noteLookup }: { row: SuggestionRowModel; noteLookup: Map<string, LtmNote> }) {
+function SuggestionRow({
+  row,
+  noteLookup,
+  selectMode,
+  selected,
+  editedMutation,
+  busy,
+  onSelect,
+  onMutationEdited,
+  onKeep,
+  onSkip,
+}: {
+  row: SuggestionRowModel;
+  noteLookup: Map<string, LtmNote>;
+  selectMode: boolean;
+  selected: boolean;
+  editedMutation?: LtmDraftMutation;
+  busy: boolean;
+  onSelect: (selected: boolean) => void;
+  onMutationEdited: (mutation: LtmDraftMutation) => void;
+  onKeep: () => void;
+  onSkip: () => void;
+}) {
   const { draft, mutation } = row;
-  const accept = useAcceptLongTermMemoryDraft();
-  const deleteMutation = useDeleteLongTermMemoryDraftMutation();
   const [editing, setEditing] = useState(false);
-  const [editedMutation, setEditedMutation] = useState<LtmDraftMutation | null>(null);
-  const busy = accept.isPending || deleteMutation.isPending;
+  const [draftEdit, setDraftEdit] = useState<LtmDraftMutation | null>(null);
+  const hasEdits = Boolean(editedMutation) && !editing;
 
-  const skipOne = async () => {
-    try {
-      await deleteMutation.mutateAsync({ id: draft.id, mutationId: mutation.id });
-      toast.success("Suggestion skipped");
-    } catch (err) {
-      toast.error((err as Error).message);
-    }
+  const openEditor = () => {
+    setDraftEdit(editedMutation ?? mutation);
+    setEditing(true);
   };
 
-  const handleAccept = () => {
-    accept
-      .mutateAsync({
-        id: draft.id,
-        mutationIds: [mutation.id],
-        editedMutations: editedMutation ? [editedMutation] : undefined,
-      })
-      .then((result: any) => {
-        const autoCount: number = result?.autoIncludedMutationIds?.length ?? 0;
-        const suffix = autoCount
-          ? ` (also created ${autoCount} note${autoCount > 1 ? "s" : ""} to support this change)`
-          : "";
-        toast.success(editedMutation ? `Edited suggestion kept${suffix}` : `Suggestion kept${suffix}`);
-        setEditedMutation(null);
-      })
-      .catch((err: Error) => toast.error(err.message));
-  };
-
-  const handleToggleEdit = () => {
-    if (!editing && !editedMutation) setEditedMutation(mutation);
-    setEditing((current) => !current);
-  };
-
-  const handleSave = (saved: LtmDraftMutation) => {
-    setEditedMutation(saved);
+  const closeEditor = () => {
     setEditing(false);
+    setDraftEdit(null);
   };
-
-  const hasEdits = editedMutation !== null && !editing;
 
   return (
-    <article className="rounded-xl bg-[var(--card)] p-3 ring-1 ring-[var(--border)]">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <StatusPill label={mutationKindLabel(mutation.kind)} />
-            <StatusPill label={mutationRiskLabel(mutation.risk)} tone={mutationRiskTone(mutation.risk)} />
-            <StatusPill label={`Confidence ${Math.round(mutation.confidence * 100)}%`} />
-            <StatusPill label={referenceLabel(mutation.evidence.length)} />
-            <StatusPill label={draftStatusLabel(draft.status)} />
-            {hasEdits ? <StatusPill label="edited" /> : null}
+    <article
+      className={cn(
+        "rounded-xl bg-[var(--card)] p-3 ring-1 ring-[var(--border)]",
+        selectMode && selected && selectedListRowClassName,
+      )}
+    >
+      <div className={cn("grid gap-3", selectMode && "grid-cols-[auto_minmax(0,1fr)]")}>
+        {selectMode ? (
+          <label className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--background)]/55 ring-1 ring-[var(--border)]">
+            <input
+              type="checkbox"
+              checked={selected}
+              disabled={busy}
+              onChange={(event) => onSelect(event.target.checked)}
+              className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+              aria-label={`Select ${mutationTargetTitle(mutation)}`}
+            />
+          </label>
+        ) : null}
+        <div>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <StatusPill label={mutationKindLabel(mutation.kind)} />
+                <StatusPill label={mutationRiskLabel(mutation.risk)} tone={mutationRiskTone(mutation.risk)} />
+                <StatusPill label={`Confidence ${Math.round(mutation.confidence * 100)}%`} />
+                <StatusPill label={referenceLabel(mutation.evidence.length)} />
+                <StatusPill label={draftStatusLabel(draft.status)} />
+                {hasEdits ? <StatusPill label="edited" /> : null}
+              </div>
+              <h4 className="mt-2 text-sm font-medium text-[var(--foreground)]">{mutationTargetTitle(mutation)}</h4>
+              <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-[var(--muted-foreground)]">
+                {compactMutationText(editedMutation ?? mutation, noteLookup)}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <ToolButton onClick={editing ? closeEditor : openEditor} disabled={busy}>
+                <Save size="0.875rem" />
+                {editing ? "Cancel edit" : hasEdits ? "Edit again" : "Edit"}
+              </ToolButton>
+              <ToolButton onClick={onKeep} disabled={busy} tone="primary">
+                <Check size="0.875rem" />
+                Keep
+              </ToolButton>
+              <ToolButton onClick={onSkip} disabled={busy}>
+                <X size="0.875rem" />
+                Skip
+              </ToolButton>
+            </div>
           </div>
-          <h4 className="mt-2 text-sm font-medium text-[var(--foreground)]">{mutationTargetTitle(mutation)}</h4>
-          <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-[var(--muted-foreground)]">
-            {compactMutationText(editedMutation ?? mutation, noteLookup)}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          <ToolButton onClick={handleToggleEdit} disabled={busy}>
-            <Save size="0.875rem" />
-            {editing ? "Cancel edit" : hasEdits ? "Edit again" : "Edit"}
-          </ToolButton>
-          <ToolButton onClick={handleAccept} disabled={busy} tone="primary">
-            <Check size="0.875rem" />
-            Keep
-          </ToolButton>
-          <ToolButton onClick={skipOne} disabled={busy}>
-            <X size="0.875rem" />
-            Skip
-          </ToolButton>
+          {editing && draftEdit ? (
+            <SuggestionMutationEditor
+              mutation={draftEdit}
+              onSave={(saved) => {
+                onMutationEdited(saved);
+                closeEditor();
+              }}
+              onCancel={closeEditor}
+            />
+          ) : null}
         </div>
       </div>
-      {editing && editedMutation ? (
-        <SuggestionMutationEditor mutation={editedMutation} onSave={handleSave} onCancel={() => setEditing(false)} />
-      ) : null}
     </article>
   );
 }

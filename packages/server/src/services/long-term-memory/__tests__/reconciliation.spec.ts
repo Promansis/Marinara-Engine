@@ -13,6 +13,7 @@ import {
   ltmPoliciesConfigSchema,
   ltmScopeSchema,
 } from "../../../../../shared/src/schemas/long-term-memory.schema.js";
+import { buildApp } from "../../../app.js";
 import { chunkNotes, type LtmMemoryChunk } from "../chunking.js";
 import { buildLtmMetadataIndex } from "../metadata-index.js";
 import { compileLtmEvidenceUnits } from "../evidence-unit-compiler.js";
@@ -3942,6 +3943,257 @@ test("typed note type changes rewrite note links and pending draft references", 
     );
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("bulk skip removes only selected pending draft mutations", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-bulk-skip-subset-"));
+  try {
+    const draftStore = new LongTermMemoryDraftStore(root);
+    const draft = await draftStore.createDraft({
+      source: { sourceNoteId: "scene_source_test" },
+      modes: ["roleplay"],
+      response: {
+        summary: "Pending suggestions",
+        mutations: [
+          {
+            id: randomUUID(),
+            kind: "create_note",
+            risk: "medium",
+            confidence: 0.85,
+            summary: "Create Mara note",
+            evidence: ["source_note:scene_source_test"],
+            note: {
+              id: "char_mara",
+              type: "character",
+              status: "active",
+              modes: ["roleplay"],
+              scope: {},
+              tags: ["typed_memory"],
+              links: [],
+              sections: {
+                facts: {
+                  text: "Mara keeps a wax-sealed notebook.",
+                  updatedAt: timestamp,
+                  evidence: ["source_note:scene_source_test"],
+                },
+              },
+            },
+          },
+          {
+            id: randomUUID(),
+            kind: "append_section",
+            noteId: "thread_watchtower",
+            sectionKey: "facts",
+            text: "The watchtower bell cracked at dusk.",
+            risk: "medium",
+            confidence: 0.8,
+            summary: "Append tower detail",
+            evidence: ["source_note:scene_source_test"],
+          },
+        ],
+      },
+    });
+
+    const skippedId = draft.mutations[0]!.id;
+    const keptId = draft.mutations[1]!.id;
+    const result = await draftStore.withDraftLock(draft.id, () => draftStore.deleteDraftMutations(draft.id, [skippedId]));
+
+    assert.equal(result.deleted, true);
+    assert.equal(result.draft?.status, "pending");
+    assert.deepEqual(result.draft?.mutations.map((mutation) => mutation.id), [keptId]);
+
+    const persisted = await draftStore.getDraft(draft.id);
+    assert.deepEqual(persisted?.mutations.map((mutation) => mutation.id), [keptId]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("bulk skip deletes draft when all pending mutations are removed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-bulk-skip-all-"));
+  try {
+    const draftStore = new LongTermMemoryDraftStore(root);
+    const draft = await draftStore.createDraft({
+      source: { sourceNoteId: "scene_source_test" },
+      modes: ["roleplay"],
+      response: {
+        summary: "Pending suggestions",
+        mutations: [
+          {
+            id: randomUUID(),
+            kind: "append_section",
+            noteId: "thread_watchtower",
+            sectionKey: "facts",
+            text: "The bell rope frayed long ago.",
+            risk: "medium",
+            confidence: 0.8,
+            summary: "Append tower detail",
+            evidence: ["source_note:scene_source_test"],
+          },
+        ],
+      },
+    });
+
+    const result = await draftStore.withDraftLock(draft.id, () =>
+      draftStore.deleteDraftMutations(
+        draft.id,
+        draft.mutations.map((mutation) => mutation.id),
+      ),
+    );
+
+    assert.equal(result.deleted, true);
+    assert.equal(result.draft, null);
+    assert.equal(await draftStore.getDraft(draft.id), null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("bulk skip reports the same not-pending conflict reason as single skip", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-bulk-skip-conflict-"));
+  try {
+    const draftStore = new LongTermMemoryDraftStore(root);
+    const draft = await draftStore.createDraft({
+      source: { sourceNoteId: "scene_source_test" },
+      modes: ["roleplay"],
+      response: {
+        summary: "Pending suggestions",
+        mutations: [
+          {
+            id: randomUUID(),
+            kind: "append_section",
+            noteId: "thread_watchtower",
+            sectionKey: "facts",
+            text: "The bell rope frayed long ago.",
+            risk: "medium",
+            confidence: 0.8,
+            summary: "Append tower detail",
+            evidence: ["source_note:scene_source_test"],
+          },
+        ],
+      },
+    });
+
+    await draftStore.updateDraftStatus(draft.id, "accepted");
+
+    const singleSkip = await draftStore.withDraftLock(draft.id, () =>
+      draftStore.deleteDraftMutation(draft.id, draft.mutations[0]!.id),
+    );
+    const bulkSkip = await draftStore.withDraftLock(draft.id, () =>
+      draftStore.deleteDraftMutations(draft.id, [draft.mutations[0]!.id]),
+    );
+
+    assert.equal(singleSkip.deleted, false);
+    assert.equal(singleSkip.reason, "not_pending");
+    assert.equal(bulkSkip.deleted, false);
+    assert.equal(bulkSkip.reason, "not_pending");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("bulk skip route validates payloads and preserves route conflict behavior", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "marinara-ltm-bulk-skip-route-"));
+  const previousDataDir = process.env.DATA_DIR;
+  const previousBasicAuthUser = process.env.BASIC_AUTH_USER;
+  const previousBasicAuthPass = process.env.BASIC_AUTH_PASS;
+  const previousAdminSecret = process.env.ADMIN_SECRET;
+  let app: Awaited<ReturnType<typeof buildApp>> | null = null;
+
+  delete process.env.BASIC_AUTH_USER;
+  delete process.env.BASIC_AUTH_PASS;
+  delete process.env.ADMIN_SECRET;
+  process.env.DATA_DIR = dataDir;
+
+  try {
+    app = await buildApp();
+    const draftStore = new LongTermMemoryDraftStore(join(dataDir, "long-term-memory"));
+    const draft = await draftStore.createDraft({
+      source: { sourceNoteId: "scene_source_test" },
+      modes: ["roleplay"],
+      response: {
+        summary: "Pending suggestions",
+        mutations: [
+          {
+            id: randomUUID(),
+            kind: "append_section",
+            noteId: "thread_watchtower",
+            sectionKey: "facts",
+            text: "The bell rope frayed long ago.",
+            risk: "medium",
+            confidence: 0.8,
+            summary: "Append tower detail",
+            evidence: ["source_note:scene_source_test"],
+          },
+          {
+            id: randomUUID(),
+            kind: "set_status",
+            noteId: "thread_watchtower",
+            status: "resolved",
+            risk: "medium",
+            confidence: 0.75,
+            summary: "Resolve tower detail",
+            evidence: ["source_note:scene_source_test"],
+          },
+        ],
+      },
+    });
+
+    const malformed = await app.inject({
+      method: "POST",
+      url: `/api/long-term-memory/drafts/${draft.id}/skip`,
+      payload: {},
+      remoteAddress: "127.0.0.1",
+    });
+    assert.equal(malformed.statusCode, 400);
+
+    const unknown = await app.inject({
+      method: "POST",
+      url: `/api/long-term-memory/drafts/${draft.id}/skip`,
+      payload: { mutationIds: [randomUUID()] },
+      remoteAddress: "127.0.0.1",
+    });
+    assert.equal(unknown.statusCode, 404);
+
+    const success = await app.inject({
+      method: "POST",
+      url: `/api/long-term-memory/drafts/${draft.id}/skip`,
+      payload: { mutationIds: [draft.mutations[0]!.id] },
+      remoteAddress: "127.0.0.1",
+    });
+    assert.equal(success.statusCode, 200);
+    const successBody = JSON.parse(success.body) as {
+      deleted: boolean;
+      draftId: string;
+      mutationIds: string[];
+      draft: { status: string; mutations: Array<{ id: string }> } | null;
+    };
+    assert.equal(successBody.deleted, true);
+    assert.equal(successBody.draftId, draft.id);
+    assert.deepEqual(successBody.mutationIds, [draft.mutations[0]!.id]);
+    assert.equal(successBody.draft?.status, "pending");
+    assert.deepEqual(successBody.draft?.mutations.map((mutation) => mutation.id), [draft.mutations[1]!.id]);
+
+    await draftStore.updateDraftStatus(draft.id, "accepted");
+    const conflict = await app.inject({
+      method: "POST",
+      url: `/api/long-term-memory/drafts/${draft.id}/skip`,
+      payload: { mutationIds: [draft.mutations[1]!.id] },
+      remoteAddress: "127.0.0.1",
+    });
+    assert.equal(conflict.statusCode, 409);
+  } finally {
+    if (app) await app.close();
+    if (previousDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = previousDataDir;
+    if (previousBasicAuthUser === undefined) delete process.env.BASIC_AUTH_USER;
+    else process.env.BASIC_AUTH_USER = previousBasicAuthUser;
+    if (previousBasicAuthPass === undefined) delete process.env.BASIC_AUTH_PASS;
+    else process.env.BASIC_AUTH_PASS = previousBasicAuthPass;
+    if (previousAdminSecret === undefined) delete process.env.ADMIN_SECRET;
+    else process.env.ADMIN_SECRET = previousAdminSecret;
+    await rm(dataDir, { recursive: true, force: true });
   }
 });
 

@@ -205,6 +205,12 @@ const acceptDraftBodySchema = z
   .strict()
   .default({});
 
+const skipDraftBodySchema = z
+  .object({
+    mutationIds: z.array(z.string().uuid()).min(1).max(25),
+  })
+  .strict();
+
 const extractSourceNoteBodySchema = z
   .object({
     chatId: z.string().min(1).max(120).optional(),
@@ -942,6 +948,22 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
       const status = message.includes("not found") ? 404 : message.includes("not pending") ? 409 : 400;
       return reply.status(status).send({ error: message });
     }
+  });
+
+  app.post<{ Params: { id: string }; Body: unknown }>("/drafts/:id/skip", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft mutation deletion" })) return;
+    const { id } = draftIdParamSchema.parse(req.params);
+    const body = skipDraftBodySchema.parse(req.body ?? {});
+    const result = await draftStore.withDraftLock(id, () => draftStore.deleteDraftMutations(id, body.mutationIds));
+    if (!result.deleted) {
+      const status = result.reason === "not_pending" ? 409 : 404;
+      const error =
+        result.reason === "not_pending"
+          ? "Long-term memory draft mutation can only be removed from pending drafts"
+          : "Long-term memory draft mutation not found";
+      return reply.status(status).send({ error });
+    }
+    return { deleted: true, draftId: id, mutationIds: body.mutationIds, draft: result.draft };
   });
 
   app.delete<{ Params: { id: string; mutationId: string } }>("/drafts/:id/mutations/:mutationId", async (req, reply) => {
