@@ -178,6 +178,77 @@ export const ltmScopeSchema = z
   })
   .strict();
 
+export const ltmNoteTransferModeSchema = z.enum(["copy", "move"]);
+
+export const ltmNoteTransferConflictSeveritySchema = z.enum(["hard", "soft"]);
+
+export const ltmNoteTransferConflictReasonSchema = z.enum(["exact_text", "same_source_type", "lexical_overlap"]);
+
+export const ltmNoteTransferConflictSchema = z
+  .object({
+    noteId: ltmNoteIdSchema,
+    targetNoteId: ltmNoteIdSchema,
+    targetTitle: z.string().min(1).max(240),
+    targetType: ltmNoteTypeSchema,
+    targetPreview: z.string().max(600).optional(),
+    severity: ltmNoteTransferConflictSeveritySchema,
+    reason: ltmNoteTransferConflictReasonSchema,
+    score: z.number().finite().min(0).max(1).optional(),
+  })
+  .strict();
+
+export const ltmNoteTransferPreviewItemSchema = z
+  .object({
+    noteId: ltmNoteIdSchema,
+    title: z.string().min(1).max(240),
+    type: ltmNoteTypeSchema,
+    previewText: z.string().max(600),
+    scope: ltmScopeSchema,
+    nextScope: ltmScopeSchema,
+    derived: z.boolean().default(false),
+    sourceNoteId: ltmNoteIdSchema.optional(),
+    classification: z.enum(["ready", "no_op", "conflict"]),
+    defaultIncluded: z.boolean(),
+    reason: z.string().min(1).max(240).optional(),
+    conflicts: z.array(ltmNoteTransferConflictSchema).max(3).default([]),
+  })
+  .strict();
+
+export const ltmNoteTransferPreviewRequestSchema = z
+  .object({
+    noteIds: z.array(ltmNoteIdSchema).min(1).max(500),
+    mode: ltmNoteTransferModeSchema,
+    destinationChatId: z.string().min(1).max(120),
+    includeDerived: z.boolean().optional(),
+  })
+  .strict();
+
+export const ltmNoteTransferPreviewResponseSchema = z
+  .object({
+    mode: ltmNoteTransferModeSchema,
+    destinationChatId: z.string().min(1).max(120),
+    selection: z
+      .object({
+        requestedNoteCount: z.number().int().min(0),
+        totalNoteCount: z.number().int().min(0),
+        requestedNoteIds: z.array(ltmNoteIdSchema).max(500),
+        availableDerivedCount: z.number().int().min(0),
+        includedDerivedCount: z.number().int().min(0),
+        derivedNoteIds: z.array(ltmNoteIdSchema).max(500),
+        includeDerived: z.boolean(),
+      })
+      .strict(),
+    buckets: z
+      .object({
+        ready: z.array(ltmNoteIdSchema).max(500),
+        noOp: z.array(ltmNoteIdSchema).max(500),
+        conflict: z.array(ltmNoteIdSchema).max(500),
+      })
+      .strict(),
+    items: z.array(ltmNoteTransferPreviewItemSchema).max(500),
+  })
+  .strict();
+
 export const ltmLinkSchema = z
   .object({
     target: ltmNoteIdSchema,
@@ -410,6 +481,29 @@ export const ltmIndexMetadataSchema = z
   })
   .strict();
 
+export const ltmTransferRebuildSummarySchema = z
+  .object({
+    generatedAt: ltmIsoTimestampSchema,
+    noteCount: z.number().int().min(0),
+    chunkCount: z.number().int().min(0),
+    sourceChunkCount: z.number().int().min(0),
+    embeddedChunkCount: z.number().int().min(0),
+    embeddingsAvailable: z.boolean(),
+    manifest: ltmIndexMetadataSchema.optional(),
+  })
+  .strict();
+
+export const ltmNoteTransferApplyResponseSchema = z
+  .object({
+    mode: ltmNoteTransferModeSchema,
+    destinationChatId: z.string().min(1).max(120),
+    updatedNoteIds: z.array(ltmNoteIdSchema).max(500),
+    skippedNoteIds: z.array(ltmNoteIdSchema).max(500),
+    derivedNoteIdsTouched: z.array(ltmNoteIdSchema).max(500),
+    rebuild: ltmTransferRebuildSummarySchema.nullable(),
+  })
+  .strict();
+
 export const ltmDraftStatusSchema = z.enum(["pending", "accepted", "auto_applied"]);
 
 export const ltmDraftRiskSchema = z.enum(["low", "medium", "high"]);
@@ -603,6 +697,11 @@ export type LtmExtractionSettings = z.infer<typeof ltmExtractionSettingsSchema>;
 export type LtmResolvedExtractionSettings = z.infer<typeof ltmResolvedExtractionSettingsSchema>;
 export type LtmMode = z.infer<typeof ltmModeSchema>;
 export type LtmScope = z.infer<typeof ltmScopeSchema>;
+export type LtmNoteTransferMode = z.infer<typeof ltmNoteTransferModeSchema>;
+export type LtmNoteTransferConflict = z.infer<typeof ltmNoteTransferConflictSchema>;
+export type LtmNoteTransferPreviewItem = z.infer<typeof ltmNoteTransferPreviewItemSchema>;
+export type LtmNoteTransferPreviewRequest = z.infer<typeof ltmNoteTransferPreviewRequestSchema>;
+export type LtmNoteTransferPreviewResponse = z.infer<typeof ltmNoteTransferPreviewResponseSchema>;
 export type LtmLink = z.infer<typeof ltmLinkSchema>;
 export type LtmSection = z.infer<typeof ltmSectionSchema>;
 export type LtmConflict = z.infer<typeof ltmConflictSchema>;
@@ -616,6 +715,8 @@ export type LtmPolicy = z.infer<typeof ltmPolicySchema>;
 export type LtmPoliciesConfig = z.infer<typeof ltmPoliciesConfigSchema>;
 export type LtmRetrievalConfig = z.infer<typeof ltmRetrievalConfigSchema>;
 export type LtmIndexMetadata = z.infer<typeof ltmIndexMetadataSchema>;
+export type LtmTransferRebuildSummary = z.infer<typeof ltmTransferRebuildSummarySchema>;
+export type LtmNoteTransferApplyResponse = z.infer<typeof ltmNoteTransferApplyResponseSchema>;
 export type LtmDraftStatus = z.infer<typeof ltmDraftStatusSchema>;
 export type LtmDraftRisk = z.infer<typeof ltmDraftRiskSchema>;
 export type LtmDraftSource = z.infer<typeof ltmDraftSourceSchema>;

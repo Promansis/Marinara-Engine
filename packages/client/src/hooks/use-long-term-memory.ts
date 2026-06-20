@@ -11,6 +11,10 @@ import type {
   LtmExtractionResponse,
   LtmExtractionSettings as SharedLtmExtractionSettings,
   LtmNote,
+  LtmNoteTransferApplyResponse,
+  LtmNoteTransferMode,
+  LtmNoteTransferPreviewRequest,
+  LtmNoteTransferPreviewResponse,
   LtmNoteType,
   LtmResolvedExtractionSettings as SharedLtmResolvedExtractionSettings,
   LtmScope,
@@ -302,6 +306,15 @@ export type DeleteLongTermMemoryNotesResponse = {
   failedIds: string[];
 };
 
+export type PreviewLongTermMemoryNoteTransferInput = LtmNoteTransferPreviewRequest;
+
+export type ApplyLongTermMemoryNoteTransferInput = {
+  noteIds: string[];
+  mode: LtmNoteTransferMode;
+  destinationChatId: string;
+  includeDerived?: boolean;
+};
+
 function qs(params: Record<string, string | undefined>) {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -415,6 +428,22 @@ export function useDeleteLongTermMemoryNotes() {
       }
       qc.invalidateQueries({ queryKey: longTermMemoryKeys.all });
     },
+  });
+}
+
+export function usePreviewLongTermMemoryNoteTransfer() {
+  return useMutation({
+    mutationFn: (input: PreviewLongTermMemoryNoteTransferInput) =>
+      api.post<LtmNoteTransferPreviewResponse>("/long-term-memory/notes/transfer-preview", input),
+  });
+}
+
+export function useApplyLongTermMemoryNoteTransfer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ApplyLongTermMemoryNoteTransferInput) =>
+      api.post<LtmNoteTransferApplyResponse>("/long-term-memory/notes/transfer", input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
   });
 }
 

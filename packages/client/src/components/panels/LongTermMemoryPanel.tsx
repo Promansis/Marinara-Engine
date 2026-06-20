@@ -3,11 +3,12 @@ import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import {
   AlertTriangle,
+  ArrowRightLeft,
   ChevronDown,
   ChevronRight,
+  Copy,
   Eye,
   FileJson,
-  GitBranch,
   Hammer,
   History,
   Info,
@@ -66,6 +67,7 @@ import {
 } from "../long-term-memory/CreateLongTermMemoryNoteForm";
 import { LongTermMemoryDebugLogModal } from "../long-term-memory/LongTermMemoryDebugLogModal";
 import { LongTermMemoryExtractionSettingsEditor } from "../long-term-memory/LongTermMemoryExtractionSettingsModal";
+import { LongTermMemoryNoteTransferModal } from "../long-term-memory/LongTermMemoryNoteTransferModal";
 import { LongTermMemoryNoteEditor } from "../long-term-memory/LongTermMemoryNoteEditor";
 import { LongTermMemorySuggestionsTab } from "../long-term-memory/LongTermMemorySuggestionsTab";
 import {
@@ -85,7 +87,6 @@ import {
   resolveEvidenceDisplay,
   sentenceCaseIdentifier,
   type LtmDisplayLookupContext,
-  type LtmGroupLookup,
 } from "../long-term-memory/ltm-editor-utils";
 import {
   compactInputClassName,
@@ -98,6 +99,17 @@ import {
   sectionCardClassName,
   SettingField,
 } from "../long-term-memory/LtmFields";
+import {
+  buildNavigatorGroupLookup,
+  buildNavigatorThreads,
+  findNavigatorThread,
+  LtmNavigatorSelector,
+  navigatorSelectionLabel,
+  noteFilterFromNavigatorScope,
+  scopeFromNavigatorSelection,
+  type CharacterLookup,
+  type LtmNavigatorSelection,
+} from "../long-term-memory/ltm-navigator";
 import { StatusPill, ToolButton } from "../long-term-memory/LtmPills";
 import { Modal } from "../ui/Modal";
 import { useShallow } from "zustand/react/shallow";
@@ -146,20 +158,6 @@ type SourceSummaryGroup = {
 type MemoryModalMode = "view" | "edit";
 type MemoryModalTab = "overview" | "content" | "links" | "recall" | "suggestions";
 type LtmRecallStyle = "balanced" | "exact" | "broad" | "story";
-type LtmNavigatorSelection = {
-  groupId: string | null;
-  chatId: string | null;
-};
-type LtmNavigatorThread = {
-  id: string;
-  groupId: string | null;
-  title: string;
-  chats: Chat[];
-  representative: Chat;
-  characterIds: string[];
-  searchText: string;
-};
-type CharacterLookup = Map<string, { name: string }>;
 
 const LTM_RECALL_STYLES: Array<{ id: LtmRecallStyle; label: string; description: string }> = [
   { id: "balanced", label: "Balanced", description: "Mixes meaning, exact wording, and linked story notes." },
@@ -214,23 +212,6 @@ function parseMetadata(raw: unknown): Record<string, unknown> {
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
   } catch {
     return {};
-  }
-}
-
-function uniqueStrings(values: Array<string | null | undefined>) {
-  return [...new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value)))];
-}
-
-function normalizeChatCharacterIds(value: unknown) {
-  if (Array.isArray(value)) return uniqueStrings(value.filter((item): item is string => typeof item === "string"));
-  if (typeof value !== "string") return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed)
-      ? uniqueStrings(parsed.filter((item): item is string => typeof item === "string"))
-      : [];
-  } catch {
-    return value.trim() ? [value.trim()] : [];
   }
 }
 
@@ -334,104 +315,6 @@ function noteTextPreview(note: LtmNote, limit = 220) {
   );
 }
 
-function buildNavigatorThreads(chats: Chat[] | undefined, characters: CharacterLookup): LtmNavigatorThread[] {
-  const byThread = new Map<string, Chat[]>();
-  for (const chat of chats ?? []) {
-    const key = chat.groupId ? `group:${chat.groupId}` : `chat:${chat.id}`;
-    byThread.set(key, [...(byThread.get(key) ?? []), chat]);
-  }
-
-  return [...byThread.entries()]
-    .map(([id, groupChats]) => {
-      const sortedChats = [...groupChats].sort((left, right) => {
-        const updated = new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
-        return updated || (right.name || "").localeCompare(left.name || "");
-      });
-      const representative = sortedChats[0]!;
-      const characterIds = uniqueStrings(sortedChats.flatMap((chat) => normalizeChatCharacterIds(chat.characterIds)));
-      const characterNames = characterIds.map((id) => characters.get(id)?.name ?? "").filter(Boolean);
-      return {
-        id,
-        groupId: representative.groupId,
-        title: representative.name || "Untitled chat",
-        chats: sortedChats,
-        representative,
-        characterIds,
-        searchText: uniqueStrings([
-          representative.name,
-          representative.id,
-          representative.groupId ?? undefined,
-          ...sortedChats.flatMap((chat) => [chat.id, chat.name]),
-          ...characterNames,
-        ])
-          .join(" ")
-          .toLowerCase(),
-      };
-    })
-    .sort((left, right) => new Date(right.representative.updatedAt).getTime() - new Date(left.representative.updatedAt).getTime());
-}
-
-function buildGroupLookup(threads: LtmNavigatorThread[]): LtmGroupLookup {
-  return new Map(
-    threads
-      .filter((thread) => thread.groupId)
-      .map((thread) => [
-        thread.groupId!,
-        {
-          label: `${thread.title}, all branches`,
-          rawId: thread.groupId ?? undefined,
-        },
-      ]),
-  );
-}
-
-function findNavigatorThread(threads: LtmNavigatorThread[], selection: LtmNavigatorSelection) {
-  if (selection.groupId) return threads.find((thread) => thread.groupId === selection.groupId) ?? null;
-  if (selection.chatId) return threads.find((thread) => thread.chats.some((chat) => chat.id === selection.chatId)) ?? null;
-  return null;
-}
-
-function selectedNavigatorChat(thread: LtmNavigatorThread | null, selection: LtmNavigatorSelection) {
-  if (!thread) return null;
-  return selection.chatId ? (thread.chats.find((chat) => chat.id === selection.chatId) ?? null) : null;
-}
-
-function scopeFromNavigatorSelection(thread: LtmNavigatorThread | null, selection: LtmNavigatorSelection): LtmScope {
-  if (!thread) return {};
-  const branch = selectedNavigatorChat(thread, selection);
-  if (branch) {
-    const characterIds = normalizeChatCharacterIds(branch.characterIds);
-    return {
-      chatId: branch.id,
-      chatIds: [branch.id],
-      ...(branch.groupId ? { groupId: branch.groupId } : {}),
-      ...(characterIds.length ? { characterIds } : {}),
-    };
-  }
-  if (thread.groupId) {
-    return {
-      groupId: thread.groupId,
-      ...(thread.characterIds.length ? { characterIds: thread.characterIds } : {}),
-    };
-  }
-  const chat = thread.representative;
-  const characterIds = normalizeChatCharacterIds(chat.characterIds);
-  return {
-    chatId: chat.id,
-    chatIds: [chat.id],
-    ...(characterIds.length ? { characterIds } : {}),
-  };
-}
-
-function noteFilterFromNavigatorScope(scope: LtmScope) {
-  return {
-    scopeChatIds: scope.chatIds ?? (scope.chatId ? [scope.chatId] : undefined),
-    scopeGroupId: scope.groupId,
-    scopeCharacterIds: scope.characterIds,
-    includeGlobal: true,
-  };
-}
-
 function scopeDraftFromLtmScope(scope: LtmScope) {
   return {
     chatIds: scope.chatIds ?? (scope.chatId ? [scope.chatId] : []),
@@ -486,94 +369,6 @@ function DisclosureHeader({
         </span>
       </span>
     </button>
-  );
-}
-
-function LtmContextNavigator({
-  threads,
-  selection,
-  activeChatId,
-  scopeLabel,
-  query,
-  onQueryChange,
-  onSelect,
-}: {
-  threads: LtmNavigatorThread[];
-  selection: LtmNavigatorSelection;
-  activeChatId: string | null;
-  scopeLabel: string;
-  query: string;
-  onQueryChange: (query: string) => void;
-  onSelect: (selection: LtmNavigatorSelection) => void;
-}) {
-  const filteredThreads = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return threads;
-    return threads.filter((thread) => thread.searchText.includes(needle));
-  }, [threads, query]);
-  const selectedThread = findNavigatorThread(threads, selection);
-  const selectedThreadId = selectedThread?.id ?? "";
-  const selectedBranchId = selection.chatId ?? "";
-  const followsActive = Boolean(activeChatId && selectedBranchId === activeChatId);
-
-  return (
-    <div className={cn(sectionCardClassName, "space-y-2")}>
-      <div className="flex flex-wrap items-center gap-1.5">
-        <StatusPill label={followsActive ? "Following active chat" : "Panel scope"} tone={followsActive ? "good" : "warn"} />
-        <StatusPill label={scopeLabel} />
-      </div>
-      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)]">
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-2 rounded-lg bg-[var(--secondary)] px-2.5 py-2 ring-1 ring-[var(--border)] focus-within:ring-2 focus-within:ring-[var(--ring)]/60">
-            <Search size="0.8125rem" className="shrink-0 text-[var(--muted-foreground)]" />
-            <input
-              value={query}
-              onChange={(event) => onQueryChange(event.target.value)}
-              placeholder="Find chat, branch, ID, or character"
-              className="min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]/60"
-            />
-          </div>
-          <select
-            value={selectedThreadId}
-            onChange={(event) => {
-              const thread = threads.find((item) => item.id === event.target.value);
-              if (thread) onSelect({ groupId: thread.groupId, chatId: thread.groupId ? null : thread.representative.id });
-            }}
-            className={compactInputClassName}
-          >
-            {filteredThreads.length === 0 && <option value={selectedThreadId}>No chats match</option>}
-            {filteredThreads.map((thread) => (
-              <option key={thread.id} value={thread.id}>
-                {thread.title} {thread.chats.length > 1 ? `(${thread.chats.length} branches)` : ""}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="space-y-1.5">
-          <div className="flex min-h-9 items-center gap-2 rounded-lg bg-[var(--secondary)]/45 px-2.5 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-            <GitBranch size="0.8125rem" className="shrink-0" />
-            <span className="truncate">Branch</span>
-          </div>
-          <select
-            value={selectedBranchId}
-            onChange={(event) => {
-              if (!selectedThread) return;
-              const chatId = event.target.value || null;
-              onSelect({ groupId: selectedThread.groupId, chatId });
-            }}
-            disabled={!selectedThread || selectedThread.chats.length <= 1}
-            className={compactInputClassName}
-          >
-            {selectedThread?.groupId && <option value="">All branches</option>}
-            {selectedThread?.chats.map((chat) => (
-              <option key={chat.id} value={chat.id}>
-                {chat.name || "Untitled"} · {chat.id}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -3044,6 +2839,7 @@ export function LongTermMemoryPanel() {
   const [openNoteId, setOpenNoteId] = useState<string | null>(null);
   const [memoryModalMode, setMemoryModalMode] = useState<MemoryModalMode>("view");
   const [memoryModalTab, setMemoryModalTab] = useState<MemoryModalTab>("overview");
+  const [transferModalMode, setTransferModalMode] = useState<"copy" | "move" | null>(null);
   const {
     autoApplyLowRisk: importApplyLowRisk,
     connectionId: importConnectionId,
@@ -3088,7 +2884,7 @@ export function LongTermMemoryPanel() {
     () => buildNavigatorThreads(chats as Chat[] | undefined, characterLookup),
     [characterLookup, chats],
   );
-  const groupLookup = useMemo(() => buildGroupLookup(navigatorThreads), [navigatorThreads]);
+  const groupLookup = useMemo(() => buildNavigatorGroupLookup(navigatorThreads), [navigatorThreads]);
   const activeChatId = useChatStore((s) => s.activeChatId);
   const cachedActiveChat = useChatStore((s) => s.activeChat);
   const activeChatQuery = useChat(activeChatId);
@@ -3102,12 +2898,10 @@ export function LongTermMemoryPanel() {
     [navigatorSelection, selectedNavigatorThread],
   );
   const navigatorNoteFilter = useMemo(() => noteFilterFromNavigatorScope(navigatorScope), [navigatorScope]);
-  const navigatorScopeLabel = useMemo(() => {
-    const branch = selectedNavigatorChat(selectedNavigatorThread, navigatorSelection);
-    if (branch) return branch.name || branch.id;
-    if (selectedNavigatorThread?.groupId) return `${selectedNavigatorThread.title}, all branches`;
-    return selectedNavigatorThread?.title ?? "No chat selected";
-  }, [navigatorSelection, selectedNavigatorThread]);
+  const navigatorScopeLabel = useMemo(
+    () => navigatorSelectionLabel(selectedNavigatorThread, navigatorSelection),
+    [navigatorSelection, selectedNavigatorThread],
+  );
   const activeChatMetadata = useMemo(() => parseMetadata(activeChat?.metadata), [activeChat?.metadata]);
   const activeRecallSettings = useMemo(
     () => readLongTermMemoryRecallSearchSettings(activeChatMetadata),
@@ -3515,6 +3309,11 @@ export function LongTermMemoryPanel() {
     void deleteMemoriesById(confirmDerivedDeleteIds(ids));
   };
 
+  const openTransferModal = (mode: "copy" | "move") => {
+    if (selectedVisibleNoteIds.length === 0) return;
+    setTransferModalMode(mode);
+  };
+
   const setImportRowSelected = (sourceId: string, selected: boolean) => {
     const key = importRowKey(importSource, sourceId);
     setSelectedImportRows((current) => {
@@ -3655,7 +3454,7 @@ export function LongTermMemoryPanel() {
             </p>
           </div>
 
-          <LtmContextNavigator
+          <LtmNavigatorSelector
             threads={navigatorThreads}
             selection={navigatorSelection}
             activeChatId={activeChatId}
@@ -3730,29 +3529,33 @@ export function LongTermMemoryPanel() {
                   tone={selectedVisibleNoteIds.length > 0 ? "warn" : "neutral"}
                 />
                 {selectedVisibleNoteIds.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setAllVisibleNotesSelected(false)}
-                    disabled={deleteNotes.isPending}
-                    className="rounded-lg px-2 py-1.5 text-xs font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Clear selection
-                  </button>
+                  <>
+                    <ToolButton onClick={() => openTransferModal("copy")} disabled={deleteNotes.isPending}>
+                      <Copy size="0.875rem" />
+                      Copy selected
+                    </ToolButton>
+                    <ToolButton onClick={() => openTransferModal("move")} disabled={deleteNotes.isPending}>
+                      <ArrowRightLeft size="0.875rem" />
+                      Move selected
+                    </ToolButton>
+                    <ToolButton onClick={() => setAllVisibleNotesSelected(false)} disabled={deleteNotes.isPending}>
+                      <RotateCcw size="0.875rem" />
+                      Clear selection
+                    </ToolButton>
+                    <ToolButton
+                      onClick={deleteSelectedMemories}
+                      disabled={selectedVisibleNoteIds.length === 0 || deleteNotes.isPending}
+                      tone="danger"
+                    >
+                      {deleteNotes.isPending ? (
+                        <Loader2 size="0.875rem" className="animate-spin" />
+                      ) : (
+                        <Trash2 size="0.875rem" />
+                      )}
+                      Delete selected
+                    </ToolButton>
+                  </>
                 )}
-                <div className="ml-auto">
-                  <ToolButton
-                    onClick={deleteSelectedMemories}
-                    disabled={selectedVisibleNoteIds.length === 0 || deleteNotes.isPending}
-                    tone="danger"
-                  >
-                    {deleteNotes.isPending ? (
-                      <Loader2 size="0.875rem" className="animate-spin" />
-                    ) : (
-                      <Trash2 size="0.875rem" />
-                    )}
-                    Delete selected
-                  </ToolButton>
-                </div>
               </div>
             )}
             <div className="space-y-2">
@@ -3817,7 +3620,7 @@ export function LongTermMemoryPanel() {
           </div>
 
           {importSource === "chats" && (
-            <LtmContextNavigator
+            <LtmNavigatorSelector
               threads={navigatorThreads}
               selection={navigatorSelection}
               activeChatId={activeChatId}
@@ -3988,6 +3791,18 @@ export function LongTermMemoryPanel() {
         )}
       </Modal>
       <LongTermMemoryDebugLogModal open={debugLogOpen} onClose={() => setDebugLogOpen(false)} />
+      <LongTermMemoryNoteTransferModal
+        open={transferModalMode !== null}
+        mode={transferModalMode ?? "copy"}
+        notes={filteredNotes.filter((note) => selectedVisibleNoteIds.includes(note.id))}
+        allNotes={notes.data ?? []}
+        chats={chats as Chat[] | undefined}
+        activeChatId={activeChatId}
+        chatLookup={chatLookup}
+        characterLookup={characterLookup}
+        groupLookup={groupLookup}
+        onClose={() => setTransferModalMode(null)}
+      />
       {(status.isLoading || integrity.isLoading) && (
         <div className="fixed bottom-3 right-3 rounded-full bg-[var(--card)] p-2 shadow-sm ring-1 ring-[var(--border)]">
           <Loader2 size="1rem" className="animate-spin" />

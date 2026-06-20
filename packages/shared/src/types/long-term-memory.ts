@@ -31,5 +31,12 @@ export type {
   LtmDraftRisk,
   LtmDraftSource,
   LtmDraftStatus,
+  LtmNoteTransferApplyResponse,
+  LtmNoteTransferConflict,
+  LtmNoteTransferMode,
+  LtmNoteTransferPreviewRequest,
+  LtmNoteTransferPreviewResponse,
+  LtmTransferRebuildSummary,
+  LtmNoteTransferPreviewItem,
   LtmResolvedExtractionSettings,
 } from "../schemas/long-term-memory.schema.js";

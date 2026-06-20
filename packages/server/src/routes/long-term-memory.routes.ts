@@ -20,17 +20,17 @@ import {
   ltmLinkSchema,
   ltmModeSchema,
   ltmNoteIdSchema,
+  ltmNoteTransferApplyResponseSchema,
+  ltmNoteTransferPreviewRequestSchema,
+  ltmNoteTransferPreviewResponseSchema,
   ltmNoteTitleSchema,
   ltmNoteTypeSchema,
   ltmScopeSchema,
   ltmSectionKeySchema,
   ltmSectionSchema,
   ltmStatusSchema,
-  withMergedLtmScopeLinks,
   type LtmIndexMetadata,
-  type LtmMode,
   type LtmNote,
-  type LtmScope,
 } from "@marinara-engine/shared";
 import { z } from "zod";
 import { requirePrivilegedAccess } from "../middleware/privileged-gate.js";
@@ -71,6 +71,12 @@ import {
 import { getLtmExtractionConfig, updateLtmExtractionConfig } from "../services/long-term-memory/extraction-config.js";
 import { LongTermMemoryStorage } from "../services/long-term-memory/storage.js";
 import { applyLtmScopeLinksToDerivedNotes } from "../services/long-term-memory/scope-links.js";
+import { ltmModeForChatMode, resolveChatLtmScope } from "../services/long-term-memory/chat-scope.js";
+import {
+  applyLtmNoteTransfer,
+  LtmNoteTransferError,
+  previewLtmNoteTransfer,
+} from "../services/long-term-memory/note-transfer.js";
 import { withConcurrency } from "../lib/concurrency.js";
 
 const NOTE_BODY_LIMIT_BYTES = 512 * 1024;
@@ -326,42 +332,8 @@ function parseMetadata(raw: unknown): Record<string, unknown> {
   return typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
 }
 
-function normalizeCharacterIds(value: unknown) {
-  if (Array.isArray(value)) return value.filter((id): id is string => typeof id === "string" && id.trim().length > 0);
-  if (typeof value !== "string") return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed)
-      ? parsed.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
-      : [];
-  } catch {
-    return [];
-  }
-}
-
 function normalizeLtmIdentifier(value: unknown) {
   return typeof value === "string" && /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(value) ? value : null;
-}
-
-function ltmModeForChatMode(mode: unknown): LtmMode {
-  return ltmModeSchema.catch("roleplay").parse(mode);
-}
-
-function resolveChatLtmScope(chat: {
-  id: string;
-  groupId?: string | null;
-  characterIds?: unknown;
-  metadata?: unknown;
-}) {
-  const characterIds = normalizeCharacterIds(chat.characterIds);
-  return withMergedLtmScopeLinks(
-    {
-      chatId: chat.id,
-      ...(chat.groupId ? { groupId: chat.groupId } : {}),
-      ...(characterIds.length ? { characterIds } : {}),
-    },
-    { chatIds: [chat.id] },
-  ) satisfies LtmScope;
 }
 
 function publicRebuildResult(result: Awaited<ReturnType<typeof rebuildLongTermMemoryIndexes>>) {
@@ -547,6 +519,39 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     const note = await storage.getNote(id);
     if (!note) return reply.status(404).send({ error: "Long-term memory note not found" });
     return note;
+  });
+
+  app.post<{ Body: unknown }>("/notes/transfer-preview", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req, reply) => {
+    const body = ltmNoteTransferPreviewRequestSchema.parse(req.body ?? {});
+    const destinationChat = await chats.getById(body.destinationChatId);
+    if (!destinationChat) return reply.status(404).send({ error: "Destination chat not found" });
+
+    try {
+      return ltmNoteTransferPreviewResponseSchema.parse(await previewLtmNoteTransfer(body, destinationChat));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to preview long-term memory transfer";
+      const status = err instanceof LtmNoteTransferError ? err.statusCode : 500;
+      return reply.status(status).send({ error: message });
+    }
+  });
+
+  app.post<{ Body: unknown }>("/notes/transfer", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory note transfer" })) return;
+    const body = ltmNoteTransferPreviewRequestSchema.parse(req.body ?? {});
+    const destinationChat = await chats.getById(body.destinationChatId);
+    if (!destinationChat) return reply.status(404).send({ error: "Destination chat not found" });
+
+    try {
+      const result = await applyLtmNoteTransfer(body, destinationChat, {
+        storage,
+        rebuild: async () => publicRebuildResult(await rebuildLongTermMemoryIndexes()),
+      });
+      return ltmNoteTransferApplyResponseSchema.parse(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to transfer long-term memory notes";
+      const status = err instanceof LtmNoteTransferError ? err.statusCode : 500;
+      return reply.status(status).send({ error: message });
+    }
   });
 
   app.post<{ Params: { id: string }; Body: unknown }>(
