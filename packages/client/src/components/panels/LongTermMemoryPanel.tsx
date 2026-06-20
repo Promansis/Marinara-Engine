@@ -2859,21 +2859,15 @@ export function LongTermMemoryPanel() {
   const [memoryModalMode, setMemoryModalMode] = useState<MemoryModalMode>("view");
   const [memoryModalTab, setMemoryModalTab] = useState<MemoryModalTab>("overview");
   const [transferModalMode, setTransferModalMode] = useState<"copy" | "move" | null>(null);
-  const { importLimit, importSource, legacyRunDefaults, setLtmPanelPreferences } = useUIStore(
-    useShallow((state) => ({
-      importLimit: state.ltmPanelPreferences.importLimit,
-      importSource: state.ltmPanelPreferences.importSource,
-      legacyRunDefaults: {
-        extractionMode: state.ltmPanelPreferences.extractionMode,
-        importConcurrency: state.ltmPanelPreferences.importConcurrency,
-        autoApplyLowRisk: state.ltmPanelPreferences.autoApplyLowRisk,
-        connectionId: state.ltmPanelPreferences.connectionId,
-        model: state.ltmPanelPreferences.model,
-        instruction: state.ltmPanelPreferences.instruction,
-      },
-      setLtmPanelPreferences: state.setLtmPanelPreferences,
-    })),
-  );
+  const autoApplyLowRisk = useUIStore((state) => state.ltmPanelPreferences.autoApplyLowRisk);
+  const connectionId = useUIStore((state) => state.ltmPanelPreferences.connectionId);
+  const extractionMode = useUIStore((state) => state.ltmPanelPreferences.extractionMode);
+  const importConcurrency = useUIStore((state) => state.ltmPanelPreferences.importConcurrency);
+  const importLimit = useUIStore((state) => state.ltmPanelPreferences.importLimit);
+  const importSource = useUIStore((state) => state.ltmPanelPreferences.importSource);
+  const instruction = useUIStore((state) => state.ltmPanelPreferences.instruction);
+  const model = useUIStore((state) => state.ltmPanelPreferences.model);
+  const setLtmPanelPreferences = useUIStore((state) => state.setLtmPanelPreferences);
   const [editedNoteDirty, setEditedNoteDirty] = useState(false);
   const [expandedTypeIds, setExpandedTypeIds] = useState<Set<string>>(() => new Set());
   const [expandedMemoryIds, setExpandedMemoryIds] = useState<Set<string>>(() => new Set());
@@ -2924,6 +2918,17 @@ export function LongTermMemoryPanel() {
     [navigatorSelection, selectedNavigatorThread],
   );
   const activeRecallSettings = useMemo(() => readLongTermMemoryRecallSearchSettings(ltmSettings), [ltmSettings]);
+  const legacyRunDefaults = useMemo(
+    () => ({
+      extractionMode,
+      importConcurrency,
+      autoApplyLowRisk,
+      connectionId,
+      model,
+      instruction,
+    }),
+    [autoApplyLowRisk, connectionId, extractionMode, importConcurrency, instruction, model],
+  );
   const activeChatMessages = useChatMessages(activeChatId, activeRecallSettings.contextMessages, Boolean(openNoteId));
   const status = useLongTermMemoryStatus();
   const integrity = useLongTermMemoryIntegrity();
