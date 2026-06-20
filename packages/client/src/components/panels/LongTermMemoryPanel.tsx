@@ -2290,6 +2290,12 @@ function ChatMemorySettings({
     [],
   );
 
+  const takePendingPatchValue = useCallback((key: keyof typeof latestPatchValueRef.current) => {
+    const nextValue = latestPatchValueRef.current[key];
+    delete latestPatchValueRef.current[key];
+    return nextValue;
+  }, []);
+
   const schedulePatch = useCallback(
     (
       key: keyof typeof latestPatchValueRef.current,
@@ -2300,12 +2306,12 @@ function ChatMemorySettings({
       clearPatchTimer(key);
       patchTimersRef.current[key] = setTimeout(() => {
         delete patchTimersRef.current[key];
-        const nextValue = latestPatchValueRef.current[key];
+        const nextValue = takePendingPatchValue(key);
         if (nextValue === undefined) return;
         void commit(nextValue);
       }, 450);
     },
-    [clearPatchTimer],
+    [clearPatchTimer, takePendingPatchValue],
   );
 
   const flushPatch = useCallback(
@@ -2314,11 +2320,11 @@ function ChatMemorySettings({
       commit: (nextValue: string | number) => Promise<unknown>,
     ) => {
       clearPatchTimer(key);
-      const nextValue = latestPatchValueRef.current[key];
+      const nextValue = takePendingPatchValue(key);
       if (nextValue === undefined) return;
       void commit(nextValue);
     },
-    [clearPatchTimer],
+    [clearPatchTimer, takePendingPatchValue],
   );
 
   const dispatchKeepaliveSettingsPatch = useCallback((patchData: Record<string, unknown>) => {
@@ -2381,6 +2387,8 @@ function ChatMemorySettings({
   }, [patch, weights]);
 
   useEffect(() => {
+    const patchTimers = patchTimersRef.current;
+
     const flushPending = () => {
       flushPatch("budget", (value) => commitBudget(String(value)));
       flushPatch("maxChunks", (value) => commitMaxChunks(String(value)));
@@ -2453,11 +2461,14 @@ function ChatMemorySettings({
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
-      flushPending();
+      Object.keys(patchTimers).forEach((key) => {
+        clearPatchTimer(key as keyof typeof latestPatchValueRef.current);
+      });
       window.removeEventListener("beforeunload", handleBeforeUnload);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [
+    clearPatchTimer,
     commitBudget,
     commitContextMessages,
     commitMaxChunks,
@@ -2597,8 +2608,8 @@ function ChatMemorySettings({
                         setBudgetDraft(event.target.value);
                         schedulePatch("budget", event.target.value, (value) => commitBudget(String(value)));
                       }}
-                      onPointerUp={(event) => commitBudget((event.target as HTMLInputElement).value)}
-                      onBlur={(event) => commitBudget(event.target.value)}
+                      onPointerUp={() => flushPatch("budget", (value) => commitBudget(String(value)))}
+                      onBlur={() => flushPatch("budget", (value) => commitBudget(String(value)))}
                       className="min-w-0 accent-[var(--primary)]"
                     />
                     <input
@@ -2611,7 +2622,7 @@ function ChatMemorySettings({
                         setBudgetDraft(event.target.value);
                         schedulePatch("budget", event.target.value, (value) => commitBudget(String(value)));
                       }}
-                      onBlur={(event) => commitBudget(event.target.value)}
+                      onBlur={() => flushPatch("budget", (value) => commitBudget(String(value)))}
                       className={compactInputClassName}
                     />
                   </div>
@@ -2627,7 +2638,7 @@ function ChatMemorySettings({
                       setMaxChunksDraft(event.target.value);
                       schedulePatch("maxChunks", event.target.value, (value) => commitMaxChunks(String(value)));
                     }}
-                    onBlur={(event) => commitMaxChunks(event.target.value)}
+                    onBlur={() => flushPatch("maxChunks", (value) => commitMaxChunks(String(value)))}
                     className={compactInputClassName}
                   />
                 </SettingField>
@@ -2643,7 +2654,7 @@ function ChatMemorySettings({
                     setContextMessagesDraft(event.target.value);
                     schedulePatch("contextMessages", event.target.value, (value) => commitContextMessages(String(value)));
                   }}
-                  onBlur={(event) => commitContextMessages(event.target.value)}
+                  onBlur={() => flushPatch("contextMessages", (value) => commitContextMessages(String(value)))}
                   className={compactInputClassName}
                 />
               </SettingField>
@@ -2676,8 +2687,8 @@ function ChatMemorySettings({
                           setScoreThresholdDraft(nextValue);
                           schedulePatch("scoreThreshold", nextValue, (value) => commitScoreThreshold(Number(value)));
                         }}
-                        onPointerUp={(event) => commitScoreThreshold(Number((event.target as HTMLInputElement).value))}
-                        onBlur={(event) => commitScoreThreshold(Number(event.target.value))}
+                        onPointerUp={() => flushPatch("scoreThreshold", (value) => commitScoreThreshold(Number(value)))}
+                        onBlur={() => flushPatch("scoreThreshold", (value) => commitScoreThreshold(Number(value)))}
                         className="min-w-0 accent-[var(--primary)]"
                       />
                       <input
@@ -2691,7 +2702,7 @@ function ChatMemorySettings({
                           setScoreThresholdDraft(nextValue);
                           schedulePatch("scoreThreshold", nextValue, (value) => commitScoreThreshold(Number(value)));
                         }}
-                        onBlur={(event) => commitScoreThreshold(Number(event.target.value))}
+                        onBlur={() => flushPatch("scoreThreshold", (value) => commitScoreThreshold(Number(value)))}
                         className={compactInputClassName}
                       />
                     </div>
@@ -2744,8 +2755,8 @@ function ChatMemorySettings({
                                 item.setDraft(event.target.value);
                                 schedulePatch(item.key, event.target.value, (value) => commitWeight(item.key, String(value)));
                               }}
-                              onPointerUp={(event) => commitWeight(item.key, (event.target as HTMLInputElement).value)}
-                              onBlur={(event) => commitWeight(item.key, event.target.value)}
+                              onPointerUp={() => flushPatch(item.key, (value) => commitWeight(item.key, String(value)))}
+                              onBlur={() => flushPatch(item.key, (value) => commitWeight(item.key, String(value)))}
                               className="min-w-0 accent-[var(--primary)]"
                             />
                             <input
@@ -2758,7 +2769,7 @@ function ChatMemorySettings({
                                 item.setDraft(event.target.value);
                                 schedulePatch(item.key, event.target.value, (value) => commitWeight(item.key, String(value)));
                               }}
-                              onBlur={(event) => commitWeight(item.key, event.target.value)}
+                              onBlur={() => flushPatch(item.key, (value) => commitWeight(item.key, String(value)))}
                               className={compactInputClassName}
                             />
                           </div>
