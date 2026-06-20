@@ -2900,7 +2900,7 @@ export function LongTermMemoryPanel() {
   const importApplyLowRisk = ltmSettings?.autoApplyLowRisk ?? false;
   const importConnectionId = ltmSettings?.connectionId ?? "";
   const importExtractionMode = ltmSettings?.extractionMode ?? "fast";
-  const importConcurrency = ltmSettings?.importConcurrency ?? DEFAULT_IMPORT_CONCURRENCY;
+  const importConcurrencySetting = ltmSettings?.importConcurrency ?? DEFAULT_IMPORT_CONCURRENCY;
   const importInstruction = ltmSettings?.instruction ?? "";
   const importModel = ltmSettings?.model ?? "";
   const legacyMigrationAttemptedRef = useRef(false);
@@ -3404,7 +3404,7 @@ export function LongTermMemoryPanel() {
         model: optionalTrimmedText(importModel),
         instruction: optionalTrimmedText(importInstruction),
         applyLowRisk: importApplyLowRisk || undefined,
-        importConcurrency: clampImportConcurrency(importConcurrency),
+        importConcurrency: clampImportConcurrency(importConcurrencySetting),
         extractionMode: importExtractionMode,
       });
       const importedCount = result.imported.length;
@@ -3710,7 +3710,7 @@ export function LongTermMemoryPanel() {
                 label={importExtractionMode === "fast" ? "Fast extraction" : "Balanced extraction"}
                 tone={importExtractionMode === "fast" ? "good" : "warn"}
               />
-              <StatusPill label={`${clampImportConcurrency(importConcurrency)} at once`} />
+              <StatusPill label={`${clampImportConcurrency(importConcurrencySetting)} at once`} />
               {importApplyLowRisk ? <StatusPill label="Low-risk auto-apply" tone="warn" /> : null}
             </div>
             <p className={cn("mt-2", helperTextClassName)}>
