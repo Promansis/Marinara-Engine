@@ -28,6 +28,7 @@ import {
 import { friendlyNoteType, humanScopeLabel, type LtmGroupLookup } from "./ltm-editor-utils";
 
 type TransferMode = "copy" | "move";
+const NOTE_ID_KEY_SEPARATOR = "\u001f";
 
 type LongTermMemoryNoteTransferModalProps = {
   open: boolean;
@@ -103,9 +104,13 @@ export function LongTermMemoryNoteTransferModal({
   groupLookup,
   onClose,
 }: LongTermMemoryNoteTransferModalProps) {
-  const previewTransfer = usePreviewLongTermMemoryNoteTransfer();
+  const { mutateAsync: previewTransferAsync, reset: resetPreviewTransfer } = usePreviewLongTermMemoryNoteTransfer();
   const applyTransfer = useApplyLongTermMemoryNoteTransfer();
-  const selectedNoteIds = useMemo(() => notes.map((note) => note.id), [notes]);
+  const selectedNoteIdsKey = useMemo(() => notes.map((note) => note.id).join(NOTE_ID_KEY_SEPARATOR), [notes]);
+  const selectedNoteIds = useMemo(
+    () => (selectedNoteIdsKey ? selectedNoteIdsKey.split(NOTE_ID_KEY_SEPARATOR) : []),
+    [selectedNoteIdsKey],
+  );
   const availableDerivedIds = useMemo(
     () => extractedChildrenForNoteIds(allNotes, selectedNoteIds),
     [allNotes, selectedNoteIds],
@@ -114,7 +119,7 @@ export function LongTermMemoryNoteTransferModal({
   const [navigatorSelection, setNavigatorSelection] = useState<LtmNavigatorSelection>({ groupId: null, chatId: null });
   const [navigatorQuery, setNavigatorQuery] = useState("");
   const [includeDerived, setIncludeDerived] = useState(true);
-  const [preview, setPreview] = useState<Awaited<ReturnType<typeof previewTransfer.mutateAsync>> | null>(null);
+  const [preview, setPreview] = useState<Awaited<ReturnType<typeof previewTransferAsync>> | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [includedNoteIds, setIncludedNoteIds] = useState<Set<string>>(new Set());
@@ -145,22 +150,21 @@ export function LongTermMemoryNoteTransferModal({
     setPreviewError(null);
     setPreviewing(false);
     setIncludedNoteIds(new Set());
-    previewTransfer.reset();
-  }, [open, previewTransfer]);
+    resetPreviewTransfer();
+  }, [open, resetPreviewTransfer]);
 
   useEffect(() => {
-    if (!open || !destinationChatId || notes.length === 0) return;
+    if (!open || !destinationChatId || selectedNoteIds.length === 0) return;
     const currentVersion = ++previewVersionRef.current;
     setPreviewing(true);
     setPreviewError(null);
 
-    void previewTransfer
-      .mutateAsync({
-        noteIds: selectedNoteIds,
-        mode,
-        destinationChatId,
-        ...(hasDerivedChildren ? { includeDerived } : {}),
-      })
+    void previewTransferAsync({
+      noteIds: selectedNoteIds,
+      mode,
+      destinationChatId,
+      ...(hasDerivedChildren ? { includeDerived } : {}),
+    })
       .then((result) => {
         if (previewVersionRef.current !== currentVersion) return;
         setPreview(result);
@@ -175,7 +179,15 @@ export function LongTermMemoryNoteTransferModal({
       .finally(() => {
         if (previewVersionRef.current === currentVersion) setPreviewing(false);
       });
-  }, [destinationChatId, hasDerivedChildren, includeDerived, mode, notes.length, open, previewTransfer, selectedNoteIds]);
+  }, [
+    destinationChatId,
+    hasDerivedChildren,
+    includeDerived,
+    mode,
+    open,
+    previewTransferAsync,
+    selectedNoteIds,
+  ]);
 
   const toggleIncluded = (noteId: string, checked: boolean) => {
     setIncludedNoteIds((current) => {

@@ -3017,6 +3017,10 @@ export function LongTermMemoryPanel() {
     () => visibleNoteIds.filter((id) => selectedNoteIds.has(id)),
     [selectedNoteIds, visibleNoteIds],
   );
+  const selectedTransferNotes = useMemo(
+    () => filteredNotes.filter((note) => selectedVisibleNoteIds.includes(note.id)),
+    [filteredNotes, selectedVisibleNoteIds],
+  );
   const allVisibleNotesSelected =
     visibleNoteIds.length > 0 && visibleNoteIds.every((id) => selectedNoteIds.has(id));
   const derivedCountBySource = useMemo(() => {
@@ -3846,7 +3850,7 @@ export function LongTermMemoryPanel() {
       <LongTermMemoryNoteTransferModal
         open={transferModalMode !== null}
         mode={transferModalMode ?? "copy"}
-        notes={filteredNotes.filter((note) => selectedVisibleNoteIds.includes(note.id))}
+        notes={selectedTransferNotes}
         allNotes={notes.data ?? []}
         chats={chats as Chat[] | undefined}
         activeChatId={activeChatId}
