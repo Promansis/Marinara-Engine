@@ -8,6 +8,7 @@ import type { LtmDraftMutation, LtmEvidenceUnit, LtmNote } from "@marinara-engin
 import {
   DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
   DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
+  DEFAULT_LTM_RECALL_PREAMBLE,
   matchesLtmScope,
 } from "@marinara-engine/shared";
 import {
@@ -279,8 +280,43 @@ test("long-term memory prompt injection contains prose only", () => {
     } satisfies LtmBudgetedChunk,
   ]);
 
-  assert.equal(block, "[TONE]\nA sample instruction remains available for later retrieval.");
+  assert.equal(
+    block,
+    "[TONE]\nA sample instruction remains available for later retrieval.",
+  );
   assert.doesNotMatch(block, /<long_term_memory>|tier:|reasons:|note:|section:|chat:|group:|characters:|graph:/);
+});
+
+test("long-term memory prompt injection can include a recall preamble", () => {
+  const block = formatLongTermMemoryBlock(
+    [
+      {
+        chunk: {
+          id: "sample_memory_note::social_habits",
+          noteId: "sample_memory_note",
+          sectionKey: "social_habits",
+          text: "A sample instruction remains available for later retrieval.",
+          noteType: "tone",
+          status: "active",
+          scope: {},
+          tags: ["typed_memory"],
+          updatedAt: timestamp,
+          sourceHash,
+        },
+        score: 1,
+        reasons: ["vector"],
+        lanes: ["vector"],
+        tier: 1,
+        estimatedTokens: 42,
+      } satisfies LtmBudgetedChunk,
+    ],
+    { preamble: DEFAULT_LTM_RECALL_PREAMBLE },
+  );
+
+  assert.equal(
+    block,
+    `${DEFAULT_LTM_RECALL_PREAMBLE}\n\n[TONE]\nA sample instruction remains available for later retrieval.`,
+  );
 });
 
 test("long-term memory prompt injection inserts a system message before chat history", () => {
@@ -290,27 +326,31 @@ test("long-term memory prompt injection inserts a system message before chat his
     { role: "assistant", content: "I think it was near the archive." },
   ];
 
-  const result = injectLongTermMemoryPromptBlock(messages, [
-    {
-      chunk: {
-        id: "world_archive_key::facts",
-        noteId: "world_archive_key",
-        sectionKey: "facts",
-        text: "Mara hid the archive key behind the clock in the tower foyer.",
-        noteType: "world",
-        status: "active",
-        scope: {},
-        tags: ["typed_memory"],
-        updatedAt: timestamp,
-        sourceHash,
-      },
-      score: 1,
-      reasons: ["bm25"],
-      lanes: ["bm25"],
-      tier: 1,
-      estimatedTokens: 16,
-    } satisfies LtmBudgetedChunk,
-  ]);
+  const result = injectLongTermMemoryPromptBlock(
+    messages,
+    [
+      {
+        chunk: {
+          id: "world_archive_key::facts",
+          noteId: "world_archive_key",
+          sectionKey: "facts",
+          text: "Mara hid the archive key behind the clock in the tower foyer.",
+          noteType: "world",
+          status: "active",
+          scope: {},
+          tags: ["typed_memory"],
+          updatedAt: timestamp,
+          sourceHash,
+        },
+        score: 1,
+        reasons: ["bm25"],
+        lanes: ["bm25"],
+        tier: 1,
+        estimatedTokens: 16,
+      } satisfies LtmBudgetedChunk,
+    ],
+    { preamble: "" },
+  );
 
   assert.equal(result.inserted, true);
   assert.equal(result.insertAt, 1);
@@ -456,6 +496,7 @@ test("generation long-term memory uses global retrieval settings and injects aft
       longTermMemoryGraphWeight: 0.15,
       longTermMemoryMetadataWeight: 0.25,
       longTermMemoryIncludeResolved: true,
+      longTermMemoryRecallPreamble: DEFAULT_LTM_RECALL_PREAMBLE,
       longTermMemoryDebug: true,
       extractionMode: "fast",
       importConcurrency: 3,
@@ -539,7 +580,10 @@ test("generation long-term memory uses global retrieval settings and injects aft
   assert.equal(result.injection.insertedBeforeRole, "user");
   assert.deepEqual(finalMessages.map((message) => message.role), ["system", "system", "system", "user", "assistant"]);
   assert.equal(finalMessages[2]?.contextKind, "injection");
-  assert.equal(finalMessages[2]?.content, "[WORLD]\nMara hid the archive key behind the clock in the tower foyer.");
+  assert.equal(
+    finalMessages[2]?.content,
+    `${DEFAULT_LTM_RECALL_PREAMBLE}\n\n[WORLD]\nMara hid the archive key behind the clock in the tower foyer.`,
+  );
 });
 
 test("assembler injects long-term memory before chat summary fallback to avoid duplicate context", async () => {

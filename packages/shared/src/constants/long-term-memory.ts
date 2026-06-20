@@ -12,6 +12,7 @@ export const DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS = 2_400;
 export const LTM_DRAFT_MUTATION_LIMIT = 25;
 
 export const DEFAULT_LTM_RECALL_STYLE = "balanced" satisfies LongTermMemoryRecallStyle;
+export const DEFAULT_LTM_RECALL_PREAMBLE = "Relevant long-term memories for this reply:";
 
 export const LTM_RECALL_STYLE_WEIGHTS = {
   balanced: {

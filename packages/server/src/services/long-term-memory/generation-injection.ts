@@ -47,6 +47,7 @@ export interface GenerationLongTermMemoryPlan {
   debugEnabled: boolean;
   contextMessages: number;
   includeResolved: boolean;
+  recallPreamble: string;
   scope: LtmScope;
   queryText: string;
   lastUserMessageText: string;
@@ -186,6 +187,9 @@ export function buildGenerationLongTermMemoryPlan(
     debugEnabled,
     contextMessages,
     includeResolved: settings?.longTermMemoryIncludeResolved ?? input.chatMeta.longTermMemoryIncludeResolved === true,
+    recallPreamble:
+      settings?.longTermMemoryRecallPreamble ??
+      (typeof input.chatMeta.longTermMemoryRecallPreamble === "string" ? input.chatMeta.longTermMemoryRecallPreamble : ""),
     scope,
     queryText,
     lastUserMessageText,
@@ -240,7 +244,9 @@ export async function applyGenerationLongTermMemoryInjection(
     };
   }
 
-  const injection = injectLongTermMemoryPromptBlock(input.finalMessages, retrieval.chunks);
+  const injection = injectLongTermMemoryPromptBlock(input.finalMessages, retrieval.chunks, {
+    preamble: input.plan.recallPreamble,
+  });
   return {
     retrieval,
     injection: {
@@ -258,6 +264,9 @@ export async function retrieveGenerationLongTermMemoryBlock(
   const retrieval = await (input.retrieveLongTermMemoryFn ?? retrieveLongTermMemory)(input.plan.retrievalInput);
   return {
     retrieval,
-    block: retrieval.chunks.length > 0 ? formatLongTermMemoryBlock(retrieval.chunks) : "",
+    block:
+      retrieval.chunks.length > 0
+        ? formatLongTermMemoryBlock(retrieval.chunks, { preamble: input.plan.recallPreamble })
+        : "",
   };
 }

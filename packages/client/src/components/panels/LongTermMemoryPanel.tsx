@@ -34,6 +34,7 @@ import type {
   LtmStatus,
 } from "@marinara-engine/shared";
 import {
+  DEFAULT_LTM_RECALL_PREAMBLE,
   LTM_RECALL_STYLE_WEIGHTS,
   isLtmSourceLikeNote,
 } from "@marinara-engine/shared";
@@ -101,6 +102,7 @@ import {
   selectedListRowClassName,
   sectionCardClassName,
   SettingField,
+  textareaClassName,
 } from "../long-term-memory/LtmFields";
 import {
   buildNavigatorGroupLookup,
@@ -2217,12 +2219,15 @@ function ChatMemorySettings({
   const scoreThresholdValue = recallSearchSettings.minScore;
   const recallStyle = globalSettings?.longTermMemoryRecallStyle ?? "balanced";
   const includeResolved = globalSettings?.longTermMemoryIncludeResolved ?? false;
+  const recallPreamble = globalSettings?.longTermMemoryRecallPreamble ?? DEFAULT_LTM_RECALL_PREAMBLE;
   const weights = recallSearchSettings;
   const contextMessagesValue = recallSearchSettings.contextMessages;
   const [budgetDraft, setBudgetDraft] = useState(String(budgetValue));
   const [maxChunksDraft, setMaxChunksDraft] = useState(String(maxChunksValue));
   const [scoreThresholdDraft, setScoreThresholdDraft] = useState(scoreThresholdValue);
   const [contextMessagesDraft, setContextMessagesDraft] = useState(String(contextMessagesValue));
+  const [recallPreambleDraft, setRecallPreambleDraft] = useState(recallPreamble);
+  const [editingRecallPreamble, setEditingRecallPreamble] = useState(false);
   const [semanticWeightDraft, setSemanticWeightDraft] = useState(String(weights.semanticWeight));
   const [lexicalWeightDraft, setLexicalWeightDraft] = useState(String(weights.lexicalWeight));
   const [graphWeightDraft, setGraphWeightDraft] = useState(String(weights.graphWeight));
@@ -2243,8 +2248,8 @@ function ChatMemorySettings({
       setLtmPanelPreferences: state.setLtmPanelPreferences,
     })),
   );
-  const patchTimersRef = useRef<Partial<Record<"budget" | "maxChunks" | "contextMessages" | "scoreThreshold" | "semantic" | "lexical" | "graph", ReturnType<typeof setTimeout>>>>({});
-  const latestPatchValueRef = useRef<Partial<Record<"budget" | "maxChunks" | "contextMessages" | "scoreThreshold" | "semantic" | "lexical" | "graph", string | number>>>({});
+  const patchTimersRef = useRef<Partial<Record<"budget" | "maxChunks" | "contextMessages" | "scoreThreshold" | "recallPreamble" | "semantic" | "lexical" | "graph", ReturnType<typeof setTimeout>>>>({});
+  const latestPatchValueRef = useRef<Partial<Record<"budget" | "maxChunks" | "contextMessages" | "scoreThreshold" | "recallPreamble" | "semantic" | "lexical" | "graph", string | number>>>({});
   const sliderBudget = Number.isFinite(Number(budgetDraft))
     ? Math.max(128, Math.min(16_384, Math.floor(Number(budgetDraft))))
     : budgetValue;
@@ -2254,13 +2259,16 @@ function ChatMemorySettings({
     setMaxChunksDraft(String(maxChunksValue));
     setScoreThresholdDraft(scoreThresholdValue);
     setContextMessagesDraft(String(contextMessagesValue));
+    if (!editingRecallPreamble) setRecallPreambleDraft(recallPreamble);
     setSemanticWeightDraft(String(weights.semanticWeight));
     setLexicalWeightDraft(String(weights.lexicalWeight));
     setGraphWeightDraft(String(weights.graphWeight));
   }, [
     budgetValue,
     contextMessagesValue,
+    editingRecallPreamble,
     maxChunksValue,
+    recallPreamble,
     scoreThresholdValue,
     weights.graphWeight,
     weights.lexicalWeight,
@@ -2356,6 +2364,13 @@ function ChatMemorySettings({
     return patch({ version: 1, longTermMemoryScoreThreshold: next });
   }, [patch, scoreThresholdValue]);
 
+  const commitRecallPreamble = useCallback((value: string) => {
+    const next = value.slice(0, 500);
+    setRecallPreambleDraft(next);
+    if (next === recallPreamble) return Promise.resolve();
+    return patch({ version: 1, longTermMemoryRecallPreamble: next });
+  }, [patch, recallPreamble]);
+
   const readWeightDraft = (value: string, fallback: number, max = LTM_WEIGHT_MAX) => {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? Math.max(LTM_WEIGHT_MIN, Math.min(max, Number(numeric.toFixed(2)))) : fallback;
@@ -2374,6 +2389,7 @@ function ChatMemorySettings({
       flushPatch("maxChunks", (value) => commitMaxChunks(String(value)));
       flushPatch("contextMessages", (value) => commitContextMessages(String(value)));
       flushPatch("scoreThreshold", (value) => commitScoreThreshold(Number(value)));
+      flushPatch("recallPreamble", (value) => commitRecallPreamble(String(value)));
       flushPatch("semantic", (value) => commitWeight("semantic", String(value)));
       flushPatch("lexical", (value) => commitWeight("lexical", String(value)));
       flushPatch("graph", (value) => commitWeight("graph", String(value)));
@@ -2404,6 +2420,10 @@ function ChatMemorySettings({
       if (scoreThreshold !== undefined) {
         const numeric = Number.isFinite(Number(scoreThreshold)) ? Number(scoreThreshold) : DEFAULT_LTM_SCORE_THRESHOLD;
         patchData.longTermMemoryScoreThreshold = Math.max(0, Math.min(1, Number(numeric.toFixed(2))));
+      }
+      const recallPreamble = latestPatchValueRef.current.recallPreamble;
+      if (recallPreamble !== undefined) {
+        patchData.longTermMemoryRecallPreamble = String(recallPreamble).slice(0, 500);
       }
       const semantic = latestPatchValueRef.current.semantic;
       if (semantic !== undefined) {
@@ -2444,6 +2464,7 @@ function ChatMemorySettings({
     commitBudget,
     commitContextMessages,
     commitMaxChunks,
+    commitRecallPreamble,
     commitScoreThreshold,
     commitWeight,
     dispatchKeepaliveSettingsPatch,
@@ -2471,6 +2492,7 @@ function ChatMemorySettings({
     setMaxChunksDraft(String(DEFAULT_LTM_MAX_CHUNKS));
     setScoreThresholdDraft(DEFAULT_LTM_SCORE_THRESHOLD);
     setContextMessagesDraft(String(DEFAULT_LTM_CONTEXT_MESSAGES));
+    setRecallPreambleDraft(DEFAULT_LTM_RECALL_PREAMBLE);
     return patch({
       version: 1,
       enableLongTermMemory: true,
@@ -2484,6 +2506,7 @@ function ChatMemorySettings({
       longTermMemoryGraphWeight: null,
       longTermMemoryMetadataWeight: null,
       longTermMemoryIncludeResolved: false,
+      longTermMemoryRecallPreamble: DEFAULT_LTM_RECALL_PREAMBLE,
     });
   };
 
@@ -2507,6 +2530,28 @@ function ChatMemorySettings({
                 checked={enabled}
                 onChange={(checked) => patch({ version: 1, enableLongTermMemory: checked })}
               />
+              <SettingField label="Memory preamble">
+                <textarea
+                  value={recallPreambleDraft}
+                  maxLength={500}
+                  rows={2}
+                  placeholder={DEFAULT_LTM_RECALL_PREAMBLE}
+                  onFocus={() => setEditingRecallPreamble(true)}
+                  onChange={(event) => {
+                    const nextValue = event.target.value.slice(0, 500);
+                    setRecallPreambleDraft(nextValue);
+                    latestPatchValueRef.current.recallPreamble = nextValue;
+                  }}
+                  onBlur={(event) => {
+                    setEditingRecallPreamble(false);
+                    commitRecallPreamble(event.target.value);
+                  }}
+                  className={cn(textareaClassName, "min-h-16")}
+                />
+              </SettingField>
+              <p className="mt-1 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                Appears before recalled memories in the prompt. Leave blank to inject only the memory sections.
+              </p>
               <SettingGroup label="Recall style">
                 <div className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--background)] p-1 ring-1 ring-[var(--border)]">
                   {LTM_RECALL_STYLES.map((style) => (

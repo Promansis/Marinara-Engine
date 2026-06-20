@@ -2,6 +2,10 @@ import type { LtmBudgetedChunk } from "./budget.js";
 import { cleanLongTermMemoryChunkText } from "./chunking.js";
 import type { ChatMessage } from "../llm/base-provider.js";
 
+interface FormatLongTermMemoryBlockOptions {
+  preamble?: string;
+}
+
 const NOTE_TYPE_LABELS: Record<string, string> = {
   character: "CHARACTERS",
   relationship: "RELATIONSHIPS",
@@ -15,7 +19,7 @@ function normalizedPromptText(text: string) {
   return text.replace(/\s+/g, " ").trim().toLocaleLowerCase();
 }
 
-export function formatLongTermMemoryBlock(chunks: LtmBudgetedChunk[]) {
+export function formatLongTermMemoryBlock(chunks: LtmBudgetedChunk[], options?: FormatLongTermMemoryBlockOptions) {
   const groups = new Map<string, LtmBudgetedChunk[]>();
   const seenText = new Set<string>();
   for (const c of chunks) {
@@ -49,14 +53,18 @@ export function formatLongTermMemoryBlock(chunks: LtmBudgetedChunk[]) {
     }
   }
 
-  return sections.join("\n\n");
+  const body = sections.join("\n\n");
+  if (!body) return "";
+  const preamble = options?.preamble?.trim();
+  return preamble ? `${preamble}\n\n${body}` : body;
 }
 
 export function injectLongTermMemoryPromptBlock(
   messages: ChatMessage[],
   chunks: LtmBudgetedChunk[],
+  options?: FormatLongTermMemoryBlockOptions,
 ): { block: string; insertAt: number; inserted: boolean } {
-  const block = formatLongTermMemoryBlock(chunks);
+  const block = formatLongTermMemoryBlock(chunks, options);
   if (!block) {
     return { block, insertAt: messages.length, inserted: false };
   }

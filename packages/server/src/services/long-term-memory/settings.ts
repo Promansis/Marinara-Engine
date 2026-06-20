@@ -91,6 +91,12 @@ function normalizePersistedSettings(input: LtmGlobalSettings): LtmGlobalSettings
     "longTermMemoryIncludeResolved",
     input.longTermMemoryIncludeResolved ?? DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryIncludeResolved,
   );
+  setIfChanged(
+    "longTermMemoryRecallPreamble",
+    input.longTermMemoryRecallPreamble === undefined
+      ? DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryRecallPreamble
+      : normalizeText(input.longTermMemoryRecallPreamble, 500),
+  );
   setIfChanged("longTermMemoryDebug", input.longTermMemoryDebug ?? DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryDebug);
   setIfChanged("extractionMode", input.extractionMode ?? DEFAULT_LTM_GLOBAL_SETTINGS.extractionMode);
   setIfChanged("importConcurrency", input.importConcurrency ?? DEFAULT_LTM_GLOBAL_SETTINGS.importConcurrency);
@@ -114,6 +120,10 @@ function resolveGlobalSettings(config: LtmGlobalSettings): LtmResolvedGlobalSett
     longTermMemoryLexicalWeight: config.longTermMemoryLexicalWeight ?? styleWeights.lexicalWeight,
     longTermMemoryGraphWeight: config.longTermMemoryGraphWeight ?? styleWeights.graphWeight,
     longTermMemoryMetadataWeight: config.longTermMemoryMetadataWeight ?? styleWeights.metadataWeight,
+    longTermMemoryRecallPreamble:
+      config.longTermMemoryRecallPreamble === undefined
+        ? DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryRecallPreamble
+        : normalizeText(config.longTermMemoryRecallPreamble, 500),
     connectionId: normalizeText(config.connectionId, 120),
     model: normalizeText(config.model, 240),
     instruction: normalizeText(config.instruction, 2_000),

@@ -3,6 +3,7 @@
 // ──────────────────────────────────────────────
 import { z } from "zod";
 import {
+  DEFAULT_LTM_RECALL_PREAMBLE,
   DEFAULT_LTM_RECALL_STYLE,
   DEFAULT_LTM_RECALL_STYLE_WEIGHTS,
   LTM_DRAFT_MUTATION_LIMIT,
@@ -60,6 +61,7 @@ const ltmGlobalSettingsShape = z
     longTermMemoryGraphWeight: z.number().finite().min(0).max(1).nullable().optional(),
     longTermMemoryMetadataWeight: z.number().finite().min(0).max(2).nullable().optional(),
     longTermMemoryIncludeResolved: z.boolean().optional(),
+    longTermMemoryRecallPreamble: z.string().max(500).optional(),
     longTermMemoryDebug: z.boolean().optional(),
     extractionMode: ltmExtractionModeSchema.optional(),
     importConcurrency: z.number().int().min(1).max(10).optional(),
@@ -100,6 +102,7 @@ export const ltmResolvedGlobalSettingsSchema = z
     longTermMemoryGraphWeight: z.number().finite().min(0).max(1),
     longTermMemoryMetadataWeight: z.number().finite().min(0).max(2),
     longTermMemoryIncludeResolved: z.boolean(),
+    longTermMemoryRecallPreamble: z.string().max(500),
     longTermMemoryDebug: z.boolean(),
     extractionMode: ltmExtractionModeSchema,
     importConcurrency: z.number().int().min(1).max(10),
@@ -123,6 +126,7 @@ export const DEFAULT_LTM_GLOBAL_SETTINGS = ltmResolvedGlobalSettingsSchema.parse
   longTermMemoryGraphWeight: DEFAULT_LTM_RECALL_STYLE_WEIGHTS.graphWeight,
   longTermMemoryMetadataWeight: DEFAULT_LTM_RECALL_STYLE_WEIGHTS.metadataWeight,
   longTermMemoryIncludeResolved: false,
+  longTermMemoryRecallPreamble: DEFAULT_LTM_RECALL_PREAMBLE,
   longTermMemoryDebug: false,
   extractionMode: "fast",
   importConcurrency: 3,
