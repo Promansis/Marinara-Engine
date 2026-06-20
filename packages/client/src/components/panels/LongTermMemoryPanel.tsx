@@ -33,7 +33,10 @@ import type {
   LtmScope,
   LtmStatus,
 } from "@marinara-engine/shared";
-import { LTM_RECALL_STYLE_WEIGHTS, isLtmSourceLikeNote } from "@marinara-engine/shared";
+import {
+  LTM_RECALL_STYLE_WEIGHTS,
+  isLtmSourceLikeNote,
+} from "@marinara-engine/shared";
 import {
   useImportLongTermMemorySourceNotes,
   useDeleteLongTermMemoryNotes,
@@ -379,7 +382,12 @@ function DisclosureHeader({
   children?: ReactNode;
 }) {
   return (
-    <button type="button" onClick={onToggle} className={disclosureButtonClassName} aria-expanded={open}>
+    <button
+      type="button"
+      onClick={onToggle}
+      className={disclosureButtonClassName}
+      aria-expanded={open}
+    >
       <span className="min-w-0">
         <span className="block truncate">{title}</span>
         {description && (
@@ -390,7 +398,9 @@ function DisclosureHeader({
       </span>
       <span className="flex min-w-0 shrink items-center justify-end gap-1 overflow-hidden">
         {children}
-        <span className="shrink-0">{open ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}</span>
+        <span className="shrink-0">
+          {open ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
+        </span>
       </span>
     </button>
   );
@@ -430,7 +440,9 @@ function NoteRow({
   const displayTitle = title ?? friendlyNoteTitle(note);
   const showSourceSummary = isSourceSummaryNote(note);
   return (
-    <article className={cn("group", listRowClassName, (open || bulkSelected) && selectedListRowClassName)}>
+    <article
+      className={cn("group", listRowClassName, (open || bulkSelected) && selectedListRowClassName)}
+    >
       <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
         <div className={cn("grid min-w-0 gap-2", onSelect && "grid-cols-[auto_minmax(0,1fr)]")}>
           {onSelect && (
@@ -452,9 +464,7 @@ function NoteRow({
               </div>
             )}
             <div className="mt-1 flex min-w-0 flex-wrap gap-1">
-              <StatusPill
-                label={primaryLabel ?? (showSourceSummary ? "Source summary" : friendlyNoteType(note.type))}
-              />
+              <StatusPill label={primaryLabel ?? (showSourceSummary ? "Source summary" : friendlyNoteType(note.type))} />
               {!showSourceSummary && (
                 <StatusPill label={friendlyStatus(note.status)} tone={note.status === "active" ? "good" : "neutral"} />
               )}
@@ -489,10 +499,7 @@ function NoteRow({
             <button
               type="button"
               onClick={onDelete}
-              className={cn(
-                rowActionButtonClassName,
-                "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]",
-              )}
+              className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
               aria-label={`Delete ${displayTitle}`}
               title="Delete memory"
             >
@@ -570,9 +577,7 @@ function sourceSummaryEvidenceValue(note: LtmNote, prefix: string) {
 }
 
 function sourceSummaryChatName(note: LtmNote, chatLookup?: Map<string, Chat>) {
-  return (
-    sourceSummaryEvidenceValue(note, "chat_name:") || chatLookup?.get(note.scope.chatId ?? "")?.name || "Unknown Chat"
-  );
+  return sourceSummaryEvidenceValue(note, "chat_name:") || chatLookup?.get(note.scope.chatId ?? "")?.name || "Unknown Chat";
 }
 
 function sourceSummaryMessageRange(note: LtmNote) {
@@ -870,10 +875,7 @@ function SourceInfoPopover({
 
                 if (!onOpenSource) {
                   return (
-                    <div
-                      key={sourceId}
-                      className="rounded-md bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]/70"
-                    >
+                    <div key={sourceId} className="rounded-md bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]/70">
                       {content}
                     </div>
                   );
@@ -939,7 +941,11 @@ function TypeMemoryGroups({
   chatLookup?: Map<string, Chat>;
 }) {
   if (groups.length === 0) {
-    return <p className={emptyStateClassName}>No typed memories match these filters.</p>;
+    return (
+      <p className={emptyStateClassName}>
+        No typed memories match these filters.
+      </p>
+    );
   }
 
   return (
@@ -1004,7 +1010,6 @@ function TypeMemoryGroups({
                           >
                             {expanded ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
                           </button>
-
                           <input
                             type="checkbox"
                             checked={selected}
@@ -1380,9 +1385,7 @@ function SourceNoteReference({
   onOpenSourceNote?: (noteId: string) => void;
 }) {
   if (!sourceNoteId) return null;
-  const label = noteLookup
-    ? sourceReferenceLabel(sourceNoteId, noteLookup, chatLookup)
-    : friendlyIdentifier(sourceNoteId);
+  const label = noteLookup ? sourceReferenceLabel(sourceNoteId, noteLookup, chatLookup) : friendlyIdentifier(sourceNoteId);
   if (onOpenSourceNote) {
     return (
       <button
@@ -1437,7 +1440,11 @@ function GraphLinks({
   onOpenNote?: (noteId: string) => void;
 }) {
   if (links.length === 0) {
-    return <p className={emptyStateClassName}>No related memories yet.</p>;
+    return (
+      <p className={emptyStateClassName}>
+        No related memories yet.
+      </p>
+    );
   }
 
   return (
@@ -1446,12 +1453,12 @@ function GraphLinks({
         const label = noteReferenceLabel(link.target, noteLookup, chatLookup);
         const content = (
           <>
-            <span className="shrink-0 rounded-md bg-[var(--muted)]/50 px-1.5 py-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
-              {humanRelationLabel(link.relation)}
-            </span>
-            <span className="min-w-0 truncate text-[var(--foreground)]" title={label}>
-              {label}
-            </span>
+          <span className="shrink-0 rounded-md bg-[var(--muted)]/50 px-1.5 py-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
+            {humanRelationLabel(link.relation)}
+          </span>
+          <span className="min-w-0 truncate text-[var(--foreground)]" title={label}>
+            {label}
+          </span>
           </>
         );
         if (onOpenNote) {
@@ -1523,7 +1530,9 @@ function DerivedActiveMemories({
           Loading derived memories...
         </div>
       ) : groups.length === 0 ? (
-        <p className={emptyStateClassName}>No active typed memories link back to this source yet.</p>
+        <p className={emptyStateClassName}>
+          No active typed memories link back to this source yet.
+        </p>
       ) : (
         <div className="space-y-3">
           {groups.map((group) => (
@@ -1585,9 +1594,7 @@ function MemoryOverviewPanel({
   const sourceIds = sourceLinkIds(note);
   const conflictCount = pendingConflictCount(note);
   const isSourceNote = isSourceSummaryNote(note);
-  const derivedCount = activeNotes.filter(
-    (candidate) => candidate.id !== note.id && isDerivedFromSource(candidate, note.id),
-  ).length;
+  const derivedCount = activeNotes.filter((candidate) => candidate.id !== note.id && isDerivedFromSource(candidate, note.id)).length;
 
   return (
     <div className="space-y-3">
@@ -1608,8 +1615,7 @@ function MemoryOverviewPanel({
           {conflictCount > 0 && <StatusPill label={`${conflictCount} needs review`} tone="warn" />}
         </div>
         <div className="mt-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-          {humanScopeLabel(note, chatLookup, displayContext.groups)} · updated{" "}
-          {new Date(note.updatedAt).toLocaleString()}
+          {humanScopeLabel(note, chatLookup, displayContext.groups)} · updated {new Date(note.updatedAt).toLocaleString()}
         </div>
       </div>
 
@@ -1667,7 +1673,13 @@ function MemoryOverviewPanel({
   );
 }
 
-function MemoryContentsPanel({ note, displayContext }: { note: LtmNote; displayContext: LtmDisplayLookupContext }) {
+function MemoryContentsPanel({
+  note,
+  displayContext,
+}: {
+  note: LtmNote;
+  displayContext: LtmDisplayLookupContext;
+}) {
   return (
     <div className="space-y-2">
       {Object.entries(note.sections).map(([key, section]) => (
@@ -1679,12 +1691,8 @@ function MemoryContentsPanel({ note, displayContext }: { note: LtmNote; displayC
           <summary className="cursor-pointer list-none">
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-xs font-semibold text-[var(--foreground)]">{friendlySectionKey(key)}</span>
-              {typeof section.salience === "number" && (
-                <StatusPill label={`Importance: ${humanScoreLabel(section.salience)}`} />
-              )}
-              {typeof section.confidence === "number" && (
-                <StatusPill label={`Confidence: ${humanScoreLabel(section.confidence)}`} />
-              )}
+              {typeof section.salience === "number" && <StatusPill label={`Importance: ${humanScoreLabel(section.salience)}`} />}
+              {typeof section.confidence === "number" && <StatusPill label={`Confidence: ${humanScoreLabel(section.confidence)}`} />}
             </div>
           </summary>
           <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-[var(--foreground)]">{section.text}</p>
@@ -1694,13 +1702,7 @@ function MemoryContentsPanel({ note, displayContext }: { note: LtmNote; displayC
               <div className="flex flex-wrap gap-1.5">
                 {dedupeEvidenceEntries(section.evidence ?? [], displayContext).map((entry) => {
                   const resolved = resolveEvidenceDisplay(entry, displayContext);
-                  return (
-                    <StatusPill
-                      key={`${key}-${entry}`}
-                      label={resolved.label}
-                      title={resolved.tooltip ?? resolved.label}
-                    />
-                  );
+                  return <StatusPill key={`${key}-${entry}`} label={resolved.label} title={resolved.tooltip ?? resolved.label} />;
                 })}
               </div>
             </div>
@@ -1866,7 +1868,11 @@ function _MemorySuggestionsPanel({
   }
 
   if (drafts.length === 0) {
-    return <p className={emptyStateClassName}>No pending suggestions for this source.</p>;
+    return (
+      <p className={emptyStateClassName}>
+        No pending suggestions for this source.
+      </p>
+    );
   }
 
   return (
@@ -1881,12 +1887,7 @@ function _MemorySuggestionsPanel({
           <div className="truncate text-xs font-semibold text-[var(--foreground)]">
             {draft.summary || "Untitled suggestion"}
           </div>
-          <DraftMetadataPills
-            draft={draft}
-            noteLookup={noteLookup}
-            chatLookup={chatLookup}
-            onOpenSourceNote={onOpenSourceNote}
-          />
+          <DraftMetadataPills draft={draft} noteLookup={noteLookup} chatLookup={chatLookup} onOpenSourceNote={onOpenSourceNote} />
         </button>
       ))}
     </div>
@@ -1958,18 +1959,20 @@ function MemoryNoteModal({
       ...(isSourceNote ? [{ id: "suggestions" as const, label: "Suggestions" }] : []),
     ];
   }, [isSourceNote, mode, note]);
-  const safeActiveTab = tabs.some((tab) => tab.id === activeTab) ? activeTab : (tabs[0]?.id ?? "overview");
+  const safeActiveTab = tabs.some((tab) => tab.id === activeTab) ? activeTab : tabs[0]?.id ?? "overview";
 
   return (
-    <Modal open={open} onClose={onClose} title={note ? humanMemoryTitle(note, chatLookup) : "Memory"} width="max-w-4xl">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={note ? humanMemoryTitle(note, chatLookup) : "Memory"}
+      width="max-w-4xl"
+    >
       {note && (
         <div className="grid gap-4">
           <div className="grid gap-3 rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
             <div className="min-w-0">
-              <div
-                className="truncate text-sm font-semibold text-[var(--foreground)]"
-                title={humanMemoryTitle(note, chatLookup)}
-              >
+              <div className="truncate text-sm font-semibold text-[var(--foreground)]" title={humanMemoryTitle(note, chatLookup)}>
                 {humanMemoryTitle(note, chatLookup)}
               </div>
               <div className="mt-2 flex flex-wrap gap-1.5">
@@ -1978,9 +1981,7 @@ function MemoryNoteModal({
                 {note.modes.map((item) => (
                   <StatusPill key={item} label={friendlyMode(item)} />
                 ))}
-                {note.links.length > 0 && (
-                  <StatusPill label={`${note.links.length} linked memor${note.links.length === 1 ? "y" : "ies"}`} />
-                )}
+                {note.links.length > 0 && <StatusPill label={`${note.links.length} linked memor${note.links.length === 1 ? "y" : "ies"}`} />}
                 {editorDirty && <StatusPill label="Unsaved changes" tone="warn" />}
               </div>
             </div>
@@ -1991,7 +1992,9 @@ function MemoryNoteModal({
                   Edit
                 </ToolButton>
               ) : (
-                <ToolButton onClick={() => onModeChange("view")}>Cancel</ToolButton>
+                <ToolButton onClick={() => onModeChange("view")}>
+                  Cancel
+                </ToolButton>
               )}
             </div>
           </div>
@@ -2030,12 +2033,7 @@ function MemoryNoteModal({
               )}
               {safeActiveTab === "content" && <MemoryContentsPanel note={note} displayContext={displayContext} />}
               {safeActiveTab === "links" && (
-                <GraphLinks
-                  links={note.links}
-                  noteLookup={noteLookup}
-                  chatLookup={chatLookup}
-                  onOpenNote={onOpenNote}
-                />
+                <GraphLinks links={note.links} noteLookup={noteLookup} chatLookup={chatLookup} onOpenNote={onOpenNote} />
               )}
               {safeActiveTab === "recall" && !isSourceNote && (
                 <MemoryRecallPanel
@@ -2158,23 +2156,20 @@ function ImportPreviewRowItem({
         selected && selectedListRowClassName,
       )}
     >
-      <input
-        type="checkbox"
-        checked={selected}
-        disabled={disabled}
-        onChange={(event) => onSelect(event.target.checked)}
-        className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-        aria-label={`Select ${sample.title}`}
-      />
+        <input
+          type="checkbox"
+          checked={selected}
+          disabled={disabled}
+          onChange={(event) => onSelect(event.target.checked)}
+          className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+          aria-label={`Select ${sample.title}`}
+        />
       <div className="min-w-0 self-center">
         <div className="truncate text-xs font-medium text-[var(--foreground)]" title={sample.title}>
           {sample.title}
         </div>
         {sample.snippet && (
-          <div
-            className="mt-1 truncate text-[10px] leading-relaxed text-[var(--muted-foreground)]"
-            title={sample.snippet}
-          >
+          <div className="mt-1 truncate text-[10px] leading-relaxed text-[var(--muted-foreground)]" title={sample.snippet}>
             {sample.snippet}
           </div>
         )}
@@ -2231,7 +2226,14 @@ function ChatMemorySettings({
   const [semanticWeightDraft, setSemanticWeightDraft] = useState(String(weights.semanticWeight));
   const [lexicalWeightDraft, setLexicalWeightDraft] = useState(String(weights.lexicalWeight));
   const [graphWeightDraft, setGraphWeightDraft] = useState(String(weights.graphWeight));
-  const { advancedOpen, debugOpen, extractionOpen, maintenanceOpen, recallOpen, setLtmPanelPreferences } = useUIStore(
+  const {
+    advancedOpen,
+    debugOpen,
+    extractionOpen,
+    maintenanceOpen,
+    recallOpen,
+    setLtmPanelPreferences,
+  } = useUIStore(
     useShallow((state) => ({
       advancedOpen: state.ltmPanelPreferences.advancedOpen,
       debugOpen: state.ltmPanelPreferences.debugOpen,
@@ -2241,22 +2243,8 @@ function ChatMemorySettings({
       setLtmPanelPreferences: state.setLtmPanelPreferences,
     })),
   );
-  const patchTimersRef = useRef<
-    Partial<
-      Record<
-        "budget" | "maxChunks" | "contextMessages" | "scoreThreshold" | "semantic" | "lexical" | "graph",
-        ReturnType<typeof setTimeout>
-      >
-    >
-  >({});
-  const latestPatchValueRef = useRef<
-    Partial<
-      Record<
-        "budget" | "maxChunks" | "contextMessages" | "scoreThreshold" | "semantic" | "lexical" | "graph",
-        string | number
-      >
-    >
-  >({});
+  const patchTimersRef = useRef<Partial<Record<"budget" | "maxChunks" | "contextMessages" | "scoreThreshold" | "semantic" | "lexical" | "graph", ReturnType<typeof setTimeout>>>>({});
+  const latestPatchValueRef = useRef<Partial<Record<"budget" | "maxChunks" | "contextMessages" | "scoreThreshold" | "semantic" | "lexical" | "graph", string | number>>>({});
   const sliderBudget = Number.isFinite(Number(budgetDraft))
     ? Math.max(128, Math.min(16_384, Math.floor(Number(budgetDraft))))
     : budgetValue;
@@ -2279,23 +2267,23 @@ function ChatMemorySettings({
     weights.semanticWeight,
   ]);
 
-  const patch = useCallback(
-    (next: LtmGlobalSettings) => {
-      return updateSettings
-        .mutateAsync(next)
-        .then(() => toast.success("Memory settings updated"))
-        .catch((err: Error) => toast.error(err.message));
-    },
-    [updateSettings],
-  );
+  const patch = useCallback((next: LtmGlobalSettings) => {
+    return updateSettings
+      .mutateAsync(next)
+      .then(() => toast.success("Memory settings updated"))
+      .catch((err: Error) => toast.error(err.message));
+  }, [updateSettings]);
 
-  const clearPatchTimer = useCallback((key: keyof typeof latestPatchValueRef.current) => {
-    const timer = patchTimersRef.current[key];
-    if (timer) {
-      clearTimeout(timer);
-      delete patchTimersRef.current[key];
-    }
-  }, []);
+  const clearPatchTimer = useCallback(
+    (key: keyof typeof latestPatchValueRef.current) => {
+      const timer = patchTimersRef.current[key];
+      if (timer) {
+        clearTimeout(timer);
+        delete patchTimersRef.current[key];
+      }
+    },
+    [],
+  );
 
   const schedulePatch = useCallback(
     (
@@ -2316,7 +2304,10 @@ function ChatMemorySettings({
   );
 
   const flushPatch = useCallback(
-    (key: keyof typeof latestPatchValueRef.current, commit: (nextValue: string | number) => Promise<unknown>) => {
+    (
+      key: keyof typeof latestPatchValueRef.current,
+      commit: (nextValue: string | number) => Promise<unknown>,
+    ) => {
       clearPatchTimer(key);
       const nextValue = latestPatchValueRef.current[key];
       if (nextValue === undefined) return;
@@ -2329,68 +2320,53 @@ function ChatMemorySettings({
     api.putKeepalive("/long-term-memory/settings", { version: 1, ...patchData });
   }, []);
 
-  const commitBudget = useCallback(
-    (value: string) => {
-      const numeric = Number(value);
-      const next = Number.isFinite(numeric)
-        ? Math.max(128, Math.min(16_384, Math.floor(numeric)))
-        : DEFAULT_LTM_BUDGET_TOKENS;
-      setBudgetDraft(String(next));
-      if (next === budgetValue) return Promise.resolve();
-      return patch({ version: 1, longTermMemoryBudgetTokens: next });
-    },
-    [budgetValue, patch],
-  );
+  const commitBudget = useCallback((value: string) => {
+    const numeric = Number(value);
+    const next = Number.isFinite(numeric)
+      ? Math.max(128, Math.min(16_384, Math.floor(numeric)))
+      : DEFAULT_LTM_BUDGET_TOKENS;
+    setBudgetDraft(String(next));
+    if (next === budgetValue) return Promise.resolve();
+    return patch({ version: 1, longTermMemoryBudgetTokens: next });
+  }, [budgetValue, patch]);
 
-  const commitMaxChunks = useCallback(
-    (value: string) => {
-      const numeric = Number(value);
-      const next = Number.isFinite(numeric) ? Math.max(1, Math.min(100, Math.floor(numeric))) : DEFAULT_LTM_MAX_CHUNKS;
-      setMaxChunksDraft(String(next));
-      if (next === maxChunksValue) return Promise.resolve();
-      return patch({ version: 1, longTermMemoryMaxChunks: next });
-    },
-    [maxChunksValue, patch],
-  );
+  const commitMaxChunks = useCallback((value: string) => {
+    const numeric = Number(value);
+    const next = Number.isFinite(numeric) ? Math.max(1, Math.min(100, Math.floor(numeric))) : DEFAULT_LTM_MAX_CHUNKS;
+    setMaxChunksDraft(String(next));
+    if (next === maxChunksValue) return Promise.resolve();
+    return patch({ version: 1, longTermMemoryMaxChunks: next });
+  }, [maxChunksValue, patch]);
 
-  const commitContextMessages = useCallback(
-    (value: string) => {
-      const numeric = Number(value);
-      const next = Number.isFinite(numeric)
-        ? Math.max(1, Math.min(20, Math.floor(numeric)))
-        : DEFAULT_LTM_CONTEXT_MESSAGES;
-      setContextMessagesDraft(String(next));
-      if (next === contextMessagesValue) return Promise.resolve();
-      return patch({ version: 1, longTermMemoryRecallContextMessages: next });
-    },
-    [contextMessagesValue, patch],
-  );
+  const commitContextMessages = useCallback((value: string) => {
+    const numeric = Number(value);
+    const next = Number.isFinite(numeric)
+      ? Math.max(1, Math.min(20, Math.floor(numeric)))
+      : DEFAULT_LTM_CONTEXT_MESSAGES;
+    setContextMessagesDraft(String(next));
+    if (next === contextMessagesValue) return Promise.resolve();
+    return patch({ version: 1, longTermMemoryRecallContextMessages: next });
+  }, [contextMessagesValue, patch]);
 
-  const commitScoreThreshold = useCallback(
-    (value: number) => {
-      const numeric = Number.isFinite(value) ? value : DEFAULT_LTM_SCORE_THRESHOLD;
-      const next = Math.max(0, Math.min(1, Number(numeric.toFixed(2))));
-      setScoreThresholdDraft(next);
-      if (next === scoreThresholdValue) return Promise.resolve();
-      return patch({ version: 1, longTermMemoryScoreThreshold: next });
-    },
-    [patch, scoreThresholdValue],
-  );
+  const commitScoreThreshold = useCallback((value: number) => {
+    const numeric = Number.isFinite(value) ? value : DEFAULT_LTM_SCORE_THRESHOLD;
+    const next = Math.max(0, Math.min(1, Number(numeric.toFixed(2))));
+    setScoreThresholdDraft(next);
+    if (next === scoreThresholdValue) return Promise.resolve();
+    return patch({ version: 1, longTermMemoryScoreThreshold: next });
+  }, [patch, scoreThresholdValue]);
 
   const readWeightDraft = (value: string, fallback: number, max = LTM_WEIGHT_MAX) => {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? Math.max(LTM_WEIGHT_MIN, Math.min(max, Number(numeric.toFixed(2)))) : fallback;
   };
 
-  const commitWeight = useCallback(
-    (key: "semantic" | "lexical" | "graph", value: string) => {
-      const fallback = weights[`${key}Weight` as const];
-      const next = readWeightDraft(value, fallback, 1);
-      if (next === fallback) return Promise.resolve();
-      return patch({ version: 1, [LTM_WEIGHT_PATCH_KEY_MAP[key]]: next });
-    },
-    [patch, weights],
-  );
+  const commitWeight = useCallback((key: "semantic" | "lexical" | "graph", value: string) => {
+    const fallback = weights[`${key}Weight` as const];
+    const next = readWeightDraft(value, fallback, 1);
+    if (next === fallback) return Promise.resolve();
+    return patch({ version: 1, [LTM_WEIGHT_PATCH_KEY_MAP[key]]: next });
+  }, [patch, weights]);
 
   useEffect(() => {
     const flushPending = () => {
@@ -2441,7 +2417,9 @@ function ChatMemorySettings({
       if (graph !== undefined) {
         patchData[LTM_WEIGHT_PATCH_KEY_MAP.graph] = readWeightDraft(String(graph), weights.graphWeight, 1);
       }
-      if (Object.keys(patchData).length > 0) dispatchKeepaliveSettingsPatch(patchData);
+      if (Object.keys(patchData).length > 0) {
+        dispatchKeepaliveSettingsPatch(patchData);
+      }
     };
 
     const handleBeforeUnload = () => {
@@ -2481,10 +2459,10 @@ function ChatMemorySettings({
     setGraphWeightDraft(String(LTM_RECALL_STYLE_WEIGHTS[recallStyle].graphWeight));
     return patch({
       version: 1,
-      longTermMemorySemanticWeight: LTM_RECALL_STYLE_WEIGHTS[recallStyle].semanticWeight,
-      longTermMemoryLexicalWeight: LTM_RECALL_STYLE_WEIGHTS[recallStyle].lexicalWeight,
-      longTermMemoryGraphWeight: LTM_RECALL_STYLE_WEIGHTS[recallStyle].graphWeight,
-      longTermMemoryMetadataWeight: LTM_RECALL_STYLE_WEIGHTS[recallStyle].metadataWeight,
+      longTermMemorySemanticWeight: null,
+      longTermMemoryLexicalWeight: null,
+      longTermMemoryGraphWeight: null,
+      longTermMemoryMetadataWeight: null,
     });
   };
 
@@ -2501,375 +2479,365 @@ function ChatMemorySettings({
       longTermMemoryScoreThreshold: DEFAULT_LTM_SCORE_THRESHOLD,
       longTermMemoryRecallContextMessages: DEFAULT_LTM_CONTEXT_MESSAGES,
       longTermMemoryRecallStyle: "balanced",
-      longTermMemorySemanticWeight: LTM_RECALL_STYLE_WEIGHTS.balanced.semanticWeight,
-      longTermMemoryLexicalWeight: LTM_RECALL_STYLE_WEIGHTS.balanced.lexicalWeight,
-      longTermMemoryGraphWeight: LTM_RECALL_STYLE_WEIGHTS.balanced.graphWeight,
-      longTermMemoryMetadataWeight: LTM_RECALL_STYLE_WEIGHTS.balanced.metadataWeight,
+      longTermMemorySemanticWeight: null,
+      longTermMemoryLexicalWeight: null,
+      longTermMemoryGraphWeight: null,
+      longTermMemoryMetadataWeight: null,
       longTermMemoryIncludeResolved: false,
     });
   };
 
-  if (!activeChat) {
-    return (
-      <div className="space-y-2">
-        <p className="text-xs text-[var(--muted-foreground)]">Open a chat to edit its long-term memory settings.</p>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-2">
-      <DisclosureHeader
-        title="Recall"
-        open={recallOpen}
-        onToggle={() => setLtmPanelPreferences({ recallOpen: !recallOpen })}
-      />
-      {recallOpen && (
-        <div className={sectionCardClassName}>
-          <SettingToggle
-            label="Use memory in prompts"
-            checked={enabled}
-            onChange={(checked) => patch({ version: 1, enableLongTermMemory: checked })}
-          />
-          <SettingGroup label="Recall style">
-            <div className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--background)] p-1 ring-1 ring-[var(--border)]">
-              {LTM_RECALL_STYLES.map((style) => (
-                <div key={style.id} className="grid grid-cols-[1fr_auto] overflow-hidden rounded-md">
-                  <button
-                    type="button"
-                    onClick={() => patch({ version: 1, longTermMemoryRecallStyle: style.id })}
-                    aria-pressed={recallStyle === style.id}
-                    className={cn(
-                      "min-h-8 px-2 text-left text-xs font-medium transition-colors",
-                      recallStyle === style.id
-                        ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
-                        : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                    )}
-                  >
-                    {style.label}
-                  </button>
-                  <button
-                    type="button"
-                    title={style.description}
-                    aria-label={`${style.label} recall style: ${style.description}`}
-                    onClick={(event) => event.preventDefault()}
-                    className={cn(
-                      "flex h-8 w-8 items-center justify-center transition-colors",
-                      recallStyle === style.id
-                        ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
-                        : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                    )}
-                  >
-                    <Info size="0.75rem" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          </SettingGroup>
-          <div className="grid gap-3 sm:grid-cols-[1fr_6.5rem]">
-            <SettingField label="Max tokens">
-              <div className="grid grid-cols-[1fr_5.5rem] items-center gap-3">
-                <input
-                  type="range"
-                  min={128}
-                  max={16384}
-                  step={128}
-                  value={sliderBudget}
-                  onChange={(event) => {
-                    setBudgetDraft(event.target.value);
-                    schedulePatch("budget", event.target.value, (value) => commitBudget(String(value)));
-                  }}
-                  onPointerUp={(event) => commitBudget((event.target as HTMLInputElement).value)}
-                  onBlur={(event) => commitBudget(event.target.value)}
-                  className="min-w-0 accent-[var(--primary)]"
-                />
-                <input
-                  type="number"
-                  min={128}
-                  max={16384}
-                  step={128}
-                  value={budgetDraft}
-                  onChange={(event) => {
-                    setBudgetDraft(event.target.value);
-                    schedulePatch("budget", event.target.value, (value) => commitBudget(String(value)));
-                  }}
-                  onBlur={(event) => commitBudget(event.target.value)}
-                  className={compactInputClassName}
-                />
-              </div>
-            </SettingField>
-            <SettingField label="Max memories">
-              <input
-                type="number"
-                min={1}
-                max={100}
-                step={1}
-                value={maxChunksDraft}
-                onChange={(event) => {
-                  setMaxChunksDraft(event.target.value);
-                  schedulePatch("maxChunks", event.target.value, (value) => commitMaxChunks(String(value)));
-                }}
-                onBlur={(event) => commitMaxChunks(event.target.value)}
-                className={compactInputClassName}
-              />
-            </SettingField>
-          </div>
-          <SettingField label="Context messages for search">
-            <input
-              type="number"
-              min={1}
-              max={20}
-              step={1}
-              value={contextMessagesDraft}
-              onChange={(event) => {
-                setContextMessagesDraft(event.target.value);
-                schedulePatch("contextMessages", event.target.value, (value) => commitContextMessages(String(value)));
-              }}
-              onBlur={(event) => commitContextMessages(event.target.value)}
-              className={compactInputClassName}
-            />
-          </SettingField>
-          <p className="mt-1 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-            Search uses recent chat text plus scope filters. Max memories is only a ceiling; relevance still decides
-            what appears.
-          </p>
+      {!activeChat && (
+        <p className="text-xs text-[var(--muted-foreground)]">Open a chat to edit its long-term memory settings.</p>
+      )}
+
+      {activeChat && (
+        <>
           <DisclosureHeader
-            title="Advanced recall"
-            description="Resolved threads and score threshold"
-            open={advancedOpen}
-            onToggle={() => setLtmPanelPreferences({ advancedOpen: !advancedOpen })}
+            title="Recall"
+            open={recallOpen}
+            onToggle={() => setLtmPanelPreferences({ recallOpen: !recallOpen })}
           />
-          {advancedOpen && (
-            <div className="grid gap-2 rounded-xl bg-[var(--background)]/75 p-2 shadow-inner ring-1 ring-[var(--border)]">
+          {recallOpen && (
+            <div className={sectionCardClassName}>
               <SettingToggle
-                label="Include resolved threads"
-                checked={includeResolved}
-                onChange={(checked) => patch({ version: 1, longTermMemoryIncludeResolved: checked })}
+                label="Use memory in prompts"
+                checked={enabled}
+                onChange={(checked) => patch({ version: 1, enableLongTermMemory: checked })}
               />
-              <SettingGroup label="Score threshold">
-                <div className="grid grid-cols-[1fr_4.5rem] items-center gap-3">
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={scoreThresholdDraft}
-                    onChange={(event) => {
-                      const nextValue = Number(event.target.value);
-                      setScoreThresholdDraft(nextValue);
-                      schedulePatch("scoreThreshold", nextValue, (value) => commitScoreThreshold(Number(value)));
-                    }}
-                    onPointerUp={(event) => commitScoreThreshold(Number((event.target as HTMLInputElement).value))}
-                    onBlur={(event) => commitScoreThreshold(Number(event.target.value))}
-                    className="min-w-0 accent-[var(--primary)]"
-                  />
+              <SettingGroup label="Recall style">
+                <div className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--background)] p-1 ring-1 ring-[var(--border)]">
+                  {LTM_RECALL_STYLES.map((style) => (
+                    <div key={style.id} className="grid grid-cols-[1fr_auto] overflow-hidden rounded-md">
+                      <button
+                        type="button"
+                        onClick={() => patch({ version: 1, longTermMemoryRecallStyle: style.id })}
+                        aria-pressed={recallStyle === style.id}
+                        className={cn(
+                          "min-h-8 px-2 text-left text-xs font-medium transition-colors",
+                          recallStyle === style.id
+                            ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
+                            : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                        )}
+                      >
+                        {style.label}
+                      </button>
+                      <button
+                        type="button"
+                        title={style.description}
+                        aria-label={`${style.label} recall style: ${style.description}`}
+                        onClick={(event) => event.preventDefault()}
+                        className={cn(
+                          "flex h-8 w-8 items-center justify-center transition-colors",
+                          recallStyle === style.id
+                            ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
+                            : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                        )}
+                      >
+                        <Info size="0.75rem" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </SettingGroup>
+              <div className="grid gap-3 sm:grid-cols-[1fr_6.5rem]">
+                <SettingField label="Max tokens">
+                  <div className="grid grid-cols-[1fr_5.5rem] items-center gap-3">
+                    <input
+                      type="range"
+                      min={128}
+                      max={16384}
+                      step={128}
+                      value={sliderBudget}
+                      onChange={(event) => {
+                        setBudgetDraft(event.target.value);
+                        schedulePatch("budget", event.target.value, (value) => commitBudget(String(value)));
+                      }}
+                      onPointerUp={(event) => commitBudget((event.target as HTMLInputElement).value)}
+                      onBlur={(event) => commitBudget(event.target.value)}
+                      className="min-w-0 accent-[var(--primary)]"
+                    />
+                    <input
+                      type="number"
+                      min={128}
+                      max={16384}
+                      step={128}
+                      value={budgetDraft}
+                      onChange={(event) => {
+                        setBudgetDraft(event.target.value);
+                        schedulePatch("budget", event.target.value, (value) => commitBudget(String(value)));
+                      }}
+                      onBlur={(event) => commitBudget(event.target.value)}
+                      className={compactInputClassName}
+                    />
+                  </div>
+                </SettingField>
+                <SettingField label="Max memories">
                   <input
                     type="number"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={scoreThresholdDraft}
+                    min={1}
+                    max={100}
+                    step={1}
+                    value={maxChunksDraft}
                     onChange={(event) => {
-                      const nextValue = Number(event.target.value);
-                      setScoreThresholdDraft(nextValue);
-                      schedulePatch("scoreThreshold", nextValue, (value) => commitScoreThreshold(Number(value)));
+                      setMaxChunksDraft(event.target.value);
+                      schedulePatch("maxChunks", event.target.value, (value) => commitMaxChunks(String(value)));
                     }}
-                    onBlur={(event) => commitScoreThreshold(Number(event.target.value))}
+                    onBlur={(event) => commitMaxChunks(event.target.value)}
                     className={compactInputClassName}
                   />
+                </SettingField>
+              </div>
+              <SettingField label="Context messages for search">
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  step={1}
+                  value={contextMessagesDraft}
+                  onChange={(event) => {
+                    setContextMessagesDraft(event.target.value);
+                    schedulePatch("contextMessages", event.target.value, (value) => commitContextMessages(String(value)));
+                  }}
+                  onBlur={(event) => commitContextMessages(event.target.value)}
+                  className={compactInputClassName}
+                />
+              </SettingField>
+              <p className="mt-1 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                Search uses recent chat text plus scope filters. Max memories is only a ceiling; relevance still decides what appears.
+              </p>
+              <DisclosureHeader
+                title="Advanced recall"
+                description="Resolved threads and score threshold"
+                open={advancedOpen}
+                onToggle={() => setLtmPanelPreferences({ advancedOpen: !advancedOpen })}
+              />
+              {advancedOpen && (
+                <div className="grid gap-2 rounded-xl bg-[var(--background)]/75 p-2 shadow-inner ring-1 ring-[var(--border)]">
+                  <SettingToggle
+                    label="Include resolved threads"
+                    checked={includeResolved}
+                    onChange={(checked) => patch({ version: 1, longTermMemoryIncludeResolved: checked })}
+                  />
+                  <SettingGroup label="Score threshold">
+                    <div className="grid grid-cols-[1fr_4.5rem] items-center gap-3">
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={scoreThresholdDraft}
+                        onChange={(event) => {
+                          const nextValue = Number(event.target.value);
+                          setScoreThresholdDraft(nextValue);
+                          schedulePatch("scoreThreshold", nextValue, (value) => commitScoreThreshold(Number(value)));
+                        }}
+                        onPointerUp={(event) => commitScoreThreshold(Number((event.target as HTMLInputElement).value))}
+                        onBlur={(event) => commitScoreThreshold(Number(event.target.value))}
+                        className="min-w-0 accent-[var(--primary)]"
+                      />
+                      <input
+                        type="number"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={scoreThresholdDraft}
+                        onChange={(event) => {
+                          const nextValue = Number(event.target.value);
+                          setScoreThresholdDraft(nextValue);
+                          schedulePatch("scoreThreshold", nextValue, (value) => commitScoreThreshold(Number(value)));
+                        }}
+                        onBlur={(event) => commitScoreThreshold(Number(event.target.value))}
+                        className={compactInputClassName}
+                      />
+                    </div>
+                    <p className="mt-1 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                      0 keeps all ranked matches. Higher values drop memories whose final weighted relevance is lower.
+                    </p>
+                  </SettingGroup>
+                  <SettingGroup label="Lane weights">
+                    <div className="space-y-2">
+                      {[
+                        {
+                          label: "Semantic",
+                          draft: semanticWeightDraft,
+                          setDraft: setSemanticWeightDraft,
+                          fallback: weights.semanticWeight,
+                          max: 1,
+                          key: "semantic" as const,
+                        },
+                        {
+                          label: "Lexical",
+                          draft: lexicalWeightDraft,
+                          setDraft: setLexicalWeightDraft,
+                          fallback: weights.lexicalWeight,
+                          max: 1,
+                          key: "lexical" as const,
+                        },
+                        {
+                          label: "Graph",
+                          draft: graphWeightDraft,
+                          setDraft: setGraphWeightDraft,
+                          fallback: weights.graphWeight,
+                          max: 1,
+                          key: "graph" as const,
+                        },
+                      ].map((item) => {
+                        const inputId = `ltm-${item.key}-weight`;
+                        return (
+                          <div key={item.key} className="grid grid-cols-[4.5rem_1fr_4.75rem] items-center gap-3">
+                            <label htmlFor={inputId} className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+                              {item.label}
+                            </label>
+                            <input
+                              id={inputId}
+                              type="range"
+                              min={LTM_WEIGHT_MIN}
+                              max={item.max}
+                              step={LTM_WEIGHT_STEP}
+                              value={item.draft}
+                              onChange={(event) => {
+                                item.setDraft(event.target.value);
+                                schedulePatch(item.key, event.target.value, (value) => commitWeight(item.key, String(value)));
+                              }}
+                              onPointerUp={(event) => commitWeight(item.key, (event.target as HTMLInputElement).value)}
+                              onBlur={(event) => commitWeight(item.key, event.target.value)}
+                              className="min-w-0 accent-[var(--primary)]"
+                            />
+                            <input
+                              type="number"
+                              min={LTM_WEIGHT_MIN}
+                              max={item.max}
+                              step={LTM_WEIGHT_STEP}
+                              value={item.draft}
+                              onChange={(event) => {
+                                item.setDraft(event.target.value);
+                                schedulePatch(item.key, event.target.value, (value) => commitWeight(item.key, String(value)));
+                              }}
+                              onBlur={(event) => commitWeight(item.key, event.target.value)}
+                              className={compactInputClassName}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-1 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                      The selected recall style sets the default mix. Set all three weights to 0 to disable LTM prompt injection. Metadata scopes only filter eligible memories.
+                    </p>
+                    <div className="mt-2">
+                      <ToolButton onClick={resetWeightOverrides}>
+                        <RotateCcw size="0.875rem" />
+                        Reset lane weights
+                      </ToolButton>
+                    </div>
+                  </SettingGroup>
+                  <div>
+                    <ToolButton onClick={resetRecallDefaults}>
+                      <RotateCcw size="0.875rem" />
+                      Reset recall defaults
+                    </ToolButton>
+                  </div>
                 </div>
-                <p className="mt-1 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-                  0 keeps all ranked matches. Higher values drop memories whose final weighted relevance is lower.
-                </p>
-              </SettingGroup>
-              <SettingGroup label="Lane weights">
-                <div className="space-y-2">
-                  {[
-                    {
-                      label: "Semantic",
-                      draft: semanticWeightDraft,
-                      setDraft: setSemanticWeightDraft,
-                      fallback: weights.semanticWeight,
-                      max: 1,
-                      key: "semantic" as const,
-                    },
-                    {
-                      label: "Lexical",
-                      draft: lexicalWeightDraft,
-                      setDraft: setLexicalWeightDraft,
-                      fallback: weights.lexicalWeight,
-                      max: 1,
-                      key: "lexical" as const,
-                    },
-                    {
-                      label: "Graph",
-                      draft: graphWeightDraft,
-                      setDraft: setGraphWeightDraft,
-                      fallback: weights.graphWeight,
-                      max: 1,
-                      key: "graph" as const,
-                    },
-                  ].map((item) => {
-                    const inputId = `ltm-${item.key}-weight`;
-                    return (
-                      <div key={item.key} className="grid grid-cols-[4.5rem_1fr_4.75rem] items-center gap-3">
-                        <label
-                          htmlFor={inputId}
-                          className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]"
-                        >
-                          {item.label}
-                        </label>
-                        <input
-                          id={inputId}
-                          type="range"
-                          min={LTM_WEIGHT_MIN}
-                          max={item.max}
-                          step={LTM_WEIGHT_STEP}
-                          value={item.draft}
-                          onChange={(event) => {
-                            item.setDraft(event.target.value);
-                            schedulePatch(item.key, event.target.value, (value) =>
-                              commitWeight(item.key, String(value)),
-                            );
-                          }}
-                          onPointerUp={(event) => commitWeight(item.key, (event.target as HTMLInputElement).value)}
-                          onBlur={(event) => commitWeight(item.key, event.target.value)}
-                          className="min-w-0 accent-[var(--primary)]"
-                        />
-                        <input
-                          type="number"
-                          min={LTM_WEIGHT_MIN}
-                          max={item.max}
-                          step={LTM_WEIGHT_STEP}
-                          value={item.draft}
-                          onChange={(event) => {
-                            item.setDraft(event.target.value);
-                            schedulePatch(item.key, event.target.value, (value) =>
-                              commitWeight(item.key, String(value)),
-                            );
-                          }}
-                          onBlur={(event) => commitWeight(item.key, event.target.value)}
-                          className={compactInputClassName}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-                <p className="mt-1 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-                  The selected recall style sets the default mix. Set all three weights to 0 to disable LTM prompt
-                  injection. Metadata scopes only filter eligible memories.
-                </p>
-                <div className="mt-2">
-                  <ToolButton onClick={resetWeightOverrides}>
-                    <RotateCcw size="0.875rem" />
-                    Reset lane weights
-                  </ToolButton>
-                </div>
-              </SettingGroup>
-              <div>
-                <ToolButton onClick={resetRecallDefaults}>
-                  <RotateCcw size="0.875rem" />
-                  Reset recall defaults
-                </ToolButton>
+              )}
+            </div>
+          )}
+
+          <DisclosureHeader
+            title="Extraction"
+            open={extractionOpen}
+            onToggle={() => setLtmPanelPreferences({ extractionOpen: !extractionOpen })}
+          />
+          {extractionOpen && <LongTermMemoryExtractionSettingsEditor enabled={extractionOpen} />}
+
+          <DisclosureHeader
+            title="Maintenance"
+            open={maintenanceOpen}
+            onToggle={() => setLtmPanelPreferences({ maintenanceOpen: !maintenanceOpen })}
+          />
+          {maintenanceOpen && (
+            <div className={sectionCardClassName}>
+              <ToolButton
+                onClick={() =>
+                  rebuild
+                    .mutateAsync()
+                    .then(() => toast.success("Memory search refreshed"))
+                    .catch((err: Error) => toast.error(err.message))
+                }
+                disabled={rebuild.isPending}
+                tone="primary"
+              >
+                <RefreshCw size="0.875rem" />
+                Refresh Memory Search
+              </ToolButton>
+              <ToolButton
+                onClick={() =>
+                  replay
+                    .mutateAsync()
+                    .then((result) => toast(result.replayable ? "Memory history looks healthy" : result.messages[0]))
+                    .catch((err: Error) => toast.error(err.message))
+                }
+                disabled={replay.isPending}
+              >
+                <History size="0.875rem" />
+                Check Memory History
+              </ToolButton>
+              <ToolButton
+                onClick={() =>
+                  repair
+                    .mutateAsync(["quarantine_malformed_notes", "rebuild_indexes"])
+                    .then(() => toast.success("Repair actions finished"))
+                    .catch((err: Error) => toast.error(err.message))
+                }
+                disabled={repair.isPending}
+                tone="danger"
+              >
+                <Hammer size="0.875rem" />
+                Repair Broken Memory Files
+              </ToolButton>
+              <div className="mt-3 space-y-2">
+                {(integrity.data?.issues ?? [])
+                  .filter((issue) => issue.severity !== "info")
+                  .slice(0, 8).map((issue) => (
+                  <div
+                    key={`${issue.code}-${issue.path ?? issue.noteId ?? issue.message}`}
+                    className="rounded-lg bg-[var(--secondary)]/50 p-3 text-xs ring-1 ring-[var(--border)]"
+                  >
+                    <div className="flex items-center gap-2 font-medium">
+                      {issue.severity === "error" ? (
+                        <AlertTriangle size="0.875rem" className="text-rose-300" />
+                      ) : (
+                        <ShieldCheck size="0.875rem" />
+                      )}
+                      {issue.code}
+                    </div>
+                    <p className="mt-1 text-xs text-[var(--muted-foreground)]">{issue.message}</p>
+                  </div>
+                ))}
               </div>
             </div>
           )}
-        </div>
-      )}
 
-      <DisclosureHeader
-        title="Extraction"
-        open={extractionOpen}
-        onToggle={() => setLtmPanelPreferences({ extractionOpen: !extractionOpen })}
-      />
-      {extractionOpen && <LongTermMemoryExtractionSettingsEditor enabled={extractionOpen} />}
-
-      <DisclosureHeader
-        title="Maintenance"
-        open={maintenanceOpen}
-        onToggle={() => setLtmPanelPreferences({ maintenanceOpen: !maintenanceOpen })}
-      />
-      {maintenanceOpen && (
-        <div className={sectionCardClassName}>
-          <ToolButton
-            onClick={() =>
-              rebuild
-                .mutateAsync()
-                .then(() => toast.success("Memory search refreshed"))
-                .catch((err: Error) => toast.error(err.message))
-            }
-            disabled={rebuild.isPending}
-            tone="primary"
-          >
-            <RefreshCw size="0.875rem" />
-            Refresh Memory Search
-          </ToolButton>
-          <ToolButton
-            onClick={() =>
-              replay
-                .mutateAsync()
-                .then((result) => toast(result.replayable ? "Memory history looks healthy" : result.messages[0]))
-                .catch((err: Error) => toast.error(err.message))
-            }
-            disabled={replay.isPending}
-          >
-            <History size="0.875rem" />
-            Check Memory History
-          </ToolButton>
-          <ToolButton
-            onClick={() =>
-              repair
-                .mutateAsync(["quarantine_malformed_notes", "rebuild_indexes"])
-                .then(() => toast.success("Repair actions finished"))
-                .catch((err: Error) => toast.error(err.message))
-            }
-            disabled={repair.isPending}
-            tone="danger"
-          >
-            <Hammer size="0.875rem" />
-            Repair Broken Memory Files
-          </ToolButton>
-          <div className="mt-3 space-y-2">
-            {(integrity.data?.issues ?? [])
-              .filter((issue) => issue.severity !== "info")
-              .slice(0, 8)
-              .map((issue) => (
-                <div
-                  key={`${issue.code}-${issue.path ?? issue.noteId ?? issue.message}`}
-                  className="rounded-lg bg-[var(--secondary)]/50 p-3 text-xs ring-1 ring-[var(--border)]"
-                >
-                  <div className="flex items-center gap-2 font-medium">
-                    {issue.severity === "error" ? (
-                      <AlertTriangle size="0.875rem" className="text-rose-300" />
-                    ) : (
-                      <ShieldCheck size="0.875rem" />
-                    )}
-                    {issue.code}
-                  </div>
-                  <p className="mt-1 text-xs text-[var(--muted-foreground)]">{issue.message}</p>
-                </div>
-              ))}
-          </div>
-        </div>
-      )}
-
-      <DisclosureHeader
-        title="Debug"
-        open={debugOpen}
-        onToggle={() => setLtmPanelPreferences({ debugOpen: !debugOpen })}
-      />
-      {debugOpen && (
-        <div className={sectionCardClassName}>
-          <SettingToggle
-            label="Debug retrieval logs"
-            checked={debug}
-            onChange={(checked) => patch({ version: 1, longTermMemoryDebug: checked })}
+          <DisclosureHeader
+            title="Debug"
+            open={debugOpen}
+            onToggle={() => setLtmPanelPreferences({ debugOpen: !debugOpen })}
           />
-          <p className="text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-            Detailed extraction diagnostics now stay in debug surfaces. Use source-memory Suggestions for kept and
-            dropped candidate recovery.
-          </p>
-        </div>
+          {debugOpen && (
+            <div className={sectionCardClassName}>
+              <SettingToggle
+                label="Debug retrieval logs"
+                checked={debug}
+                onChange={(checked) => patch({ version: 1, longTermMemoryDebug: checked })}
+              />
+              <p className="text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                Detailed extraction diagnostics now stay in debug surfaces. Use source-memory Suggestions for kept and
+                dropped candidate recovery.
+              </p>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -2967,7 +2935,9 @@ export function LongTermMemoryPanel() {
   const allDrafts = useLongTermMemoryDrafts(
     {},
     {
-      enabled: Boolean(openNoteId) || Boolean(viewingDraftId),
+      enabled:
+        Boolean(openNoteId) ||
+        Boolean(viewingDraftId),
     },
   );
   const exactViewingNote = useLongTermMemoryNote(openNoteId ?? undefined);
@@ -3042,7 +3012,8 @@ export function LongTermMemoryPanel() {
     () => visibleNoteIds.filter((id) => selectedNoteIds.has(id)),
     [selectedNoteIds, visibleNoteIds],
   );
-  const allVisibleNotesSelected = visibleNoteIds.length > 0 && visibleNoteIds.every((id) => selectedNoteIds.has(id));
+  const allVisibleNotesSelected =
+    visibleNoteIds.length > 0 && visibleNoteIds.every((id) => selectedNoteIds.has(id));
   const derivedCountBySource = useMemo(() => {
     const counts = new Map<string, number>();
     for (const note of filteredNotes) {
@@ -3061,23 +3032,26 @@ export function LongTermMemoryPanel() {
     return [...byId.values()];
   }, [allDrafts.data]);
   const importRows = useMemo(() => importPreview.data?.samples ?? [], [importPreview.data?.samples]);
-  const visibleImportRows = useMemo(() => {
-    if (importSource !== "chats") return importRows;
-    const scopeChatIds = navigatorScope.chatIds ?? (navigatorScope.chatId ? [navigatorScope.chatId] : []);
-    if (scopeChatIds.length > 0) {
-      const chatIds = new Set(scopeChatIds);
-      return importRows.filter((sample) => chatIds.has(sample.sourceId.split(":")[0] ?? ""));
-    }
-    if (navigatorScope.groupId) {
-      const groupChatIds = new Set(
-        ((chats as Chat[] | undefined) ?? [])
-          .filter((chat) => chat.groupId === navigatorScope.groupId)
-          .map((chat) => chat.id),
-      );
-      return importRows.filter((sample) => groupChatIds.has(sample.sourceId.split(":")[0] ?? ""));
-    }
-    return importRows;
-  }, [chats, importRows, importSource, navigatorScope.chatId, navigatorScope.chatIds, navigatorScope.groupId]);
+  const visibleImportRows = useMemo(
+    () => {
+      if (importSource !== "chats") return importRows;
+      const scopeChatIds = navigatorScope.chatIds ?? (navigatorScope.chatId ? [navigatorScope.chatId] : []);
+      if (scopeChatIds.length > 0) {
+        const chatIds = new Set(scopeChatIds);
+        return importRows.filter((sample) => chatIds.has(sample.sourceId.split(":")[0] ?? ""));
+      }
+      if (navigatorScope.groupId) {
+        const groupChatIds = new Set(
+          ((chats as Chat[] | undefined) ?? [])
+            .filter((chat) => chat.groupId === navigatorScope.groupId)
+            .map((chat) => chat.id),
+        );
+        return importRows.filter((sample) => groupChatIds.has(sample.sourceId.split(":")[0] ?? ""));
+      }
+      return importRows;
+    },
+    [chats, importRows, importSource, navigatorScope.chatId, navigatorScope.chatIds, navigatorScope.groupId],
+  );
   const selectedVisibleImportRows = useMemo(
     () => visibleImportRows.filter((sample) => selectedImportRows.has(importRowKey(importSource, sample.sourceId))),
     [importSource, selectedImportRows, visibleImportRows],
@@ -3124,7 +3098,9 @@ export function LongTermMemoryPanel() {
   const pendingDraftsForOpenNote = useMemo(
     () =>
       openNote
-        ? combinedDrafts.filter((draft) => draft.status === "pending" && draft.source.sourceNoteId === openNote.id)
+        ? combinedDrafts.filter(
+            (draft) => draft.status === "pending" && draft.source.sourceNoteId === openNote.id,
+          )
         : [],
     [combinedDrafts, openNote],
   );
@@ -3260,20 +3236,16 @@ export function LongTermMemoryPanel() {
     const existingEvidence = sourceNote.sections.source?.evidence ?? sourceNote.sections.summary?.evidence ?? [];
     const nextEvidence = Array.from(new Set([...sourceEvidence, ...existingEvidence])).slice(0, 20);
     const defaultType = recovery?.noteType ?? "scene";
-    const defaultId =
-      recovery?.noteId ??
-      (
-        {
-          timeline_event: "timeline_",
-          character: "char_",
-          relationship: "rel_",
-          scene: "scene_",
-          thread: "thread_",
-          world: "world_",
-          tone: "tone_",
-          source: "source_",
-        } satisfies Record<LtmNoteType, string>
-      )[defaultType];
+    const defaultId = recovery?.noteId ?? ({
+      timeline_event: "timeline_",
+      character: "char_",
+      relationship: "rel_",
+      scene: "scene_",
+      thread: "thread_",
+      world: "world_",
+      tone: "tone_",
+      source: "source_",
+    } satisfies Record<LtmNoteType, string>)[defaultType];
 
     if (!confirmDiscardEditor() || !confirmDiscardCreate()) return;
     closeMemoryModal();
@@ -3359,9 +3331,7 @@ export function LongTermMemoryPanel() {
         return note ? isSourceSummaryNote(note) : false;
       }),
     );
-    const unselectedDerivedIds = derivedNoteIdsForSources(combinedNotes, sourceIds).filter(
-      (id) => !selectedIds.has(id),
-    );
+    const unselectedDerivedIds = derivedNoteIdsForSources(combinedNotes, sourceIds).filter((id) => !selectedIds.has(id));
     if (unselectedDerivedIds.length === 0) return ids;
 
     const includeDerived = confirm(
@@ -3379,11 +3349,7 @@ export function LongTermMemoryPanel() {
   const deleteSelectedMemories = () => {
     const ids = selectedVisibleNoteIds;
     if (ids.length === 0) return;
-    if (
-      !confirm(
-        `Permanently delete ${ids.length} selected memor${ids.length === 1 ? "y" : "ies"}? This cannot be undone.`,
-      )
-    ) {
+    if (!confirm(`Permanently delete ${ids.length} selected memor${ids.length === 1 ? "y" : "ies"}? This cannot be undone.`)) {
       return;
     }
     void deleteMemoriesById(confirmDerivedDeleteIds(ids));
@@ -3521,9 +3487,7 @@ export function LongTermMemoryPanel() {
         <Section title="Memories">
           <div className={panelIntroCardClassName}>
             <div className="flex flex-wrap gap-1.5">
-              <StatusPill
-                label={`${(notes.data ?? []).length} memor${(notes.data ?? []).length === 1 ? "y" : "ies"}`}
-              />
+              <StatusPill label={`${(notes.data ?? []).length} memor${(notes.data ?? []).length === 1 ? "y" : "ies"}`} />
               <StatusPill label={`${status.data?.indexes.chunkCount ?? 0} search chunks`} />
               <StatusPill label={integrity.data?.ok ? "Healthy" : "Needs check"} tone={statusTone} />
               <StatusPill
@@ -3531,7 +3495,9 @@ export function LongTermMemoryPanel() {
                 tone="neutral"
               />
             </div>
-            <p className={cn("mt-2", helperTextClassName)}>Search, review, and maintain long-term memories.</p>
+            <p className={cn("mt-2", helperTextClassName)}>
+              Search, review, and maintain long-term memories.
+            </p>
           </div>
 
           <LtmNavigatorSelector
@@ -3546,9 +3512,7 @@ export function LongTermMemoryPanel() {
 
           {editingNoteHiddenByFilters && (
             <div className="mb-3 rounded-xl bg-amber-500/10 p-3 ring-1 ring-amber-500/30">
-              <div className="text-xs font-medium text-amber-700 dark:text-amber-100">
-                Open note is hidden by filters
-              </div>
+              <div className="text-xs font-medium text-amber-700 dark:text-amber-100">Open note is hidden by filters</div>
               <p className="mt-1 text-[0.6875rem] text-amber-700/80 dark:text-amber-100/80">
                 The editor stays open so unsaved edits are not lost.
               </p>
@@ -3675,7 +3639,9 @@ export function LongTermMemoryPanel() {
               <StatusPill label={integrity.data?.ok ? "Healthy indexes" : "Needs maintenance"} tone={statusTone} />
               <StatusPill label={status.data?.indexes.embeddingsAvailable ? "Smart search" : "Basic search"} />
             </div>
-            <p className={cn("mt-2", helperTextClassName)}>Tune recall, extraction, maintenance, and debug behavior.</p>
+            <p className={cn("mt-2", helperTextClassName)}>
+              Tune recall, extraction, maintenance, and debug behavior.
+            </p>
           </div>
           <ChatMemorySettings
             activeChat={activeChat}
@@ -3777,7 +3743,9 @@ export function LongTermMemoryPanel() {
           <div className="mt-3 space-y-2">
             {importPreview.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
             {!importPreview.isLoading && visibleImportRows.length === 0 && (
-              <p className={emptyStateClassName}>No sources are ready to bring in.</p>
+              <p className={emptyStateClassName}>
+                No sources are ready to bring in.
+              </p>
             )}
             {visibleImportRows.map((sample) => (
               <ImportPreviewRowItem

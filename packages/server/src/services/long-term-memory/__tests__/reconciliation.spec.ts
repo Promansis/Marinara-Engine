@@ -22,9 +22,15 @@ import { LongTermMemoryDraftStore } from "../draft-store.js";
 import { checkLongTermMemoryIntegrity } from "../maintenance.js";
 import { getLongTermMemoryDirectories } from "../paths.js";
 import { formatLongTermMemoryBlock, injectLongTermMemoryPromptBlock } from "../prompt.js";
-import { applyGenerationLongTermMemoryInjection, buildGenerationLongTermMemoryPlan } from "../generation-injection.js";
+import {
+  applyGenerationLongTermMemoryInjection,
+  buildGenerationLongTermMemoryPlan,
+} from "../generation-injection.js";
 import { rebuildLongTermMemoryIndexes } from "../rebuild.js";
-import { applyLongTermMemoryDraft, isLowRiskSourceExtractionMutation } from "../reconciliation.js";
+import {
+  applyLongTermMemoryDraft,
+  isLowRiskSourceExtractionMutation,
+} from "../reconciliation.js";
 import { retrieveLongTermMemory } from "../retrieval.js";
 import { LongTermMemoryStorage } from "../storage.js";
 import {
@@ -126,10 +132,7 @@ test("long-term memory scope matcher includes global, chat, thread, group, and c
   assert.equal(matchesLtmScope(note("thread_all_branches", "thread", { groupId: "thread_alpha" }), scopedView), true);
   assert.equal(matchesLtmScope(note("world_group", "world", { groupId: "thread_alpha" }), scopedView), true);
   assert.equal(matchesLtmScope(note("char_mara", "character", { characterIds: ["char_mara"] }), scopedView), true);
-  assert.equal(
-    matchesLtmScope(note("world_elsewhere", "world", { chatId: "branch_b", characterIds: ["char_jules"] }), scopedView),
-    false,
-  );
+  assert.equal(matchesLtmScope(note("world_elsewhere", "world", { chatId: "branch_b", characterIds: ["char_jules"] }), scopedView), false);
   assert.equal(matchesLtmScope(note("world_global", "world", {}), { ...scopedView, includeGlobal: false }), false);
 });
 
@@ -304,10 +307,7 @@ test("long-term memory prompt injection inserts a system message before chat his
   assert.equal(result.inserted, true);
   assert.equal(result.insertAt, 1);
   assert.equal(result.block, "[WORLD]\nMara hid the archive key behind the clock in the tower foyer.");
-  assert.deepEqual(
-    messages.map((message) => message.role),
-    ["system", "system", "user", "assistant"],
-  );
+  assert.deepEqual(messages.map((message) => message.role), ["system", "system", "user", "assistant"]);
   assert.equal(messages[1]?.contextKind, "injection");
   assert.equal(messages[1]?.content, result.block);
 });
@@ -529,10 +529,7 @@ test("generation long-term memory uses global retrieval settings and injects aft
   assert.equal(result.injection.inserted, true);
   assert.equal(result.injection.insertAt, 2);
   assert.equal(result.injection.insertedBeforeRole, "user");
-  assert.deepEqual(
-    finalMessages.map((message) => message.role),
-    ["system", "system", "system", "user", "assistant"],
-  );
+  assert.deepEqual(finalMessages.map((message) => message.role), ["system", "system", "system", "user", "assistant"]);
   assert.equal(finalMessages[2]?.contextKind, "injection");
   assert.equal(finalMessages[2]?.content, "[WORLD]\nMara hid the archive key behind the clock in the tower foyer.");
 });
@@ -623,10 +620,7 @@ test("assembler injects long-term memory before chat summary fallback to avoid d
 
   assert.match(systemPrompt, /\[WORLD\]\nMara hid the archive key behind the clock in the tower foyer\./);
   assert.doesNotMatch(systemPrompt, /Summary says Mara hid the archive key behind the clock/);
-  assert.deepEqual(
-    result.messages.map((message) => message.role),
-    ["system", "user", "assistant"],
-  );
+  assert.deepEqual(result.messages.map((message) => message.role), ["system", "user", "assistant"]);
 });
 
 test("assembler places long-term memory at an explicit long_term_memory marker", async () => {
@@ -729,10 +723,7 @@ test("assembler places long-term memory at an explicit long_term_memory marker",
   const result = await assemblePrompt(input);
   const systemPrompt = result.messages.find((message) => message.role === "system")?.content ?? "";
 
-  assert.deepEqual(
-    result.messages.map((message) => message.role),
-    ["system", "user", "assistant"],
-  );
+  assert.deepEqual(result.messages.map((message) => message.role), ["system", "user", "assistant"]);
   assert.match(systemPrompt, /<system>\n    <persona>\n    Base system prompt\n    <\/persona>\n<\/system>/);
   assert.match(
     systemPrompt,
@@ -845,6 +836,7 @@ test("long-term memory prompt and budget dedupe exact normalized chunk text", ()
   ]);
   assert.equal(block.match(/archive key is under the clock/gi)?.length, 1);
 });
+
 
 function sceneAppendMutation(): Extract<LtmDraftMutation, { kind: "append_section" }> {
   return {
@@ -1226,10 +1218,7 @@ test("source extraction auto-apply keeps medium-risk mutations pending in mixed 
     assert.deepEqual(result.appliedMutationIds, [lowMutation.id]);
     assert.deepEqual(result.skippedMutationIds, [mediumMutation.id]);
     assert.equal(result.draft.status, "pending");
-    assert.deepEqual(
-      result.draft.mutations.map((mutation) => mutation.id),
-      [mediumMutation.id],
-    );
+    assert.deepEqual(result.draft.mutations.map((mutation) => mutation.id), [mediumMutation.id]);
     assert.equal((await storage.getNote(lowMutation.note.id))?.type, "thread");
     assert.equal(await storage.getNote("rel_mara_jules"), null);
   } finally {
@@ -2828,7 +2817,8 @@ test("evidence unit extraction recovers a truncated json response", async () => 
   const provider = {
     maxTokensOverrideValue: undefined,
     chatComplete: async () => ({
-      content: `{"summary":"One compact unit","units":[{"id":"${randomUUID()}","bucket":"character_fact","subjectId":"mara","sectionKey":"facts","text":"Mara keeps old promises.","evidence":["source_note:scene_source_test"],"confidence":0.9,"salience":0.7,"status":"active","links":[],"sourceHash":"${sourceHash}"}`,
+      content:
+        `{"summary":"One compact unit","units":[{"id":"${randomUUID()}","bucket":"character_fact","subjectId":"mara","sectionKey":"facts","text":"Mara keeps old promises.","evidence":["source_note:scene_source_test"],"confidence":0.9,"salience":0.7,"status":"active","links":[],"sourceHash":"${sourceHash}"}`,
     }),
   } as any;
 
@@ -2960,10 +2950,7 @@ test("evidence unit extraction validation rejects copied placeholder values", ()
     compiled.diagnostics.filter((diagnostic) => diagnostic.severity === "error").map((diagnostic) => diagnostic.code),
     ["candidate_dropped_placeholder_output"],
   );
-  assert.deepEqual(
-    compiled.outcome.droppedCandidates.map((candidate) => candidate.reason),
-    ["placeholder_output"],
-  );
+  assert.deepEqual(compiled.outcome.droppedCandidates.map((candidate) => candidate.reason), ["placeholder_output"]);
 });
 
 test("source-summary extraction validation drops transient character state candidates", () => {
@@ -3008,13 +2995,11 @@ test("source-summary extraction validation drops transient character state candi
   });
 
   assert.equal(compiled.compiledResponse.mutations.length, 0);
-  assert.deepEqual(
-    compiled.outcome.droppedCandidates.map((candidate) => candidate.reason),
-    ["unsupported_bucket"],
-  );
+  assert.deepEqual(compiled.outcome.droppedCandidates.map((candidate) => candidate.reason), ["unsupported_bucket"]);
   assert(
     compiled.diagnostics.some(
-      (diagnostic) => diagnostic.severity === "error" && diagnostic.code === "candidate_dropped_unsupported_bucket",
+      (diagnostic) =>
+        diagnostic.severity === "error" && diagnostic.code === "candidate_dropped_unsupported_bucket",
     ),
   );
 });
@@ -3066,10 +3051,7 @@ test("source-summary extraction validation drops event-shaped character facts bu
     sourceHash,
   });
 
-  assert.deepEqual(
-    compiled.outcome.droppedCandidates.map((candidate) => candidate.reason),
-    ["unsupported_bucket"],
-  );
+  assert.deepEqual(compiled.outcome.droppedCandidates.map((candidate) => candidate.reason), ["unsupported_bucket"]);
   const createCharacter = compiled.compiledResponse.mutations.find(
     (mutation) => mutation.kind === "create_note" && mutation.note.id === "char_mara",
   );
@@ -3119,10 +3101,7 @@ test("relationship state candidates require relationship history support", () =>
     sourceHash,
   });
   assert.equal(unsupported.compiledResponse.mutations.length, 0);
-  assert.deepEqual(
-    unsupported.outcome.droppedCandidates.map((candidate) => candidate.reason),
-    ["unsupported_bucket"],
-  );
+  assert.deepEqual(unsupported.outcome.droppedCandidates.map((candidate) => candidate.reason), ["unsupported_bucket"]);
 
   const supported = compileEvidenceUnitExtraction({
     unitResponse: {
@@ -3205,10 +3184,10 @@ test("relationship state support ignores same-pass events dropped during validat
   });
 
   assert.equal(compiled.compiledResponse.mutations.length, 0);
-  assert.deepEqual(
-    compiled.outcome.droppedCandidates.map((candidate) => candidate.reason),
-    ["missing_source_evidence", "unsupported_bucket"],
-  );
+  assert.deepEqual(compiled.outcome.droppedCandidates.map((candidate) => candidate.reason), [
+    "missing_source_evidence",
+    "unsupported_bucket",
+  ]);
 });
 
 test("source-summary thread validation accepts explicit resolver phrasing", () => {
@@ -3321,10 +3300,7 @@ test("source-summary thread validation still drops unresolved threads without a 
   });
 
   assert.equal(compiled.compiledResponse.mutations.length, 0);
-  assert.deepEqual(
-    compiled.outcome.droppedCandidates.map((candidate) => candidate.reason),
-    ["unsupported_bucket"],
-  );
+  assert.deepEqual(compiled.outcome.droppedCandidates.map((candidate) => candidate.reason), ["unsupported_bucket"]);
 });
 
 test("evidence unit compiler reports when suggested changes exceed the draft cap", () => {
@@ -3444,10 +3420,7 @@ test("source note extraction skips draft creation when every candidate is droppe
     assert.equal(result.draft, null);
     assert.equal(result.response.mutations.length, 0);
     assert.equal(result.outcome.state, "no_suggestions_created");
-    assert.deepEqual(
-      result.outcome.droppedCandidates.map((candidate) => candidate.reason),
-      ["placeholder_output"],
-    );
+    assert.deepEqual(result.outcome.droppedCandidates.map((candidate) => candidate.reason), ["placeholder_output"]);
     assert(
       result.diagnostics.some(
         (diagnostic) => diagnostic.severity === "error" && diagnostic.code === "candidate_dropped_placeholder_output",
@@ -3825,7 +3798,11 @@ test("archived notes are retrievable via normal list/get and can be reactivated"
       ["world_archive_display"],
     );
 
-    const restored = await storage.updateNote("world_archive_display", { status: "active" }, { suppressEvent: true });
+    const restored = await storage.updateNote(
+      "world_archive_display",
+      { status: "active" },
+      { suppressEvent: true },
+    );
     assert.equal(restored.status, "active");
     assert.equal((await storage.getNote("world_archive_display"))?.status, "active");
     assert.deepEqual(
@@ -3861,7 +3838,11 @@ test("typed note type changes move vault file and preserve display title", async
       { suppressEvent: true },
     );
 
-    const updated = await storage.updateNote("world_poppy_promise", { type: "thread" }, { suppressEvent: true });
+    const updated = await storage.updateNote(
+      "world_poppy_promise",
+      { type: "thread" },
+      { suppressEvent: true },
+    );
 
     assert.equal(updated.id, "thread_poppy_promise");
     assert.equal(updated.type, "thread");
@@ -4073,22 +4054,14 @@ test("bulk skip removes only selected pending draft mutations", async () => {
 
     const skippedId = draft.mutations[0]!.id;
     const keptId = draft.mutations[1]!.id;
-    const result = await draftStore.withDraftLock(draft.id, () =>
-      draftStore.deleteDraftMutations(draft.id, [skippedId]),
-    );
+    const result = await draftStore.withDraftLock(draft.id, () => draftStore.deleteDraftMutations(draft.id, [skippedId]));
 
     assert.equal(result.deleted, true);
     assert.equal(result.draft?.status, "pending");
-    assert.deepEqual(
-      result.draft?.mutations.map((mutation) => mutation.id),
-      [keptId],
-    );
+    assert.deepEqual(result.draft?.mutations.map((mutation) => mutation.id), [keptId]);
 
     const persisted = await draftStore.getDraft(draft.id);
-    assert.deepEqual(
-      persisted?.mutations.map((mutation) => mutation.id),
-      [keptId],
-    );
+    assert.deepEqual(persisted?.mutations.map((mutation) => mutation.id), [keptId]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -4257,10 +4230,7 @@ test("bulk skip route validates payloads and preserves route conflict behavior",
     assert.equal(successBody.draftId, draft.id);
     assert.deepEqual(successBody.mutationIds, [draft.mutations[0]!.id]);
     assert.equal(successBody.draft?.status, "pending");
-    assert.deepEqual(
-      successBody.draft?.mutations.map((mutation) => mutation.id),
-      [draft.mutations[1]!.id],
-    );
+    assert.deepEqual(successBody.draft?.mutations.map((mutation) => mutation.id), [draft.mutations[1]!.id]);
 
     await draftStore.updateDraftStatus(draft.id, "accepted");
     const conflict = await app.inject({
@@ -4943,10 +4913,7 @@ test("evidence unit compiler skips duplicate cumulative lines from overlapping s
 
 test("generate route no longer creates live-turn long-term memory drafts", async () => {
   const generateRouteSource = await readFile(new URL("../../../routes/generate.routes.ts", import.meta.url), "utf8");
-  const longTermMemoryRouteSource = await readFile(
-    new URL("../../../routes/long-term-memory.routes.ts", import.meta.url),
-    "utf8",
-  );
+  const longTermMemoryRouteSource = await readFile(new URL("../../../routes/long-term-memory.routes.ts", import.meta.url), "utf8");
   const sourceExtractionSource = await readFile(new URL("../source-extraction.ts", import.meta.url), "utf8");
 
   assert.doesNotMatch(
@@ -5424,10 +5391,7 @@ test("source note extraction target lookup prevents duplicate creates across sou
       ),
     );
     assert.equal(result.outcome.state, "no_suggestions_created");
-    assert.deepEqual(
-      result.outcome.droppedCandidates.map((candidate) => candidate.reason),
-      ["target_note_outside_scope"],
-    );
+    assert.deepEqual(result.outcome.droppedCandidates.map((candidate) => candidate.reason), ["target_note_outside_scope"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -5647,10 +5611,7 @@ test("source note extraction keeps in-scope targets and drops out-of-scope targe
 
     assert(result.draft);
     assert.equal(result.outcome.state, "partial_success");
-    assert.deepEqual(
-      result.outcome.droppedCandidates.map((candidate) => candidate.reason),
-      ["target_note_outside_scope"],
-    );
+    assert.deepEqual(result.outcome.droppedCandidates.map((candidate) => candidate.reason), ["target_note_outside_scope"]);
     assert(
       result.diagnostics.some(
         (diagnostic) => diagnostic.severity === "warning" && diagnostic.code === "target_note_scope_mismatch",
@@ -5979,7 +5940,10 @@ test("retrieval does not double-count character scope metadata", async () => {
     const selected = result.debug?.selected.find((candidate) => candidate.chunkId === "char_rika::current_state");
     assert(selected);
     assert.equal(selected.rawLaneScores?.metadata, 2.5);
-    assert.equal(selected.reasons.join(",").match(/character:rika/g)?.length, 1);
+    assert.equal(
+      selected.reasons.join(",").match(/character:rika/g)?.length,
+      1,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -83,9 +83,7 @@ export const ltmGlobalSettingsSchema = z.preprocess((value) => {
         ? input.longTermMemoryRecallStyle
         : undefined;
   }
-  return {
-    ...normalized,
-  };
+  return normalized;
 }, ltmGlobalSettingsShape);
 
 export const ltmResolvedGlobalSettingsSchema = z
@@ -223,7 +221,10 @@ export function hasLtmSourceSummarySceneTag(tags: readonly string[]) {
   return LTM_SOURCE_SUMMARY_SCENE_TAGS.some((tag) => tags.includes(tag));
 }
 
-export function isLtmSourceLikeNote(note: { type: z.infer<typeof ltmNoteTypeSchema>; tags: readonly string[] }) {
+export function isLtmSourceLikeNote(note: {
+  type: z.infer<typeof ltmNoteTypeSchema>;
+  tags: readonly string[];
+}) {
   return note.type === "source" || (note.type === "scene" && hasLtmSourceSummarySceneTag(note.tags));
 }
 
