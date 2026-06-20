@@ -28,7 +28,7 @@ import type { LtmSuggestionCapMetadata } from "./evidence-unit-compiler.js";
 import { validateLtmEvidenceUnits } from "./evidence-unit-validation.js";
 
 export const DEFAULT_LTM_EXTRACTION_PROMPT = [
-  "You extract structured long-term memory evidence units from a source note.",
+  "You extract structured memory-stream evidence units from a source note.",
   "Return strict JSON only. Do not explain.",
   "Do not include thinking, analysis, markdown, or <think> tags. Output JSON object only.",
   "Source notes are audit evidence, not active recall memory.",
@@ -59,7 +59,7 @@ export const DEFAULT_LTM_EXTRACTION_PROMPT = [
   "- tone: observations. World/session-level atmospheric register only, not one-scene mood.",
   "- anchor: the source section key. Recurring motif or planted callback only.",
 
-  "Each unit must be assigned to a memory stream and useful for future continuity.",
+  "Each unit must be assigned to one memory stream and be useful for future continuity.",
   "Every unit must include at least one supplied evidence string, including source_note:<id>.",
   "Use real lowercase snake_case subjectId and sectionKey values derived from the source.",
   "Never output placeholder values such as lowercase_snake_case_scope_id, lowercase_snake_case, target_note_id, or copied schema/example text.",
@@ -424,7 +424,7 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
         },
         unitFields: {
           id: "uuid",
-          bucket: "one allowed stream value from allowedBuckets",
+          bucket: "one allowed stream value from allowedStreams",
           subjectId: "real lowercase_snake_case subject",
           sectionKey: "real lowercase_snake_case section",
           text: "compact memory text, not transcript summary",
@@ -436,11 +436,11 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
           mergeHint: "optional evidence-backed compiler note only",
           sourceHash: options.sourceHash,
         },
-        allowedBuckets,
+        allowedStreams: allowedBuckets,
         allowedStatuses: ["active", "resolved"],
-        bucketScanOrder: filteredScanOrder,
+        streamScanOrder: filteredScanOrder,
         allowedTimelineRelations: ["occurred_in", "triggered_by", "resolved_in", "evidenced_by"],
-        buckets: filteredBucketDescriptions,
+        streamDescriptions: filteredBucketDescriptions,
         sourceNote: {
           id: options.sourceNote.id,
           status: options.sourceNote.status,

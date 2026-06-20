@@ -2432,7 +2432,7 @@ test("source note extraction fast mode skips existing typed note retrieval", asy
     });
 
     const userPayload = JSON.parse(messages.find((message) => message.role === "user")!.content);
-    assert.equal(userPayload.existingTypedNotes, "(no relevant typed notes)");
+    assert.equal(userPayload.existingTypedNotes, "(no relevant memory streams)");
     assert.doesNotMatch(userPayload.existingTypedNotes, /world_kiseki_academy/);
 
     const events = await readLtmDebugLog({ operationId }, root);
@@ -2588,10 +2588,10 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
     summary: "string, short",
     units: "array of 0..40 evidence unit objects",
   });
-  assert.equal(userPayload.unitFields.bucket, "one allowedBuckets value");
+  assert.equal(userPayload.unitFields.bucket, "one allowed stream value from allowedStreams");
   assert.equal(userPayload.unitFields.links, "real links only, otherwise []");
   assert.equal(userPayload.unitFields.sourceHash, sourceHash);
-  assert.deepEqual(userPayload.bucketScanOrder.slice(0, 4), [
+  assert.deepEqual(userPayload.streamScanOrder.slice(0, 4), [
     "timeline_event",
     "relationship_event",
     "relationship_state",
@@ -2604,7 +2604,7 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
     "evidenced_by",
   ]);
   assert.deepEqual(userPayload.requiredEvidence, ["source_note:scene_source_test", "chat:chat_test"]);
-  assert.deepEqual(userPayload.allowedBuckets, [
+  assert.deepEqual(userPayload.allowedStreams, [
     "timeline_event",
     "character_fact",
     "relationship_event",
@@ -2615,7 +2615,21 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
     "tone",
     "anchor",
   ]);
+  assert.deepEqual(userPayload.streamDescriptions, {
+    timeline_event: "source-summary scene/plot pivot, decision, action, discovery, fight outcome, promise, arrival, or departure; not the live current scene",
+    character_fact: "durable character identity/trait/role/affiliation/backstory/belief/permanent status/development/ability/item/exact voice quote; not ordinary scene action or transient condition",
+    relationship_event: "evidence-backed interpersonal event or history item",
+    relationship_state: "current reduced relationship state backed by same-pass relationship_event or existing relationship note",
+    relationship_conflict: "unresolved contradiction or instability",
+    world_fact: "stable world/lore fact",
+    thread: "unresolved situation, question, tension, or goal with a clear future resolver",
+    tone: "durable world/session atmospheric register or recurring style only",
+    anchor: "recurring motif, planted callback, or continuity anchor",
+  });
   const payloadJson = JSON.stringify(userPayload);
+  assert(!payloadJson.includes("allowedBuckets"));
+  assert(!payloadJson.includes("bucketScanOrder"));
+  assert(!payloadJson.includes("\"buckets\""));
   assert(!payloadJson.includes("relationship_arc"));
   assert(!payloadJson.includes("current_scene"));
   assert(!payloadJson.includes("current_state"));
@@ -2641,6 +2655,8 @@ test("default ltm extraction prompt forbids thinking and non-json wrapper text",
       "Do not include thinking, analysis, markdown, or <think> tags. Output JSON object only.",
     ),
   );
+  assert(DEFAULT_LTM_EXTRACTION_PROMPT.includes("Extract every distinct durable memory stream supported by the source."));
+  assert(!DEFAULT_LTM_EXTRACTION_PROMPT.includes("bucket"));
 });
 
 test("evidence unit extraction retries reasoning none with low when provider rejects it", async () => {

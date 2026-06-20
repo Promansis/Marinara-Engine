@@ -414,7 +414,7 @@ export function LongTermMemoryExtractionSettingsEditor({
   const handleDuplicatePromptTemplate = useCallback(
     (template: ExtractionPromptTemplate | null) => {
       setEditingTemplateId(null);
-      setTemplateNameDraft(`${template?.name ?? "Built-in default"} copy`);
+      setTemplateNameDraft(`${template?.name ?? "Built-in Extraction Prompt"} copy`);
       setTemplatePromptDraft(template?.prompt ?? draft?.systemPrompt.trim() ?? "");
       setTemplateEditorOpen(true);
     },
@@ -602,18 +602,17 @@ export function LongTermMemoryExtractionSettingsEditor({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-xs font-semibold text-[var(--foreground)]">
             <SlidersHorizontal size="0.875rem" />
-            Prompt
+            Extraction Prompt
           </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => {
                 set("systemPrompt", "");
-                set("extraInstruction", "");
               }}
               className="rounded-md px-2 py-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
             >
-              Reset prompt
+              Reset Extraction Prompt
             </button>
             <button
               type="button"
@@ -644,7 +643,7 @@ export function LongTermMemoryExtractionSettingsEditor({
               aria-label="Extraction prompt template"
             >
               <span className="min-w-0 truncate">
-                {activePromptTemplate ? activePromptTemplate.name : "Built-in default"}
+                {activePromptTemplate ? activePromptTemplate.name : "Built-in Extraction Prompt"}
               </span>
               <ChevronRight
                 size="0.75rem"
@@ -670,7 +669,7 @@ export function LongTermMemoryExtractionSettingsEditor({
                       : "hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
                   )}
                 >
-                  Built-in default
+                  Built-in Extraction Prompt
                 </button>
                 {promptTemplates.map((template) => (
                   <button
@@ -695,8 +694,8 @@ export function LongTermMemoryExtractionSettingsEditor({
             type="button"
             onClick={() => handleDuplicatePromptTemplate(activePromptTemplate)}
             className="rounded-md p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-            title="Copy current prompt to a new template"
-            aria-label="Copy current prompt to a new template"
+            title="Copy current extraction prompt to a new template"
+            aria-label="Copy current extraction prompt to a new template"
           >
             <Copy size="0.75rem" />
           </button>
@@ -756,7 +755,7 @@ export function LongTermMemoryExtractionSettingsEditor({
               className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-[var(--border)] bg-[var(--accent)]/35 px-2 py-1.5 text-[0.625rem] font-semibold text-[var(--foreground)] transition-colors hover:bg-[var(--accent)]"
             >
               <Plus size="0.6875rem" />
-              New template
+              New Extraction Template
             </button>
 
             {templateNameDraft || templatePromptDraft ? (
@@ -772,7 +771,7 @@ export function LongTermMemoryExtractionSettingsEditor({
                   value={templatePromptDraft}
                   onChange={(event) => setTemplatePromptDraft(event.target.value)}
                   rows={8}
-                  placeholder="Prompt instructions for extraction..."
+                  placeholder="Extraction prompt instructions..."
                   className="max-h-48 w-full resize-y rounded-md bg-[var(--card)] px-2 py-1.5 font-mono text-[0.625rem] leading-relaxed text-[var(--foreground)] ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                 />
                 <div className="flex justify-end gap-1">
@@ -798,7 +797,7 @@ export function LongTermMemoryExtractionSettingsEditor({
           </div>
         ) : null}
 
-        <SettingField label={activePromptTemplate ? "Selected template prompt" : "System prompt override"}>
+        <SettingField label={activePromptTemplate ? "Selected Extraction Prompt" : "Default Extraction Prompt"}>
           <textarea
             value={draft.systemPrompt}
             onChange={(event) => set("systemPrompt", event.target.value)}
@@ -812,8 +811,8 @@ export function LongTermMemoryExtractionSettingsEditor({
         </SettingField>
         {activePromptTemplate ? (
           <p className={helperTextClassName}>
-            Source-memory extraction uses the selected template above. Clear the selection to edit the fallback prompt
-            override directly.
+            Source-note extraction uses the selected template above. Clear the selection to edit the built-in
+            extraction prompt directly.
           </p>
         ) : null}
         <SettingField label="Extra user instruction">
