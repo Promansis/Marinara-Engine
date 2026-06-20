@@ -50,7 +50,6 @@ import {
   useLongTermMemoryStatus,
   useRebuildLongTermMemory,
   useRepairLongTermMemory,
-  useReplayLongTermMemory,
   useSearchLongTermMemory,
   useUpdateLongTermMemorySettings,
   type LtmGlobalSettings,
@@ -2199,13 +2198,11 @@ function ChatMemorySettings({
   activeChat,
   integrity,
   rebuild,
-  replay,
   repair,
 }: {
   activeChat?: Chat | null;
   integrity: ReturnType<typeof useLongTermMemoryIntegrity>;
   rebuild: ReturnType<typeof useRebuildLongTermMemory>;
-  replay: ReturnType<typeof useReplayLongTermMemory>;
   repair: ReturnType<typeof useRepairLongTermMemory>;
 }) {
   const settings = useLongTermMemorySettings();
@@ -2818,18 +2815,6 @@ function ChatMemorySettings({
               </ToolButton>
               <ToolButton
                 onClick={() =>
-                  replay
-                    .mutateAsync()
-                    .then((result) => toast(result.replayable ? "Memory history looks healthy" : result.messages[0]))
-                    .catch((err: Error) => toast.error(err.message))
-                }
-                disabled={replay.isPending}
-              >
-                <History size="0.875rem" />
-                Check Memory History
-              </ToolButton>
-              <ToolButton
-                onClick={() =>
                   repair
                     .mutateAsync(["quarantine_malformed_notes", "rebuild_indexes"])
                     .then(() => toast.success("Repair actions finished"))
@@ -2997,7 +2982,6 @@ export function LongTermMemoryPanel() {
     importSource === "chats" ? navigatorScope : undefined,
   );
   const rebuild = useRebuildLongTermMemory();
-  const replay = useReplayLongTermMemory();
   const repair = useRepairLongTermMemory();
   const deleteNotes = useDeleteLongTermMemoryNotes();
   const importSourceNotes = useImportLongTermMemorySourceNotes();
@@ -3701,7 +3685,6 @@ export function LongTermMemoryPanel() {
             activeChat={activeChat}
             integrity={integrity}
             rebuild={rebuild}
-            replay={replay}
             repair={repair}
           />
         </div>

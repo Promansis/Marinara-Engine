@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rename, rm, unlink } from "node:fs/promises";
-import { basename, dirname, join, relative } from "node:path";
+import { mkdir, readdir, readFile, rename, rm } from "node:fs/promises";
+import { basename, join, relative } from "node:path";
 import {
   normalizeChatSummaryEntries,
   ltmExtractionResponseSchema,
@@ -32,7 +32,6 @@ import {
 } from "./paths.js";
 import { rebuildLongTermMemoryIndexes } from "./rebuild.js";
 import { LongTermMemoryStorage } from "./storage.js";
-import { writeJsonAtomic } from "./atomic-json.js";
 
 type IntegritySeverity = "info" | "warning" | "error";
 type IntegrityIssue = {
@@ -97,17 +96,6 @@ export interface LtmIntegrityResult {
   noteCount: number;
   eventCount: number;
   issues: IntegrityIssue[];
-}
-
-export interface LtmReplayAuditResult {
-  replayable: boolean;
-  checkedAt: string;
-  replayRoot: string;
-  eventCount: number;
-  unsupportedEventCount: number;
-  replayedEventCount: number;
-  driftCount: number | null;
-  messages: string[];
 }
 
 export interface LtmRepairResult {
@@ -262,14 +250,6 @@ async function checkEventLogIntegrity(root: string, issues: IntegrityIssue[]) {
   return eventCount;
 }
 
-async function writeReplayNoteExact(root: string, note: LtmNote) {
-  const parsed = ltmNoteSchema.parse({
-    ...note,
-    scope: normalizeLegacyNoteScope(note.scope),
-  });
-  await writeJsonAtomic(notePathForId(parsed.id, parsed.type, root), parsed);
-}
-
 export async function checkLongTermMemoryIntegrity(root = getLongTermMemoryRoot()): Promise<LtmIntegrityResult> {
   const storage = new LongTermMemoryStorage(root);
   await storage.initializeLtmStore();
@@ -346,134 +326,6 @@ export async function checkLongTermMemoryIntegrity(root = getLongTermMemoryRoot(
     eventCount,
     issues,
   };
-}
-
-export async function auditLongTermMemoryReplay(root = getLongTermMemoryRoot()): Promise<LtmReplayAuditResult> {
-  return withLtmDebugOperation(
-    {
-      root,
-      phase: "replay",
-      action: "audit_replay",
-      message: "Audit long-term memory replay log",
-    },
-    async (operationId) => {
-      const storage = new LongTermMemoryStorage(root);
-      const events = await storage.readEvents();
-      const replayRoot = join(dirname(root), `${basename(root)}-replay-${Date.now()}`);
-      const replayStorage = new LongTermMemoryStorage(replayRoot);
-      try {
-        await replayStorage.initializeLtmStore();
-        const unsupported = [];
-        let replayedEventCount = 0;
-
-        for (const event of events) {
-          const payload = event.payload ?? {};
-          try {
-            if (payload.note) {
-              if (typeof payload.note !== "object" || Array.isArray(payload.note)) {
-                continue;
-              }
-              const rawNote = payload.note as Record<string, unknown>;
-              const note = ltmNoteSchema.parse({
-                ...rawNote,
-                scope: normalizeLegacyNoteScope(rawNote.scope),
-              });
-              if (event.type.endsWith(".created")) {
-                await replayStorage.createNote(note, {
-                  actor: "replay",
-                  cause: event.id,
-                  summary: event.summary,
-                  payload: { sourceEventId: event.id },
-                  suppressEvent: true,
-                });
-              } else if (event.type.endsWith(".deleted")) {
-                await unlink(notePathForId(note.id, note.type, replayRoot)).catch((err) => {
-                  if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-                });
-              } else {
-                await writeReplayNoteExact(replayRoot, note);
-              }
-              replayedEventCount += 1;
-              continue;
-            }
-            if (
-              typeof event.target === "string" &&
-              payload.patch &&
-              typeof payload.patch === "object" &&
-              !Array.isArray(payload.patch)
-            ) {
-              await replayStorage.updateNote(event.target, payload.patch, {
-                actor: "replay",
-                cause: event.id,
-                summary: event.summary,
-                payload: { sourceEventId: event.id },
-                suppressEvent: true,
-              });
-              replayedEventCount += 1;
-              continue;
-            }
-            unsupported.push(event);
-          } catch {
-            unsupported.push(event);
-          }
-        }
-
-        const driftCount = unsupported.length === 0 ? await compareVaults(storage, replayStorage) : null;
-        const result = {
-          replayable: unsupported.length === 0,
-          checkedAt: nowIso(),
-          replayRoot: relative(dirname(root), replayRoot)
-            .split(/[\\/]+/)
-            .join("/"),
-          eventCount: events.length,
-          unsupportedEventCount: unsupported.length,
-          replayedEventCount,
-          driftCount,
-          messages:
-            unsupported.length > 0
-              ? [
-                  "Event log is mutation history, but existing events do not include enough note payload data for full vault replay.",
-                  "Use integrity check plus rebuild for current recovery; future event writers should include note or patch payloads for deterministic replay.",
-                ]
-              : driftCount === 0
-                ? ["Replay finished and matched the current vault."]
-                : [`Replay finished with ${driftCount} note difference(s).`],
-        };
-        await recordLtmDebugEvent({
-          root,
-          operationId,
-          phase: "replay",
-          action: "audit_replay_result",
-          status: result.replayable ? "ok" : "warning",
-          counts: {
-            events: result.eventCount,
-            unsupportedEvents: result.unsupportedEventCount,
-            replayedEvents: result.replayedEventCount,
-            drift: result.driftCount ?? 0,
-          },
-          details: { messages: result.messages },
-        });
-        return result;
-      } finally {
-        await rm(replayRoot, { recursive: true, force: true });
-      }
-    },
-  );
-}
-
-async function compareVaults(left: LongTermMemoryStorage, right: LongTermMemoryStorage) {
-  const [leftNotes, rightNotes] = await Promise.all([left.listNotes(), right.listNotes()]);
-  const rightById = new Map(rightNotes.map((note) => [note.id, stableNote(note)]));
-  let drift = 0;
-  for (const note of leftNotes) {
-    if (stableNote(note) !== rightById.get(note.id)) drift += 1;
-    rightById.delete(note.id);
-  }
-  return drift + rightById.size;
-}
-
-function stableNote(note: LtmNote) {
-  return JSON.stringify(note);
 }
 
 export async function repairLongTermMemory(

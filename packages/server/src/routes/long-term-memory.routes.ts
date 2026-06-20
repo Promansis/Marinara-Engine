@@ -54,7 +54,6 @@ import {
 } from "../services/long-term-memory/debug-log.js";
 import { LongTermMemoryDraftStore } from "../services/long-term-memory/draft-store.js";
 import {
-  auditLongTermMemoryReplay,
   checkLongTermMemoryIntegrity,
   createLongTermMemoryInteropSourceNotes,
   previewLongTermMemoryInterop,
@@ -783,12 +782,6 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
   });
 
   app.get("/integrity", async () => checkLongTermMemoryIntegrity());
-
-  app.post("/replay", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req, reply) => {
-    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory replay audit" })) return;
-    rebuildBodySchema.parse(req.body ?? {});
-    return auditLongTermMemoryReplay();
-  });
 
   app.post<{ Body: unknown }>("/repair", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req, reply) => {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory repair" })) return;

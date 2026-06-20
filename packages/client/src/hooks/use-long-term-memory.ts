@@ -64,14 +64,6 @@ export type LtmIntegrityResponse = {
   issues: LtmIntegrityIssue[];
 };
 
-export type LtmReplayResponse = {
-  replayable: boolean;
-  checkedAt: string;
-  eventCount: number;
-  unsupportedEventCount: number;
-  messages: string[];
-};
-
 export type LtmExtractionSettings = SharedLtmExtractionSettings;
 export type LtmResolvedExtractionSettings = SharedLtmResolvedExtractionSettings;
 export type LtmGlobalSettings = SharedLtmGlobalSettings;
@@ -554,12 +546,6 @@ export function useRebuildLongTermMemory() {
   return useMutation({
     mutationFn: () => api.post("/long-term-memory/rebuild", {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
-  });
-}
-
-export function useReplayLongTermMemory() {
-  return useMutation({
-    mutationFn: () => api.post<LtmReplayResponse>("/long-term-memory/replay", {}),
   });
 }
 
