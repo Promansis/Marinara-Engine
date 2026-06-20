@@ -1,15 +1,17 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, unlink } from "node:fs/promises";
 import {
+  DEFAULT_LTM_GLOBAL_SETTINGS,
   LTM_NOTE_ID_PREFIXES_BY_TYPE,
+  isLtmSourceLikeNote,
   ltmEventSchema,
   ltmExtractionDraftSchema,
+  ltmGlobalSettingsSchema,
   ltmNoteIdSchema,
   ltmNoteSchema,
   ltmNoteTypeSchema,
   ltmPoliciesConfigSchema,
   ltmRetrievalConfigSchema,
-  isLtmSourceLikeNote,
   matchesLtmScope,
   withMergedLtmScopeLinks,
   type LtmScope,
@@ -201,13 +203,19 @@ export class LongTermMemoryStorage {
 
     const policiesPath = safeJoin(dirs.config, "policies.json");
     const retrievalPath = safeJoin(dirs.config, "retrieval.json");
+    const settingsPath = safeJoin(dirs.config, "settings.json");
     const existingPolicies = ltmPoliciesConfigSchema.parse(await readJsonFile(policiesPath, DEFAULT_LTM_POLICIES));
     const existingRetrieval = ltmRetrievalConfigSchema.parse(
       await readJsonFile(retrievalPath, DEFAULT_LTM_RETRIEVAL_CONFIG),
     );
+    const existingSettings = ltmGlobalSettingsSchema.parse(await readJsonFile(settingsPath, { version: 1 }));
 
     await writeJsonIfChanged(policiesPath, existingPolicies);
     await writeJsonIfChanged(retrievalPath, existingRetrieval);
+    await writeJsonIfChanged(
+      settingsPath,
+      existingSettings.version === 1 ? existingSettings : DEFAULT_LTM_GLOBAL_SETTINGS,
+    );
   }
 
   async listNotes(filter: LtmListNotesFilter = {}) {
@@ -318,9 +326,7 @@ export class LongTermMemoryStorage {
     const existing = await this.getRequiredNote(id);
     const relatedNotes = isLtmSourceLikeNote(existing) ? await this.listNotes() : [];
     const derived = relatedNotes.filter(
-      (note) =>
-        note.id !== id &&
-        note.links.some((link) => link.relation === "extracted_from" && link.target === id),
+      (note) => note.id !== id && note.links.some((link) => link.relation === "extracted_from" && link.target === id),
     );
     const archiveContext = {
       ...eventContext,

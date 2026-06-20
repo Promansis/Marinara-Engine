@@ -13,6 +13,7 @@ import {
   ltmDebugStatusSchema,
   ltmExtractionModeSchema,
   ltmExtractionSettingsSchema,
+  ltmGlobalSettingsSchema,
   ltmExtractionDraftSchema,
   ltmExtractionResponseSchema,
   ltmIndexMetadataSchema,
@@ -69,6 +70,7 @@ import {
   isLtmSourceNote,
 } from "../services/long-term-memory/source-extraction.js";
 import { getLtmExtractionConfig, updateLtmExtractionConfig } from "../services/long-term-memory/extraction-config.js";
+import { getLtmGlobalSettings, updateLtmGlobalSettings } from "../services/long-term-memory/settings.js";
 import { LongTermMemoryStorage } from "../services/long-term-memory/storage.js";
 import { applyLtmScopeLinksToDerivedNotes } from "../services/long-term-memory/scope-links.js";
 import { ltmModeForChatMode, resolveChatLtmScope } from "../services/long-term-memory/chat-scope.js";
@@ -91,10 +93,13 @@ const ltmIdentifierSchema = z
   .max(120)
   .regex(/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/, "Identifier must be lowercase snake_case.");
 
-const scopedListIdsSchema = z.preprocess((value) => {
-  const values = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
-  return values.map((item) => String(item).trim()).filter(Boolean);
-}, z.array(z.string().min(1).max(120)).max(100).optional());
+const scopedListIdsSchema = z.preprocess(
+  (value) => {
+    const values = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
+    return values.map((item) => String(item).trim()).filter(Boolean);
+  },
+  z.array(z.string().min(1).max(120)).max(100).optional(),
+);
 
 const queryBooleanSchema = z.preprocess((value) => {
   if (value === "false") return false;
@@ -136,25 +141,28 @@ const createNoteBodySchema = z
   })
   .strict();
 
-const updateNoteBodySchema = z.preprocess((value) => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const body = { ...(value as Record<string, unknown>) };
-  if (body.title === null || body.title === "") body.title = undefined;
-  return body;
-}, z
-  .object({
-    title: ltmNoteTitleSchema.optional(),
-    type: ltmNoteTypeSchema.optional(),
-    status: ltmStatusSchema.optional(),
-    modes: z.array(ltmModeSchema).min(1).max(8).optional(),
-    scope: ltmScopeSchema.optional(),
-    tags: z.array(ltmIdentifierSchema).max(100).optional(),
-    links: z.array(ltmLinkSchema).max(250).optional(),
-    sections: z.record(ltmSectionKeySchema, ltmSectionSchema).optional(),
-    conflicts: z.array(ltmConflictSchema).max(250).optional(),
-  })
-  .strict()
-  .refine((value) => Object.keys(value).length > 0, "Patch body must include at least one updatable field."));
+const updateNoteBodySchema = z.preprocess(
+  (value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+    const body = { ...(value as Record<string, unknown>) };
+    if (body.title === null || body.title === "") body.title = undefined;
+    return body;
+  },
+  z
+    .object({
+      title: ltmNoteTitleSchema.optional(),
+      type: ltmNoteTypeSchema.optional(),
+      status: ltmStatusSchema.optional(),
+      modes: z.array(ltmModeSchema).min(1).max(8).optional(),
+      scope: ltmScopeSchema.optional(),
+      tags: z.array(ltmIdentifierSchema).max(100).optional(),
+      links: z.array(ltmLinkSchema).max(250).optional(),
+      sections: z.record(ltmSectionKeySchema, ltmSectionSchema).optional(),
+      conflicts: z.array(ltmConflictSchema).max(250).optional(),
+    })
+    .strict()
+    .refine((value) => Object.keys(value).length > 0, "Patch body must include at least one updatable field."),
+);
 
 const rebuildBodySchema = z.object({}).strict().default({});
 
@@ -494,6 +502,16 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     },
   );
 
+  app.get("/settings", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory settings" })) return;
+    return getLtmGlobalSettings();
+  });
+
+  app.put<{ Body: unknown }>("/settings", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory settings" })) return;
+    return updateLtmGlobalSettings(ltmGlobalSettingsSchema.parse(req.body ?? {}));
+  });
+
   app.get<{ Querystring: unknown }>("/notes", async (req) => {
     const query = listNotesQuerySchema.parse(req.query);
     const scope =
@@ -521,19 +539,23 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     return note;
   });
 
-  app.post<{ Body: unknown }>("/notes/transfer-preview", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req, reply) => {
-    const body = ltmNoteTransferPreviewRequestSchema.parse(req.body ?? {});
-    const destinationChat = await chats.getById(body.destinationChatId);
-    if (!destinationChat) return reply.status(404).send({ error: "Destination chat not found" });
+  app.post<{ Body: unknown }>(
+    "/notes/transfer-preview",
+    { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES },
+    async (req, reply) => {
+      const body = ltmNoteTransferPreviewRequestSchema.parse(req.body ?? {});
+      const destinationChat = await chats.getById(body.destinationChatId);
+      if (!destinationChat) return reply.status(404).send({ error: "Destination chat not found" });
 
-    try {
-      return ltmNoteTransferPreviewResponseSchema.parse(await previewLtmNoteTransfer(body, destinationChat));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to preview long-term memory transfer";
-      const status = err instanceof LtmNoteTransferError ? err.statusCode : 500;
-      return reply.status(status).send({ error: message });
-    }
-  });
+      try {
+        return ltmNoteTransferPreviewResponseSchema.parse(await previewLtmNoteTransfer(body, destinationChat));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to preview long-term memory transfer";
+        const status = err instanceof LtmNoteTransferError ? err.statusCode : 500;
+        return reply.status(status).send({ error: message });
+      }
+    },
+  );
 
   app.post<{ Body: unknown }>("/notes/transfer", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req, reply) => {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory note transfer" })) return;
@@ -662,7 +684,9 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
         cause: "api.patch",
         summary: "Updated via long-term memory maintenance API",
       });
-      await rebuildLongTermMemoryIndexes({ scope: rebuildScopeForNote(existing) === "source" ? "source" : rebuildScopeForNote(note) });
+      await rebuildLongTermMemoryIndexes({
+        scope: rebuildScopeForNote(existing) === "source" ? "source" : rebuildScopeForNote(note),
+      });
       return note;
     },
   );
@@ -774,7 +798,13 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
 
   app.post<{ Body: unknown }>("/import/preview", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req) => {
     const body = interopBodySchema.parse(req.body);
-    return previewLongTermMemoryInterop(app.db, body.source as LtmInteropSource, body.limit, getLongTermMemoryRoot(), body.scope);
+    return previewLongTermMemoryInterop(
+      app.db,
+      body.source as LtmInteropSource,
+      body.limit,
+      getLongTermMemoryRoot(),
+      body.scope,
+    );
   });
 
   app.post<{ Body: unknown }>(
@@ -971,20 +1001,23 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     return { deleted: true, draftId: id, mutationIds: body.mutationIds, draft: result.draft };
   });
 
-  app.delete<{ Params: { id: string; mutationId: string } }>("/drafts/:id/mutations/:mutationId", async (req, reply) => {
-    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft mutation deletion" })) return;
-    const { id, mutationId } = draftMutationParamSchema.parse(req.params);
-    const result = await draftStore.withDraftLock(id, () => draftStore.deleteDraftMutation(id, mutationId));
-    if (!result.deleted) {
-      const status = result.reason === "not_pending" ? 409 : 404;
-      const error =
-        result.reason === "not_pending"
-          ? "Long-term memory draft mutation can only be removed from pending drafts"
-          : "Long-term memory draft mutation not found";
-      return reply.status(status).send({ error });
-    }
-    return { deleted: true, draftId: id, mutationId, draft: result.draft };
-  });
+  app.delete<{ Params: { id: string; mutationId: string } }>(
+    "/drafts/:id/mutations/:mutationId",
+    async (req, reply) => {
+      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft mutation deletion" })) return;
+      const { id, mutationId } = draftMutationParamSchema.parse(req.params);
+      const result = await draftStore.withDraftLock(id, () => draftStore.deleteDraftMutation(id, mutationId));
+      if (!result.deleted) {
+        const status = result.reason === "not_pending" ? 409 : 404;
+        const error =
+          result.reason === "not_pending"
+            ? "Long-term memory draft mutation can only be removed from pending drafts"
+            : "Long-term memory draft mutation not found";
+        return reply.status(status).send({ error });
+      }
+      return { deleted: true, draftId: id, mutationId, draft: result.draft };
+    },
+  );
 
   app.delete<{ Params: { id: string } }>("/drafts/:id", async (req, reply) => {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft deletion" })) return;

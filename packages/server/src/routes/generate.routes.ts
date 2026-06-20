@@ -154,6 +154,7 @@ import { PROFESSOR_MARI_ID } from "@marinara-engine/shared";
 import { chunkAndEmbedMessages, embedMemoryRecallTexts, recallMemories } from "../services/memory-recall.js";
 import { resolveMemoryRecallEmbeddingSource } from "../services/memory-recall-embedding.js";
 import { recordLtmDebugEvent } from "../services/long-term-memory/debug-log.js";
+import { getLtmGlobalSettings } from "../services/long-term-memory/settings.js";
 import { recordLongTermMemoryInjection } from "../services/long-term-memory/usage.js";
 import {
   applyGenerationLongTermMemoryInjection,
@@ -1909,6 +1910,7 @@ export async function generateRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: "No base URL configured for this connection" });
     }
     let chatMeta = parseExtra(chat.metadata) as Record<string, unknown>;
+    const ltmGlobalSettings = await getLtmGlobalSettings();
     const promptTimeZone =
       normalizePromptTimeZone(chatMeta.promptTimeZone) ?? normalizePromptTimeZone(input.userTimeZone);
     const promptNow = toZonedWallClockDate(new Date(), promptTimeZone);
@@ -1976,8 +1978,7 @@ export async function generateRoutes(app: FastifyInstance) {
       const allChatMessages = await chats.listMessages(input.chatId);
       const chatMode = requestChatMode;
       const lorebookGenerationTriggers = resolveLorebookGenerationTriggers(input, chatMode);
-      const supportsHiddenFromAI =
-        chatMode === "conversation" || chatMode === "roleplay";
+      const supportsHiddenFromAI = chatMode === "conversation" || chatMode === "roleplay";
       const preferLatestVisibleGameState = shouldPreferLatestVisibleGameState(input);
 
       // ── Conversation-start filter: find the latest "isConversationStart" marker ──
@@ -2447,16 +2448,14 @@ export async function generateRoutes(app: FastifyInstance) {
             presets.listChoiceBlocksForPreset(presetId),
           ]);
           const presetGameState = chatMode === "game" ? await selectedGameStateForPrompt() : null;
-          let presetLongTermMemory:
-            | {
-                operationId: string;
-                startedAt: number;
-                plan: ReturnType<typeof buildGenerationLongTermMemoryPlan>;
-                retrieval: Awaited<ReturnType<typeof retrieveGenerationLongTermMemoryBlock>>["retrieval"];
-                block: string;
-              }
-            | null = null;
-          if (chatMeta.enableLongTermMemory === true) {
+          let presetLongTermMemory: {
+            operationId: string;
+            startedAt: number;
+            plan: ReturnType<typeof buildGenerationLongTermMemoryPlan>;
+            retrieval: Awaited<ReturnType<typeof retrieveGenerationLongTermMemoryBlock>>["retrieval"];
+            block: string;
+          } | null = null;
+          if (ltmGlobalSettings.enableLongTermMemory) {
             const startedAt = Date.now();
             const operationId = randomUUID();
             const plan = buildGenerationLongTermMemoryPlan({
@@ -2467,6 +2466,7 @@ export async function generateRoutes(app: FastifyInstance) {
               activeCharacterNames: promptMacroContext.characters,
               inputMessages: currentInputMessages(),
               chatMeta,
+              globalSettings: ltmGlobalSettings,
               userMessage: input.userMessage ?? undefined,
               generationGuide: typeof input.generationGuide === "string" ? input.generationGuide : undefined,
               lorebookGenerationTriggers,
@@ -2623,7 +2623,9 @@ export async function generateRoutes(app: FastifyInstance) {
                 maxTokens: retrieval.maxTokens,
               },
             };
-            const firstHistoryMessage = assembled.messages.find((message) => message.role === "user" || message.role === "assistant");
+            const firstHistoryMessage = assembled.messages.find(
+              (message) => message.role === "user" || message.role === "assistant",
+            );
             const insertedBeforeRole = firstHistoryMessage?.role ?? null;
             const systemPromptCount = assembled.messages.filter((message) => message.role === "system").length;
 
@@ -5304,9 +5306,7 @@ export async function generateRoutes(app: FastifyInstance) {
         }
 
         const roleplayDmCommandsEnabled =
-          chatMode === "roleplay" &&
-          chatMeta.roleplayDmCommandsEnabled === true &&
-          !input.impersonate;
+          chatMode === "roleplay" && chatMeta.roleplayDmCommandsEnabled === true && !input.impersonate;
         if (roleplayDmCommandsEnabled) {
           const dmTargetHint =
             charInfo
@@ -5402,7 +5402,7 @@ export async function generateRoutes(app: FastifyInstance) {
         const allowLatestGameStateFallback = !input.regenerateMessageId;
         const gameState = latestGameState ? parseGameStateRow(latestGameState as Record<string, unknown>) : null;
         // ── Long-term memory: opt-in local retrieval before final context fitting ──
-        if (chatMeta.enableLongTermMemory === true && !presetId) {
+        if (ltmGlobalSettings.enableLongTermMemory && !presetId) {
           const _tLtm = Date.now();
           const ltmInjectionOperationId = randomUUID();
           const ltmPlan = buildGenerationLongTermMemoryPlan({
@@ -5413,6 +5413,7 @@ export async function generateRoutes(app: FastifyInstance) {
             activeCharacterNames: charInfo.map((character) => character.name),
             inputMessages: currentInputMessages(),
             chatMeta,
+            globalSettings: ltmGlobalSettings,
             userMessage: input.userMessage ?? undefined,
             generationGuide: typeof input.generationGuide === "string" ? input.generationGuide : undefined,
             lorebookGenerationTriggers,

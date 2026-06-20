@@ -10,6 +10,7 @@ import type {
   LtmExtractionOutcome,
   LtmExtractionResponse,
   LtmExtractionSettings as SharedLtmExtractionSettings,
+  LtmGlobalSettings as SharedLtmGlobalSettings,
   LtmNote,
   LtmNoteTransferApplyResponse,
   LtmNoteTransferMode,
@@ -17,6 +18,7 @@ import type {
   LtmNoteTransferPreviewResponse,
   LtmNoteType,
   LtmResolvedExtractionSettings as SharedLtmResolvedExtractionSettings,
+  LtmResolvedGlobalSettings as SharedLtmResolvedGlobalSettings,
   LtmScope,
   LtmStatus,
 } from "@marinara-engine/shared";
@@ -72,6 +74,8 @@ export type LtmReplayResponse = {
 
 export type LtmExtractionSettings = SharedLtmExtractionSettings;
 export type LtmResolvedExtractionSettings = SharedLtmResolvedExtractionSettings;
+export type LtmGlobalSettings = SharedLtmGlobalSettings;
+export type LtmResolvedGlobalSettings = SharedLtmResolvedGlobalSettings;
 
 export type LtmRepairResponse = {
   repairedAt: string;
@@ -275,6 +279,7 @@ export const longTermMemoryKeys = {
   importPreview: (source: LtmInteropSource, limit: number, scope?: LtmScope) =>
     [...longTermMemoryKeys.all, "import-preview", source, limit, scope ?? {}] as const,
   extractionSettings: () => [...longTermMemoryKeys.all, "extraction-settings"] as const,
+  settings: () => [...longTermMemoryKeys.all, "settings"] as const,
   debugLogs: () => [...longTermMemoryKeys.all, "debug-log"] as const,
   debugLog: (filter?: LtmDebugLogFilter) => [...longTermMemoryKeys.all, "debug-log", filter ?? {}] as const,
 };
@@ -481,6 +486,26 @@ export function useUpdateLongTermMemoryExtractionSettings() {
     onSuccess: (settings) => {
       qc.setQueryData(longTermMemoryKeys.extractionSettings(), settings);
       qc.invalidateQueries({ queryKey: longTermMemoryKeys.extractionSettings() });
+    },
+  });
+}
+
+export function useLongTermMemorySettings(options: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: longTermMemoryKeys.settings(),
+    queryFn: () => api.get<LtmResolvedGlobalSettings>("/long-term-memory/settings"),
+    enabled: options.enabled ?? true,
+    staleTime: 30_000,
+  });
+}
+
+export function useUpdateLongTermMemorySettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: LtmGlobalSettings) => api.put<LtmResolvedGlobalSettings>("/long-term-memory/settings", data),
+    onSuccess: (settings) => {
+      qc.setQueryData(longTermMemoryKeys.settings(), settings);
+      qc.invalidateQueries({ queryKey: longTermMemoryKeys.settings() });
     },
   });
 }

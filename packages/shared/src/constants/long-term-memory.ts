@@ -48,6 +48,8 @@ export const LTM_RECALL_STYLE_WEIGHTS = {
   }
 >;
 
+export const DEFAULT_LTM_RECALL_STYLE_WEIGHTS = LTM_RECALL_STYLE_WEIGHTS[DEFAULT_LTM_RECALL_STYLE];
+
 export type LtmRecallWeights = {
   semanticWeight: number;
   lexicalWeight: number;
@@ -59,7 +61,10 @@ export function clampLtmRecallWeight(value: unknown, fallback: number, min = 0, 
   return typeof value === "number" && Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
 }
 
-export function readLtmRecallWeightOverrides(metadata: Record<string, unknown>, fallback: LtmRecallWeights): LtmRecallWeights {
+export function readLtmRecallWeightOverrides(
+  metadata: Record<string, unknown>,
+  fallback: LtmRecallWeights,
+): LtmRecallWeights {
   const read = (value: unknown, defaultValue: number, min: number, max: number) =>
     typeof value === "number" && Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : defaultValue;
   return {

@@ -15,6 +15,7 @@ export type {
   LtmExtractionResponse,
   LtmExtractionSettings,
   LtmExtractionVerbosity,
+  LtmGlobalSettings,
   LtmIndexMetadata,
   LtmLink,
   LtmMode,
@@ -39,4 +40,5 @@ export type {
   LtmTransferRebuildSummary,
   LtmNoteTransferPreviewItem,
   LtmResolvedExtractionSettings,
+  LtmResolvedGlobalSettings,
 } from "../schemas/long-term-memory.schema.js";

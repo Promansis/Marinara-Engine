@@ -2,7 +2,11 @@
 // Long-Term Memory Zod Schemas
 // ──────────────────────────────────────────────
 import { z } from "zod";
-import { LTM_DRAFT_MUTATION_LIMIT } from "../constants/long-term-memory.js";
+import {
+  DEFAULT_LTM_RECALL_STYLE,
+  DEFAULT_LTM_RECALL_STYLE_WEIGHTS,
+  LTM_DRAFT_MUTATION_LIMIT,
+} from "../constants/long-term-memory.js";
 
 export const ltmNoteTypeSchema = z.enum([
   "source",
@@ -41,6 +45,94 @@ export const ltmExtractionReasoningEffortSchema = z.enum(["none", "low", "medium
 export const ltmExtractionVerbositySchema = z.enum(["low", "medium", "high"]);
 
 export const ltmExtractionModeSchema = z.enum(["fast", "balanced"]);
+
+const ltmGlobalSettingsShape = z
+  .object({
+    version: z.literal(1).default(1),
+    enableLongTermMemory: z.boolean().optional(),
+    longTermMemoryBudgetTokens: z.number().int().min(128).max(16_384).optional(),
+    longTermMemoryMaxChunks: z.number().int().min(1).max(100).optional(),
+    longTermMemoryScoreThreshold: z.number().finite().min(0).max(1).optional(),
+    longTermMemoryRecallContextMessages: z.number().int().min(1).max(20).optional(),
+    longTermMemoryRecallStyle: z.enum(["balanced", "exact", "broad", "story"]).optional(),
+    longTermMemorySemanticWeight: z.number().finite().min(0).max(1).nullable().optional(),
+    longTermMemoryLexicalWeight: z.number().finite().min(0).max(1).nullable().optional(),
+    longTermMemoryGraphWeight: z.number().finite().min(0).max(1).nullable().optional(),
+    longTermMemoryMetadataWeight: z.number().finite().min(0).max(2).nullable().optional(),
+    longTermMemoryIncludeResolved: z.boolean().optional(),
+    longTermMemoryDebug: z.boolean().optional(),
+    extractionMode: ltmExtractionModeSchema.optional(),
+    importConcurrency: z.number().int().min(1).max(10).optional(),
+    connectionId: z.string().max(120).optional(),
+    model: z.string().max(240).optional(),
+    instruction: z.string().max(2_000).optional(),
+    autoApplyLowRisk: z.boolean().optional(),
+  })
+  .strict();
+
+export const ltmGlobalSettingsSchema = z.preprocess((value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const input = value as Record<string, unknown>;
+  const normalized = { ...input };
+  if ("longTermMemoryRecallStyle" in normalized) {
+    normalized.longTermMemoryRecallStyle =
+      input.longTermMemoryRecallStyle === "exact" ||
+      input.longTermMemoryRecallStyle === "broad" ||
+      input.longTermMemoryRecallStyle === "story" ||
+      input.longTermMemoryRecallStyle === "balanced"
+        ? input.longTermMemoryRecallStyle
+        : undefined;
+  }
+  return {
+    ...normalized,
+  };
+}, ltmGlobalSettingsShape);
+
+export const ltmResolvedGlobalSettingsSchema = z
+  .object({
+    version: z.literal(1),
+    enableLongTermMemory: z.boolean(),
+    longTermMemoryBudgetTokens: z.number().int().min(128).max(16_384),
+    longTermMemoryMaxChunks: z.number().int().min(1).max(100),
+    longTermMemoryScoreThreshold: z.number().finite().min(0).max(1),
+    longTermMemoryRecallContextMessages: z.number().int().min(1).max(20),
+    longTermMemoryRecallStyle: z.enum(["balanced", "exact", "broad", "story"]),
+    longTermMemorySemanticWeight: z.number().finite().min(0).max(1),
+    longTermMemoryLexicalWeight: z.number().finite().min(0).max(1),
+    longTermMemoryGraphWeight: z.number().finite().min(0).max(1),
+    longTermMemoryMetadataWeight: z.number().finite().min(0).max(2),
+    longTermMemoryIncludeResolved: z.boolean(),
+    longTermMemoryDebug: z.boolean(),
+    extractionMode: ltmExtractionModeSchema,
+    importConcurrency: z.number().int().min(1).max(10),
+    connectionId: z.string().max(120),
+    model: z.string().max(240),
+    instruction: z.string().max(2_000),
+    autoApplyLowRisk: z.boolean(),
+  })
+  .strict();
+
+export const DEFAULT_LTM_GLOBAL_SETTINGS = ltmResolvedGlobalSettingsSchema.parse({
+  version: 1,
+  enableLongTermMemory: true,
+  longTermMemoryBudgetTokens: 2048,
+  longTermMemoryMaxChunks: 12,
+  longTermMemoryScoreThreshold: 0,
+  longTermMemoryRecallContextMessages: 4,
+  longTermMemoryRecallStyle: DEFAULT_LTM_RECALL_STYLE,
+  longTermMemorySemanticWeight: DEFAULT_LTM_RECALL_STYLE_WEIGHTS.semanticWeight,
+  longTermMemoryLexicalWeight: DEFAULT_LTM_RECALL_STYLE_WEIGHTS.lexicalWeight,
+  longTermMemoryGraphWeight: DEFAULT_LTM_RECALL_STYLE_WEIGHTS.graphWeight,
+  longTermMemoryMetadataWeight: DEFAULT_LTM_RECALL_STYLE_WEIGHTS.metadataWeight,
+  longTermMemoryIncludeResolved: false,
+  longTermMemoryDebug: false,
+  extractionMode: "fast",
+  importConcurrency: 3,
+  connectionId: "",
+  model: "",
+  instruction: "",
+  autoApplyLowRisk: false,
+});
 
 export const ltmExtractionPromptTemplateSchema = z
   .object({
@@ -131,10 +223,7 @@ export function hasLtmSourceSummarySceneTag(tags: readonly string[]) {
   return LTM_SOURCE_SUMMARY_SCENE_TAGS.some((tag) => tags.includes(tag));
 }
 
-export function isLtmSourceLikeNote(note: {
-  type: z.infer<typeof ltmNoteTypeSchema>;
-  tags: readonly string[];
-}) {
+export function isLtmSourceLikeNote(note: { type: z.infer<typeof ltmNoteTypeSchema>; tags: readonly string[] }) {
   return note.type === "source" || (note.type === "scene" && hasLtmSourceSummarySceneTag(note.tags));
 }
 
@@ -693,6 +782,8 @@ export type LtmEvidenceUnitBucket = z.infer<typeof ltmEvidenceUnitBucketSchema>;
 export type LtmExtractionReasoningEffort = z.infer<typeof ltmExtractionReasoningEffortSchema>;
 export type LtmExtractionVerbosity = z.infer<typeof ltmExtractionVerbositySchema>;
 export type LtmExtractionMode = z.infer<typeof ltmExtractionModeSchema>;
+export type LtmGlobalSettings = z.infer<typeof ltmGlobalSettingsSchema>;
+export type LtmResolvedGlobalSettings = z.infer<typeof ltmResolvedGlobalSettingsSchema>;
 export type LtmExtractionSettings = z.infer<typeof ltmExtractionSettingsSchema>;
 export type LtmResolvedExtractionSettings = z.infer<typeof ltmResolvedExtractionSettingsSchema>;
 export type LtmMode = z.infer<typeof ltmModeSchema>;

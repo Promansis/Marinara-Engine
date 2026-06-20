@@ -27,13 +27,15 @@ import {
 } from "@marinara-engine/shared";
 import {
   useLongTermMemoryExtractionSettings,
+  useLongTermMemorySettings,
   useUpdateLongTermMemoryExtractionSettings,
+  useUpdateLongTermMemorySettings,
+  type LtmGlobalSettings,
   type LtmExtractionSettings,
   type LtmResolvedExtractionSettings,
 } from "../../hooks/use-long-term-memory";
 import { useConnections } from "../../hooks/use-connections";
 import { api } from "../../lib/api-client";
-import { useUIStore } from "../../stores/ui.store";
 import { cn, generateClientId } from "../../lib/utils";
 import { Modal } from "../ui/Modal";
 import {
@@ -248,10 +250,10 @@ export function LongTermMemoryExtractionSettingsEditor({
   onClose,
 }: LongTermMemoryExtractionSettingsEditorProps) {
   const settings = useLongTermMemoryExtractionSettings({ enabled });
+  const globalSettings = useLongTermMemorySettings({ enabled });
   const updateSettings = useUpdateLongTermMemoryExtractionSettings();
+  const updateGlobalSettings = useUpdateLongTermMemorySettings();
   const connectionsQuery = useConnections();
-  const ltmPanelPreferences = useUIStore((state) => state.ltmPanelPreferences);
-  const setLtmPanelPreferences = useUIStore((state) => state.setLtmPanelPreferences);
   const [draft, setDraft] = useState<ExtractionSettingsDraft | null>(null);
   const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
   const [templateSelectOpen, setTemplateSelectOpen] = useState(false);
@@ -264,7 +266,11 @@ export function LongTermMemoryExtractionSettingsEditor({
   const promptTemplates = useMemo(() => settings.data?.promptTemplates ?? [], [settings.data?.promptTemplates]);
   const textConnections = useMemo(
     () =>
-      ((connectionsQuery.data as Array<{ id: string; name: string; model?: string | null; provider?: string }> | undefined) ?? [])
+      (
+        (connectionsQuery.data as
+          | Array<{ id: string; name: string; model?: string | null; provider?: string }>
+          | undefined) ?? []
+      )
         .filter((connection) => connection.provider !== "image_generation")
         .sort((left, right) => left.name.localeCompare(right.name)),
     [connectionsQuery.data],
@@ -274,6 +280,14 @@ export function LongTermMemoryExtractionSettingsEditor({
   const isEditingExistingTemplate = Boolean(editingTemplateId);
   const hasTemplateDraft = Boolean(templateNameDraft.trim() && templatePromptDraft.trim());
   const introCardClassName = mode === "modal" ? modalIntroCardClassName : panelIntroCardClassName;
+  const patchGlobalSettings = useCallback(
+    (patch: LtmGlobalSettings) => {
+      updateGlobalSettings.mutate(patch, {
+        onError: (err) => toast.error((err as Error).message),
+      });
+    },
+    [updateGlobalSettings],
+  );
 
   useEffect(() => {
     if (enabled && settings.data) {
@@ -291,12 +305,9 @@ export function LongTermMemoryExtractionSettingsEditor({
     [draft, settings.data],
   );
 
-  const set = useCallback(
-    <K extends keyof ExtractionSettingsDraft>(key: K, value: ExtractionSettingsDraft[K]) => {
-      setDraft((current) => (current ? { ...current, [key]: value } : current));
-    },
-    [],
-  );
+  const set = useCallback(<K extends keyof ExtractionSettingsDraft>(key: K, value: ExtractionSettingsDraft[K]) => {
+    setDraft((current) => (current ? { ...current, [key]: value } : current));
+  }, []);
 
   const persistSettings = useCallback(
     (patch: Record<string, unknown>, options?: { quiet?: boolean }) => {
@@ -420,7 +431,7 @@ export function LongTermMemoryExtractionSettingsEditor({
           template.id === editingTemplateId ? { ...template, name: trimmedName, prompt: trimmedPrompt } : template,
         )
       : [...currentTemplates, { id: generateClientId(), name: trimmedName, prompt: trimmedPrompt }];
-    const nextActiveId = isEditingExistingTemplate ? activePromptTemplateId : nextTemplates.at(-1)?.id ?? null;
+    const nextActiveId = isEditingExistingTemplate ? activePromptTemplateId : (nextTemplates.at(-1)?.id ?? null);
     persistSettings({
       ...(draft ? payloadFromDraft(draft) : {}),
       promptTemplates: nextTemplates,
@@ -481,7 +492,7 @@ export function LongTermMemoryExtractionSettingsEditor({
     );
   }
 
-  if (settings.isLoading || !draft) {
+  if (settings.isLoading || globalSettings.isLoading || !draft || !globalSettings.data) {
     return (
       <div className="grid min-h-52 place-items-center text-[var(--muted-foreground)]">
         <Loader2 size="1.25rem" className="animate-spin" />
@@ -509,7 +520,8 @@ export function LongTermMemoryExtractionSettingsEditor({
           </button>
         </div>
         <p className={cn("mt-2", helperTextClassName)}>
-          Tune how source notes become typed memories while keeping the same dense settings vocabulary used elsewhere in Marinara.
+          Tune how source notes become typed memories while keeping the same dense settings vocabulary used elsewhere in
+          Marinara.
         </p>
       </div>
 
@@ -518,8 +530,10 @@ export function LongTermMemoryExtractionSettingsEditor({
         <div className="grid gap-3 sm:grid-cols-2">
           <SettingField label="Extraction mode">
             <select
-              value={ltmPanelPreferences.extractionMode}
-              onChange={(event) => setLtmPanelPreferences({ extractionMode: event.target.value as "fast" | "balanced" })}
+              value={globalSettings.data.extractionMode}
+              onChange={(event) =>
+                patchGlobalSettings({ version: 1, extractionMode: event.target.value as "fast" | "balanced" })
+              }
               className={compactInputClassName}
             >
               <option value="fast">Fast - skip memory lookup</option>
@@ -531,15 +545,15 @@ export function LongTermMemoryExtractionSettingsEditor({
               type="number"
               min={1}
               max={10}
-              value={ltmPanelPreferences.importConcurrency}
-              onChange={(event) => setLtmPanelPreferences({ importConcurrency: Number(event.target.value) })}
+              value={globalSettings.data.importConcurrency}
+              onChange={(event) => patchGlobalSettings({ version: 1, importConcurrency: Number(event.target.value) })}
               className={compactInputClassName}
             />
           </SettingField>
           <SettingField label="Connection override">
             <select
-              value={ltmPanelPreferences.connectionId}
-              onChange={(event) => setLtmPanelPreferences({ connectionId: event.target.value })}
+              value={globalSettings.data.connectionId}
+              onChange={(event) => patchGlobalSettings({ version: 1, connectionId: event.target.value })}
               className={compactInputClassName}
             >
               <option value="">Default extraction model</option>
@@ -556,8 +570,8 @@ export function LongTermMemoryExtractionSettingsEditor({
             <label className="flex min-h-8 items-center gap-2 rounded-md bg-[var(--card)] px-2 text-xs ring-1 ring-[var(--border)]">
               <input
                 type="checkbox"
-                checked={ltmPanelPreferences.autoApplyLowRisk}
-                onChange={(event) => setLtmPanelPreferences({ autoApplyLowRisk: event.target.checked })}
+                checked={globalSettings.data.autoApplyLowRisk}
+                onChange={(event) => patchGlobalSettings({ version: 1, autoApplyLowRisk: event.target.checked })}
                 className="h-3.5 w-3.5 shrink-0 rounded border-[var(--border)] accent-[var(--primary)]"
               />
               <span className="min-w-0 flex-1">Automatically keep low-risk changes</span>
@@ -566,16 +580,16 @@ export function LongTermMemoryExtractionSettingsEditor({
         </div>
         <SettingField label="Model override">
           <input
-            value={ltmPanelPreferences.model}
-            onChange={(event) => setLtmPanelPreferences({ model: event.target.value })}
+            value={globalSettings.data.model}
+            onChange={(event) => patchGlobalSettings({ version: 1, model: event.target.value })}
             placeholder="Optional model override"
             className={compactInputClassName}
           />
         </SettingField>
         <SettingField label="Instruction override">
           <textarea
-            value={ltmPanelPreferences.instruction}
-            onChange={(event) => setLtmPanelPreferences({ instruction: event.target.value })}
+            value={globalSettings.data.instruction}
+            onChange={(event) => patchGlobalSettings({ version: 1, instruction: event.target.value })}
             maxLength={2000}
             rows={3}
             placeholder="Optional instruction for imports and source-note extraction"
@@ -798,8 +812,8 @@ export function LongTermMemoryExtractionSettingsEditor({
         </SettingField>
         {activePromptTemplate ? (
           <p className={helperTextClassName}>
-            Source-memory extraction uses the selected template above. Clear the selection to edit the fallback
-            prompt override directly.
+            Source-memory extraction uses the selected template above. Clear the selection to edit the fallback prompt
+            override directly.
           </p>
         ) : null}
         <SettingField label="Extra user instruction">
@@ -900,11 +914,7 @@ export function LongTermMemoryExtractionSettingsEditor({
           Reset
         </ToolButton>
         <ToolButton onClick={save} disabled={!dirty || updateSettings.isPending} tone="primary">
-          {updateSettings.isPending ? (
-            <Loader2 size="0.875rem" className="animate-spin" />
-          ) : (
-            <Save size="0.875rem" />
-          )}
+          {updateSettings.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Save size="0.875rem" />}
           Save now
         </ToolButton>
       </div>

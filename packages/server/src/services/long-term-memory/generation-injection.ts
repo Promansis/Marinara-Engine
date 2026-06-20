@@ -1,8 +1,9 @@
 import {
   LTM_RECALL_STYLE_WEIGHTS,
-  readLtmRecallWeightOverrides,
   parseLongTermMemoryRecallStyle,
+  readLtmRecallWeightOverrides,
   withMergedLtmScopeLinks,
+  type LtmResolvedGlobalSettings,
   type LongTermMemoryRecallStyle,
   type LtmRecallWeights,
   type LtmScope,
@@ -26,6 +27,7 @@ export interface BuildGenerationLongTermMemoryPlanInput {
   activeCharacterNames: string[];
   inputMessages: GenerationPromptInputMessage[];
   chatMeta: Record<string, unknown>;
+  globalSettings?: LtmResolvedGlobalSettings;
   userMessage?: string;
   generationGuide?: string;
   lorebookGenerationTriggers: string[];
@@ -119,13 +121,34 @@ export function parseLongTermMemoryContextMessages(value: unknown) {
 export function buildGenerationLongTermMemoryPlan(
   input: BuildGenerationLongTermMemoryPlanInput,
 ): GenerationLongTermMemoryPlan {
-  const budgetTokens = parseLongTermMemoryBudgetTokens(input.chatMeta.longTermMemoryBudgetTokens);
-  const maxChunks = parseLongTermMemoryMaxChunks(input.chatMeta.longTermMemoryMaxChunks);
-  const scoreThreshold = parseLongTermMemoryScoreThreshold(input.chatMeta.longTermMemoryScoreThreshold);
-  const recallStyle = parseLongTermMemoryRecallStyle(input.chatMeta.longTermMemoryRecallStyle);
-  const weights = readLtmRecallWeightOverrides(input.chatMeta, LTM_RECALL_STYLE_WEIGHTS[recallStyle]);
-  const debugEnabled = input.chatMeta.longTermMemoryDebug === true || input.requestDebug === true;
-  const contextMessages = parseLongTermMemoryContextMessages(input.chatMeta.longTermMemoryRecallContextMessages);
+  const settings = input.globalSettings;
+  const budgetTokens =
+    parseLongTermMemoryBudgetTokens(settings?.longTermMemoryBudgetTokens) ??
+    parseLongTermMemoryBudgetTokens(input.chatMeta.longTermMemoryBudgetTokens);
+  const maxChunks =
+    parseLongTermMemoryMaxChunks(settings?.longTermMemoryMaxChunks) ??
+    parseLongTermMemoryMaxChunks(input.chatMeta.longTermMemoryMaxChunks);
+  const scoreThreshold =
+    parseLongTermMemoryScoreThreshold(settings?.longTermMemoryScoreThreshold) ??
+    parseLongTermMemoryScoreThreshold(input.chatMeta.longTermMemoryScoreThreshold);
+  const recallStyle = parseLongTermMemoryRecallStyle(
+    settings?.longTermMemoryRecallStyle ?? input.chatMeta.longTermMemoryRecallStyle,
+  );
+  const styleWeights = LTM_RECALL_STYLE_WEIGHTS[recallStyle];
+  const weights = settings
+    ? {
+        semanticWeight: settings.longTermMemorySemanticWeight,
+        lexicalWeight: settings.longTermMemoryLexicalWeight,
+        graphWeight: settings.longTermMemoryGraphWeight,
+        metadataWeight: settings.longTermMemoryMetadataWeight,
+      }
+    : readLtmRecallWeightOverrides(input.chatMeta, styleWeights);
+  const debugEnabled = settings
+    ? settings.longTermMemoryDebug === true || input.requestDebug === true
+    : input.chatMeta.longTermMemoryDebug === true || input.requestDebug === true;
+  const contextMessages = parseLongTermMemoryContextMessages(
+    settings?.longTermMemoryRecallContextMessages ?? input.chatMeta.longTermMemoryRecallContextMessages,
+  );
   const scope = resolveGenerationLongTermMemoryScope({
     id: input.chatId,
     groupId: input.groupId,
@@ -154,7 +177,7 @@ export function buildGenerationLongTermMemoryPlan(
     .join("\n\n");
 
   return {
-    enabled: input.chatMeta.enableLongTermMemory === true,
+    enabled: settings?.enableLongTermMemory ?? input.chatMeta.enableLongTermMemory === true,
     budgetTokens,
     maxChunks,
     scoreThreshold,
@@ -162,7 +185,7 @@ export function buildGenerationLongTermMemoryPlan(
     weights,
     debugEnabled,
     contextMessages,
-    includeResolved: input.chatMeta.longTermMemoryIncludeResolved === true,
+    includeResolved: settings?.longTermMemoryIncludeResolved ?? input.chatMeta.longTermMemoryIncludeResolved === true,
     scope,
     queryText,
     lastUserMessageText,
@@ -179,7 +202,7 @@ export function buildGenerationLongTermMemoryPlan(
       ],
       scope,
       characterIds: input.promptCharacterIds,
-      includeResolved: input.chatMeta.longTermMemoryIncludeResolved === true,
+      includeResolved: settings?.longTermMemoryIncludeResolved ?? input.chatMeta.longTermMemoryIncludeResolved === true,
       maxChunks,
       maxTokens: budgetTokens,
       minScore: scoreThreshold,

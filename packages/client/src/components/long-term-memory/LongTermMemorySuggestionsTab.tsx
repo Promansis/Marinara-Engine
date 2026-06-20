@@ -26,11 +26,11 @@ import {
   useExtractLongTermMemorySourceNote,
   useLongTermMemoryDrafts,
   useLongTermMemoryNotes,
+  useLongTermMemorySettings,
   useSkipLongTermMemoryDraftMutations,
   type AcceptLongTermMemoryDraftResponse,
   type ExtractLongTermMemorySourceResponse,
 } from "../../hooks/use-long-term-memory";
-import { useUIStore } from "../../stores/ui.store";
 import { cn } from "../../lib/utils";
 import {
   actionRowClassName,
@@ -40,13 +40,7 @@ import {
   selectedListRowClassName,
 } from "./LtmFields";
 import { StatusPill, ToolButton } from "./LtmPills";
-import {
-  friendlyIdentifier,
-  friendlyNoteTitle,
-  friendlyStatus,
-  isTypedSuggestionDraft,
-} from "./ltm-editor-utils";
-import { useShallow } from "zustand/react/shallow";
+import { friendlyIdentifier, friendlyNoteTitle, friendlyStatus, isTypedSuggestionDraft } from "./ltm-editor-utils";
 
 type SuggestionRowModel = {
   draft: LtmExtractionDraft;
@@ -57,12 +51,7 @@ type SuggestionGroup = "new" | "rewrite";
 type BatchAction = "keep" | "skip";
 type LatestExtractionResult = Pick<ExtractLongTermMemorySourceResponse, "diagnostics" | "draft" | "outcome">;
 
-const rewriteKinds = new Set<LtmDraftMutation["kind"]>([
-  "append_section",
-  "update_section",
-  "add_link",
-  "set_status",
-]);
+const rewriteKinds = new Set<LtmDraftMutation["kind"]>(["append_section", "update_section", "add_link", "set_status"]);
 
 function isSourceMemory(note: LtmNote) {
   return isLtmSourceLikeNote(note);
@@ -205,7 +194,8 @@ function summarizeBulkKeep(keptCount: number, failedDraftCount: number, autoIncl
   if (failedDraftCount === 0) return { tone: "success" as const, message: `${summary}.${dependencySummary}`.trim() };
   return {
     tone: "error" as const,
-    message: `${summary}; ${failedDraftCount} draft${failedDraftCount === 1 ? "" : "s"} failed.${dependencySummary}`.trim(),
+    message:
+      `${summary}; ${failedDraftCount} draft${failedDraftCount === 1 ? "" : "s"} failed.${dependencySummary}`.trim(),
   };
 }
 
@@ -232,15 +222,12 @@ export function LongTermMemorySuggestionsTab({
   const deleteDraftMutation = useDeleteLongTermMemoryDraftMutation();
   const extractSourceNote = useExtractLongTermMemorySourceNote();
   const skipDraftMutations = useSkipLongTermMemoryDraftMutations();
-  const { autoApplyLowRisk, connectionId, extractionMode, instruction, model } = useUIStore(
-    useShallow((state) => ({
-      autoApplyLowRisk: state.ltmPanelPreferences.autoApplyLowRisk,
-      connectionId: state.ltmPanelPreferences.connectionId,
-      extractionMode: state.ltmPanelPreferences.extractionMode,
-      instruction: state.ltmPanelPreferences.instruction,
-      model: state.ltmPanelPreferences.model,
-    })),
-  );
+  const globalSettings = useLongTermMemorySettings();
+  const autoApplyLowRisk = globalSettings.data?.autoApplyLowRisk ?? false;
+  const connectionId = globalSettings.data?.connectionId ?? "";
+  const extractionMode = globalSettings.data?.extractionMode ?? "fast";
+  const instruction = globalSettings.data?.instruction ?? "";
+  const model = globalSettings.data?.model ?? "";
   const [latestResult, setLatestResult] = useState<LatestExtractionResult | null>(null);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<Set<string>>(() => new Set());
@@ -497,7 +484,10 @@ export function LongTermMemorySuggestionsTab({
               <StatusPill label="Source memory" tone="good" />
               <StatusPill label={`${rows.length} pending suggestion${rows.length === 1 ? "" : "s"}`} />
               {selectMode ? (
-                <StatusPill label={`${selectedRows.length} selected`} tone={selectedRows.length > 0 ? "warn" : "neutral"} />
+                <StatusPill
+                  label={`${selectedRows.length} selected`}
+                  tone={selectedRows.length > 0 ? "warn" : "neutral"}
+                />
               ) : null}
             </div>
             <p className={helperTextClassName}>
@@ -594,11 +584,19 @@ export function LongTermMemorySuggestionsTab({
               disabled={selectedRows.length === 0 || rowActionsDisabled}
               tone="primary"
             >
-              {activeBatchAction === "keep" ? <Loader2 size="0.875rem" className="animate-spin" /> : <Check size="0.875rem" />}
+              {activeBatchAction === "keep" ? (
+                <Loader2 size="0.875rem" className="animate-spin" />
+              ) : (
+                <Check size="0.875rem" />
+              )}
               Keep selected
             </ToolButton>
             <ToolButton onClick={() => void runBulkSkip()} disabled={selectedRows.length === 0 || rowActionsDisabled}>
-              {activeBatchAction === "skip" ? <Loader2 size="0.875rem" className="animate-spin" /> : <X size="0.875rem" />}
+              {activeBatchAction === "skip" ? (
+                <Loader2 size="0.875rem" className="animate-spin" />
+              ) : (
+                <X size="0.875rem" />
+              )}
               Skip selected
             </ToolButton>
           </div>
@@ -681,7 +679,10 @@ function ExtractionOutcomePanel({
           <div className="flex flex-wrap items-center gap-1.5">
             <StatusPill label={outcomeLabel(outcome)} tone={outcomeTone(outcome)} />
             <StatusPill label={`${outcome.keptUnits} kept`} tone={outcome.keptUnits > 0 ? "good" : "neutral"} />
-            <StatusPill label={`${outcome.droppedUnits} dropped`} tone={outcome.droppedUnits > 0 ? "warn" : "neutral"} />
+            <StatusPill
+              label={`${outcome.droppedUnits} dropped`}
+              tone={outcome.droppedUnits > 0 ? "warn" : "neutral"}
+            />
           </div>
           <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">{outcomeSummary(outcome)}</p>
           {suggestionCapWarning ? (
@@ -957,7 +958,7 @@ function SuggestionMutationEditor({
 }) {
   const [text, setText] = useState(
     mutation.kind === "create_note"
-      ? Object.values(mutation.note.sections)[0]?.text ?? ""
+      ? (Object.values(mutation.note.sections)[0]?.text ?? "")
       : mutation.kind === "append_section"
         ? mutation.text
         : mutation.kind === "update_section"
