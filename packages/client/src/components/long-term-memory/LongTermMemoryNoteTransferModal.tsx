@@ -85,7 +85,7 @@ function conflictReasonLabel(reason: LtmNoteTransferPreviewItem["conflicts"][num
     case "same_source_type":
       return "Same source";
     case "lexical_overlap":
-      return "Lexical overlap";
+      return "Exact words overlap";
     default:
       return reason;
   }

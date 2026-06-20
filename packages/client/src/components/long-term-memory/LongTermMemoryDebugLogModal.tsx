@@ -393,7 +393,7 @@ function FunnelSummary({ decision }: { decision: DebugRecord | undefined }) {
     ["Budget skipped", getNumber(funnel, "tokenBudgetSkippedCandidates")],
     ["Vector", getNumber(funnel, "vectorCandidates")],
     ["BM25", getNumber(funnel, "bm25Candidates")],
-    ["Graph", getNumber(funnel, "graphCandidates")],
+    ["Memory Links", getNumber(funnel, "graphCandidates")],
     ["Filtered", (getNumber(funnel, "scopeFiltered") ?? 0) + (getNumber(funnel, "statusFiltered") ?? 0)],
   ].filter(([, value]) => typeof value === "number");
   return (

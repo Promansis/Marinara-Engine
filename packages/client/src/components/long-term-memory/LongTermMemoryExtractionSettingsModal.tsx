@@ -520,7 +520,7 @@ export function LongTermMemoryExtractionSettingsEditor({
           </button>
         </div>
         <p className={cn("mt-2", helperTextClassName)}>
-          Tune how source notes become typed memories while keeping the same dense settings vocabulary used elsewhere in
+          Tune how source notes become memory streams while keeping the same dense settings vocabulary used elsewhere in
           Marinara.
         </p>
       </div>
@@ -858,7 +858,7 @@ export function LongTermMemoryExtractionSettingsEditor({
       </section>
 
       <section className={cn("space-y-3", sectionCardClassName)}>
-        <div className="text-xs font-semibold text-[var(--foreground)]">Extraction Shape</div>
+        <div className="text-xs font-semibold text-[var(--foreground)]">Extraction Limits</div>
         <div className="grid gap-3 sm:grid-cols-2">
           <NumberField
             label="Max source chars"

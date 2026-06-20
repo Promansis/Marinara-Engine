@@ -159,7 +159,7 @@ export async function extractLongTermMemoryFromSourceNote(
       action: "extract_source_note",
       sourceNoteId: options.noteId,
       model: options.model,
-      message: "Extract typed long-term memory from source note",
+      message: "Extract memory streams from source note",
     },
     async (operationId) => extractLongTermMemoryFromSourceNoteInner({ ...options, operationId }),
   );

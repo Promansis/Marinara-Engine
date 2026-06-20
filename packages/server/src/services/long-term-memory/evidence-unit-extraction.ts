@@ -33,12 +33,12 @@ export const DEFAULT_LTM_EXTRACTION_PROMPT = [
   "Do not include thinking, analysis, markdown, or <think> tags. Output JSON object only.",
   "Source notes are audit evidence, not active recall memory.",
   "Do not output source summaries, transcript summaries, or final write operations.",
-  "Extract every distinct durable memory unit supported by the source.",
-  "Emit zero or more units per bucket. Prefer a few substantial units that capture the complete fact over many fragmentary observations.",
-  "Scan bucket groups explicitly: timeline beats (timeline_event); relationships (relationship_event, relationship_state, relationship_conflict); open loops (thread); character facts (character_fact); world facts (world_fact); style and motifs (tone, anchor).",
-  "Use one best bucket per fact. If a detail fits both a timeline and character/relationship bucket, emit the plot-changing action as timeline_event or relationship_event and reserve character_fact for durable identity, backstory, permanent development, ability, item, or exact voice evidence.",
-  "Do not duplicate the same fact across buckets or sections.",
-  "Write source-derived memories in past-tense/outcome phrasing unless the fact is a durable present-tense rule or trait.",
+  "Extract every distinct durable memory stream supported by the source.",
+  "Emit zero or more units per stream. Prefer a few substantial units that capture the complete fact over many fragmentary observations.",
+  "Scan stream groups explicitly: timeline beats (timeline_event); relationships (relationship_event, relationship_state, relationship_conflict); open loops (thread); character facts (character_fact); world facts (world_fact); style and motifs (tone, anchor).",
+  "Use one best stream per fact. If a detail fits both a timeline and character/relationship stream, emit the plot-changing action as timeline_event or relationship_event and reserve character_fact for durable identity, backstory, permanent development, ability, item, or exact voice evidence.",
+  "Do not duplicate the same fact across streams or sections.",
+  "Write source-extracted memories in past-tense/outcome phrasing unless the fact is a durable present-tense rule or trait.",
 
   "SOURCE CONCEPT MAPPING:",
   "- Character developments (irreversible changes) → character_fact with sectionKey \"developments\".",
@@ -59,14 +59,14 @@ export const DEFAULT_LTM_EXTRACTION_PROMPT = [
   "- tone: observations. World/session-level atmospheric register only, not one-scene mood.",
   "- anchor: the source section key. Recurring motif or planted callback only.",
 
-  "Each unit must be typed and useful for future continuity.",
+  "Each unit must be assigned to a memory stream and useful for future continuity.",
   "Every unit must include at least one supplied evidence string, including source_note:<id>.",
   "Use real lowercase snake_case subjectId and sectionKey values derived from the source.",
   "Never output placeholder values such as lowercase_snake_case_scope_id, lowercase_snake_case, target_note_id, or copied schema/example text.",
   "Do not copy schema/example placeholder values.",
   "Omit optional fields unless they are real and evidence-backed.",
   "Use timeline_event for historical source-summary scenes or beats; never call those current_scene.",
-  "Typed memories may link to timeline_event notes using occurred_in, triggered_by, resolved_in, or evidenced_by.",
+  "Memory streams may link to timeline_event notes using occurred_in, triggered_by, resolved_in, or evidenced_by.",
   "Keep source-note provenance as source_note evidence; timeline links describe story structure, not source provenance.",
   "Use sourceHash exactly as supplied.",
   "Set confidence and salience from 0 to 1.",
@@ -371,7 +371,7 @@ function formatExistingNotes(notes: LtmNote[], maxChars = DEFAULT_LTM_EXTRACTION
     used += block.length;
     blocks.push(block);
   }
-  return blocks.length ? blocks.join("\n\n---\n\n") : "(no relevant typed notes)";
+  return blocks.length ? blocks.join("\n\n---\n\n") : "(no relevant memory streams)";
 }
 
 function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOptions): ChatMessage[] {
@@ -380,7 +380,7 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
   const allBucketDescriptions: Record<string, string> = {
     timeline_event: "source-summary scene/plot pivot, decision, action, discovery, fight outcome, promise, arrival, or departure; not the live current scene",
     character_fact: "durable character identity/trait/role/affiliation/backstory/belief/permanent status/development/ability/item/exact voice quote; not ordinary scene action or transient condition",
-    character_state: "legacy/manual current character condition only; source-summary extraction must not use this bucket",
+    character_state: "legacy/manual current character condition only; source-summary extraction must not use this stream",
     relationship_event: "evidence-backed interpersonal event or history item",
     relationship_state: "current reduced relationship state backed by same-pass relationship_event or existing relationship note",
     relationship_conflict: "unresolved contradiction or instability",
@@ -411,7 +411,7 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
         },
         unitFields: {
           id: "uuid",
-          bucket: "one allowedBuckets value",
+          bucket: "one allowed stream value from allowedBuckets",
           subjectId: "real lowercase_snake_case subject",
           sectionKey: "real lowercase_snake_case section",
           text: "compact memory text, not transcript summary",

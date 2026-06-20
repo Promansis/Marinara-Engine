@@ -156,8 +156,8 @@ function toastForOutcome(outcome: LtmExtractionOutcome) {
   const createdSuggestions = outcome.suggestionCap?.returned ?? outcome.keptUnits;
   if (outcome.state === "success") {
     return createdSuggestions === 1
-      ? "Created 1 typed memory suggestion"
-      : `Created ${createdSuggestions} typed memory suggestions`;
+      ? "Created 1 memory stream suggestion"
+      : `Created ${createdSuggestions} memory stream suggestions`;
   }
   if (outcome.state === "partial_success") {
     return `Kept ${outcome.keptUnits} candidate${outcome.keptUnits === 1 ? "" : "s"} and dropped ${outcome.droppedUnits}`;
@@ -165,7 +165,7 @@ function toastForOutcome(outcome: LtmExtractionOutcome) {
   if (outcome.droppedUnits > 0) {
     return `No suggestions created, but ${outcome.droppedUnits} dropped candidate${outcome.droppedUnits === 1 ? "" : "s"} can be reviewed`;
   }
-  return "No typed memories extracted";
+  return "No memory streams extracted";
 }
 
 function toastForExtractionResult(result: ExtractLongTermMemorySourceResponse, applyLowRisk: boolean) {
@@ -491,7 +491,7 @@ export function LongTermMemorySuggestionsTab({
               ) : null}
             </div>
             <p className={helperTextClassName}>
-              Extract typed memories from this source note, then keep, skip, or manually recover anything useful.
+              Extract memory streams from this source note, then keep, skip, or manually recover anything useful.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
@@ -538,7 +538,7 @@ export function LongTermMemorySuggestionsTab({
               ) : (
                 <BrainCircuit size="0.875rem" />
               )}
-              Extract typed memories
+              Extract Memory Streams
             </ToolButton>
           </div>
         </div>
@@ -610,7 +610,7 @@ export function LongTermMemorySuggestionsTab({
         </div>
       ) : rows.length === 0 ? (
         <p className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-xs text-[var(--muted-foreground)]">
-          No typed-memory suggestions need review for this source.
+          No memory stream suggestions need review for this source.
         </p>
       ) : (
         <div className="space-y-3">

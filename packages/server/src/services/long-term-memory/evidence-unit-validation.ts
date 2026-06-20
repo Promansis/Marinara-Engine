@@ -172,7 +172,7 @@ export function validateLtmEvidenceUnits({
         candidateIndex,
         mutationId: unit.id,
         noteId,
-        message: "Evidence unit text exceeds the maximum typed-memory length.",
+        message: "Evidence unit text exceeds the maximum memory stream length.",
       });
     }
 
@@ -183,7 +183,7 @@ export function validateLtmEvidenceUnits({
         candidateIndex,
         mutationId: unit.id,
         noteId,
-        message: "Evidence unit copies source-summary/transcript structure instead of typed memory.",
+        message: "Evidence unit copies source-summary/transcript structure instead of a memory stream.",
       });
     }
 
@@ -194,7 +194,7 @@ export function validateLtmEvidenceUnits({
         candidateIndex,
         mutationId: unit.id,
         noteId,
-        message: "Source-summary extraction does not support this typed-memory bucket.",
+        message: "Source-summary extraction does not support this memory stream.",
       });
     }
 
@@ -518,9 +518,9 @@ function userFacingDropMessage(reason: LtmExtractionDropReason) {
     case "missing_source_evidence":
       return "Dropped a candidate that did not include usable source evidence.";
     case "source_summary_payload":
-      return "Dropped a candidate that looked like a source-summary transcript instead of a typed memory.";
+      return "Dropped a candidate that looked like a source-summary transcript instead of a memory stream.";
     case "unsupported_bucket":
-      return "Dropped a candidate that used the wrong typed-memory bucket for source-summary extraction.";
+      return "Dropped a candidate that used the wrong memory stream for source-summary extraction.";
     case "target_note_outside_scope":
       return "Dropped a candidate that targeted a memory outside this source's scope.";
     case "too_long_to_keep_safely":

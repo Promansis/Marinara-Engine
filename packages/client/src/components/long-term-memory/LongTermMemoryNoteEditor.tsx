@@ -704,7 +704,7 @@ export function LongTermMemoryNoteEditor({
               Related Memories
             </h4>
             <p className={cn("mt-1", helperTextClassName)}>
-              Link this note to source memories, timeline events, or other typed notes.
+              Link this note to source memories, timeline events, or other memory streams.
             </p>
           </div>
           {draft.links.map((link, index) => (

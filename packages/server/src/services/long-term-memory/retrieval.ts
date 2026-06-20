@@ -539,7 +539,7 @@ export async function retrieveLongTermMemory(
       );
     }
   } else if (input.includeSourceNotes && input.debug) {
-    warnings.push("Searching source audit indexes; normal typed-memory indexes are not included.");
+    warnings.push("Searching source audit indexes; normal memory stream indexes are not included.");
   }
   const metadataMatches = getLtmMetadataMatches(metadata, {
     noteIds: signals.noteIds,

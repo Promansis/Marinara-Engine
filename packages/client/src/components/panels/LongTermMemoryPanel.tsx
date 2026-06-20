@@ -943,7 +943,7 @@ function TypeMemoryGroups({
   if (groups.length === 0) {
     return (
       <p className={emptyStateClassName}>
-        No typed memories match these filters.
+        No memory streams match these filters.
       </p>
     );
   }
@@ -1043,7 +1043,7 @@ function TypeMemoryGroups({
                             )}
                             {sourcesCount === 0 && note.type !== "source" && <StatusPill label="Manual" />}
                             {isSourceSummaryNote(note) && derivedCount > 0 && (
-                              <StatusPill label={`${derivedCount} typed memor${derivedCount === 1 ? "y" : "ies"}`} />
+                              <StatusPill label={`${derivedCount} memory stream${derivedCount === 1 ? "" : "s"}`} />
                             )}
                           </div>
                           <EvidencePills
@@ -1192,7 +1192,7 @@ function _ArchivedSourceSummaryGroupRow({
           </div>
           <div className="mt-1 flex flex-wrap gap-1.5">
             <StatusPill label={isChatSummarySourceNote(group.source) ? "Source summary" : "Source note"} />
-            <StatusPill label={`${group.derived.length} typed memor${group.derived.length === 1 ? "y" : "ies"}`} />
+            <StatusPill label={`${group.derived.length} memory stream${group.derived.length === 1 ? "" : "s"}`} />
           </div>
         </div>
       </div>
@@ -1518,7 +1518,7 @@ function DerivedActiveMemories({
   return (
     <section className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-xs font-semibold text-[var(--foreground)]">Derived Active Memories</h3>
+        <h3 className="text-xs font-semibold text-[var(--foreground)]">Extracted Active Memories</h3>
         <StatusPill
           label={`${derivedCount} active memor${derivedCount === 1 ? "y" : "ies"}`}
           tone={derivedCount ? "good" : "neutral"}
@@ -1527,11 +1527,11 @@ function DerivedActiveMemories({
       {loading ? (
         <div className="flex items-center justify-center rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-3 text-xs text-[var(--muted-foreground)]">
           <Loader2 className="mr-2 animate-spin" size="0.875rem" />
-          Loading derived memories...
+          Loading extracted memories...
         </div>
       ) : groups.length === 0 ? (
         <p className={emptyStateClassName}>
-          No active typed memories link back to this source yet.
+          No active memory streams link back to this source yet.
         </p>
       ) : (
         <div className="space-y-3">
@@ -2621,7 +2621,7 @@ function ChatMemorySettings({
                     checked={includeResolved}
                     onChange={(checked) => patch({ version: 1, longTermMemoryIncludeResolved: checked })}
                   />
-                  <SettingGroup label="Score threshold">
+                  <SettingGroup label="Minimum relevance">
                     <div className="grid grid-cols-[1fr_4.5rem] items-center gap-3">
                       <input
                         type="range"
@@ -2657,11 +2657,11 @@ function ChatMemorySettings({
                       0 keeps all ranked matches. Higher values drop memories whose final weighted relevance is lower.
                     </p>
                   </SettingGroup>
-                  <SettingGroup label="Lane weights">
+                  <SettingGroup label="Ranking Weights">
                     <div className="space-y-2">
                       {[
                         {
-                          label: "Semantic",
+                          label: "Meaning",
                           draft: semanticWeightDraft,
                           setDraft: setSemanticWeightDraft,
                           fallback: weights.semanticWeight,
@@ -2669,7 +2669,7 @@ function ChatMemorySettings({
                           key: "semantic" as const,
                         },
                         {
-                          label: "Lexical",
+                          label: "Exact Words",
                           draft: lexicalWeightDraft,
                           setDraft: setLexicalWeightDraft,
                           fallback: weights.lexicalWeight,
@@ -2677,7 +2677,7 @@ function ChatMemorySettings({
                           key: "lexical" as const,
                         },
                         {
-                          label: "Graph",
+                          label: "Memory Links",
                           draft: graphWeightDraft,
                           setDraft: setGraphWeightDraft,
                           fallback: weights.graphWeight,
@@ -2769,7 +2769,7 @@ function ChatMemorySettings({
                 tone="primary"
               >
                 <RefreshCw size="0.875rem" />
-                Refresh Memory Search
+                Reindex Memories
               </ToolButton>
               <ToolButton
                 onClick={() =>
@@ -2794,7 +2794,7 @@ function ChatMemorySettings({
                 tone="danger"
               >
                 <Hammer size="0.875rem" />
-                Repair Broken Memory Files
+                Repair Memory Store
               </ToolButton>
               <div className="mt-3 space-y-2">
                 {(integrity.data?.issues ?? [])
@@ -3340,7 +3340,7 @@ export function LongTermMemoryPanel() {
     if (unselectedDerivedIds.length === 0) return ids;
 
     const includeDerived = confirm(
-      `${sourceIds.size} selected source memor${sourceIds.size === 1 ? "y has" : "ies have"} ${unselectedDerivedIds.length} derived memor${unselectedDerivedIds.length === 1 ? "y" : "ies"}. Delete derived memories too?`,
+      `${sourceIds.size} selected source memor${sourceIds.size === 1 ? "y has" : "ies have"} ${unselectedDerivedIds.length} extracted memor${unselectedDerivedIds.length === 1 ? "y" : "ies"}. Delete extracted memories too?`,
     );
     return includeDerived ? uniqueNoteIds([...ids, ...unselectedDerivedIds]) : ids;
   };

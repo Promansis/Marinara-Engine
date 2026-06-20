@@ -225,7 +225,7 @@ export function CreateLongTermMemoryNoteForm({
           </span>
         </div>
         <p className={cn("mt-2", helperTextClassName)}>
-          Create a typed memory with the same scope, tags, and section structure used across the rest of Marinara.
+          Create a memory stream with the same scope, tags, and section structure used across the rest of Marinara.
         </p>
       </div>
 
