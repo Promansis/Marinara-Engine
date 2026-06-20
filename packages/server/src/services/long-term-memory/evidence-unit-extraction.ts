@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
-  DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS,
-  DEFAULT_LTM_EXTRACTION_MAX_SOURCE_CHARS,
+  DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
+  DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
   DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
   DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
   DEFAULT_LTM_EXTRACTION_VERBOSITY,
@@ -114,8 +114,8 @@ export interface RunLongTermMemoryEvidenceUnitExtractionOptions {
   verbosity?: NonNullable<ChatOptions["verbosity"]>;
   maxOutputTokens?: number;
   temperature?: number;
-  maxSourceChars?: number;
-  maxExistingNoteChars?: number;
+  maxSourceTokens?: number;
+  maxExistingNoteTokens?: number;
   signal?: AbortSignal;
   operationId?: string;
   allowedBuckets?: LtmEvidenceUnit["bucket"][];
@@ -353,8 +353,20 @@ function parseEvidenceUnitPayload(raw: unknown, expectedSourceHash: string): Par
   };
 }
 
-function formatExistingNotes(notes: LtmNote[], maxChars = DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS) {
-  let used = 0;
+function estimateLtmPromptTokens(text: string) {
+  return Math.max(1, Math.ceil(text.length / 4));
+}
+
+function truncateToEstimatedTokens(text: string, maxTokens = DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS) {
+  const budget = Math.max(1, Math.floor(maxTokens));
+  if (estimateLtmPromptTokens(text) <= budget) return text;
+  let end = Math.min(text.length, budget * 4);
+  while (end > 0 && estimateLtmPromptTokens(text.slice(0, end)) > budget) end--;
+  return text.slice(0, end);
+}
+
+function formatExistingNotes(notes: LtmNote[], maxTokens = DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS) {
+  let usedTokens = 0;
   const blocks: string[] = [];
   for (const note of notes) {
     const sections = Object.entries(note.sections)
@@ -367,8 +379,9 @@ function formatExistingNotes(notes: LtmNote[], maxChars = DEFAULT_LTM_EXTRACTION
       `tags: ${note.tags.join(", ") || "(none)"}`,
       `sections:\n${sections}`,
     ].join("\n");
-    if (used + block.length > maxChars) break;
-    used += block.length;
+    const blockTokens = estimateLtmPromptTokens(block);
+    if (usedTokens + blockTokens > maxTokens) break;
+    usedTokens += blockTokens;
     blocks.push(block);
   }
   return blocks.length ? blocks.join("\n\n---\n\n") : "(no relevant memory streams)";
@@ -441,8 +454,8 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
         modes: options.modes,
         userInstruction: options.instruction?.trim() || undefined,
         extraInstruction: options.extraInstruction?.trim() || undefined,
-        existingTypedNotes: formatExistingNotes(options.existingNotes, options.maxExistingNoteChars),
-        sourceText: options.sourceText.slice(0, options.maxSourceChars ?? DEFAULT_LTM_EXTRACTION_MAX_SOURCE_CHARS),
+        existingTypedNotes: formatExistingNotes(options.existingNotes, options.maxExistingNoteTokens),
+        sourceText: truncateToEstimatedTokens(options.sourceText, options.maxSourceTokens),
       }),
     },
   ];
@@ -475,10 +488,11 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
       counts: {
         messages: messages.length,
         promptChars,
+        promptTokens: estimateLtmPromptTokens(messages.map((message) => message.content).join("\n")),
         sourceChars: options.sourceText.length,
         existingNotes: options.existingNotes.length,
-        maxSourceChars: options.maxSourceChars ?? DEFAULT_LTM_EXTRACTION_MAX_SOURCE_CHARS,
-        maxExistingNoteChars: options.maxExistingNoteChars ?? DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS,
+        maxSourceTokens: options.maxSourceTokens ?? DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
+        maxExistingNoteTokens: options.maxExistingNoteTokens ?? DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
       },
       details: {
         reasoningEffort: requestedReasoningEffort,

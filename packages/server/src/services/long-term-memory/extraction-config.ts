@@ -1,8 +1,8 @@
 import {
   DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS,
   DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
-  DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS,
-  DEFAULT_LTM_EXTRACTION_MAX_SOURCE_CHARS,
+  DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
+  DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
   DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
   DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
   DEFAULT_LTM_EXTRACTION_TEMPERATURE,
@@ -24,8 +24,8 @@ export const DEFAULT_LTM_EXTRACTION_CONFIG = ltmResolvedExtractionSettingsSchema
   verbosity: DEFAULT_LTM_EXTRACTION_VERBOSITY,
   maxOutputTokens: DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
   temperature: DEFAULT_LTM_EXTRACTION_TEMPERATURE,
-  maxSourceChars: DEFAULT_LTM_EXTRACTION_MAX_SOURCE_CHARS,
-  maxExistingNoteChars: DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS,
+  maxSourceTokens: DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
+  maxExistingNoteTokens: DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
   existingNoteMaxChunks: DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS,
   existingNoteMaxTokens: DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
   promptTemplates: [],
@@ -52,14 +52,14 @@ function normalizePersistedConfig(input: LtmExtractionSettings): LtmExtractionSe
   if (input.temperature !== undefined && input.temperature !== DEFAULT_LTM_EXTRACTION_CONFIG.temperature) {
     next.temperature = input.temperature;
   }
-  if (input.maxSourceChars !== undefined && input.maxSourceChars !== DEFAULT_LTM_EXTRACTION_CONFIG.maxSourceChars) {
-    next.maxSourceChars = input.maxSourceChars;
+  if (input.maxSourceTokens !== undefined && input.maxSourceTokens !== DEFAULT_LTM_EXTRACTION_CONFIG.maxSourceTokens) {
+    next.maxSourceTokens = input.maxSourceTokens;
   }
   if (
-    input.maxExistingNoteChars !== undefined &&
-    input.maxExistingNoteChars !== DEFAULT_LTM_EXTRACTION_CONFIG.maxExistingNoteChars
+    input.maxExistingNoteTokens !== undefined &&
+    input.maxExistingNoteTokens !== DEFAULT_LTM_EXTRACTION_CONFIG.maxExistingNoteTokens
   ) {
-    next.maxExistingNoteChars = input.maxExistingNoteChars;
+    next.maxExistingNoteTokens = input.maxExistingNoteTokens;
   }
   if (
     input.existingNoteMaxChunks !== undefined &&

@@ -16,8 +16,8 @@ import { toast } from "sonner";
 import {
   DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS,
   DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
-  DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS,
-  DEFAULT_LTM_EXTRACTION_MAX_SOURCE_CHARS,
+  DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
+  DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
   DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
   DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
   DEFAULT_LTM_EXTRACTION_TEMPERATURE,
@@ -61,8 +61,8 @@ type ExtractionSettingsDraft = {
   verbosity: OptionalLevel<LtmExtractionVerbosity>;
   maxOutputTokens: string;
   temperature: string;
-  maxSourceChars: string;
-  maxExistingNoteChars: string;
+  maxSourceTokens: string;
+  maxExistingNoteTokens: string;
   existingNoteMaxChunks: string;
   existingNoteMaxTokens: string;
 };
@@ -72,8 +72,8 @@ const DEFAULT_SETTINGS = {
   verbosity: DEFAULT_LTM_EXTRACTION_VERBOSITY,
   maxOutputTokens: DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
   temperature: DEFAULT_LTM_EXTRACTION_TEMPERATURE,
-  maxSourceChars: DEFAULT_LTM_EXTRACTION_MAX_SOURCE_CHARS,
-  maxExistingNoteChars: DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_CHARS,
+  maxSourceTokens: DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
+  maxExistingNoteTokens: DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
   existingNoteMaxChunks: DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS,
   existingNoteMaxTokens: DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
 } as const;
@@ -89,8 +89,8 @@ function draftFromSettings(settings: LtmResolvedExtractionSettings): ExtractionS
     verbosity: settings.verbosity === DEFAULT_SETTINGS.verbosity ? "default" : settings.verbosity,
     maxOutputTokens: String(settings.maxOutputTokens),
     temperature: String(settings.temperature),
-    maxSourceChars: String(settings.maxSourceChars),
-    maxExistingNoteChars: String(settings.maxExistingNoteChars),
+    maxSourceTokens: String(settings.maxSourceTokens),
+    maxExistingNoteTokens: String(settings.maxExistingNoteTokens),
     existingNoteMaxChunks: String(settings.existingNoteMaxChunks),
     existingNoteMaxTokens: String(settings.existingNoteMaxTokens),
   };
@@ -118,12 +118,12 @@ function payloadFromDraft(draft: ExtractionSettingsDraft): LtmExtractionSettings
   if (draft.verbosity !== "default") payload.verbosity = draft.verbosity;
   payload.maxOutputTokens = parseInteger(draft.maxOutputTokens, 512, 32_768, DEFAULT_SETTINGS.maxOutputTokens);
   payload.temperature = parseNumber(draft.temperature, 0, 2, DEFAULT_SETTINGS.temperature);
-  payload.maxSourceChars = parseInteger(draft.maxSourceChars, 1_000, 200_000, DEFAULT_SETTINGS.maxSourceChars);
-  payload.maxExistingNoteChars = parseInteger(
-    draft.maxExistingNoteChars,
-    1_000,
-    100_000,
-    DEFAULT_SETTINGS.maxExistingNoteChars,
+  payload.maxSourceTokens = parseInteger(draft.maxSourceTokens, 250, 50_000, DEFAULT_SETTINGS.maxSourceTokens);
+  payload.maxExistingNoteTokens = parseInteger(
+    draft.maxExistingNoteTokens,
+    250,
+    25_000,
+    DEFAULT_SETTINGS.maxExistingNoteTokens,
   );
   payload.existingNoteMaxChunks = parseInteger(
     draft.existingNoteMaxChunks,
@@ -148,12 +148,12 @@ function resolvedFromDraft(draft: ExtractionSettingsDraft, current: LtmResolvedE
     verbosity: draft.verbosity === "default" ? DEFAULT_SETTINGS.verbosity : draft.verbosity,
     maxOutputTokens: parseInteger(draft.maxOutputTokens, 512, 32_768, DEFAULT_SETTINGS.maxOutputTokens),
     temperature: parseNumber(draft.temperature, 0, 2, DEFAULT_SETTINGS.temperature),
-    maxSourceChars: parseInteger(draft.maxSourceChars, 1_000, 200_000, DEFAULT_SETTINGS.maxSourceChars),
-    maxExistingNoteChars: parseInteger(
-      draft.maxExistingNoteChars,
-      1_000,
-      100_000,
-      DEFAULT_SETTINGS.maxExistingNoteChars,
+    maxSourceTokens: parseInteger(draft.maxSourceTokens, 250, 50_000, DEFAULT_SETTINGS.maxSourceTokens),
+    maxExistingNoteTokens: parseInteger(
+      draft.maxExistingNoteTokens,
+      250,
+      25_000,
+      DEFAULT_SETTINGS.maxExistingNoteTokens,
     ),
     existingNoteMaxChunks: parseInteger(draft.existingNoteMaxChunks, 1, 100, DEFAULT_SETTINGS.existingNoteMaxChunks),
     existingNoteMaxTokens: parseInteger(
@@ -175,8 +175,8 @@ function isDraftDirty(draft: ExtractionSettingsDraft, current: LtmResolvedExtrac
     resolved.verbosity !== current.verbosity ||
     resolved.maxOutputTokens !== current.maxOutputTokens ||
     resolved.temperature !== current.temperature ||
-    resolved.maxSourceChars !== current.maxSourceChars ||
-    resolved.maxExistingNoteChars !== current.maxExistingNoteChars ||
+    resolved.maxSourceTokens !== current.maxSourceTokens ||
+    resolved.maxExistingNoteTokens !== current.maxExistingNoteTokens ||
     resolved.existingNoteMaxChunks !== current.existingNoteMaxChunks ||
     resolved.existingNoteMaxTokens !== current.existingNoteMaxTokens
   );
@@ -861,20 +861,20 @@ export function LongTermMemoryExtractionSettingsEditor({
         <div className="text-xs font-semibold text-[var(--foreground)]">Extraction Limits</div>
         <div className="grid gap-3 sm:grid-cols-2">
           <NumberField
-            label="Max source chars"
-            value={draft.maxSourceChars}
-            min={1_000}
-            max={200_000}
-            step={1000}
-            onChange={(value) => set("maxSourceChars", value)}
+            label="Max source tokens"
+            value={draft.maxSourceTokens}
+            min={250}
+            max={50_000}
+            step={250}
+            onChange={(value) => set("maxSourceTokens", value)}
           />
           <NumberField
-            label="Existing note chars"
-            value={draft.maxExistingNoteChars}
-            min={1_000}
-            max={100_000}
-            step={1000}
-            onChange={(value) => set("maxExistingNoteChars", value)}
+            label="Existing note context tokens"
+            value={draft.maxExistingNoteTokens}
+            min={250}
+            max={25_000}
+            step={250}
+            onChange={(value) => set("maxExistingNoteTokens", value)}
           />
           <NumberField
             label="Existing note chunks"

@@ -5,7 +5,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import type { LtmDraftMutation, LtmEvidenceUnit, LtmNote } from "@marinara-engine/shared";
-import { DEFAULT_LTM_EXTRACTION_MAX_TOKENS, matchesLtmScope } from "@marinara-engine/shared";
+import {
+  DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
+  DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
+  matchesLtmScope,
+} from "@marinara-engine/shared";
 import {
   isLtmSourceLikeNote,
   ltmExtractionModeSchema,
@@ -54,6 +58,10 @@ const sourceHash = "a".repeat(64);
 
 async function readJsonText(path: string) {
   return readFile(path, "utf8");
+}
+
+function estimateLtmTestTokens(text: string) {
+  return Math.max(1, Math.ceil(text.length / 4));
 }
 
 async function listSourceFiles(root: URL): Promise<URL[]> {
@@ -2026,7 +2034,8 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
     assert.equal(defaults.reasoningEffort, "low");
     assert.equal(defaults.verbosity, "low");
     assert.equal(defaults.maxOutputTokens, DEFAULT_LTM_EXTRACTION_MAX_TOKENS);
-    assert.equal(defaults.maxSourceChars, 24_000);
+    assert.equal(defaults.maxSourceTokens, DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS);
+    assert.equal(defaults.maxExistingNoteTokens, 3_000);
     assert.deepEqual(defaults.promptTemplates, []);
     assert.equal(defaults.activePromptTemplateId, null);
 
@@ -2037,7 +2046,8 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
         verbosity: "high",
         maxOutputTokens: 4096,
         temperature: 0.25,
-        maxSourceChars: 12_000,
+        maxSourceTokens: 3_000,
+        maxExistingNoteTokens: 1_500,
         existingNoteMaxChunks: 8,
         existingNoteMaxTokens: 1600,
         promptTemplates: [
@@ -2056,7 +2066,8 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
     assert.equal(updated.verbosity, "high");
     assert.equal(updated.maxOutputTokens, 4096);
     assert.equal(updated.temperature, 0.25);
-    assert.equal(updated.maxSourceChars, 12_000);
+    assert.equal(updated.maxSourceTokens, 3_000);
+    assert.equal(updated.maxExistingNoteTokens, 1_500);
     assert.equal(updated.existingNoteMaxChunks, 8);
     assert.equal(updated.existingNoteMaxTokens, 1600);
     assert.equal(updated.systemPrompt, "Use a compact extraction prompt.");
@@ -2067,6 +2078,8 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
     const persisted = JSON.parse(await readFile(join(dirs.config, "extraction.json"), "utf8"));
     assert.equal(persisted.systemPrompt, undefined);
     assert.equal(persisted.extraInstruction, "Prefer threads when source text sets up later payoff.");
+    assert.equal(persisted.maxSourceTokens, 3_000);
+    assert.equal(persisted.maxExistingNoteTokens, 1_500);
     assert.deepEqual(persisted.promptTemplates, [
       {
         id: "compact",
@@ -2182,8 +2195,8 @@ test("source note extraction applies saved extraction config to llm request", as
         verbosity: "medium",
         maxOutputTokens: 1024,
         temperature: 0.5,
-        maxSourceChars: 1000,
-        maxExistingNoteChars: 1000,
+        maxSourceTokens: 250,
+        maxExistingNoteTokens: 250,
         promptTemplates: [
           {
             id: "template_compact",
@@ -2223,6 +2236,7 @@ test("source note extraction applies saved extraction config to llm request", as
       "Return JSON with compact test units only.",
     );
     assert.equal(userPayload.extraInstruction, "Treat lantern hum as a thread.");
+    assert.ok(estimateLtmTestTokens(userPayload.sourceText) <= 250);
     assert.equal(userPayload.sourceText, sourceText.slice(0, 1000));
     assert.equal(chatOptions.maxTokens, 1024);
     assert.equal(chatOptions.temperature, 0.5);
