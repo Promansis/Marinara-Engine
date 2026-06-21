@@ -21,6 +21,13 @@ import type { LtmMetadataIndex } from "./metadata-index.js";
 import { getLtmMetadataMatches } from "./metadata-index.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
 import { applyLtmBudget, type LtmBudgetedChunk, type LtmBudgetRejectedCandidate } from "./budget.js";
+
+const COOLDOWN_MAX_AGE_MINUTES = 30;
+const COOLDOWN_TIER_1_MINUTES = 5;
+const COOLDOWN_TIER_2_MINUTES = 15;
+const COOLDOWN_PENALTY_TIER_1 = 0.65;
+const COOLDOWN_PENALTY_TIER_2 = 0.8;
+const COOLDOWN_PENALTY_TIER_3 = 0.9;
 import { reciprocalRankFuse, type LtmRankLane } from "./ranking.js";
 import { readLongTermMemoryUsage } from "./usage.js";
 
@@ -635,8 +642,8 @@ export async function retrieveLongTermMemory(
         const injectedAt = Date.parse(entry.lastInjectedAt);
         if (!Number.isFinite(injectedAt)) return [];
         const ageMinutes = (now - injectedAt) / 60_000;
-        if (ageMinutes < 0 || ageMinutes > 30) return [];
-        const penalty = ageMinutes < 5 ? 0.65 : ageMinutes < 15 ? 0.8 : 0.9;
+        if (ageMinutes < 0 || ageMinutes > COOLDOWN_MAX_AGE_MINUTES) return [];
+        const penalty = ageMinutes < COOLDOWN_TIER_1_MINUTES ? COOLDOWN_PENALTY_TIER_1 : ageMinutes < COOLDOWN_TIER_2_MINUTES ? COOLDOWN_PENALTY_TIER_2 : COOLDOWN_PENALTY_TIER_3;
         return [
           {
             chunkId: entry.chunkId,
