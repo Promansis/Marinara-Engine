@@ -72,6 +72,7 @@ import { getLtmExtractionConfig, updateLtmExtractionConfig } from "../services/l
 import { getLtmGlobalSettings, updateLtmGlobalSettings } from "../services/long-term-memory/settings.js";
 import { LongTermMemoryStorage } from "../services/long-term-memory/storage.js";
 import { applyLtmScopeLinksToDerivedNotes } from "../services/long-term-memory/scope-links.js";
+import { countBy } from "../services/long-term-memory/ltm-utils.js";
 import { ltmModeForChatMode, resolveChatLtmScope } from "../services/long-term-memory/chat-scope.js";
 import {
   applyLtmNoteTransfer,
@@ -290,12 +291,7 @@ const debugLogQuerySchema = z
   })
   .strict();
 
-function countBy<T extends string>(values: T[]) {
-  return values.reduce<Record<string, number>>((counts, value) => {
-    counts[value] = (counts[value] ?? 0) + 1;
-    return counts;
-  }, {});
-}
+
 
 async function readOptionalJson<T>(index: string, path: string, parse: (value: unknown) => T) {
   try {

@@ -13,6 +13,7 @@ import type {
 } from "@marinara-engine/shared";
 import { isLtmSourceLikeNote, LTM_DRAFT_MUTATION_LIMIT } from "@marinara-engine/shared";
 import { noteIdForEvidenceUnit, riskForEvidenceUnit } from "./evidence-unit-validation.js";
+import { uniqueStrings } from "./ltm-utils.js";
 
 export interface CompileLtmEvidenceUnitsOptions {
   units: LtmEvidenceUnit[];
@@ -435,9 +436,7 @@ function maxRisk(risks: LtmDraftRisk[]): LtmDraftRisk {
   return "low";
 }
 
-function uniqueStrings<T extends string>(values: T[]) {
-  return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
-}
+
 
 function uniqueLinks(links: LtmEvidenceUnit["links"]) {
   const seen = new Set<string>();

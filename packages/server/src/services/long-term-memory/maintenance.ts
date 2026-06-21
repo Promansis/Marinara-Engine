@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
 import { logger } from "../../lib/logger.js";
+import { isEnoent, nowIso } from "./ltm-utils.js";
 import {
   ltmIndexMetadataSchema,
   normalizeChatSummaryEntries,
@@ -122,9 +123,7 @@ export interface LtmInteropSourceNoteImport {
   created: boolean;
 }
 
-function nowIso() {
-  return new Date().toISOString();
-}
+
 
 function normalizeIdentifier(value: string, fallback: string) {
   const normalized = value
@@ -205,7 +204,7 @@ async function listVaultFiles(root: string) {
   for (const folder of LTM_VAULT_FOLDERS) {
     const folderPath = safeJoin(dirs.vault, folder);
     const entries = await readdir(folderPath, { withFileTypes: true }).catch((err) => {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+      if (isEnoent(err)) return [];
       throw err;
     });
     for (const entry of entries) {
@@ -225,7 +224,7 @@ async function checkEventLogIntegrity(root: string, issues: IntegrityIssue[]) {
   try {
     content = await readFile(dirs.eventLog, "utf8");
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    if (isEnoent(err)) return 0;
     logger.error(err, "Event log unreadable at %s", publicPath);
     issues.push({
       severity: "error",
@@ -263,7 +262,7 @@ async function checkIndexCoherence(root: string, vaultNoteCount: number, issues:
     const raw = JSON.parse(await readFile(manifestPath, "utf8"));
     manifest = ltmIndexMetadataSchema.parse(raw);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+    if (!isEnoent(err)) {
       logger.warn(err, "Manifest unreadable at %s", relative(root, manifestPath));
       issues.push({
         severity: "error",
@@ -314,7 +313,7 @@ async function checkIndexCoherence(root: string, vaultNoteCount: number, issues:
       });
     }
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+    if (!isEnoent(err)) {
       logger.warn(err, "Embeddings index unreadable at %s", relative(root, embeddingsPath));
       issues.push({
         severity: "warning",

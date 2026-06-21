@@ -13,6 +13,7 @@ import {
   type LtmScope,
 } from "@marinara-engine/shared";
 import { logger } from "../../lib/logger.js";
+import { uniqueStrings } from "./ltm-utils.js";
 import { LongTermMemoryStorage } from "./storage.js";
 import { resolveChatLtmScope } from "./chat-scope.js";
 
@@ -87,9 +88,7 @@ export class LtmNoteTransferError extends Error {
   }
 }
 
-function uniqueStrings(values: Array<string | null | undefined>) {
-  return Array.from(new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value))));
-}
+
 
 function transferStorage(options: TransferServiceOptions) {
   return options.storage ?? new LongTermMemoryStorage(options.root);

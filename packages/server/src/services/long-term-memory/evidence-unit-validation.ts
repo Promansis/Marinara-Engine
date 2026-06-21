@@ -7,6 +7,7 @@ import type {
 } from "@marinara-engine/shared";
 import { isLtmSourceLikeNote } from "@marinara-engine/shared";
 import type { LtmExtractionDiagnostic } from "./diagnostics.js";
+import { safeSnippet } from "./ltm-utils.js";
 
 const DIALOGUE_BUCKETS = new Set<LtmEvidenceUnit["bucket"]>(["tone"]);
 const RISK_BUCKETS = new Set<LtmEvidenceUnit["bucket"]>(["relationship_conflict"]);
@@ -419,11 +420,7 @@ function droppedCandidate(input: Required<Pick<DroppedCandidateInput, "candidate
   };
 }
 
-function safeSnippet(text: string | undefined) {
-  const value = text?.replace(/\s+/g, " ").trim() ?? "";
-  if (!value || value.length < 12) return undefined;
-  return value.length > 280 ? `${value.slice(0, 277).trim()}...` : value;
-}
+
 
 function recoveryHintForUnit(unit: LtmEvidenceUnit): LtmExtractionRecoveryHint {
   return {

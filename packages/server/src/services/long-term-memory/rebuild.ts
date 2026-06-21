@@ -2,6 +2,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import type { LtmIndexMetadata } from "@marinara-engine/shared";
 import { logger } from "../../lib/logger.js";
+import { isEnoent } from "./ltm-utils.js";
 import { embedMemoryRecallTexts, type MemoryRecallEmbeddingOptions } from "../memory-recall.js";
 import { writeJsonAtomic } from "./atomic-json.js";
 import { buildLtmBm25Index, type LtmBm25Index } from "./bm25.js";
@@ -47,7 +48,7 @@ export type LtmRebuildScope = "all" | "typed" | "source";
 
 async function listFiles(root: string): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true }).catch((err) => {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    if (isEnoent(err)) return [];
     logger.warn(err, "Failed to list files in %s", root);
     throw err;
   });

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readdir, readFile, unlink } from "node:fs/promises";
 import { logger } from "../../lib/logger.js";
+import { isEnoent, nowIso } from "./ltm-utils.js";
 import {
   ltmExtractionDraftSchema,
   ltmDraftStatusSchema,
@@ -30,9 +31,7 @@ export type LtmDraftListFilter = {
   chatId?: string;
 };
 
-function nowIso() {
-  return new Date().toISOString();
-}
+
 
 function draftPathForId(id: string, root = getLongTermMemoryRoot()) {
   return safeJoin(getLongTermMemoryDirectories(root).drafts, `${id}.json`);
@@ -167,7 +166,7 @@ export class LongTermMemoryDraftStore {
       await unlink(draftPathForId(id, this.root));
       return true;
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+      if (isEnoent(err)) return false;
       logger.warn(err, "Failed to delete draft %s", id);
       throw err;
     }

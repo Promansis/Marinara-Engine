@@ -10,6 +10,7 @@ import {
   type LtmSection,
 } from "@marinara-engine/shared";
 import { logger } from "../../lib/logger.js";
+import { nowIso, uniqueStrings } from "./ltm-utils.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import { LongTermMemoryDraftStore } from "./draft-store.js";
 import { rebuildLongTermMemoryIndexes } from "./rebuild.js";
@@ -32,9 +33,7 @@ export interface ApplyLtmDraftResult {
   autoIncludedMutationIds: string[];
 }
 
-function nowIso() {
-  return new Date().toISOString();
-}
+
 
 function withEvidence(section: LtmSection, evidence: string[]) {
   return {
@@ -128,9 +127,7 @@ function withSourceLink(noteId: string, links: LtmLink[], draft: LtmExtractionDr
   return uniqueLinks([...links, sourceLink]);
 }
 
-function uniqueStrings(values: string[]) {
-  return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
-}
+
 
 function mergeScopes(existing: LtmNote["scope"], incoming: LtmNote["scope"]) {
   return {

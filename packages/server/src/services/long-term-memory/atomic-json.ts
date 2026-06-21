@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { link, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { logger } from "../../lib/logger.js";
+import { isEnoent } from "./ltm-utils.js";
 
 const ATOMIC_RENAME_RETRY_DELAYS_MS = [10, 25, 50] as const;
 
@@ -99,7 +100,7 @@ export async function readJsonFile<T>(path: string, fallback: T): Promise<T> {
   try {
     return JSON.parse(await readFile(path, "utf8")) as T;
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return fallback;
+    if (isEnoent(err)) return fallback;
     throw err;
   }
 }

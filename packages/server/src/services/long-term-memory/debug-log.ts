@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { logger } from "../../lib/logger.js";
+import { isEnoent } from "./ltm-utils.js";
 import {
   ltmDebugEventSchema,
   type LtmDebugEvent,
@@ -127,13 +128,13 @@ function buildEvent(input: LtmDebugEventInput): LtmDebugEvent {
 
 async function rotateIfNeeded(path: string) {
   const info = await stat(path).catch((err) => {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    if (isEnoent(err)) return null;
     throw err;
   });
   if (!info || info.size < MAX_DEBUG_LOG_BYTES) return;
   const rotated = `${path}.1`;
   await unlink(rotated).catch((err) => {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    if (!isEnoent(err)) throw err;
   });
   await rename(path, rotated);
 }
@@ -180,7 +181,7 @@ export async function readLtmDebugLog(filter: LtmDebugLogFilter = {}, root = get
   const path = getLongTermMemoryDirectories(root).debugLog;
   const limit = Math.min(Math.max(filter.limit ?? 200, 1), 1_000);
   const content = await readFile(path, "utf8").catch((err) => {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return "";
+    if (isEnoent(err)) return "";
     logger.warn(err, "Failed to read LTM debug log at %s", path);
     throw err;
   });
@@ -214,7 +215,7 @@ export async function clearLtmDebugLog(root = getLongTermMemoryRoot()) {
 export async function exportLtmDebugLog(root = getLongTermMemoryRoot()) {
   const path = getLongTermMemoryDirectories(root).debugLog;
   return readFile(path, "utf8").catch((err) => {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return "";
+    if (isEnoent(err)) return "";
     logger.warn(err, "Failed to export LTM debug log at %s", path);
     throw err;
   });

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, unlink } from "node:fs/promises";
 import { logger } from "../../lib/logger.js";
+import { isEnoent, nowIso } from "./ltm-utils.js";
 import {
   DEFAULT_LTM_GLOBAL_SETTINGS,
   LTM_NOTE_ID_PREFIXES_BY_TYPE,
@@ -62,9 +63,7 @@ export type CreateLtmNoteInput = Omit<LtmNote, "createdAt" | "updatedAt" | "vers
 
 export type UpdateLtmNotePatch = Partial<Omit<LtmNote, "id" | "createdAt" | "updatedAt" | "version">>;
 
-function nowIso() {
-  return new Date().toISOString();
-}
+
 
 function normalizeStoredScope(scope: LtmScope) {
   return withMergedLtmScopeLinks(scope, {});
@@ -368,7 +367,7 @@ export class LongTermMemoryStorage {
     try {
       content = await readFile(this.dirs.eventLog, "utf8");
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      if (!isEnoent(err)) {
         logger.warn(err, "Failed to read events from %s", this.dirs.eventLog);
         throw err;
       }
@@ -415,7 +414,7 @@ export class LongTermMemoryStorage {
     try {
       return await this.readNoteFile(safeJoin(this.dirs.vault, `${folder}/${id}.json`), folder);
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+      if (isEnoent(err)) return null;
       logger.warn(err, "Failed to read note %s in folder %s", id, folder);
       throw err;
     }
@@ -587,7 +586,7 @@ async function writeJsonIfChanged(path: string, value: unknown) {
     const current = await readFile(path, "utf8");
     if (current === next) return;
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+    if (!isEnoent(err)) {
       logger.warn(err, "Failed to read config for write-if-changed at %s", path);
       throw err;
     }

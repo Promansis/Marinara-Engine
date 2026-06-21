@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { logger } from "../../lib/logger.js";
+import { isEnoent } from "./ltm-utils.js";
 import {
   isLtmSourceLikeNote,
   ltmRetrievalConfigSchema,
@@ -121,7 +122,7 @@ async function readIndexFile<T>(path: string, warnings: string[]): Promise<T | n
   try {
     return JSON.parse(await readFile(path, "utf8")) as T;
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+    if (isEnoent(err)) {
       warnings.push(`Missing index ${path}`);
       return null;
     }
@@ -135,7 +136,7 @@ async function readConfig<T>(path: string, fallback: T, parse: (value: unknown) 
   try {
     return parse(JSON.parse(await readFile(path, "utf8")));
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+    if (!isEnoent(err)) {
       logger.warn(err, "Failed to read retrieval config %s; using defaults", path);
       warnings.push(`Failed to read retrieval config ${path}; using defaults`);
     }

@@ -1,9 +1,5 @@
-import { withMergedLtmScopeLinks, type LtmMode, type LtmScope } from "@marinara-engine/shared";
-import { ltmModeSchema } from "@marinara-engine/shared";
-
-function uniqueStrings(values: Array<string | null | undefined>) {
-  return Array.from(new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value))));
-}
+import { ltmModeSchema, withMergedLtmScopeLinks, type LtmMode, type LtmScope } from "@marinara-engine/shared";
+import { uniqueStrings } from "./ltm-utils.js";
 
 export function normalizeLtmChatCharacterIds(value: unknown) {
   if (Array.isArray(value)) return uniqueStrings(value.filter((id): id is string => typeof id === "string"));
