@@ -42,6 +42,11 @@ export function getPrivilegedActionErrorMessage(error: unknown, fallback: string
   return fallback;
 }
 
+type KeepaliveRequestResult = {
+  dispatched: boolean;
+  response?: Promise<Response>;
+};
+
 export type JsonRepairKind = "game_setup" | "session_conclusion" | "campaign_progression" | "lorebook_keeper";
 
 export type JsonRepairRequest = {
@@ -192,6 +197,35 @@ async function readDownloadFilename(res: Response, fallbackFilename: string) {
   return match?.[1] ? decodeURIComponent(match[1]) : fallbackFilename;
 }
 
+function keepaliveFetch(path: string, init?: RequestInit): KeepaliveRequestResult {
+  const headers = new Headers(init?.headers);
+  for (const [name, value] of Object.entries(getAdminSecretHeader())) {
+    headers.set(name, value);
+  }
+  const method = (init?.method ?? "GET").toUpperCase();
+  if (UNSAFE_METHODS.has(method)) {
+    headers.set(CSRF_HEADER, CSRF_HEADER_VALUE);
+  }
+  if (typeof init?.body === "string" && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  try {
+    return {
+      dispatched: true,
+      response: fetch(`${BASE}${path}`, {
+        ...init,
+        headers,
+        cache: "no-store",
+        keepalive: true,
+      }),
+    };
+  } catch {
+    return { dispatched: false };
+  }
+}
+}
+
 export const api = {
   raw: (path: string, init?: RequestInit) => apiFetch(path, init),
 
@@ -217,7 +251,26 @@ export const api = {
       body: body !== undefined ? JSON.stringify(body) : undefined,
     }),
 
-  delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+  putKeepalive: (path: string, body?: unknown, init?: RequestInit) =>
+    keepaliveFetch(path, {
+      ...init,
+      method: "PUT",
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    }),
+
+  patchKeepalive: (path: string, body?: unknown, init?: RequestInit) =>
+    keepaliveFetch(path, {
+      ...init,
+      method: "PATCH",
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    }),
+
+  delete: <T>(path: string, body?: unknown, init?: RequestInit) =>
+    request<T>(path, {
+      ...init,
+      method: "DELETE",
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    }),
 
   /** Download a JSON endpoint as a file (triggers browser save-as). */
   download: async (path: string, fallbackFilename = "export.json", init?: RequestInit) => {

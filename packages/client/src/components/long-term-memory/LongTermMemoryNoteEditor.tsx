@@ -1,0 +1,776 @@
+import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
+import { Check, Loader2, Pencil, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
+import {
+  getLtmScopeChatIds,
+  isLtmSourceLikeNote,
+  withMergedLtmScopeLinks,
+  type LtmExtractionDroppedCandidate,
+  type LtmLink,
+  type LtmMode,
+  type LtmNote,
+  type LtmNoteType,
+  type LtmSection,
+} from "@marinara-engine/shared";
+import {
+  useApplyLongTermMemoryScopeToDerived,
+  useRebuildLongTermMemory,
+  useUpdateLongTermMemoryNote,
+} from "../../hooks/use-long-term-memory";
+import { useChat } from "../../hooks/use-chats";
+import { cn } from "../../lib/utils";
+import { useChatStore } from "../../stores/chat.store";
+import { FloatingMessageEditor } from "../chat/FloatingMessageEditor";
+import { HelpTooltip } from "../ui/HelpTooltip";
+import {
+  actionRowClassName,
+  compactInputClassName,
+  helperTextClassName,
+  insetSectionCardClassName,
+  sectionCardClassName,
+  SettingField,
+} from "./LtmFields";
+import { LtmScopePicker } from "./LtmScopePicker";
+import { LongTermMemorySuggestionsTab } from "./LongTermMemorySuggestionsTab";
+import { ToolButton } from "./LtmPills";
+import {
+  dedupeEvidenceEntries,
+  editablePatchFromDraft,
+  emptySection,
+  friendlyIdentifier,
+  friendlyMode,
+  friendlyNoteType,
+  friendlySectionKey,
+  friendlyStatus,
+  groupScopeLabel,
+  humanRelationLabel,
+  modeOptions,
+  normalizeIdentifier,
+  normalizeTagsInput,
+  noteTypeOptions,
+  resolveEvidenceDisplay,
+  statusOptions,
+  type LtmDisplayLookupContext,
+} from "./ltm-editor-utils";
+
+type LongTermMemoryNoteEditorProps = {
+  note: LtmNote;
+  onCancel: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  onSaved?: (note: LtmNote) => void;
+  onRecoverDroppedCandidate?: (candidate: LtmExtractionDroppedCandidate, note: LtmNote) => void;
+  embedded?: boolean;
+  displayContext?: LtmDisplayLookupContext;
+};
+
+function serializedEditable(note: LtmNote) {
+  return JSON.stringify(editablePatchFromDraft(note));
+}
+
+function numberOrUndefined(value: string) {
+  if (!value.trim()) return undefined;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.max(0, Math.min(1, numeric)) : undefined;
+}
+
+function sectionHasContent(section: LtmSection) {
+  return section.text.trim().length > 0;
+}
+
+function readChatCharacterIds(value: unknown) {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  if (typeof value !== "string" || !value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function isSourceMemory(note: LtmNote) {
+  return isLtmSourceLikeNote(note);
+}
+
+export function LongTermMemoryNoteEditor({
+  note,
+  onCancel,
+  onDirtyChange,
+  onSaved,
+  onRecoverDroppedCandidate,
+  embedded = false,
+  displayContext,
+}: LongTermMemoryNoteEditorProps) {
+  const activeChatId = useChatStore((state) => state.activeChatId);
+  const cachedActiveChat = useChatStore((state) => state.activeChat);
+  const activeChatQuery = useChat(activeChatId);
+  const activeChat = activeChatQuery.data ?? cachedActiveChat;
+  const [savedBaseline, setSavedBaseline] = useState(note);
+  const [draft, setDraft] = useState(note);
+  const [titleText, setTitleText] = useState(note.title ?? "");
+  const [tagsText, setTagsText] = useState(note.tags.join(", "));
+  const [linkDraft, setLinkDraft] = useState<LtmLink>({ target: "", relation: "" });
+  const [floatingSectionKey, setFloatingSectionKey] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"details" | "suggestions">("details");
+  const updateNote = useUpdateLongTermMemoryNote();
+  const applyScopeToDerived = useApplyLongTermMemoryScopeToDerived();
+  const rebuild = useRebuildLongTermMemory();
+
+  useEffect(() => {
+    setSavedBaseline(note);
+    setDraft(note);
+    setTitleText(note.title ?? "");
+    setTagsText(note.tags.join(", "));
+    setActiveTab("details");
+  }, [note]);
+
+  const dirty = useMemo(() => serializedEditable(draft) !== serializedEditable(savedBaseline), [draft, savedBaseline]);
+  const busy = updateNote.isPending || rebuild.isPending || applyScopeToDerived.isPending;
+  const sourceMemory = isSourceMemory(draft);
+  const typedNoteTypeOptions = noteTypeOptions.filter((type) => type !== "source");
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+
+  const setSection = (key: string, updater: (section: LtmSection) => LtmSection) => {
+    setDraft((current) => ({
+      ...current,
+      sections: {
+        ...current.sections,
+        [key]: {
+          ...updater(current.sections[key]),
+          updatedAt: new Date().toISOString(),
+        },
+      },
+    }));
+  };
+
+  const validateDraft = () => {
+    const entries = Object.entries(draft.sections);
+    if (entries.length === 0) return "At least one section is required.";
+    const empty = entries.find(([, section]) => !sectionHasContent(section));
+    if (empty) return `Section ${empty[0]} needs text.`;
+    if (draft.modes.length === 0) return "Select at least one mode.";
+    return null;
+  };
+
+  const save = async ({ rebuildAfter = false }: { rebuildAfter?: boolean } = {}) => {
+    const error = validateDraft();
+    if (error) {
+      toast.error(error);
+      return;
+    }
+    try {
+      const saved = await updateNote.mutateAsync({ id: draft.id, patch: editablePatchFromDraft(draft) });
+      toast.success("Memory saved");
+      setSavedBaseline(saved);
+      setDraft(saved);
+      onDirtyChange?.(false);
+      onSaved?.(saved);
+      if (rebuildAfter) {
+        try {
+          await rebuild.mutateAsync();
+          toast.success("Memory search refreshed");
+        } catch (err) {
+          toast.error(`Saved, but rebuild failed: ${(err as Error).message}`);
+        }
+      }
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
+  const cancel = () => {
+    if (dirty && !confirm("Discard unsaved memory changes?")) return;
+    onCancel();
+  };
+
+  const renameSection = (from: string, nextRaw: string) => {
+    const to = normalizeIdentifier(nextRaw, "section");
+    if (!to || to === from) return;
+    if (draft.sections[to]) {
+      toast.error(`Section ${to} already exists`);
+      return;
+    }
+    setDraft((current) => {
+      const { [from]: section, ...rest } = current.sections;
+      return {
+        ...current,
+        sections: {
+          ...rest,
+          [to]: section,
+        },
+      };
+    });
+  };
+
+  const addSection = () => {
+    setDraft((current) => {
+      let index = Object.keys(current.sections).length + 1;
+      let key = `section_${index}`;
+      while (current.sections[key]) {
+        index += 1;
+        key = `section_${index}`;
+      }
+      return {
+        ...current,
+        sections: {
+          ...current.sections,
+          [key]: emptySection(),
+        },
+      };
+    });
+  };
+
+  const removeSection = (key: string) => {
+    if (Object.keys(draft.sections).length <= 1) {
+      toast.error("At least one section is required");
+      return;
+    }
+    setDraft((current) => {
+      const { [key]: _removed, ...sections } = current.sections;
+      return { ...current, sections };
+    });
+  };
+
+  const addLink = () => {
+    const target = normalizeIdentifier(linkDraft.target, "note");
+    const relation = normalizeIdentifier(linkDraft.relation, "relation");
+    if (!target || !relation) return;
+    setDraft((current) => ({ ...current, links: [...current.links, { target, relation }] }));
+    setLinkDraft({ target: "", relation: "" });
+  };
+
+  const setLinkedScope = (next: { chatIds: string[]; characterIds: string[]; groupId?: string }) => {
+    setDraft((current) => {
+      const { chatId: _chatId, chatIds: _chatIds, characterIds: _characterIds, groupId: _groupId, ...restScope } = current.scope;
+      return {
+        ...current,
+        scope: withMergedLtmScopeLinks(
+          {
+            ...restScope,
+            groupId: next.groupId?.trim() || undefined,
+          },
+          { chatIds: next.chatIds, characterIds: next.characterIds },
+        ),
+      };
+    });
+  };
+
+  const useCurrentChatScope = () => {
+    if (!activeChat) return;
+    setDraft((current) => {
+      const { chatId: _chatId, chatIds: _chatIds, characterIds: _characterIds, ...restScope } = current.scope;
+      return {
+        ...current,
+        scope: withMergedLtmScopeLinks(
+          {
+            ...restScope,
+            groupId: activeChat.groupId ?? undefined,
+          },
+          { chatIds: [activeChat.id], characterIds: readChatCharacterIds(activeChat.characterIds) },
+        ),
+      };
+    });
+  };
+
+  const applyToDerived = async () => {
+    const chatIds = getLtmScopeChatIds(draft.scope);
+    const characterIds = draft.scope.characterIds ?? [];
+    if (!chatIds.length && !characterIds.length) {
+      toast.error("Add chat or character links first");
+      return;
+    }
+    try {
+      const result = await applyScopeToDerived.mutateAsync({ noteId: draft.id, chatIds, characterIds });
+      toast.success(
+        result.count === 1
+          ? "Applied links to 1 extracted memory"
+          : `Applied links to ${result.count} extracted memories`,
+      );
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
+  const floatingSection = floatingSectionKey ? draft.sections[floatingSectionKey] : null;
+  const [advancedEvidenceKey, setAdvancedEvidenceKey] = useState<string | null>(null);
+  const [advancedEvidenceValue, setAdvancedEvidenceValue] = useState("");
+
+  const addEvidenceEntry = (sectionKey: string) => {
+    const nextEntry = advancedEvidenceValue.trim();
+    if (!nextEntry) return;
+    setSection(sectionKey, (current) => ({
+      ...current,
+      evidence: dedupeEvidenceEntries([...(current.evidence ?? []), nextEntry], displayContext),
+    }));
+    setAdvancedEvidenceValue("");
+    setAdvancedEvidenceKey(null);
+  };
+
+  return (
+    <div className="grid gap-4">
+      {!embedded && (
+        <div className="rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-[var(--foreground)]">{friendlyIdentifier(draft.id)}</div>
+              <div className="mt-2 text-[0.625rem] text-[var(--muted-foreground)]">
+                {friendlyStatus(draft.status)} · updated {new Date(draft.updatedAt).toLocaleString()}
+              </div>
+            </div>
+            {dirty ? (
+              <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-amber-600 dark:text-amber-200">
+                Unsaved
+              </span>
+            ) : null}
+          </div>
+          <p className={cn("mt-2", helperTextClassName)}>
+            Keep the note structure, scope, and supporting evidence aligned with the rest of the memory library.
+          </p>
+        </div>
+      )}
+
+      {!embedded && (
+        <div className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--secondary)]/45 p-1 ring-1 ring-[var(--border)]">
+        {(["details", "suggestions"] as const).map((tab) => {
+          const disabled = tab === "suggestions" && !sourceMemory;
+          return (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => !disabled && setActiveTab(tab)}
+              disabled={disabled}
+              className={cn(
+                "rounded-lg px-3 py-2 text-xs font-semibold transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45",
+                activeTab === tab
+                  ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm ring-1 ring-[var(--border)]"
+                  : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+              )}
+            >
+              {tab === "details" ? "Details" : "Suggestions"}
+            </button>
+          );
+        })}
+        </div>
+      )}
+
+      {!embedded && activeTab === "suggestions" && onRecoverDroppedCandidate ? (
+        <LongTermMemorySuggestionsTab note={savedBaseline} onRecoverDroppedCandidate={onRecoverDroppedCandidate} />
+      ) : null}
+
+      {(embedded || activeTab === "details") && (
+      <div className="grid gap-4">
+        <SettingField label="Title">
+          <input
+            value={titleText}
+            onChange={(event) => {
+              const nextTitle = event.target.value;
+              setTitleText(nextTitle);
+              setDraft((current) => ({ ...current, title: nextTitle.trim() ? nextTitle : undefined }));
+            }}
+            placeholder={friendlyIdentifier(draft.id)}
+            className={compactInputClassName}
+          />
+        </SettingField>
+
+        <div className="grid gap-2 sm:grid-cols-2">
+          <SettingField label="Type">
+            {sourceMemory ? (
+              <div className="grid gap-1">
+                <div className={cn(compactInputClassName, "flex items-center")}>
+                  {draft.type === "source" ? "Source" : friendlyNoteType(draft.type)}
+                </div>
+                <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                  Source memories keep their type so extraction history stays linked.
+                </p>
+              </div>
+            ) : (
+              <select
+                value={draft.type}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, type: event.target.value as LtmNoteType }))
+                }
+                className={compactInputClassName}
+              >
+                {typedNoteTypeOptions.map((type) => (
+                  <option key={type} value={type}>
+                    {friendlyNoteType(type)}
+                  </option>
+                ))}
+              </select>
+            )}
+          </SettingField>
+          <SettingField label="Status">
+            <select
+              value={draft.status}
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, status: event.target.value as LtmNote["status"] }))
+              }
+              className={compactInputClassName}
+            >
+              {statusOptions.map((status) => (
+                <option key={status} value={status}>
+                  {friendlyStatus(status)}
+                </option>
+              ))}
+            </select>
+          </SettingField>
+          <SettingField label="Tags">
+            <input
+              value={tagsText}
+              onChange={(event) => setTagsText(event.target.value)}
+              onBlur={() => setDraft((current) => ({ ...current, tags: normalizeTagsInput(tagsText) }))}
+              className={compactInputClassName}
+            />
+          </SettingField>
+        </div>
+
+        <fieldset className={sectionCardClassName}>
+          <legend className="px-1 text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+            Use In
+          </legend>
+          <div className="grid gap-1 sm:grid-cols-2">
+            {modeOptions.map((mode) => (
+              <label
+                key={mode}
+                className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs transition-colors hover:bg-[var(--accent)]/60"
+              >
+                <input
+                  type="checkbox"
+                  checked={draft.modes.includes(mode)}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      modes: event.target.checked
+                        ? [...current.modes, mode]
+                        : current.modes.filter((item: LtmMode) => item !== mode),
+                    }))
+                  }
+                  className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+                />
+                {friendlyMode(mode)}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
+        <div className={sectionCardClassName}>
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1 text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+                Where this applies
+                <HelpTooltip
+                  text="Scope controls which chats this memory applies to. The AI only retrieves memories matching your active context."
+                  size="0.6875rem"
+                />
+              </div>
+              <p className={cn("mt-1", helperTextClassName)}>
+                Scope this memory to the right chats, characters, or group so recall stays predictable.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={useCurrentChatScope}
+              disabled={!activeChat}
+              className="rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50"
+            >
+              Use this chat
+            </button>
+          </div>
+          <LtmScopePicker
+            value={{
+              chatIds: getLtmScopeChatIds(draft.scope),
+              characterIds: draft.scope.characterIds ?? [],
+              groupId: draft.scope.groupId,
+            }}
+            onChange={setLinkedScope}
+          />
+          {draft.scope.groupId && (
+            <div className="text-[0.625rem] text-[var(--muted-foreground)]">
+              Grouped chat: {groupScopeLabel(draft.scope.groupId, displayContext) ?? "Grouped chat"}
+            </div>
+          )}
+          {sourceMemory && (
+            <div className={cn(insetSectionCardClassName, "flex flex-wrap items-center justify-between gap-2")}>
+              <span className={helperTextClassName}>Push these chat and character links to extracted memories.</span>
+              <ToolButton onClick={applyToDerived} disabled={busy}>
+                {applyScopeToDerived.isPending ? (
+                  <Loader2 size="0.875rem" className="animate-spin" />
+                ) : (
+                  <RefreshCw size="0.875rem" />
+                )}
+                Apply To Extracted Memories
+              </ToolButton>
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+                Memory Details
+              </h4>
+              <p className={cn("mt-1", helperTextClassName)}>Edit each section, relevance score, and supporting evidence.</p>
+            </div>
+            <ToolButton onClick={addSection}>
+              <Plus size="0.875rem" />
+              Add
+            </ToolButton>
+          </div>
+          {Object.entries(draft.sections).map(([key, section]) => (
+            <section key={key} className={sectionCardClassName}>
+              <div className="mb-2 grid grid-cols-[1fr_auto] gap-2">
+                <input
+                  defaultValue={key}
+                  onBlur={(event) => renameSection(key, event.target.value)}
+                  className={compactInputClassName}
+                  aria-label={`Rename ${friendlySectionKey(key)}`}
+                />
+                <button
+                  type="button"
+                  onClick={() => removeSection(key)}
+                  className="rounded-lg px-2 text-[var(--destructive)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--destructive)]/10 active:scale-95"
+                  aria-label={`Remove ${friendlySectionKey(key)}`}
+                >
+                  <Trash2 size="0.875rem" />
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFloatingSectionKey(key)}
+                className="group/summary flex min-h-28 w-full flex-col rounded-xl bg-[var(--background)] px-3 py-3 text-left text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/45 focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
+              >
+                <span className="mb-2 inline-flex items-center gap-1.5 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                  <Pencil size="0.75rem" />
+                  Edit memory text
+                </span>
+                <span
+                  className={cn(
+                    "line-clamp-4 whitespace-pre-wrap",
+                    !section.text.trim() && "text-[var(--muted-foreground)]/70",
+                  )}
+                >
+                  {section.text.trim() || "No memory text yet."}
+                </span>
+              </button>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1 inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                    Relevance
+                    <HelpTooltip
+                      text="Higher values make this memory more likely to appear in the AI's context for the current chat."
+                      size="0.625rem"
+                    />
+                  </span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={section.salience ?? ""}
+                    onChange={(event) =>
+                      setSection(key, (current) => ({ ...current, salience: numberOrUndefined(event.target.value) }))
+                    }
+                    placeholder="0-1"
+                    className={compactInputClassName}
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                    AI Certainty
+                    <HelpTooltip
+                      text="How confident the AI was when creating this memory. Lower values mean the AI treats this as less reliable. Edit to override."
+                      size="0.625rem"
+                    />
+                  </span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={section.confidence ?? ""}
+                    onChange={(event) =>
+                      setSection(key, (current) => ({ ...current, confidence: numberOrUndefined(event.target.value) }))
+                    }
+                    placeholder="0-1"
+                    className={compactInputClassName}
+                  />
+                </label>
+              </div>
+              <label className="mt-3 block">
+                <span className="mb-1 inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                  Supporting Evidence
+                  <HelpTooltip
+                    text="Reasons the AI created this memory. Each line is a source reference or justification."
+                    size="0.625rem"
+                  />
+                </span>
+                <div className="grid gap-2 rounded-xl bg-[var(--background)]/45 p-2 ring-1 ring-[var(--border)]/70">
+                  {(section.evidence?.length ?? 0) > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {dedupeEvidenceEntries(section.evidence ?? [], displayContext).map((entry) => {
+                        const resolved = resolveEvidenceDisplay(entry, displayContext);
+                        return (
+                          <span
+                            key={`${key}-${entry}`}
+                            title={resolved.tooltip}
+                            className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-[var(--secondary)]/60 px-2 py-1 text-[0.6875rem] text-[var(--foreground)] ring-1 ring-[var(--border)]"
+                          >
+                            <span className="truncate">{resolved.label}</span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSection(key, (current) => ({
+                                  ...current,
+                                  evidence: (current.evidence ?? []).filter((candidate) => candidate !== entry),
+                                }))
+                              }
+                              className="rounded p-0.5 hover:bg-[var(--accent)]"
+                              aria-label={`Remove ${resolved.label}`}
+                            >
+                              <X size="0.7rem" />
+                            </button>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-[0.6875rem] text-[var(--muted-foreground)]">No supporting evidence yet.</p>
+                  )}
+                  {advancedEvidenceKey === key ? (
+                    <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+                      <input
+                        value={advancedEvidenceValue}
+                        onChange={(event) => setAdvancedEvidenceValue(event.target.value)}
+                        placeholder="Advanced token, for example source_note:..."
+                        className={compactInputClassName}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => addEvidenceEntry(key)}
+                        className="rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+                      >
+                        <Check size="0.75rem" className="inline-block align-[-0.12rem]" /> Save
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAdvancedEvidenceKey(null);
+                          setAdvancedEvidenceValue("");
+                        }}
+                        className="rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setAdvancedEvidenceKey(key)}
+                      className="justify-self-start rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                    >
+                      Add Advanced Evidence
+                    </button>
+                  )}
+                </div>
+              </label>
+            </section>
+          ))}
+          {floatingSectionKey && floatingSection && (
+            <FloatingMessageEditor
+              open
+              title={`Edit ${friendlySectionKey(floatingSectionKey)}`}
+              initialContent={floatingSection.text}
+              fontSize={13}
+              showFormatting
+              onSave={(content) => {
+                setSection(floatingSectionKey, (current) => ({
+                  ...current,
+                  text: content,
+                }));
+                setFloatingSectionKey(null);
+              }}
+              onCancel={() => setFloatingSectionKey(null)}
+            />
+          )}
+        </div>
+
+        <div className={sectionCardClassName}>
+          <div>
+            <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+              Related Memories
+            </h4>
+            <p className={cn("mt-1", helperTextClassName)}>
+              Link this note to source memories, timeline events, or other memory streams.
+            </p>
+          </div>
+          {draft.links.map((link, index) => (
+            <div
+              key={`${link.target}-${link.relation}-${index}`}
+              className="grid grid-cols-[1fr_auto] items-center gap-2 rounded-lg bg-[var(--background)]/45 px-3 py-2 text-xs ring-1 ring-[var(--border)]/70"
+            >
+              <div className="min-w-0">
+                <div className="text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+                  {humanRelationLabel(link.relation)}
+                </div>
+                <div className="mt-0.5 truncate text-[var(--foreground)]">
+                  {friendlyIdentifier(link.target)}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  setDraft((current) => ({
+                    ...current,
+                    links: current.links.filter((_, linkIndex) => linkIndex !== index),
+                  }))
+                }
+                className="rounded-lg p-1 text-[var(--destructive)] hover:bg-[var(--destructive)]/10"
+                aria-label={`Remove relation ${friendlyIdentifier(link.relation)}`}
+              >
+                <X size="0.875rem" />
+              </button>
+            </div>
+          ))}
+          <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+            <input
+              value={linkDraft.target}
+              onChange={(event) => setLinkDraft((current) => ({ ...current, target: event.target.value }))}
+              placeholder="related memory"
+              className={compactInputClassName}
+            />
+            <input
+              value={linkDraft.relation}
+              onChange={(event) => setLinkDraft((current) => ({ ...current, relation: event.target.value }))}
+              placeholder="relationship"
+              className={compactInputClassName}
+            />
+            <ToolButton onClick={addLink}>
+              <Plus size="0.875rem" />
+              Add Relation
+            </ToolButton>
+          </div>
+        </div>
+
+        <div className={actionRowClassName}>
+          <ToolButton onClick={() => save()} disabled={!dirty || busy} tone="primary">
+            {updateNote.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Save size="0.875rem" />}
+            Save
+          </ToolButton>
+          <ToolButton onClick={() => save({ rebuildAfter: true })} disabled={!dirty || busy}>
+            {rebuild.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <RefreshCw size="0.875rem" />}
+            Save And Refresh Search
+          </ToolButton>
+          <ToolButton onClick={cancel} disabled={busy}>
+            <X size="0.875rem" />
+            Cancel
+          </ToolButton>
+        </div>
+      </div>
+      )}
+    </div>
+  );
+}

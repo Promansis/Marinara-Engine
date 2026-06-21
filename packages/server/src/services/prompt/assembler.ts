@@ -150,6 +150,10 @@ export interface AssemblerInput {
   lorebookScanMessages?: ChatMLMessage[];
   /** Current chat summary text (if any) */
   chatSummary?: string | null;
+  /** Pre-formatted long-term memory prompt block to merge into the prompt scaffold. */
+  longTermMemoryBlock?: string | null;
+  /** When true, skip summary fallback appends to avoid duplicating newer context. */
+  suppressChatSummary?: boolean;
   /** Whether agents are enabled for this chat */
   enableAgents?: boolean;
   /** Per-chat list of active agent type IDs (empty = use global enabled state) */
@@ -310,6 +314,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
     chatMessages: input.chatMessages,
     lorebookScanMessages: input.lorebookScanMessages,
     chatSummary: input.chatSummary ?? null,
+    longTermMemoryBlock: input.longTermMemoryBlock ?? null,
     wrapFormat,
     enableAgents: input.enableAgents ?? true,
     activeAgentIds: input.activeAgentIds ?? [],
@@ -334,6 +339,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
   const depthSections: ResolvedSection[] = [];
   let lorebookDepthEntriesCount = 0;
   let hasChatSummaryMarker = false;
+  let hasLongTermMemoryMarker = false;
   const runtimeAgentTypesUsed = new Set<string>();
 
   for (const sectionId of sectionOrder) {
@@ -352,6 +358,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
       try {
         const mc = JSON.parse(section.markerConfig) as MarkerConfig;
         if (mc.type === "chat_summary") hasChatSummaryMarker = true;
+        if (mc.type === "long_term_memory") hasLongTermMemoryMarker = true;
       } catch {
         /* ignore */
       }
@@ -428,9 +435,25 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
   }
 
   // ── Phase 2b: Fallback chat summary injection ──
+  // Merge long-term memory into the leading system prompt before summary fallback so
+  // both features share the same prompt assembly path without duplicating context.
+  const longTermMemoryBlock = input.longTermMemoryBlock?.trim();
+  if (longTermMemoryBlock && !hasLongTermMemoryMarker) {
+    const firstSystemIdx = messages.findIndex((m) => m.role === "system");
+    if (firstSystemIdx >= 0) {
+      messages[firstSystemIdx] = {
+        ...messages[firstSystemIdx]!,
+        content: `${messages[firstSystemIdx]!.content}\n\n${longTermMemoryBlock}`,
+        contextKind: "prompt",
+      };
+    } else {
+      messages.unshift({ role: "system", content: longTermMemoryBlock, contextKind: "prompt" });
+    }
+  }
+
   // If the preset has no chat_summary marker but a summary exists, append it
   // to the bottom of the first system message so it's always included.
-  if (!hasChatSummaryMarker && markerCtx.chatSummary) {
+  if (!input.suppressChatSummary && !hasChatSummaryMarker && markerCtx.chatSummary) {
     const wrapped = wrapContent(markerCtx.chatSummary, "Chat Summary", wrapFormat);
     if (wrapped) {
       const firstSystemIdx = messages.findIndex((m) => m.role === "system");

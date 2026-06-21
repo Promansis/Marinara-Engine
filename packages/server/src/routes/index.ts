@@ -53,6 +53,7 @@ import { ttsRoutes } from "./tts.routes.js";
 import { promptOverridesRoutes } from "./prompt-overrides.routes.js";
 import { csrfDiagnosticsRoutes } from "./csrf-diagnostics.routes.js";
 import { professorMariWorkspaceRoutes } from "./professor-mari-workspace.routes.js";
+import { longTermMemoryRoutes } from "./long-term-memory.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(chatsRoutes, { prefix: "/api/chats" });
@@ -102,6 +103,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(gameAssetsRoutes, { prefix: "/api/game-assets" });
   await app.register(turnGamesRoutes, { prefix: "/api/turn-games" });
   await app.register(ttsRoutes, { prefix: "/api/tts" });
+  await app.register(longTermMemoryRoutes, { prefix: "/api/long-term-memory" });
   await app.register(promptOverridesRoutes, { prefix: "/api/prompt-overrides" });
   await app.register(csrfDiagnosticsRoutes, { prefix: "/api/csrf" });
   await app.register(professorMariWorkspaceRoutes, { prefix: "/api/professor-mari/workspace" });
