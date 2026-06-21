@@ -24,6 +24,7 @@ export type MarkerType =
   | "persona"
   | "chat_history"
   | "chat_summary"
+  | "long_term_memory"
   | "world_info_before"
   | "world_info_after"
   | "dialogue_examples"

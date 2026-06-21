@@ -1,0 +1,140 @@
+import { createHash } from "node:crypto";
+import {
+  isLtmSourceLikeNote,
+  type LtmNote,
+  type LtmNoteType,
+  type LtmScope,
+  type LtmStatus,
+} from "@marinara-engine/shared";
+
+export interface LtmMemoryChunk {
+  id: string;
+  noteId: string;
+  sectionKey: string;
+  text: string;
+  noteType: LtmNoteType;
+  status: LtmStatus;
+  scope: LtmScope;
+  tags: string[];
+  salience?: number;
+  confidence?: number;
+  updatedAt: string;
+  sourceHash: string;
+}
+
+export interface ChunkLtmNotesOptions {
+  includeSourceNotes?: boolean;
+  sourceNotesOnly?: boolean;
+}
+
+const LEGACY_LABEL_SUFFIX_PATTERN = /\n{2,}\[note:[^\n]*\]\s*$/;
+const INLINE_EVIDENCE_LABEL_PATTERN = /\s*\[evidence:[^\]\n]*\]/g;
+
+export function cleanLongTermMemoryChunkText(text: string) {
+  return text.trim().replace(LEGACY_LABEL_SUFFIX_PATTERN, "").replace(INLINE_EVIDENCE_LABEL_PATTERN, "").trim();
+}
+
+export function stableJsonHash(value: unknown) {
+  return createHash("sha256").update(stableStringify(value)).digest("hex");
+}
+
+export function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b));
+  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(",")}}`;
+}
+
+export function isLtmSourceSummaryNote(note: Pick<LtmNote, "type" | "tags">) {
+  return isLtmSourceLikeNote(note);
+}
+
+export function chunkNoteSections(note: LtmNote): LtmMemoryChunk[] {
+  if (note.type === "tone") {
+    const profileText = note.sections.profile?.text
+      ? cleanLongTermMemoryChunkText(note.sections.profile.text)
+      : "";
+    const obsText = note.sections.observations?.text
+      ? cleanLongTermMemoryChunkText(note.sections.observations.text)
+      : "";
+    const combined = [profileText, obsText].filter(Boolean).join("\n\n");
+    const section = note.sections.profile ?? note.sections.observations;
+    if (!section || !combined) return [];
+    return [
+      {
+        id: `${note.id}::profile`,
+        noteId: note.id,
+        sectionKey: "profile",
+        text: combined,
+        noteType: note.type,
+        status: note.status,
+        scope: note.scope,
+        tags: [...note.tags].sort((a, b) => a.localeCompare(b)),
+        salience: Math.max(
+          note.sections.profile?.salience ?? 0,
+          note.sections.observations?.salience ?? 0,
+        ),
+        confidence: Math.max(
+          note.sections.profile?.confidence ?? 0,
+          note.sections.observations?.confidence ?? 0,
+        ),
+        updatedAt: note.sections.profile?.updatedAt ?? note.sections.observations?.updatedAt ?? "",
+        sourceHash: stableJsonHash({
+          noteId: note.id,
+          noteType: note.type,
+          status: note.status,
+          scope: note.scope,
+          tags: note.tags,
+          sectionKey: "profile",
+          section,
+        }),
+      },
+    ];
+  }
+
+  return Object.entries(note.sections)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([sectionKey, section]) => {
+      const text = cleanLongTermMemoryChunkText(section.text);
+      return {
+        id: `${note.id}::${sectionKey}`,
+        noteId: note.id,
+        sectionKey,
+        text,
+        noteType: note.type,
+        status: note.status,
+        scope: note.scope,
+        tags: [...note.tags].sort((a, b) => a.localeCompare(b)),
+        salience: section.salience,
+        confidence: section.confidence,
+        updatedAt: section.updatedAt,
+        sourceHash: stableJsonHash({
+          noteId: note.id,
+          noteType: note.type,
+          status: note.status,
+          scope: note.scope,
+          tags: note.tags,
+          sectionKey,
+          section,
+        }),
+      };
+    });
+}
+
+export function chunkNotes(notes: LtmNote[], options: ChunkLtmNotesOptions = {}) {
+  return notes
+    .slice()
+    .filter((note) => {
+      const isSource = isLtmSourceSummaryNote(note);
+      if (options.sourceNotesOnly) return isSource;
+      return options.includeSourceNotes === true || !isSource;
+    })
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .flatMap((note) => chunkNoteSections(note));
+}
