@@ -234,6 +234,19 @@ Release helpers now in the repo:
 - `pnpm guard:installer-artifacts` fails when tracked installer binaries appear under `win/installer/*.exe`.
 - `pnpm release:notes -- <version>` renders the matching `CHANGELOG.md` entry for release publication and prepends the temporary Android APK / Termux notice.
 
+## Architecture: Managed Custom Agents
+
+The agent system supports *managed custom agents* — DB-row agents with a reserved `type` (e.g. `"long-term-memory"`) registered in `MANAGED_AGENT_TYPES`. These agents behave like custom agents but have dedicated:
+- **Feature panels** in `AgentEditor` (looked up via `MANAGED_AGENT_FEATURE_PANELS`) instead of generic custom-agent sections.
+- **Settings schemas** validated server-side via manual route-handler branches (`ltmAgentSettingsSchema` for LTM).
+- **Connectionless executors** in the generation pipeline that skip provider/model/connection resolution.
+
+Key files:
+- `packages/shared/src/types/agent.ts` — `ManagedAgentType`, `MANAGED_AGENT_TYPES`, `isManagedAgentType()`, `isConnectionlessAgentType()`
+- `packages/shared/src/features/agents/agent-feature-panels.ts` — `MANAGED_AGENT_FEATURE_PANELS`
+- `packages/server/src/services/agents/long-term-memory-agent.ts` — connectionless executor registration
+- `packages/server/src/services/generation/agent-pipeline.ts` — connectionless routing
+
 ## Immediate Way Forward
 
 - Add launcher and installer smoke tests so startup parity is exercised automatically, not just by manual verification.

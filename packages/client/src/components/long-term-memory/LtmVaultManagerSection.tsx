@@ -40,7 +40,6 @@ import {
   type LtmInteropSource,
 } from "../../hooks/use-long-term-memory";
 import { useChatStore } from "../../stores/chat.store";
-import { useUIStore } from "../../stores/ui.store";
 import { useChat, useChatMessages, useChats } from "../../hooks/use-chats";
 import { useCharacters } from "../../hooks/use-characters";
 import { cn } from "../../lib/utils";
@@ -104,11 +103,96 @@ import {
   type MemoryModalTab,
   type TabId,
 } from "../long-term-memory/ltm-panel-shared";
+import {
+  useUpdateAgentByType,
+  type AgentConfigRow,
+} from "../../hooks/use-agents";
 
 
+type LtmImportSource = "characters" | "lorebooks" | "chats";
+type LtmExtractionRunMode = "fast" | "balanced";
 
+interface LtmVaultManagerSectionProps {
+  agentConfig: AgentConfigRow;
+  agentSettings: Record<string, unknown>;
+}
 
-export function LongTermMemoryPanel() {
+function extractPanelPrefs(settings: Record<string, unknown>) {
+  const rawImportSource = settings.importSource;
+  const importSource: LtmImportSource =
+    rawImportSource === "characters" || rawImportSource === "lorebooks" || rawImportSource === "chats"
+      ? rawImportSource
+      : "chats";
+  const rawExtractionMode = settings.extractionMode;
+  const extractionMode: LtmExtractionRunMode =
+    rawExtractionMode === "balanced" ? "balanced" : "fast";
+  return {
+    autoApplyLowRisk: settings.autoApplyLowRisk === true,
+    connectionId: typeof settings.connectionId === "string" ? settings.connectionId : "",
+    extractionMode,
+    importConcurrency:
+      typeof settings.importConcurrency === "number"
+        ? Math.max(1, Math.min(10, Math.round(settings.importConcurrency)))
+        : 3,
+    importLimit:
+      typeof settings.importLimit === "number"
+        ? Math.max(1, Math.min(100, Math.round(settings.importLimit)))
+        : 25,
+    importSource,
+    instruction: typeof settings.instruction === "string" ? settings.instruction : "",
+    model: typeof settings.model === "string" ? settings.model : "",
+  };
+}
+
+export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSettings }: LtmVaultManagerSectionProps) {
+  const panelPrefs = useMemo(() => extractPanelPrefs(agentSettings ?? {}), [agentSettings]);
+  const autoApplyLowRisk = panelPrefs.autoApplyLowRisk;
+  const connectionId = panelPrefs.connectionId;
+  const extractionMode = panelPrefs.extractionMode;
+  const importConcurrency = panelPrefs.importConcurrency;
+  const importLimit = panelPrefs.importLimit;
+  const importSource = panelPrefs.importSource;
+  const instruction = panelPrefs.instruction;
+  const model = panelPrefs.model;
+
+  const updateAgentByType = useUpdateAgentByType();
+
+  // One-time client migration: read old ltmPanelPreferences from localStorage
+  // and merge into agent settings, then clear the old key.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem("ui-store");
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      const oldPrefs: Record<string, unknown> | undefined = parsed?.state?.ltmPanelPreferences;
+      if (!oldPrefs) return;
+
+      const relevantFields: Array<keyof ReturnType<typeof extractPanelPrefs>> = [
+        "autoApplyLowRisk", "connectionId", "extractionMode", "importConcurrency",
+        "importLimit", "importSource", "instruction", "model",
+      ];
+      const hasRelevantValue = relevantFields.some((f) => oldPrefs[f] !== undefined && oldPrefs[f] !== "" && oldPrefs[f] !== false);
+      if (!hasRelevantValue) return;
+
+      const merged = { ...agentSettings, ...oldPrefs };
+      updateAgentByType.mutate({ agentType: "long-term-memory", settings: merged });
+      const newState = { ...parsed };
+      delete newState.state?.ltmPanelPreferences;
+      window.localStorage.setItem("ui-store", JSON.stringify(newState));
+    } catch {
+      // Silently ignore migration errors
+    }
+  }, []);
+
+  const handlePrefsChange = useCallback(
+    (partial: Partial<ReturnType<typeof extractPanelPrefs>>) => {
+      const merged = { ...agentSettings, ...partial };
+      updateAgentByType.mutate({ agentType: "long-term-memory", settings: merged });
+    },
+    [agentSettings, updateAgentByType],
+  );
+
   const [tab, setTab] = useState<TabId>("notes");
   const [noteType, setNoteType] = useState<"all" | LtmNoteType>("all");
   const [noteStatus, setNoteStatus] = useState<"all" | LtmStatus>("all");
@@ -124,15 +208,6 @@ export function LongTermMemoryPanel() {
   const [memoryModalMode, setMemoryModalMode] = useState<MemoryModalMode>("view");
   const [memoryModalTab, setMemoryModalTab] = useState<MemoryModalTab>("overview");
   const [transferModalMode, setTransferModalMode] = useState<"copy" | "move" | null>(null);
-  const autoApplyLowRisk = useUIStore((state) => state.ltmPanelPreferences.autoApplyLowRisk);
-  const connectionId = useUIStore((state) => state.ltmPanelPreferences.connectionId);
-  const extractionMode = useUIStore((state) => state.ltmPanelPreferences.extractionMode);
-  const importConcurrency = useUIStore((state) => state.ltmPanelPreferences.importConcurrency);
-  const importLimit = useUIStore((state) => state.ltmPanelPreferences.importLimit);
-  const importSource = useUIStore((state) => state.ltmPanelPreferences.importSource);
-  const instruction = useUIStore((state) => state.ltmPanelPreferences.instruction);
-  const model = useUIStore((state) => state.ltmPanelPreferences.model);
-  const setLtmPanelPreferences = useUIStore((state) => state.setLtmPanelPreferences);
   const [editedNoteDirty, setEditedNoteDirty] = useState(false);
   const [expandedTypeIds, setExpandedTypeIds] = useState<Set<string>>(() => new Set());
   const [expandedMemoryIds, setExpandedMemoryIds] = useState<Set<string>>(() => new Set());
@@ -584,10 +659,6 @@ export function LongTermMemoryPanel() {
     [navigatorScope],
   );
 
-  /**
-   * Returns true if a note is visible outside the currently active navigator
-   * scope — i.e. deleting it should unscope rather than permanently destroy.
-   */
   const noteIsSharedBeyondScope = useCallback(
     (note: LtmNote): boolean => {
       if (isGlobalLtmScope(note.scope)) return true;
@@ -595,8 +666,6 @@ export function LongTermMemoryPanel() {
       const hasGroupId = Boolean(note.scope.groupId);
       const hasCharacterIds = Boolean(note.scope.characterIds?.length);
       if (hasGroupId || hasCharacterIds) {
-        // If the note is also scoped to characters/groups we can't cleanly
-        // unscope by chatId alone — treat as shared.
         if (noteChatIds.size > 0) return true;
         return activeScopeChatIds.length === 0;
       }
@@ -1084,7 +1153,7 @@ export function LongTermMemoryPanel() {
           <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
             <select
               value={importSource}
-              onChange={(event) => setLtmPanelPreferences({ importSource: event.target.value as LtmInteropSource })}
+              onChange={(event) => handlePrefsChange({ importSource: event.target.value as LtmInteropSource })}
               className={compactInputClassName}
             >
               {IMPORT_SOURCES.map((source) => (
@@ -1098,7 +1167,7 @@ export function LongTermMemoryPanel() {
               min={1}
               max={100}
               value={importLimit}
-              onChange={(event) => setLtmPanelPreferences({ importLimit: Number(event.target.value) })}
+              onChange={(event) => handlePrefsChange({ importLimit: Number(event.target.value) })}
               className={cn(compactInputClassName, "w-24")}
             />
           </div>

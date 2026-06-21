@@ -12,8 +12,6 @@ import {
   useUpdateLongTermMemorySettings,
   type LtmGlobalSettings,
 } from "../../hooks/use-long-term-memory";
-import { useUIStore } from "../../stores/ui.store";
-import { useShallow } from "zustand/react/shallow";
 import { api } from "../../lib/api-client";
 import { cn } from "../../lib/utils";
 import { LongTermMemoryExtractionSettingsEditor } from "./LongTermMemoryExtractionSettingsModal";
@@ -111,23 +109,11 @@ export function ChatMemorySettings({
   const [semanticWeightDraft, setSemanticWeightDraft] = useState(String(weights.semanticWeight));
   const [lexicalWeightDraft, setLexicalWeightDraft] = useState(String(weights.lexicalWeight));
   const [graphWeightDraft, setGraphWeightDraft] = useState(String(weights.graphWeight));
-  const {
-    advancedOpen,
-    debugOpen,
-    extractionOpen,
-    maintenanceOpen,
-    recallOpen,
-    setLtmPanelPreferences,
-  } = useUIStore(
-    useShallow((state) => ({
-      advancedOpen: state.ltmPanelPreferences.advancedOpen,
-      debugOpen: state.ltmPanelPreferences.debugOpen,
-      extractionOpen: state.ltmPanelPreferences.extractionOpen,
-      maintenanceOpen: state.ltmPanelPreferences.maintenanceOpen,
-      recallOpen: state.ltmPanelPreferences.recallOpen,
-      setLtmPanelPreferences: state.setLtmPanelPreferences,
-    })),
-  );
+  const [recallOpen, setRecallOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [extractionOpen, setExtractionOpen] = useState(false);
+  const [maintenanceOpen, setMaintenanceOpen] = useState(false);
+  const [debugOpen, setDebugOpen] = useState(false);
   const patchTimersRef = useRef<Partial<Record<"budget" | "maxChunks" | "contextMessages" | "scoreThreshold" | "recallPreamble" | "semantic" | "lexical" | "graph", ReturnType<typeof setTimeout>>>>({});
   const latestPatchValueRef = useRef<Partial<Record<"budget" | "maxChunks" | "contextMessages" | "scoreThreshold" | "recallPreamble" | "semantic" | "lexical" | "graph", string | number>>>({});
   const sliderBudget = Number.isFinite(Number(budgetDraft))
@@ -412,7 +398,7 @@ export function ChatMemorySettings({
           <DisclosureHeader
             title="Recall"
             open={recallOpen}
-            onToggle={() => setLtmPanelPreferences({ recallOpen: !recallOpen })}
+            onToggle={() => setRecallOpen((v) => !v)}
           />
           {recallOpen && (
             <div className={sectionCardClassName}>
@@ -548,7 +534,7 @@ export function ChatMemorySettings({
                 title="Advanced recall"
                 description="Resolved threads and score threshold"
                 open={advancedOpen}
-                onToggle={() => setLtmPanelPreferences({ advancedOpen: !advancedOpen })}
+                onToggle={() => setAdvancedOpen((v) => !v)}
               />
               {advancedOpen && (
                 <div className="grid gap-2 rounded-xl bg-[var(--background)]/75 p-2 shadow-inner ring-1 ring-[var(--border)]">
@@ -683,14 +669,14 @@ export function ChatMemorySettings({
           <DisclosureHeader
             title="Extraction"
             open={extractionOpen}
-            onToggle={() => setLtmPanelPreferences({ extractionOpen: !extractionOpen })}
+            onToggle={() => setExtractionOpen((v) => !v)}
           />
           {extractionOpen && <LongTermMemoryExtractionSettingsEditor enabled={extractionOpen} />}
 
           <DisclosureHeader
             title="Maintenance"
             open={maintenanceOpen}
-            onToggle={() => setLtmPanelPreferences({ maintenanceOpen: !maintenanceOpen })}
+            onToggle={() => setMaintenanceOpen((v) => !v)}
           />
           {maintenanceOpen && (
             <div className={sectionCardClassName}>
@@ -746,7 +732,7 @@ export function ChatMemorySettings({
           <DisclosureHeader
             title="Debug"
             open={debugOpen}
-            onToggle={() => setLtmPanelPreferences({ debugOpen: !debugOpen })}
+            onToggle={() => setDebugOpen((v) => !v)}
           />
           {debugOpen && (
             <div className={sectionCardClassName}>
