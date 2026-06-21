@@ -262,6 +262,8 @@ export function LongTermMemoryExtractionSettingsEditor({
   const [templatePromptDraft, setTemplatePromptDraft] = useState("");
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedPayloadRef = useRef<string | null>(null);
+  const latestDraftRef = useRef<ExtractionSettingsDraft | null>(null);
+  const latestSettingsRef = useRef<LtmResolvedExtractionSettings | null>(null);
 
   const promptTemplates = useMemo(() => settings.data?.promptTemplates ?? [], [settings.data?.promptTemplates]);
   const textConnections = useMemo(
@@ -290,6 +292,11 @@ export function LongTermMemoryExtractionSettingsEditor({
   );
 
   useEffect(() => {
+    latestDraftRef.current = draft;
+    latestSettingsRef.current = settings.data ?? null;
+  }, [draft, settings.data]);
+
+  useEffect(() => {
     if (enabled && settings.data) {
       setDraft(draftFromSettings(settings.data));
       setTemplateEditorOpen(false);
@@ -297,6 +304,7 @@ export function LongTermMemoryExtractionSettingsEditor({
       setEditingTemplateId(null);
       setTemplateNameDraft("");
       setTemplatePromptDraft("");
+      lastSavedPayloadRef.current = JSON.stringify(payloadFromDraft(draftFromSettings(settings.data)));
     }
   }, [enabled, settings.data]);
 
@@ -324,23 +332,27 @@ export function LongTermMemoryExtractionSettingsEditor({
   );
 
   const flushAutosave = useCallback(() => {
-    if (!draft || !settings.data) return;
-    const payload = payloadFromDraft(draft);
+    const currentDraft = latestDraftRef.current;
+    const currentSettings = latestSettingsRef.current;
+    if (!currentDraft || !currentSettings) return;
+    const payload = payloadFromDraft(currentDraft);
     const serialized = JSON.stringify(payload);
-    if (serialized === lastSavedPayloadRef.current || !isDraftDirty(draft, settings.data)) return;
+    if (serialized === lastSavedPayloadRef.current || !isDraftDirty(currentDraft, currentSettings)) return;
     persistSettings(payload, { quiet: true });
-  }, [draft, persistSettings, settings.data]);
+  }, [persistSettings]);
 
   const dispatchKeepaliveSettingsSave = useCallback(() => {
-    if (!draft || !settings.data) return;
-    const payload = payloadFromDraft(draft);
+    const currentDraft = latestDraftRef.current;
+    const currentSettings = latestSettingsRef.current;
+    if (!currentDraft || !currentSettings) return;
+    const payload = payloadFromDraft(currentDraft);
     const serialized = JSON.stringify(payload);
-    if (serialized === lastSavedPayloadRef.current || !isDraftDirty(draft, settings.data)) return;
+    if (serialized === lastSavedPayloadRef.current || !isDraftDirty(currentDraft, currentSettings)) return;
     const result = api.putKeepalive("/long-term-memory/extraction-settings", payload);
     if (result.dispatched) {
       lastSavedPayloadRef.current = serialized;
     }
-  }, [draft, settings.data]);
+  }, []);
 
   useEffect(() => {
     if (!enabled || !draft || !settings.data) return;
@@ -371,7 +383,6 @@ export function LongTermMemoryExtractionSettingsEditor({
     window.addEventListener("beforeunload", handleBeforeUnload);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
-      flushAutosave();
       window.removeEventListener("beforeunload", handleBeforeUnload);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };

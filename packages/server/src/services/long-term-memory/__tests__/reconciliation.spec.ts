@@ -25,6 +25,7 @@ import { compileLtmEvidenceUnits } from "../evidence-unit-compiler.js";
 import { applyLtmBudget } from "../budget.js";
 import { LongTermMemoryDraftStore } from "../draft-store.js";
 import { checkLongTermMemoryIntegrity } from "../maintenance.js";
+import { renameWithRetry } from "../atomic-json.js";
 import { getLongTermMemoryDirectories } from "../paths.js";
 import { formatLongTermMemoryBlock, injectLongTermMemoryPromptBlock } from "../prompt.js";
 import {
@@ -2143,6 +2144,40 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("renameWithRetry retries transient rename failures", async () => {
+  const attempts: string[] = [];
+  const transientError = Object.assign(new Error("busy"), { code: "EPERM" });
+  let callCount = 0;
+  await renameWithRetry("draft.tmp", "draft.json", async (fromPath: string, toPath: string) => {
+    attempts.push(`${fromPath}->${toPath}`);
+    callCount += 1;
+    if (callCount < 3) throw transientError;
+  });
+
+  assert.equal(callCount, 3);
+  assert.deepEqual(attempts, [
+    "draft.tmp->draft.json",
+    "draft.tmp->draft.json",
+    "draft.tmp->draft.json",
+  ]);
+});
+
+test("renameWithRetry does not retry non-transient rename failures", async () => {
+  let callCount = 0;
+  const missingError = Object.assign(new Error("missing"), { code: "ENOENT" });
+
+  await assert.rejects(
+    () =>
+      renameWithRetry("draft.tmp", "draft.json", async () => {
+        callCount += 1;
+        throw missingError;
+      }),
+    missingError,
+  );
+
+  assert.equal(callCount, 1);
 });
 
 test("ltm global settings change recall styles without pinning old style weights", async () => {

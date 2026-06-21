@@ -3,6 +3,8 @@ import { constants } from "node:fs";
 import { link, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 
+const ATOMIC_RENAME_RETRY_DELAYS_MS = [10, 25, 50] as const;
+
 async function fsyncPath(path: string) {
   let handle;
   try {
@@ -16,6 +18,38 @@ async function fsyncPath(path: string) {
   }
 }
 
+function isRetryableAtomicRenameError(err: unknown) {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  return code === "EPERM" || code === "EACCES" || code === "EBUSY";
+}
+
+async function sleep(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function renameWithRetry(
+  fromPath: string,
+  toPath: string,
+  renameFn: (from: string, to: string) => Promise<void> = rename,
+) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= ATOMIC_RENAME_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      await renameFn(fromPath, toPath);
+      return;
+    } catch (err) {
+      if (!isRetryableAtomicRenameError(err) || attempt === ATOMIC_RENAME_RETRY_DELAYS_MS.length) {
+        throw err;
+      }
+      lastError = err;
+      const delayMs = ATOMIC_RENAME_RETRY_DELAYS_MS[attempt];
+      if (delayMs === undefined) throw err;
+      await sleep(delayMs);
+    }
+  }
+  throw lastError;
+}
+
 export async function writeJsonAtomic(path: string, value: unknown) {
   await mkdir(dirname(path), { recursive: true });
   const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}-${randomUUID()}`;
@@ -27,7 +61,7 @@ export async function writeJsonAtomic(path: string, value: unknown) {
     await handle.sync();
     await handle.close();
     handle = undefined;
-    await rename(tmpPath, path);
+    await renameWithRetry(tmpPath, path);
     await fsyncPath(dirname(path));
   } catch (err) {
     await handle?.close().catch(() => {});
