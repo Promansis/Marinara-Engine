@@ -308,8 +308,7 @@ export function AgentsPanel() {
       visibleAgentConfigs.filter(
         (config) =>
           !BUILT_IN_AGENT_TYPE_SET.has(config.type) &&
-          !isRetiredBuiltInAgentId(config.type) &&
-          !isManagedAgentType(config.type),
+          !isRetiredBuiltInAgentId(config.type),
       ),
     [visibleAgentConfigs],
   );
