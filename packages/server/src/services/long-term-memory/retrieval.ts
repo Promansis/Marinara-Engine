@@ -389,6 +389,7 @@ async function vectorLane(
   config: LtmRetrievalConfig,
   chunksById: Map<string, LtmMemoryChunk>,
   characterIds: string[],
+  allowedChunkIds: Set<string>,
 ) {
   if (!embeddings || !embeddings.dimension || queryText.trim().length === 0) return { items: [], available: false };
 
@@ -398,7 +399,7 @@ async function vectorLane(
   const items = embeddings.chunks
     .flatMap((entry) => {
       const chunk = chunksById.get(entry.chunkId);
-      if (!entry.vector || !chunk || !candidateAllowed(chunk, input, config, characterIds)) return [];
+      if (!entry.vector || !chunk || !allowedChunkIds.has(chunk.id)) return [];
       if (entry.vector.length !== queryEmbedding.length) {
         return [];
       }
@@ -482,6 +483,7 @@ export async function retrieveLongTermMemory(
   const characterIds = uniqueSorted(signals.characterIds);
   const chunksById = new Map(Object.entries(metadata.chunks));
   const allChunks = Object.values(metadata.chunks);
+  const allowedChunkIds = new Set(allChunks.filter((chunk) => candidateAllowed(chunk, input, config, characterIds)).map((chunk) => chunk.id));
   const filterCounts = includeDebug ? summarizeCandidateFilters(allChunks, input, config, characterIds) : null;
   if (generationLanesDisabled) {
     warnings.push("No active long-term memory relevance lanes; retrieval returned no chunks.");
@@ -553,18 +555,18 @@ export async function retrieveLongTermMemory(
     characterIds,
   }).filter((candidate) => {
     const chunk = chunksById.get(candidate.chunkId);
-    return chunk ? candidateAllowed(chunk, input, config, characterIds) : false;
+    return chunk ? allowedChunkIds.has(chunk.id) : false;
   });
 
   const vector =
     weights.semantic > 0
-      ? await vectorLane(embeddings, signals.queryText, input, config, chunksById, characterIds)
+      ? await vectorLane(embeddings, signals.queryText, input, config, chunksById, characterIds, allowedChunkIds)
       : { items: [], available: Boolean(embeddings?.embeddedChunkCount) };
   const bm25Items =
     bm25 && signals.queryText.trim().length > 0
       ? searchLtmBm25(bm25, signals.queryText).flatMap((match) => {
           const chunk = chunksById.get(match.chunkId);
-          return chunk && candidateAllowed(chunk, input, config, characterIds)
+          return chunk && allowedChunkIds.has(chunk.id)
             ? [{ chunkId: match.chunkId, reason: "bm25", rawScore: match.score }]
             : [];
         })
@@ -613,7 +615,7 @@ export async function retrieveLongTermMemory(
       weight: weights.graph,
       items: expandLtmGraph(graph, graphSeeds).flatMap((match) => {
         const chunk = chunksById.get(match.chunkId);
-        return chunk && candidateAllowed(chunk, input, config, characterIds)
+        return chunk && allowedChunkIds.has(chunk.id)
           ? [{ chunkId: match.chunkId, reason: `graph:${match.viaNoteId}:${match.distance}`, rawScore: match.score }]
           : [];
       }),
