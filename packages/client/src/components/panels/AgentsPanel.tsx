@@ -35,6 +35,7 @@ import {
   getFolderImportEntries,
   getFolderManifestConfig,
   isAgentConfigDeleted,
+  isManagedAgentType,
   isRetiredBuiltInAgentId,
   normalizeAgentPhaseForType,
   normalizeAgentPhaseValue,
@@ -255,7 +256,10 @@ export function AgentsPanel() {
   const customAgents = useMemo(
     () =>
       visibleAgentConfigs.filter(
-        (config) => !BUILT_IN_AGENT_TYPE_SET.has(config.type) && !isRetiredBuiltInAgentId(config.type),
+        (config) =>
+          !BUILT_IN_AGENT_TYPE_SET.has(config.type) &&
+          !isRetiredBuiltInAgentId(config.type) &&
+          !isManagedAgentType(config.type),
       ),
     [visibleAgentConfigs],
   );

@@ -8,6 +8,7 @@ import { newId, now } from "../../utils/id-generator.js";
 import {
   BUILT_IN_AGENTS,
   getDefaultBuiltInAgentSettings,
+  isManagedAgentType,
   markAgentConfigDeletedSettings,
   normalizeAgentPhaseForType,
   type CreateAgentConfigInput,
@@ -194,7 +195,7 @@ export function createAgentsStorage(db: DB) {
       const id = newId();
       const timestamp = now();
       const requestedCustomType = isRemovedBuiltInAgentType(input.type) ? `${input.type}-custom` : input.type;
-      const type = builtInType ? input.type : await getUniqueCustomType(requestedCustomType, id);
+      const type = builtInType || isManagedAgentType(input.type) ? input.type : await getUniqueCustomType(requestedCustomType, id);
       const settings = { ...(input.settings ?? {}) };
       if (input.resultType) settings.resultType = input.resultType;
       await db.insert(agentConfigs).values({

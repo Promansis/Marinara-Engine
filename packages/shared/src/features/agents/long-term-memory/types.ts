@@ -41,4 +41,4 @@ export type {
   LtmNoteTransferPreviewItem,
   LtmResolvedExtractionSettings,
   LtmResolvedGlobalSettings,
-} from "../schemas/long-term-memory.schema.js";
+} from "./schema.js";
