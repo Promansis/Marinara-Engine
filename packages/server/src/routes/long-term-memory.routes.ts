@@ -429,7 +429,8 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     };
   }
 
-  app.get("/status", async () => {
+  app.get("/status", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory status" })) return;
     await storage.initializeLtmStore();
     const notes = await storage.listNotes();
     const dirs = getLongTermMemoryDirectories(storage.root);
@@ -511,7 +512,8 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     return updateLtmGlobalSettings(ltmGlobalSettingsSchema.parse(req.body ?? {}));
   });
 
-  app.get<{ Querystring: unknown }>("/notes", async (req) => {
+  app.get<{ Querystring: unknown }>("/notes", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory notes list" })) return;
     const query = listNotesQuerySchema.parse(req.query);
     const scope =
       query.scopeChatIds?.length || query.scopeGroupId || query.scopeCharacterIds?.length
@@ -532,6 +534,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
   });
 
   app.get<{ Params: { id: string } }>("/notes/:id", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory note detail" })) return;
     const id = ltmNoteIdSchema.parse(req.params.id);
     const note = await storage.getNote(id);
     if (!note) return reply.status(404).send({ error: "Long-term memory note not found" });
@@ -938,7 +941,8 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     },
   );
 
-  app.post<{ Body: unknown }>("/search", { bodyLimit: SEARCH_BODY_LIMIT_BYTES }, async (req) => {
+  app.post<{ Body: unknown }>("/search", { bodyLimit: SEARCH_BODY_LIMIT_BYTES }, async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory search" })) return;
     const body = searchBodySchema.parse(req.body);
     const result = await retrieveLongTermMemory(body);
     return {
@@ -947,12 +951,14 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     };
   });
 
-  app.get<{ Querystring: unknown }>("/drafts", async (req) => {
+  app.get<{ Querystring: unknown }>("/drafts", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft list" })) return;
     const query = listDraftsQuerySchema.parse(req.query);
     return draftStore.listDrafts(query);
   });
 
   app.get<{ Params: { id: string } }>("/drafts/:id", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft detail" })) return;
     const { id } = draftIdParamSchema.parse(req.params);
     const draft = await draftStore.getDraft(id);
     if (!draft) return reply.status(404).send({ error: "Long-term memory draft not found" });

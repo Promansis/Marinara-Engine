@@ -37,7 +37,6 @@ import {
 import { useConnections } from "../../hooks/use-connections";
 import { api } from "../../lib/api-client";
 import { cn, generateClientId } from "../../lib/utils";
-import { Modal } from "../ui/Modal";
 import {
   actionRowClassName,
   compactInputClassName,
@@ -932,10 +931,3 @@ export function LongTermMemoryExtractionSettingsEditor({
   );
 }
 
-export function LongTermMemoryExtractionSettingsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  return (
-    <Modal open={open} onClose={onClose} title="Extraction Settings" width="max-w-4xl">
-      <LongTermMemoryExtractionSettingsEditor enabled={open} mode="modal" onClose={onClose} />
-    </Modal>
-  );
-}

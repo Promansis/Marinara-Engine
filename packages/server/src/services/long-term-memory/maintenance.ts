@@ -375,6 +375,9 @@ export async function repairLongTermMemory(
           }
         }
         results.push({ action, result: moved > 0 ? "quarantined" : "no_malformed_notes", count: moved });
+        if (moved > 0) {
+          await rebuildLongTermMemoryIndexes({ root });
+        }
       }
 
       const result = {
