@@ -12,6 +12,7 @@ import {
   type LtmNoteTransferPreviewResponse,
   type LtmScope,
 } from "@marinara-engine/shared";
+import { logger } from "../../lib/logger.js";
 import { LongTermMemoryStorage } from "./storage.js";
 import { resolveChatLtmScope } from "./chat-scope.js";
 
@@ -275,6 +276,7 @@ async function buildTransferPlan(
   const requestedNoteIds = uniqueStrings(request.noteIds);
   const missingNoteIds = requestedNoteIds.filter((noteId) => !noteLookup.has(noteId));
   if (missingNoteIds.length > 0) {
+    logger.warn("Transfer requested non-existent notes: %s", missingNoteIds.join(", "));
     throw new LtmNoteTransferError(`Long-term memory note not found: ${missingNoteIds.join(", ")}`, 404);
   }
 

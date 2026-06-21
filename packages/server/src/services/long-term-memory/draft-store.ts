@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readdir, readFile, unlink } from "node:fs/promises";
+import { logger } from "../../lib/logger.js";
 import {
   ltmExtractionDraftSchema,
   ltmDraftStatusSchema,
@@ -167,6 +168,7 @@ export class LongTermMemoryDraftStore {
       return true;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+      logger.warn(err, "Failed to delete draft %s", id);
       throw err;
     }
   }

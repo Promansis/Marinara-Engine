@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { logger } from "../../lib/logger.js";
 import {
   isLtmSourceLikeNote,
   ltmRetrievalConfigSchema,
@@ -124,6 +125,7 @@ async function readIndexFile<T>(path: string, warnings: string[]): Promise<T | n
       warnings.push(`Missing index ${path}`);
       return null;
     }
+    logger.warn(err, "Failed to read index %s", path);
     warnings.push(`Failed to read index ${path}`);
     return null;
   }
@@ -134,6 +136,7 @@ async function readConfig<T>(path: string, fallback: T, parse: (value: unknown) 
     return parse(JSON.parse(await readFile(path, "utf8")));
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      logger.warn(err, "Failed to read retrieval config %s; using defaults", path);
       warnings.push(`Failed to read retrieval config ${path}; using defaults`);
     }
     return fallback;
@@ -411,6 +414,7 @@ export async function retrieveLongTermMemory(
   input: RetrieveLongTermMemoryInput = {},
 ): Promise<RetrieveLongTermMemoryResult> {
   const root = input.root ?? getLongTermMemoryRoot();
+  logger.debug({ root, queryLength: input.queryText?.length }, "LTM retrieval started");
   const includeDebug = input.debug === true || input.explain === true;
   const metadataMode = input.metadataMode ?? "rank";
   const bundle = await loadRetrievalBundle(root, input.includeSourceNotes === true);
@@ -617,7 +621,8 @@ export async function retrieveLongTermMemory(
 
   const usage =
     input.applyUsageCooldown === true
-      ? await readLongTermMemoryUsage(root).catch(() => {
+      ? await readLongTermMemoryUsage(root).catch((err) => {
+          logger.warn(err, "Failed to read LTM usage data for cooldown");
           return null;
         })
       : null;
@@ -639,6 +644,7 @@ export async function retrieveLongTermMemory(
       })
     : [];
   const ranked = reciprocalRankFuse(lanes, { cooldowns });
+  logger.debug({ laneCount: lanes.length, rankedCount: ranked.length }, "LTM retrieval lanes fused");
   const budgeted = applyLtmBudget(ranked, chunksById, {
     maxChunks: input.maxChunks ?? config.maxChunks,
     maxTokens: input.maxTokens ?? config.maxTokens,
@@ -695,6 +701,11 @@ export async function retrieveLongTermMemory(
         rejected: budgeted.rejected.map((candidate) => formatRejectedCandidate(candidate, chunksById)),
       }
     : undefined;
+
+  logger.debug(
+    { selectedCount: budgeted.chunks.length, totalChunks: allChunks.length },
+    "LTM retrieval completed",
+  );
 
   return {
     chunks: budgeted.chunks,

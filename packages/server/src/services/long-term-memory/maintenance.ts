@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
+import { logger } from "../../lib/logger.js";
 import {
   ltmIndexMetadataSchema,
   normalizeChatSummaryEntries,
@@ -225,6 +226,7 @@ async function checkEventLogIntegrity(root: string, issues: IntegrityIssue[]) {
     content = await readFile(dirs.eventLog, "utf8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    logger.error(err, "Event log unreadable at %s", publicPath);
     issues.push({
       severity: "error",
       code: "event_log_unreadable",
@@ -262,6 +264,7 @@ async function checkIndexCoherence(root: string, vaultNoteCount: number, issues:
     manifest = ltmIndexMetadataSchema.parse(raw);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      logger.warn(err, "Manifest unreadable at %s", relative(root, manifestPath));
       issues.push({
         severity: "error",
         code: "manifest_unreadable",
@@ -312,6 +315,7 @@ async function checkIndexCoherence(root: string, vaultNoteCount: number, issues:
     }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      logger.warn(err, "Embeddings index unreadable at %s", relative(root, embeddingsPath));
       issues.push({
         severity: "warning",
         code: "embeddings_unreadable",
@@ -359,6 +363,7 @@ export async function checkLongTermMemoryIntegrity(root = getLongTermMemoryRoot(
         });
       }
     } catch (err) {
+      logger.warn(err, "Malformed note at %s", publicPath);
       issues.push({
         severity: "error",
         code: "malformed_note",

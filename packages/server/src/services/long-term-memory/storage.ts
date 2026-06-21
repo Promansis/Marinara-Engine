@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, unlink } from "node:fs/promises";
+import { logger } from "../../lib/logger.js";
 import {
   DEFAULT_LTM_GLOBAL_SETTINGS,
   LTM_NOTE_ID_PREFIXES_BY_TYPE,
@@ -367,7 +368,10 @@ export class LongTermMemoryStorage {
     try {
       content = await readFile(this.dirs.eventLog, "utf8");
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        logger.warn(err, "Failed to read events from %s", this.dirs.eventLog);
+        throw err;
+      }
       return [];
     }
 
@@ -389,12 +393,19 @@ export class LongTermMemoryStorage {
   }
 
   private async readNoteFile(path: string, folder: (typeof LTM_VAULT_FOLDERS)[number]) {
-    const raw = JSON.parse(await readFile(path, "utf8"));
+    let raw: Record<string, unknown>;
+    try {
+      raw = JSON.parse(await readFile(path, "utf8"));
+    } catch (err) {
+      logger.warn(err, "Failed to parse note file %s", path);
+      throw err;
+    }
     const note = ltmNoteSchema.parse({
       ...raw,
       scope: normalizeStoredScope(raw.scope ?? {}),
     });
     if (vaultFolderForNoteType(note.type) !== folder) {
+      logger.warn("Note %s has type %s but stored in folder %s", note.id, note.type, folder);
       throw new Error(`Long-term memory note ${note.id} has type ${note.type} but is stored in ${folder}.`);
     }
     return note;
@@ -405,6 +416,7 @@ export class LongTermMemoryStorage {
       return await this.readNoteFile(safeJoin(this.dirs.vault, `${folder}/${id}.json`), folder);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+      logger.warn(err, "Failed to read note %s in folder %s", id, folder);
       throw err;
     }
   }
@@ -575,7 +587,10 @@ async function writeJsonIfChanged(path: string, value: unknown) {
     const current = await readFile(path, "utf8");
     if (current === next) return;
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      logger.warn(err, "Failed to read config for write-if-changed at %s", path);
+      throw err;
+    }
   }
   await writeJsonAtomic(path, value);
 }

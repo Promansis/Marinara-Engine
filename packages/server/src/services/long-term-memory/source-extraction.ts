@@ -13,6 +13,7 @@ import {
   type LtmScope,
 } from "@marinara-engine/shared";
 import type { BaseLLMProvider } from "../llm/base-provider.js";
+import { logger } from "../../lib/logger.js";
 import {
   compileEvidenceUnitExtraction,
   DEFAULT_LTM_EXTRACTION_PROMPT,
@@ -170,11 +171,20 @@ async function extractLongTermMemoryFromSourceNoteInner(
 ): Promise<ExtractLongTermMemoryFromSourceNoteResult> {
   const storage = new LongTermMemoryStorage(options.root);
   const sourceNote = await storage.getNote(options.noteId);
-  if (!sourceNote) throw new Error(`Long-term memory note not found: ${options.noteId}`);
-  if (!isLtmSourceNote(sourceNote)) throw new Error(`Long-term memory note is not a source note: ${options.noteId}`);
+  if (!sourceNote) {
+    logger.warn("Source note not found: %s", options.noteId);
+    throw new Error(`Long-term memory note not found: ${options.noteId}`);
+  }
+  if (!isLtmSourceNote(sourceNote)) {
+    logger.warn("Note %s is not a source note", options.noteId);
+    throw new Error(`Long-term memory note is not a source note: ${options.noteId}`);
+  }
 
   const sourceText = getLtmSourceNoteText(sourceNote);
-  if (!sourceText) throw new Error(`Long-term memory source note has no source text: ${options.noteId}`);
+  if (!sourceText) {
+    logger.warn("Source note %s has no source text", options.noteId);
+    throw new Error(`Long-term memory source note has no source text: ${options.noteId}`);
+  }
 
   const scope = options.scope ?? sourceNote.scope;
   const modes = options.modes?.length ? options.modes : sourceNote.modes;

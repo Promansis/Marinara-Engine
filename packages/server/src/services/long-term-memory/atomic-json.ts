@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { link, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
+import { logger } from "../../lib/logger.js";
 
 const ATOMIC_RENAME_RETRY_DELAYS_MS = [10, 25, 50] as const;
 
@@ -37,11 +38,14 @@ export async function renameWithRetry(
     try {
       await renameFn(fromPath, toPath);
       return;
-    } catch (err) {
-      if (!isRetryableAtomicRenameError(err) || attempt === ATOMIC_RENAME_RETRY_DELAYS_MS.length) {
-        throw err;
+  } catch (err) {
+    if (!isRetryableAtomicRenameError(err) || attempt === ATOMIC_RENAME_RETRY_DELAYS_MS.length) {
+      if (!isRetryableAtomicRenameError(err)) {
+        logger.warn(err, "Atomic rename non-retryable error from %s to %s", fromPath, toPath);
       }
-      lastError = err;
+      throw err;
+    }
+    lastError = err;
       const delayMs = ATOMIC_RENAME_RETRY_DELAYS_MS[attempt];
       if (delayMs === undefined) throw err;
       await sleep(delayMs);

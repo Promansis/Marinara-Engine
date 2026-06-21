@@ -8,6 +8,7 @@ import {
   type LtmRecallWeights,
   type LtmScope,
 } from "@marinara-engine/shared";
+import { logger } from "../../lib/logger.js";
 import type { ChatMessage } from "../llm/base-provider.js";
 import type { MemoryRecallEmbeddingSource } from "../memory-recall.js";
 import {
@@ -233,6 +234,7 @@ export async function applyGenerationLongTermMemoryInjection(
     retrieveLongTermMemoryFn: input.retrieveLongTermMemoryFn,
   });
   if (retrieval.chunks.length === 0) {
+    logger.debug("No LTM chunks retrieved for generation injection");
     return {
       retrieval,
       injection: {

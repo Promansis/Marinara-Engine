@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { logger } from "../../lib/logger.js";
 import {
   ltmDebugEventSchema,
   type LtmDebugEvent,
@@ -146,7 +147,8 @@ export async function recordLtmDebugEvent(input: LtmDebugEventInput): Promise<Lt
     await rotateIfNeeded(path);
     await appendFile(path, `${JSON.stringify(event)}\n`, "utf8");
     return event;
-  } catch {
+  } catch (err) {
+    logger.warn(err, "Failed to record LTM debug event");
     return null;
   }
 }
@@ -179,6 +181,7 @@ export async function readLtmDebugLog(filter: LtmDebugLogFilter = {}, root = get
   const limit = Math.min(Math.max(filter.limit ?? 200, 1), 1_000);
   const content = await readFile(path, "utf8").catch((err) => {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return "";
+    logger.warn(err, "Failed to read LTM debug log at %s", path);
     throw err;
   });
   const events: LtmDebugEvent[] = [];
@@ -212,6 +215,7 @@ export async function exportLtmDebugLog(root = getLongTermMemoryRoot()) {
   const path = getLongTermMemoryDirectories(root).debugLog;
   return readFile(path, "utf8").catch((err) => {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return "";
+    logger.warn(err, "Failed to export LTM debug log at %s", path);
     throw err;
   });
 }

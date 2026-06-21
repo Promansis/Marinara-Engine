@@ -20,6 +20,7 @@ import {
   type LtmScope,
 } from "@marinara-engine/shared";
 import type { BaseLLMProvider, ChatMessage, ChatOptions } from "../llm/base-provider.js";
+import { logger } from "../../lib/logger.js";
 import { stableJsonHash } from "./chunking.js";
 import { recordLtmDebugEvent } from "./debug-log.js";
 import type { LtmExtractionDiagnostic } from "./diagnostics.js";
@@ -268,6 +269,7 @@ async function chatCompleteWithReasoningFallback({
     return await extractionOptions.provider.chatComplete(messages, chatOptions);
   } catch (err) {
     if (chatOptions.reasoningEffort !== "none" || !isReasoningNoneUnsupportedError(err)) {
+      logger.warn(err, "LLM chat complete failed for evidence unit extraction");
       throw err;
     }
     await recordLtmDebugEvent({
@@ -622,6 +624,7 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
       throw parseErr;
     }
   } catch (err) {
+    logger.error(err, "Evidence unit extraction failed for note %s", options.sourceNote.id);
     await recordLtmDebugEvent({
       operationId: options.operationId,
       phase: "llm",

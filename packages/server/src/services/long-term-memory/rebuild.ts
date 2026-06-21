@@ -1,6 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import type { LtmIndexMetadata } from "@marinara-engine/shared";
+import { logger } from "../../lib/logger.js";
 import { embedMemoryRecallTexts, type MemoryRecallEmbeddingOptions } from "../memory-recall.js";
 import { writeJsonAtomic } from "./atomic-json.js";
 import { buildLtmBm25Index, type LtmBm25Index } from "./bm25.js";
@@ -47,6 +48,7 @@ export type LtmRebuildScope = "all" | "typed" | "source";
 async function listFiles(root: string): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true }).catch((err) => {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    logger.warn(err, "Failed to list files in %s", root);
     throw err;
   });
   const files: string[] = [];
@@ -80,10 +82,15 @@ async function hashSourceFiles(root: string) {
 async function buildEmbeddingIndex(chunks: LtmMemoryChunk[], options: MemoryRecallEmbeddingOptions) {
   let vectors: number[][] = [];
   if (chunks.length > 0) {
-    vectors = await embedMemoryRecallTexts(
-      chunks.map((chunk) => chunk.text),
-      options,
-    );
+    try {
+      vectors = await embedMemoryRecallTexts(
+        chunks.map((chunk) => chunk.text),
+        options,
+      );
+    } catch (err) {
+      logger.warn(err, "Embedding failed for %d chunks", chunks.length);
+      throw err;
+    }
   }
 
   const dimension = vectors.find((vector) => vector.length > 0)?.length ?? null;

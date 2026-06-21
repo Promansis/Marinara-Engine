@@ -9,6 +9,7 @@ import {
   type LtmNote,
   type LtmSection,
 } from "@marinara-engine/shared";
+import { logger } from "../../lib/logger.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import { LongTermMemoryDraftStore } from "./draft-store.js";
 import { rebuildLongTermMemoryIndexes } from "./rebuild.js";
@@ -340,7 +341,12 @@ async function applyMutation(
     links: withSourceLink(existing.id, patch.links ?? existing.links, draft),
   };
 
-  await storage.updateNote(existing.id, patch, eventContext);
+  try {
+    await storage.updateNote(existing.id, patch, eventContext);
+  } catch (err) {
+    logger.error(err, "Failed to apply draft mutation %s to note %s", mutation.id, mutation.noteId);
+    throw err;
+  }
 }
 
 export async function applyLongTermMemoryDraft(

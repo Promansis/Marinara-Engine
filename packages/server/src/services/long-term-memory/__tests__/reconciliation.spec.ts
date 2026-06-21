@@ -5084,7 +5084,6 @@ test("long-term memory diagnostics stay out of process console", async () => {
   const serviceFiles = await listSourceFiles(new URL("../", import.meta.url));
   for (const file of serviceFiles) {
     const source = await readFile(file, "utf8");
-    assert.doesNotMatch(source, /\blogger\./, `${file.pathname} should not write through the server logger`);
     assert.doesNotMatch(source, /\bconsole\./, `${file.pathname} should not write to the console`);
   }
 
