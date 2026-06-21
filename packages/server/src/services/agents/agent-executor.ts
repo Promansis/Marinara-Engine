@@ -17,6 +17,7 @@ import {
   DEFAULT_AGENT_CONTEXT_SIZE,
   DEFAULT_AGENT_MAX_TOKENS,
   MIN_AGENT_MAX_TOKENS,
+  isConnectionlessAgentType,
   normalizeCustomAgentCapabilities,
   getDefaultAgentPrompt,
   normalizeRpgStatPools,
@@ -435,6 +436,14 @@ export async function executeAgent(
     );
     if (!template) {
       return makeError(config, "No prompt template configured", startTime);
+    }
+
+    if (isConnectionlessAgentType(config.type)) {
+      return makeError(
+        config,
+        `Connectionless agent type "${config.type}" routed to LLM executor — pipeline misconfiguration`,
+        startTime,
+      );
     }
 
     const messages =

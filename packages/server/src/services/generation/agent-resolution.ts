@@ -5,6 +5,7 @@ import {
   getDefaultBuiltInAgentSettings,
   isBuiltInAgentRuntimeDisabled,
   isAgentConfigDeleted,
+  isConnectionlessAgentType,
   isRetiredBuiltInAgentId,
   LOCAL_SIDECAR_CONNECTION_ID,
   mergeBuiltInAgentSettings,
@@ -31,6 +32,7 @@ import {
   normalizeProseGuardianPromptTemplate,
 } from "./prose-guardian-settings.js";
 import { applyKnowledgeAgentChatSettings } from "./knowledge-agent-settings.js";
+import { applyLtmAgentChatSettings } from "./ltm-agent-settings.js";
 
 type ConnectionsStore = {
   getWithKey(id: string): Promise<any | null>;
@@ -308,6 +310,7 @@ export async function resolveAgentPipelineAgents({
     }
     settings = applyTextRewriteAgentChatSettings(cfg.type as string, settings, chatMetadata);
     settings = applyKnowledgeAgentChatSettings(cfg.type as string, settings, chatMetadata);
+    settings = applyLtmAgentChatSettings(cfg.type as string, settings, chatMetadata);
     if (
       cfg.type === "spotify" &&
       settings.musicProvider !== "youtube" &&
@@ -333,9 +336,24 @@ export async function resolveAgentPipelineAgents({
       settings,
       selectedPromptTemplateId: agentPromptTemplateSelections[cfg.type as string] ?? null,
     });
-    const effectiveConnectionId = resolveAgentConnectionRequest({
-      agentType: cfg.type as string,
-      configuredConnectionId: cfg.connectionId as string | null,
+    // Connectionless agents (e.g. long-term-memory) skip provider/model resolution.
+    if (isConnectionlessAgentType(cfg.type as string)) {
+      resolvedAgents.push({
+        id: cfg.id,
+        type: cfg.type,
+        name: cfg.name,
+        phase: resolveAgentRuntimePhase(cfg.type as string, cfg.phase as string),
+        promptTemplate: selectedPromptTemplate,
+        connectionId: cfg.connectionId as string | null,
+        settings,
+        provider: null,
+        model: null,
+      });
+      continue;
+    }
+
+    const effectiveConnectionId = resolveAgentConnectionId({
+      requestedConnectionId: cfg.connectionId as string | null,
       defaultAgentConnectionId: defaultAgentConn?.id ?? null,
       chatMetadata,
       localSidecarAvailable: localSidecarAvailableForTrackers,

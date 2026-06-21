@@ -1527,6 +1527,7 @@ export async function generateRoutes(app: FastifyInstance) {
       }
     }
     const ltmGlobalSettings = await getLtmGlobalSettings();
+    const isLtmViaPipeline = process.env.MARINARA_LTM_USE_AGENT === "true";
 
     if (activeGenerations) {
       activeGenerations.set(input.chatId, { abortController, backendUrl: baseUrl });
@@ -2215,7 +2216,7 @@ export async function generateRoutes(app: FastifyInstance) {
             retrieval: Awaited<ReturnType<typeof retrieveGenerationLongTermMemoryBlock>>["retrieval"];
             block: string;
           } | null = null;
-          if (ltmGlobalSettings.enableLongTermMemory) {
+          if (ltmGlobalSettings.enableLongTermMemory && !isLtmViaPipeline) {
             const startedAt = Date.now();
             const operationId = randomUUID();
             const plan = buildGenerationLongTermMemoryPlan({
@@ -4738,7 +4739,7 @@ export async function generateRoutes(app: FastifyInstance) {
         const allowLatestGameStateFallback = !input.regenerateMessageId;
         const gameState = latestGameState ? parseGameStateRow(latestGameState as Record<string, unknown>) : null;
         // ── Long-term memory: opt-in local retrieval before final context fitting ──
-        if (ltmGlobalSettings.enableLongTermMemory && !presetId) {
+        if (ltmGlobalSettings.enableLongTermMemory && !presetId && !isLtmViaPipeline) {
           const _tLtm = Date.now();
           const ltmInjectionOperationId = randomUUID();
           const ltmPlan = buildGenerationLongTermMemoryPlan({
@@ -5686,7 +5687,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 ...(Object.keys(state).length > 0 ? { _secretPlotState: state } : {}),
               },
             };
-            const result = await executeAgent(secretAgent, secretContext, secretAgent.provider, secretAgent.model);
+            const result = await executeAgent(secretAgent, secretContext, secretAgent.provider!, secretAgent.model!);
             sendAgentEvent(result);
             if (result.success && result.data && typeof result.data === "object") {
               const plotData = result.data as Record<string, unknown>;
@@ -5785,8 +5786,8 @@ export async function generateRoutes(app: FastifyInstance) {
                   const krResult = await executeKnowledgeRetrieval(
                     krConfig,
                     agentContext,
-                    knowledgeRetrievalAgent!.provider,
-                    knowledgeRetrievalAgent!.model,
+                    knowledgeRetrievalAgent!.provider!,
+                    knowledgeRetrievalAgent!.model!,
                     sourceMaterial,
                   );
                   sendAgentEvent(krResult);
@@ -5835,8 +5836,8 @@ export async function generateRoutes(app: FastifyInstance) {
                   const routerResult = await executeKnowledgeRouter(
                     routerConfig,
                     agentContext,
-                    knowledgeRouterAgent!.provider,
-                    knowledgeRouterAgent!.model,
+                    knowledgeRouterAgent!.provider!,
+                    knowledgeRouterAgent!.model!,
                     knowledgeRouterEntries,
                     {
                       embeddingSource: memoryRecallEmbeddingSource,
@@ -8122,8 +8123,8 @@ export async function generateRoutes(app: FastifyInstance) {
               const lorebookKeeperResult = await executeAgent(
                 lorebookKeeperAgent,
                 lorebookKeeperContext,
-                lorebookKeeperAgent.provider,
-                lorebookKeeperAgent.model,
+                lorebookKeeperAgent.provider!,
+                lorebookKeeperAgent.model!,
               );
               const finalizedLorebookKeeperResult = markLorebookResultForApproval(lorebookKeeperResult);
               sendAgentEvent(finalizedLorebookKeeperResult);
@@ -8174,8 +8175,8 @@ export async function generateRoutes(app: FastifyInstance) {
                 const retried = await executeAgent(
                   agentCfg,
                   retryCtx,
-                  agentCfg.provider,
-                  agentCfg.model,
+                  agentCfg.provider!,
+                  agentCfg.model!,
                   agentCfg.type === "spotify" ? undefined : agentCfg.toolContext,
                 );
                 const finalizedRetryResults = await applySpotifyAgentPlaybackFallbacks(
@@ -9585,8 +9586,8 @@ export async function generateRoutes(app: FastifyInstance) {
                 const editorResult = await executeAgent(
                   textRewriteAgent,
                   editorContext,
-                  textRewriteAgent.provider,
-                  textRewriteAgent.model,
+                  textRewriteAgent.provider!,
+                  textRewriteAgent.model!,
                 );
                 sendAgentEvent(editorResult);
 

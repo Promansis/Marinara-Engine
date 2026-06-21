@@ -1,4 +1,4 @@
-import type { LtmScope } from "../schemas/long-term-memory.schema.js";
+import type { LtmScope } from "./schema.js";
 
 function uniqueStrings(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value))));
