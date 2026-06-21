@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, unlink } from "node:fs/promises";
 import {
   DEFAULT_LTM_GLOBAL_SETTINGS,
@@ -56,17 +56,13 @@ export type LtmListNotesFilter = {
   includeGlobal?: boolean;
 };
 
-export type CreateLtmNoteInput = Omit<LtmNote, "createdAt" | "updatedAt" | "version" | "previousHash"> &
-  Partial<Pick<LtmNote, "createdAt" | "updatedAt" | "version" | "previousHash">>;
+export type CreateLtmNoteInput = Omit<LtmNote, "createdAt" | "updatedAt" | "version"> &
+  Partial<Pick<LtmNote, "createdAt" | "updatedAt" | "version">>;
 
-export type UpdateLtmNotePatch = Partial<Omit<LtmNote, "id" | "createdAt" | "updatedAt" | "version" | "previousHash">>;
+export type UpdateLtmNotePatch = Partial<Omit<LtmNote, "id" | "createdAt" | "updatedAt" | "version">>;
 
 function nowIso() {
   return new Date().toISOString();
-}
-
-function hashNote(note: LtmNote) {
-  return createHash("sha256").update(JSON.stringify(note)).digest("hex");
 }
 
 function normalizeStoredScope(scope: LtmScope) {
@@ -435,7 +431,6 @@ export class LongTermMemoryStorage {
         conflicts: normalizedPatch.conflicts ?? current.conflicts,
         updatedAt: timestamp,
         version: current.version + 1,
-        previousHash: hashNote(current),
       });
 
       if (!eventContext.suppressEvent) {
@@ -487,7 +482,6 @@ export class LongTermMemoryStorage {
           conflicts: normalizedPatch.conflicts ?? current.conflicts,
           updatedAt: timestamp,
           version: current.version + 1,
-          previousHash: hashNote(current),
         });
         const draftRewrites = await this.prepareDraftReferenceRewrites(current.id, next.id);
 

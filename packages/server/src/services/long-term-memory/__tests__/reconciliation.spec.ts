@@ -3004,6 +3004,47 @@ test("evidence unit extraction recovers valid units from malformed partial json"
   assert.equal(result.response.units[0]?.text, "The lantern hum should pay off later.");
 });
 
+test("evidence unit extraction throws on empty/garbage response", async () => {
+  const sourceNote: LtmNote = {
+    id: "scene_source_test",
+    type: "scene",
+    status: "active",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["source_summary"],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      source: {
+        text: "Mara keeps old promises.",
+        updatedAt: timestamp,
+        evidence: ["chat:chat_test"],
+      },
+    },
+    version: 1,
+  };
+
+  const provider = {
+    maxTokensOverrideValue: undefined,
+    chatComplete: async () => ({ content: "```json\n{\n  \ngarbage not even close to json\n" }),
+  } as any;
+
+  await assert.rejects(
+    () =>
+      runLongTermMemoryEvidenceUnitExtraction({
+        sourceNote,
+        sourceText: sourceNote.sections.source!.text,
+        existingNotes: [],
+        provider,
+        model: "test-model",
+        scope: {},
+        modes: ["roleplay"],
+        sourceHash,
+      }),
+  );
+});
+
 test("evidence unit extraction validation rejects copied placeholder values", () => {
   const sourceNote: LtmNote = {
     id: "scene_source_test",

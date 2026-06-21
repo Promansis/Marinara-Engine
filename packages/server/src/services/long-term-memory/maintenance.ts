@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
 import {
+  ltmIndexMetadataSchema,
   normalizeChatSummaryEntries,
   ltmExtractionResponseSchema,
   ltmEventSchema,
@@ -12,6 +13,7 @@ import {
   type ChatSummaryEntry,
   type LtmDraftMutation,
   type LtmExtractionDraft,
+  type LtmIndexMetadata,
   type LtmMode,
   type LtmNote,
   type LtmNoteType,
@@ -31,6 +33,7 @@ import {
   vaultFolderForNoteType,
 } from "./paths.js";
 import { rebuildLongTermMemoryIndexes } from "./rebuild.js";
+import { stableJsonHash } from "./chunking.js";
 import { LongTermMemoryStorage } from "./storage.js";
 
 type IntegritySeverity = "info" | "warning" | "error";
@@ -250,6 +253,75 @@ async function checkEventLogIntegrity(root: string, issues: IntegrityIssue[]) {
   return eventCount;
 }
 
+async function checkIndexCoherence(root: string, vaultNoteCount: number, issues: IntegrityIssue[]) {
+  const dirs = getLongTermMemoryDirectories(root);
+  const manifestPath = safeJoin(dirs.indexes, "manifest.json");
+  let manifest: LtmIndexMetadata | null = null;
+  try {
+    const raw = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest = ltmIndexMetadataSchema.parse(raw);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      issues.push({
+        severity: "error",
+        code: "manifest_unreadable",
+        path: relative(root, manifestPath),
+        message: "Manifest cannot be read or parsed.",
+      });
+    }
+    return;
+  }
+
+  if (manifest.noteCount !== vaultNoteCount) {
+    issues.push({
+      severity: "warning",
+      code: "manifest_note_mismatch",
+      path: relative(root, manifestPath),
+      message: `Manifest reports ${manifest.noteCount} notes but vault has ${vaultNoteCount}.`,
+    });
+  }
+
+  const vaultFiles = await listVaultFiles(root);
+  const computedHashes: Record<string, string> = {};
+  for (const file of vaultFiles) {
+    const relativePath = relative(root, file.path).split(/[\\/]+/).join("/");
+    computedHashes[relativePath] = stableJsonHash(await readFile(file.path, "utf8"));
+  }
+  const actualSourceHash = stableJsonHash(computedHashes);
+  if (manifest.sourceHash !== actualSourceHash) {
+    issues.push({
+      severity: "warning",
+      code: "manifest_hash_mismatch",
+      path: relative(root, manifestPath),
+      message: "Manifest source hash does not match current vault content.",
+    });
+  }
+
+  const embeddingsPath = safeJoin(dirs.indexes, "embeddings.json");
+  try {
+    const embeddingsRaw = JSON.parse(await readFile(embeddingsPath, "utf8"));
+    const embeddings = embeddingsRaw as { embeddedChunkCount?: number; chunks?: unknown[] };
+    const embeddingCount = embeddings.embeddedChunkCount ?? embeddings.chunks?.length ?? -1;
+    if (embeddingCount !== manifest.chunkCount) {
+      issues.push({
+        severity: "info",
+        code: "embedding_chunk_mismatch",
+        path: relative(root, embeddingsPath),
+        message: `Embeddings report ${embeddingCount} chunks but manifest reports ${manifest.chunkCount}.`,
+      });
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      issues.push({
+        severity: "warning",
+        code: "embeddings_unreadable",
+        path: relative(root, embeddingsPath),
+        message: "Embeddings index cannot be read.",
+      });
+    }
+  }
+}
+
 export async function checkLongTermMemoryIntegrity(root = getLongTermMemoryRoot()): Promise<LtmIntegrityResult> {
   const storage = new LongTermMemoryStorage(root);
   await storage.initializeLtmStore();
@@ -286,15 +358,6 @@ export async function checkLongTermMemoryIntegrity(root = getLongTermMemoryRoot(
           message: `Filename should be ${basename(expected)}.`,
         });
       }
-      if (note.previousHash) {
-        issues.push({
-          severity: "info",
-          code: "hash_chain_present",
-          path: publicPath,
-          noteId: note.id,
-          message: "Note has a previous hash pointer.",
-        });
-      }
     } catch (err) {
       issues.push({
         severity: "error",
@@ -319,6 +382,7 @@ export async function checkLongTermMemoryIntegrity(root = getLongTermMemoryRoot(
   }
 
   const eventCount = await checkEventLogIntegrity(root, issues);
+  await checkIndexCoherence(root, notesById.size, issues);
   return {
     ok: !issues.some((issue) => issue.severity === "error"),
     checkedAt: nowIso(),

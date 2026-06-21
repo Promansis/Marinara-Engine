@@ -44,7 +44,6 @@ function baseNote(input: Partial<LtmNote> & Pick<LtmNote, "id" | "type">): LtmNo
     conflicts: input.conflicts,
     version: input.version ?? 1,
     extracted: input.extracted,
-    previousHash: input.previousHash,
   };
 }
 

@@ -404,10 +404,6 @@ export const ltmNoteSchema = z
     conflicts: z.array(ltmConflictSchema).max(250).optional(),
     version: z.number().int().min(1),
     extracted: z.boolean().optional(),
-    previousHash: z
-      .string()
-      .regex(/^[a-f0-9]{64}$/)
-      .optional(),
   })
   .strict()
   .superRefine((note, ctx) => {
@@ -633,10 +629,6 @@ export const ltmDraftNoteInputSchema = z
     sections: z.record(ltmSectionKeySchema, ltmSectionSchema),
     conflicts: z.array(ltmConflictSchema).max(250).optional(),
     version: z.number().int().min(1).optional(),
-    previousHash: z
-      .string()
-      .regex(/^[a-f0-9]{64}$/)
-      .optional(),
   })
   .strip()
   .superRefine((note, ctx) => {

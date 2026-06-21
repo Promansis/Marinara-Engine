@@ -291,12 +291,23 @@ export type LtmDraftFilter = {
   chatId?: string;
 };
 
-export type CreateLongTermMemoryNoteInput = Omit<LtmNote, "createdAt" | "updatedAt" | "version" | "previousHash"> &
-  Partial<Pick<LtmNote, "createdAt" | "updatedAt" | "version" | "previousHash">>;
+export type CreateLongTermMemoryNoteInput = Omit<LtmNote, "createdAt" | "updatedAt" | "version"> &
+  Partial<Pick<LtmNote, "createdAt" | "updatedAt" | "version">>;
 
-export type UpdateLongTermMemoryNoteInput = Partial<
-  Omit<LtmNote, "id" | "title" | "createdAt" | "updatedAt" | "version" | "previousHash">
-> & { title?: string | null };
+export type CreateLongTermMemoryNoteDraft = Pick<LtmNote, "id" | "type" | "modes" | "scope" | "sections" | "links" | "tags"> &
+  Omit<LtmNote, "id" | "title" | "createdAt" | "updatedAt" | "version"> & { title?: string | null };
+
+export type UpdateLongTermMemoryNoteInput = {
+  title?: string | null;
+  type?: LtmNote["type"];
+  status?: LtmNote["status"];
+  modes?: LtmNote["modes"];
+  scope?: LtmNote["scope"];
+  tags?: LtmNote["tags"];
+  links?: LtmNote["links"];
+  sections?: LtmNote["sections"];
+  conflicts?: LtmNote["conflicts"];
+};
 
 export type DeleteLongTermMemoryNotesResponse = {
   deletedIds: string[];
