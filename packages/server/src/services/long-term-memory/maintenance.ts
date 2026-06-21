@@ -254,7 +254,12 @@ async function checkEventLogIntegrity(root: string, issues: IntegrityIssue[]) {
   return eventCount;
 }
 
-async function checkIndexCoherence(root: string, vaultNoteCount: number, issues: IntegrityIssue[]) {
+async function checkIndexCoherence(
+  root: string,
+  vaultNoteCount: number,
+  issues: IntegrityIssue[],
+  fileContents: Array<{ path: string; rawContent: string }>,
+) {
   const dirs = getLongTermMemoryDirectories(root);
   const manifestPath = safeJoin(dirs.indexes, "manifest.json");
   let manifest: LtmIndexMetadata | null = null;
@@ -283,11 +288,10 @@ async function checkIndexCoherence(root: string, vaultNoteCount: number, issues:
     });
   }
 
-  const vaultFiles = await listVaultFiles(root);
   const computedHashes: Record<string, string> = {};
-  for (const file of vaultFiles) {
+  for (const file of fileContents) {
     const relativePath = relative(root, file.path).split(/[\\/]+/).join("/");
-    computedHashes[relativePath] = stableJsonHash(await readFile(file.path, "utf8"));
+    computedHashes[relativePath] = stableJsonHash(file.rawContent);
   }
   const actualSourceHash = stableJsonHash(computedHashes);
   if (manifest.sourceHash !== actualSourceHash) {
@@ -330,13 +334,27 @@ export async function checkLongTermMemoryIntegrity(root = getLongTermMemoryRoot(
   await storage.initializeLtmStore();
   const issues: IntegrityIssue[] = [];
   const notesById = new Map<string, LtmNote>();
+  const fileContents: Array<{ path: string; rawContent: string }> = [];
 
   for (const file of await listVaultFiles(root)) {
     const publicPath = relative(root, file.path)
       .split(/[\\/]+/)
       .join("/");
+    let rawContent: string;
     try {
-      const raw = JSON.parse(await readFile(file.path, "utf8"));
+      rawContent = await readFile(file.path, "utf8");
+    } catch (err) {
+      issues.push({
+        severity: "error",
+        code: "malformed_note",
+        path: publicPath,
+        message: err instanceof Error ? err.message : "Note could not be read.",
+      });
+      continue;
+    }
+    fileContents.push({ path: file.path, rawContent });
+    try {
+      const raw = JSON.parse(rawContent);
       const note = ltmNoteSchema.parse({
         ...raw,
         scope: normalizeLegacyNoteScope(raw.scope),
@@ -386,7 +404,7 @@ export async function checkLongTermMemoryIntegrity(root = getLongTermMemoryRoot(
   }
 
   const eventCount = await checkEventLogIntegrity(root, issues);
-  await checkIndexCoherence(root, notesById.size, issues);
+  await checkIndexCoherence(root, notesById.size, issues, fileContents);
   return {
     ok: !issues.some((issue) => issue.severity === "error"),
     checkedAt: nowIso(),
