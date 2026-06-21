@@ -14,7 +14,7 @@ import {
   friendlySectionKey,
   friendlyStatus,
 } from "../long-term-memory/ltm-editor-utils";
-import type { LtmExtractionRunMode } from "../../stores/ui.store";
+export type LtmExtractionRunMode = "fast" | "balanced";
 import { LTM_RECALL_STYLE_WEIGHTS } from "@marinara-engine/shared";
 import { ChevronDown, ChevronRight, Info } from "lucide-react";
 import { StatusPill } from "./LtmPills";
