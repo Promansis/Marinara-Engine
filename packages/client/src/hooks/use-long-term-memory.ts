@@ -439,6 +439,52 @@ export function useDeleteLongTermMemoryNotes() {
   });
 }
 
+export type RemoveLongTermMemoryNotesFromScopeResponse = {
+  removedIds: string[];
+  deletedIds: string[];
+  failedIds: string[];
+};
+
+/**
+ * Remove notes from a specific chat scope instead of permanently deleting them.
+ * If a note has no remaining scope after removal, the server permanently
+ * deletes it (reported in `deletedIds`).
+ */
+export function useRemoveLongTermMemoryNotesFromScope() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { ids: string[]; chatIds: string[] }) => {
+      const results = await Promise.allSettled(
+        input.ids.map((id) =>
+          api.delete<{ deleted: boolean; unscoped: boolean; id: string }>(
+            `/long-term-memory/notes/${id}/scope`,
+            { chatIds: input.chatIds },
+          ),
+        ),
+      );
+      const removedIds: string[] = [];
+      const deletedIds: string[] = [];
+      const failedIds: string[] = [];
+      results.forEach((result, index) => {
+        const id = input.ids[index]!;
+        if (result.status === "fulfilled") {
+          if (result.value.deleted) deletedIds.push(id);
+          else removedIds.push(id);
+        } else {
+          failedIds.push(id);
+        }
+      });
+      return { removedIds, deletedIds, failedIds } satisfies RemoveLongTermMemoryNotesFromScopeResponse;
+    },
+    onSuccess: (result) => {
+      for (const id of result.deletedIds) {
+        qc.removeQueries({ queryKey: longTermMemoryKeys.note(id) });
+      }
+      qc.invalidateQueries({ queryKey: longTermMemoryKeys.all });
+    },
+  });
+}
+
 export function usePreviewLongTermMemoryNoteTransfer() {
   return useMutation({
     mutationFn: (input: PreviewLongTermMemoryNoteTransferInput) =>

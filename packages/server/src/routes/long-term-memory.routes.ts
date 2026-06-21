@@ -736,6 +736,36 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     return { deleted: true, id: note.id };
   });
 
+  app.delete<{ Params: { id: string }; Body: unknown }>(
+    "/notes/:id/scope",
+    { bodyLimit: REBUILD_BODY_LIMIT_BYTES },
+    async (req, reply) => {
+      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory note scope removal" })) return;
+      const id = ltmNoteIdSchema.parse(req.params.id);
+      const body = z
+        .object({
+          chatIds: z.array(z.string().min(1).max(120)).min(1).max(100),
+        })
+        .strict()
+        .parse(req.body ?? {});
+      const existing = await storage.getNote(id);
+      if (!existing) return reply.status(404).send({ error: "Long-term memory note not found" });
+
+      const result = await storage.removeNoteFromChatScope(id, body.chatIds, {
+        actor: "maintenance_api",
+        cause: "api.unscope",
+        summary: "Removed from chat scope via long-term memory maintenance API",
+      });
+      await rebuildLongTermMemoryIndexes({
+        scope: result.deleted ? rebuildScopeForNote(existing) : rebuildScopeForNote(result.note!),
+      });
+      if (result.deleted) {
+        return { deleted: true, unscoped: false, id: existing.id };
+      }
+      return { deleted: false, unscoped: true, id: result.note!.id, note: result.note };
+    },
+  );
+
   app.post<{ Body: unknown }>("/rebuild", { bodyLimit: REBUILD_BODY_LIMIT_BYTES }, async (req, reply) => {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory index rebuild" })) return;
     rebuildBodySchema.parse(req.body ?? {});

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   ArrowRightLeft,
@@ -20,6 +20,7 @@ import type {
   LtmNoteType,
   LtmStatus,
 } from "@marinara-engine/shared";
+import { getLtmScopeChatIds, isGlobalLtmScope } from "@marinara-engine/shared";
 import {
   useImportLongTermMemorySourceNotes,
   useDeleteLongTermMemoryNotes,
@@ -29,6 +30,7 @@ import {
   useLongTermMemoryNote,
   useLongTermMemoryNotes,
   useLongTermMemorySettings,
+  useRemoveLongTermMemoryNotesFromScope,
   useLongTermMemoryStatus,
   useRebuildLongTermMemory,
   useRepairLongTermMemory,
@@ -217,6 +219,7 @@ export function LongTermMemoryPanel() {
   const rebuild = useRebuildLongTermMemory();
   const repair = useRepairLongTermMemory();
   const deleteNotes = useDeleteLongTermMemoryNotes();
+  const removeNotesFromScope = useRemoveLongTermMemoryNotesFromScope();
   const importSourceNotes = useImportLongTermMemorySourceNotes();
   const searchMemory = useSearchLongTermMemory();
   const [recallQueryByNoteId, setRecallQueryByNoteId] = useState<Record<string, string>>({});
@@ -576,6 +579,72 @@ export function LongTermMemoryPanel() {
     });
   };
 
+  const activeScopeChatIds = useMemo(
+    () => getLtmScopeChatIds(navigatorScope),
+    [navigatorScope],
+  );
+
+  /**
+   * Returns true if a note is visible outside the currently active navigator
+   * scope — i.e. deleting it should unscope rather than permanently destroy.
+   */
+  const noteIsSharedBeyondScope = useCallback(
+    (note: LtmNote): boolean => {
+      if (isGlobalLtmScope(note.scope)) return true;
+      const noteChatIds = new Set(getLtmScopeChatIds(note.scope));
+      const hasGroupId = Boolean(note.scope.groupId);
+      const hasCharacterIds = Boolean(note.scope.characterIds?.length);
+      if (hasGroupId || hasCharacterIds) {
+        // If the note is also scoped to characters/groups we can't cleanly
+        // unscope by chatId alone — treat as shared.
+        if (noteChatIds.size > 0) return true;
+        return activeScopeChatIds.length === 0;
+      }
+      if (activeScopeChatIds.length === 0) return true;
+      return noteChatIds.size > activeScopeChatIds.filter((id) => noteChatIds.has(id)).length;
+    },
+    [activeScopeChatIds],
+  );
+
+  const removeMemoriesFromScopeById = async (ids: string[], chatIds: string[]) => {
+    const uniqueIds = uniqueNoteIds(ids);
+    if (uniqueIds.length === 0 || chatIds.length === 0) return;
+
+    try {
+      const result = await removeNotesFromScope.mutateAsync({ ids: uniqueIds, chatIds });
+      const allAffected = [...result.removedIds, ...result.deletedIds];
+      setSelectedNoteIds((current) => {
+        const next = new Set(current);
+        for (const id of allAffected) next.delete(id);
+        return next;
+      });
+      setExpandedMemoryIds((current) => {
+        const next = new Set(current);
+        for (const id of allAffected) next.delete(id);
+        return next;
+      });
+      if (openNoteId && allAffected.includes(openNoteId)) {
+        closeMemoryModal();
+      }
+
+      if (result.failedIds.length > 0) {
+        toast.error(
+          `${allAffected.length} memor${allAffected.length === 1 ? "y" : "ies"} affected, ${result.failedIds.length} failed.`,
+        );
+      } else if (result.deletedIds.length > 0 && result.removedIds.length > 0) {
+        toast.success(
+          `${result.removedIds.length} removed from this chat, ${result.deletedIds.length} permanently deleted`,
+        );
+      } else if (result.deletedIds.length > 0) {
+        toast.success(`${result.deletedIds.length} memor${result.deletedIds.length === 1 ? "y" : "ies"} deleted`);
+      } else {
+        toast.success(`${result.removedIds.length} memor${result.removedIds.length === 1 ? "y" : "ies"} removed from this chat`);
+      }
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
   const deleteMemoriesById = async (ids: string[]) => {
     const uniqueIds = uniqueNoteIds(ids);
     if (uniqueIds.length === 0) return;
@@ -630,6 +699,21 @@ export function LongTermMemoryPanel() {
 
   const deleteMemory = async (note: LtmNote) => {
     const title = memoryRowTitle(note, chatLookup);
+    const scopeChatIds = activeScopeChatIds;
+
+    if (scopeChatIds.length > 0 && noteIsSharedBeyondScope(note)) {
+      const choice = await showConfirmDialog({
+        title: "Remove Memory",
+        message: `Remove "${title}" from this chat? It will still be available in other chats it belongs to.`,
+        confirmLabel: "Remove from chat",
+        tone: "destructive",
+      });
+      if (!choice) return;
+      const ids = await confirmDerivedDeleteIds([note.id]);
+      void removeMemoriesFromScopeById(ids, scopeChatIds);
+      return;
+    }
+
     if (
       !(await showConfirmDialog({
         title: "Permanently Delete",
@@ -645,6 +729,23 @@ export function LongTermMemoryPanel() {
   const deleteSelectedMemories = async () => {
     const ids = selectedVisibleNoteIds;
     if (ids.length === 0) return;
+    const scopeChatIds = activeScopeChatIds;
+    const selectedNotes = ids.map((id) => noteLookup.get(id)).filter((n): n is LtmNote => Boolean(n));
+    const anyShared = selectedNotes.some((note) => noteIsSharedBeyondScope(note));
+
+    if (scopeChatIds.length > 0 && anyShared) {
+      const choice = await showConfirmDialog({
+        title: "Remove Memories",
+        message: `Remove ${ids.length} selected memor${ids.length === 1 ? "y" : "ies"} from this chat? Memories that are only in this chat will be permanently deleted; shared memories will remain in other chats.`,
+        confirmLabel: "Remove from chat",
+        tone: "destructive",
+      });
+      if (!choice) return;
+      const allIds = await confirmDerivedDeleteIds(ids);
+      void removeMemoriesFromScopeById(allIds, scopeChatIds);
+      return;
+    }
+
     if (
       !(await showConfirmDialog({
         title: "Permanently Delete",

@@ -14,6 +14,8 @@ import {
   ltmNoteTypeSchema,
   ltmPoliciesConfigSchema,
   ltmRetrievalConfigSchema,
+  getLtmScopeChatIds,
+  isGlobalLtmScope,
   matchesLtmScope,
   withMergedLtmScopeLinks,
   type LtmScope,
@@ -361,6 +363,68 @@ export class LongTermMemoryStorage {
       await unlink(path);
       return current;
     });
+  }
+
+  /**
+   * Remove a note from the given chat scope(s). If the note has no remaining
+   * scope (no chatIds, groupId, or characterIds) after removal, it is
+   * permanently deleted instead. Returns the resulting note (null when deleted)
+   * and whether the note was deleted.
+   */
+  async removeNoteFromChatScope(
+    id: string,
+    chatIdsToRemove: string[],
+    eventContext: LtmEventContext = {},
+  ): Promise<{ note: LtmNote | null; deleted: boolean }> {
+    await this.initializeLtmStore();
+    const existing = await this.getRequiredNote(id);
+    const toRemove = new Set(chatIdsToRemove);
+
+    const remainingChatIds = getLtmScopeChatIds(existing.scope).filter((chatId) => !toRemove.has(chatId));
+
+    const hasGroupId = Boolean(existing.scope.groupId);
+    const hasCharacterIds = Boolean(existing.scope.characterIds?.length);
+
+    // If removing the chatIds would leave the note with no scope at all,
+    // permanently delete it instead of leaving an orphaned global note.
+    if (remainingChatIds.length === 0 && !hasGroupId && !hasCharacterIds) {
+      const deleted = await this.deleteNote(id, {
+        ...eventContext,
+        cause: eventContext.cause ?? "api.unscope",
+        summary: eventContext.summary ?? "Removed from last chat scope via long-term memory API",
+      });
+      return { note: null, deleted: true };
+    }
+
+    // If the note is currently global (no scope at all), removing it from
+    // specific chats doesn't make sense — the user should use permanent delete.
+    // But we handle it gracefully by scoping it to everything *except* the
+    // removed chats. However, since we don't have a list of all chats, we
+    // just permanently delete in this case.
+    if (isGlobalLtmScope(existing.scope)) {
+      const deleted = await this.deleteNote(id, {
+        ...eventContext,
+        cause: eventContext.cause ?? "api.unscope",
+        summary: eventContext.summary ?? "Removed global note via long-term memory API",
+      });
+      return { note: null, deleted: true };
+    }
+
+    const nextScope: LtmScope = { ...existing.scope };
+    if (remainingChatIds.length > 0) {
+      nextScope.chatIds = remainingChatIds;
+      nextScope.chatId = remainingChatIds[0];
+    } else {
+      delete nextScope.chatIds;
+      delete nextScope.chatId;
+    }
+
+    const note = await this.updateNote(id, { scope: nextScope }, {
+      ...eventContext,
+      cause: eventContext.cause ?? "api.unscope",
+      summary: eventContext.summary ?? "Removed from chat scope via long-term memory API",
+    });
+    return { note, deleted: false };
   }
 
   async appendEvent(event: LtmEvent) {
