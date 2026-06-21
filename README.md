@@ -150,6 +150,8 @@ Character expression sprites with automatic emotion switching, custom scene back
 
 25+ built-in agents that run alongside your chat — world state tracking, quest management, combat, expression detection, background selection, narrative direction, prose analysis, Music DJ, CYOA choices, and more. All disabled by default; enable only what you want, or create custom agents.
 
+**Long-Term Memory** is a managed custom agent that stores, retrieves, and maintains persistent narrative context across sessions. Access its memory vault from the Agents panel → open the "long-term-memory" agent card. Browse memories, import chat summaries, tune recall and extraction settings, and manage note scope — all from the agent editor.
+
 ### Prompt Engineering
 
 Preset system with drag-and-drop prompt ordering, lorebooks with keyword triggers, an AI lorebook maker, world info inspector, regex scripts, and a macro/template system.
