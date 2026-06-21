@@ -9,15 +9,13 @@ import {
   DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
   DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
   DEFAULT_LTM_RECALL_PREAMBLE,
-  matchesLtmScope,
-} from "@marinara-engine/shared";
-import {
   isLtmSourceLikeNote,
-  ltmExtractionModeSchema,
   ltmEvidenceUnitSchema,
+  ltmExtractionModeSchema,
   ltmPoliciesConfigSchema,
   ltmScopeSchema,
-} from "../../../../../shared/src/schemas/long-term-memory.schema.js";
+  matchesLtmScope,
+} from "@marinara-engine/shared";
 import { buildApp } from "../../../app.js";
 import { chunkNotes, type LtmMemoryChunk } from "../chunking.js";
 import { buildLtmMetadataIndex } from "../metadata-index.js";

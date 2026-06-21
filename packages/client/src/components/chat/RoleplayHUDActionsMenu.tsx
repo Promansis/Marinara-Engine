@@ -11,7 +11,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { BUILT_IN_AGENTS, type Message } from "@marinara-engine/shared";
+import { BUILT_IN_AGENTS, isManagedAgentType, type Message } from "@marinara-engine/shared";
 import { useUpdateAgentRunData, type AgentConfigRow, type AgentRunRow } from "../../hooks/use-agents";
 import {
   formatAgentFailureDetail,
@@ -401,6 +401,7 @@ function hasActiveInjectableCustomAgent(configs: AgentConfigRow[], enabledAgentT
   const builtInTypes = new Set(BUILT_IN_AGENTS.map((agent) => agent.id));
   return configs.some((config) => {
     if (builtInTypes.has(config.type)) return false;
+    if (isManagedAgentType(config.type)) return false;
     if (!enabledAgentTypes.has(config.type)) return false;
     const settings = parseAgentSettings(config.settings);
     return settings.injectAsSection === true;
@@ -412,6 +413,7 @@ function hasActiveCustomAgentType(configs: AgentConfigRow[], enabledAgentTypes?:
   const builtInTypes = new Set(BUILT_IN_AGENTS.map((agent) => agent.id));
   return configs.some((config) => {
     if (builtInTypes.has(config.type)) return false;
+    if (isManagedAgentType(config.type)) return false;
     return enabledAgentTypes.has(config.type);
   });
 }
@@ -427,6 +429,7 @@ function getLatestInjectableCustomRuns(
     configs
       .filter((config) => {
         if (builtInTypes.has(config.type)) return false;
+        if (isManagedAgentType(config.type)) return false;
         if (!enabledAgentTypes.has(config.type)) return false;
         const settings = parseAgentSettings(config.settings);
         return settings.injectAsSection === true;

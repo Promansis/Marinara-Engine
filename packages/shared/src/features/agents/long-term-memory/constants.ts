@@ -1,5 +1,5 @@
-import type { LtmExtractionReasoningEffort, LtmExtractionVerbosity } from "../schemas/long-term-memory.schema.js";
-import type { LongTermMemoryRecallStyle } from "../types/chat.js";
+import type { LtmExtractionReasoningEffort, LtmExtractionVerbosity } from "./schema.js";
+import type { LongTermMemoryRecallStyle } from "../../../types/chat.js";
 
 export const DEFAULT_LTM_EXTRACTION_REASONING_EFFORT = "low" satisfies LtmExtractionReasoningEffort;
 export const DEFAULT_LTM_EXTRACTION_VERBOSITY = "low" satisfies LtmExtractionVerbosity;

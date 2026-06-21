@@ -1,13 +1,10 @@
-// ──────────────────────────────────────────────
-// Long-Term Memory Zod Schemas
-// ──────────────────────────────────────────────
 import { z } from "zod";
 import {
   DEFAULT_LTM_RECALL_PREAMBLE,
   DEFAULT_LTM_RECALL_STYLE,
   DEFAULT_LTM_RECALL_STYLE_WEIGHTS,
   LTM_DRAFT_MUTATION_LIMIT,
-} from "../constants/long-term-memory.js";
+} from "./constants.js";
 
 export const ltmNoteTypeSchema = z.enum([
   "source",
@@ -819,3 +816,34 @@ export type LtmExtractionOutcome = z.infer<typeof ltmExtractionOutcomeSchema>;
 export type LtmExtractionResponse = z.infer<typeof ltmExtractionResponseSchema>;
 export type LtmEvidenceUnit = z.infer<typeof ltmEvidenceUnitSchema>;
 export type LtmEvidenceUnitExtractionResponse = z.infer<typeof ltmEvidenceUnitExtractionResponseSchema>;
+
+/**
+ * Settings stored in agent_configs.settings when type === "long-term-memory".
+ * Subset of LtmGlobalSettings that are user-configurable per agent.
+ */
+export const ltmAgentSettingsSchema = z
+  .object({
+    connectionId: z.string().nullable().optional(),
+    model: z.string().max(240).optional(),
+    instruction: z.string().max(2_000).optional(),
+    extractionMode: ltmExtractionModeSchema.optional(),
+    importConcurrency: z.number().int().min(1).max(10).optional(),
+    importLimit: z.number().int().min(1).max(5000).optional(),
+    importSource: z.string().max(50).optional(),
+    autoApplyLowRisk: z.boolean().optional(),
+    longTermMemoryBudgetTokens: z.number().int().min(128).max(16_384).optional(),
+    longTermMemoryMaxChunks: z.number().int().min(1).max(100).optional(),
+    longTermMemoryScoreThreshold: z.number().finite().min(0).max(1).optional(),
+    longTermMemoryRecallContextMessages: z.number().int().min(1).max(20).optional(),
+    longTermMemoryRecallStyle: z.enum(["balanced", "exact", "broad", "story"]).optional(),
+    longTermMemorySemanticWeight: z.number().finite().min(0).max(1).nullable().optional(),
+    longTermMemoryLexicalWeight: z.number().finite().min(0).max(1).nullable().optional(),
+    longTermMemoryGraphWeight: z.number().finite().min(0).max(1).nullable().optional(),
+    longTermMemoryMetadataWeight: z.number().finite().min(0).max(2).nullable().optional(),
+    longTermMemoryIncludeResolved: z.boolean().optional(),
+    longTermMemoryRecallPreamble: z.string().max(500).optional(),
+    longTermMemoryDebug: z.boolean().optional(),
+  })
+  .strict();
+
+export type LtmAgentSettings = z.infer<typeof ltmAgentSettingsSchema>;

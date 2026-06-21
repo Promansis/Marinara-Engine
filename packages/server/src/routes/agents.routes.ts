@@ -11,6 +11,8 @@ import {
   BUILT_IN_AGENTS,
   DEFAULT_AGENT_TOOLS,
   getDefaultBuiltInAgentSettings,
+  isManagedAgentType,
+  ltmAgentSettingsSchema,
   normalizeAgentPhaseForType,
 } from "@marinara-engine/shared";
 import { createAgentsStorage } from "../services/storage/agents.storage.js";
@@ -216,8 +218,18 @@ export async function agentsRoutes(app: FastifyInstance) {
     return agent;
   });
 
-  app.post("/", async (req) => {
+  app.post("/", async (req, reply) => {
     const input = createAgentConfigSchema.parse(req.body);
+    if (isManagedAgentType(input.type) && input.settings) {
+      try {
+        ltmAgentSettingsSchema.parse(input.settings);
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          return reply.status(400).send({ error: "Invalid LTM agent settings", issues: err.issues });
+        }
+        throw err;
+      }
+    }
     return storage.create(input);
   });
 
@@ -227,11 +239,32 @@ export async function agentsRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: "Agent is not configured" });
     }
     const data = updateAgentConfigSchema.parse(req.body);
+    if (isManagedAgentType(req.params.agentType) && data.settings !== undefined) {
+      try {
+        ltmAgentSettingsSchema.parse(data.settings);
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          return reply.status(400).send({ error: "Invalid LTM agent settings", issues: err.issues });
+        }
+        throw err;
+      }
+    }
     return storage.update(config.id, data);
   });
 
-  app.patch<{ Params: { id: string } }>("/:id", async (req) => {
+  app.patch<{ Params: { id: string } }>("/:id", async (req, reply) => {
     const data = updateAgentConfigSchema.parse(req.body);
+    const existing = await storage.getById(req.params.id);
+    if (existing && isManagedAgentType(existing.type) && data.settings !== undefined) {
+      try {
+        ltmAgentSettingsSchema.parse(data.settings);
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          return reply.status(400).send({ error: "Invalid LTM agent settings", issues: err.issues });
+        }
+        throw err;
+      }
+    }
     return storage.update(req.params.id, data);
   });
 
