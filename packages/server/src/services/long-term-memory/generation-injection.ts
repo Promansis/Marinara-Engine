@@ -234,7 +234,7 @@ export async function applyGenerationLongTermMemoryInjection(
     retrieveLongTermMemoryFn: input.retrieveLongTermMemoryFn,
   });
   if (retrieval.chunks.length === 0) {
-    logger.debug("No LTM chunks retrieved for generation injection");
+    logger.debug("[ltm] No chunks retrieved for generation injection");
     return {
       retrieval,
       injection: {

@@ -149,7 +149,7 @@ export async function recordLtmDebugEvent(input: LtmDebugEventInput): Promise<Lt
     await appendFile(path, `${JSON.stringify(event)}\n`, "utf8");
     return event;
   } catch (err) {
-    logger.warn(err, "Failed to record LTM debug event");
+    logger.warn(err, "[ltm] Failed to record debug event");
     return null;
   }
 }
@@ -182,7 +182,7 @@ export async function readLtmDebugLog(filter: LtmDebugLogFilter = {}, root = get
   const limit = Math.min(Math.max(filter.limit ?? 200, 1), 1_000);
   const content = await readFile(path, "utf8").catch((err) => {
     if (isEnoent(err)) return "";
-    logger.warn(err, "Failed to read LTM debug log at %s", path);
+    logger.warn(err, "[ltm] Failed to read debug log at %s", path);
     throw err;
   });
   const events: LtmDebugEvent[] = [];
@@ -216,7 +216,7 @@ export async function exportLtmDebugLog(root = getLongTermMemoryRoot()) {
   const path = getLongTermMemoryDirectories(root).debugLog;
   return readFile(path, "utf8").catch((err) => {
     if (isEnoent(err)) return "";
-    logger.warn(err, "Failed to export LTM debug log at %s", path);
+    logger.warn(err, "[ltm] Failed to export debug log at %s", path);
     throw err;
   });
 }

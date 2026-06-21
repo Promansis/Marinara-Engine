@@ -49,7 +49,7 @@ export type LtmRebuildScope = "all" | "typed" | "source";
 async function listFiles(root: string): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true }).catch((err) => {
     if (isEnoent(err)) return [];
-    logger.warn(err, "Failed to list files in %s", root);
+    logger.warn(err, "[ltm] Failed to list files in %s", root);
     throw err;
   });
   const files: string[] = [];
@@ -89,7 +89,7 @@ async function buildEmbeddingIndex(chunks: LtmMemoryChunk[], options: MemoryReca
         options,
       );
     } catch (err) {
-      logger.warn(err, "Embedding failed for %d chunks", chunks.length);
+      logger.warn(err, "[ltm] Embedding failed for %d chunks", chunks.length);
       throw err;
     }
   }

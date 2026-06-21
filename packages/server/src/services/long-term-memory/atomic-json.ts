@@ -42,7 +42,7 @@ export async function renameWithRetry(
   } catch (err) {
     if (!isRetryableAtomicRenameError(err) || attempt === ATOMIC_RENAME_RETRY_DELAYS_MS.length) {
       if (!isRetryableAtomicRenameError(err)) {
-        logger.warn(err, "Atomic rename non-retryable error from %s to %s", fromPath, toPath);
+        logger.warn(err, "[ltm] Atomic rename non-retryable error from %s to %s", fromPath, toPath);
       }
       throw err;
     }

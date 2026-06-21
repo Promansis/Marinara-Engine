@@ -263,7 +263,7 @@ async function chatCompleteWithReasoningFallback({
     return await extractionOptions.provider.chatComplete(messages, chatOptions);
   } catch (err) {
     if (chatOptions.reasoningEffort !== "none" || !isReasoningNoneUnsupportedError(err)) {
-      logger.warn(err, "LLM chat complete failed for evidence unit extraction");
+      logger.warn(err, "[ltm] LLM chat complete failed for evidence unit extraction");
       throw err;
     }
     await recordLtmDebugEvent({
@@ -614,7 +614,7 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
       throw parseErr;
     }
   } catch (err) {
-    logger.error(err, "Evidence unit extraction failed for note %s", options.sourceNote.id);
+    logger.error(err, "[ltm] Evidence unit extraction failed for note %s", options.sourceNote.id);
     await recordLtmDebugEvent({
       operationId: options.operationId,
       phase: "llm",

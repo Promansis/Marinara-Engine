@@ -77,6 +77,14 @@ function normalizePatch(patch: UpdateLtmNotePatch) {
   return next;
 }
 
+function parseStoredNote(raw: unknown) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return ltmNoteSchema.parse(raw);
+  }
+  const { previousHash: _previousHash, ...note } = raw as Record<string, unknown>;
+  return ltmNoteSchema.parse(note);
+}
+
 function firstIdPrefixForType(type: LtmNoteType) {
   return LTM_NOTE_ID_PREFIXES_BY_TYPE[type][0];
 }
@@ -368,7 +376,7 @@ export class LongTermMemoryStorage {
       content = await readFile(this.dirs.eventLog, "utf8");
     } catch (err) {
       if (!isEnoent(err)) {
-        logger.warn(err, "Failed to read events from %s", this.dirs.eventLog);
+        logger.warn(err, "[ltm] Failed to read events from %s", this.dirs.eventLog);
         throw err;
       }
       return [];
@@ -396,15 +404,15 @@ export class LongTermMemoryStorage {
     try {
       raw = JSON.parse(await readFile(path, "utf8"));
     } catch (err) {
-      logger.warn(err, "Failed to parse note file %s", path);
+      logger.warn(err, "[ltm] Failed to parse note file %s", path);
       throw err;
     }
-    const note = ltmNoteSchema.parse({
+    const note = parseStoredNote({
       ...raw,
       scope: normalizeStoredScope(raw.scope ?? {}),
     });
     if (vaultFolderForNoteType(note.type) !== folder) {
-      logger.warn("Note %s has type %s but stored in folder %s", note.id, note.type, folder);
+      logger.warn("[ltm] Note %s has type %s but stored in folder %s", note.id, note.type, folder);
       throw new Error(`Long-term memory note ${note.id} has type ${note.type} but is stored in ${folder}.`);
     }
     return note;
@@ -415,7 +423,7 @@ export class LongTermMemoryStorage {
       return await this.readNoteFile(safeJoin(this.dirs.vault, `${folder}/${id}.json`), folder);
     } catch (err) {
       if (isEnoent(err)) return null;
-      logger.warn(err, "Failed to read note %s in folder %s", id, folder);
+      logger.warn(err, "[ltm] Failed to read note %s in folder %s", id, folder);
       throw err;
     }
   }
@@ -587,7 +595,7 @@ async function writeJsonIfChanged(path: string, value: unknown) {
     if (current === next) return;
   } catch (err) {
     if (!isEnoent(err)) {
-      logger.warn(err, "Failed to read config for write-if-changed at %s", path);
+      logger.warn(err, "[ltm] Failed to read config for write-if-changed at %s", path);
       throw err;
     }
   }

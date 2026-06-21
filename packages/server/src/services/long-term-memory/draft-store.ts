@@ -167,7 +167,7 @@ export class LongTermMemoryDraftStore {
       return true;
     } catch (err) {
       if (isEnoent(err)) return false;
-      logger.warn(err, "Failed to delete draft %s", id);
+      logger.warn(err, "[ltm] Failed to delete draft %s", id);
       throw err;
     }
   }

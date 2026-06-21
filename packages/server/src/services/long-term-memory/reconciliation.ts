@@ -341,7 +341,7 @@ async function applyMutation(
   try {
     await storage.updateNote(existing.id, patch, eventContext);
   } catch (err) {
-    logger.error(err, "Failed to apply draft mutation %s to note %s", mutation.id, mutation.noteId);
+    logger.error(err, "[ltm] Failed to apply draft mutation %s to note %s", mutation.id, mutation.noteId);
     throw err;
   }
 }

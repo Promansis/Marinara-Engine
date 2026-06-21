@@ -172,17 +172,17 @@ async function extractLongTermMemoryFromSourceNoteInner(
   const storage = new LongTermMemoryStorage(options.root);
   const sourceNote = await storage.getNote(options.noteId);
   if (!sourceNote) {
-    logger.warn("Source note not found: %s", options.noteId);
+    logger.warn("[ltm] Source note not found: %s", options.noteId);
     throw new Error(`Long-term memory note not found: ${options.noteId}`);
   }
   if (!isLtmSourceNote(sourceNote)) {
-    logger.warn("Note %s is not a source note", options.noteId);
+    logger.warn("[ltm] Note %s is not a source note", options.noteId);
     throw new Error(`Long-term memory note is not a source note: ${options.noteId}`);
   }
 
   const sourceText = getLtmSourceNoteText(sourceNote);
   if (!sourceText) {
-    logger.warn("Source note %s has no source text", options.noteId);
+    logger.warn("[ltm] Source note %s has no source text", options.noteId);
     throw new Error(`Long-term memory source note has no source text: ${options.noteId}`);
   }
 

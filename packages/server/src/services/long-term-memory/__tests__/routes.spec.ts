@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -199,6 +199,80 @@ test("LTM routes — POST /notes creates and GET /notes/:id retrieves it", async
     if (app) await app.close();
     if (previousDataDir === undefined) delete process.env.DATA_DIR;
     else process.env.DATA_DIR = previousDataDir;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("LTM routes — read endpoints tolerate legacy previousHash notes", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "marinara-ltm-routes-legacy-note-"));
+  const previousDataDir = process.env.DATA_DIR;
+  const previousBasicAuthUser = process.env.BASIC_AUTH_USER;
+  const previousBasicAuthPass = process.env.BASIC_AUTH_PASS;
+  const previousAdminSecret = process.env.ADMIN_SECRET;
+
+  delete process.env.BASIC_AUTH_USER;
+  delete process.env.BASIC_AUTH_PASS;
+  delete process.env.ADMIN_SECRET;
+  process.env.DATA_DIR = dataDir;
+
+  let app: Awaited<ReturnType<typeof buildApp>> | null = null;
+  try {
+    const vaultDir = join(dataDir, "long-term-memory", "vault", "world");
+    const timestamp = new Date().toISOString();
+    await mkdir(vaultDir, { recursive: true });
+    await writeFile(
+      join(vaultDir, "world_legacy_previous_hash.json"),
+      `${JSON.stringify(
+        {
+          id: "world_legacy_previous_hash",
+          type: "world",
+          status: "active",
+          modes: ["roleplay"],
+          scope: {},
+          tags: [],
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          links: [],
+          sections: { facts: { text: "Legacy previousHash note.", updatedAt: timestamp } },
+          version: 2,
+          previousHash: "a".repeat(64),
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    app = await buildApp();
+
+    const status = await app.inject({
+      method: "GET",
+      url: "/api/long-term-memory/status",
+      remoteAddress: "127.0.0.1",
+    });
+    assert.equal(status.statusCode, 200, status.body);
+    assert.equal(JSON.parse(status.body).notes.total, 1);
+
+    const notes = await app.inject({
+      method: "GET",
+      url: "/api/long-term-memory/notes?status=active",
+      remoteAddress: "127.0.0.1",
+    });
+    assert.equal(notes.statusCode, 200, notes.body);
+    const body = JSON.parse(notes.body);
+    assert.equal(body.length, 1);
+    assert.equal(body[0].id, "world_legacy_previous_hash");
+    assert.equal(body[0].previousHash, undefined);
+  } finally {
+    if (app) await app.close();
+    if (previousDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = previousDataDir;
+    if (previousBasicAuthUser === undefined) delete process.env.BASIC_AUTH_USER;
+    else process.env.BASIC_AUTH_USER = previousBasicAuthUser;
+    if (previousBasicAuthPass === undefined) delete process.env.BASIC_AUTH_PASS;
+    else process.env.BASIC_AUTH_PASS = previousBasicAuthPass;
+    if (previousAdminSecret === undefined) delete process.env.ADMIN_SECRET;
+    else process.env.ADMIN_SECRET = previousAdminSecret;
     await rm(dataDir, { recursive: true, force: true });
   }
 });
