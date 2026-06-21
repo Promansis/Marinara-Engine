@@ -7,7 +7,7 @@ import type { GenerationGuideSource } from "../utils/generation-guide.js";
 import type { HapticFeedbackSensitivity } from "./haptic.js";
 import type { CustomEmojiSelectionPrefs } from "../schemas/custom-emoji.schema.js";
 
-/** The four primary chat modes the engine supports. */
+/** The three primary chat modes the engine supports. */
 export type ChatMode = "conversation" | "roleplay" | "visual_novel" | "game";
 
 /** How a multi-character (group) chat is handled. */
@@ -62,6 +62,8 @@ export type MessageRole = "user" | "assistant" | "system" | "narrator";
 
 /** Which side sprite sidebars / default sprite layouts prefer. */
 export type SpriteSide = "left" | "right";
+
+export type LongTermMemoryRecallStyle = "balanced" | "exact" | "broad" | "story";
 
 /** A saved on-screen sprite anchor position within the chat area. */
 export interface SpritePlacement {
@@ -328,6 +330,30 @@ export interface ChatMetadata {
   manualTrackers?: boolean;
   /** Whether to recall memories from this chat during generation. Default: true for conversation/scenes, false for roleplay. */
   enableMemoryRecall?: boolean;
+  /** When true, inject retrieved local long-term memory into generation prompts. Default: false. */
+  enableLongTermMemory?: boolean;
+  /** Per-chat token budget for injected local long-term memory. Missing uses server retrieval defaults. */
+  longTermMemoryBudgetTokens?: number;
+  /** Per-chat maximum selected long-term memory chunks for prompt injection. */
+  longTermMemoryMaxChunks?: number;
+  /** Normalized 0-1 relevance threshold. 0 keeps all ranked candidates; higher values require stronger raw lane matches. */
+  longTermMemoryScoreThreshold?: number;
+  /** Number of recent chat messages to include when building recall searches. */
+  longTermMemoryRecallContextMessages?: number;
+  /** Recall weighting profile for prompt-injected local long-term memory. */
+  longTermMemoryRecallStyle?: LongTermMemoryRecallStyle;
+  /** Optional per-chat override for how much semantic similarity should matter during LTM recall. Null clears the override. */
+  longTermMemorySemanticWeight?: number | null;
+  /** Optional per-chat override for how much lexical matching should matter during LTM recall. Null clears the override. */
+  longTermMemoryLexicalWeight?: number | null;
+  /** Optional per-chat override for how much graph expansion should matter during LTM recall. Null clears the override. */
+  longTermMemoryGraphWeight?: number | null;
+  /** Optional per-chat override for how much metadata matching should matter during LTM recall. Null clears the override. */
+  longTermMemoryMetadataWeight?: number | null;
+  /** When true, resolved thread memories may be recalled during prompt injection. Default: false. */
+  longTermMemoryIncludeResolved?: boolean;
+  /** When true, log/debug local long-term memory prompt injection decisions for this chat. Default: false. */
+  longTermMemoryDebug?: boolean;
   /** Discord webhook URL to mirror messages to a Discord channel. */
   discordWebhookUrl?: string;
   /** Per-chat ephemeral / enabled overrides for lorebook entries (entryId → state).

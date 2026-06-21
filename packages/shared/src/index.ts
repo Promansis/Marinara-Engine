@@ -25,6 +25,7 @@ export * from "./types/game.js";
 export * from "./types/sidecar.js";
 export * from "./types/image-generation-defaults.js";
 export * from "./types/image-style-profile.js";
+export * from "./types/long-term-memory.js";
 export * from "./types/professor-mari-workspace.js";
 export * from "./types/achievement.js";
 
@@ -43,6 +44,7 @@ export * from "./schemas/custom-sticker.schema.js";
 export * from "./schemas/theme.schema.js";
 export * from "./schemas/extension.schema.js";
 export * from "./schemas/app-settings.schema.js";
+export * from "./schemas/long-term-memory.schema.js";
 
 // Constants
 export * from "./constants/providers.js";
@@ -60,6 +62,7 @@ export * from "./constants/game-assets.js";
 export * from "./constants/conversation-prompt.js";
 export * from "./constants/game-prompt.js";
 export * from "./constants/achievements.js";
+export * from "./constants/long-term-memory.js";
 
 // Feature registries
 export * from "./features/agents/agent-manifest.types.js";
@@ -100,3 +103,4 @@ export * from "./utils/lorebook-folder-tree.js";
 export * from "./utils/text-matching.js";
 export * from "./utils/sprite-labels.js";
 export * from "./utils/conversation-presence.js";
+export * from "./utils/ltm-scope.js";

@@ -1,0 +1,223 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-12T00:00:00.000Z",
+  "title": "Design System: Marinara Engine",
+  "extensions": {
+    "colorMeta": {
+      "blush-primary": {
+        "role": "primary",
+        "displayName": "Blush Primary",
+        "canonical": "#ffb3d9",
+        "tonalRamp": [
+          "oklch(0.15 0.06 340)",
+          "oklch(0.25 0.08 340)",
+          "oklch(0.36 0.1 340)",
+          "oklch(0.48 0.12 340)",
+          "oklch(0.62 0.13 340)",
+          "oklch(0.74 0.1 340)",
+          "oklch(0.84 0.07 340)",
+          "oklch(0.95 0.03 340)"
+        ]
+      },
+      "deep-violet": {
+        "role": "secondary",
+        "displayName": "Deep Violet Secondary",
+        "canonical": "#1a1a2e",
+        "tonalRamp": [
+          "oklch(0.12 0.025 285)",
+          "oklch(0.18 0.03 285)",
+          "oklch(0.26 0.035 285)",
+          "oklch(0.36 0.04 285)",
+          "oklch(0.5 0.04 285)",
+          "oklch(0.65 0.035 285)",
+          "oklch(0.8 0.025 285)",
+          "oklch(0.94 0.015 285)"
+        ]
+      },
+      "muted-orchid": {
+        "role": "tertiary",
+        "displayName": "Muted Orchid",
+        "canonical": "#d4adfc",
+        "tonalRamp": [
+          "oklch(0.16 0.06 305)",
+          "oklch(0.26 0.08 305)",
+          "oklch(0.38 0.1 305)",
+          "oklch(0.5 0.12 305)",
+          "oklch(0.64 0.11 305)",
+          "oklch(0.76 0.08 305)",
+          "oklch(0.86 0.05 305)",
+          "oklch(0.95 0.025 305)"
+        ]
+      },
+      "void-night": {
+        "role": "neutral",
+        "displayName": "Void Night",
+        "canonical": "#050312",
+        "tonalRamp": [
+          "oklch(0.05 0.014 300)",
+          "oklch(0.12 0.014 300)",
+          "oklch(0.22 0.014 300)",
+          "oklch(0.35 0.012 300)",
+          "oklch(0.5 0.01 300)",
+          "oklch(0.66 0.008 300)",
+          "oklch(0.82 0.006 300)",
+          "oklch(0.96 0.004 300)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Compact page, markdown h1, modal, and major surface headings."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Markdown h2, section headings, and important drawer titles."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Card titles, message author labels, panel headings, and compact modal titles."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Default app text, chat metadata, settings descriptions, and dense controls."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Buttons, chips, tabs, field labels, compact status text."
+      },
+      "micro-label": {
+        "displayName": "Micro Label",
+        "purpose": "Dense panel group headings, filters, mode metadata, and compact labels."
+      }
+    },
+    "shadows": [
+      {
+        "name": "glass-strong",
+        "value": "0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px rgba(255, 255, 255, 0.1)",
+        "purpose": "Modals, strong popovers, and elevated shell panels."
+      },
+      {
+        "name": "modal-lift",
+        "value": "shadow-2xl shadow-black/50",
+        "purpose": "Current modal shell vocabulary."
+      }
+    ],
+    "motion": [
+      {
+        "name": "modal-state",
+        "value": "150ms ease-out",
+        "purpose": "Opacity and transform feedback for modal enter/exit."
+      },
+      {
+        "name": "control-state",
+        "value": "120ms-200ms ease-out",
+        "purpose": "Hover, focus, active, and range input feedback."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "md",
+        "value": "768px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Canonical compact action button using semantic primary tokens.",
+      "html": "<button class=\"ds-btn-primary\">Create</button>",
+      "css": ".ds-btn-primary { background: var(--primary); color: var(--primary-foreground); border: 0; border-radius: 12px; padding: 8px 20px; font: 600 0.8125rem/1.25 var(--font-y2k); transition: opacity 150ms ease-out, transform 150ms ease-out, box-shadow 150ms ease-out; } .ds-btn-primary:hover { opacity: 0.9; box-shadow: 0 3px 8px rgba(0,0,0,0.3); } .ds-btn-primary:active { transform: scale(0.98); } .ds-btn-primary:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Tokenized secondary control for dense panels.",
+      "html": "<button class=\"ds-btn-secondary\">Import</button>",
+      "css": ".ds-btn-secondary { background: var(--secondary); color: var(--secondary-foreground); border: 1px solid var(--border); border-radius: 12px; padding: 8px 12px; font: 600 0.8125rem/1.25 var(--font-y2k); transition: background-color 150ms ease-out, transform 150ms ease-out; } .ds-btn-secondary:hover { background: var(--accent); } .ds-btn-secondary:active { transform: scale(0.98); } .ds-btn-secondary:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }"
+    },
+    {
+      "name": "Input",
+      "kind": "input",
+      "refersTo": "input-default",
+      "description": "Default tokenized search or text field.",
+      "html": "<label class=\"ds-field\"><span>Search</span><input placeholder=\"Search...\" /></label>",
+      "css": ".ds-field { display: grid; gap: 6px; color: var(--muted-foreground); font: 600 0.6875rem/1.2 var(--font-y2k); letter-spacing: 0.05em; text-transform: uppercase; } .ds-field input { background: var(--secondary); color: var(--foreground); border: 1px solid var(--border); border-radius: 12px; padding: 8px 12px; font: 400 0.875rem/1.5 var(--font-y2k); outline: none; transition: border-color 150ms ease-out, box-shadow 150ms ease-out; } .ds-field input:focus { border-color: color-mix(in srgb, var(--primary) 40%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 20%, transparent); }"
+    },
+    {
+      "name": "Sidebar Tab",
+      "kind": "nav",
+      "description": "Current chat-mode tab treatment for Conversation, Roleplay, and Game.",
+      "html": "<button class=\"ds-sidebar-tab\" aria-pressed=\"true\">CONVO</button>",
+      "css": ".ds-sidebar-tab { min-height: 2.125rem; border: 0; border-radius: 8px; padding: 8px; background: var(--sidebar-accent); color: var(--sidebar-accent-foreground); font: 600 0.75rem/1.2 var(--font-y2k); transition: background-color 150ms ease-out, color 150ms ease-out; } .ds-sidebar-tab:hover { background: color-mix(in srgb, var(--sidebar-accent) 70%, transparent); } .ds-sidebar-tab:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }"
+    },
+    {
+      "name": "Glass Surface",
+      "kind": "card",
+      "refersTo": "surface-glass",
+      "description": "Elevated shell surface for modals and popovers.",
+      "html": "<section class=\"ds-glass\"><h3>Panel</h3><p>Compact product surface with Marinara atmosphere.</p></section>",
+      "css": ".ds-glass { background: var(--card); color: var(--foreground); border: 1px solid var(--border); border-radius: 12px; padding: 16px; box-shadow: var(--glass-strong-shadow); font-family: var(--font-y2k); } .ds-glass h3 { margin: 0 0 6px; font-size: 1rem; line-height: 1.35; } .ds-glass p { margin: 0; color: var(--muted-foreground); font-size: 0.875rem; line-height: 1.5; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Velvet Y2K Game Console",
+    "overview": "Marinara should feel like a lovingly built story machine: visual, intimate, a little magical, and still practical enough for power users who live in settings panels. The default visual theme is called Default (Marinara) in settings and described in the app as a Y2K / retro aesthetic with glow effects.",
+    "keyCharacteristics": [
+      "Default (Marinara) theme is Y2K/retro with blush-violet core tokens and a wider decorative palette.",
+      "Semantic CSS variables are the implementation contract for app chrome, panels, inputs, sidebars, and custom themes.",
+      "Compact density is normal: text-xs, 0.6875rem uppercase labels, tracking-wider, rounded-xl, and rounded-2xl all appear in dense surfaces.",
+      "Category accents are part of the app identity: violet/purple for Agents, pink/rose for Characters, amber/orange for Lorebooks, cyan/blue for Browser and Connections, emerald/teal for Personas.",
+      "Mobile layouts are first-class play surfaces, not reduced desktop leftovers."
+    ],
+    "rules": [
+      {
+        "name": "The Semantic Contract Rule",
+        "body": "Use --background, --foreground, --card, --popover, --primary, --secondary, --muted, --accent, --destructive, --border, --input, --ring, and --sidebar-* before adding a one-off color.",
+        "section": "colors"
+      },
+      {
+        "name": "The Y2K Palette Is Effects Rule",
+        "body": "--y2k-*, --pastel-*, and --rgb-* exist for effects, decoration, custom theme compatibility, and data color.",
+        "section": "colors"
+      },
+      {
+        "name": "The Tracker Card Rule",
+        "body": "Tracker cards have their own derived token family and should stay in CSS rather than frontmatter hex tokens.",
+        "section": "colors"
+      },
+      {
+        "name": "The Micro Label Rule",
+        "body": "0.6875rem uppercase labels with tracking-wider are allowed in dense panels, but not for primary actions or mobile-critical instructions.",
+        "section": "typography"
+      },
+      {
+        "name": "The Reading Surface Rule",
+        "body": "Never put heavy blur behind long chat text, JSON editors, prompt editors, logs, or repair modals.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do use the existing semantic tokens before adding one-off colors.",
+      "Do name the default theme Default (Marinara) or Y2K Marinara in product and design guidance.",
+      "Do keep game and roleplay surfaces immersive.",
+      "Do make mobile controls touch-friendly and readable.",
+      "Do pair color with labels, icons, shape, or state text for color-blind support."
+    ],
+    "donts": [
+      "Don't turn Marinara into a sterile SaaS dashboard with gray cards, dry labels, and enterprise emptiness.",
+      "Don't make it a bland SillyTavern clone that copies structure without adding identity.",
+      "Don't make it feel like a generic Discord clone.",
+      "Don't build developer-only control panels that assume technical confidence.",
+      "Don't use colored side-stripe borders, decorative gradient text, nested cards, or glassmorphism as the default layout answer.",
+      "Don't describe visual_novel as a visible fourth chat tab unless the UI exposes it again."
+    ]
+  }
+}

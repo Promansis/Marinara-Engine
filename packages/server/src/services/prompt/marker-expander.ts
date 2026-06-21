@@ -43,6 +43,7 @@ export interface MarkerContext {
   /** Optional scan-only messages for lorebook matching. */
   lorebookScanMessages?: ChatMLMessage[];
   chatSummary: string | null;
+  longTermMemoryBlock?: string | null;
   wrapFormat: WrapFormat;
   /** When false, agent_data markers expand to empty strings */
   enableAgents: boolean;
@@ -123,6 +124,8 @@ export async function expandMarker(config: MarkerConfig, ctx: MarkerContext): Pr
       return expandChatHistory(config, ctx);
     case "chat_summary":
       return expandChatSummary(ctx);
+    case "long_term_memory":
+      return expandLongTermMemory(ctx);
     case "dialogue_examples":
       return expandDialogueExamples(config, ctx);
     case "agent_data":
@@ -464,6 +467,10 @@ async function expandDialogueExamples(_config: MarkerConfig, ctx: MarkerContext)
 
 function expandChatSummary(ctx: MarkerContext): ExpandedMarker {
   return { content: resolveSanitizedPromptLeaf(ctx.chatSummary ?? "", ctx) };
+}
+
+function expandLongTermMemory(ctx: MarkerContext): ExpandedMarker {
+  return { content: ctx.longTermMemoryBlock ?? "" };
 }
 
 // ── Agent Data ─────────────────────────────────

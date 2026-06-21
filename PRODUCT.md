@@ -2,7 +2,7 @@
 
 ## Register
 
-brand
+product
 
 ## Users
 
@@ -12,12 +12,12 @@ Primary users include:
 
 - AI roleplayers who want expressive character interactions, branching scenes, sprites, backgrounds, memories, lorebooks, and game-like immersion.
 - Casual chat users who want an approachable local AI companion/chat engine that feels fun instead of technical.
-- Power users who want deep control over models, prompts, agents, TTS, image generation, lorebooks, regex, and imports.
+- Power users who want deep control over models, prompts, agents, TTS, image generation, lorebooks, regex, themes, imports, local models, and synced settings.
 - Nontechnical users who need clear setup flows, forgiving defaults, visible guidance, and mobile-friendly controls.
 
 ## Product Purpose
 
-Marinara Engine is a local, AI-powered chat, roleplay, and game engine built to make advanced AI interaction feel playful, visual, and plug-and-play. It combines conversation mode, immersive roleplay, and game mode into one connected experience where characters, memories, assets, agents, and prompts can work together.
+Marinara Engine is a local, AI-powered chat, roleplay, and game engine built to make advanced AI interaction feel playful, visual, and plug-and-play. It combines Conversation, Roleplay, and Game as the visible chat creation modes. Shared contracts still include a legacy `visual_novel` mode for compatibility, but the current sidebar and new-chat flow expose three tabs: Conversation, Roleplay, and Game.
 
 Success means users can install Marinara, connect or configure a model, create or import characters, and quickly reach an immersive experience that feels alive. The interface should support serious power-user workflows while still feeling warm, pretty, and unintimidating for people who are bad at tech.
 
@@ -51,7 +51,7 @@ Marinara should not look like:
    Roleplay, conversation, and game mode should remain usable on phones with touch-friendly controls, readable text, and layouts that do not require desktop precision.
 
 5. Let personality show through utility.
-   Settings, logs, agents, lorebooks, and prompt tools can still feel playful and polished. Functional screens should not become lifeless.
+   Settings, logs, agents, lorebooks, prompt tools, tracker cards, import flows, and local-model setup can still feel playful and polished. Functional screens should not become lifeless.
 
 ## Accessibility & Inclusion
 

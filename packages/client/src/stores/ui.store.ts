@@ -76,6 +76,23 @@ export interface SummaryPopoverSettings {
   hideSummarisedMessages: boolean;
   collapseHiddenMessages: boolean;
 }
+export type LtmImportSource = "characters" | "lorebooks" | "chats";
+export type LtmExtractionRunMode = "fast" | "balanced";
+export interface LtmPanelPreferences {
+  importSource: LtmImportSource;
+  importLimit: number;
+  extractionMode: LtmExtractionRunMode;
+  importConcurrency: number;
+  autoApplyLowRisk: boolean;
+  connectionId: string;
+  model: string;
+  instruction: string;
+  recallOpen: boolean;
+  advancedOpen: boolean;
+  extractionOpen: boolean;
+  maintenanceOpen: boolean;
+  debugOpen: boolean;
+}
 export const APP_LANGUAGE_OPTIONS = [{ id: "en", label: "English" }] as const;
 export type AppLanguage = (typeof APP_LANGUAGE_OPTIONS)[number]["id"];
 
@@ -151,6 +168,22 @@ const DEFAULT_SUMMARY_POPOVER_SETTINGS: SummaryPopoverSettings = {
   rangeEnd: null,
   hideSummarisedMessages: false,
   collapseHiddenMessages: false,
+};
+const LEGACY_LTM_AUTO_APPLY_LOW_RISK_STORAGE_KEY = "ltm:auto-apply-low-risk";
+const DEFAULT_LTM_PANEL_PREFERENCES: LtmPanelPreferences = {
+  importSource: "chats",
+  importLimit: 25,
+  extractionMode: "fast",
+  importConcurrency: 3,
+  autoApplyLowRisk: false,
+  connectionId: "",
+  model: "",
+  instruction: "",
+  recallOpen: false,
+  advancedOpen: false,
+  extractionOpen: false,
+  maintenanceOpen: false,
+  debugOpen: false,
 };
 
 function normalizeUserActivity(activity: string): string {
@@ -321,6 +354,51 @@ export function normalizeTrackerTemperatureUnit(value: unknown): TrackerTemperat
 function normalizeTrackerPanelBackgroundColor(value: unknown) {
   if (typeof value !== "string") return TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR;
   return value.trim() || TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR;
+}
+
+function readLegacyLtmAutoApplyLowRisk() {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(LEGACY_LTM_AUTO_APPLY_LOW_RISK_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function normalizeLtmImportSource(value: unknown): LtmImportSource {
+  return value === "characters" || value === "lorebooks" || value === "chats" ? value : "chats";
+}
+
+function normalizeLtmExtractionRunMode(value: unknown): LtmExtractionRunMode {
+  return value === "balanced" || value === "fast" ? value : "fast";
+}
+
+function normalizeLtmPanelPreferences(value: unknown): LtmPanelPreferences {
+  const raw = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+
+  return {
+    importSource: normalizeLtmImportSource(raw.importSource),
+    importLimit:
+      typeof raw.importLimit === "number" && Number.isFinite(raw.importLimit)
+        ? Math.max(1, Math.min(100, Math.round(raw.importLimit)))
+        : DEFAULT_LTM_PANEL_PREFERENCES.importLimit,
+    extractionMode: normalizeLtmExtractionRunMode(raw.extractionMode),
+    importConcurrency:
+      typeof raw.importConcurrency === "number" && Number.isFinite(raw.importConcurrency)
+        ? Math.max(1, Math.min(10, Math.round(raw.importConcurrency)))
+        : DEFAULT_LTM_PANEL_PREFERENCES.importConcurrency,
+    autoApplyLowRisk:
+      raw.autoApplyLowRisk === true ||
+      (raw.autoApplyLowRisk === undefined && readLegacyLtmAutoApplyLowRisk()),
+    connectionId: typeof raw.connectionId === "string" ? raw.connectionId : DEFAULT_LTM_PANEL_PREFERENCES.connectionId,
+    model: typeof raw.model === "string" ? raw.model : DEFAULT_LTM_PANEL_PREFERENCES.model,
+    instruction: typeof raw.instruction === "string" ? raw.instruction : DEFAULT_LTM_PANEL_PREFERENCES.instruction,
+    recallOpen: raw.recallOpen === true,
+    advancedOpen: raw.advancedOpen === true,
+    extractionOpen: raw.extractionOpen === true,
+    maintenanceOpen: raw.maintenanceOpen === true,
+    debugOpen: raw.debugOpen === true,
+  };
 }
 
 function normalizeDefaultRoleplayBackground(value: unknown) {
@@ -585,6 +663,8 @@ interface UIState {
   editMessageOnDoubleClick: boolean;
   /** Persisted controls shown in the Chat Summary popover settings window. */
   summaryPopoverSettings: SummaryPopoverSettings;
+  /** Long-term memory extraction and recall panel preferences. */
+  ltmPanelPreferences: LtmPanelPreferences;
 
   // ── Text Appearance ──
   /** Color for narrator text in RP mode (empty = default amber) */
@@ -847,6 +927,7 @@ interface UIState {
   setEditLastMessageOnArrowUp: (v: boolean) => void;
   setEditMessageOnDoubleClick: (v: boolean) => void;
   setSummaryPopoverSettings: (settings: Partial<SummaryPopoverSettings>) => void;
+  setLtmPanelPreferences: (settings: Partial<LtmPanelPreferences>) => void;
   setNarrationFontColor: (v: string) => void;
   setNarrationOpacity: (v: number) => void;
   setChatFontColor: (v: string) => void;
@@ -1217,6 +1298,7 @@ export const useUIStore = create<UIState>()(
       editLastMessageOnArrowUp: true,
       editMessageOnDoubleClick: true,
       summaryPopoverSettings: DEFAULT_SUMMARY_POPOVER_SETTINGS,
+      ltmPanelPreferences: normalizeLtmPanelPreferences(null),
       narrationFontColor: "",
       narrationOpacity: 80,
       chatFontColor: "",
@@ -1785,6 +1867,13 @@ export const useUIStore = create<UIState>()(
         set((state) => ({
           summaryPopoverSettings: normalizeSummaryPopoverSettings({
             ...state.summaryPopoverSettings,
+            ...settings,
+          }),
+        })),
+      setLtmPanelPreferences: (settings) =>
+        set((state) => ({
+          ltmPanelPreferences: normalizeLtmPanelPreferences({
+            ...state.ltmPanelPreferences,
             ...settings,
           }),
         })),
@@ -2445,6 +2534,11 @@ export const useUIStore = create<UIState>()(
         persisted.includeReasoningInExports = persisted.includeReasoningInExports === true;
         persisted.chatChromeTextColor = normalizeChatChromeTextColor(persisted.chatChromeTextColor);
         persisted.defaultRoleplayBackground = normalizeDefaultRoleplayBackground(persisted.defaultRoleplayBackground);
+        // v60 -> v61: long-term memory panel preferences.
+        if (version <= 60) {
+          persisted.ltmPanelPreferences = normalizeLtmPanelPreferences(persisted.ltmPanelPreferences);
+        }
+        persisted.ltmPanelPreferences = normalizeLtmPanelPreferences(persisted.ltmPanelPreferences);
         delete persisted.trackerPanelWidth;
         return persisted;
       },
@@ -2564,6 +2658,7 @@ export const useUIStore = create<UIState>()(
         editLastMessageOnArrowUp: state.editLastMessageOnArrowUp,
         editMessageOnDoubleClick: state.editMessageOnDoubleClick,
         summaryPopoverSettings: state.summaryPopoverSettings,
+        ltmPanelPreferences: state.ltmPanelPreferences,
         narrationFontColor: state.narrationFontColor,
         narrationOpacity: state.narrationOpacity,
         chatFontColor: state.chatFontColor,
