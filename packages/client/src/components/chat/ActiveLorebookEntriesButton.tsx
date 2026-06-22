@@ -40,6 +40,7 @@ type ActiveLorebookEntriesButtonProps = {
   iconSize?: number | string;
   title?: string;
   onOpen?: () => void;
+  onViewAll?: () => void;
 };
 
 function getMobileActiveContextPanelStyle(anchor: NonNullable<ChatToolbarFloatingPanelAnchor>) {
@@ -65,11 +66,13 @@ export function ActiveLorebookEntriesModal({
   open,
   onClose,
   anchor = null,
+  onViewAll,
 }: {
   chatId: string | null;
   open: boolean;
   onClose: () => void;
   anchor?: ChatToolbarFloatingPanelAnchor;
+  onViewAll?: () => void;
 }) {
   if (!open || !chatId) return null;
 
@@ -100,7 +103,7 @@ export function ActiveLorebookEntriesModal({
       <div className="absolute inset-0 bg-black/30" onClick={onClose} />
       <div className={PANEL_CONTAINER} onClick={(e) => e.stopPropagation()}>
         <Suspense fallback={<ActiveLorebookEntriesLoadingFallback />}>
-          <ActiveLorebookEntriesPanel chatId={chatId} onClose={onClose} />
+          <ActiveLorebookEntriesPanel chatId={chatId} isMobile onClose={onClose} onViewAll={onViewAll} />
         </Suspense>
       </div>
     </div>,
@@ -114,6 +117,7 @@ export function ActiveLorebookEntriesButton({
   iconSize = "0.875rem",
   title = "Active Context",
   onOpen,
+  onViewAll,
 }: ActiveLorebookEntriesButtonProps) {
   const [open, setOpen] = useState(false);
   const [mobileAnchor, setMobileAnchor] = useState<ChatToolbarFloatingPanelAnchor>(null);
@@ -205,6 +209,7 @@ export function ActiveLorebookEntriesButton({
             open={open}
             onClose={() => setOpen(false)}
             anchor={mobileAnchor}
+            onViewAll={onViewAll}
           />
         ) : (
           <div
@@ -216,7 +221,7 @@ export function ActiveLorebookEntriesButton({
             )}
           >
             <Suspense fallback={<ActiveLorebookEntriesLoadingFallback />}>
-              <ActiveLorebookEntriesPanel chatId={chatId} onClose={() => setOpen(false)} />
+              <ActiveLorebookEntriesPanel chatId={chatId} isMobile={isMobile} onClose={() => setOpen(false)} onViewAll={onViewAll} />
             </Suspense>
           </div>
         ))}

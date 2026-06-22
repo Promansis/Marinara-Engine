@@ -477,6 +477,35 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     return clearLtmDebugLog();
   });
 
+  app.get<{ Params: { chatId: string } }>("/last-injection/:chatId", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory last injection" })) return;
+    const events = await readLtmDebugLog({
+      phase: "injection",
+      chatId: req.params.chatId,
+      limit: 1,
+    });
+    const last = events[0];
+    if (!last || !last.uiSummary) {
+      return reply.send({ memoryCount: 0, tokenCount: 0, memories: [] });
+    }
+    let summary: { memoryCount: number; tokenCount: number; memories: Array<{ noteId: string; title: string; tokenCount: number }> };
+    try {
+      summary = JSON.parse(last.uiSummary);
+    } catch {
+      return reply.send({ memoryCount: 0, tokenCount: 0, memories: [] });
+    }
+    const notes = await storage.listNotes();
+    const titleMap = new Map(notes.map((n) => [n.id, n.title?.trim() || n.id]));
+    return reply.send({
+      memoryCount: summary.memoryCount,
+      tokenCount: summary.tokenCount,
+      memories: summary.memories.map((m) => ({
+        ...m,
+        title: titleMap.get(m.noteId) ?? m.title,
+      })),
+    });
+  });
+
   app.get("/extraction-settings", async (req, reply) => {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory extraction settings" })) return;
     return getLtmExtractionConfig();
@@ -972,6 +1001,12 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft list" })) return;
     const query = listDraftsQuerySchema.parse(req.query);
     return draftStore.listDrafts(query);
+  });
+
+  app.get("/drafts/pending-count", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory pending draft count" })) return;
+    const drafts = await draftStore.listDrafts({ status: "pending" });
+    return { count: drafts.length };
   });
 
   app.get<{ Params: { id: string } }>("/drafts/:id", async (req, reply) => {

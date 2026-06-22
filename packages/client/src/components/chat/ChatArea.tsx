@@ -62,6 +62,8 @@ import { useUIStore } from "../../stores/ui.store";
 import { useAgentStore } from "../../stores/agent.store";
 import { cn, parseAvatarCropJson } from "../../lib/utils";
 import { Modal } from "../ui/Modal";
+import { useAgentConfigs, type AgentConfigRow } from "../../hooks/use-agents";
+import { LtmVaultManagerSection } from "../long-term-memory/LtmVaultManagerSection";
 import { useEncounter } from "../../hooks/use-encounter";
 import { useScene } from "../../hooks/use-scene";
 import { useEncounterStore } from "../../stores/encounter.store";
@@ -405,6 +407,12 @@ export function ChatArea() {
   const [agentInjectionReview, setAgentInjectionReview] = useState<AgentInjectionReviewRequest | null>(null);
   const [agentInjectionDrafts, setAgentInjectionDrafts] = useState<Record<string, string>>({});
   const [creditsOpen, setCreditsOpen] = useState(false);
+  const [vaultOpen, setVaultOpen] = useState(false);
+  const { data: agentConfigs } = useAgentConfigs();
+  const ltmAgentConfig = useMemo(
+    () => (agentConfigs as AgentConfigRow[] | undefined)?.find((a) => a.type === "long-term-memory") ?? null,
+    [agentConfigs],
+  );
   const queryClient = useQueryClient();
   const trackHomeFooterAchievement = useCallback(
     (event: AchievementEvent) => {
@@ -2420,6 +2428,7 @@ export function ChatArea() {
             onSwitchChat={chat?.connectedChatId ? () => setActiveChatId(chat.connectedChatId!) : undefined}
             onConcludeScene={chatMeta.sceneStatus === "active" ? () => concludeScene(activeChatId) : undefined}
             onAbandonScene={chatMeta.sceneStatus === "active" ? () => abandonScene(activeChatId) : undefined}
+            onOpenVault={() => setVaultOpen(true)}
             onOpenSettings={handleOpenSettingsPanel}
             onOpenGallery={handleOpenGalleryPanel}
             onCloseSettings={handleCloseSettingsPanel}
@@ -2543,6 +2552,7 @@ export function ChatArea() {
           onAbandonScene={() => abandonScene(activeChatId)}
           onForkScene={forkScene}
           isForkingScene={isForking || isStreaming}
+          onOpenVault={() => setVaultOpen(true)}
           onOpenSettings={handleOpenSettingsPanel}
           onOpenGallery={handleOpenGalleryPanel}
           onCloseSettings={handleCloseSettingsPanel}
@@ -2589,6 +2599,19 @@ export function ChatArea() {
           onClose={() => useChatStore.getState().setPendingNewChatMode(null)}
         />
       )}
+      <Modal
+        open={vaultOpen}
+        onClose={() => setVaultOpen(false)}
+        title="Long-Term Memory"
+        width="max-w-5xl"
+      >
+        {vaultOpen && ltmAgentConfig && (
+          <LtmVaultManagerSection
+            agentConfig={ltmAgentConfig}
+            agentSettings={JSON.parse(ltmAgentConfig.settings ?? "{}") as Record<string, unknown>}
+          />
+        )}
+      </Modal>
     </>
   );
 }

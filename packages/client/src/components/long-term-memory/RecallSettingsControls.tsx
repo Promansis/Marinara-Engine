@@ -31,6 +31,7 @@ type RecallSettingsControlsProps = {
   values: Partial<RecallSettingsValues>;
   onChange: (patch: Partial<RecallSettingsValues>) => void;
   showExpert?: boolean;
+  showStylesOnly?: boolean;
 };
 
 function SettingToggle({
@@ -76,6 +77,7 @@ export function RecallSettingsControls({
   values,
   onChange,
   showExpert = true,
+  showStylesOnly = false,
 }: RecallSettingsControlsProps) {
   const recallStyle = values.longTermMemoryRecallStyle ?? "balanced";
   const budgetTokens = values.longTermMemoryBudgetTokens ?? 4096;
@@ -97,8 +99,8 @@ export function RecallSettingsControls({
     });
   };
 
-  return (
-    <div className={cn(sectionCardClassName, "space-y-3")}>
+  if (showStylesOnly) {
+    return (
       <SettingGroup label="Recall style">
         <div className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--background)] p-1 ring-1 ring-[var(--border)]">
           {LTM_RECALL_STYLES.map((style) => (
@@ -134,6 +136,11 @@ export function RecallSettingsControls({
           ))}
         </div>
       </SettingGroup>
+    );
+  }
+
+  return (
+    <div className={cn(sectionCardClassName, "space-y-3")}>
 
       <SettingField label="Memory budget">
         <div className="grid grid-cols-[1fr_5.5rem] items-center gap-3">

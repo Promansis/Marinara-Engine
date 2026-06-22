@@ -108,6 +108,7 @@ import { isManagedAgentType } from "@marinara-engine/shared";
 import { Modal } from "../ui/Modal";
 import { LtmVaultManagerSection } from "../long-term-memory/LtmVaultManagerSection";
 import { LongTermMemoryExtractionSettingsEditor } from "../long-term-memory/LongTermMemoryExtractionSettingsModal";
+import { LtmInlineSettingsSections } from "../long-term-memory/LtmInlineSettingsSections";
 
 function parseActivationKeywordsText(value: string): string[] {
   const seen = new Set<string>();
@@ -3520,26 +3521,29 @@ export function AgentEditor() {
 
       {/* ── LTM Memories Section ── */}
       {isLtmAgent && dbConfig && (
-        <FieldGroup
-          label="Memories"
-          icon={<DatabaseZap size="0.875rem" className="text-[var(--primary)]" />}
-          help="Browse, search, and manage long-term memories. Extraction and recall settings are configured per-chat or in global LTM settings."
-        >
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setMemoriesModalOpen(true)}
-              className="rounded-xl bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] transition-colors hover:bg-[var(--primary)]/90"
-            >
-              Manage Memories
-            </button>
-            <button
-              onClick={() => setLtmSettingsOpen(true)}
-              className="text-sm text-[var(--muted-foreground)] underline-offset-4 hover:underline"
-            >
-              Advanced settings
-            </button>
-          </div>
-        </FieldGroup>
+        <>
+          <FieldGroup
+            label="Memories"
+            icon={<DatabaseZap size="0.875rem" className="text-[var(--primary)]" />}
+            help="Browse, search, and manage long-term memories. Extraction and recall settings are configured per-chat or in global LTM settings."
+          >
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setMemoriesModalOpen(true)}
+                className="rounded-xl bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] transition-colors hover:bg-[var(--primary)]/90"
+              >
+                Manage Memories
+              </button>
+              <button
+                onClick={() => setLtmSettingsOpen(true)}
+                className="text-sm text-[var(--muted-foreground)] underline-offset-4 hover:underline"
+              >
+                Advanced settings
+              </button>
+            </div>
+          </FieldGroup>
+          <LtmInlineSettingsSections onOpenAdvancedSettings={() => setLtmSettingsOpen(true)} />
+        </>
       )}
       <Modal
         open={memoriesModalOpen}
@@ -3569,7 +3573,7 @@ export function AgentEditor() {
 //  Shared Components
 // ═══════════════════════════════════════════════
 
-function FieldGroup({
+export function FieldGroup({
   label,
   icon,
   help,
