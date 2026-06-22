@@ -20,6 +20,8 @@ import type {
   LtmResolvedGlobalSettings as SharedLtmResolvedGlobalSettings,
   LtmScope,
   LtmStatus,
+  LtmLastInjectionResponse,
+  LtmPendingDraftsCountResponse,
 } from "@marinara-engine/shared";
 import { api } from "../lib/api-client";
 
@@ -270,6 +272,8 @@ export const longTermMemoryKeys = {
   settings: () => [...longTermMemoryKeys.all, "settings"] as const,
   debugLogs: () => [...longTermMemoryKeys.all, "debug-log"] as const,
   debugLog: (filter?: LtmDebugLogFilter) => [...longTermMemoryKeys.all, "debug-log", filter ?? {}] as const,
+  lastInjection: (chatId: string) => ["long-term-memory", "last-injection", chatId] as const,
+  pendingDraftsCount: () => ["long-term-memory", "drafts", "pending-count"] as const,
 };
 
 export type LtmNoteFilter = {
@@ -691,5 +695,23 @@ export function useDeleteLongTermMemoryDraftMutation() {
         `/long-term-memory/drafts/${id}/mutations/${mutationId}`,
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
+  });
+}
+
+export function useLastInjection(chatId: string | undefined, options: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: longTermMemoryKeys.lastInjection(chatId ?? ""),
+    queryFn: () => api.get<LtmLastInjectionResponse>(`/long-term-memory/last-injection/${chatId}`),
+    enabled: !!chatId && (options.enabled ?? true),
+    staleTime: 10_000,
+  });
+}
+
+export function usePendingDraftsCount(options: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: longTermMemoryKeys.pendingDraftsCount(),
+    queryFn: () => api.get<LtmPendingDraftsCountResponse>("/long-term-memory/drafts/pending-count"),
+    enabled: options.enabled ?? true,
+    staleTime: 15_000,
   });
 }

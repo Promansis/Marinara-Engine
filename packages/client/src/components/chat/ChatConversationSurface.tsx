@@ -60,6 +60,7 @@ type ConversationSurfaceProps = {
   onSwitchChat?: () => void;
   onConcludeScene?: () => void;
   onAbandonScene?: () => void;
+  onOpenVault?: () => void;
   onOpenSettings: ComponentProps<typeof ConversationView>["onOpenSettings"];
   onOpenGallery: ComponentProps<typeof ConversationView>["onOpenGallery"];
   onCloseSettings: () => void;
@@ -124,6 +125,7 @@ export function ChatConversationSurface({
   onSwitchChat,
   onConcludeScene,
   onAbandonScene,
+  onOpenVault,
   onOpenSettings,
   onOpenGallery,
   onCloseSettings,
@@ -172,6 +174,7 @@ export function ChatConversationSurface({
           onToggleHiddenFromAI={onToggleHiddenFromAI}
           onPeekPrompt={onPeekPrompt}
           lastAssistantMessageId={lastAssistantMessageId}
+          onOpenVault={onOpenVault}
           onOpenSettings={onOpenSettings}
           onOpenGallery={onOpenGallery}
           onBranch={onBranch}

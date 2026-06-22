@@ -15,12 +15,12 @@ import type { BaseLLMProvider } from "../llm/base-provider.js";
 import { logger } from "../../lib/logger.js";
 import {
   compileEvidenceUnitExtraction,
-  DEFAULT_LTM_EXTRACTION_PROMPT,
   runLongTermMemoryEvidenceUnitExtraction,
   sourceHashForEvidenceUnitExtraction,
   summarizeCompiledEvidenceUnitExtraction,
   sourceMetadataForEvidenceUnitDraft,
 } from "./evidence-unit-extraction.js";
+import { DEFAULT_LTM_EXTRACTION_PROMPT } from "@marinara-engine/shared";
 import { getLtmExtractionConfig } from "./extraction-config.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import type { LtmExtractionDiagnostic } from "./diagnostics.js";

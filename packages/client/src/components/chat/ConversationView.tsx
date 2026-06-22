@@ -23,6 +23,7 @@ import { ChessSetup } from "./ChessSetup";
 import { SceneBanner, EndSceneBar } from "./SceneBanner";
 import { ChatBranchSelector } from "./ChatBranchSelector";
 import { ActiveLorebookEntriesButton } from "./ActiveLorebookEntriesButton";
+import { DraftsReadyButton } from "./DraftsReadyButton";
 import { ChatToolbarButton, ChatToolbarMenu } from "./ChatToolbarControls";
 import { groupConsecutiveSegments, parseNamePrefixFormat, parseSpeakerTags } from "./ConversationMessageShared";
 import { ConversationPresenceCard } from "./ConversationPresenceCard";
@@ -72,6 +73,7 @@ interface ConversationViewProps {
   lastAssistantMessageId: string | null;
   onOpenSettings: (event?: ReactMouseEvent<HTMLElement>, options?: { initialSection?: "autonomous" | null }) => void;
   onOpenGallery: (event?: ReactMouseEvent<HTMLElement>) => void;
+  onOpenVault?: () => void;
   onBranch?: (messageId: string) => void;
   multiSelectMode?: boolean;
   selectedMessageIds?: Set<string>;
@@ -287,6 +289,7 @@ export function ConversationView({
   sceneInfo,
   onConcludeScene,
   onAbandonScene,
+  onOpenVault,
 }: ConversationViewProps) {
   useRenderTimer("convo-messages"); // [#3104 diagnostic]
   const streamingChatId = useChatStore((s) => s.streamingChatId);
@@ -395,7 +398,8 @@ export function ConversationView({
         variant="roleplay"
         compact={compact}
       />
-      <ActiveLorebookEntriesButton chatId={chatId} />
+      <ActiveLorebookEntriesButton chatId={chatId} onViewAll={onOpenVault} />
+      {onOpenVault && <DraftsReadyButton onOpenVault={onOpenVault} />}
       <ChatToolbarButton icon={<ImageIcon size="0.875rem" />} title="Gallery" onClick={onOpenGallery} />
       {onSwitchChat && (
         <ChatToolbarButton

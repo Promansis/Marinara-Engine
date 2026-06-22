@@ -65,6 +65,8 @@ import { TranscriptWindowControls } from "./TranscriptWindowControls";
 import { EndSceneBar } from "./SceneBanner";
 import { ChatCommonOverlays } from "./ChatCommonOverlays";
 import { PinnedImageOverlay } from "./PinnedImageOverlay";
+import { MemoryOverviewNotice } from "./MemoryOverviewNotice";
+import { DraftsReadyButton } from "./DraftsReadyButton";
 import {
   ROLEPLAY_POPOVER_CLOSE_BUTTON,
   ROLEPLAY_POPOVER_CLOSE_ICON_SIZE,
@@ -445,11 +447,13 @@ function ActiveContextLinksButton({
   chatMeta,
   chatCharIds,
   characterMap,
+  onViewAll,
 }: {
   chat: ChatData | null | undefined;
   chatMeta: Record<string, any>;
   chatCharIds: string[];
   characterMap: CharacterMap;
+  onViewAll?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -645,6 +649,7 @@ function ActiveContextLinksButton({
             <span className="shrink-0 text-[0.625rem] text-foreground/45">Preset</span>
           </button>
         )}
+        <MemoryOverviewNotice chatId={chat.id} onViewAll={onViewAll} />
       </div>
     </>
   );
@@ -1104,6 +1109,7 @@ type RoleplaySurfaceProps = {
   isForkingScene?: boolean;
   onOpenSettings: (event?: ReactMouseEvent<HTMLElement>) => void;
   onOpenGallery: (event?: ReactMouseEvent<HTMLElement>) => void;
+  onOpenVault?: () => void;
   onCloseSettings: () => void;
   onCloseGallery: () => void;
   onIllustrate?: () => void;
@@ -1213,6 +1219,7 @@ export function ChatRoleplaySurface({
   isForkingScene,
   onOpenSettings,
   onOpenGallery,
+  onOpenVault,
   onCloseSettings,
   onCloseGallery,
   onIllustrate,
@@ -1572,7 +1579,9 @@ export function ChatRoleplaySurface({
                       chatMeta={chatMeta}
                       chatCharIds={chatCharIds}
                       characterMap={characterMap}
+                      onViewAll={onOpenVault}
                     />
+                    {onOpenVault && <DraftsReadyButton onOpenVault={onOpenVault} />}
                     <AuthorNotesButton
                       chatId={chat?.id ?? null}
                       chatMeta={chatMeta}
@@ -1678,6 +1687,7 @@ export function ChatRoleplaySurface({
                           chatCharIds={chatCharIds}
                           characterMap={characterMap}
                         />
+                        {onOpenVault && <DraftsReadyButton onOpenVault={onOpenVault} />}
                         <AuthorNotesButton
                           chatId={chat?.id ?? null}
                           chatMeta={chatMeta}
@@ -1748,6 +1758,7 @@ export function ChatRoleplaySurface({
                         chatCharIds={chatCharIds}
                         characterMap={characterMap}
                       />
+                      {onOpenVault && <DraftsReadyButton onOpenVault={onOpenVault} />}
                       <AuthorNotesButton
                         chatId={chat?.id ?? null}
                         chatMeta={chatMeta}

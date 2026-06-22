@@ -6519,6 +6519,24 @@ export function ChatSettingsDrawer({
                             />
                           </div>
                         </label>
+                        <div className="mt-2">
+                          <RecallSettingsControls
+                            values={{
+                              longTermMemoryBudgetTokens: metadata.longTermMemoryBudgetTokens ?? ltmGlobalSettings.data?.longTermMemoryBudgetTokens ?? 4096,
+                              longTermMemoryMaxChunks: metadata.longTermMemoryMaxChunks ?? ltmGlobalSettings.data?.longTermMemoryMaxChunks ?? 20,
+                              longTermMemoryScoreThreshold: metadata.longTermMemoryScoreThreshold ?? ltmGlobalSettings.data?.longTermMemoryScoreThreshold ?? 0,
+                              longTermMemoryRecallContextMessages: metadata.longTermMemoryRecallContextMessages ?? ltmGlobalSettings.data?.longTermMemoryRecallContextMessages ?? 4,
+                              longTermMemoryRecallStyle: metadata.longTermMemoryRecallStyle ?? ltmGlobalSettings.data?.longTermMemoryRecallStyle ?? "balanced",
+                              longTermMemorySemanticWeight: metadata.longTermMemorySemanticWeight ?? ltmGlobalSettings.data?.longTermMemorySemanticWeight ?? null,
+                              longTermMemoryLexicalWeight: metadata.longTermMemoryLexicalWeight ?? ltmGlobalSettings.data?.longTermMemoryLexicalWeight ?? null,
+                              longTermMemoryGraphWeight: metadata.longTermMemoryGraphWeight ?? ltmGlobalSettings.data?.longTermMemoryGraphWeight ?? null,
+                              longTermMemoryIncludeResolved: metadata.longTermMemoryIncludeResolved ?? ltmGlobalSettings.data?.longTermMemoryIncludeResolved ?? false,
+                              longTermMemoryDebug: metadata.longTermMemoryDebug ?? ltmGlobalSettings.data?.longTermMemoryDebug ?? false,
+                            }}
+                            onChange={(patch) => updateMeta.mutate({ id: chat.id, ...patch })}
+                            showStylesOnly={true}
+                          />
+                        </div>
                         <details className="mt-2">
                           <summary className="cursor-pointer text-xs text-[var(--muted-foreground)]">
                             Advanced recall settings
@@ -6538,6 +6556,7 @@ export function ChatSettingsDrawer({
                                 longTermMemoryDebug: metadata.longTermMemoryDebug ?? ltmGlobalSettings.data?.longTermMemoryDebug ?? false,
                               }}
                               onChange={(patch) => updateMeta.mutate({ id: chat.id, ...patch })}
+                              showStylesOnly={false}
                               showExpert={false}
                             />
                           </div>

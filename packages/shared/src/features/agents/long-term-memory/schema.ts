@@ -499,6 +499,8 @@ export const ltmDebugEventSchema = z
     model: z.string().max(240).optional(),
     error: ltmDebugErrorSchema.optional(),
     details: z.record(z.unknown()).optional(),
+    chatId: z.string().max(200).optional(),
+    uiSummary: z.string().max(4_000).optional(),
   })
   .strict();
 
@@ -765,6 +767,22 @@ export const ltmEvidenceUnitExtractionResponseSchema = z
   })
   .strict();
 
+export const ltmLastInjectionMemorySchema = z.object({
+  noteId: z.string(),
+  title: z.string(),
+  tokenCount: z.number(),
+});
+
+export const ltmLastInjectionResponseSchema = z.object({
+  memoryCount: z.number(),
+  tokenCount: z.number(),
+  memories: z.array(ltmLastInjectionMemorySchema),
+});
+
+export const ltmPendingDraftsCountResponseSchema = z.object({
+  count: z.number(),
+});
+
 export type LtmNoteType = z.infer<typeof ltmNoteTypeSchema>;
 export type LtmStatus = z.infer<typeof ltmStatusSchema>;
 export type LtmEvidenceUnitStatus = z.infer<typeof ltmEvidenceUnitStatusSchema>;
@@ -811,6 +829,9 @@ export type LtmExtractionOutcome = z.infer<typeof ltmExtractionOutcomeSchema>;
 export type LtmExtractionResponse = z.infer<typeof ltmExtractionResponseSchema>;
 export type LtmEvidenceUnit = z.infer<typeof ltmEvidenceUnitSchema>;
 export type LtmEvidenceUnitExtractionResponse = z.infer<typeof ltmEvidenceUnitExtractionResponseSchema>;
+export type LtmLastInjectionMemory = z.infer<typeof ltmLastInjectionMemorySchema>;
+export type LtmLastInjectionResponse = z.infer<typeof ltmLastInjectionResponseSchema>;
+export type LtmPendingDraftsCountResponse = z.infer<typeof ltmPendingDraftsCountResponseSchema>;
 
 /**
  * Settings stored in agent_configs.settings when type === "long-term-memory".
