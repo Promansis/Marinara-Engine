@@ -98,7 +98,6 @@ function normalizePersistedSettings(input: LtmGlobalSettings): LtmGlobalSettings
       : normalizeText(input.longTermMemoryRecallPreamble, 500),
   );
   setIfChanged("longTermMemoryDebug", input.longTermMemoryDebug ?? DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryDebug);
-  setIfChanged("extractionMode", input.extractionMode ?? DEFAULT_LTM_GLOBAL_SETTINGS.extractionMode);
   setIfChanged("importConcurrency", input.importConcurrency ?? DEFAULT_LTM_GLOBAL_SETTINGS.importConcurrency);
   setIfChanged("connectionId", normalizeText(input.connectionId, 120));
   setIfChanged("model", normalizeText(input.model, 240));
