@@ -902,6 +902,98 @@ export function AgentEditor() {
       if (currentSettings[key] !== undefined) preservedSpotifyFields[key] = currentSettings[key];
     }
 
+    const settingsPayload: Record<string, unknown> = isLtmAgent
+      ? (() => {
+          const LTM_KEYS = new Set([
+            "connectionId",
+            "model",
+            "instruction",
+            "importConcurrency",
+            "importLimit",
+            "importSource",
+            "autoApplyLowRisk",
+            "longTermMemoryBudgetTokens",
+            "longTermMemoryMaxChunks",
+            "longTermMemoryScoreThreshold",
+            "longTermMemoryRecallContextMessages",
+            "longTermMemoryRecallStyle",
+            "longTermMemorySemanticWeight",
+            "longTermMemoryLexicalWeight",
+            "longTermMemoryGraphWeight",
+            "longTermMemoryMetadataWeight",
+            "longTermMemoryIncludeResolved",
+            "longTermMemoryRecallPreamble",
+            "longTermMemoryDebug",
+          ]);
+          const existing = parseAgentSettingsRecord(dbConfig?.settings);
+          const filtered: Record<string, unknown> = {};
+          for (const key of Object.keys(existing)) {
+            if (LTM_KEYS.has(key)) filtered[key] = existing[key];
+          }
+          return filtered;
+        })()
+      : {
+          ...preservedSpotifyFields,
+          author: savedAuthor,
+          promptTemplates: savedPromptTemplates,
+          ...(isEditingCustomAgent ? { customCapabilities } : {}),
+          ...(isEditingCustomAgent ? { resultType: localResultType } : {}),
+          ...(activationKeywords.length > 0
+            ? {
+                activationKeywords,
+                activationScanDepth,
+              }
+            : {}),
+          ...(mayIncludeTurnData && localIncludePreGenInjections ? { includePreGenInjections: true } : {}),
+          ...(mayIncludeTurnData && localIncludeParallelResults ? { includeParallelResults: true } : {}),
+          ...(localContextSize !== "" ? { contextSize: Number(localContextSize) } : {}),
+          ...(localMaxTokens !== "" ? { maxTokens: clampAgentMaxTokens(localMaxTokens) } : {}),
+          ...(!isDirectorAgent && localRunInterval !== "" ? { runInterval: Number(localRunInterval) } : {}),
+          ...(!isDirectorAgent && localInjectAsSection ? { injectAsSection: true } : {}),
+          ...(isMusicAgent ? { musicProvider: localMusicProvider } : {}),
+          enabledTools: isMusicAgent && localMusicProvider === "youtube" ? [] : effectiveEnabledTools,
+          ...(lorebookWriterEnabled
+            ? { lorebookWriteEnabled: true, writableLorebookId, writableLorebookIds: [writableLorebookId] }
+            : {}),
+          ...(localSpotifyClientId ? { spotifyClientId: localSpotifyClientId } : {}),
+          ...(isKnowledgeRetrievalAgent || isKnowledgeRouterAgent
+            ? { useChatActiveLorebooks: localUseChatActiveLorebooks }
+            : {}),
+          ...(localSourceLorebookIds.length > 0 ? { sourceLorebookIds: localSourceLorebookIds } : {}),
+          // Only persist sourceFileIds for the Knowledge Retrieval agent — the Router
+          // doesn't read this setting. Without this guard, switching an agent from
+          // Retrieval to Router would leave behind stale file IDs the user can no
+          // longer see or remove via the UI.
+          ...(isKnowledgeRetrievalAgent && localSourceFileIds.length > 0 ? { sourceFileIds: localSourceFileIds } : {}),
+          ...(localImageConnectionId ? { imageConnectionId: localImageConnectionId } : {}),
+          ...(localAutoGenerateAvatars ? { autoGenerateAvatars: true } : {}),
+          ...(localAutoGenerateBackgrounds ? { autoGenerateBackgrounds: true } : {}),
+          ...(isIllustratorAgent
+            ? {
+                useAvatarReferences: localUseAvatarReferences,
+                includeCharacterAppearance: localIncludeCharacterAppearance,
+              }
+            : {}),
+          ...(isProseGuardianAgent
+            ? {
+                banned: localProseGuardianBanned.trim() || DEFAULT_PROSE_GUARDIAN_BANNED_WORDS,
+                avoid: localProseGuardianAvoid.trim() || DEFAULT_PROSE_GUARDIAN_AVOID,
+                prefer: localProseGuardianPrefer.trim(),
+                holdForRewrite: localProseGuardianHoldForRewrite,
+              }
+            : {}),
+          ...(isContinuityAgent ? { holdForRewrite: localProseGuardianHoldForRewrite } : {}),
+          ...(isDirectorAgent
+            ? {
+                directorMode: localDirectorMode,
+                secretPlotEnabled: localSecretPlotEnabled,
+                secretPlotRunInterval: localSecretPlotRunInterval,
+              }
+            : {}),
+          ...(localImagePositivePrompt.trim() ? { imagePositivePrompt: localImagePositivePrompt.trim() } : {}),
+          ...(localImageNegativePrompt.trim() ? { imageNegativePrompt: localImageNegativePrompt.trim() } : {}),
+        };
+
     const payload = {
       name: localName,
       description: localDescription,
@@ -909,67 +1001,7 @@ export function AgentEditor() {
       enabled: localAgentEnabled,
       connectionId: localConnectionId || null,
       promptTemplate: localPrompt,
-      settings: {
-        ...preservedSpotifyFields,
-        author: savedAuthor,
-        promptTemplates: savedPromptTemplates,
-        ...(isEditingCustomAgent ? { customCapabilities } : {}),
-        ...(isEditingCustomAgent ? { resultType: localResultType } : {}),
-        ...(activationKeywords.length > 0
-          ? {
-              activationKeywords,
-              activationScanDepth,
-            }
-          : {}),
-        ...(mayIncludeTurnData && localIncludePreGenInjections ? { includePreGenInjections: true } : {}),
-        ...(mayIncludeTurnData && localIncludeParallelResults ? { includeParallelResults: true } : {}),
-        ...(localContextSize !== "" ? { contextSize: Number(localContextSize) } : {}),
-        ...(localMaxTokens !== "" ? { maxTokens: clampAgentMaxTokens(localMaxTokens) } : {}),
-        ...(!isDirectorAgent && localRunInterval !== "" ? { runInterval: Number(localRunInterval) } : {}),
-        ...(!isDirectorAgent && localInjectAsSection ? { injectAsSection: true } : {}),
-        ...(isMusicAgent ? { musicProvider: localMusicProvider } : {}),
-        enabledTools: isMusicAgent && localMusicProvider === "youtube" ? [] : effectiveEnabledTools,
-        ...(lorebookWriterEnabled
-          ? { lorebookWriteEnabled: true, writableLorebookId, writableLorebookIds: [writableLorebookId] }
-          : {}),
-        ...(localSpotifyClientId ? { spotifyClientId: localSpotifyClientId } : {}),
-        ...(isKnowledgeRetrievalAgent || isKnowledgeRouterAgent
-          ? { useChatActiveLorebooks: localUseChatActiveLorebooks }
-          : {}),
-        ...(localSourceLorebookIds.length > 0 ? { sourceLorebookIds: localSourceLorebookIds } : {}),
-        // Only persist sourceFileIds for the Knowledge Retrieval agent — the Router
-        // doesn't read this setting. Without this guard, switching an agent from
-        // Retrieval to Router would leave behind stale file IDs the user can no
-        // longer see or remove via the UI.
-        ...(isKnowledgeRetrievalAgent && localSourceFileIds.length > 0 ? { sourceFileIds: localSourceFileIds } : {}),
-        ...(localImageConnectionId ? { imageConnectionId: localImageConnectionId } : {}),
-        ...(localAutoGenerateAvatars ? { autoGenerateAvatars: true } : {}),
-        ...(localAutoGenerateBackgrounds ? { autoGenerateBackgrounds: true } : {}),
-        ...(isIllustratorAgent
-          ? {
-              useAvatarReferences: localUseAvatarReferences,
-              includeCharacterAppearance: localIncludeCharacterAppearance,
-            }
-          : {}),
-        ...(isProseGuardianAgent
-          ? {
-              banned: localProseGuardianBanned.trim() || DEFAULT_PROSE_GUARDIAN_BANNED_WORDS,
-              avoid: localProseGuardianAvoid.trim() || DEFAULT_PROSE_GUARDIAN_AVOID,
-              prefer: localProseGuardianPrefer.trim(),
-              holdForRewrite: localProseGuardianHoldForRewrite,
-            }
-          : {}),
-        ...(isContinuityAgent ? { holdForRewrite: localProseGuardianHoldForRewrite } : {}),
-        ...(isDirectorAgent
-          ? {
-              directorMode: localDirectorMode,
-              secretPlotEnabled: localSecretPlotEnabled,
-              secretPlotRunInterval: localSecretPlotRunInterval,
-            }
-          : {}),
-        ...(localImagePositivePrompt.trim() ? { imagePositivePrompt: localImagePositivePrompt.trim() } : {}),
-        ...(localImageNegativePrompt.trim() ? { imageNegativePrompt: localImageNegativePrompt.trim() } : {}),
-      },
+      settings: settingsPayload,
     };
 
     try {
@@ -1047,6 +1079,7 @@ export function AgentEditor() {
     isMusicAgent,
     isKnowledgeRetrievalAgent,
     isKnowledgeRouterAgent,
+    isLtmAgent,
     updateAgent,
     createAgent,
     openAgentDetail,
@@ -1420,7 +1453,7 @@ export function AgentEditor() {
             icon={<Info size="0.875rem" className="text-[var(--primary)]" />}
             help="A short summary of what this agent does, plus author credit for the person or team who made it."
           >
-            <div className="grid gap-3 sm:grid-cols-[1fr_14rem]">
+            <div className={cn("grid gap-3", isLtmAgent ? "" : "sm:grid-cols-[1fr_14rem]")}>
               <label className="flex min-w-0 flex-col gap-1.5">
                 <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Description</span>
                 <input
@@ -1433,18 +1466,20 @@ export function AgentEditor() {
                   placeholder="What does this agent do…"
                 />
               </label>
-              <label className="flex min-w-0 flex-col gap-1.5">
-                <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Author</span>
-                <input
-                  value={localAuthor}
-                  onChange={(e) => {
-                    setLocalAuthor(e.target.value);
-                    markDirty();
-                  }}
-                  className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                  placeholder={builtIn ? DEFAULT_AGENT_AUTHOR : "Your name"}
-                />
-              </label>
+              {!isLtmAgent && (
+                <label className="flex min-w-0 flex-col gap-1.5">
+                  <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Author</span>
+                  <input
+                    value={localAuthor}
+                    onChange={(e) => {
+                      setLocalAuthor(e.target.value);
+                      markDirty();
+                    }}
+                    className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                    placeholder={builtIn ? DEFAULT_AGENT_AUTHOR : "Your name"}
+                  />
+                </label>
+              )}
             </div>
           </FieldGroup>
 

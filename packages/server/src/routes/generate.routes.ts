@@ -179,7 +179,6 @@ import { recordLtmDebugEvent } from "../services/long-term-memory/debug-log.js";
 import { getLtmGlobalSettings } from "../services/long-term-memory/settings.js";
 import { recordLongTermMemoryInjection } from "../services/long-term-memory/usage.js";
 import {
-  applyGenerationLongTermMemoryInjection,
   buildGenerationLongTermMemoryPlan,
   retrieveGenerationLongTermMemoryBlock,
 } from "../services/long-term-memory/generation-injection.js";
@@ -1992,6 +1991,74 @@ export async function generateRoutes(app: FastifyInstance) {
               ];
             }),
           );
+          // ── LTM retrieval for marker expansion ──
+          let longTermMemoryBlock: string | null = null;
+          if (chatEnableAgents && (!hasPerChatAgentList || perChatAgentSet.has("long-term-memory"))) {
+            try {
+              const ltmGlobalSettings = await getLtmGlobalSettings();
+              const charNameMap = await getGroupHistoryCharacterNamesById();
+              const activeCharacterNames = promptCharacterIds
+                .map((id) => charNameMap.get(id))
+                .filter((name): name is string => !!name);
+              const LTM_CHAT_OVERRIDE_KEYS = [
+                "longTermMemoryBudgetTokens", "longTermMemoryMaxChunks",
+                "longTermMemoryScoreThreshold", "longTermMemoryRecallContextMessages",
+                "longTermMemoryRecallStyle", "longTermMemorySemanticWeight",
+                "longTermMemoryLexicalWeight", "longTermMemoryGraphWeight",
+                "longTermMemoryMetadataWeight", "longTermMemoryIncludeResolved",
+                "longTermMemoryDebug", "longTermMemoryRecallPreamble",
+                "enableLongTermMemory",
+              ];
+              const chatLtmOverrides: Record<string, unknown> = {};
+              for (const key of LTM_CHAT_OVERRIDE_KEYS) {
+                if (key in chatMeta && chatMeta[key] !== undefined && chatMeta[key] !== null) {
+                  chatLtmOverrides[key] = chatMeta[key];
+                }
+              }
+              const plan = buildGenerationLongTermMemoryPlan({
+                chatId: input.chatId,
+                chatMode,
+                promptCharacterIds,
+                activeCharacterNames,
+                inputMessages: mappedMessages.map((m: any) => ({
+                  role: m.role as "system" | "user" | "assistant" | "tool",
+                  content: typeof m.content === "string" ? m.content : "",
+                })),
+                chatMeta: chatMeta as Record<string, unknown>,
+                globalSettings: { ...ltmGlobalSettings, ...chatLtmOverrides },
+                lorebookGenerationTriggers,
+                ...(activeChatSummary ? { generationGuide: activeChatSummary } : {}),
+                ...(presetGameState ? { gameState: presetGameState } : {}),
+                requestDebug: isDebug,
+              });
+              if (plan.enabled) {
+                const { retrieval, block } = await retrieveGenerationLongTermMemoryBlock({ plan });
+                if (retrieval.chunks.length > 0) {
+                  await recordLongTermMemoryInjection(retrieval.chunks);
+                }
+                if (plan.debugEnabled && retrieval.debug) {
+                  await recordLtmDebugEvent({
+                    operationId: crypto.randomUUID(),
+                    phase: "injection",
+                    action: "generate-route-ltm-retrieval",
+                    status: "ok",
+                    message: `Generate route retrieved ${retrieval.chunks.length} chunks (${retrieval.usedTokens} tokens)`,
+                    durationMs: Date.now() - _tAssemble,
+                    counts: { chunks: retrieval.chunks.length, tokens: retrieval.usedTokens },
+                    diagnostics: [retrieval.debug as unknown as Record<string, unknown>],
+                    chatId: input.chatId,
+                    uiSummary: JSON.stringify({
+                      memoryCount: new Set(retrieval.chunks.map((c: any) => c.chunk?.noteId).filter(Boolean)).size,
+                      tokenCount: retrieval.usedTokens,
+                    }),
+                  });
+                }
+                longTermMemoryBlock = block || null;
+              }
+            } catch (err) {
+              logger.warn(err, "[generate] LTM retrieval failed — continuing without LTM block");
+            }
+          }
           const assemblerInput: AssemblerInput = {
             db: app.db,
             preset: preset as any,
@@ -1999,6 +2066,7 @@ export async function generateRoutes(app: FastifyInstance) {
             groups: groups as any,
             choiceBlocks: choiceBlocks as any,
             chatChoices,
+            longTermMemoryBlock,
             chatId: input.chatId,
             characterIds: promptCharacterIds,
             personaId,
@@ -4931,7 +4999,7 @@ export async function generateRoutes(app: FastifyInstance) {
         const reviewedAgentTypes = new Set(reviewedAgentInjections.map((entry) => entry.agentType));
         let contextInjections: AgentInjection[] = reviewedAgentInjections;
         const SEPARATE_INJECTION_AGENTS = new Set(["director", "knowledge-retrieval", "knowledge-router"]);
-        const EXCLUDED_FROM_PIPELINE = new Set(["knowledge-retrieval", "knowledge-router"]);
+        const EXCLUDED_FROM_PIPELINE = new Set(["knowledge-retrieval", "knowledge-router", "long-term-memory"]);
         const hasPreGenAgents = resolvedAgents.some(
           (a) => a.phase === "pre_generation" && !EXCLUDED_FROM_PIPELINE.has(a.type) && !reviewedAgentTypes.has(a.type),
         );
@@ -5332,10 +5400,14 @@ export async function generateRoutes(app: FastifyInstance) {
           const cached = normalizeContextInjections(regenExtra.contextInjections);
           // Secret plot is applied from Director memory, not from message cache (legacy entries ignored).
           const cachedSansSecret = cached.filter((i) => i.agentType !== "secret-plot-driver");
+          // LTM is now provided by the marker path at assembly time, not from agent
+          // pipeline context_injection — skip any legacy cached LTM entries to avoid
+          // duplication with the freshly retrieved block.
+          const cachedSansLtm = cachedSansSecret.filter((i) => i.agentType !== "long-term-memory");
 
-          if (cachedSansSecret && cachedSansSecret.length > 0) {
-            contextInjections = cachedSansSecret;
-            for (const inj of cachedSansSecret) {
+          if (cachedSansLtm && cachedSansLtm.length > 0) {
+            contextInjections = cachedSansLtm;
+            for (const inj of cachedSansLtm) {
               reply.raw.write(
                 `data: ${JSON.stringify({
                   type: "agent_result",
