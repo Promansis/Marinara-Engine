@@ -70,6 +70,7 @@ export const ltmGlobalSettingsSchema = z.preprocess((value) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const input = value as Record<string, unknown>;
   const normalized = { ...input };
+  delete normalized.extractionMode;
   if ("longTermMemoryRecallStyle" in normalized) {
     normalized.longTermMemoryRecallStyle =
       input.longTermMemoryRecallStyle === "exact" ||
@@ -815,7 +816,7 @@ export type LtmEvidenceUnitExtractionResponse = z.infer<typeof ltmEvidenceUnitEx
  * Settings stored in agent_configs.settings when type === "long-term-memory".
  * Subset of LtmGlobalSettings that are user-configurable per agent.
  */
-export const ltmAgentSettingsSchema = z
+const ltmAgentSettingsShape = z
   .object({
     connectionId: z.string().nullable().optional(),
     model: z.string().max(240).optional(),
@@ -838,5 +839,12 @@ export const ltmAgentSettingsSchema = z
     longTermMemoryDebug: z.boolean().optional(),
   })
   .strict();
+
+export const ltmAgentSettingsSchema = z.preprocess((value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const input = { ...(value as Record<string, unknown>) };
+  delete input.extractionMode;
+  return input;
+}, ltmAgentSettingsShape);
 
 export type LtmAgentSettings = z.infer<typeof ltmAgentSettingsSchema>;
