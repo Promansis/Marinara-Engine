@@ -48,6 +48,7 @@ import {
   isAgentConfigDeleted,
   isAgentHiddenFromChatSettingsPicker,
   isBuiltInAgentRuntimeDisabled,
+  isManagedAgentType,
   isRetiredBuiltInAgentId,
   mergeBuiltInAgentSettings,
   normalizeAgentPhaseForType,
@@ -194,6 +195,7 @@ type AvailableAgent = {
   phase: AgentPhase;
   builtIn: boolean;
   runtimeDisabled?: boolean;
+  managed?: boolean;
 };
 
 type AgentAddPreview = {
@@ -1425,6 +1427,18 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
       if (isAgentConfigDeleted(config.settings)) continue;
       if (isRetiredBuiltInAgentId(config.type)) continue;
       if (BUILT_IN_AGENTS.some((agent) => agent.id === config.type)) continue;
+      if (isManagedAgentType(config.type)) {
+        agents.push({
+          id: config.type,
+          name: config.name,
+          description: config.description,
+          category: "memory",
+          phase: normalizeAgentPhaseForType(config.type, config.phase),
+          builtIn: false,
+          managed: true,
+        });
+        continue;
+      }
       agents.push({
         id: config.type,
         name: config.name,
@@ -1734,13 +1748,16 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
     if (!agentAddPreview) return;
     const { agent, config, contextSize, maxTokens, runInterval, setup } = agentAddPreview;
     const builtInMeta = BUILT_IN_AGENTS.find((entry) => entry.id === agent.id) ?? null;
+    const isManaged = isManagedAgentType(agent.id);
     let nextSettings: Record<string, unknown> = {
       ...mergeBuiltInAgentSettings(agent.id, config?.settings),
-      contextSize,
-      maxTokens: normalizeAgentMaxTokens(maxTokens),
     };
-    const intervalMeta = getAgentRunIntervalMeta(agent.id, !!builtInMeta);
-    if (intervalMeta && runInterval != null) nextSettings.runInterval = runInterval;
+    if (!isManaged) {
+      nextSettings.contextSize = contextSize;
+      nextSettings.maxTokens = normalizeAgentMaxTokens(maxTokens);
+      const intervalMeta = getAgentRunIntervalMeta(agent.id, !!builtInMeta);
+      if (intervalMeta && runInterval != null) nextSettings.runInterval = runInterval;
+    }
     nextSettings = applyAgentAddSetupToAgentSettings(agent.id, setup, nextSettings, {
       allowSecretPlot: supportsNarrativeDirectorSecretPlot,
     });
@@ -2164,7 +2181,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
                     <div className="flex items-center gap-2">
                       <p className="text-sm font-semibold text-[var(--foreground)]">{agentAddPreview.agent.name}</p>
                       <span className="rounded-full bg-[var(--accent)] px-2 py-0.5 text-[0.5625rem] uppercase tracking-wide text-[var(--muted-foreground)]">
-                        {agentAddPreview.agent.builtIn ? agentAddPreview.agent.category : "custom"}
+                        {agentAddPreview.agent.category}
                       </span>
                     </div>
                     <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">
@@ -2173,7 +2190,11 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
                   </div>
                 </div>
 
-                {agentAddPreview.agent.runtimeDisabled ? (
+                {agentAddPreview.agent.managed ? (
+                  <p className="rounded-lg bg-[var(--accent)] px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                    This agent runs as a connectionless retrieval step — no model call or token budget is needed.
+                  </p>
+                ) : agentAddPreview.agent.runtimeDisabled ? (
                   <p className="rounded-lg bg-[var(--accent)] px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
                     This adds instructions to the Roleplay prompt without making a separate model call.
                   </p>

@@ -1,3 +1,5 @@
+import { isManagedAgentType } from "@marinara-engine/shared";
+
 export type AgentRunIntervalMeta = {
   label: string;
   unit: string;
@@ -9,6 +11,8 @@ export type AgentRunIntervalMeta = {
 export const EVERY_RUN_LABEL = "Every run";
 
 export function getAgentRunIntervalMeta(agentType: string, isBuiltIn = true): AgentRunIntervalMeta | null {
+  if (isManagedAgentType(agentType)) return null;
+
   switch (agentType) {
     case "illustrator":
       return {
