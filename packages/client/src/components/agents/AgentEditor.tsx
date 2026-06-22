@@ -104,12 +104,10 @@ import {
 } from "../../lib/agent-transfer";
 import { serializeCustomToolForTransfer } from "../../lib/custom-tool-transfer";
 import { downloadZipFile } from "../../lib/download-zip";
-import {
-  isManagedAgentType,
-  MANAGED_AGENT_FEATURE_PANELS,
-  type ManagedAgentType,
-} from "@marinara-engine/shared";
+import { isManagedAgentType } from "@marinara-engine/shared";
+import { Modal } from "../ui/Modal";
 import { LtmVaultManagerSection } from "../long-term-memory/LtmVaultManagerSection";
+import { LongTermMemoryExtractionSettingsEditor } from "../long-term-memory/LongTermMemoryExtractionSettingsModal";
 
 function parseActivationKeywordsText(value: string): string[] {
   const seen = new Set<string>();
@@ -520,6 +518,8 @@ export function AgentEditor() {
   const [localIncludeParallelResults, setLocalIncludeParallelResults] = useState(false);
   const [localEnabledTools, setLocalEnabledTools] = useState<string[]>([]);
   const [toolsSectionOpen, setToolsSectionOpen] = useState(false);
+  const [memoriesModalOpen, setMemoriesModalOpen] = useState(false);
+  const [ltmSettingsOpen, setLtmSettingsOpen] = useState(false);
   const [localLorebookWriteEnabled, setLocalLorebookWriteEnabled] = useState(false);
   const [localWritableLorebookId, setLocalWritableLorebookId] = useState("");
   const [localMusicProvider, setLocalMusicProvider] = useState<MusicProvider>("spotify");
@@ -1645,7 +1645,7 @@ export function AgentEditor() {
           </FieldGroup>
 
           {/* Agent Pipeline Phase */}
-          <FieldGroup
+          {!isLtmAgent && <FieldGroup
             label="Pipeline Phase"
             icon={<Zap size="0.875rem" className="text-[var(--primary)]" />}
             help="When this agent runs during generation. Pre-Generation runs before the AI replies, Parallel runs alongside, Post-Processing runs after the reply is complete."
@@ -1675,7 +1675,7 @@ export function AgentEditor() {
               })}
             </div>
             <p className="mt-1.5 text-[0.625rem] text-[var(--muted-foreground)]">{phaseMeta.description}</p>
-          </FieldGroup>
+          </FieldGroup>}
 
           {(isCustomAgent || isNewCustomAgent) && (
             <FieldGroup
@@ -1831,7 +1831,7 @@ export function AgentEditor() {
           )}
 
           {/* ── Connection Override ── */}
-          <FieldGroup
+          {!isLtmAgent && <FieldGroup
             label="Connection Override"
             icon={<Link2 size="0.875rem" className="text-[var(--primary)]" />}
             help="Use a different AI connection for this agent. For example, use a faster/cheaper model for background processing tasks."
@@ -1861,7 +1861,7 @@ export function AgentEditor() {
                 ? "Uses the built-in Local Model from the Connections panel. The sidecar will start on demand when this agent runs."
                 : "When empty, uses the agent default connection if one is set, otherwise falls back to the chat's active connection."}
             </p>
-          </FieldGroup>
+          </FieldGroup>}
 
           {/* ── Image Generation Connection (Illustrator only) ── */}
           {(agentDetailId === "illustrator" || dbConfig?.type === "illustrator") && (
@@ -2056,7 +2056,7 @@ export function AgentEditor() {
             </FieldGroup>
           )}
 
-          <FieldGroup
+          {!isLtmAgent && <FieldGroup
             label="Agent Budget"
             icon={<Clock size="0.875rem" className="text-[var(--primary)]" />}
             help="Controls how much recent chat context the agent reads and how much output room it reserves. If max output is too high for the model context, prompt context can be trimmed."
@@ -2116,7 +2116,7 @@ export function AgentEditor() {
               For 8k local models, try {DEFAULT_AGENT_MAX_TOKENS.toLocaleString()} or lower so the agent prompt keeps
               enough room.
             </p>
-          </FieldGroup>
+          </FieldGroup>}
 
           {isProseGuardianAgent && (
             <FieldGroup
@@ -2521,7 +2521,7 @@ export function AgentEditor() {
           )}
 
           {/* ── Inject as Prompt Section ── */}
-          {!isDirectorAgent && (
+          {!isDirectorAgent && !isLtmAgent && (
             <FieldGroup
               label="Add as Prompt Section"
               icon={<Layers size="0.875rem" className="text-[var(--primary)]" />}
@@ -3359,7 +3359,7 @@ export function AgentEditor() {
           )}
 
           {/* ── Prompt Template ── */}
-          <FieldGroup
+          {!isLtmAgent && <FieldGroup
             label="Prompt Template"
             icon={<FileText size="0.875rem" className="text-[var(--primary)]" />}
             help="The system instructions this agent receives. Built-in agents have sensible defaults. You can override to customize behavior."
@@ -3513,10 +3513,10 @@ export function AgentEditor() {
             </div>
 
             {/* Default prompt preview removed — now shown inline above */}
-          </FieldGroup>
+          </FieldGroup>}
 
           {/* ── Available Tools (Function Calling) ── */}
-          <FieldGroup
+          {!isLtmAgent && <FieldGroup
             label="Tools / Function Calling"
             icon={<Wrench size="0.875rem" className="text-[var(--primary)]" />}
             help="Select which tools this agent can use during generation. The AI can call these functions and receive results back for multi-step interactions."
@@ -3578,153 +3578,49 @@ export function AgentEditor() {
                 </p>
               </>
             )}
-          </FieldGroup>
+          </FieldGroup>}
 
-      {/* ── Managed Agent Feature Panel ── */}
+      {/* ── LTM Memories Section ── */}
       {isLtmAgent && dbConfig && (
-        <div className="space-y-4">
-          <div className="border-b border-[var(--border)] pb-2">
-            <h3 className="text-sm font-semibold text-[var(--foreground)]">Memory Vault</h3>
-            <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
-              Browse, search, import, and manage long-term memories.
-            </p>
-          </div>
-
-          {/* ── LTM Agent Settings ── */}
-          {isLtmAgent && (() => {
-            const ltmSettings: Record<string, unknown> = JSON.parse(dbConfig?.settings ?? "{}");
-            return (
-            <FieldGroup
-              label="Agent Settings"
-              icon={<DatabaseZap size="0.875rem" className="text-[var(--primary)]" />}
-              help="Connection, model, instruction, and extraction preferences for this agent."
-              collapsible
-              expanded={false}
+        <FieldGroup
+          label="Memories"
+          icon={<DatabaseZap size="0.875rem" className="text-[var(--primary)]" />}
+          help="Browse, search, and manage long-term memories. Extraction and recall settings are configured per-chat or in global LTM settings."
+        >
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setMemoriesModalOpen(true)}
+              className="rounded-xl bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] transition-colors hover:bg-[var(--primary)]/90"
             >
-              <div className="space-y-3">
-                <div>
-                  <label className="mb-1 block text-[0.6875rem] font-medium text-[var(--foreground)]">Connection</label>
-                  <select
-                    value={ltmSettings.connectionId as string ?? ""}
-                    onChange={(e) => {
-                      ltmSettings.connectionId = e.target.value;
-                      markDirty();
-                    }}
-                    className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                  >
-                    <option value="">Default</option>
-                    {(connections ?? []).map((conn) => (
-                      <option key={(conn as { id: string }).id} value={(conn as { id: string }).id}>{(conn as { name: string }).name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-[0.6875rem] font-medium text-[var(--foreground)]">Model</label>
-                  <input
-                    type="text"
-                    defaultValue={ltmSettings.model as string ?? ""}
-                    onBlur={(e) => {
-                      ltmSettings.model = e.target.value;
-                      markDirty();
-                    }}
-                    placeholder="e.g. gpt-4o"
-                    className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-[0.6875rem] font-medium text-[var(--foreground)]">Instruction</label>
-                  <textarea
-                    defaultValue={ltmSettings.instruction as string ?? ""}
-                    onBlur={(e) => {
-                      ltmSettings.instruction = e.target.value;
-                      markDirty();
-                    }}
-                    placeholder="Optional instruction for memory extraction..."
-                    rows={3}
-                    className="w-full resize-none rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="mb-1 block text-[0.6875rem] font-medium text-[var(--foreground)]">Extraction Mode</label>
-                    <select
-                      defaultValue={ltmSettings.extractionMode as string ?? "fast"}
-                      onChange={(e) => {
-                        ltmSettings.extractionMode = e.target.value;
-                        markDirty();
-                      }}
-                      className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                    >
-                      <option value="fast">Fast</option>
-                      <option value="balanced">Balanced</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-[0.6875rem] font-medium text-[var(--foreground)]">Import Concurrency</label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={10}
-                      defaultValue={ltmSettings.importConcurrency as number ?? 3}
-                      onBlur={(e) => {
-                        ltmSettings.importConcurrency = Math.max(1, Math.min(10, parseInt(e.target.value) || 3));
-                        markDirty();
-                      }}
-                      className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="mb-1 block text-[0.6875rem] font-medium text-[var(--foreground)]">Import Limit</label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={5000}
-                      defaultValue={ltmSettings.importLimit as number ?? 25}
-                      onBlur={(e) => {
-                        ltmSettings.importLimit = Math.max(1, Math.min(5000, parseInt(e.target.value) || 25));
-                        markDirty();
-                      }}
-                      className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-[0.6875rem] font-medium text-[var(--foreground)]">Import Source</label>
-                    <select
-                      defaultValue={ltmSettings.importSource as string ?? "chats"}
-                      onChange={(e) => {
-                        ltmSettings.importSource = e.target.value;
-                        markDirty();
-                      }}
-                      className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                    >
-                      <option value="chats">Chat summaries</option>
-                      <option value="characters">Characters</option>
-                      <option value="lorebooks">Lorebooks</option>
-                    </select>
-                  </div>
-                </div>
-                <label className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-[var(--foreground)]">
-                  <input
-                    type="checkbox"
-                    defaultChecked={ltmSettings.autoApplyLowRisk === true}
-                    onChange={(e) => {
-                      ltmSettings.autoApplyLowRisk = e.target.checked;
-                      markDirty();
-                    }}
-                    className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-                  />
-                  Auto-apply low-risk changes
-                </label>
-              </div>
-            </FieldGroup>
-            );
-          })()}
-
-          <LtmVaultManagerSection agentConfig={dbConfig} agentSettings={JSON.parse(dbConfig?.settings ?? "{}") as Record<string, unknown>} />
-        </div>
+              Manage Memories
+            </button>
+            <button
+              onClick={() => setLtmSettingsOpen(true)}
+              className="text-sm text-[var(--muted-foreground)] underline-offset-4 hover:underline"
+            >
+              Advanced settings
+            </button>
+          </div>
+        </FieldGroup>
       )}
+      <Modal
+        open={memoriesModalOpen}
+        onClose={() => setMemoriesModalOpen(false)}
+        title="Long-Term Memory"
+        width="max-w-5xl"
+      >
+        {memoriesModalOpen && dbConfig && (
+          <LtmVaultManagerSection agentConfig={dbConfig} agentSettings={JSON.parse(dbConfig.settings ?? "{}") as Record<string, unknown>} />
+        )}
+      </Modal>
+      <Modal
+        open={ltmSettingsOpen}
+        onClose={() => setLtmSettingsOpen(false)}
+        title="Long-Term Memory Settings"
+        width="max-w-3xl"
+      >
+        <LongTermMemoryExtractionSettingsEditor mode="modal" onClose={() => setLtmSettingsOpen(false)} />
+      </Modal>
         </div>
       </div>
     </div>

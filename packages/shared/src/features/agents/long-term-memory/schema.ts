@@ -42,8 +42,6 @@ export const ltmExtractionReasoningEffortSchema = z.enum(["none", "low", "medium
 
 export const ltmExtractionVerbositySchema = z.enum(["low", "medium", "high"]);
 
-export const ltmExtractionModeSchema = z.enum(["fast", "balanced"]);
-
 const ltmGlobalSettingsShape = z
   .object({
     version: z.literal(1).default(1),
@@ -60,7 +58,6 @@ const ltmGlobalSettingsShape = z
     longTermMemoryIncludeResolved: z.boolean().optional(),
     longTermMemoryRecallPreamble: z.string().max(500).optional(),
     longTermMemoryDebug: z.boolean().optional(),
-    extractionMode: ltmExtractionModeSchema.optional(),
     importConcurrency: z.number().int().min(1).max(10).optional(),
     connectionId: z.string().max(120).optional(),
     model: z.string().max(240).optional(),
@@ -101,7 +98,6 @@ export const ltmResolvedGlobalSettingsSchema = z
     longTermMemoryIncludeResolved: z.boolean(),
     longTermMemoryRecallPreamble: z.string().max(500),
     longTermMemoryDebug: z.boolean(),
-    extractionMode: ltmExtractionModeSchema,
     importConcurrency: z.number().int().min(1).max(10),
     connectionId: z.string().max(120),
     model: z.string().max(240),
@@ -113,8 +109,8 @@ export const ltmResolvedGlobalSettingsSchema = z
 export const DEFAULT_LTM_GLOBAL_SETTINGS = ltmResolvedGlobalSettingsSchema.parse({
   version: 1,
   enableLongTermMemory: true,
-  longTermMemoryBudgetTokens: 2048,
-  longTermMemoryMaxChunks: 12,
+  longTermMemoryBudgetTokens: 4096,
+  longTermMemoryMaxChunks: 20,
   longTermMemoryScoreThreshold: 0,
   longTermMemoryRecallContextMessages: 4,
   longTermMemoryRecallStyle: DEFAULT_LTM_RECALL_STYLE,
@@ -125,7 +121,6 @@ export const DEFAULT_LTM_GLOBAL_SETTINGS = ltmResolvedGlobalSettingsSchema.parse
   longTermMemoryIncludeResolved: false,
   longTermMemoryRecallPreamble: DEFAULT_LTM_RECALL_PREAMBLE,
   longTermMemoryDebug: false,
-  extractionMode: "fast",
   importConcurrency: 3,
   connectionId: "",
   model: "",
@@ -775,7 +770,6 @@ export type LtmEvidenceUnitStatus = z.infer<typeof ltmEvidenceUnitStatusSchema>;
 export type LtmEvidenceUnitBucket = z.infer<typeof ltmEvidenceUnitBucketSchema>;
 export type LtmExtractionReasoningEffort = z.infer<typeof ltmExtractionReasoningEffortSchema>;
 export type LtmExtractionVerbosity = z.infer<typeof ltmExtractionVerbositySchema>;
-export type LtmExtractionMode = z.infer<typeof ltmExtractionModeSchema>;
 export type LtmGlobalSettings = z.infer<typeof ltmGlobalSettingsSchema>;
 export type LtmResolvedGlobalSettings = z.infer<typeof ltmResolvedGlobalSettingsSchema>;
 export type LtmExtractionSettings = z.infer<typeof ltmExtractionSettingsSchema>;
@@ -826,7 +820,6 @@ export const ltmAgentSettingsSchema = z
     connectionId: z.string().nullable().optional(),
     model: z.string().max(240).optional(),
     instruction: z.string().max(2_000).optional(),
-    extractionMode: ltmExtractionModeSchema.optional(),
     importConcurrency: z.number().int().min(1).max(10).optional(),
     importLimit: z.number().int().min(1).max(5000).optional(),
     importSource: z.string().max(50).optional(),

@@ -38,7 +38,6 @@ import {
   getFolderImportEntries,
   getFolderManifestConfig,
   isAgentConfigDeleted,
-  isManagedAgentType,
   isRetiredBuiltInAgentId,
   normalizeAgentPhaseForType,
   normalizeAgentPhaseValue,

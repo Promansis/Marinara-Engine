@@ -32,8 +32,6 @@ import {
   useLongTermMemorySettings,
   useRemoveLongTermMemoryNotesFromScope,
   useLongTermMemoryStatus,
-  useRebuildLongTermMemory,
-  useRepairLongTermMemory,
   useSearchLongTermMemory,
   useUpdateLongTermMemorySettings,
   type LtmSearchResponse,
@@ -51,7 +49,6 @@ import { LongTermMemoryDebugLogModal } from "../long-term-memory/LongTermMemoryD
 import { MemoryNoteModal, defaultMemoryModalTab } from "../long-term-memory/LongTermMemoryNoteModal";
 import { TypeMemoryGroups } from "../long-term-memory/LongTermMemoryNoteList";
 import { DraftDetails, ImportPreviewRowItem } from "../long-term-memory/LongTermMemoryImportSection";
-import { ChatMemorySettings } from "../long-term-memory/LongTermMemoryMaintenanceSection";
 import { LongTermMemoryNoteTransferModal } from "../long-term-memory/LongTermMemoryNoteTransferModal";
 import { friendlyNoteType, friendlyStatus, type LtmDisplayLookupContext } from "../long-term-memory/ltm-editor-utils";
 import {
@@ -110,7 +107,6 @@ import {
 
 
 type LtmImportSource = "characters" | "lorebooks" | "chats";
-type LtmExtractionRunMode = "fast" | "balanced";
 
 interface LtmVaultManagerSectionProps {
   agentConfig: AgentConfigRow;
@@ -123,13 +119,9 @@ function extractPanelPrefs(settings: Record<string, unknown>) {
     rawImportSource === "characters" || rawImportSource === "lorebooks" || rawImportSource === "chats"
       ? rawImportSource
       : "chats";
-  const rawExtractionMode = settings.extractionMode;
-  const extractionMode: LtmExtractionRunMode =
-    rawExtractionMode === "balanced" ? "balanced" : "fast";
   return {
     autoApplyLowRisk: settings.autoApplyLowRisk === true,
     connectionId: typeof settings.connectionId === "string" ? settings.connectionId : "",
-    extractionMode,
     importConcurrency:
       typeof settings.importConcurrency === "number"
         ? Math.max(1, Math.min(10, Math.round(settings.importConcurrency)))
@@ -148,7 +140,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const panelPrefs = useMemo(() => extractPanelPrefs(agentSettings ?? {}), [agentSettings]);
   const autoApplyLowRisk = panelPrefs.autoApplyLowRisk;
   const connectionId = panelPrefs.connectionId;
-  const extractionMode = panelPrefs.extractionMode;
   const importConcurrency = panelPrefs.importConcurrency;
   const importLimit = panelPrefs.importLimit;
   const importSource = panelPrefs.importSource;
@@ -169,7 +160,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
       if (!oldPrefs) return;
 
       const relevantFields: Array<keyof ReturnType<typeof extractPanelPrefs>> = [
-        "autoApplyLowRisk", "connectionId", "extractionMode", "importConcurrency",
+        "autoApplyLowRisk", "connectionId", "importConcurrency",
         "importLimit", "importSource", "instruction", "model",
       ];
       const hasRelevantValue = relevantFields.some((f) => oldPrefs[f] !== undefined && oldPrefs[f] !== "" && oldPrefs[f] !== false);
@@ -183,7 +174,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     } catch {
       // Silently ignore migration errors
     }
-  }, []);
+  }, [agentSettings, updateAgentByType]);
 
   const handlePrefsChange = useCallback(
     (partial: Partial<ReturnType<typeof extractPanelPrefs>>) => {
@@ -239,7 +230,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const ltmSettings = globalSettings.data;
   const importApplyLowRisk = ltmSettings?.autoApplyLowRisk ?? false;
   const importConnectionId = ltmSettings?.connectionId ?? "";
-  const importExtractionMode = ltmSettings?.extractionMode ?? "fast";
   const importConcurrencySetting = ltmSettings?.importConcurrency ?? DEFAULT_IMPORT_CONCURRENCY;
   const importInstruction = ltmSettings?.instruction ?? "";
   const importModel = ltmSettings?.model ?? "";
@@ -260,14 +250,13 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const activeRecallSettings = useMemo(() => readLongTermMemoryRecallSearchSettings(ltmSettings), [ltmSettings]);
   const legacyRunDefaults = useMemo(
     () => ({
-      extractionMode,
       importConcurrency,
       autoApplyLowRisk,
       connectionId,
       model,
       instruction,
     }),
-    [autoApplyLowRisk, connectionId, extractionMode, importConcurrency, instruction, model],
+    [autoApplyLowRisk, connectionId, importConcurrency, instruction, model],
   );
   const activeChatMessages = useChatMessages(activeChatId, activeRecallSettings.contextMessages, Boolean(openNoteId));
   const status = useLongTermMemoryStatus();
@@ -291,8 +280,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     importLimit,
     importSource === "chats" ? navigatorScope : undefined,
   );
-  const rebuild = useRebuildLongTermMemory();
-  const repair = useRepairLongTermMemory();
   const deleteNotes = useDeleteLongTermMemoryNotes();
   const removeNotesFromScope = useRemoveLongTermMemoryNotesFromScope();
   const importSourceNotes = useImportLongTermMemorySourceNotes();
@@ -321,7 +308,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     updateGlobalSettings.mutate(
       {
         version: 1,
-        extractionMode: legacyRunDefaults.extractionMode,
         importConcurrency: legacyRunDefaults.importConcurrency,
         autoApplyLowRisk: legacyRunDefaults.autoApplyLowRisk,
         connectionId: legacyRunDefaults.connectionId,
@@ -873,7 +859,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
         instruction: optionalTrimmedText(importInstruction),
         applyLowRisk: importApplyLowRisk || undefined,
         importConcurrency: clampImportConcurrency(importConcurrencySetting),
-        extractionMode: importExtractionMode,
       });
       const importedCount = result.imported.length;
       const suggestionCount = result.imported.reduce(
@@ -928,8 +913,8 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     <div className="flex min-h-full flex-col gap-3 p-3 text-[var(--foreground)]">
       <div className="sticky top-0 z-10 -mx-3 bg-[var(--background)]/95 px-3 py-2 backdrop-blur-sm">
         <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-          <div className="grid grid-cols-3 gap-1 rounded-xl bg-[var(--secondary)]/35 p-1 ring-1 ring-[var(--border)]/80">
-            {(["notes", "tools", "import"] as TabId[]).map((id) => (
+          <div className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--secondary)]/35 p-1 ring-1 ring-[var(--border)]/80">
+            {(["notes", "import"] as TabId[]).map((id) => (
               <button
                 key={id}
                 onClick={() => setTabWithGuards(id)}
@@ -1105,26 +1090,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
         </Section>
       )}
 
-      {tab === "tools" && (
-        <div className="space-y-3">
-          <div className={panelIntroCardClassName}>
-            <div className="flex flex-wrap gap-1.5">
-              <StatusPill label={integrity.data?.ok ? "Healthy indexes" : "Needs maintenance"} tone={statusTone} />
-              <StatusPill label={status.data?.indexes.embeddingsAvailable ? "Smart search" : "Basic search"} />
-            </div>
-            <p className={cn("mt-2", helperTextClassName)}>
-              Tune recall, extraction, maintenance, and debug behavior.
-            </p>
-          </div>
-          <ChatMemorySettings
-            activeChat={activeChat}
-            integrity={integrity}
-            rebuild={rebuild}
-            repair={repair}
-          />
-        </div>
-      )}
-
       {tab === "import" && (
         <Section title="Import">
           <div className={panelIntroCardClassName}>
@@ -1173,15 +1138,11 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
           </div>
           <div className={cn(sectionCardClassName, "mt-2")}>
             <div className="flex flex-wrap gap-1.5">
-              <StatusPill
-                label={importExtractionMode === "fast" ? "Fast extraction" : "Balanced extraction"}
-                tone={importExtractionMode === "fast" ? "good" : "warn"}
-              />
               <StatusPill label={`${clampImportConcurrency(importConcurrencySetting)} at once`} />
               {importApplyLowRisk ? <StatusPill label="Low-risk auto-apply" tone="warn" /> : null}
             </div>
             <p className={cn("mt-2", helperTextClassName)}>
-              Import uses the shared extraction defaults from the Tools tab, including connection, model, instruction,
+              Import uses the shared extraction defaults, including connection, model, instruction,
               and low-risk auto-apply.
             </p>
           </div>

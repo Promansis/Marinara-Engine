@@ -6,7 +6,6 @@ import type {
   LtmDebugPhase,
   LtmDebugStatus,
   LtmExtractionDraft,
-  LtmExtractionMode,
   LtmExtractionOutcome,
   LtmExtractionResponse,
   LtmExtractionSettings as SharedLtmExtractionSettings,
@@ -76,7 +75,6 @@ export type LtmRepairResponse = {
 };
 
 export type LtmInteropSource = "characters" | "lorebooks" | "chats";
-export type LtmSourceExtractionMode = LtmExtractionMode;
 
 export type LtmInteropPreview = {
   source: LtmInteropSource;
@@ -181,7 +179,6 @@ export type ExtractLongTermMemorySourceInput = {
   model?: string;
   instruction?: string;
   applyLowRisk?: boolean;
-  extractionMode?: LtmSourceExtractionMode;
 };
 
 export type ImportLongTermMemorySourceNotesInput = {
@@ -194,7 +191,6 @@ export type ImportLongTermMemorySourceNotesInput = {
   instruction?: string;
   applyLowRisk?: boolean;
   importConcurrency?: number;
-  extractionMode?: LtmSourceExtractionMode;
 };
 
 export type ExtractLongTermMemorySourceResponse = {
@@ -628,7 +624,6 @@ export function useImportLongTermMemorySourceNotes() {
       instruction,
       applyLowRisk,
       importConcurrency,
-      extractionMode,
     }: ImportLongTermMemorySourceNotesInput) =>
       api.post<ImportLongTermMemorySourceNotesResponse>("/long-term-memory/import/source-notes", {
         source,
@@ -640,7 +635,6 @@ export function useImportLongTermMemorySourceNotes() {
         instruction,
         applyLowRisk,
         importConcurrency,
-        extractionMode,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
   });

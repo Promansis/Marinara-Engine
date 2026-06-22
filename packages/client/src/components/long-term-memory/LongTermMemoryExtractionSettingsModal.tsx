@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
   BrainCircuit,
   ChevronRight,
   Copy,
+  Hammer,
   Loader2,
   Pencil,
   Plus,
+  RefreshCw,
   RotateCcw,
   Save,
+  ShieldCheck,
   SlidersHorizontal,
   Trash2,
   X,
@@ -27,7 +31,10 @@ import {
 } from "@marinara-engine/shared";
 import {
   useLongTermMemoryExtractionSettings,
+  useLongTermMemoryIntegrity,
   useLongTermMemorySettings,
+  useRebuildLongTermMemory,
+  useRepairLongTermMemory,
   useUpdateLongTermMemoryExtractionSettings,
   useUpdateLongTermMemorySettings,
   type LtmGlobalSettings,
@@ -49,6 +56,7 @@ import {
   textareaClassName,
 } from "./LtmFields";
 import { StatusPill, ToolButton } from "./LtmPills";
+import { RecallSettingsControls } from "./RecallSettingsControls";
 
 type OptionalLevel<T extends string> = "default" | T;
 type ExtractionPromptTemplate = LtmResolvedExtractionSettings["promptTemplates"][number];
@@ -265,6 +273,9 @@ export function LongTermMemoryExtractionSettingsEditor({
   const latestSettingsRef = useRef<LtmResolvedExtractionSettings | null>(null);
 
   const promptTemplates = useMemo(() => settings.data?.promptTemplates ?? [], [settings.data?.promptTemplates]);
+  const integrity = useLongTermMemoryIntegrity();
+  const rebuild = useRebuildLongTermMemory();
+  const repair = useRepairLongTermMemory();
   const textConnections = useMemo(
     () =>
       (
@@ -538,18 +549,6 @@ export function LongTermMemoryExtractionSettingsEditor({
       <section className={cn("space-y-3", sectionCardClassName)}>
         <div className="text-xs font-semibold text-[var(--foreground)]">Shared run defaults</div>
         <div className="grid gap-3 sm:grid-cols-2">
-          <SettingField label="Extraction mode">
-            <select
-              value={globalSettings.data.extractionMode}
-              onChange={(event) =>
-                patchGlobalSettings({ version: 1, extractionMode: event.target.value as "fast" | "balanced" })
-              }
-              className={compactInputClassName}
-            >
-              <option value="fast">Fast - skip memory lookup</option>
-              <option value="balanced">Balanced - merge-aware</option>
-            </select>
-          </SettingField>
           <SettingField label="Import concurrency">
             <input
               type="number"
@@ -906,6 +905,70 @@ export function LongTermMemoryExtractionSettingsEditor({
           Placeholder-looking extraction output is always rejected internally now. Recovery happens through kept
           suggestions and dropped-candidate review instead of a user-facing toggle.
         </p>
+      </section>
+
+      <section className={cn("space-y-3", sectionCardClassName)}>
+        <div className="text-xs font-semibold text-[var(--foreground)]">Default recall settings</div>
+        <p className={helperTextClassName}>
+          These are the workspace-level defaults. Each chat can override them in its settings drawer.
+        </p>
+        <RecallSettingsControls
+          values={globalSettings.data}
+          onChange={(patch) => patchGlobalSettings({ version: 1, ...patch })}
+          showExpert={true}
+        />
+      </section>
+
+      <section className={cn("space-y-3", sectionCardClassName)}>
+        <div className="text-xs font-semibold text-[var(--foreground)]">Maintenance</div>
+        <div className="flex flex-wrap gap-2">
+          <ToolButton
+            onClick={() =>
+              rebuild
+                .mutateAsync()
+                .then(() => toast.success("Memory search refreshed"))
+                .catch((err: Error) => toast.error(err.message))
+            }
+            disabled={rebuild.isPending}
+            tone="primary"
+          >
+            <RefreshCw size="0.875rem" />
+            Reindex Memories
+          </ToolButton>
+          <ToolButton
+            onClick={() =>
+              repair
+                .mutateAsync(["quarantine_malformed_notes", "rebuild_indexes"])
+                .then(() => toast.success("Repair actions finished"))
+                .catch((err: Error) => toast.error(err.message))
+            }
+            disabled={repair.isPending}
+            tone="danger"
+          >
+            <Hammer size="0.875rem" />
+            Repair Memory Store
+          </ToolButton>
+        </div>
+        <div className="mt-3 space-y-2">
+          {(integrity.data?.issues ?? [])
+            .filter((issue) => issue.severity !== "info")
+            .slice(0, 8).map((issue) => (
+            <div
+              key={`${issue.code}-${issue.path ?? issue.noteId ?? issue.message}`}
+              className="rounded-lg bg-[var(--secondary)]/50 p-3 text-xs ring-1 ring-[var(--border)]"
+            >
+              <div className="flex items-center gap-2 font-medium">
+                {issue.severity === "error" ? (
+                  <AlertTriangle size="0.875rem" className="text-rose-300" />
+                ) : (
+                  <ShieldCheck size="0.875rem" />
+                )}
+                {issue.code}
+              </div>
+              <p className="mt-1 text-xs text-[var(--muted-foreground)]">{issue.message}</p>
+            </div>
+          ))}
+        </div>
       </section>
 
       <div className={cn(actionRowClassName, "justify-end")}>

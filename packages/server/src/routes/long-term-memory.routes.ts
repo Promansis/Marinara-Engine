@@ -11,7 +11,6 @@ import {
   ltmDraftStatusSchema,
   ltmDebugPhaseSchema,
   ltmDebugStatusSchema,
-  ltmExtractionModeSchema,
   ltmExtractionSettingsSchema,
   ltmGlobalSettingsSchema,
   ltmExtractionDraftSchema,
@@ -191,7 +190,6 @@ const interopImportBodySchema = z
     instruction: z.string().max(2_000).optional(),
     applyLowRisk: z.boolean().optional(),
     importConcurrency: z.number().int().min(1).max(10).optional(),
-    extractionMode: ltmExtractionModeSchema.optional(),
   })
   .strict();
 
@@ -228,7 +226,6 @@ const extractSourceNoteBodySchema = z
     model: z.string().min(1).max(240).optional(),
     instruction: z.string().max(2_000).optional(),
     applyLowRisk: z.boolean().optional(),
-    extractionMode: ltmExtractionModeSchema.optional(),
   })
   .strict()
   .default({});
@@ -605,7 +602,6 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
           scope: chat ? resolveChatLtmScope(chat) : sourceNote.scope,
           modes: chat ? [ltmModeForChatMode(chat.mode)] : sourceNote.modes,
           instruction: body.instruction,
-          extractionMode: body.extractionMode ?? "balanced",
           operationId,
         });
         const applyResult =
@@ -862,7 +858,6 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
             scope: item.note.scope,
             modes: item.note.modes,
             instruction: body.instruction,
-            extractionMode: body.extractionMode ?? "fast",
             operationId,
           });
           const applyResult =
