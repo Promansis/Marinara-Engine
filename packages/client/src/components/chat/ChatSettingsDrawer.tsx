@@ -30,6 +30,7 @@ import {
   ArrowRightLeft,
   Unlink,
   Brain,
+  BrainCircuit,
   Maximize2,
   Vibrate,
   Feather,
@@ -144,6 +145,8 @@ import type {
   Message,
 } from "@marinara-engine/shared";
 import { useAgentConfigs, useCreateAgent, useUpdateAgent, type AgentConfigRow } from "../../hooks/use-agents";
+import { useLongTermMemorySettings } from "../../hooks/use-long-term-memory";
+import { RecallSettingsControls } from "../long-term-memory/RecallSettingsControls";
 import { useAgentStore } from "../../stores/agent.store";
 import {
   BUILT_IN_AGENTS,
@@ -1122,6 +1125,7 @@ export function ChatSettingsDrawer({
       ? metadata.hapticSensitivity
       : "standard";
   const agentWriteApprovalRequired = metadata.agentWriteApprovalRequired === true;
+  const ltmActive = activeAgentIds.includes("long-term-memory");
   const knowledgeRetrievalActive = activeAgentIds.includes("knowledge-retrieval");
   const knowledgeRouterActive = activeAgentIds.includes("knowledge-router");
   const illustratorConfig = agentConfigsByType.get("illustrator");
@@ -1232,6 +1236,10 @@ export function ChatSettingsDrawer({
     },
     [chat.id, updateMeta],
   );
+  const ltmGlobalSettings = useLongTermMemorySettings({ enabled: ltmActive });
+  const toggleLtmEnabled = useCallback(() => {
+    updateMeta.mutate({ id: chat.id, enableLongTermMemory: metadata.enableLongTermMemory === false });
+  }, [chat.id, metadata.enableLongTermMemory, updateMeta]);
   const getKnowledgeAgentSourceSettings = useCallback(
     (agentType: KnowledgeAgentType) => {
       const config = agentConfigsByType.get(agentType);
@@ -5843,6 +5851,73 @@ export function ChatSettingsDrawer({
                             ? "Roleplay DJ queues several fitting tracks when it changes music."
                             : "YouTube mode uses the Music DJ agent's YouTube connection and embedded player."}
                         </p>
+                      </AgentSettingsCard>
+                    )}
+
+                    {ltmActive && (
+                      <AgentSettingsCard
+                        icon={<BrainCircuit size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
+                        title="Memory"
+                        description="Long-term memory recalls facts and events from past conversations."
+                      >
+                        <AgentSettingsToggle
+                          label="Use memory in this chat"
+                          description="When disabled, the LTM agent still extracts but does not inject memories into the prompt."
+                          enabled={metadata.enableLongTermMemory !== false}
+                          onToggle={toggleLtmEnabled}
+                        />
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                            Memory budget
+                          </span>
+                          <div className="grid grid-cols-[1fr_5.5rem] items-center gap-3">
+                            <input
+                              type="range"
+                              min={128}
+                              max={16384}
+                              step={128}
+                              value={metadata.longTermMemoryBudgetTokens ?? ltmGlobalSettings.data?.longTermMemoryBudgetTokens ?? 4096}
+                              onChange={(event) =>
+                                updateMeta.mutate({ id: chat.id, longTermMemoryBudgetTokens: Number(event.target.value) })
+                              }
+                              className="min-w-0 accent-[var(--primary)]"
+                            />
+                            <input
+                              type="number"
+                              min={128}
+                              max={16384}
+                              step={128}
+                              value={metadata.longTermMemoryBudgetTokens ?? ltmGlobalSettings.data?.longTermMemoryBudgetTokens ?? 4096}
+                              onChange={(event) =>
+                                updateMeta.mutate({ id: chat.id, longTermMemoryBudgetTokens: Number(event.target.value) })
+                              }
+                              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)]"
+                            />
+                          </div>
+                        </label>
+                        <details className="mt-2">
+                          <summary className="cursor-pointer text-xs text-[var(--muted-foreground)]">
+                            Advanced recall settings
+                          </summary>
+                          <div className="mt-2">
+                            <RecallSettingsControls
+                              values={{
+                                longTermMemoryBudgetTokens: metadata.longTermMemoryBudgetTokens ?? ltmGlobalSettings.data?.longTermMemoryBudgetTokens ?? 4096,
+                                longTermMemoryMaxChunks: metadata.longTermMemoryMaxChunks ?? ltmGlobalSettings.data?.longTermMemoryMaxChunks ?? 20,
+                                longTermMemoryScoreThreshold: metadata.longTermMemoryScoreThreshold ?? ltmGlobalSettings.data?.longTermMemoryScoreThreshold ?? 0,
+                                longTermMemoryRecallContextMessages: metadata.longTermMemoryRecallContextMessages ?? ltmGlobalSettings.data?.longTermMemoryRecallContextMessages ?? 4,
+                                longTermMemoryRecallStyle: metadata.longTermMemoryRecallStyle ?? ltmGlobalSettings.data?.longTermMemoryRecallStyle ?? "balanced",
+                                longTermMemorySemanticWeight: metadata.longTermMemorySemanticWeight ?? ltmGlobalSettings.data?.longTermMemorySemanticWeight ?? null,
+                                longTermMemoryLexicalWeight: metadata.longTermMemoryLexicalWeight ?? ltmGlobalSettings.data?.longTermMemoryLexicalWeight ?? null,
+                                longTermMemoryGraphWeight: metadata.longTermMemoryGraphWeight ?? ltmGlobalSettings.data?.longTermMemoryGraphWeight ?? null,
+                                longTermMemoryIncludeResolved: metadata.longTermMemoryIncludeResolved ?? ltmGlobalSettings.data?.longTermMemoryIncludeResolved ?? false,
+                                longTermMemoryDebug: metadata.longTermMemoryDebug ?? ltmGlobalSettings.data?.longTermMemoryDebug ?? false,
+                              }}
+                              onChange={(patch) => updateMeta.mutate({ id: chat.id, ...patch })}
+                              showExpert={false}
+                            />
+                          </div>
+                        </details>
                       </AgentSettingsCard>
                     )}
 

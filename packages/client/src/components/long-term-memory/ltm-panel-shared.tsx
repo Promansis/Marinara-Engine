@@ -14,7 +14,6 @@ import {
   friendlySectionKey,
   friendlyStatus,
 } from "../long-term-memory/ltm-editor-utils";
-export type LtmExtractionRunMode = "fast" | "balanced";
 import { LTM_RECALL_STYLE_WEIGHTS } from "@marinara-engine/shared";
 import { ChevronDown, ChevronRight, Info } from "lucide-react";
 import { StatusPill } from "./LtmPills";
@@ -168,7 +167,6 @@ export function readLongTermMemoryRecallSearchSettings(settings: LtmResolvedGlob
 }
 
 export function hasLegacyRunDefaultOverrides(preferences: {
-  extractionMode: LtmExtractionRunMode;
   importConcurrency: number;
   autoApplyLowRisk: boolean;
   connectionId: string;
@@ -176,7 +174,6 @@ export function hasLegacyRunDefaultOverrides(preferences: {
   instruction: string;
 }) {
   return (
-    preferences.extractionMode !== "fast" ||
     preferences.importConcurrency !== DEFAULT_IMPORT_CONCURRENCY ||
     preferences.autoApplyLowRisk ||
     preferences.connectionId.trim().length > 0 ||
@@ -187,7 +184,6 @@ export function hasLegacyRunDefaultOverrides(preferences: {
 
 export function hasServerRunDefaultOverrides(settings: LtmResolvedGlobalSettings) {
   return (
-    settings.extractionMode !== "fast" ||
     settings.importConcurrency !== DEFAULT_IMPORT_CONCURRENCY ||
     settings.autoApplyLowRisk ||
     settings.connectionId.trim().length > 0 ||

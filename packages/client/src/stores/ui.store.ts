@@ -56,7 +56,6 @@ export interface SummaryPopoverSettings {
   hideSummarisedMessages: boolean;
   collapseHiddenMessages: boolean;
 }
-export type LtmExtractionRunMode = "fast" | "balanced";
 export const APP_LANGUAGE_OPTIONS = [{ id: "en", label: "English" }] as const;
 export type AppLanguage = (typeof APP_LANGUAGE_OPTIONS)[number]["id"];
 

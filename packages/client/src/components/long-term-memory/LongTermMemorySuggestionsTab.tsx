@@ -225,7 +225,6 @@ export function LongTermMemorySuggestionsTab({
   const globalSettings = useLongTermMemorySettings();
   const autoApplyLowRisk = globalSettings.data?.autoApplyLowRisk ?? false;
   const connectionId = globalSettings.data?.connectionId ?? "";
-  const extractionMode = globalSettings.data?.extractionMode ?? "fast";
   const instruction = globalSettings.data?.instruction ?? "";
   const model = globalSettings.data?.model ?? "";
   const [latestResult, setLatestResult] = useState<LatestExtractionResult | null>(null);
@@ -516,7 +515,6 @@ export function LongTermMemorySuggestionsTab({
                     noteId: note.id,
                     applyLowRisk: autoApplyLowRisk,
                     connectionId: connectionId.trim() || undefined,
-                    extractionMode,
                     instruction: instruction.trim() || undefined,
                     model: model.trim() || undefined,
                   })

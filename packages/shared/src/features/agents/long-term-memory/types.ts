@@ -9,7 +9,6 @@ export type {
   LtmEvidenceUnitBucket,
   LtmEvidenceUnitExtractionResponse,
   LtmEvidenceUnitStatus,
-  LtmExtractionMode,
   LtmExtractionReasoningEffort,
   LtmExtractionDraft,
   LtmExtractionResponse,

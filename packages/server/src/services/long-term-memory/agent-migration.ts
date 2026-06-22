@@ -73,11 +73,10 @@ export async function migrateLtmChatsForAgentPipeline(
           defaultSettings.connectionId = ltmGlobalSettings.connectionId ?? null;
           defaultSettings.model = ltmGlobalSettings.model ?? "";
           defaultSettings.instruction = ltmGlobalSettings.instruction ?? "";
-          defaultSettings.extractionMode = ltmGlobalSettings.extractionMode ?? "fast";
           defaultSettings.importConcurrency = ltmGlobalSettings.importConcurrency ?? 3;
           defaultSettings.autoApplyLowRisk = ltmGlobalSettings.autoApplyLowRisk ?? false;
-          defaultSettings.longTermMemoryBudgetTokens = ltmGlobalSettings.longTermMemoryBudgetTokens ?? 2048;
-          defaultSettings.longTermMemoryMaxChunks = ltmGlobalSettings.longTermMemoryMaxChunks ?? 12;
+          defaultSettings.longTermMemoryBudgetTokens = ltmGlobalSettings.longTermMemoryBudgetTokens ?? 4096;
+          defaultSettings.longTermMemoryMaxChunks = ltmGlobalSettings.longTermMemoryMaxChunks ?? 20;
           defaultSettings.longTermMemoryScoreThreshold = ltmGlobalSettings.longTermMemoryScoreThreshold ?? 0;
           defaultSettings.longTermMemoryRecallContextMessages = ltmGlobalSettings.longTermMemoryRecallContextMessages ?? 4;
           defaultSettings.longTermMemoryRecallStyle = ltmGlobalSettings.longTermMemoryRecallStyle ?? "balanced";
