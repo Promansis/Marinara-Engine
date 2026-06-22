@@ -36,9 +36,9 @@ import {
 } from "../reconciliation.js";
 import { retrieveLongTermMemory } from "../retrieval.js";
 import { LongTermMemoryStorage } from "../storage.js";
+import { DEFAULT_LTM_EXTRACTION_PROMPT } from "@marinara-engine/shared";
 import {
   compileEvidenceUnitExtraction,
-  DEFAULT_LTM_EXTRACTION_PROMPT,
   runLongTermMemoryEvidenceUnitExtraction,
   sourceHashForEvidenceUnitExtraction,
 } from "../evidence-unit-extraction.js";

@@ -39,6 +39,8 @@ export type LtmDebugEventInput = {
   model?: string;
   error?: unknown;
   details?: LtmDebugDetails;
+  chatId?: string;
+  uiSummary?: string;
   root?: string;
 };
 
@@ -49,6 +51,7 @@ export type LtmDebugLogFilter = {
   draftId?: string;
   status?: LtmDebugStatus;
   phase?: LtmDebugPhase;
+  chatId?: string;
 };
 
 function capString(value: string, max = MAX_STRING_LENGTH) {
@@ -123,6 +126,8 @@ function buildEvent(input: LtmDebugEventInput): LtmDebugEvent {
     model: input.model ? capString(input.model, 240) : undefined,
     error: input.error ? serializeLtmDebugError(input.error) : undefined,
     details: input.details ? (sanitizeValue(input.details) as Record<string, unknown>) : undefined,
+    chatId: input.chatId,
+    uiSummary: input.uiSummary ? capString(input.uiSummary, 4_000) : undefined,
   });
 }
 
@@ -195,6 +200,7 @@ export async function readLtmDebugLog(filter: LtmDebugLogFilter = {}, root = get
       if (filter.draftId && event.draftId !== filter.draftId) continue;
       if (filter.status && event.status !== filter.status) continue;
       if (filter.phase && event.phase !== filter.phase) continue;
+      if (filter.chatId && event.chatId !== filter.chatId) continue;
       events.push(event);
     } catch {
       continue;

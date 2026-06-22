@@ -21,6 +21,7 @@ import { UnoSetup } from "./UnoSetup";
 import { SceneBanner, EndSceneBar } from "./SceneBanner";
 import { ChatBranchSelector } from "./ChatBranchSelector";
 import { ActiveLorebookEntriesButton } from "./ActiveLorebookEntriesButton";
+import { DraftsReadyButton } from "./DraftsReadyButton";
 import { ChatToolbarButton, ChatToolbarMenu } from "./ChatToolbarControls";
 import { ConversationPresenceCard } from "./ConversationPresenceCard";
 import { TranscriptWindowControls } from "./TranscriptWindowControls";
@@ -64,6 +65,7 @@ interface ConversationViewProps {
   lastAssistantMessageId: string | null;
   onOpenSettings: (event?: ReactMouseEvent<HTMLElement>, options?: { initialSection?: "autonomous" | null }) => void;
   onOpenGallery: (event?: ReactMouseEvent<HTMLElement>) => void;
+  onOpenVault?: () => void;
   onBranch?: (messageId: string) => void;
   multiSelectMode?: boolean;
   selectedMessageIds?: Set<string>;
@@ -269,6 +271,7 @@ export function ConversationView({
   sceneInfo,
   onConcludeScene,
   onAbandonScene,
+  onOpenVault,
 }: ConversationViewProps) {
   const streamingChatId = useChatStore((s) => s.streamingChatId);
   const isStreaming = useChatStore((s) => s.isStreaming) && streamingChatId === chatId;
@@ -348,7 +351,8 @@ export function ConversationView({
         variant="roleplay"
         compact={compact}
       />
-      <ActiveLorebookEntriesButton chatId={chatId} />
+      <ActiveLorebookEntriesButton chatId={chatId} onViewAll={onOpenVault} />
+      {onOpenVault && <DraftsReadyButton onOpenVault={onOpenVault} />}
       <ChatToolbarButton icon={<ImageIcon size="0.875rem" />} title="Gallery" onClick={onOpenGallery} />
       {onSwitchChat && (
         <ChatToolbarButton

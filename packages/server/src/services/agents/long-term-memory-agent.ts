@@ -97,6 +97,25 @@ export async function executeLongTermMemoryAgent(
     );
 
     if (plan.debugEnabled && retrieval.debug) {
+      const uiSummary = JSON.stringify({
+        memoryCount: new Set(retrieval.chunks.map((c) => c.chunk?.noteId).filter(Boolean)).size,
+        tokenCount: retrieval.usedTokens,
+        memories: Object.entries(
+          retrieval.chunks.reduce<Record<string, { noteId: string; title: string; tokenCount: number }>>(
+            (acc, c) => {
+              const noteId = c.chunk?.noteId;
+              if (!noteId) return acc;
+              if (!acc[noteId]) acc[noteId] = { noteId, title: noteId, tokenCount: 0 };
+              acc[noteId].tokenCount += c.estimatedTokens ?? 0;
+              return acc;
+            },
+            {},
+          ),
+        )
+          .map(([, v]) => v)
+          .sort((a, b) => b.tokenCount - a.tokenCount)
+          .slice(0, 5),
+      });
       await recordLtmDebugEvent({
         operationId: crypto.randomUUID(),
         phase: "injection",
@@ -106,6 +125,8 @@ export async function executeLongTermMemoryAgent(
         durationMs: Date.now() - startTime,
         counts: { chunks: retrieval.chunks.length, tokens: retrieval.usedTokens },
         diagnostics: [retrieval.debug as unknown as Record<string, unknown>],
+        chatId: context.chatId,
+        uiSummary,
       });
     }
 

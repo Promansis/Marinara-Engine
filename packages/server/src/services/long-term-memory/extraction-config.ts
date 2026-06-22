@@ -11,9 +11,9 @@ import {
   ltmResolvedExtractionSettingsSchema,
   type LtmExtractionSettings,
   type LtmResolvedExtractionSettings,
+  DEFAULT_LTM_EXTRACTION_PROMPT,
 } from "@marinara-engine/shared";
 import { readJsonFile, writeJsonAtomic } from "./atomic-json.js";
-import { DEFAULT_LTM_EXTRACTION_PROMPT } from "./evidence-unit-extraction.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
 
 export const DEFAULT_LTM_EXTRACTION_CONFIG = ltmResolvedExtractionSettingsSchema.parse({

@@ -33,6 +33,7 @@ type ActiveLorebookEntriesButtonProps = {
   buttonClassName?: string | ((state: ButtonClassNameInput) => string);
   iconSize?: number | string;
   title?: string;
+  onViewAll?: () => void;
 };
 
 function ActiveLorebookEntriesLoadingFallback() {
@@ -48,10 +49,12 @@ export function ActiveLorebookEntriesModal({
   chatId,
   open,
   onClose,
+  onViewAll,
 }: {
   chatId: string | null;
   open: boolean;
   onClose: () => void;
+  onViewAll?: () => void;
 }) {
   if (!open || !chatId) return null;
 
@@ -60,7 +63,7 @@ export function ActiveLorebookEntriesModal({
       <div className="absolute inset-0 bg-black/30" onClick={onClose} />
       <div className={PANEL_CONTAINER} onClick={(e) => e.stopPropagation()}>
         <Suspense fallback={<ActiveLorebookEntriesLoadingFallback />}>
-          <ActiveLorebookEntriesPanel chatId={chatId} isMobile onClose={onClose} />
+          <ActiveLorebookEntriesPanel chatId={chatId} isMobile onClose={onClose} onViewAll={onViewAll} />
         </Suspense>
       </div>
     </div>,
@@ -73,6 +76,7 @@ export function ActiveLorebookEntriesButton({
   buttonClassName,
   iconSize = "0.875rem",
   title = "Active Context",
+  onViewAll,
 }: ActiveLorebookEntriesButtonProps) {
   const [open, setOpen] = useState(false);
   const { data, isLoading } = useActiveLorebookEntries(chatId, true);
@@ -121,7 +125,7 @@ export function ActiveLorebookEntriesButton({
       </button>
       {open &&
         (isMobile ? (
-          <ActiveLorebookEntriesModal chatId={chatId} open={open} onClose={() => setOpen(false)} />
+          <ActiveLorebookEntriesModal chatId={chatId} open={open} onClose={() => setOpen(false)} onViewAll={onViewAll} />
         ) : (
           <div
             className={cn(
@@ -131,7 +135,7 @@ export function ActiveLorebookEntriesButton({
             )}
           >
             <Suspense fallback={<ActiveLorebookEntriesLoadingFallback />}>
-              <ActiveLorebookEntriesPanel chatId={chatId} isMobile={isMobile} onClose={() => setOpen(false)} />
+              <ActiveLorebookEntriesPanel chatId={chatId} isMobile={isMobile} onClose={() => setOpen(false)} onViewAll={onViewAll} />
             </Suspense>
           </div>
         ))}
