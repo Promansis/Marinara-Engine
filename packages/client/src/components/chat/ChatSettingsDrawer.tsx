@@ -169,6 +169,7 @@ import {
   isAgentConfigDeleted,
   isAgentHiddenFromChatSettingsPicker,
   isBuiltInAgentRuntimeDisabled,
+  isManagedAgentType,
   isRetiredBuiltInAgentId,
   mergeBuiltInAgentSettings,
   normalizeAgentPhaseForType,
@@ -433,6 +434,7 @@ type AvailableAgent = {
   phase: AgentPhase;
   builtIn: boolean;
   runtimeDisabled?: boolean;
+  managed?: boolean;
 };
 
 type DrawerPersona = {
@@ -1000,6 +1002,18 @@ export function ChatSettingsDrawer({
         if (isAgentConfigDeleted(c.settings)) continue;
         if (isRetiredBuiltInAgentId(c.type)) continue;
         if (!BUILT_IN_AGENTS.some((b) => b.id === c.type)) {
+          if (isManagedAgentType(c.type)) {
+            agents.push({
+              id: c.type,
+              name: c.name,
+              description: c.description,
+              category: "memory",
+              phase: normalizeAgentPhaseForType(c.type, c.phase),
+              builtIn: false,
+              managed: true,
+            });
+            continue;
+          }
           agents.push({
             id: c.type,
             name: c.name,
@@ -2223,14 +2237,17 @@ export function ChatSettingsDrawer({
     const { agent, config, contextSize, maxTokens, runInterval, setup } = agentAddPreview;
     const normalizedMaxTokens = normalizeAgentMaxTokens(maxTokens);
     const builtInMeta = BUILT_IN_AGENTS.find((entry) => entry.id === agent.id) ?? null;
+    const isManaged = isManagedAgentType(agent.id);
     let nextSettings: Record<string, unknown> = {
       ...mergeBuiltInAgentSettings(agent.id, config?.settings),
-      contextSize,
-      maxTokens: normalizedMaxTokens,
     };
-    const intervalMeta = getAgentRunIntervalMeta(agent.id, !!builtInMeta);
-    if (intervalMeta && runInterval != null) {
-      nextSettings.runInterval = runInterval;
+    if (!isManaged) {
+      nextSettings.contextSize = contextSize;
+      nextSettings.maxTokens = normalizedMaxTokens;
+      const intervalMeta = getAgentRunIntervalMeta(agent.id, !!builtInMeta);
+      if (intervalMeta && runInterval != null) {
+        nextSettings.runInterval = runInterval;
+      }
     }
     nextSettings = applyAgentAddSetupToAgentSettings(agent.id, setup, nextSettings, {
       allowSecretPlot: supportsNarrativeDirectorSecretPlot,
@@ -6691,7 +6708,7 @@ export function ChatSettingsDrawer({
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-semibold text-[var(--foreground)]">{agentAddPreview.agent.name}</p>
                     <span className="rounded-full bg-[var(--accent)] px-2 py-0.5 text-[0.5625rem] uppercase tracking-wide text-[var(--muted-foreground)]">
-                      {agentAddPreview.agent.builtIn ? agentAddPreview.agent.category : "custom"}
+                      {agentAddPreview.agent.category}
                     </span>
                   </div>
                   <p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-[var(--muted-foreground)]">
@@ -6701,7 +6718,11 @@ export function ChatSettingsDrawer({
               </div>
             </div>
 
-            {agentAddIsRuntimeDisabled ? (
+            {agentAddPreview.agent.managed ? (
+              <div className="rounded-xl bg-[var(--secondary)]/70 px-3 py-2.5 text-[0.6875rem] leading-5 text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                This agent runs as a connectionless retrieval step — no model call or token budget is needed.
+              </div>
+            ) : agentAddIsRuntimeDisabled ? (
               <div className="rounded-xl bg-[var(--secondary)]/70 px-3 py-2.5 text-[0.6875rem] leading-5 text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
                 This adds its instructions to the next Roleplay prompt. It does not make a separate model call or use an
                 agent connection.
