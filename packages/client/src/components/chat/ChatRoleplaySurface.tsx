@@ -41,8 +41,7 @@ import { getTranscriptRenderWindow, TRANSCRIPT_RENDER_WINDOW_STEP } from "../../
 import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { useGameStateStore } from "../../stores/game-state.store";
-import { useActiveLorebookEntries, useLorebooks } from "../../hooks/use-lorebooks";
-import { usePresetFull, usePresets } from "../../hooks/use-presets";
+import { usePresetFull } from "../../hooks/use-presets";
 import { ChatMessage } from "./ChatMessage";
 import { ChatInput } from "./ChatInput";
 import { CyoaChoices } from "./CyoaChoices";
@@ -80,36 +79,6 @@ import type {
 
 type ChatData = ComponentProps<typeof ChatCommonOverlays>["chat"];
 type LorebookEntryStatus = "normal" | "constant" | "selective";
-
-const ACTIVE_CONTEXT_STATUS_STYLE: Record<
-  LorebookEntryStatus,
-  { label: string; dot: string; row: string; badge: string }
-> = {
-  normal: {
-    label: "NORMAL",
-    dot: "bg-emerald-400",
-    row: "border-emerald-400/20 bg-emerald-400/10",
-    badge: "bg-emerald-400/15 text-emerald-300 ring-1 ring-emerald-400/20",
-  },
-  constant: {
-    label: "CONST",
-    dot: "bg-yellow-300",
-    row: "border-yellow-300/25 bg-yellow-300/10",
-    badge: "bg-yellow-300/15 text-yellow-200 ring-1 ring-yellow-300/20",
-  },
-  selective: {
-    label: "SELECT",
-    dot: "bg-red-400",
-    row: "border-red-400/25 bg-red-400/10",
-    badge: "bg-red-400/15 text-red-200 ring-1 ring-red-400/20",
-  },
-};
-
-function getActiveContextEntryStatus(entry: { constant?: boolean; selective?: boolean }): LorebookEntryStatus {
-  if (entry.constant) return "constant";
-  if (entry.selective) return "selective";
-  return "normal";
-}
 
 const RoleplayHUD = lazy(async () => {
   const module = await import("./RoleplayHUD");
@@ -342,6 +311,65 @@ function RegeneratingMessageContent({
 function isHiddenFromUser(message: MessageWithSwipes) {
   const extra = typeof message.extra === "string" ? JSON.parse(message.extra) : (message.extra ?? {});
   return extra.hiddenFromUser === true;
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.length > 0)
+    : [];
+}
+
+function promptEnabled(value: unknown): boolean {
+  return value !== false && value !== "false";
+}
+
+function readMarkerConfig(value: unknown): MarkerConfig | null {
+  if (!value) return null;
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as MarkerConfig;
+    } catch {
+      return null;
+    }
+  }
+  return typeof value === "object" ? (value as MarkerConfig) : null;
+}
+
+function groupPathEnabled(groupId: string | null, groupsById: Map<string, PromptGroup>): boolean {
+  let currentId = groupId;
+  const seen = new Set<string>();
+  while (currentId) {
+    if (seen.has(currentId)) return true;
+    seen.add(currentId);
+    const group = groupsById.get(currentId);
+    if (!group) return true;
+    if (!promptEnabled(group.enabled)) return false;
+    currentId = group.parentGroupId;
+  }
+  return true;
+}
+
+function resolveChatSummaryInjectionHint(
+  presetFull: { sections: PromptSection[]; groups: PromptGroup[] } | null | undefined,
+): string | null {
+  if (!presetFull) return null;
+
+  const groupsById = new Map(presetFull.groups.map((group) => [group.id, group]));
+  const summarySections = presetFull.sections.filter((section) => {
+    const isMarker = (section.isMarker as unknown) === true || (section.isMarker as unknown) === "true";
+    return isMarker && readMarkerConfig(section.markerConfig)?.type === "chat_summary";
+  });
+
+  if (summarySections.length === 0) {
+    return "Active preset has no Chat Summary marker, so enabled summaries will not be inserted.";
+  }
+  if (!summarySections.some((section) => promptEnabled(section.enabled))) {
+    return "Chat Summary section is disabled in the active preset.";
+  }
+  if (!summarySections.some((section) => promptEnabled(section.enabled) && groupPathEnabled(section.groupId, groupsById))) {
+    return "Chat Summary section is inside a disabled preset group.";
+  }
+  return null;
 }
 
 function SummaryButton({

@@ -224,7 +224,6 @@ function keepaliveFetch(path: string, init?: RequestInit): KeepaliveRequestResul
     return { dispatched: false };
   }
 }
-}
 
 export const api = {
   raw: (path: string, init?: RequestInit) => apiFetch(path, init),

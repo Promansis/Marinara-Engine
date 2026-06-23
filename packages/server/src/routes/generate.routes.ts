@@ -2191,7 +2191,7 @@ export async function generateRoutes(app: FastifyInstance) {
             presets.listGroups(presetId),
             presets.listChoiceBlocksForPreset(presetId),
           ]);
-          const presetGameState = chatMode === "game" ? await selectedGameStateForPrompt() : null;
+          const presetGameState = null;
           for (const section of sections) {
             if (section.enabled !== "true" || section.isMarker !== "true" || !section.markerConfig) continue;
             try {
