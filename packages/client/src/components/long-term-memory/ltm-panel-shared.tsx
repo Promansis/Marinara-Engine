@@ -288,6 +288,36 @@ export function sourceSummaryEvidence(note: LtmNote) {
   return note.sections.source?.evidence ?? [];
 }
 
+function firstSectionEntry(mutation: LtmDraftMutation) {
+  if (mutation.kind !== "create_note") return null;
+  return Object.entries(mutation.note.sections)[0] ?? null;
+}
+
+export function mutationTargetTitle(mutation: LtmDraftMutation) {
+  if (mutation.kind === "create_note") return friendlyNoteTitle(mutation.note);
+  return friendlyIdentifier(mutation.noteId);
+}
+
+export function compactMutationText(mutation: LtmDraftMutation, noteLookup: Map<string, LtmNote>) {
+  if (mutation.kind === "create_note") {
+    const first = firstSectionEntry(mutation);
+    return first?.[1].text ?? "";
+  }
+  if (mutation.kind === "append_section") return mutation.text;
+  if (mutation.kind === "update_section") return mutation.section.text;
+  if (mutation.kind === "add_link") {
+    const targetNote = noteLookup.get(mutation.link.target);
+    const targetLabel = targetNote ? friendlyNoteTitle(targetNote) : friendlyIdentifier(mutation.link.target);
+    return `${friendlyIdentifier(mutation.link.relation)}: ${targetLabel}`;
+  }
+  if (mutation.kind === "set_status") return friendlyStatus(mutation.status);
+  return "Unknown mutation";
+}
+
+export function suggestionRowKey(draftId: string, mutationId: string) {
+  return `${draftId}:${mutationId}`;
+}
+
 export function sourceSummaryEvidenceValue(note: LtmNote, prefix: string) {
   const item = sourceSummaryEvidence(note).find((entry) => entry.startsWith(prefix));
   return item?.slice(prefix.length).trim();
