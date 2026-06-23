@@ -778,7 +778,7 @@ type RoleplaySurfaceProps = {
   isForkingScene?: boolean;
   onOpenSettings: (event?: ReactMouseEvent<HTMLElement>) => void;
   onOpenGallery: (event?: ReactMouseEvent<HTMLElement>) => void;
-  onOpenVault?: (payload?: { initialTab?: "notes" | "import" | "suggestions"; sourceNoteId?: string }) => void;
+  onOpenVault?: (payload?: { initialTab?: "notes" | "import" | "review" | "suggestions"; sourceNoteId?: string }) => void;
   onCloseSettings: () => void;
   onCloseGallery: () => void;
   onIllustrate?: () => void;

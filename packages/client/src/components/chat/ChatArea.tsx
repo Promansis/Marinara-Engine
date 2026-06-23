@@ -480,7 +480,7 @@ export function ChatArea() {
   const [homeProfessorChatOpen, setHomeProfessorChatOpen] = useState(false);
   const [homeProfessorChatActive, setHomeProfessorChatActive] = useState(false);
   const homeProfessorChatOpenRef = useRef(false);
-  const [vaultOpen, setVaultOpen] = useState<{ initialTab?: "notes" | "import" | "suggestions"; sourceNoteId?: string } | null>(null);
+  const [vaultOpen, setVaultOpen] = useState<{ initialTab?: "notes" | "import" | "review" | "suggestions"; sourceNoteId?: string } | null>(null);
   const vaultOpenBool = vaultOpen !== null;
   const { data: agentConfigs } = useAgentConfigs();
   const ltmAgentConfig = useMemo(

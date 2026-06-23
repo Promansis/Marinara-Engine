@@ -75,7 +75,7 @@ interface ConversationViewProps {
   lastAssistantMessageId: string | null;
   onOpenSettings: (event?: ReactMouseEvent<HTMLElement>, options?: { initialSection?: "autonomous" | null }) => void;
   onOpenGallery: (event?: ReactMouseEvent<HTMLElement>) => void;
-  onOpenVault?: (payload?: { initialTab?: "notes" | "import" | "suggestions"; sourceNoteId?: string }) => void;
+  onOpenVault?: (payload?: { initialTab?: "notes" | "import" | "review" | "suggestions"; sourceNoteId?: string }) => void;
   onBranch?: (messageId: string) => void;
   multiSelectMode?: boolean;
   selectedMessageIds?: Set<string>;

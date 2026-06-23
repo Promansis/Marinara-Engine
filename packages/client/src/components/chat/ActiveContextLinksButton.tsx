@@ -39,7 +39,7 @@ type Props = {
   chatCharIds: string[];
   characterMap: CharacterMap;
   onViewAll?: () => void;
-  onOpenVault?: (payload?: { initialTab?: "notes" | "import" | "suggestions"; sourceNoteId?: string }) => void;
+  onOpenVault?: (payload?: { initialTab?: "notes" | "import" | "review" | "suggestions"; sourceNoteId?: string }) => void;
 };
 
 export function ActiveContextLinksButton({
@@ -150,7 +150,7 @@ export function ActiveContextLinksButton({
     setOpen(false);
   };
 
-  const handleOpenVault = (payload?: { initialTab?: "notes" | "import" | "suggestions"; sourceNoteId?: string }) => {
+  const handleOpenVault = (payload?: { initialTab?: "notes" | "import" | "review" | "suggestions"; sourceNoteId?: string }) => {
     if (onOpenVault) {
       onOpenVault(payload);
     } else if (onViewAll) {
@@ -233,7 +233,7 @@ export function ActiveContextLinksButton({
           <div className="mb-2 rounded-lg p-2 text-xs ring-1 ring-[var(--border)]">
             <button
               type="button"
-              onClick={() => handleOpenVault({ initialTab: "notes" })}
+              onClick={() => handleOpenVault({ initialTab: "review" })}
               className="flex w-full items-center gap-2 rounded-lg px-1 py-1.5 text-xs ring-1 ring-[var(--border)] hover:bg-[var(--accent)]"
             >
               <BrainCircuit size="0.75rem" className="text-[var(--primary)]" />

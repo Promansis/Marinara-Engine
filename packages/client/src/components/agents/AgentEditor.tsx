@@ -522,7 +522,7 @@ export function AgentEditor() {
   const [localIncludeParallelResults, setLocalIncludeParallelResults] = useState(false);
   const [localEnabledTools, setLocalEnabledTools] = useState<string[]>([]);
   const [toolsSectionOpen, setToolsSectionOpen] = useState(false);
-  const [vaultOpen, setVaultOpen] = useState<{ initialTab?: "notes" | "import" | "suggestions"; sourceNoteId?: string } | null>(null);
+  const [vaultOpen, setVaultOpen] = useState<{ initialTab?: "notes" | "import" | "review" | "suggestions"; sourceNoteId?: string } | null>(null);
   const memoriesModalOpen = vaultOpen !== null;
   const [ltmSettingsOpen, setLtmSettingsOpen] = useState(false);
   const [ltmAdvancedOpen, setLtmAdvancedOpen] = useState(false);
