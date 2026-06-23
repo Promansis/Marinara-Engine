@@ -8,6 +8,7 @@ import {
   ChevronRight,
   ListChecks,
   Loader2,
+  MoreHorizontal,
   Save,
   Wrench,
   X,
@@ -32,6 +33,7 @@ import {
   type ExtractLongTermMemorySourceResponse,
 } from "../../hooks/use-long-term-memory";
 import { cn } from "../../lib/utils";
+import { showConfirmDialog } from "../../lib/app-dialogs";
 import {
   actionRowClassName,
   helperTextClassName,
@@ -64,22 +66,22 @@ function mutationGroup(mutation: LtmDraftMutation): SuggestionGroup {
 function mutationKindLabel(kind: LtmDraftMutation["kind"]) {
   switch (kind) {
     case "create_note":
-      return "New memory";
+      return "New";
     case "append_section":
-      return "Add detail";
+      return "Add to existing";
     case "update_section":
-      return "Rewrite detail";
+      return "Update existing";
     case "add_link":
-      return "Related memory";
+      return "Link";
     case "set_status":
-      return "Status change";
+      return "Status";
   }
 }
 
 function mutationRiskLabel(risk: LtmDraftMutation["risk"]) {
   if (risk === "low") return "Low risk";
-  if (risk === "medium") return "Review";
-  return "Careful";
+  if (risk === "medium") return "Check first";
+  return "Major change";
 }
 
 function mutationRiskTone(risk: LtmDraftMutation["risk"]) {
@@ -195,7 +197,7 @@ function summarizeBulkKeep(keptCount: number, failedDraftCount: number, autoIncl
   return {
     tone: "error" as const,
     message:
-      `${summary}; ${failedDraftCount} draft${failedDraftCount === 1 ? "" : "s"} failed.${dependencySummary}`.trim(),
+      `${summary}; ${failedDraftCount} suggestion${failedDraftCount === 1 ? "" : "s"} failed.${dependencySummary}`.trim(),
   };
 }
 
@@ -204,7 +206,7 @@ function summarizeBulkSkip(skippedCount: number, failedDraftCount: number) {
   if (failedDraftCount === 0) return { tone: "success" as const, message: `${summary}.` };
   return {
     tone: "error" as const,
-    message: `${summary}; ${failedDraftCount} draft${failedDraftCount === 1 ? "" : "s"} failed.`,
+    message: `${summary}; ${failedDraftCount} suggestion${failedDraftCount === 1 ? "" : "s"} failed.`,
   };
 }
 
@@ -256,6 +258,33 @@ export function LongTermMemorySuggestionsTab({
     deleteDraftMutation.isPending ||
     extractSourceNote.isPending ||
     skipDraftMutations.isPending;
+
+  const runExtraction = async () => {
+    const confirmed = await showConfirmDialog({
+      title: "Re-run extraction?",
+      message:
+        "This will ask the AI to read the source again and create a new batch of suggestions. Your existing pending suggestions will stay. Continue?",
+      confirmLabel: "Re-run",
+    });
+    if (!confirmed) return;
+    extractSourceNote
+      .mutateAsync({
+        noteId: note.id,
+        applyLowRisk: autoApplyLowRisk,
+        connectionId: connectionId.trim() || undefined,
+        instruction: instruction.trim() || undefined,
+        model: model.trim() || undefined,
+      })
+      .then((result) => {
+        setLatestResult({
+          draft: result.draft,
+          outcome: result.outcome,
+          diagnostics: result.diagnostics,
+        });
+        toast.success(toastForExtractionResult(result, autoApplyLowRisk));
+      })
+      .catch((err: Error) => toast.error(err.message));
+  };
 
   useEffect(() => {
     setLatestResult(null);
@@ -508,42 +537,30 @@ export function LongTermMemorySuggestionsTab({
               {selectMode ? <X size="0.875rem" /> : <ListChecks size="0.875rem" />}
               {selectMode ? "Cancel" : "Select"}
             </ToolButton>
-            <ToolButton
-              onClick={() =>
-                extractSourceNote
-                  .mutateAsync({
-                    noteId: note.id,
-                    applyLowRisk: autoApplyLowRisk,
-                    connectionId: connectionId.trim() || undefined,
-                    instruction: instruction.trim() || undefined,
-                    model: model.trim() || undefined,
-                  })
-                  .then((result) => {
-                    setLatestResult({
-                      draft: result.draft,
-                      outcome: result.outcome,
-                      diagnostics: result.diagnostics,
-                    });
-                    toast.success(toastForExtractionResult(result, autoApplyLowRisk));
-                  })
-                  .catch((err: Error) => toast.error(err.message))
-              }
-              disabled={rowActionsDisabled}
-              tone="primary"
-            >
-              {extractSourceNote.isPending ? (
-                <Loader2 size="0.875rem" className="animate-spin" />
-              ) : (
-                <BrainCircuit size="0.875rem" />
-              )}
-              Extract Memory Streams
-            </ToolButton>
+            {rows.length === 0 ? (
+              <ToolButton
+                onClick={runExtraction}
+                disabled={rowActionsDisabled}
+                tone="primary"
+              >
+                {extractSourceNote.isPending ? (
+                  <Loader2 size="0.875rem" className="animate-spin" />
+                ) : (
+                  <BrainCircuit size="0.875rem" />
+                )}
+                Re-run extraction
+              </ToolButton>
+            ) : (
+              <ToolButton
+                onClick={runExtraction}
+                disabled={rowActionsDisabled}
+              >
+                <MoreHorizontal size="0.875rem" />
+                Re-run extraction
+              </ToolButton>
+            )}
           </div>
         </div>
-        <p className={cn("mt-3", helperTextClassName)}>
-          Uses the shared extraction defaults from the Tools tab, including mode, model overrides, and low-risk
-          auto-apply.
-        </p>
       </div>
 
       {latestResult?.outcome ? (
@@ -904,7 +921,7 @@ function SuggestionRow({
               <div className="flex flex-wrap items-center gap-1.5">
                 <StatusPill label={mutationKindLabel(mutation.kind)} />
                 <StatusPill label={mutationRiskLabel(mutation.risk)} tone={mutationRiskTone(mutation.risk)} />
-                <StatusPill label={`Confidence ${Math.round(mutation.confidence * 100)}%`} />
+                <StatusPill label="AI confident" title={`AI is ${Math.round(mutation.confidence * 100)}% confident`} />
                 <StatusPill label={referenceLabel(mutation.evidence.length)} />
                 <StatusPill label={draftStatusLabel(draft.status)} />
                 {hasEdits ? <StatusPill label="edited" /> : null}

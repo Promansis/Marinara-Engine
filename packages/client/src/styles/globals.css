@@ -5500,6 +5500,9 @@ strong {
   .mari-professor-pixel-scene[data-state="active"] [data-part="base"] i {
     animation: none;
   }
+  .animate-pulse-ring {
+    animation: none;
+  }
 }
 
 @keyframes mari-professor-idle-bob {

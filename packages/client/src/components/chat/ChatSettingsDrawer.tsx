@@ -155,7 +155,7 @@ import type {
   PromptPreset,
 } from "@marinara-engine/shared";
 import { useAgentConfigs, useCreateAgent, useUpdateAgent, type AgentConfigRow } from "../../hooks/use-agents";
-import { useLongTermMemorySettings } from "../../hooks/use-long-term-memory";
+import { useLastInjection, useLongTermMemorySettings } from "../../hooks/use-long-term-memory";
 import { RecallSettingsControls } from "../long-term-memory/RecallSettingsControls";
 import { useAgentStore } from "../../stores/agent.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
@@ -1450,6 +1450,7 @@ export function ChatSettingsDrawer({
     [chat.id, updateMeta],
   );
   const ltmGlobalSettings = useLongTermMemorySettings({ enabled: ltmActive });
+  const ltmLastInjection = useLastInjection(chat.id, { enabled: ltmActive });
   const toggleLtmEnabled = useCallback(() => {
     updateMeta.mutate({ id: chat.id, enableLongTermMemory: metadata.enableLongTermMemory === false });
   }, [chat.id, metadata.enableLongTermMemory, updateMeta]);
@@ -6490,35 +6491,18 @@ export function ChatSettingsDrawer({
                           enabled={metadata.enableLongTermMemory !== false}
                           onToggle={toggleLtmEnabled}
                         />
-                        <label className="flex flex-col gap-1">
-                          <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                            Memory budget
-                          </span>
-                          <div className="grid grid-cols-[1fr_5.5rem] items-center gap-3">
-                            <input
-                              type="range"
-                              min={128}
-                              max={16384}
-                              step={128}
-                              value={metadata.longTermMemoryBudgetTokens ?? ltmGlobalSettings.data?.longTermMemoryBudgetTokens ?? 4096}
-                              onChange={(event) =>
-                                updateMeta.mutate({ id: chat.id, longTermMemoryBudgetTokens: Number(event.target.value) })
-                              }
-                              className="min-w-0 accent-[var(--primary)]"
-                            />
-                            <input
-                              type="number"
-                              min={128}
-                              max={16384}
-                              step={128}
-                              value={metadata.longTermMemoryBudgetTokens ?? ltmGlobalSettings.data?.longTermMemoryBudgetTokens ?? 4096}
-                              onChange={(event) =>
-                                updateMeta.mutate({ id: chat.id, longTermMemoryBudgetTokens: Number(event.target.value) })
-                              }
-                              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)]"
-                            />
-                          </div>
-                        </label>
+                        {(metadata.enableLongTermMemory === false) && (
+                          <p className="text-xs text-[var(--muted-foreground)]">
+                            Memory is off for this chat — turn it on to recall facts into your messages.
+                          </p>
+                        )}
+                        {metadata.enableLongTermMemory !== false &&
+                          (ltmLastInjection.data?.memoryCount ?? 0) === 0 &&
+                          !ltmLastInjection.isLoading && (
+                            <p className="text-xs text-[var(--muted-foreground)]">
+                              Send a message to see recalled memories.
+                            </p>
+                          )}
                         <div className="mt-2">
                           <RecallSettingsControls
                             values={{
@@ -6542,6 +6526,38 @@ export function ChatSettingsDrawer({
                             Advanced recall settings
                           </summary>
                           <div className="mt-2">
+                            <label className="flex flex-col gap-1">
+                              <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                                Max memory size in prompt
+                              </span>
+                              <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                                How many tokens of memory to include. Higher = more context, less room for your message.
+                              </p>
+                              <div className="grid grid-cols-[1fr_5.5rem] items-center gap-3">
+                                <input
+                                  type="range"
+                                  min={128}
+                                  max={16384}
+                                  step={128}
+                                  value={metadata.longTermMemoryBudgetTokens ?? ltmGlobalSettings.data?.longTermMemoryBudgetTokens ?? 4096}
+                                  onChange={(event) =>
+                                    updateMeta.mutate({ id: chat.id, longTermMemoryBudgetTokens: Number(event.target.value) })
+                                  }
+                                  className="min-w-0 accent-[var(--primary)]"
+                                />
+                                <input
+                                  type="number"
+                                  min={128}
+                                  max={16384}
+                                  step={128}
+                                  value={metadata.longTermMemoryBudgetTokens ?? ltmGlobalSettings.data?.longTermMemoryBudgetTokens ?? 4096}
+                                  onChange={(event) =>
+                                    updateMeta.mutate({ id: chat.id, longTermMemoryBudgetTokens: Number(event.target.value) })
+                                  }
+                                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)]"
+                                />
+                              </div>
+                            </label>
                             <RecallSettingsControls
                               values={{
                                 longTermMemoryBudgetTokens: metadata.longTermMemoryBudgetTokens ?? ltmGlobalSettings.data?.longTermMemoryBudgetTokens ?? 4096,

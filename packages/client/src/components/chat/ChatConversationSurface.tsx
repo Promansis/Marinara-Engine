@@ -60,7 +60,7 @@ type ConversationSurfaceProps = {
   onSwitchChat?: () => void;
   onConcludeScene?: () => void;
   onAbandonScene?: () => void;
-  onOpenVault?: () => void;
+  onOpenVault?: (payload?: { initialTab?: "notes" | "import" | "suggestions"; sourceNoteId?: string }) => void;
   onOpenSettings: ComponentProps<typeof ConversationView>["onOpenSettings"];
   onOpenGallery: ComponentProps<typeof ConversationView>["onOpenGallery"];
   onCloseSettings: () => void;
@@ -153,6 +153,7 @@ export function ChatConversationSurface({
       <div className="relative flex flex-1 flex-col overflow-hidden">
         <ConversationView
           chatId={activeChatId}
+          chat={chat}
           messages={messages}
           isLoading={isLoading}
           hasNextPage={hasNextPage}

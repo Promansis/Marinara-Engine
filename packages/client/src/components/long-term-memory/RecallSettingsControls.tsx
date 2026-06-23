@@ -215,6 +215,7 @@ export function RecallSettingsControls({
 
       {showExpert && (
         <SettingGroup label="Ranking Weights">
+          <p className="text-[0.625rem] text-[var(--muted-foreground)] mb-2">Fine-tune how memories are found. Leave at default unless recall feels off.</p>
           <div className="space-y-2">
             {[
               { label: "Meaning", key: "longTermMemorySemanticWeight" as const, value: semanticWeight, max: 1 },

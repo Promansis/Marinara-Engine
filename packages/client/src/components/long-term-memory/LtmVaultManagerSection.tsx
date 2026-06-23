@@ -48,7 +48,7 @@ import {
 import { LongTermMemoryDebugLogModal } from "../long-term-memory/LongTermMemoryDebugLogModal";
 import { MemoryNoteModal, defaultMemoryModalTab } from "../long-term-memory/LongTermMemoryNoteModal";
 import { TypeMemoryGroups } from "../long-term-memory/LongTermMemoryNoteList";
-import { DraftDetails, ImportPreviewRowItem } from "../long-term-memory/LongTermMemoryImportSection";
+import { ImportPreviewRowItem } from "../long-term-memory/LongTermMemoryImportSection";
 import { LongTermMemoryNoteTransferModal } from "../long-term-memory/LongTermMemoryNoteTransferModal";
 import { friendlyNoteType, friendlyStatus, type LtmDisplayLookupContext } from "../long-term-memory/ltm-editor-utils";
 import {
@@ -111,6 +111,8 @@ type LtmImportSource = "characters" | "lorebooks" | "chats";
 interface LtmVaultManagerSectionProps {
   agentConfig: AgentConfigRow;
   agentSettings: Record<string, unknown>;
+  initialTab?: "notes" | "import" | "suggestions";
+  sourceNoteId?: string;
 }
 
 function extractPanelPrefs(settings: Record<string, unknown>) {
@@ -136,7 +138,7 @@ function extractPanelPrefs(settings: Record<string, unknown>) {
   };
 }
 
-export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSettings }: LtmVaultManagerSectionProps) {
+export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSettings, initialTab, sourceNoteId }: LtmVaultManagerSectionProps) {
   const panelPrefs = useMemo(() => extractPanelPrefs(agentSettings ?? {}), [agentSettings]);
   const autoApplyLowRisk = panelPrefs.autoApplyLowRisk;
   const connectionId = panelPrefs.connectionId;
@@ -184,7 +186,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     [agentSettings, updateAgentByType],
   );
 
-  const [tab, setTab] = useState<TabId>("notes");
+  const [tab, setTab] = useState<TabId>(initialTab === "import" ? "import" : "notes");
   const [noteType, setNoteType] = useState<"all" | LtmNoteType>("all");
   const [noteStatus, setNoteStatus] = useState<"all" | LtmStatus>("all");
   const [query, setQuery] = useState("");
@@ -202,7 +204,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const [editedNoteDirty, setEditedNoteDirty] = useState(false);
   const [expandedTypeIds, setExpandedTypeIds] = useState<Set<string>>(() => new Set());
   const [expandedMemoryIds, setExpandedMemoryIds] = useState<Set<string>>(() => new Set());
-  const [viewingDraftId, setViewingDraftId] = useState<string | null>(null);
   const [navigatorSelection, setNavigatorSelection] = useState<LtmNavigatorSelection>({ groupId: null, chatId: null });
   const [navigatorQuery, setNavigatorQuery] = useState("");
 
@@ -234,6 +235,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const importInstruction = ltmSettings?.instruction ?? "";
   const importModel = ltmSettings?.model ?? "";
   const legacyMigrationAttemptedRef = useRef(false);
+  const sourceNoteOpenedRef = useRef<string | null>(null);
   const selectedNavigatorThread = useMemo(
     () => findNavigatorThread(navigatorThreads, navigatorSelection),
     [navigatorSelection, navigatorThreads],
@@ -269,9 +271,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const allDrafts = useLongTermMemoryDrafts(
     {},
     {
-      enabled:
-        Boolean(openNoteId) ||
-        Boolean(viewingDraftId),
+      enabled: Boolean(openNoteId),
     },
   );
   const exactViewingNote = useLongTermMemoryNote(openNoteId ?? undefined);
@@ -414,10 +414,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
         : null,
     [combinedNotes, exactViewingNote.data, openNoteId],
   );
-  const viewingDraft = useMemo(
-    () => (viewingDraftId ? (combinedDrafts.find((draft) => draft.id === viewingDraftId) ?? null) : null),
-    [combinedDrafts, viewingDraftId],
-  );
   const editedNoteFilteredOut = Boolean(openNote && !filteredNotes.some((note) => note.id === openNote.id));
   const editingNoteHiddenByFilters = Boolean(editedNoteFilteredOut && openNote && memoryModalMode === "edit");
   const viewingRecallQuery = openNote ? (recallQueryByNoteId[openNote.id] ?? "") : "";
@@ -448,15 +444,24 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     });
   }, [notes.data]);
 
+  useEffect(() => {
+    if (!sourceNoteId || sourceNoteOpenedRef.current === sourceNoteId) return;
+    if (notes.data && !notes.isLoading) {
+      const sourceNote = notes.data.find((n) => n.id === sourceNoteId);
+      if (sourceNote) {
+        sourceNoteOpenedRef.current = sourceNoteId;
+        setTab("notes");
+        openMemory(sourceNoteId, { mode: "view" });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceNoteId, notes.data, notes.isLoading]);
+
   const closeMemoryModal = () => {
     setOpenNoteId(null);
     setMemoryModalMode("view");
     setMemoryModalTab("overview");
     setEditedNoteDirty(false);
-  };
-
-  const closeDraftViewer = () => {
-    setViewingDraftId(null);
   };
 
   const closeCreateForm = () => {
@@ -489,7 +494,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     if (memoryModalMode === "edit" && !(await confirmDiscardEditor())) return;
     if (creatingNote) closeCreateForm();
     if (openNoteId) closeMemoryModal();
-    if (viewingDraftId) closeDraftViewer();
     setTab(nextTab);
   };
 
@@ -498,7 +502,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     if (memoryModalMode === "edit" && !(await confirmDiscardEditor())) return;
     if (creatingNote && !(await confirmDiscardCreate())) return;
     closeCreateForm();
-    setViewingDraftId(null);
     setOpenNoteId(id);
     setMemoryModalMode(options.mode ?? "view");
     const nextNote = noteLookup.get(id) ?? openNote;
@@ -543,7 +546,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     if (!(await confirmDiscardEditor())) return;
     closeMemoryModal();
     setEditedNoteDirty(false);
-    closeDraftViewer();
     setCreatingNote(true);
   };
 
@@ -598,7 +600,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
 
     if (!(await confirmDiscardEditor()) || !(await confirmDiscardCreate())) return;
     closeMemoryModal();
-    closeDraftViewer();
     setCreateNoteDraft({
       type: defaultType,
       id: defaultId,
@@ -1257,21 +1258,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
         onRecoverDroppedCandidate={openRecoveryDraft}
       />
 
-      <Modal
-        open={Boolean(viewingDraft)}
-        onClose={closeDraftViewer}
-        title={viewingDraft?.summary || "View Suggestion"}
-        width="max-w-4xl"
-      >
-        {viewingDraft && (
-          <DraftDetails
-            draft={viewingDraft}
-            noteLookup={noteLookup}
-            chatLookup={chatLookup}
-            onOpenSourceNote={(id) => openMemory(id, { mode: "view" })}
-          />
-        )}
-      </Modal>
       <LongTermMemoryDebugLogModal open={debugLogOpen} onClose={() => setDebugLogOpen(false)} />
       <LongTermMemoryNoteTransferModal
         open={transferModalMode !== null}
