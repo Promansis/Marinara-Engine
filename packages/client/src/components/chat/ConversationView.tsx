@@ -11,6 +11,7 @@ import {
   useCallback,
   useMemo,
   useState,
+  type ComponentProps,
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { Loader2, ChevronUp, Settings2, Image as ImageIcon, ArrowRightLeft } from "lucide-react";
@@ -20,8 +21,8 @@ import { UnoBoard } from "./UnoBoard";
 import { UnoSetup } from "./UnoSetup";
 import { SceneBanner, EndSceneBar } from "./SceneBanner";
 import { ChatBranchSelector } from "./ChatBranchSelector";
-import { ActiveLorebookEntriesButton } from "./ActiveLorebookEntriesButton";
-import { DraftsReadyButton } from "./DraftsReadyButton";
+import { ChatCommonOverlays } from "./ChatCommonOverlays";
+import { ActiveContextLinksButton } from "./ActiveContextLinksButton";
 import { ChatToolbarButton, ChatToolbarMenu } from "./ChatToolbarControls";
 import { ConversationPresenceCard } from "./ConversationPresenceCard";
 import { TranscriptWindowControls } from "./TranscriptWindowControls";
@@ -44,6 +45,7 @@ const ConversationAutonomousEffects = lazy(async () => {
 
 interface ConversationViewProps {
   chatId: string;
+  chat?: ComponentProps<typeof ChatCommonOverlays>["chat"] | null;
   messages: Message[] | undefined;
   isLoading: boolean;
   hasNextPage: boolean;
@@ -67,7 +69,7 @@ interface ConversationViewProps {
   lastAssistantMessageId: string | null;
   onOpenSettings: (event?: ReactMouseEvent<HTMLElement>, options?: { initialSection?: "autonomous" | null }) => void;
   onOpenGallery: (event?: ReactMouseEvent<HTMLElement>) => void;
-  onOpenVault?: () => void;
+  onOpenVault?: (payload?: { initialTab?: "notes" | "import" | "suggestions"; sourceNoteId?: string }) => void;
   onBranch?: (messageId: string) => void;
   multiSelectMode?: boolean;
   selectedMessageIds?: Set<string>;
@@ -241,6 +243,7 @@ const globalSeenKeys = new Set<string>();
 
 export function ConversationView({
   chatId,
+  chat,
   messages,
   isLoading,
   hasNextPage,
@@ -378,8 +381,14 @@ export function ConversationView({
         variant="roleplay"
         compact={compact}
       />
-      <ActiveLorebookEntriesButton chatId={chatId} onViewAll={onOpenVault} />
-      {onOpenVault && <DraftsReadyButton onOpenVault={onOpenVault} />}
+      <ActiveContextLinksButton
+        chat={chat}
+        chatMeta={chatMeta}
+        chatCharIds={chatCharIds}
+        characterMap={characterMap}
+        onViewAll={onOpenVault}
+        onOpenVault={onOpenVault}
+      />
       <ChatToolbarButton icon={<ImageIcon size="0.875rem" />} title="Gallery" onClick={onOpenGallery} />
       {onSwitchChat && (
         <ChatToolbarButton

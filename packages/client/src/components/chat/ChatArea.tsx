@@ -407,7 +407,8 @@ export function ChatArea() {
   const [agentInjectionReview, setAgentInjectionReview] = useState<AgentInjectionReviewRequest | null>(null);
   const [agentInjectionDrafts, setAgentInjectionDrafts] = useState<Record<string, string>>({});
   const [creditsOpen, setCreditsOpen] = useState(false);
-  const [vaultOpen, setVaultOpen] = useState(false);
+  const [vaultOpen, setVaultOpen] = useState<{ initialTab?: "notes" | "import" | "suggestions"; sourceNoteId?: string } | null>(null);
+  const vaultOpenBool = vaultOpen !== null;
   const { data: agentConfigs } = useAgentConfigs();
   const ltmAgentConfig = useMemo(
     () => (agentConfigs as AgentConfigRow[] | undefined)?.find((a) => a.type === "long-term-memory") ?? null,
@@ -2428,7 +2429,7 @@ export function ChatArea() {
             onSwitchChat={chat?.connectedChatId ? () => setActiveChatId(chat.connectedChatId!) : undefined}
             onConcludeScene={chatMeta.sceneStatus === "active" ? () => concludeScene(activeChatId) : undefined}
             onAbandonScene={chatMeta.sceneStatus === "active" ? () => abandonScene(activeChatId) : undefined}
-            onOpenVault={() => setVaultOpen(true)}
+            onOpenVault={(payload) => setVaultOpen(payload ?? {})}
             onOpenSettings={handleOpenSettingsPanel}
             onOpenGallery={handleOpenGalleryPanel}
             onCloseSettings={handleCloseSettingsPanel}
@@ -2552,7 +2553,7 @@ export function ChatArea() {
           onAbandonScene={() => abandonScene(activeChatId)}
           onForkScene={forkScene}
           isForkingScene={isForking || isStreaming}
-          onOpenVault={() => setVaultOpen(true)}
+          onOpenVault={(payload) => setVaultOpen(payload ?? {})}
           onOpenSettings={handleOpenSettingsPanel}
           onOpenGallery={handleOpenGalleryPanel}
           onCloseSettings={handleCloseSettingsPanel}
@@ -2600,15 +2601,17 @@ export function ChatArea() {
         />
       )}
       <Modal
-        open={vaultOpen}
-        onClose={() => setVaultOpen(false)}
+        open={vaultOpenBool}
+        onClose={() => setVaultOpen(null)}
         title="Long-Term Memory"
         width="max-w-5xl"
       >
-        {vaultOpen && ltmAgentConfig && (
+        {vaultOpenBool && ltmAgentConfig && (
           <LtmVaultManagerSection
             agentConfig={ltmAgentConfig}
             agentSettings={JSON.parse(ltmAgentConfig.settings ?? "{}") as Record<string, unknown>}
+            initialTab={vaultOpen?.initialTab}
+            sourceNoteId={vaultOpen?.sourceNoteId}
           />
         )}
       </Modal>
