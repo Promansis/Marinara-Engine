@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import {
   ArrowRightLeft,
   Copy,
+  Eye,
   FileJson,
   History,
   Import,
@@ -111,7 +112,7 @@ type LtmImportSource = "characters" | "lorebooks" | "chats";
 interface LtmVaultManagerSectionProps {
   agentConfig: AgentConfigRow;
   agentSettings: Record<string, unknown>;
-  initialTab?: "notes" | "import" | "suggestions";
+  initialTab?: "notes" | "import" | "review" | "suggestions";
   sourceNoteId?: string;
 }
 
@@ -186,7 +187,9 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     [agentSettings, updateAgentByType],
   );
 
-  const [tab, setTab] = useState<TabId>(initialTab === "import" ? "import" : "notes");
+  const initialTabId: TabId =
+    initialTab === "review" ? "review" : initialTab === "import" ? "import" : "notes";
+  const [tab, setTab] = useState<TabId>(initialTabId);
   const [noteType, setNoteType] = useState<"all" | LtmNoteType>("all");
   const [noteStatus, setNoteStatus] = useState<"all" | LtmStatus>("all");
   const [query, setQuery] = useState("");
@@ -273,6 +276,10 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     {
       enabled: Boolean(openNoteId),
     },
+  );
+  const pendingDraftsForReview = useLongTermMemoryDrafts(
+    { status: "pending" },
+    { enabled: tab === "review" },
   );
   const exactViewingNote = useLongTermMemoryNote(openNoteId ?? undefined);
   const importPreview = useLongTermMemoryImportPreview(
@@ -435,6 +442,23 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
         : [],
     [combinedDrafts, openNote],
   );
+
+  const reviewGroups = useMemo(() => {
+    const drafts = pendingDraftsForReview.data ?? [];
+    const groups = new Map<string, LtmExtractionDraft[]>();
+    for (const draft of drafts) {
+      const sourceNoteId = draft.source.sourceNoteId;
+      if (!sourceNoteId) continue;
+      const existing = groups.get(sourceNoteId);
+      if (existing) existing.push(draft);
+      else groups.set(sourceNoteId, [draft]);
+    }
+    return Array.from(groups.entries()).map(([sourceNoteId, sourceDrafts]) => {
+      const sourceNote = noteLookup.get(sourceNoteId);
+      const totalMutations = sourceDrafts.reduce((sum, d) => sum + d.mutations.length, 0);
+      return { sourceNoteId, sourceNote, sourceDrafts, totalMutations };
+    });
+  }, [pendingDraftsForReview.data, noteLookup]);
 
   useEffect(() => {
     const availableIds = new Set((notes.data ?? []).map((note) => note.id));
@@ -915,7 +939,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
       <div className="sticky top-0 z-10 -mx-3 bg-[var(--background)]/95 px-3 py-2 backdrop-blur-sm">
         <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
           <div className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--secondary)]/35 p-1 ring-1 ring-[var(--border)]/80">
-            {(["notes", "import"] as TabId[]).map((id) => (
+            {(["notes", "import", "review"] as TabId[]).map((id) => (
               <button
                 key={id}
                 onClick={() => setTabWithGuards(id)}
@@ -1193,6 +1217,46 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
               />
             ))}
           </div>
+        </Section>
+      )}
+
+      {tab === "review" && (
+        <Section title="Review">
+          {pendingDraftsForReview.isLoading && (
+            <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />
+          )}
+          {!pendingDraftsForReview.isLoading && reviewGroups.length === 0 && (
+            <p className={emptyStateClassName}>No pending suggestions to review.</p>
+          )}
+          {!pendingDraftsForReview.isLoading && reviewGroups.length > 0 && (
+            <div className="space-y-2">
+              {reviewGroups.map(({ sourceNoteId, sourceNote, totalMutations }) => (
+                <div
+                  key={sourceNoteId}
+                  className="flex items-center justify-between gap-3 rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-semibold text-[var(--foreground)]">
+                      {sourceNote
+                        ? memoryRowTitle(sourceNote, chatLookup)
+                        : sourceNoteId}
+                    </p>
+                    <p className="mt-0.5 text-[0.6875rem] text-[var(--muted-foreground)]">
+                      {totalMutations} pending suggestion{totalMutations === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => openMemory(sourceNoteId, { tab: "suggestions" })}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--primary)] px-2.5 py-1.5 text-xs font-semibold text-[var(--primary-foreground)] transition-colors hover:opacity-90"
+                  >
+                    <Eye size="0.75rem" />
+                    Review
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </Section>
       )}
 

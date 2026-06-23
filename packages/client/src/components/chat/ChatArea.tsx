@@ -407,7 +407,7 @@ export function ChatArea() {
   const [agentInjectionReview, setAgentInjectionReview] = useState<AgentInjectionReviewRequest | null>(null);
   const [agentInjectionDrafts, setAgentInjectionDrafts] = useState<Record<string, string>>({});
   const [creditsOpen, setCreditsOpen] = useState(false);
-  const [vaultOpen, setVaultOpen] = useState<{ initialTab?: "notes" | "import" | "suggestions"; sourceNoteId?: string } | null>(null);
+  const [vaultOpen, setVaultOpen] = useState<{ initialTab?: "notes" | "import" | "review" | "suggestions"; sourceNoteId?: string } | null>(null);
   const vaultOpenBool = vaultOpen !== null;
   const { data: agentConfigs } = useAgentConfigs();
   const ltmAgentConfig = useMemo(

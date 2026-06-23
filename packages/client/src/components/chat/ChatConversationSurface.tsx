@@ -59,7 +59,7 @@ type ConversationSurfaceProps = {
   onSwitchChat?: () => void;
   onConcludeScene?: () => void;
   onAbandonScene?: () => void;
-  onOpenVault?: (payload?: { initialTab?: "notes" | "import" | "suggestions"; sourceNoteId?: string }) => void;
+  onOpenVault?: (payload?: { initialTab?: "notes" | "import" | "review" | "suggestions"; sourceNoteId?: string }) => void;
   onOpenSettings: ComponentProps<typeof ConversationView>["onOpenSettings"];
   onOpenGallery: ComponentProps<typeof ConversationView>["onOpenGallery"];
   onCloseSettings: () => void;
