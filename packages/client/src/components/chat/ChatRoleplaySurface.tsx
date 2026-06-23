@@ -83,36 +83,6 @@ import type {
 type ChatData = ComponentProps<typeof ChatCommonOverlays>["chat"];
 type LorebookEntryStatus = "normal" | "constant" | "selective";
 
-const ACTIVE_CONTEXT_STATUS_STYLE: Record<
-  LorebookEntryStatus,
-  { label: string; dot: string; row: string; badge: string }
-> = {
-  normal: {
-    label: "NORMAL",
-    dot: "bg-emerald-400",
-    row: "border-emerald-400/20 bg-emerald-400/10",
-    badge: "bg-emerald-400/15 text-emerald-300 ring-1 ring-emerald-400/20",
-  },
-  constant: {
-    label: "CONST",
-    dot: "bg-yellow-300",
-    row: "border-yellow-300/25 bg-yellow-300/10",
-    badge: "bg-yellow-300/15 text-yellow-200 ring-1 ring-yellow-300/20",
-  },
-  selective: {
-    label: "SELECT",
-    dot: "bg-red-400",
-    row: "border-red-400/25 bg-red-400/10",
-    badge: "bg-red-400/15 text-red-200 ring-1 ring-red-400/20",
-  },
-};
-
-function getActiveContextEntryStatus(entry: { constant?: boolean; selective?: boolean }): LorebookEntryStatus {
-  if (entry.constant) return "constant";
-  if (entry.selective) return "selective";
-  return "normal";
-}
-
 const RoleplayHUD = lazy(async () => {
   const module = await import("./RoleplayHUD");
   return { default: module.RoleplayHUD };
@@ -348,6 +318,7 @@ function isHiddenFromUser(message: MessageWithSwipes) {
 }
 
 
+
 function readStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string" && item.length > 0)
@@ -394,21 +365,16 @@ function resolveChatSummaryInjectionHint(
     const isMarker = (section.isMarker as unknown) === true || (section.isMarker as unknown) === "true";
     return isMarker && readMarkerConfig(section.markerConfig)?.type === "chat_summary";
   });
-  const enabledSummarySections = summarySections.filter((section) => promptEnabled(section.enabled));
-  const activeSummarySections = enabledSummarySections.filter((section) =>
-    groupPathEnabled(section.groupId, groupsById),
-  );
-
   if (summarySections.length === 0) {
-    return "Enabled summaries will be added at the end of the system prompt. Add an enabled Chat Summary marker to the active preset to choose a specific position.";
+    return "Active preset has no Chat Summary marker, so enabled summaries will not be inserted.";
   }
-  if (activeSummarySections.length > 0) {
-    return "Enabled summaries will be inserted where the active preset's Chat Summary marker is placed.";
+  if (!summarySections.some((section) => promptEnabled(section.enabled))) {
+    return "Chat Summary section is disabled in the active preset.";
   }
-  if (enabledSummarySections.length === 0) {
-    return "The active preset's Chat Summary marker is disabled, so enabled summaries will be added at the end of the system prompt.";
+  if (!summarySections.some((section) => promptEnabled(section.enabled) && groupPathEnabled(section.groupId, groupsById))) {
+    return "Chat Summary section is inside a disabled preset group.";
   }
-  return "The active preset's Chat Summary marker is inside a disabled group, so enabled summaries will be added at the end of the system prompt.";
+  return null;
 }
 
 
