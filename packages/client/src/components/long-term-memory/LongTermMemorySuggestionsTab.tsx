@@ -42,7 +42,8 @@ import {
   selectedListRowClassName,
 } from "./LtmFields";
 import { StatusPill, ToolButton } from "./LtmPills";
-import { friendlyIdentifier, friendlyNoteTitle, friendlyStatus, isTypedSuggestionDraft } from "./ltm-editor-utils";
+import { isTypedSuggestionDraft } from "./ltm-editor-utils";
+import { compactMutationText, mutationTargetTitle, suggestionRowKey } from "./ltm-panel-shared";
 
 type SuggestionRowModel = {
   draft: LtmExtractionDraft;
@@ -100,31 +101,7 @@ function referenceLabel(count: number) {
   return `${count} reference${count === 1 ? "" : "s"}`;
 }
 
-function firstSectionEntry(mutation: LtmDraftMutation) {
-  if (mutation.kind !== "create_note") return null;
-  return Object.entries(mutation.note.sections)[0] ?? null;
-}
 
-function mutationTargetTitle(mutation: LtmDraftMutation) {
-  if (mutation.kind === "create_note") return friendlyNoteTitle(mutation.note);
-  return friendlyIdentifier(mutation.noteId);
-}
-
-function compactMutationText(mutation: LtmDraftMutation, noteLookup: Map<string, LtmNote>) {
-  if (mutation.kind === "create_note") {
-    const first = firstSectionEntry(mutation);
-    return first?.[1].text ?? "";
-  }
-  if (mutation.kind === "append_section") return mutation.text;
-  if (mutation.kind === "update_section") return mutation.section.text;
-  if (mutation.kind === "add_link") {
-    const targetNote = noteLookup.get(mutation.link.target);
-    const targetLabel = targetNote ? friendlyNoteTitle(targetNote) : friendlyIdentifier(mutation.link.target);
-    return `${friendlyIdentifier(mutation.link.relation)}: ${targetLabel}`;
-  }
-  if (mutation.kind === "set_status") return friendlyStatus(mutation.status);
-  return "Unknown mutation";
-}
 
 function outcomeTone(outcome: LtmExtractionOutcome) {
   if (outcome.state === "success") return "good";
@@ -178,10 +155,6 @@ function toastForExtractionResult(result: ExtractLongTermMemorySourceResponse, a
   return `${base}; ${applied} low-risk change${applied === 1 ? "" : "s"} applied, ${skipped} change${
     skipped === 1 ? "" : "s"
   } left for review`;
-}
-
-function suggestionRowKey(draftId: string, mutationId: string) {
-  return `${draftId}:${mutationId}`;
 }
 
 function suggestionRowKeyFor(row: SuggestionRowModel) {

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
+  AlertCircle,
   ArrowRightLeft,
+  Check,
   Copy,
   Eye,
   FileJson,
@@ -12,6 +14,7 @@ import {
   RotateCcw,
   Search,
   Trash2,
+  X,
 } from "lucide-react";
 import type {
   Chat,
@@ -23,6 +26,8 @@ import type {
 } from "@marinara-engine/shared";
 import { getLtmScopeChatIds, isGlobalLtmScope } from "@marinara-engine/shared";
 import {
+  useAcceptLongTermMemoryDraft,
+  useDeleteLongTermMemoryDraftMutation,
   useImportLongTermMemorySourceNotes,
   useDeleteLongTermMemoryNotes,
   useLongTermMemoryDrafts,
@@ -32,6 +37,7 @@ import {
   useLongTermMemoryNotes,
   useLongTermMemorySettings,
   useRemoveLongTermMemoryNotesFromScope,
+  useSkipLongTermMemoryDraftMutations,
   useLongTermMemoryStatus,
   useSearchLongTermMemory,
   useUpdateLongTermMemorySettings,
@@ -51,7 +57,7 @@ import { MemoryNoteModal, defaultMemoryModalTab } from "../long-term-memory/Long
 import { TypeMemoryGroups } from "../long-term-memory/LongTermMemoryNoteList";
 import { ImportPreviewRowItem } from "../long-term-memory/LongTermMemoryImportSection";
 import { LongTermMemoryNoteTransferModal } from "../long-term-memory/LongTermMemoryNoteTransferModal";
-import { friendlyNoteType, friendlyStatus, type LtmDisplayLookupContext } from "../long-term-memory/ltm-editor-utils";
+import { friendlyIdentifier, friendlyNoteType, friendlyStatus, type LtmDisplayLookupContext } from "../long-term-memory/ltm-editor-utils";
 import {
   compactInputClassName,
   emptyStateClassName,
@@ -82,6 +88,7 @@ import {
   buildNoteLookup,
   characterNameFromRow,
   clampImportConcurrency,
+  compactMutationText,
   derivedNoteIdsForSources,
   groupNotesByType,
   hasLegacyRunDefaultOverrides,
@@ -89,11 +96,16 @@ import {
   importRowKey,
   isSourceSummaryNote,
   memoryRowTitle,
+  mutationKindLabel,
+  mutationRiskLabel,
+  mutationRiskTone,
+  mutationTargetTitle,
   optionalTrimmedText,
   readLtmGlobalSettingsMigrationFlag,
   readLongTermMemoryRecallSearchSettings,
   scopeDraftFromLtmScope,
   sourceNoteTitle,
+  suggestionRowKey,
   uniqueNoteIds,
   writeLtmGlobalSettingsMigrationFlag,
   Section,
@@ -281,6 +293,9 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     { status: "pending" },
     { enabled: tab === "review" },
   );
+  const acceptDraft = useAcceptLongTermMemoryDraft();
+  const deleteDraftMutation = useDeleteLongTermMemoryDraftMutation();
+  const skipDraftMutations = useSkipLongTermMemoryDraftMutations();
   const exactViewingNote = useLongTermMemoryNote(openNoteId ?? undefined);
   const importPreview = useLongTermMemoryImportPreview(
     importSource,
@@ -512,6 +527,43 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
       tone: "destructive",
     });
 
+  const keepOrphanMutation = async (draft: LtmExtractionDraft, mutationId: string) => {
+    try {
+      await acceptDraft.mutateAsync({ id: draft.id, mutationIds: [mutationId] });
+      toast.success("Suggestion kept");
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
+  const skipOrphanMutation = async (draft: LtmExtractionDraft, mutationId: string) => {
+    try {
+      await deleteDraftMutation.mutateAsync({ id: draft.id, mutationId });
+      toast.success("Suggestion skipped");
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
+  const skipAllOrphans = async (drafts: LtmExtractionDraft[]) => {
+    const total = drafts.reduce((s, d) => s + d.mutations.length, 0);
+    const confirmed = await showConfirmDialog({
+      title: "Skip all orphaned suggestions?",
+      message: `This will skip ${total} suggestion${total === 1 ? "" : "s"} from a deleted source. This cannot be undone.`,
+      confirmLabel: "Skip all",
+      tone: "destructive",
+    });
+    if (!confirmed) return;
+    for (const draft of drafts) {
+      try {
+        await skipDraftMutations.mutateAsync({ id: draft.id, mutationIds: draft.mutations.map((m) => m.id) });
+      } catch (err) {
+        toast.error((err as Error).message);
+      }
+    }
+    toast.success("All orphaned suggestions skipped");
+  };
+
   const setTabWithGuards = async (nextTab: TabId) => {
     if (nextTab === tab) return;
     if (creatingNote && !(await confirmDiscardCreate())) return;
@@ -531,6 +583,8 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     const nextNote = noteLookup.get(id) ?? openNote;
     if (nextNote) {
       setMemoryModalTab(options.tab ?? defaultMemoryModalTab(nextNote));
+    } else if (options.tab) {
+      setMemoryModalTab(options.tab);
     }
     setEditedNoteDirty(false);
   };
@@ -1230,29 +1284,90 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
           )}
           {!pendingDraftsForReview.isLoading && reviewGroups.length > 0 && (
             <div className="space-y-2">
-              {reviewGroups.map(({ sourceNoteId, sourceNote, totalMutations }) => (
-                <div
-                  key={sourceNoteId}
-                  className="flex items-center justify-between gap-3 rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-semibold text-[var(--foreground)]">
-                      {sourceNote
-                        ? memoryRowTitle(sourceNote, chatLookup)
-                        : sourceNoteId}
-                    </p>
-                    <p className="mt-0.5 text-[0.6875rem] text-[var(--muted-foreground)]">
-                      {totalMutations} pending suggestion{totalMutations === 1 ? "" : "s"}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => openMemory(sourceNoteId, { tab: "suggestions" })}
-                    className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--primary)] px-2.5 py-1.5 text-xs font-semibold text-[var(--primary-foreground)] transition-colors hover:opacity-90"
-                  >
-                    <Eye size="0.75rem" />
-                    Review
-                  </button>
+              {reviewGroups.map(({ sourceNoteId, sourceNote, sourceDrafts, totalMutations }) => (
+                <div key={sourceNoteId}>
+                  {sourceNote ? (
+                    <div className="flex items-center justify-between gap-3 rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-semibold text-[var(--foreground)]">
+                          {memoryRowTitle(sourceNote, chatLookup)}
+                        </p>
+                        <p className="mt-0.5 text-[0.6875rem] text-[var(--muted-foreground)]">
+                          {totalMutations} pending suggestion{totalMutations === 1 ? "" : "s"}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => openMemory(sourceNoteId, { tab: "suggestions" })}
+                        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--primary)] px-2.5 py-1.5 text-xs font-semibold text-[var(--primary-foreground)] transition-colors hover:opacity-90"
+                      >
+                        <Eye size="0.75rem" />
+                        Review
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <AlertCircle size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
+                            <span className="truncate text-xs font-semibold text-[var(--foreground)]">
+                              {friendlyIdentifier(sourceNoteId)}
+                            </span>
+                            <StatusPill label="Source deleted" tone="warn" />
+                          </div>
+                          <p className="mt-0.5 text-[0.6875rem] text-[var(--muted-foreground)]">
+                            {totalMutations} pending suggestion{totalMutations === 1 ? "" : "s"}
+                          </p>
+                        </div>
+                        <ToolButton onClick={() => skipAllOrphans(sourceDrafts)} tone="danger">
+                          <X size="0.875rem" />
+                          Skip all
+                        </ToolButton>
+                      </div>
+                      <div className="space-y-2">
+                        {sourceDrafts.map((draft) =>
+                          draft.mutations.map((mutation) => (
+                              <div
+                                key={suggestionRowKey(draft.id, mutation.id)}
+                                className="rounded-lg bg-[var(--card)] p-3 ring-1 ring-[var(--border)]"
+                              >
+                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      <StatusPill label={mutationKindLabel(mutation.kind)} />
+                                      <StatusPill
+                                        label={mutationRiskLabel(mutation.risk)}
+                                        tone={mutationRiskTone(mutation.risk)}
+                                      />
+                                    </div>
+                                    <h4 className="mt-2 text-xs font-medium text-[var(--foreground)]">
+                                      {mutationTargetTitle(mutation)}
+                                    </h4>
+                                    <p className="mt-1 whitespace-pre-wrap text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                                      {compactMutationText(mutation, noteLookup)}
+                                    </p>
+                                  </div>
+                                  <div className="flex shrink-0 gap-1.5">
+                                    <ToolButton
+                                      onClick={() => keepOrphanMutation(draft, mutation.id)}
+                                      tone="primary"
+                                    >
+                                      <Check size="0.875rem" />
+                                      Keep
+                                    </ToolButton>
+                                    <ToolButton onClick={() => skipOrphanMutation(draft, mutation.id)}>
+                                      <X size="0.875rem" />
+                                      Skip
+                                    </ToolButton>
+                                  </div>
+                                </div>
+                              </div>
+                            )),
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
