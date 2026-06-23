@@ -53,6 +53,8 @@ import {
   ShieldCheck,
   Shuffle,
   DatabaseZap,
+  Plug,
+  FileJson,
 } from "lucide-react";
 import { useDeleteAgent } from "../../hooks/use-agents";
 import { useLorebooks, useEntriesAcrossLorebooks } from "../../hooks/use-lorebooks";
@@ -104,6 +106,7 @@ import { Modal } from "../ui/Modal";
 import { LtmVaultManagerSection } from "../long-term-memory/LtmVaultManagerSection";
 import { LongTermMemoryExtractionSettingsEditor } from "../long-term-memory/LongTermMemoryExtractionSettingsModal";
 import { LtmInlineSettingsSections } from "../long-term-memory/LtmInlineSettingsSections";
+import { useLongTermMemoryStatus } from "../../hooks/use-long-term-memory";
 
 function parseActivationKeywordsText(value: string): string[] {
   const seen = new Set<string>();
@@ -449,8 +452,12 @@ export function AgentEditor() {
   const [localIncludeParallelResults, setLocalIncludeParallelResults] = useState(false);
   const [localEnabledTools, setLocalEnabledTools] = useState<string[]>([]);
   const [toolsSectionOpen, setToolsSectionOpen] = useState(false);
-  const [memoriesModalOpen, setMemoriesModalOpen] = useState(false);
+  const [vaultOpen, setVaultOpen] = useState<{ initialTab?: "notes" | "import" | "suggestions"; sourceNoteId?: string } | null>(null);
+  const memoriesModalOpen = vaultOpen !== null;
   const [ltmSettingsOpen, setLtmSettingsOpen] = useState(false);
+  const [ltmAdvancedOpen, setLtmAdvancedOpen] = useState(false);
+
+  const ltmStatus = useLongTermMemoryStatus();
   const [localLorebookWriteEnabled, setLocalLorebookWriteEnabled] = useState(false);
   const [localWritableLorebookId, setLocalWritableLorebookId] = useState("");
   const [localMusicProvider, setLocalMusicProvider] = useState<"spotify" | "youtube">("spotify");
@@ -3471,32 +3478,80 @@ export function AgentEditor() {
             icon={<DatabaseZap size="0.875rem" className="text-[var(--primary)]" />}
             help="Browse, search, and manage long-term memories. Extraction and recall settings are configured per-chat or in global LTM settings."
           >
+            {(() => {
+              const agentSettings = parseAgentSettingsRecord(dbConfig?.settings);
+              const connArray = (connections ?? []) as Array<{ id: string }>;
+              const hasConnection = !!agentSettings.connectionId && connArray.some((c) => c.id === agentSettings.connectionId);
+              const hasMemories = (ltmStatus.data?.notes.total ?? 0) > 0;
+              if (!hasConnection) {
+                return (
+                  <div className="mb-3 rounded-xl border border-[var(--primary)]/20 bg-[var(--primary)]/8 p-4">
+                    <div className="flex items-center gap-2">
+                      <Plug size="1rem" className="text-[var(--primary)]" />
+                      <p className="text-sm font-medium text-[var(--foreground)]">Memory needs an AI connection to extract facts</p>
+                    </div>
+                    <p className="mt-1 text-xs text-[var(--muted-foreground)]">Pick one in the connection dropdown below.</p>
+                  </div>
+                );
+              }
+              if (!hasMemories) {
+                return (
+                  <div className="mb-3 rounded-xl border border-[var(--primary)]/20 bg-[var(--primary)]/8 p-4">
+                    <div className="flex items-center gap-2">
+                      <FileJson size="1rem" className="text-[var(--primary)]" />
+                      <p className="text-sm font-medium text-[var(--foreground)]">Ready to import</p>
+                    </div>
+                    <p className="mt-1 text-xs text-[var(--muted-foreground)]">Bring in characters, lorebooks, or chats to get started.</p>
+                    <button
+                      onClick={() => setVaultOpen({ initialTab: "import" })}
+                      className="mt-2 rounded-xl bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] transition-colors hover:bg-[var(--primary)]/90"
+                    >
+                      Import
+                    </button>
+                  </div>
+                );
+              }
+              return null;
+            })()}
             <div className="flex items-center gap-3">
               <button
-                onClick={() => setMemoriesModalOpen(true)}
+                onClick={() => setVaultOpen({ initialTab: "notes" })}
                 className="rounded-xl bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] transition-colors hover:bg-[var(--primary)]/90"
               >
                 Manage Memories
               </button>
               <button
-                onClick={() => setLtmSettingsOpen(true)}
-                className="text-sm text-[var(--muted-foreground)] underline-offset-4 hover:underline"
+                onClick={() => setVaultOpen({ initialTab: "import" })}
+                className="rounded-xl bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] transition-colors hover:bg-[var(--primary)]/90"
               >
-                Advanced settings
+                Import
               </button>
             </div>
           </FieldGroup>
-          <LtmInlineSettingsSections onOpenAdvancedSettings={() => setLtmSettingsOpen(true)} />
+          <FieldGroup
+            label="Advanced"
+            icon={<DatabaseZap size="0.875rem" className="text-[var(--primary)]" />}
+            collapsible
+            expanded={ltmAdvancedOpen}
+            onExpandedChange={setLtmAdvancedOpen}
+          >
+            <LtmInlineSettingsSections onOpenAdvancedSettings={() => setLtmSettingsOpen(true)} />
+          </FieldGroup>
         </>
       )}
       <Modal
         open={memoriesModalOpen}
-        onClose={() => setMemoriesModalOpen(false)}
+        onClose={() => setVaultOpen(null)}
         title="Long-Term Memory"
         width="max-w-5xl"
       >
         {memoriesModalOpen && dbConfig && (
-          <LtmVaultManagerSection agentConfig={dbConfig} agentSettings={JSON.parse(dbConfig.settings ?? "{}") as Record<string, unknown>} />
+          <LtmVaultManagerSection
+            agentConfig={dbConfig}
+            agentSettings={JSON.parse(dbConfig.settings ?? "{}") as Record<string, unknown>}
+            initialTab={vaultOpen?.initialTab}
+            sourceNoteId={vaultOpen?.sourceNoteId}
+          />
         )}
       </Modal>
       <Modal

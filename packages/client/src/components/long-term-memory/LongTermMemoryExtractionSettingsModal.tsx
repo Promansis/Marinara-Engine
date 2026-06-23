@@ -41,7 +41,6 @@ import {
   type LtmExtractionSettings,
   type LtmResolvedExtractionSettings,
 } from "../../hooks/use-long-term-memory";
-import { useConnections } from "../../hooks/use-connections";
 import { api } from "../../lib/api-client";
 import { cn, generateClientId } from "../../lib/utils";
 import {
@@ -84,8 +83,6 @@ const DEFAULT_SETTINGS = {
   existingNoteMaxChunks: DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS,
   existingNoteMaxTokens: DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
 } as const;
-
-const LEVEL_OPTIONS = ["default", "none", "low", "medium", "high"] as const;
 
 function draftFromSettings(settings: LtmResolvedExtractionSettings): ExtractionSettingsDraft {
   return {
@@ -189,62 +186,6 @@ function isDraftDirty(draft: ExtractionSettingsDraft, current: LtmResolvedExtrac
   );
 }
 
-function NumberField({
-  label,
-  value,
-  min,
-  max,
-  step,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  min: number;
-  max: number;
-  step: number;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <SettingField label={label}>
-      <input
-        type="number"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className={compactInputClassName}
-      />
-    </SettingField>
-  );
-}
-
-function LevelSelect<T extends string>({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: OptionalLevel<T>;
-  onChange: (value: OptionalLevel<T>) => void;
-}) {
-  return (
-    <SettingField label={label}>
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value as OptionalLevel<T>)}
-        className={compactInputClassName}
-      >
-        {LEVEL_OPTIONS.map((option) => (
-          <option key={option} value={option}>
-            {option === "default" ? "Default" : option.charAt(0).toUpperCase() + option.slice(1)}
-          </option>
-        ))}
-      </select>
-    </SettingField>
-  );
-}
-
 type LongTermMemoryExtractionSettingsEditorProps = {
   enabled?: boolean;
   mode?: "embedded" | "modal";
@@ -260,7 +201,6 @@ export function LongTermMemoryExtractionSettingsEditor({
   const globalSettings = useLongTermMemorySettings({ enabled });
   const updateSettings = useUpdateLongTermMemoryExtractionSettings();
   const updateGlobalSettings = useUpdateLongTermMemorySettings();
-  const connectionsQuery = useConnections();
   const [draft, setDraft] = useState<ExtractionSettingsDraft | null>(null);
   const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
   const [templateSelectOpen, setTemplateSelectOpen] = useState(false);
@@ -276,17 +216,6 @@ export function LongTermMemoryExtractionSettingsEditor({
   const integrity = useLongTermMemoryIntegrity();
   const rebuild = useRebuildLongTermMemory();
   const repair = useRepairLongTermMemory();
-  const textConnections = useMemo(
-    () =>
-      (
-        (connectionsQuery.data as
-          | Array<{ id: string; name: string; model?: string | null; provider?: string }>
-          | undefined) ?? []
-      )
-        .filter((connection) => connection.provider !== "image_generation")
-        .sort((left, right) => left.name.localeCompare(right.name)),
-    [connectionsQuery.data],
-  );
   const activePromptTemplateId = settings.data?.activePromptTemplateId ?? null;
   const activePromptTemplate = promptTemplates.find((template) => template.id === activePromptTemplateId) ?? null;
   const isEditingExistingTemplate = Boolean(editingTemplateId);
@@ -559,42 +488,7 @@ export function LongTermMemoryExtractionSettingsEditor({
               className={compactInputClassName}
             />
           </SettingField>
-          <SettingField label="Connection override">
-            <select
-              value={globalSettings.data.connectionId}
-              onChange={(event) => patchGlobalSettings({ version: 1, connectionId: event.target.value })}
-              className={compactInputClassName}
-            >
-              <option value="">Default extraction model</option>
-              <option value="random">Random pool</option>
-              {textConnections.map((connection) => (
-                <option key={connection.id} value={connection.id}>
-                  {connection.name}
-                  {connection.model ? ` - ${connection.model}` : ""}
-                </option>
-              ))}
-            </select>
-          </SettingField>
-          <SettingField label="Apply low-risk suggestions">
-            <label className="flex min-h-8 items-center gap-2 rounded-md bg-[var(--card)] px-2 text-xs ring-1 ring-[var(--border)]">
-              <input
-                type="checkbox"
-                checked={globalSettings.data.autoApplyLowRisk}
-                onChange={(event) => patchGlobalSettings({ version: 1, autoApplyLowRisk: event.target.checked })}
-                className="h-3.5 w-3.5 shrink-0 rounded border-[var(--border)] accent-[var(--primary)]"
-              />
-              <span className="min-w-0 flex-1">Automatically keep low-risk changes</span>
-            </label>
-          </SettingField>
         </div>
-        <SettingField label="Model override">
-          <input
-            value={globalSettings.data.model}
-            onChange={(event) => patchGlobalSettings({ version: 1, model: event.target.value })}
-            placeholder="Optional model override"
-            className={compactInputClassName}
-          />
-        </SettingField>
         <SettingField label="Instruction override">
           <textarea
             value={globalSettings.data.instruction}
@@ -806,24 +700,6 @@ export function LongTermMemoryExtractionSettingsEditor({
           </div>
         ) : null}
 
-        <SettingField label={activePromptTemplate ? "Selected Extraction Prompt" : "Default Extraction Prompt"}>
-          <textarea
-            value={draft.systemPrompt}
-            onChange={(event) => set("systemPrompt", event.target.value)}
-            readOnly={Boolean(activePromptTemplate)}
-            className={cn(
-              textareaClassName,
-              "min-h-48 font-mono leading-relaxed",
-              activePromptTemplate ? "cursor-default opacity-80" : "",
-            )}
-          />
-        </SettingField>
-        {activePromptTemplate ? (
-          <p className={helperTextClassName}>
-            Source-note extraction uses the selected template above. Clear the selection to edit the built-in
-            extraction prompt directly.
-          </p>
-        ) : null}
         <SettingField label="Extra user instruction">
           <textarea
             value={draft.extraInstruction}
@@ -831,80 +707,6 @@ export function LongTermMemoryExtractionSettingsEditor({
             className={cn(textareaClassName, "min-h-24")}
           />
         </SettingField>
-      </section>
-
-      <section className={cn("space-y-3", sectionCardClassName)}>
-        <div className="text-xs font-semibold text-[var(--foreground)]">Model Behavior</div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <LevelSelect<LtmExtractionReasoningEffort>
-            label="Reasoning effort"
-            value={draft.reasoningEffort}
-            onChange={(value) => set("reasoningEffort", value)}
-          />
-          <LevelSelect<LtmExtractionVerbosity>
-            label="Verbosity"
-            value={draft.verbosity}
-            onChange={(value) => set("verbosity", value)}
-          />
-          <NumberField
-            label="Max output tokens"
-            value={draft.maxOutputTokens}
-            min={512}
-            max={32_768}
-            step={128}
-            onChange={(value) => set("maxOutputTokens", value)}
-          />
-          <NumberField
-            label="Temperature"
-            value={draft.temperature}
-            min={0}
-            max={2}
-            step={0.1}
-            onChange={(value) => set("temperature", value)}
-          />
-        </div>
-      </section>
-
-      <section className={cn("space-y-3", sectionCardClassName)}>
-        <div className="text-xs font-semibold text-[var(--foreground)]">Extraction Limits</div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <NumberField
-            label="Max source tokens"
-            value={draft.maxSourceTokens}
-            min={250}
-            max={50_000}
-            step={250}
-            onChange={(value) => set("maxSourceTokens", value)}
-          />
-          <NumberField
-            label="Existing note context tokens"
-            value={draft.maxExistingNoteTokens}
-            min={250}
-            max={25_000}
-            step={250}
-            onChange={(value) => set("maxExistingNoteTokens", value)}
-          />
-          <NumberField
-            label="Existing note chunks"
-            value={draft.existingNoteMaxChunks}
-            min={1}
-            max={100}
-            step={1}
-            onChange={(value) => set("existingNoteMaxChunks", value)}
-          />
-          <NumberField
-            label="Existing note tokens"
-            value={draft.existingNoteMaxTokens}
-            min={128}
-            max={16_384}
-            step={128}
-            onChange={(value) => set("existingNoteMaxTokens", value)}
-          />
-        </div>
-        <p className={cn(insetSectionCardClassName, helperTextClassName)}>
-          Placeholder-looking extraction output is always rejected internally now. Recovery happens through kept
-          suggestions and dropped-candidate review instead of a user-facing toggle.
-        </p>
       </section>
 
       <section className={cn("space-y-3", sectionCardClassName)}>

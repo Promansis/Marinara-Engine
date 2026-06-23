@@ -20,7 +20,7 @@ import { StatusPill } from "./LtmPills";
 
 // ── Types ──────────────────────────────────────
 
-export type TabId = "notes" | "tools" | "import";
+export type TabId = "notes" | "import";
 export type MemoryModalMode = "view" | "edit";
 export type MemoryModalTab = "overview" | "content" | "links" | "recall" | "suggestions";
 export type LtmRecallStyle = "balanced" | "exact" | "broad" | "story";
@@ -69,17 +69,16 @@ export const IMPORT_SOURCES: Array<{ id: LtmInteropSource; label: string }> = [
 
 export const TAB_LABELS: Record<TabId, string> = {
   notes: "Memories",
-  tools: "Tools",
   import: "Import",
 };
 
 export const LTM_GLOBAL_SETTINGS_MIGRATION_KEY = "ltm:global-settings-migrated:v1";
 
 export const LTM_RECALL_STYLES: Array<{ id: LtmRecallStyle; label: string; description: string }> = [
-  { id: "balanced", label: "Balanced", description: "Mixes meaning, exact wording, and linked story notes." },
-  { id: "exact", label: "Exact", description: "Favors direct keyword and name matches." },
-  { id: "broad", label: "Broad", description: "Looks farther through linked memories." },
-  { id: "story", label: "Story", description: "Leans toward arcs, relationships, and scene continuity." },
+  { id: "balanced", label: "Balanced", description: "Mixes meaning, exact wording, and linked story notes. Good default for most chats." },
+  { id: "exact", label: "Exact", description: "Favors direct keyword and name matches. Best when you need specific facts recalled precisely." },
+  { id: "broad", label: "Broad", description: "Looks farther through linked memories. Good for catching indirect connections." },
+  { id: "story", label: "Story", description: "Leans toward arcs, relationships, and scene continuity. Best for long-running stories." },
 ];
 
 export const DEFAULT_LTM_BUDGET_TOKENS = 2048;
