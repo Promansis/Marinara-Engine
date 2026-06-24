@@ -261,7 +261,7 @@ export function LtmExtractionPromptSection({ onOpenAdvancedSettings }: Extractio
             {DEFAULT_LTM_EXTRACTION_PROMPT}
           </pre>
           <span className="absolute right-3 top-2 rounded-md bg-[var(--card)] px-1.5 py-0.5 text-[0.5625rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-            Default \u2014 click "Copy default to edit" to customize
+            Default — click "Copy default to edit" to customize
           </span>
         </div>
       ) : (
@@ -270,7 +270,7 @@ export function LtmExtractionPromptSection({ onOpenAdvancedSettings }: Extractio
           onChange={handlePromptChange}
           rows={12}
           title="Extraction Prompt"
-          placeholder="Write the extraction system prompt\u2026"
+          placeholder="Write the extraction system prompt…"
           className="w-full resize-y rounded-xl bg-[var(--secondary)] px-4 py-3 font-mono text-xs leading-relaxed ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)] max-h-[40vh] overflow-y-auto"
         />
       )}
@@ -345,7 +345,7 @@ export function LtmExtractionPromptSection({ onOpenAdvancedSettings }: Extractio
                   rows={7}
                   title={template.name || "Prompt Option"}
                   className="w-full resize-y rounded-lg bg-[var(--background)] px-3 py-2 font-mono text-xs leading-relaxed ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                  placeholder="Write the prompt for this option\u2026"
+                  placeholder="Write the prompt for this option…"
                 />
               </div>
             ))}
@@ -359,7 +359,7 @@ export function LtmExtractionPromptSection({ onOpenAdvancedSettings }: Extractio
             onClick={onOpenAdvancedSettings}
             className="text-[0.625rem] text-[var(--muted-foreground)] underline-offset-4 hover:underline"
           >
-            Manage templates \u2192
+            Manage templates →
           </button>
         </p>
       )}

@@ -27,7 +27,7 @@ export function MemoryOverviewNotice({ chatId, onViewAll }: Props) {
       >
         <BrainCircuit size="0.75rem" className="text-[var(--primary)]" />
         <span className="min-w-0 flex-1 text-left font-medium text-[var(--foreground)]">
-          {count} memor{count === 1 ? "y" : "ies"} \u00B7 ~{tokens.toLocaleString()} tokens
+          {count} memor{count === 1 ? "y" : "ies"} · ~{tokens.toLocaleString()} tokens
         </span>
         {expanded ? <ChevronDown size="0.75rem" /> : <ChevronRight size="0.75rem" />}
       </button>
@@ -48,7 +48,7 @@ export function MemoryOverviewNotice({ chatId, onViewAll }: Props) {
               onClick={onViewAll}
               className="w-full rounded-md px-2 py-1 text-left text-[0.625rem] font-medium text-[var(--primary)] hover:bg-[var(--accent)]"
             >
-              View all {count} \u2192
+              View all {count} →
             </button>
           )}
         </div>
