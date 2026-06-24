@@ -3,7 +3,12 @@ import { AlertTriangle, BookOpen, ChevronDown, ChevronRight, Loader2, PenLine, S
 import { useUpdateChatMetadata } from "../../hooks/use-chats";
 import { type BudgetSkippedLorebookEntry, useActiveLorebookEntries } from "../../hooks/use-lorebooks";
 import { cn } from "../../lib/utils";
-import { ROLEPLAY_POPOVER_SUBTITLE, ROLEPLAY_POPOVER_TITLE } from "./roleplay-popover-styles";
+import {
+  ROLEPLAY_POPOVER_CLOSE_BUTTON,
+  ROLEPLAY_POPOVER_CLOSE_ICON_SIZE,
+  ROLEPLAY_POPOVER_SUBTITLE,
+  ROLEPLAY_POPOVER_TITLE,
+} from "./roleplay-popover-styles";
 import { MemoryOverviewNotice } from "./MemoryOverviewNotice";
 import { useLastInjection } from "../../hooks/use-long-term-memory";
 
