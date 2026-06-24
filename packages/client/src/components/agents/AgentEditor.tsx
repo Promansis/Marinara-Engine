@@ -110,8 +110,8 @@ import { isManagedAgentType } from "@marinara-engine/shared";
 import { Modal } from "../ui/Modal";
 import { LtmVaultManagerSection } from "../long-term-memory/LtmVaultManagerSection";
 import { LongTermMemoryExtractionSettingsEditor } from "../long-term-memory/LongTermMemoryExtractionSettingsModal";
-import { LtmInlineSettingsSections } from "../long-term-memory/LtmInlineSettingsSections";
-import { useLongTermMemoryStatus } from "../../hooks/use-long-term-memory";
+import LtmInlineSettingsSections, { LtmExtractionConnectionSection, LtmExtractionPromptSection } from "../long-term-memory/LtmInlineSettingsSections";
+import { useLongTermMemoryStatus, useLongTermMemorySettings } from "../../hooks/use-long-term-memory";
 
 function parseActivationKeywordsText(value: string): string[] {
   const seen = new Set<string>();
@@ -528,6 +528,7 @@ export function AgentEditor() {
   const [ltmAdvancedOpen, setLtmAdvancedOpen] = useState(false);
 
   const ltmStatus = useLongTermMemoryStatus();
+  const { data: ltmGlobalSettings } = useLongTermMemorySettings();
   const [localLorebookWriteEnabled, setLocalLorebookWriteEnabled] = useState(false);
   const [localWritableLorebookId, setLocalWritableLorebookId] = useState("");
   const [localMusicProvider, setLocalMusicProvider] = useState<MusicProvider>("spotify");
@@ -3561,9 +3562,13 @@ export function AgentEditor() {
             help="Browse, search, and manage long-term memories. Extraction and recall settings are configured per-chat or in global LTM settings."
           >
             {(() => {
-              const agentSettings = parseAgentSettingsRecord(dbConfig?.settings);
               const connArray = (connections ?? []) as Array<{ id: string }>;
-              const hasConnection = !!agentSettings.connectionId && connArray.some((c) => c.id === agentSettings.connectionId);
+              const globalConnId = ltmGlobalSettings?.connectionId ?? "";
+              const agentSettings = parseAgentSettingsRecord(dbConfig?.settings);
+              const agentConnId = typeof agentSettings.connectionId === "string" ? agentSettings.connectionId : "";
+              const hasConnection =
+                (!!globalConnId && connArray.some((c) => c.id === globalConnId)) ||
+                (!!agentConnId && connArray.some((c) => c.id === agentConnId));
               const hasMemories = (ltmStatus.data?.notes.total ?? 0) > 0;
               if (!hasConnection) {
                 return (
@@ -3610,6 +3615,8 @@ export function AgentEditor() {
               </button>
             </div>
           </FieldGroup>
+          <LtmExtractionConnectionSection />
+          <LtmExtractionPromptSection onOpenAdvancedSettings={() => setLtmSettingsOpen(true)} />
           <FieldGroup
             label="Advanced"
             icon={<DatabaseZap size="0.875rem" className="text-[var(--primary)]" />}
@@ -3617,7 +3624,7 @@ export function AgentEditor() {
             expanded={ltmAdvancedOpen}
             onExpandedChange={setLtmAdvancedOpen}
           >
-            <LtmInlineSettingsSections onOpenAdvancedSettings={() => setLtmSettingsOpen(true)} />
+            <LtmInlineSettingsSections />
           </FieldGroup>
         </>
       )}
