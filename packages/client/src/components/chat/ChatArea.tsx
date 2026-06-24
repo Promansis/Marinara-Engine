@@ -64,6 +64,7 @@ import { cn, parseAvatarCropJson } from "../../lib/utils";
 import { Modal } from "../ui/Modal";
 import { useAgentConfigs, type AgentConfigRow } from "../../hooks/use-agents";
 import { LtmVaultManagerSection } from "../long-term-memory/LtmVaultManagerSection";
+import { LongTermMemoryReviewQueueModal } from "../long-term-memory/LongTermMemoryReviewQueueModal";
 import { useEncounter } from "../../hooks/use-encounter";
 import { useScene } from "../../hooks/use-scene";
 import { useEncounterStore } from "../../stores/encounter.store";
@@ -409,6 +410,7 @@ export function ChatArea() {
   const [creditsOpen, setCreditsOpen] = useState(false);
   const [vaultOpen, setVaultOpen] = useState<{ initialTab?: "notes" | "import" | "review" | "suggestions"; sourceNoteId?: string } | null>(null);
   const vaultOpenBool = vaultOpen !== null;
+  const [reviewQueueOpen, setReviewQueueOpen] = useState(false);
   const { data: agentConfigs } = useAgentConfigs();
   const ltmAgentConfig = useMemo(
     () => (agentConfigs as AgentConfigRow[] | undefined)?.find((a) => a.type === "long-term-memory") ?? null,
@@ -474,6 +476,16 @@ export function ChatArea() {
     setGalleryOpen(false);
     setGalleryAnchor(null);
   }, []);
+  const handleOpenVault = useCallback(
+    (payload?: { initialTab?: "notes" | "import" | "review" | "suggestions"; sourceNoteId?: string }) => {
+      if (payload?.initialTab === "review") {
+        setReviewQueueOpen(true);
+        return;
+      }
+      setVaultOpen(payload ?? {});
+    },
+    [],
+  );
   const closeFloatingChatDrawers = useCallback(() => {
     setSettingsOpen(false);
     setSettingsAnchor(null);
@@ -2429,7 +2441,7 @@ export function ChatArea() {
             onSwitchChat={chat?.connectedChatId ? () => setActiveChatId(chat.connectedChatId!) : undefined}
             onConcludeScene={chatMeta.sceneStatus === "active" ? () => concludeScene(activeChatId) : undefined}
             onAbandonScene={chatMeta.sceneStatus === "active" ? () => abandonScene(activeChatId) : undefined}
-            onOpenVault={(payload) => setVaultOpen(payload ?? {})}
+            onOpenVault={handleOpenVault}
             onOpenSettings={handleOpenSettingsPanel}
             onOpenGallery={handleOpenGalleryPanel}
             onCloseSettings={handleCloseSettingsPanel}
@@ -2553,7 +2565,7 @@ export function ChatArea() {
           onAbandonScene={() => abandonScene(activeChatId)}
           onForkScene={forkScene}
           isForkingScene={isForking || isStreaming}
-          onOpenVault={(payload) => setVaultOpen(payload ?? {})}
+          onOpenVault={handleOpenVault}
           onOpenSettings={handleOpenSettingsPanel}
           onOpenGallery={handleOpenGalleryPanel}
           onCloseSettings={handleCloseSettingsPanel}
@@ -2615,6 +2627,14 @@ export function ChatArea() {
           />
         )}
       </Modal>
+      <LongTermMemoryReviewQueueModal
+        open={reviewQueueOpen}
+        onClose={() => setReviewQueueOpen(false)}
+        onOpenSource={(noteId) => {
+          setReviewQueueOpen(false);
+          setVaultOpen({ initialTab: "notes", sourceNoteId: noteId });
+        }}
+      />
     </>
   );
 }
