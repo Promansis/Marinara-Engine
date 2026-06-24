@@ -103,7 +103,7 @@ export function ActiveLorebookEntriesModal({
       <div className="absolute inset-0 bg-black/30" onClick={onClose} />
       <div className={PANEL_CONTAINER} onClick={(e) => e.stopPropagation()}>
         <Suspense fallback={<ActiveLorebookEntriesLoadingFallback />}>
-          <ActiveLorebookEntriesPanel chatId={chatId} isMobile onClose={onClose} onViewAll={onViewAll} />
+          <ActiveLorebookEntriesPanel chatId={chatId} onClose={onClose} onViewAll={onViewAll} />
         </Suspense>
       </div>
     </div>,
@@ -221,7 +221,7 @@ export function ActiveLorebookEntriesButton({
             )}
           >
             <Suspense fallback={<ActiveLorebookEntriesLoadingFallback />}>
-              <ActiveLorebookEntriesPanel chatId={chatId} isMobile={isMobile} onClose={() => setOpen(false)} onViewAll={onViewAll} />
+              <ActiveLorebookEntriesPanel chatId={chatId} onClose={() => setOpen(false)} onViewAll={onViewAll} />
             </Suspense>
           </div>
         ))}
