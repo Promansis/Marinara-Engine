@@ -773,6 +773,12 @@ export const ltmLastInjectionMemorySchema = z.object({
   tokenCount: z.number(),
 });
 
+export const ltmInjectionUiSummarySchema = z.object({
+  memoryCount: z.number().default(0),
+  tokenCount: z.number().default(0),
+  memories: z.array(ltmLastInjectionMemorySchema).default([]),
+});
+
 export const ltmLastInjectionResponseSchema = z.object({
   memoryCount: z.number(),
   tokenCount: z.number(),

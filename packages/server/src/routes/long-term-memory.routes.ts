@@ -16,6 +16,7 @@ import {
   ltmExtractionDraftSchema,
   ltmExtractionResponseSchema,
   ltmIndexMetadataSchema,
+  ltmInjectionUiSummarySchema,
   ltmIsoTimestampSchema,
   ltmLinkSchema,
   ltmModeSchema,
@@ -488,9 +489,9 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     if (!last || !last.uiSummary) {
       return reply.send({ memoryCount: 0, tokenCount: 0, memories: [] });
     }
-    let summary: { memoryCount: number; tokenCount: number; memories: Array<{ noteId: string; title: string; tokenCount: number }> };
+    let summary;
     try {
-      summary = JSON.parse(last.uiSummary);
+      summary = ltmInjectionUiSummarySchema.parse(JSON.parse(last.uiSummary));
     } catch {
       return reply.send({ memoryCount: 0, tokenCount: 0, memories: [] });
     }
