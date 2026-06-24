@@ -65,8 +65,6 @@ import { PinnedImageOverlay } from "./PinnedImageOverlay";
 import { ActiveContextLinksButton } from "./ActiveContextLinksButton";
 import { getMobileFloatingPanelFrame, type MobileFloatingPanelFrame } from "./mobile-floating-panel";
 import {
-  ROLEPLAY_POPOVER_CLOSE_BUTTON,
-  ROLEPLAY_POPOVER_CLOSE_ICON_SIZE,
   ROLEPLAY_POPOVER_SCROLL_AREA,
   ROLEPLAY_POPOVER_SHELL,
 } from "./roleplay-popover-styles";
@@ -81,7 +79,6 @@ import type {
 } from "./chat-area.types";
 
 type ChatData = ComponentProps<typeof ChatCommonOverlays>["chat"];
-type LorebookEntryStatus = "normal" | "constant" | "selective";
 
 const RoleplayHUD = lazy(async () => {
   const module = await import("./RoleplayHUD");
@@ -317,13 +314,6 @@ function isHiddenFromUser(message: MessageWithSwipes) {
   return extra.hiddenFromUser === true;
 }
 
-
-
-function readStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string" && item.length > 0)
-    : [];
-}
 
 function promptEnabled(value: unknown): boolean {
   return value !== false && value !== "false";
