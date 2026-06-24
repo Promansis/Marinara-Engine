@@ -68,13 +68,10 @@ export async function migrateLtmChatsForAgentPipeline(
           LTM_AGENT_TYPE,
         );
       } else {
-        const defaultSettings: Record<string, unknown> = {};
+        const defaultSettings: Record<string, unknown> = {
+          author: "Promansis",
+        };
         if (ltmGlobalSettings) {
-          defaultSettings.connectionId = ltmGlobalSettings.connectionId ?? null;
-          defaultSettings.model = ltmGlobalSettings.model ?? "";
-          defaultSettings.instruction = ltmGlobalSettings.instruction ?? "";
-          defaultSettings.importConcurrency = ltmGlobalSettings.importConcurrency ?? 3;
-          defaultSettings.autoApplyLowRisk = ltmGlobalSettings.autoApplyLowRisk ?? false;
           defaultSettings.longTermMemoryBudgetTokens = ltmGlobalSettings.longTermMemoryBudgetTokens ?? 4096;
           defaultSettings.longTermMemoryMaxChunks = ltmGlobalSettings.longTermMemoryMaxChunks ?? 20;
           defaultSettings.longTermMemoryScoreThreshold = ltmGlobalSettings.longTermMemoryScoreThreshold ?? 0;

@@ -58,19 +58,19 @@ const ltmGlobalSettingsShape = z
     longTermMemoryIncludeResolved: z.boolean().optional(),
     longTermMemoryRecallPreamble: z.string().max(500).optional(),
     longTermMemoryDebug: z.boolean().optional(),
-    importConcurrency: z.number().int().min(1).max(10).optional(),
-    connectionId: z.string().max(120).optional(),
-    model: z.string().max(240).optional(),
-    instruction: z.string().max(2_000).optional(),
-    autoApplyLowRisk: z.boolean().optional(),
   })
   .strict();
+
+const LTM_GLOBAL_LEGACY_KEYS = /^(importConcurrency|connectionId|model|instruction|autoApplyLowRisk)$/;
 
 export const ltmGlobalSettingsSchema = z.preprocess((value) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const input = value as Record<string, unknown>;
   const normalized = { ...input };
   delete normalized.extractionMode;
+  for (const key of Object.keys(normalized)) {
+    if (LTM_GLOBAL_LEGACY_KEYS.test(key)) delete normalized[key];
+  }
   if ("longTermMemoryRecallStyle" in normalized) {
     normalized.longTermMemoryRecallStyle =
       input.longTermMemoryRecallStyle === "exact" ||
@@ -99,11 +99,6 @@ export const ltmResolvedGlobalSettingsSchema = z
     longTermMemoryIncludeResolved: z.boolean(),
     longTermMemoryRecallPreamble: z.string().max(500),
     longTermMemoryDebug: z.boolean(),
-    importConcurrency: z.number().int().min(1).max(10),
-    connectionId: z.string().max(120),
-    model: z.string().max(240),
-    instruction: z.string().max(2_000),
-    autoApplyLowRisk: z.boolean(),
   })
   .strict();
 
@@ -122,11 +117,6 @@ export const DEFAULT_LTM_GLOBAL_SETTINGS = ltmResolvedGlobalSettingsSchema.parse
   longTermMemoryIncludeResolved: false,
   longTermMemoryRecallPreamble: DEFAULT_LTM_RECALL_PREAMBLE,
   longTermMemoryDebug: false,
-  importConcurrency: 3,
-  connectionId: "",
-  model: "",
-  instruction: "",
-  autoApplyLowRisk: false,
 });
 
 export const ltmExtractionPromptTemplateSchema = z
@@ -146,8 +136,8 @@ const ltmExtractionSettingsShape = z
     verbosity: ltmExtractionVerbositySchema.optional(),
     maxOutputTokens: z.number().int().min(512).max(32_768).optional(),
     temperature: z.number().finite().min(0).max(2).optional(),
-    maxSourceTokens: z.number().int().min(250).max(50_000).optional(),
-    maxExistingNoteTokens: z.number().int().min(250).max(25_000).optional(),
+    maxSourceTokens: z.number().int().min(128).max(65_536).optional(),
+    maxExistingNoteTokens: z.number().int().min(128).max(32_768).optional(),
     existingNoteMaxChunks: z.number().int().min(1).max(100).optional(),
     existingNoteMaxTokens: z.number().int().min(128).max(16_384).optional(),
     promptTemplates: z.array(ltmExtractionPromptTemplateSchema).max(50).optional(),
@@ -170,8 +160,8 @@ export const ltmResolvedExtractionSettingsSchema = z
     verbosity: ltmExtractionVerbositySchema,
     maxOutputTokens: z.number().int().min(512).max(32_768),
     temperature: z.number().finite().min(0).max(2),
-    maxSourceTokens: z.number().int().min(250).max(50_000),
-    maxExistingNoteTokens: z.number().int().min(250).max(25_000),
+    maxSourceTokens: z.number().int().min(128).max(65_536),
+    maxExistingNoteTokens: z.number().int().min(128).max(32_768),
     existingNoteMaxChunks: z.number().int().min(1).max(100),
     existingNoteMaxTokens: z.number().int().min(128).max(16_384),
     promptTemplates: z.array(ltmExtractionPromptTemplateSchema).max(50),
@@ -845,6 +835,7 @@ export type LtmPendingDraftsCountResponse = z.infer<typeof ltmPendingDraftsCount
  */
 const ltmAgentSettingsShape = z
   .object({
+    author: z.string().optional(),
     connectionId: z.string().nullable().optional(),
     model: z.string().max(240).optional(),
     instruction: z.string().max(2_000).optional(),

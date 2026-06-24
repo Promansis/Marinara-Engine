@@ -40,7 +40,6 @@ import {
   useSkipLongTermMemoryDraftMutations,
   useLongTermMemoryStatus,
   useSearchLongTermMemory,
-  useUpdateLongTermMemorySettings,
   type LtmSearchResponse,
   type LtmInteropSource,
 } from "../../hooks/use-long-term-memory";
@@ -80,7 +79,6 @@ import { StatusPill, ToolButton } from "../long-term-memory/LtmPills";
 import { Modal } from "../ui/Modal";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import {
-  DEFAULT_IMPORT_CONCURRENCY,
   IMPORT_SOURCES,
   NOTE_STATUSES,
   NOTE_TYPES,
@@ -91,8 +89,6 @@ import {
   compactMutationText,
   derivedNoteIdsForSources,
   groupNotesByType,
-  hasLegacyRunDefaultOverrides,
-  hasServerRunDefaultOverrides,
   importRowKey,
   isSourceSummaryNote,
   memoryRowTitle,
@@ -101,13 +97,11 @@ import {
   mutationRiskTone,
   mutationTargetTitle,
   optionalTrimmedText,
-  readLtmGlobalSettingsMigrationFlag,
   readLongTermMemoryRecallSearchSettings,
   scopeDraftFromLtmScope,
   sourceNoteTitle,
   suggestionRowKey,
   uniqueNoteIds,
-  writeLtmGlobalSettingsMigrationFlag,
   Section,
   type MemoryModalMode,
   type MemoryModalTab,
@@ -242,14 +236,12 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const activeChatQuery = useChat(activeChatId);
   const activeChat = activeChatQuery.data ?? cachedActiveChat;
   const globalSettings = useLongTermMemorySettings();
-  const updateGlobalSettings = useUpdateLongTermMemorySettings();
   const ltmSettings = globalSettings.data;
-  const importApplyLowRisk = ltmSettings?.autoApplyLowRisk ?? false;
-  const importConnectionId = ltmSettings?.connectionId ?? "";
-  const importConcurrencySetting = ltmSettings?.importConcurrency ?? DEFAULT_IMPORT_CONCURRENCY;
-  const importInstruction = ltmSettings?.instruction ?? "";
-  const importModel = ltmSettings?.model ?? "";
-  const legacyMigrationAttemptedRef = useRef(false);
+  const importApplyLowRisk = panelPrefs.autoApplyLowRisk;
+  const importConnectionId = panelPrefs.connectionId;
+  const importConcurrencySetting = panelPrefs.importConcurrency;
+  const importInstruction = panelPrefs.instruction;
+  const importModel = panelPrefs.model;
   const sourceNoteOpenedRef = useRef<string | null>(null);
   const selectedNavigatorThread = useMemo(
     () => findNavigatorThread(navigatorThreads, navigatorSelection),
@@ -265,16 +257,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     [navigatorSelection, selectedNavigatorThread],
   );
   const activeRecallSettings = useMemo(() => readLongTermMemoryRecallSearchSettings(ltmSettings), [ltmSettings]);
-  const legacyRunDefaults = useMemo(
-    () => ({
-      importConcurrency,
-      autoApplyLowRisk,
-      connectionId,
-      model,
-      instruction,
-    }),
-    [autoApplyLowRisk, connectionId, importConcurrency, instruction, model],
-  );
   const activeChatMessages = useChatMessages(activeChatId, activeRecallSettings.contextMessages, Boolean(openNoteId));
   const status = useLongTermMemoryStatus();
   const integrity = useLongTermMemoryIntegrity();
@@ -313,34 +295,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     if (!activeChatId) return;
     setNavigatorSelection({ groupId: activeChat?.groupId ?? null, chatId: activeChatId });
   }, [activeChat?.groupId, activeChatId]);
-
-  useEffect(() => {
-    if (legacyMigrationAttemptedRef.current || !ltmSettings) return;
-    legacyMigrationAttemptedRef.current = true;
-    if (readLtmGlobalSettingsMigrationFlag()) return;
-    if (!hasLegacyRunDefaultOverrides(legacyRunDefaults)) {
-      writeLtmGlobalSettingsMigrationFlag();
-      return;
-    }
-    if (hasServerRunDefaultOverrides(ltmSettings)) {
-      writeLtmGlobalSettingsMigrationFlag();
-      return;
-    }
-
-    updateGlobalSettings.mutate(
-      {
-        version: 1,
-        importConcurrency: legacyRunDefaults.importConcurrency,
-        autoApplyLowRisk: legacyRunDefaults.autoApplyLowRisk,
-        connectionId: legacyRunDefaults.connectionId,
-        model: legacyRunDefaults.model,
-        instruction: legacyRunDefaults.instruction,
-      },
-      {
-        onSuccess: writeLtmGlobalSettingsMigrationFlag,
-      },
-    );
-  }, [legacyRunDefaults, ltmSettings, updateGlobalSettings]);
 
   const filteredNotes = useMemo(() => {
     const list = (notes.data ?? []).filter((note) => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Circle, CircleDot, FileText, Link2, Plus, RotateCcw, Trash2 } from "lucide-react";
 import {
   DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS,
@@ -7,28 +7,25 @@ import {
   DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
   DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
   DEFAULT_LTM_EXTRACTION_PROMPT,
-  DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
   DEFAULT_LTM_EXTRACTION_TEMPERATURE,
-  DEFAULT_LTM_EXTRACTION_VERBOSITY,
   type LtmExtractionReasoningEffort,
   type LtmExtractionVerbosity,
 } from "@marinara-engine/shared";
-import {
-  useLongTermMemoryExtractionSettings,
-  useLongTermMemorySettings,
-  useUpdateLongTermMemoryExtractionSettings,
-  useUpdateLongTermMemorySettings,
-} from "../../hooks/use-long-term-memory";
 import { useConnections } from "../../hooks/use-connections";
 import { MacroTextarea } from "../ui/MacroTextarea";
 import { FieldGroup } from "../agents/AgentEditor";
-import { StatusPill } from "./LtmPills";
+
+type PromptTemplate = { id: string; name: string; prompt: string };
 
 /* ── Extraction Connection Section ── */
 
-export function LtmExtractionConnectionSection() {
-  const { data: globalSettings } = useLongTermMemorySettings();
-  const updateGlobalSettings = useUpdateLongTermMemorySettings();
+export function LtmExtractionConnectionSection({
+  connectionId,
+  onChangeConnectionId,
+}: {
+  connectionId: string;
+  onChangeConnectionId: (value: string) => void;
+}) {
   const connectionsQuery = useConnections();
 
   const textConnections = useMemo(
@@ -43,28 +40,6 @@ export function LtmExtractionConnectionSection() {
     [connectionsQuery.data],
   );
 
-  const [saveState, setSaveState] = useState<"saved" | "saving" | "error" | null>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-
-  const persistGlobal = useCallback(
-    (patch: Record<string, unknown>) => {
-      setSaveState("saving");
-      clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => {
-        updateGlobalSettings.mutate(
-          { version: 1, ...globalSettings, ...patch } as Parameters<typeof updateGlobalSettings.mutate>[0],
-          {
-            onSuccess: () => setSaveState("saved"),
-            onError: () => setSaveState("error"),
-          },
-        );
-      }, 400);
-    },
-    [globalSettings, updateGlobalSettings],
-  );
-
-  const connectionId = globalSettings?.connectionId ?? "";
-
   return (
     <FieldGroup
       label="Extraction Connection"
@@ -73,7 +48,7 @@ export function LtmExtractionConnectionSection() {
     >
       <select
         value={connectionId}
-        onChange={(e) => persistGlobal({ connectionId: e.target.value })}
+        onChange={(e) => onChangeConnectionId(e.target.value)}
         className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
       >
         <option value="">Default extraction model</option>
@@ -87,12 +62,6 @@ export function LtmExtractionConnectionSection() {
       <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
         When empty, uses the workspace default connection from Settings.
       </p>
-      {saveState && (
-        <StatusPill
-          label={saveState === "saving" ? "Saving\u2026" : saveState === "error" ? "Save failed" : "Saved"}
-          tone={saveState === "saving" ? "warn" : saveState === "error" ? "bad" : "good"}
-        />
-      )}
     </FieldGroup>
   );
 }
@@ -100,39 +69,24 @@ export function LtmExtractionConnectionSection() {
 /* ── Extraction Prompt Section ── */
 
 type ExtractionPromptSectionProps = {
+  systemPrompt: string;
+  promptTemplates: readonly PromptTemplate[];
+  activePromptTemplateId: string | null;
+  onChangeSystemPrompt: (value: string) => void;
+  onChangePromptTemplates: (templates: PromptTemplate[]) => void;
+  onChangeActivePromptTemplateId: (id: string | null) => void;
   onOpenAdvancedSettings?: () => void;
 };
 
-export function LtmExtractionPromptSection({ onOpenAdvancedSettings }: ExtractionPromptSectionProps) {
-  const { data: extractionSettings } = useLongTermMemoryExtractionSettings();
-  const updateExtractionSettings = useUpdateLongTermMemoryExtractionSettings();
-
-  const [saveState, setSaveState] = useState<"saved" | "saving" | "error" | null>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-
-  const debouncedPersistExtraction = useCallback(
-    (patch: Record<string, unknown>) => {
-      setSaveState("saving");
-      clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => {
-        updateExtractionSettings.mutate(
-          { version: 1, ...extractionSettings, ...patch } as Parameters<typeof updateExtractionSettings.mutate>[0],
-          {
-            onSuccess: () => setSaveState("saved"),
-            onError: () => setSaveState("error"),
-          },
-        );
-      }, 800);
-    },
-    [extractionSettings, updateExtractionSettings],
-  );
-
-  const systemPrompt = extractionSettings?.systemPrompt ?? "";
-  const promptTemplates = useMemo(
-    () => extractionSettings?.promptTemplates ?? [],
-    [extractionSettings?.promptTemplates],
-  );
-  const activePromptTemplateId = extractionSettings?.activePromptTemplateId ?? null;
+export function LtmExtractionPromptSection({
+  systemPrompt,
+  promptTemplates,
+  activePromptTemplateId,
+  onChangeSystemPrompt,
+  onChangePromptTemplates,
+  onChangeActivePromptTemplateId,
+  onOpenAdvancedSettings,
+}: ExtractionPromptSectionProps) {
   const isUsingDefaultPrompt = !systemPrompt.trim() || systemPrompt === DEFAULT_LTM_EXTRACTION_PROMPT;
   const [editingPrompt, setEditingPrompt] = useState(false);
   const [localPrompt, setLocalPrompt] = useState(systemPrompt);
@@ -143,56 +97,64 @@ export function LtmExtractionPromptSection({ onOpenAdvancedSettings }: Extractio
     }
   }, [systemPrompt, editingPrompt]);
 
-  // Local state for prompt templates (server-data mirror for responsive typing)
-  const [localTemplates, setLocalTemplates] = useState(promptTemplates);
+  // Local state for prompt templates (responsive typing mirror)
+  const [localTemplates, setLocalTemplates] = useState<PromptTemplate[]>([...promptTemplates]);
 
   useEffect(() => {
-    setLocalTemplates(promptTemplates);
+    setLocalTemplates([...promptTemplates]);
   }, [promptTemplates]);
 
   const handleLoadDefault = useCallback(() => {
     setEditingPrompt(true);
     setLocalPrompt(DEFAULT_LTM_EXTRACTION_PROMPT);
-    debouncedPersistExtraction({ systemPrompt: DEFAULT_LTM_EXTRACTION_PROMPT });
-  }, [debouncedPersistExtraction]);
+    onChangeSystemPrompt(DEFAULT_LTM_EXTRACTION_PROMPT);
+  }, [onChangeSystemPrompt]);
 
   const handleResetPrompt = useCallback(() => {
     setEditingPrompt(false);
     setLocalPrompt(DEFAULT_LTM_EXTRACTION_PROMPT);
-    debouncedPersistExtraction({ systemPrompt: undefined });
-  }, [debouncedPersistExtraction]);
+    // undefined means "use default" on the server
+    onChangeSystemPrompt("");
+  }, [onChangeSystemPrompt]);
 
   const handlePromptChange = useCallback(
     (value: string) => {
       setLocalPrompt(value);
-      debouncedPersistExtraction({ systemPrompt: value });
+      onChangeSystemPrompt(value);
     },
-    [debouncedPersistExtraction],
+    [onChangeSystemPrompt],
   );
 
-  // Named prompt options handlers
+  const syncTemplates = useCallback(
+    (next: PromptTemplate[]) => {
+      const adjusted = [...next];
+      if (activePromptTemplateId && !adjusted.some((t) => t.id === activePromptTemplateId)) {
+        onChangeActivePromptTemplateId(null);
+      }
+      onChangePromptTemplates(adjusted);
+    },
+    [activePromptTemplateId, onChangePromptTemplates, onChangeActivePromptTemplateId],
+  );
+
   const handleAddTemplate = useCallback(() => {
-    const newTemplate = { id: crypto.randomUUID(), name: "New template", prompt: "" };
-    setLocalTemplates((prev) => [...prev, newTemplate]);
+    setLocalTemplates((prev) => {
+      const next = [...prev, { id: crypto.randomUUID(), name: "New template", prompt: "" }];
+      return next;
+    });
   }, []);
 
   const handleUpdateTemplate = useCallback(
     (id: string, patch: Partial<{ name: string; prompt: string }>) => {
       setLocalTemplates((prev) => {
         const next = prev.map((t) => (t.id === id ? { ...t, ...patch } : t));
-        // Only persist when ALL templates are valid.
         const allValid = next.every((t) => t.name.trim().length > 0 && t.prompt.trim().length > 0);
         if (allValid) {
-          const serverPatch: Record<string, unknown> = { promptTemplates: next };
-          if (activePromptTemplateId && !next.some((t) => t.id === activePromptTemplateId)) {
-            serverPatch.activePromptTemplateId = null;
-          }
-          debouncedPersistExtraction(serverPatch);
+          syncTemplates(next);
         }
         return next;
       });
     },
-    [activePromptTemplateId, debouncedPersistExtraction],
+    [syncTemplates],
   );
 
   const handleRemoveTemplate = useCallback(
@@ -201,23 +163,19 @@ export function LtmExtractionPromptSection({ onOpenAdvancedSettings }: Extractio
         const next = prev.filter((t) => t.id !== id);
         const allValid = next.every((t) => t.name.trim().length > 0 && t.prompt.trim().length > 0);
         if (allValid) {
-          const patch: Record<string, unknown> = { promptTemplates: next };
-          if (activePromptTemplateId === id) {
-            patch.activePromptTemplateId = null;
-          }
-          debouncedPersistExtraction(patch);
+          syncTemplates(next);
         }
         return next;
       });
     },
-    [activePromptTemplateId, debouncedPersistExtraction],
+    [syncTemplates],
   );
 
   const handleSetActiveTemplate = useCallback(
     (id: string | null) => {
-      debouncedPersistExtraction({ activePromptTemplateId: id });
+      onChangeActivePromptTemplateId(id);
     },
-    [debouncedPersistExtraction],
+    [onChangeActivePromptTemplateId],
   );
 
   return (
@@ -363,79 +321,32 @@ export function LtmExtractionPromptSection({ onOpenAdvancedSettings }: Extractio
           </button>
         </p>
       )}
-
-      {saveState && (
-        <StatusPill
-          label={saveState === "saving" ? "Saving\u2026" : saveState === "error" ? "Save failed" : "Saved"}
-          tone={saveState === "saving" ? "warn" : saveState === "error" ? "bad" : "good"}
-        />
-      )}
     </FieldGroup>
   );
 }
 
 /* ── LTM Inline Settings (Advanced collapsible content) ── */
 
-export default function LtmInlineSettingsSections() {
-  const { data: globalSettings } = useLongTermMemorySettings();
-  const { data: extractionSettings } = useLongTermMemoryExtractionSettings();
-  const updateGlobalSettings = useUpdateLongTermMemorySettings();
-  const updateExtractionSettings = useUpdateLongTermMemoryExtractionSettings();
-
-  const [globalSaveState, setGlobalSaveState] = useState<"saved" | "saving" | "error" | null>(null);
-  const [extractionSaveState, setExtractionSaveState] = useState<"saved" | "saving" | "error" | null>(null);
-  const globalTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const extractionTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-
-  const persistGlobal = useCallback(
-    (patch: Record<string, unknown>) => {
-      setGlobalSaveState("saving");
-      clearTimeout(globalTimerRef.current);
-      globalTimerRef.current = setTimeout(() => {
-        updateGlobalSettings.mutate(
-          { version: 1, ...globalSettings, ...patch } as Parameters<typeof updateGlobalSettings.mutate>[0],
-          {
-            onSuccess: () => setGlobalSaveState("saved"),
-            onError: () => setGlobalSaveState("error"),
-          },
-        );
-      }, 400);
-    },
-    [globalSettings, updateGlobalSettings],
-  );
-
-  const persistExtraction = useCallback(
-    (patch: Record<string, unknown>) => {
-      setExtractionSaveState("saving");
-      clearTimeout(extractionTimerRef.current);
-      extractionTimerRef.current = setTimeout(() => {
-        updateExtractionSettings.mutate(
-          { version: 1, ...extractionSettings, ...patch } as Parameters<typeof updateExtractionSettings.mutate>[0],
-          {
-            onSuccess: () => setExtractionSaveState("saved"),
-            onError: () => setExtractionSaveState("error"),
-          },
-        );
-      }, 400);
-    },
-    [extractionSettings, updateExtractionSettings],
-  );
-
-  // AI Limits
-  const maxOutputTokens = extractionSettings?.maxOutputTokens ?? DEFAULT_LTM_EXTRACTION_MAX_TOKENS;
-  const maxSourceTokens = extractionSettings?.maxSourceTokens ?? DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS;
-
-  // Extraction behavior
-  const reasoningEffort = extractionSettings?.reasoningEffort ?? DEFAULT_LTM_EXTRACTION_REASONING_EFFORT;
-  const verbosity = extractionSettings?.verbosity ?? DEFAULT_LTM_EXTRACTION_VERBOSITY;
-  const temperature = extractionSettings?.temperature ?? DEFAULT_LTM_EXTRACTION_TEMPERATURE;
-  const maxExistingNoteTokens = extractionSettings?.maxExistingNoteTokens ?? DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS;
-  const existingNoteMaxChunks = extractionSettings?.existingNoteMaxChunks ?? DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS;
-  const existingNoteMaxTokens = extractionSettings?.existingNoteMaxTokens ?? DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS;
-
-  // Auto-apply (from global settings, relocated here)
-  const autoApplyLowRisk = globalSettings?.autoApplyLowRisk ?? false;
-
+export default function LtmInlineSettingsSections({
+  extractionSettings,
+  autoApplyLowRisk,
+  onChangeExtraction,
+  onChangeGlobal,
+}: {
+  extractionSettings: {
+    reasoningEffort: string;
+    verbosity: string;
+    maxOutputTokens: number;
+    temperature: number;
+    maxSourceTokens: number;
+    maxExistingNoteTokens: number;
+    existingNoteMaxChunks: number;
+    existingNoteMaxTokens: number;
+  };
+  autoApplyLowRisk: boolean;
+  onChangeExtraction: (patch: Record<string, unknown>) => void;
+  onChangeGlobal: (patch: Record<string, unknown>) => void;
+}) {
   return (
     <>
       {/* Section 1 — AI Limits */}
@@ -451,8 +362,8 @@ export default function LtmInlineSettingsSections() {
               type="number"
               min={512}
               max={32768}
-              value={maxOutputTokens}
-              onChange={(e) => persistExtraction({ maxOutputTokens: Math.max(512, Math.min(32768, parseInt(e.target.value) || 0)) })}
+              value={extractionSettings.maxOutputTokens}
+              onChange={(e) => onChangeExtraction({ maxOutputTokens: Math.max(512, Math.min(32768, parseInt(e.target.value) || 0)) })}
               placeholder={String(DEFAULT_LTM_EXTRACTION_MAX_TOKENS)}
               className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
             />
@@ -461,21 +372,15 @@ export default function LtmInlineSettingsSections() {
             <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">How much text the AI reads at once</span>
             <input
               type="number"
-              min={250}
-              max={50000}
-              value={maxSourceTokens}
-              onChange={(e) => persistExtraction({ maxSourceTokens: Math.max(250, Math.min(50000, parseInt(e.target.value) || 0)) })}
+              min={128}
+              max={65536}
+              value={extractionSettings.maxSourceTokens}
+              onChange={(e) => onChangeExtraction({ maxSourceTokens: Math.max(128, Math.min(65536, parseInt(e.target.value) || 0)) })}
               placeholder={String(DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS)}
               className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
             />
           </label>
         </div>
-        {extractionSaveState && (
-          <StatusPill
-            label={extractionSaveState === "saving" ? "Saving\u2026" : extractionSaveState === "error" ? "Save failed" : "Saved"}
-            tone={extractionSaveState === "saving" ? "warn" : extractionSaveState === "error" ? "bad" : "good"}
-          />
-        )}
       </FieldGroup>
 
       {/* Section 2 — Extraction Behavior */}
@@ -488,8 +393,8 @@ export default function LtmInlineSettingsSections() {
           <label className="flex flex-col gap-1.5">
             <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Reasoning effort</span>
             <select
-              value={reasoningEffort}
-              onChange={(e) => persistExtraction({ reasoningEffort: e.target.value as LtmExtractionReasoningEffort })}
+              value={extractionSettings.reasoningEffort}
+              onChange={(e) => onChangeExtraction({ reasoningEffort: e.target.value as LtmExtractionReasoningEffort })}
               className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
             >
               <option value="none">None</option>
@@ -501,8 +406,8 @@ export default function LtmInlineSettingsSections() {
           <label className="flex flex-col gap-1.5">
             <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Verbosity</span>
             <select
-              value={verbosity}
-              onChange={(e) => persistExtraction({ verbosity: e.target.value as LtmExtractionVerbosity })}
+              value={extractionSettings.verbosity}
+              onChange={(e) => onChangeExtraction({ verbosity: e.target.value as LtmExtractionVerbosity })}
               className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
             >
               <option value="low">Low</option>
@@ -517,8 +422,8 @@ export default function LtmInlineSettingsSections() {
               min={0}
               max={2}
               step={0.1}
-              value={temperature}
-              onChange={(e) => persistExtraction({ temperature: Math.max(0, Math.min(2, Number(e.target.value) || 0)) })}
+              value={extractionSettings.temperature}
+              onChange={(e) => onChangeExtraction({ temperature: Math.max(0, Math.min(2, Number(e.target.value) || 0)) })}
               placeholder={String(DEFAULT_LTM_EXTRACTION_TEMPERATURE)}
               className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
             />
@@ -527,10 +432,10 @@ export default function LtmInlineSettingsSections() {
             <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Max existing-note text</span>
             <input
               type="number"
-              min={250}
-              max={25000}
-              value={maxExistingNoteTokens}
-              onChange={(e) => persistExtraction({ maxExistingNoteTokens: Math.max(250, Math.min(25000, parseInt(e.target.value) || 0)) })}
+              min={128}
+              max={32768}
+              value={extractionSettings.maxExistingNoteTokens}
+              onChange={(e) => onChangeExtraction({ maxExistingNoteTokens: Math.max(128, Math.min(32768, parseInt(e.target.value) || 0)) })}
               placeholder={String(DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS)}
               className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
             />
@@ -541,8 +446,8 @@ export default function LtmInlineSettingsSections() {
               type="number"
               min={1}
               max={100}
-              value={existingNoteMaxChunks}
-              onChange={(e) => persistExtraction({ existingNoteMaxChunks: Math.max(1, Math.min(100, parseInt(e.target.value) || 0)) })}
+              value={extractionSettings.existingNoteMaxChunks}
+              onChange={(e) => onChangeExtraction({ existingNoteMaxChunks: Math.max(1, Math.min(100, parseInt(e.target.value) || 0)) })}
               placeholder={String(DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS)}
               className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
             />
@@ -553,8 +458,8 @@ export default function LtmInlineSettingsSections() {
               type="number"
               min={128}
               max={16384}
-              value={existingNoteMaxTokens}
-              onChange={(e) => persistExtraction({ existingNoteMaxTokens: Math.max(128, Math.min(16384, parseInt(e.target.value) || 0)) })}
+              value={extractionSettings.existingNoteMaxTokens}
+              onChange={(e) => onChangeExtraction({ existingNoteMaxTokens: Math.max(128, Math.min(16384, parseInt(e.target.value) || 0)) })}
               placeholder={String(DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS)}
               className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
             />
@@ -565,7 +470,7 @@ export default function LtmInlineSettingsSections() {
           <input
             type="checkbox"
             checked={autoApplyLowRisk}
-            onChange={(e) => persistGlobal({ autoApplyLowRisk: e.target.checked })}
+            onChange={(e) => onChangeGlobal({ autoApplyLowRisk: e.target.checked })}
             className="mt-0.5 rounded border-[var(--border)] accent-[var(--primary)]"
           />
           <div>
@@ -575,21 +480,6 @@ export default function LtmInlineSettingsSections() {
             </p>
           </div>
         </label>
-
-        <div className="flex items-center gap-2 pt-2">
-          {globalSaveState && (
-            <StatusPill
-              label={globalSaveState === "saving" ? "Saving\u2026" : globalSaveState === "error" ? "Save failed" : "Saved"}
-              tone={globalSaveState === "saving" ? "warn" : globalSaveState === "error" ? "bad" : "good"}
-            />
-          )}
-          {extractionSaveState && (
-            <StatusPill
-              label={extractionSaveState === "saving" ? "Saving\u2026" : extractionSaveState === "error" ? "Save failed" : "Saved"}
-              tone={extractionSaveState === "saving" ? "warn" : extractionSaveState === "error" ? "bad" : "good"}
-            />
-          )}
-        </div>
       </FieldGroup>
     </>
   );

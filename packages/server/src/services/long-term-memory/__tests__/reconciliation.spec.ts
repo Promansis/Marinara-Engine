@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import type { LtmDraftMutation, LtmEvidenceUnit, LtmNote } from "@marinara-engine/shared";
 import {
+  DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
   DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
   DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
   DEFAULT_LTM_RECALL_PREAMBLE,
@@ -490,11 +491,6 @@ test("generation long-term memory uses global retrieval settings and injects aft
       longTermMemoryIncludeResolved: true,
       longTermMemoryRecallPreamble: DEFAULT_LTM_RECALL_PREAMBLE,
       longTermMemoryDebug: true,
-      importConcurrency: 3,
-      connectionId: "",
-      model: "",
-      instruction: "",
-      autoApplyLowRisk: false,
     },
     userMessage: "Check your memory.",
     generationGuide: "Focus on emotional continuity.",
@@ -2070,7 +2066,7 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
     assert.equal(defaults.verbosity, "low");
     assert.equal(defaults.maxOutputTokens, DEFAULT_LTM_EXTRACTION_MAX_TOKENS);
     assert.equal(defaults.maxSourceTokens, DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS);
-    assert.equal(defaults.maxExistingNoteTokens, 3_000);
+    assert.equal(defaults.maxExistingNoteTokens, DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS);
     assert.deepEqual(defaults.promptTemplates, []);
     assert.equal(defaults.activePromptTemplateId, null);
 

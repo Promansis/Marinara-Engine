@@ -74,7 +74,6 @@ export const TAB_LABELS: Record<TabId, string> = {
 };
 
 export const LTM_GLOBAL_SETTINGS_MIGRATION_KEY = "ltm:global-settings-migrated:v1";
-
 export const LTM_RECALL_STYLES: Array<{ id: LtmRecallStyle; label: string; description: string }> = [
   { id: "balanced", label: "Balanced", description: "Mixes meaning, exact wording, and linked story notes. Good default for most chats." },
   { id: "exact", label: "Exact", description: "Favors direct keyword and name matches. Best when you need specific facts recalled precisely." },
@@ -164,50 +163,6 @@ export function readLongTermMemoryRecallSearchSettings(settings: LtmResolvedGlob
     contextMessages: settings?.longTermMemoryRecallContextMessages ?? DEFAULT_LTM_CONTEXT_MESSAGES,
     ...weights,
   };
-}
-
-export function hasLegacyRunDefaultOverrides(preferences: {
-  importConcurrency: number;
-  autoApplyLowRisk: boolean;
-  connectionId: string;
-  model: string;
-  instruction: string;
-}) {
-  return (
-    preferences.importConcurrency !== DEFAULT_IMPORT_CONCURRENCY ||
-    preferences.autoApplyLowRisk ||
-    preferences.connectionId.trim().length > 0 ||
-    preferences.model.trim().length > 0 ||
-    preferences.instruction.trim().length > 0
-  );
-}
-
-export function hasServerRunDefaultOverrides(settings: LtmResolvedGlobalSettings) {
-  return (
-    settings.importConcurrency !== DEFAULT_IMPORT_CONCURRENCY ||
-    settings.autoApplyLowRisk ||
-    settings.connectionId.trim().length > 0 ||
-    settings.model.trim().length > 0 ||
-    settings.instruction.trim().length > 0
-  );
-}
-
-export function readLtmGlobalSettingsMigrationFlag() {
-  if (typeof window === "undefined") return true;
-  try {
-    return window.localStorage.getItem(LTM_GLOBAL_SETTINGS_MIGRATION_KEY) === "true";
-  } catch {
-    return true;
-  }
-}
-
-export function writeLtmGlobalSettingsMigrationFlag() {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(LTM_GLOBAL_SETTINGS_MIGRATION_KEY, "true");
-  } catch {
-    // Non-critical: failing to write only means the migration may be reconsidered later.
-  }
 }
 
 export function compactLtmText(text: string | undefined, limit = 260) {
