@@ -25,7 +25,6 @@ import {
   useExtractLongTermMemorySourceNote,
   useLongTermMemoryDrafts,
   useLongTermMemoryNotes,
-  useLongTermMemorySettings,
   useSkipLongTermMemoryDraftMutations,
   type AcceptLongTermMemoryDraftResponse,
   type ExtractLongTermMemorySourceResponse,
@@ -151,11 +150,10 @@ export function LongTermMemorySuggestionsTab({
   const deleteDraftMutation = useDeleteLongTermMemoryDraftMutation();
   const extractSourceNote = useExtractLongTermMemorySourceNote();
   const skipDraftMutations = useSkipLongTermMemoryDraftMutations();
-  const globalSettings = useLongTermMemorySettings();
-  const autoApplyLowRisk = globalSettings.data?.autoApplyLowRisk ?? false;
-  const connectionId = globalSettings.data?.connectionId ?? "";
-  const instruction = globalSettings.data?.instruction ?? "";
-  const model = globalSettings.data?.model ?? "";
+  const connectionId = "";
+  const instruction = "";
+  const model = "";
+  const autoApplyLowRisk = false;
   const [latestResult, setLatestResult] = useState<LatestExtractionResult | null>(null);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<Set<string>>(() => new Set());

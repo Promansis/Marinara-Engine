@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   BrainCircuit,
@@ -41,11 +41,9 @@ import {
   type LtmExtractionSettings,
   type LtmResolvedExtractionSettings,
 } from "../../hooks/use-long-term-memory";
-import { api } from "../../lib/api-client";
 import { cn, generateClientId } from "../../lib/utils";
 import {
   actionRowClassName,
-  compactInputClassName,
   helperTextClassName,
   insetSectionCardClassName,
   modalIntroCardClassName,
@@ -122,11 +120,11 @@ function payloadFromDraft(draft: ExtractionSettingsDraft): LtmExtractionSettings
   if (draft.verbosity !== "default") payload.verbosity = draft.verbosity;
   payload.maxOutputTokens = parseInteger(draft.maxOutputTokens, 512, 32_768, DEFAULT_SETTINGS.maxOutputTokens);
   payload.temperature = parseNumber(draft.temperature, 0, 2, DEFAULT_SETTINGS.temperature);
-  payload.maxSourceTokens = parseInteger(draft.maxSourceTokens, 250, 50_000, DEFAULT_SETTINGS.maxSourceTokens);
+  payload.maxSourceTokens = parseInteger(draft.maxSourceTokens, 128, 65_536, DEFAULT_SETTINGS.maxSourceTokens);
   payload.maxExistingNoteTokens = parseInteger(
     draft.maxExistingNoteTokens,
-    250,
-    25_000,
+    128,
+    32_768,
     DEFAULT_SETTINGS.maxExistingNoteTokens,
   );
   payload.existingNoteMaxChunks = parseInteger(
@@ -152,11 +150,11 @@ function resolvedFromDraft(draft: ExtractionSettingsDraft, current: LtmResolvedE
     verbosity: draft.verbosity === "default" ? DEFAULT_SETTINGS.verbosity : draft.verbosity,
     maxOutputTokens: parseInteger(draft.maxOutputTokens, 512, 32_768, DEFAULT_SETTINGS.maxOutputTokens),
     temperature: parseNumber(draft.temperature, 0, 2, DEFAULT_SETTINGS.temperature),
-    maxSourceTokens: parseInteger(draft.maxSourceTokens, 250, 50_000, DEFAULT_SETTINGS.maxSourceTokens),
+    maxSourceTokens: parseInteger(draft.maxSourceTokens, 128, 65_536, DEFAULT_SETTINGS.maxSourceTokens),
     maxExistingNoteTokens: parseInteger(
       draft.maxExistingNoteTokens,
-      250,
-      25_000,
+      128,
+      32_768,
       DEFAULT_SETTINGS.maxExistingNoteTokens,
     ),
     existingNoteMaxChunks: parseInteger(draft.existingNoteMaxChunks, 1, 100, DEFAULT_SETTINGS.existingNoteMaxChunks),
@@ -207,10 +205,6 @@ export function LongTermMemoryExtractionSettingsEditor({
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [templateNameDraft, setTemplateNameDraft] = useState("");
   const [templatePromptDraft, setTemplatePromptDraft] = useState("");
-  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastSavedPayloadRef = useRef<string | null>(null);
-  const latestDraftRef = useRef<ExtractionSettingsDraft | null>(null);
-  const latestSettingsRef = useRef<LtmResolvedExtractionSettings | null>(null);
 
   const promptTemplates = useMemo(() => settings.data?.promptTemplates ?? [], [settings.data?.promptTemplates]);
   const integrity = useLongTermMemoryIntegrity();
@@ -231,11 +225,6 @@ export function LongTermMemoryExtractionSettingsEditor({
   );
 
   useEffect(() => {
-    latestDraftRef.current = draft;
-    latestSettingsRef.current = settings.data ?? null;
-  }, [draft, settings.data]);
-
-  useEffect(() => {
     if (enabled && settings.data) {
       setDraft(draftFromSettings(settings.data));
       setTemplateEditorOpen(false);
@@ -243,7 +232,6 @@ export function LongTermMemoryExtractionSettingsEditor({
       setEditingTemplateId(null);
       setTemplateNameDraft("");
       setTemplatePromptDraft("");
-      lastSavedPayloadRef.current = JSON.stringify(payloadFromDraft(draftFromSettings(settings.data)));
     }
   }, [enabled, settings.data]);
 
@@ -257,75 +245,17 @@ export function LongTermMemoryExtractionSettingsEditor({
   }, []);
 
   const persistSettings = useCallback(
-    (patch: Record<string, unknown>, options?: { quiet?: boolean }) => {
+    (patch: Record<string, unknown>) => {
       updateSettings
         .mutateAsync(patch as LtmExtractionSettings)
         .then((next) => {
           setDraft(draftFromSettings(next));
-          lastSavedPayloadRef.current = JSON.stringify(payloadFromDraft(draftFromSettings(next)));
-          if (!options?.quiet) toast.success("Extraction settings saved");
+          toast.success("Extraction settings saved");
         })
         .catch((err: Error) => toast.error(err.message));
     },
     [updateSettings],
   );
-
-  const flushAutosave = useCallback(() => {
-    const currentDraft = latestDraftRef.current;
-    const currentSettings = latestSettingsRef.current;
-    if (!currentDraft || !currentSettings) return;
-    const payload = payloadFromDraft(currentDraft);
-    const serialized = JSON.stringify(payload);
-    if (serialized === lastSavedPayloadRef.current || !isDraftDirty(currentDraft, currentSettings)) return;
-    persistSettings(payload, { quiet: true });
-  }, [persistSettings]);
-
-  const dispatchKeepaliveSettingsSave = useCallback(() => {
-    const currentDraft = latestDraftRef.current;
-    const currentSettings = latestSettingsRef.current;
-    if (!currentDraft || !currentSettings) return;
-    const payload = payloadFromDraft(currentDraft);
-    const serialized = JSON.stringify(payload);
-    if (serialized === lastSavedPayloadRef.current || !isDraftDirty(currentDraft, currentSettings)) return;
-    const result = api.putKeepalive("/long-term-memory/extraction-settings", payload);
-    if (result.dispatched) {
-      lastSavedPayloadRef.current = serialized;
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!enabled || !draft || !settings.data) return;
-    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
-    autosaveTimerRef.current = setTimeout(() => {
-      flushAutosave();
-      autosaveTimerRef.current = null;
-    }, 500);
-    return () => {
-      if (autosaveTimerRef.current) {
-        clearTimeout(autosaveTimerRef.current);
-        autosaveTimerRef.current = null;
-      }
-    };
-  }, [draft, enabled, flushAutosave, settings.data]);
-
-  useEffect(() => {
-    if (!enabled) return;
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "hidden") {
-        dispatchKeepaliveSettingsSave();
-        flushAutosave();
-      }
-    };
-    const handleBeforeUnload = () => {
-      dispatchKeepaliveSettingsSave();
-    };
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => {
-      window.removeEventListener("beforeunload", handleBeforeUnload);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  }, [dispatchKeepaliveSettingsSave, enabled, flushAutosave]);
 
   const handleSelectPromptTemplate = useCallback(
     (templateId: string | null) => {
@@ -474,32 +404,6 @@ export function LongTermMemoryExtractionSettingsEditor({
           Marinara.
         </p>
       </div>
-
-      <section className={cn("space-y-3", sectionCardClassName)}>
-        <div className="text-xs font-semibold text-[var(--foreground)]">Shared run defaults</div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <SettingField label="Import concurrency">
-            <input
-              type="number"
-              min={1}
-              max={10}
-              value={globalSettings.data.importConcurrency}
-              onChange={(event) => patchGlobalSettings({ version: 1, importConcurrency: Number(event.target.value) })}
-              className={compactInputClassName}
-            />
-          </SettingField>
-        </div>
-        <SettingField label="Instruction override">
-          <textarea
-            value={globalSettings.data.instruction}
-            onChange={(event) => patchGlobalSettings({ version: 1, instruction: event.target.value })}
-            maxLength={2000}
-            rows={3}
-            placeholder="Optional instruction for imports and source-note extraction"
-            className={cn(textareaClassName, "min-h-24")}
-          />
-        </SettingField>
-      </section>
 
       <section className={cn("space-y-3", sectionCardClassName)}>
         <div className="flex flex-wrap items-center justify-between gap-2">

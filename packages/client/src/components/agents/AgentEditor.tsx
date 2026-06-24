@@ -107,11 +107,21 @@ import {
 import { serializeCustomToolForTransfer } from "../../lib/custom-tool-transfer";
 import { downloadZipFile } from "../../lib/download-zip";
 import { isManagedAgentType } from "@marinara-engine/shared";
+import {
+  DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS,
+  DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
+  DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
+  DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
+  DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
+  DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
+  DEFAULT_LTM_EXTRACTION_TEMPERATURE,
+  DEFAULT_LTM_EXTRACTION_VERBOSITY,
+} from "@marinara-engine/shared";
 import { Modal } from "../ui/Modal";
 import { LtmVaultManagerSection } from "../long-term-memory/LtmVaultManagerSection";
 import { LongTermMemoryExtractionSettingsEditor } from "../long-term-memory/LongTermMemoryExtractionSettingsModal";
 import LtmInlineSettingsSections, { LtmExtractionConnectionSection, LtmExtractionPromptSection } from "../long-term-memory/LtmInlineSettingsSections";
-import { useLongTermMemoryStatus, useLongTermMemorySettings } from "../../hooks/use-long-term-memory";
+import { useLongTermMemoryStatus, useLongTermMemoryExtractionSettings, useUpdateLongTermMemoryExtractionSettings } from "../../hooks/use-long-term-memory";
 
 function parseActivationKeywordsText(value: string): string[] {
   const seen = new Set<string>();
@@ -528,7 +538,28 @@ export function AgentEditor() {
   const [ltmAdvancedOpen, setLtmAdvancedOpen] = useState(false);
 
   const ltmStatus = useLongTermMemoryStatus();
-  const { data: ltmGlobalSettings } = useLongTermMemorySettings();
+  const { data: ltmExtractionSettings } = useLongTermMemoryExtractionSettings();
+  const updateExtractionSettings = useUpdateLongTermMemoryExtractionSettings();
+  const [ltmDraft, setLtmDraft] = useState<{
+    connectionId: string;
+    model: string;
+    instruction: string;
+    importConcurrency: number;
+    autoApplyLowRisk: boolean;
+    systemPrompt: string;
+    extraInstruction: string;
+    reasoningEffort: string;
+    verbosity: string;
+    maxOutputTokens: number;
+    temperature: number;
+    maxSourceTokens: number;
+    maxExistingNoteTokens: number;
+    existingNoteMaxChunks: number;
+    existingNoteMaxTokens: number;
+    promptTemplates: { id: string; name: string; prompt: string }[];
+    activePromptTemplateId: string | null;
+  } | null>(null);
+  const ltmSeededAgentRef = useRef<string | null>(null);
   const [localLorebookWriteEnabled, setLocalLorebookWriteEnabled] = useState(false);
   const [localWritableLorebookId, setLocalWritableLorebookId] = useState("");
   const [localMusicProvider, setLocalMusicProvider] = useState<MusicProvider>("spotify");
@@ -856,6 +887,41 @@ export function AgentEditor() {
   // Managed long-term-memory agent — renders the vault manager section instead of generic fields.
   const isLtmAgent = dbConfig?.type === "long-term-memory";
 
+  // Seed LTM draft when the agent first loads (one-time per agent, not on every refetch)
+  useEffect(() => {
+    if (!isLtmAgent) {
+      setLtmDraft(null);
+      ltmSeededAgentRef.current = null;
+      return;
+    }
+    if (!dbConfig || !ltmExtractionSettings) return;
+    const agentKey = dbConfig.id || dbConfig.type || "";
+    if (ltmSeededAgentRef.current === agentKey) return;
+    ltmSeededAgentRef.current = agentKey;
+    const settings = parseAgentSettingsRecord(dbConfig.settings);
+    setLtmDraft({
+      connectionId: typeof settings.connectionId === "string" ? settings.connectionId : "",
+      model: typeof settings.model === "string" ? settings.model : "",
+      instruction: typeof settings.instruction === "string" ? settings.instruction : "",
+      importConcurrency: typeof settings.importConcurrency === "number"
+        ? Math.max(1, Math.min(10, Math.round(settings.importConcurrency)))
+        : 3,
+      autoApplyLowRisk: settings.autoApplyLowRisk === true,
+      systemPrompt: ltmExtractionSettings.systemPrompt,
+      extraInstruction: ltmExtractionSettings.extraInstruction,
+      reasoningEffort: ltmExtractionSettings.reasoningEffort,
+      verbosity: ltmExtractionSettings.verbosity,
+      maxOutputTokens: ltmExtractionSettings.maxOutputTokens,
+      temperature: ltmExtractionSettings.temperature,
+      maxSourceTokens: ltmExtractionSettings.maxSourceTokens,
+      maxExistingNoteTokens: ltmExtractionSettings.maxExistingNoteTokens,
+      existingNoteMaxChunks: ltmExtractionSettings.existingNoteMaxChunks,
+      existingNoteMaxTokens: ltmExtractionSettings.existingNoteMaxTokens,
+      promptTemplates: ltmExtractionSettings.promptTemplates,
+      activePromptTemplateId: ltmExtractionSettings.activePromptTemplateId,
+    });
+  }, [isLtmAgent, dbConfig, ltmExtractionSettings]);
+
   // Detect when both knowledge agents will actually run in parallel. Shows a
   // soft warning so users don't accidentally do overlapping work that bloats
   // the prompt with two injection blocks. Requires BOTH agents to have saved
@@ -1032,35 +1098,15 @@ export function AgentEditor() {
     const savedImageConnectionId = normalizeImageConnectionOverride(localImageConnectionId);
 
     const settingsPayload: Record<string, unknown> = isLtmAgent
-      ? (() => {
-          const LTM_KEYS = new Set([
-            "connectionId",
-            "model",
-            "instruction",
-            "importConcurrency",
-            "importLimit",
-            "importSource",
-            "autoApplyLowRisk",
-            "longTermMemoryBudgetTokens",
-            "longTermMemoryMaxChunks",
-            "longTermMemoryScoreThreshold",
-            "longTermMemoryRecallContextMessages",
-            "longTermMemoryRecallStyle",
-            "longTermMemorySemanticWeight",
-            "longTermMemoryLexicalWeight",
-            "longTermMemoryGraphWeight",
-            "longTermMemoryMetadataWeight",
-            "longTermMemoryIncludeResolved",
-            "longTermMemoryRecallPreamble",
-            "longTermMemoryDebug",
-          ]);
-          const existing = parseAgentSettingsRecord(dbConfig?.settings);
-          const filtered: Record<string, unknown> = {};
-          for (const key of Object.keys(existing)) {
-            if (LTM_KEYS.has(key)) filtered[key] = existing[key];
-          }
-          return filtered;
-        })()
+      ? {
+          ...parseAgentSettingsRecord(dbConfig?.settings),
+          author: "Promansis",
+          connectionId: ltmDraft?.connectionId ?? "",
+          model: ltmDraft?.model ?? "",
+          instruction: ltmDraft?.instruction ?? "",
+          importConcurrency: ltmDraft?.importConcurrency ?? 3,
+          autoApplyLowRisk: ltmDraft?.autoApplyLowRisk ?? false,
+        }
       : {
           ...preservedSpotifyFields,
           author: savedAuthor,
@@ -1149,6 +1195,24 @@ export function AgentEditor() {
           openAgentDetail(created.id);
         }
       }
+      if (isLtmAgent && ltmDraft) {
+        const extractionPayload: Record<string, unknown> = { version: 1 };
+        const systemPrompt = ltmDraft.systemPrompt.trim();
+        const extraInstruction = ltmDraft.extraInstruction.trim();
+        if (systemPrompt) extractionPayload.systemPrompt = systemPrompt;
+        if (extraInstruction) extractionPayload.extraInstruction = extraInstruction;
+        if (ltmDraft.reasoningEffort !== DEFAULT_LTM_EXTRACTION_REASONING_EFFORT) extractionPayload.reasoningEffort = ltmDraft.reasoningEffort;
+        if (ltmDraft.verbosity !== DEFAULT_LTM_EXTRACTION_VERBOSITY) extractionPayload.verbosity = ltmDraft.verbosity;
+        if (ltmDraft.maxOutputTokens !== DEFAULT_LTM_EXTRACTION_MAX_TOKENS) extractionPayload.maxOutputTokens = ltmDraft.maxOutputTokens;
+        if (ltmDraft.temperature !== DEFAULT_LTM_EXTRACTION_TEMPERATURE) extractionPayload.temperature = ltmDraft.temperature;
+        if (ltmDraft.maxSourceTokens !== DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS) extractionPayload.maxSourceTokens = ltmDraft.maxSourceTokens;
+        if (ltmDraft.maxExistingNoteTokens !== DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS) extractionPayload.maxExistingNoteTokens = ltmDraft.maxExistingNoteTokens;
+        if (ltmDraft.existingNoteMaxChunks !== DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS) extractionPayload.existingNoteMaxChunks = ltmDraft.existingNoteMaxChunks;
+        if (ltmDraft.existingNoteMaxTokens !== DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS) extractionPayload.existingNoteMaxTokens = ltmDraft.existingNoteMaxTokens;
+        if (ltmDraft.promptTemplates.length > 0) extractionPayload.promptTemplates = ltmDraft.promptTemplates;
+        if (ltmDraft.activePromptTemplateId !== undefined) extractionPayload.activePromptTemplateId = ltmDraft.activePromptTemplateId;
+        await updateExtractionSettings.mutateAsync(extractionPayload as any);
+      }
       setDirty(false);
       setSavedFlash(true);
       setTimeout(() => setSavedFlash(false), 1500);
@@ -1211,7 +1275,9 @@ export function AgentEditor() {
     isKnowledgeRetrievalAgent,
     isKnowledgeRouterAgent,
     isLtmAgent,
+    ltmDraft,
     updateAgent,
+    updateExtractionSettings,
     createAgent,
     openAgentDetail,
     normalizeTextConnectionOverride,
@@ -1349,6 +1415,14 @@ export function AgentEditor() {
   }, [defaultPrompt]);
 
   const markDirty = useCallback(() => setDirty(true), []);
+
+  const updateLtmDraft = useCallback(
+    (patch: Record<string, unknown>) => {
+      setLtmDraft((prev) => (prev ? { ...prev, ...patch } : prev));
+      markDirty();
+    },
+    [markDirty],
+  );
 
   const handleMusicProviderChange = useCallback(
     (provider: MusicProvider) => {
@@ -3563,12 +3637,8 @@ export function AgentEditor() {
           >
             {(() => {
               const connArray = (connections ?? []) as Array<{ id: string }>;
-              const globalConnId = ltmGlobalSettings?.connectionId ?? "";
-              const agentSettings = parseAgentSettingsRecord(dbConfig?.settings);
-              const agentConnId = typeof agentSettings.connectionId === "string" ? agentSettings.connectionId : "";
-              const hasConnection =
-                (!!globalConnId && connArray.some((c) => c.id === globalConnId)) ||
-                (!!agentConnId && connArray.some((c) => c.id === agentConnId));
+              const draftConnId = ltmDraft?.connectionId ?? "";
+              const hasConnection = !!draftConnId && connArray.some((c) => c.id === draftConnId);
               const hasMemories = (ltmStatus.data?.notes.total ?? 0) > 0;
               if (!hasConnection) {
                 return (
@@ -3615,8 +3685,19 @@ export function AgentEditor() {
               </button>
             </div>
           </FieldGroup>
-          <LtmExtractionConnectionSection />
-          <LtmExtractionPromptSection onOpenAdvancedSettings={() => setLtmSettingsOpen(true)} />
+          <LtmExtractionConnectionSection
+            connectionId={ltmDraft?.connectionId ?? ""}
+            onChangeConnectionId={(value) => updateLtmDraft({ connectionId: value })}
+          />
+          <LtmExtractionPromptSection
+            systemPrompt={ltmDraft?.systemPrompt ?? ""}
+            promptTemplates={ltmDraft?.promptTemplates ?? []}
+            activePromptTemplateId={ltmDraft?.activePromptTemplateId ?? null}
+            onChangeSystemPrompt={(value) => updateLtmDraft({ systemPrompt: value })}
+            onChangePromptTemplates={(templates) => updateLtmDraft({ promptTemplates: templates })}
+            onChangeActivePromptTemplateId={(id) => updateLtmDraft({ activePromptTemplateId: id })}
+            onOpenAdvancedSettings={() => setLtmSettingsOpen(true)}
+          />
           <FieldGroup
             label="Advanced"
             icon={<DatabaseZap size="0.875rem" className="text-[var(--primary)]" />}
@@ -3624,7 +3705,21 @@ export function AgentEditor() {
             expanded={ltmAdvancedOpen}
             onExpandedChange={setLtmAdvancedOpen}
           >
-            <LtmInlineSettingsSections />
+            <LtmInlineSettingsSections
+              extractionSettings={{
+                reasoningEffort: ltmDraft?.reasoningEffort ?? DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
+                verbosity: ltmDraft?.verbosity ?? DEFAULT_LTM_EXTRACTION_VERBOSITY,
+                maxOutputTokens: ltmDraft?.maxOutputTokens ?? DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
+                temperature: ltmDraft?.temperature ?? DEFAULT_LTM_EXTRACTION_TEMPERATURE,
+                maxSourceTokens: ltmDraft?.maxSourceTokens ?? DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
+                maxExistingNoteTokens: ltmDraft?.maxExistingNoteTokens ?? DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
+                existingNoteMaxChunks: ltmDraft?.existingNoteMaxChunks ?? DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS,
+                existingNoteMaxTokens: ltmDraft?.existingNoteMaxTokens ?? DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
+              }}
+              autoApplyLowRisk={ltmDraft?.autoApplyLowRisk ?? false}
+              onChangeExtraction={(patch) => updateLtmDraft(patch)}
+              onChangeGlobal={(patch) => updateLtmDraft(patch)}
+            />
           </FieldGroup>
         </>
       )}

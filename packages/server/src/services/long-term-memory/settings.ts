@@ -98,11 +98,6 @@ function normalizePersistedSettings(input: LtmGlobalSettings): LtmGlobalSettings
       : normalizeText(input.longTermMemoryRecallPreamble, 500),
   );
   setIfChanged("longTermMemoryDebug", input.longTermMemoryDebug ?? DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryDebug);
-  setIfChanged("importConcurrency", input.importConcurrency ?? DEFAULT_LTM_GLOBAL_SETTINGS.importConcurrency);
-  setIfChanged("connectionId", normalizeText(input.connectionId, 120));
-  setIfChanged("model", normalizeText(input.model, 240));
-  setIfChanged("instruction", normalizeText(input.instruction, 2_000));
-  setIfChanged("autoApplyLowRisk", input.autoApplyLowRisk ?? DEFAULT_LTM_GLOBAL_SETTINGS.autoApplyLowRisk);
 
   return next;
 }
@@ -123,9 +118,6 @@ function resolveGlobalSettings(config: LtmGlobalSettings): LtmResolvedGlobalSett
       config.longTermMemoryRecallPreamble === undefined
         ? DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryRecallPreamble
         : normalizeText(config.longTermMemoryRecallPreamble, 500),
-    connectionId: normalizeText(config.connectionId, 120),
-    model: normalizeText(config.model, 240),
-    instruction: normalizeText(config.instruction, 2_000),
   });
 }
 
