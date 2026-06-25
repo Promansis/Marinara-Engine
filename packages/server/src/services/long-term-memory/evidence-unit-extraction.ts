@@ -384,6 +384,9 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
         },
         allowedStreams: allowedBuckets,
         allowedStatuses: ["active", "resolved"],
+        streamAllowedStatuses: Object.fromEntries(
+          allowedBuckets.map((bucket) => [bucket, bucket === "thread" ? ["active", "resolved"] : ["active"]]),
+        ),
         streamScanOrder: filteredScanOrder,
         allowedTimelineRelations: ["occurred_in", "triggered_by", "resolved_in", "evidenced_by"],
         streamDescriptions: filteredBucketDescriptions,

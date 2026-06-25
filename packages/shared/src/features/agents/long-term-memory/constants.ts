@@ -1,7 +1,7 @@
 import type { LtmExtractionReasoningEffort, LtmExtractionVerbosity } from "./schema.js";
 import type { LongTermMemoryRecallStyle } from "../../../types/chat.js";
 
-export const DEFAULT_LTM_EXTRACTION_REASONING_EFFORT = "none" satisfies LtmExtractionReasoningEffort;
+export const DEFAULT_LTM_EXTRACTION_REASONING_EFFORT = "low" satisfies LtmExtractionReasoningEffort;
 export const DEFAULT_LTM_EXTRACTION_VERBOSITY = "low" satisfies LtmExtractionVerbosity;
 export const DEFAULT_LTM_EXTRACTION_MAX_TOKENS = 8192;
 export const DEFAULT_LTM_EXTRACTION_TEMPERATURE = 0;
@@ -39,7 +39,7 @@ export const DEFAULT_LTM_EXTRACTION_PROMPT = [
   "- relationship_conflict: conflict.",
   "- world_fact: facts or items.",
   "- timeline_event: event.",
-  "- thread: summary. The text must describe an unresolved situation and what would resolve it.",
+  "- thread: summary. The text must describe an unresolved situation and what would resolve it. When the thread is marked resolved, you MUST also emit a parallel relationship_event (sectionKey history) for each affected relationship subject, or a timeline_event (sectionKey event) if no relationship subject — capturing what changed because of the resolution in past-tense outcome phrasing. Link fan-out units back to the thread note id with relation \"resolved_in\".",
   "- tone: observations. World/session-level atmospheric register only, not one-scene mood.",
   "- anchor: the source section key. Recurring motif or planted callback only.",
   "",
@@ -56,6 +56,7 @@ export const DEFAULT_LTM_EXTRACTION_PROMPT = [
   "Set confidence and salience from 0 to 1.",
   "For voice/tone quotes, quote only exact text present in the source.",
   "Do not emit current scene, current state, character_state, relationship arc, boundary, or preference memories from source-summary extraction.",
+  "\"resolved\" status is reserved for thread memories only. Never set status \"resolved\" on relationship, character, world, timeline, tone, or anchor streams.",
   "For enum fields, choose exactly one string from the allowed arrays. Do not join multiple values with |.",
 ].join("\n");
 

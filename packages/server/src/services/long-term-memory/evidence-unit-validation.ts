@@ -301,6 +301,31 @@ export function validateLtmEvidenceUnits({
     });
   }
 
+  for (const unit of finalKeptUnits) {
+    if (unit.bucket !== "thread" || unit.status !== "resolved") continue;
+    const threadSubjects = new Set<string>([unit.subjectId]);
+    for (const link of unit.links) {
+      if (link.target !== unit.subjectId) {
+        threadSubjects.add(link.target);
+      }
+    }
+    const hasFanOut = finalKeptUnits.some(
+      (other) =>
+        other !== unit &&
+        (other.bucket === "relationship_event" || other.bucket === "timeline_event") &&
+        threadSubjects.has(other.subjectId),
+    );
+    if (!hasFanOut) {
+      diagnostics.push({
+        severity: "warning",
+        code: "resolved_thread_missing_fanout",
+        mutationId: unit.id,
+        noteId: noteIdForEvidenceUnit(unit),
+        message: `Resolved thread '${unit.subjectId}' has no parallel relationship_event/timeline_event capturing the resolution as history.`,
+      });
+    }
+  }
+
   return { keptUnits: finalKeptUnits, diagnostics, droppedCandidates };
 }
 
