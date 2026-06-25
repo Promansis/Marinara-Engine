@@ -639,6 +639,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
       status: recovery?.status ?? "active",
       modes: sourceNote.modes,
       tagsText: "",
+      keywordsText: "",
       tags: ["typed_memory"],
       scopeDraft: {
         chatIds: sourceNote.scope.chatIds ?? (sourceNote.scope.chatId ? [sourceNote.scope.chatId] : []),

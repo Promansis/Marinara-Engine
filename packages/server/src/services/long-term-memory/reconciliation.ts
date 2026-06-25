@@ -326,6 +326,8 @@ async function applyMutation(
     };
   } else if (mutation.kind === "add_link") {
     patch = { links: uniqueLinks([...existing.links, mutation.link]) };
+  } else if (mutation.kind === "set_keywords") {
+    patch = { keywords: mutation.keywords };
   } else if (mutation.kind === "set_status") {
     patch = { status: mutation.status };
   } else {

@@ -5,11 +5,11 @@ import type { LtmNote } from "@marinara-engine/shared";
 import type { LtmMemoryChunk } from "../chunking.js";
 
 function note(id: string, links: Array<{ target: string; relation: string }> = []): LtmNote {
-  return { id, type: "character", status: "active", tags: [], links, sections: {}, scope: {}, modes: ["roleplay"], version: 1, createdAt: "2024-01-01T00:00:00.000Z", updatedAt: "2024-01-01T00:00:00.000Z" };
+  return { id, type: "character", status: "active", tags: [], keywords: [], links, sections: {}, scope: {}, modes: ["roleplay"], version: 1, createdAt: "2024-01-01T00:00:00.000Z", updatedAt: "2024-01-01T00:00:00.000Z" };
 }
 
 function chunk(noteId: string, chunkId = `${noteId}_chunk`): LtmMemoryChunk {
-  return { id: chunkId, noteId, sectionKey: "section", text: "text", sourceHash: "hash", noteType: "character", status: "active", tags: [], scope: {}, updatedAt: "2024-01-01T00:00:00.000Z" };
+  return { id: chunkId, noteId, sectionKey: "section", text: "text", sourceHash: "hash", noteType: "character", status: "active", tags: [], keywords: [], scope: {}, updatedAt: "2024-01-01T00:00:00.000Z" };
 }
 
 test("buildLtmGraphIndex — correct edges from note links", () => {

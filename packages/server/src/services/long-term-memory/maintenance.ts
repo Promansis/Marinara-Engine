@@ -521,6 +521,7 @@ async function characterImportCandidates(
         tags: readJsonArray(data.tags)
           .map((tag) => normalizeIdentifier(tag, "tag"))
           .slice(0, 12),
+        keywords: [],
         links: [],
         sections: { profile: textSection(body, evidence) },
       },
@@ -597,6 +598,7 @@ async function lorebookImportCandidates(
         tags: Array.isArray(book.tags)
           ? book.tags.map((tag) => normalizeIdentifier(String(tag), "tag")).slice(0, 12)
           : [],
+        keywords: [],
         links: [],
         sections: { lore: textSection(text, evidence) },
       },
@@ -667,6 +669,7 @@ async function chatImportCandidates(
             { chatIds: [chat.id] },
           ),
           tags: ["imported_chat_summary"],
+          keywords: [],
           links: [],
           sections: { summary: textSection(entry.content, evidence) },
         },
@@ -804,6 +807,7 @@ export async function createLongTermMemoryInteropSourceNotes(
           modes: candidate.modes,
           scope: { ...(candidate.scope ?? {}), ...(options.scope ?? {}) },
           tags: ["source_summary", candidate.sourceTag],
+          keywords: [],
           links: [],
           sections: {
             source: {

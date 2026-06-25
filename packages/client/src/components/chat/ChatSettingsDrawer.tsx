@@ -6514,6 +6514,8 @@ export function ChatSettingsDrawer({
                               longTermMemorySemanticWeight: metadata.longTermMemorySemanticWeight ?? ltmGlobalSettings.data?.longTermMemorySemanticWeight ?? null,
                               longTermMemoryLexicalWeight: metadata.longTermMemoryLexicalWeight ?? ltmGlobalSettings.data?.longTermMemoryLexicalWeight ?? null,
                               longTermMemoryGraphWeight: metadata.longTermMemoryGraphWeight ?? ltmGlobalSettings.data?.longTermMemoryGraphWeight ?? null,
+                              longTermMemoryMetadataWeight: metadata.longTermMemoryMetadataWeight ?? ltmGlobalSettings.data?.longTermMemoryMetadataWeight ?? null,
+                              longTermMemoryKeywordWeight: metadata.longTermMemoryKeywordWeight ?? ltmGlobalSettings.data?.longTermMemoryKeywordWeight ?? null,
                               longTermMemoryIncludeResolved: metadata.longTermMemoryIncludeResolved ?? ltmGlobalSettings.data?.longTermMemoryIncludeResolved ?? false,
                               longTermMemoryDebug: metadata.longTermMemoryDebug ?? ltmGlobalSettings.data?.longTermMemoryDebug ?? false,
                             }}
@@ -6568,6 +6570,8 @@ export function ChatSettingsDrawer({
                                 longTermMemorySemanticWeight: metadata.longTermMemorySemanticWeight ?? ltmGlobalSettings.data?.longTermMemorySemanticWeight ?? null,
                                 longTermMemoryLexicalWeight: metadata.longTermMemoryLexicalWeight ?? ltmGlobalSettings.data?.longTermMemoryLexicalWeight ?? null,
                                 longTermMemoryGraphWeight: metadata.longTermMemoryGraphWeight ?? ltmGlobalSettings.data?.longTermMemoryGraphWeight ?? null,
+                                longTermMemoryMetadataWeight: metadata.longTermMemoryMetadataWeight ?? ltmGlobalSettings.data?.longTermMemoryMetadataWeight ?? null,
+                                longTermMemoryKeywordWeight: metadata.longTermMemoryKeywordWeight ?? ltmGlobalSettings.data?.longTermMemoryKeywordWeight ?? null,
                                 longTermMemoryIncludeResolved: metadata.longTermMemoryIncludeResolved ?? ltmGlobalSettings.data?.longTermMemoryIncludeResolved ?? false,
                                 longTermMemoryDebug: metadata.longTermMemoryDebug ?? ltmGlobalSettings.data?.longTermMemoryDebug ?? false,
                               }}

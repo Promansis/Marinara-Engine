@@ -30,6 +30,7 @@ export const DEFAULT_LTM_EXTRACTION_CONFIG = ltmResolvedExtractionSettingsSchema
   existingNoteMaxTokens: DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
   promptTemplates: [],
   activePromptTemplateId: null,
+  aiKeywordExtraction: false,
 });
 
 function extractionConfigPath(root = getLongTermMemoryRoot()) {
@@ -79,6 +80,9 @@ function normalizePersistedConfig(input: LtmExtractionSettings): LtmExtractionSe
   if (input.activePromptTemplateId !== undefined) {
     next.activePromptTemplateId = input.activePromptTemplateId;
   }
+  if (input.aiKeywordExtraction !== undefined && input.aiKeywordExtraction !== DEFAULT_LTM_EXTRACTION_CONFIG.aiKeywordExtraction) {
+    next.aiKeywordExtraction = input.aiKeywordExtraction;
+  }
   return next;
 }
 
@@ -98,6 +102,7 @@ function resolveExtractionConfig(config: LtmExtractionSettings): LtmResolvedExtr
     extraInstruction: config.extraInstruction?.trim() || "",
     promptTemplates,
     activePromptTemplateId: activePromptTemplate ? activePromptTemplate.id : null,
+    aiKeywordExtraction: config.aiKeywordExtraction ?? DEFAULT_LTM_EXTRACTION_CONFIG.aiKeywordExtraction,
   };
   return ltmResolvedExtractionSettingsSchema.parse(merged);
 }

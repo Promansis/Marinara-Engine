@@ -213,6 +213,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
         usesPromptTemplate: Boolean(extractionConfig.activePromptTemplateId),
         hasPromptOverride: extractionConfig.systemPrompt !== DEFAULT_LTM_EXTRACTION_PROMPT,
         hasExtraInstruction: extractionConfig.extraInstruction.length > 0,
+        aiKeywordExtraction: extractionConfig.aiKeywordExtraction,
       },
     },
   });
@@ -272,6 +273,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
     signal: options.signal,
     operationId: options.operationId,
     allowedBuckets: SOURCE_SUMMARY_ALLOWED_EVIDENCE_BUCKETS,
+    aiKeywordExtraction: extractionConfig.aiKeywordExtraction,
   };
 
   const extractionPayload = await runLongTermMemoryEvidenceUnitExtraction(baseExtractionOptions);

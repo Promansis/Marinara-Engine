@@ -2249,7 +2249,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 "longTermMemoryScoreThreshold", "longTermMemoryRecallContextMessages",
                 "longTermMemoryRecallStyle", "longTermMemorySemanticWeight",
                 "longTermMemoryLexicalWeight", "longTermMemoryGraphWeight",
-                "longTermMemoryMetadataWeight", "longTermMemoryIncludeResolved",
+                "longTermMemoryMetadataWeight", "longTermMemoryKeywordWeight", "longTermMemoryIncludeResolved",
                 "longTermMemoryDebug", "longTermMemoryRecallPreamble",
                 "enableLongTermMemory",
               ];

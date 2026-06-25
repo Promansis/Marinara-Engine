@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, unlink } from "node:fs/promises";
+import { z } from "zod";
 import { logger } from "../../lib/logger.js";
 import { isEnoent, nowIso } from "./ltm-utils.js";
 import {
@@ -14,6 +15,7 @@ import {
   ltmNoteTypeSchema,
   ltmPoliciesConfigSchema,
   ltmRetrievalConfigSchema,
+  ltmDraftNoteInputSchema,
   getLtmScopeChatIds,
   isGlobalLtmScope,
   matchesLtmScope,
@@ -60,8 +62,7 @@ export type LtmListNotesFilter = {
   includeGlobal?: boolean;
 };
 
-export type CreateLtmNoteInput = Omit<LtmNote, "createdAt" | "updatedAt" | "version"> &
-  Partial<Pick<LtmNote, "createdAt" | "updatedAt" | "version">>;
+export type CreateLtmNoteInput = z.input<typeof ltmDraftNoteInputSchema>;
 
 export type UpdateLtmNotePatch = Partial<Omit<LtmNote, "id" | "createdAt" | "updatedAt" | "version">>;
 
@@ -77,6 +78,21 @@ function normalizePatch(patch: UpdateLtmNotePatch) {
     delete next.title;
   }
   return next;
+}
+
+function normalizeRetrievalConfig(raw: unknown) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const input = raw as Record<string, unknown>;
+  return {
+    version: 1,
+    maxChunks: input.maxChunks,
+    maxTokens: input.maxTokens,
+    semanticWeight: input.semanticWeight,
+    lexicalWeight: input.lexicalWeight,
+    graphWeight: input.graphWeight,
+    metadataWeight: input.metadataWeight,
+    keywordWeight: input.keywordWeight,
+  };
 }
 
 function parseStoredNote(raw: unknown) {
@@ -212,7 +228,7 @@ export class LongTermMemoryStorage {
     const settingsPath = safeJoin(dirs.config, "settings.json");
     const existingPolicies = ltmPoliciesConfigSchema.parse(await readJsonFile(policiesPath, DEFAULT_LTM_POLICIES));
     const existingRetrieval = ltmRetrievalConfigSchema.parse(
-      await readJsonFile(retrievalPath, DEFAULT_LTM_RETRIEVAL_CONFIG),
+      normalizeRetrievalConfig(await readJsonFile(retrievalPath, DEFAULT_LTM_RETRIEVAL_CONFIG)),
     );
     const existingSettings = ltmGlobalSettingsSchema.parse(await readJsonFile(settingsPath, { version: 1 }));
 
@@ -293,7 +309,7 @@ export class LongTermMemoryStorage {
     const timestamp = nowIso();
     const note = ltmNoteSchema.parse({
       ...input,
-      scope: normalizeStoredScope(input.scope),
+      scope: normalizeStoredScope(input.scope ?? {}),
       createdAt: input.createdAt ?? timestamp,
       updatedAt: input.updatedAt ?? timestamp,
       version: input.version ?? 1,

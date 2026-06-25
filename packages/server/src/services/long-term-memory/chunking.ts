@@ -6,6 +6,7 @@ import {
   type LtmScope,
   type LtmStatus,
 } from "@marinara-engine/shared";
+import { extractNoteKeywords } from "./keyword-extract.js";
 
 export interface LtmMemoryChunk {
   id: string;
@@ -16,6 +17,7 @@ export interface LtmMemoryChunk {
   status: LtmStatus;
   scope: LtmScope;
   tags: string[];
+  keywords: string[];
   salience?: number;
   confidence?: number;
   updatedAt: string;
@@ -56,6 +58,7 @@ export function isLtmSourceSummaryNote(note: Pick<LtmNote, "type" | "tags">) {
 }
 
 export function chunkNoteSections(note: LtmNote): LtmMemoryChunk[] {
+  const keywords = extractNoteKeywords(note);
   if (note.type === "tone") {
     const profileText = note.sections.profile?.text
       ? cleanLongTermMemoryChunkText(note.sections.profile.text)
@@ -76,6 +79,7 @@ export function chunkNoteSections(note: LtmNote): LtmMemoryChunk[] {
         status: note.status,
         scope: note.scope,
         tags: [...note.tags].sort((a, b) => a.localeCompare(b)),
+        keywords,
         salience: Math.max(
           note.sections.profile?.salience ?? 0,
           note.sections.observations?.salience ?? 0,
@@ -91,6 +95,7 @@ export function chunkNoteSections(note: LtmNote): LtmMemoryChunk[] {
           status: note.status,
           scope: note.scope,
           tags: note.tags,
+          keywords,
           sectionKey: "profile",
           section,
         }),
@@ -111,6 +116,7 @@ export function chunkNoteSections(note: LtmNote): LtmMemoryChunk[] {
         status: note.status,
         scope: note.scope,
         tags: [...note.tags].sort((a, b) => a.localeCompare(b)),
+        keywords,
         salience: section.salience,
         confidence: section.confidence,
         updatedAt: section.updatedAt,
@@ -120,6 +126,7 @@ export function chunkNoteSections(note: LtmNote): LtmMemoryChunk[] {
           status: note.status,
           scope: note.scope,
           tags: note.tags,
+          keywords,
           sectionKey,
           section,
         }),

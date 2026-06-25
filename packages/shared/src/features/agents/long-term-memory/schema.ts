@@ -55,6 +55,7 @@ const ltmGlobalSettingsShape = z
     longTermMemoryLexicalWeight: z.number().finite().min(0).max(1).nullable().optional(),
     longTermMemoryGraphWeight: z.number().finite().min(0).max(1).nullable().optional(),
     longTermMemoryMetadataWeight: z.number().finite().min(0).max(2).nullable().optional(),
+    longTermMemoryKeywordWeight: z.number().finite().min(0).max(1).nullable().optional(),
     longTermMemoryIncludeResolved: z.boolean().optional(),
     longTermMemoryRecallPreamble: z.string().max(500).optional(),
     longTermMemoryDebug: z.boolean().optional(),
@@ -96,6 +97,7 @@ export const ltmResolvedGlobalSettingsSchema = z
     longTermMemoryLexicalWeight: z.number().finite().min(0).max(1),
     longTermMemoryGraphWeight: z.number().finite().min(0).max(1),
     longTermMemoryMetadataWeight: z.number().finite().min(0).max(2),
+    longTermMemoryKeywordWeight: z.number().finite().min(0).max(1),
     longTermMemoryIncludeResolved: z.boolean(),
     longTermMemoryRecallPreamble: z.string().max(500),
     longTermMemoryDebug: z.boolean(),
@@ -114,6 +116,7 @@ export const DEFAULT_LTM_GLOBAL_SETTINGS = ltmResolvedGlobalSettingsSchema.parse
   longTermMemoryLexicalWeight: DEFAULT_LTM_RECALL_STYLE_WEIGHTS.lexicalWeight,
   longTermMemoryGraphWeight: DEFAULT_LTM_RECALL_STYLE_WEIGHTS.graphWeight,
   longTermMemoryMetadataWeight: DEFAULT_LTM_RECALL_STYLE_WEIGHTS.metadataWeight,
+  longTermMemoryKeywordWeight: DEFAULT_LTM_RECALL_STYLE_WEIGHTS.keywordWeight,
   longTermMemoryIncludeResolved: false,
   longTermMemoryRecallPreamble: DEFAULT_LTM_RECALL_PREAMBLE,
   longTermMemoryDebug: false,
@@ -142,6 +145,7 @@ const ltmExtractionSettingsShape = z
     existingNoteMaxTokens: z.number().int().min(128).max(16_384).optional(),
     promptTemplates: z.array(ltmExtractionPromptTemplateSchema).max(50).optional(),
     activePromptTemplateId: z.string().min(1).max(64).nullable().optional(),
+    aiKeywordExtraction: z.boolean().optional(),
   })
   .strict();
 
@@ -166,6 +170,7 @@ export const ltmResolvedExtractionSettingsSchema = z
     existingNoteMaxTokens: z.number().int().min(128).max(16_384),
     promptTemplates: z.array(ltmExtractionPromptTemplateSchema).max(50),
     activePromptTemplateId: z.string().min(1).max(64).nullable(),
+    aiKeywordExtraction: z.boolean(),
   })
   .strict();
 
@@ -340,6 +345,7 @@ export const ltmEvidenceUnitSchema = z
     subjectId: ltmIdentifierSchema,
     sectionKey: ltmSectionKeySchema,
     text: z.string().min(1).max(2_000),
+    keywords: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
     evidence: z.array(z.string().min(1).max(240)).min(1).max(20),
     confidence: z.number().finite().min(0).max(1),
     salience: z.number().finite().min(0).max(1),
@@ -380,6 +386,7 @@ export const ltmNoteSchema = z
     modes: z.array(ltmModeSchema).min(1).max(8),
     scope: ltmScopeSchema.default({}),
     tags: z.array(ltmIdentifierSchema).max(100).default([]),
+    keywords: z.array(z.string().trim().min(1).max(80)).max(30).default([]),
     createdAt: ltmIsoTimestampSchema,
     updatedAt: ltmIsoTimestampSchema,
     links: z.array(ltmLinkSchema).max(250).default([]),
@@ -532,10 +539,13 @@ const ltmRetrievalConfigShape = z
     semanticWeight: z.number().finite().min(0).max(1).default(0.6),
     lexicalWeight: z.number().finite().min(0).max(1).default(0.3),
     graphWeight: z.number().finite().min(0).max(1).default(0.1),
+    metadataWeight: z.number().finite().min(0).max(2).default(1),
+    keywordWeight: z.number().finite().min(0).max(1).default(0.2),
   })
   .strict()
   .refine(
-    (value) => value.semanticWeight + value.lexicalWeight + value.graphWeight > 0,
+    (value) =>
+      value.semanticWeight + value.lexicalWeight + value.graphWeight + value.metadataWeight + value.keywordWeight > 0,
     "At least one retrieval weight must be positive.",
   );
 
@@ -607,6 +617,7 @@ export const ltmDraftNoteInputSchema = z
     modes: z.array(ltmModeSchema).min(1).max(8),
     scope: ltmScopeSchema.default({}),
     tags: z.array(ltmIdentifierSchema).max(100).default([]),
+    keywords: z.array(z.string().trim().min(1).max(80)).max(30).default([]),
     createdAt: ltmIsoTimestampSchema.optional(),
     updatedAt: ltmIsoTimestampSchema.optional(),
     extracted: z.boolean().optional(),
@@ -664,6 +675,13 @@ export const ltmDraftMutationSchema = z.discriminatedUnion("kind", [
       kind: z.literal("add_link"),
       noteId: ltmNoteIdSchema,
       link: ltmLinkSchema,
+    })
+    .strip(),
+  ltmDraftMutationBaseSchema
+    .extend({
+      kind: z.literal("set_keywords"),
+      noteId: ltmNoteIdSchema,
+      keywords: z.array(z.string().trim().min(1).max(80)).max(30),
     })
     .strip(),
   ltmDraftMutationBaseSchema
@@ -852,6 +870,7 @@ const ltmAgentSettingsShape = z
     longTermMemoryLexicalWeight: z.number().finite().min(0).max(1).nullable().optional(),
     longTermMemoryGraphWeight: z.number().finite().min(0).max(1).nullable().optional(),
     longTermMemoryMetadataWeight: z.number().finite().min(0).max(2).nullable().optional(),
+    longTermMemoryKeywordWeight: z.number().finite().min(0).max(1).nullable().optional(),
     longTermMemoryIncludeResolved: z.boolean().optional(),
     longTermMemoryRecallPreamble: z.string().max(500).optional(),
     longTermMemoryDebug: z.boolean().optional(),

@@ -128,6 +128,7 @@ const createNoteBodySchema = z
     modes: z.array(ltmModeSchema).min(1).max(8),
     scope: ltmScopeSchema.default({}),
     tags: z.array(ltmIdentifierSchema).max(100).default([]),
+    keywords: z.array(z.string().trim().min(1).max(80)).max(30).default([]),
     createdAt: ltmIsoTimestampSchema.optional(),
     updatedAt: ltmIsoTimestampSchema.optional(),
     links: z.array(ltmLinkSchema).max(250).default([]),
@@ -152,6 +153,7 @@ const updateNoteBodySchema = z.preprocess(
       modes: z.array(ltmModeSchema).min(1).max(8).optional(),
       scope: ltmScopeSchema.optional(),
       tags: z.array(ltmIdentifierSchema).max(100).optional(),
+      keywords: z.array(z.string().trim().min(1).max(80)).max(30).optional(),
       links: z.array(ltmLinkSchema).max(250).optional(),
       sections: z.record(ltmSectionKeySchema, ltmSectionSchema).optional(),
       conflicts: z.array(ltmConflictSchema).max(250).optional(),
@@ -261,6 +263,7 @@ const searchBodySchema = z
     lexicalWeight: z.number().finite().min(0).max(1).optional(),
     graphWeight: z.number().finite().min(0).max(1).optional(),
     metadataWeight: z.number().finite().min(0).max(2).optional(),
+    keywordWeight: z.number().finite().min(0).max(1).optional(),
   })
   .strict()
   .refine(

@@ -12,6 +12,7 @@ import type {
   LtmStatus,
 } from "@marinara-engine/shared";
 import { isLtmSourceLikeNote, LTM_DRAFT_MUTATION_LIMIT } from "@marinara-engine/shared";
+import { mergeKeywords } from "./keyword-extract.js";
 import { noteIdForEvidenceUnit, riskForEvidenceUnit } from "./evidence-unit-validation.js";
 import { uniqueStrings } from "./ltm-utils.js";
 
@@ -81,6 +82,11 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
     const links = uniqueLinks(units.flatMap((unit) => unit.links).filter((link) => link.target !== noteId));
     const evidence = uniqueStrings(units.flatMap((unit) => unit.evidence)).slice(0, 20);
     const confidence = Math.min(...units.map((unit) => unit.confidence));
+    const unitKeywords = mergeKeywords(
+      units.flatMap((unit) => unit.keywords).map((keyword) => keyword.trim()).filter(Boolean),
+      [],
+      30,
+    );
 
     if (!existing) {
       const note = {
@@ -90,6 +96,7 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
         modes: options.modes,
         scope: options.scope,
         tags: target.tags,
+        keywords: unitKeywords,
         links,
         sections,
       };
@@ -150,6 +157,24 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
           section,
         });
       }
+    }
+
+    const mergedKeywords = mergeKeywords(existing.keywords, unitKeywords, 30);
+    if (mergedKeywords.length > existing.keywords.length) {
+      mutations.push({
+        id: randomUUID(),
+        kind: "set_keywords",
+        risk: riskForCompiledMutation({
+          units,
+          confidence,
+          note: existing,
+        }),
+        confidence,
+        summary: `Update ${noteId} keywords`,
+        evidence,
+        noteId,
+        keywords: mergedKeywords,
+      });
     }
 
     const nextStatus = statusForUnits(units);

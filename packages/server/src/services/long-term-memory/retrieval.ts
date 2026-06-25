@@ -16,6 +16,8 @@ import { searchLtmBm25 } from "./bm25.js";
 import type { LtmMemoryChunk } from "./chunking.js";
 import type { LtmGraphIndex } from "./graph.js";
 import { expandLtmGraph } from "./graph.js";
+import type { LtmKeywordIndex } from "./keyword-index.js";
+import { searchLtmKeywordIndex } from "./keyword-index.js";
 import type { LtmEmbeddingIndex } from "./rebuild.js";
 import type { LtmMetadataIndex } from "./metadata-index.js";
 import { getLtmMetadataMatches } from "./metadata-index.js";
@@ -52,6 +54,7 @@ export interface RetrieveLongTermMemoryInput extends MemoryRecallEmbeddingOption
   lexicalWeight?: number;
   graphWeight?: number;
   metadataWeight?: number;
+  keywordWeight?: number;
   metadataMode?: "filter_only" | "rank";
   dedupeExactText?: boolean;
   applyUsageCooldown?: boolean;
@@ -93,6 +96,7 @@ export interface LtmRetrievalDebugInfo {
     lexical: number;
     graph: number;
     metadata: number;
+    keyword: number;
   };
   activeLanes: string[];
   skippedLanes: string[];
@@ -155,6 +159,7 @@ type LtmRetrievalBundle = {
   metadata: LtmMetadataIndex | null;
   bm25: LtmBm25Index | null;
   graph: LtmGraphIndex | null;
+  keywords: LtmKeywordIndex | null;
   embeddings: LtmEmbeddingIndex | null;
   config: LtmRetrievalConfig;
   warnings: string[];
@@ -189,10 +194,11 @@ async function loadRetrievalBundle(root: string, includeSourceNotes: boolean): P
     const dirs = getLongTermMemoryDirectories(root);
     const warnings: string[] = [];
     const indexPrefix = includeSourceNotes ? "source-" : "";
-    const [metadata, bm25, graph, embeddings, config] = await Promise.all([
+    const [metadata, bm25, graph, keywords, embeddings, config] = await Promise.all([
       readIndexFile<LtmMetadataIndex>(safeJoin(dirs.indexes, `${indexPrefix}metadata.json`), warnings),
       readIndexFile<LtmBm25Index>(safeJoin(dirs.indexes, `${indexPrefix}bm25.json`), warnings),
       readIndexFile<LtmGraphIndex>(safeJoin(dirs.indexes, `${indexPrefix}graph.json`), warnings),
+      readIndexFile<LtmKeywordIndex>(safeJoin(dirs.indexes, `${indexPrefix}keywords.json`), warnings),
       readIndexFile<LtmEmbeddingIndex>(safeJoin(dirs.indexes, `${indexPrefix}embeddings.json`), warnings),
       readConfig(
         safeJoin(dirs.config, "retrieval.json"),
@@ -201,7 +207,7 @@ async function loadRetrievalBundle(root: string, includeSourceNotes: boolean): P
         warnings,
       ),
     ]);
-    return { metadata, bm25, graph, embeddings, config, warnings };
+    return { metadata, bm25, graph, keywords, embeddings, config, warnings };
   })();
 
   retrievalBundleCache.set(key, load);
@@ -217,8 +223,9 @@ function resolveRetrievalWeights(config: LtmRetrievalConfig, input: RetrieveLong
   const semantic = input.semanticWeight ?? config.semanticWeight;
   const lexical = input.lexicalWeight ?? config.lexicalWeight;
   const graph = input.graphWeight ?? config.graphWeight;
-  const metadata = input.metadataWeight ?? 1;
-  return { semantic, lexical, graph, metadata };
+  const metadata = input.metadataWeight ?? config.metadataWeight;
+  const keyword = input.keywordWeight ?? config.keywordWeight;
+  return { semantic, lexical, graph, metadata, keyword };
 }
 
 function uniqueSorted(values: string[]) {
@@ -312,17 +319,21 @@ function compactScoreMap(scores: Record<string, number> | undefined) {
   return Object.fromEntries(Object.entries(scores).map(([key, value]) => [key, Number(value.toFixed(6))]));
 }
 
-function activeRelevanceLanes(weights: { semantic: number; lexical: number; graph: number; metadata: number }, metadataMode: "filter_only" | "rank") {
+function activeRelevanceLanes(
+  weights: { semantic: number; lexical: number; graph: number; metadata: number; keyword: number },
+  metadataMode: "filter_only" | "rank",
+) {
   return [
     ...(weights.semantic > 0 ? ["vector"] : []),
     ...(weights.lexical > 0 ? ["bm25"] : []),
     ...(weights.graph > 0 ? ["graph"] : []),
     ...(metadataMode === "rank" && weights.metadata > 0 ? ["metadata"] : []),
+    ...(weights.keyword > 0 ? ["keyword"] : []),
   ];
 }
 
 function skippedRelevanceLanes(
-  weights: { semantic: number; lexical: number; graph: number; metadata: number },
+  weights: { semantic: number; lexical: number; graph: number; metadata: number; keyword: number },
   metadataMode: "filter_only" | "rank",
 ) {
   return [
@@ -334,6 +345,7 @@ function skippedRelevanceLanes(
       : weights.metadata <= 0
         ? ["metadata:zero_weight"]
         : []),
+    ...(weights.keyword <= 0 ? ["keyword:zero_weight"] : []),
   ];
 }
 
@@ -427,7 +439,7 @@ export async function retrieveLongTermMemory(
   const includeDebug = input.debug === true || input.explain === true;
   const metadataMode = input.metadataMode ?? "rank";
   const bundle = await loadRetrievalBundle(root, input.includeSourceNotes === true);
-  const { metadata, bm25, graph, embeddings, config } = bundle;
+  const { metadata, bm25, graph, keywords, embeddings, config } = bundle;
   const warnings = [...bundle.warnings];
   const weights = resolveRetrievalWeights(config, input);
   const activeLanes = activeRelevanceLanes(weights, metadataMode);
@@ -460,6 +472,7 @@ export async function retrieveLongTermMemory(
                 lexical: weights.lexical,
                 graph: weights.graph,
                 metadata: weights.metadata,
+                keyword: weights.keyword,
               },
               activeLanes,
               skippedLanes,
@@ -470,6 +483,7 @@ export async function retrieveLongTermMemory(
                 scopeFiltered: 0,
                 statusFiltered: 0,
                 metadataCandidates: 0,
+                keywordCandidates: 0,
                 vectorCandidates: 0,
                 bm25Candidates: 0,
                 graphCandidates: 0,
@@ -518,6 +532,7 @@ export async function retrieveLongTermMemory(
                 lexical: weights.lexical,
                 graph: weights.graph,
                 metadata: weights.metadata,
+                keyword: weights.keyword,
               },
               activeLanes,
               skippedLanes,
@@ -528,6 +543,7 @@ export async function retrieveLongTermMemory(
                 scopeFiltered: filterCounts?.scopeFiltered ?? 0,
                 statusFiltered: filterCounts?.resolvedFiltered ?? 0,
                 metadataCandidates: 0,
+                keywordCandidates: 0,
                 vectorCandidates: 0,
                 bm25Candidates: 0,
                 graphCandidates: 0,
@@ -578,6 +594,15 @@ export async function retrieveLongTermMemory(
             : [];
         })
       : [];
+  const keywordItems =
+    keywords && weights.keyword > 0 && signals.queryText.trim().length > 0
+      ? searchLtmKeywordIndex(keywords, signals.queryText).flatMap((match) => {
+          const chunk = chunksById.get(match.chunkId);
+          return chunk && allowedChunkIds.has(chunk.id)
+            ? [{ chunkId: match.chunkId, reason: match.reasons.join(","), rawScore: match.score }]
+            : [];
+        })
+      : [];
   const metadataGraphSeedMatches =
     metadataMode === "rank"
       ? metadataMatches
@@ -589,6 +614,7 @@ export async function retrieveLongTermMemory(
     ...metadataGraphSeedMatches.slice(0, 10).map((candidate) => chunksById.get(candidate.chunkId)?.noteId ?? ""),
     ...vector.items.slice(0, 10).map((candidate) => chunksById.get(candidate.chunkId)?.noteId ?? ""),
     ...bm25Items.slice(0, 10).map((candidate) => chunksById.get(candidate.chunkId)?.noteId ?? ""),
+    ...keywordItems.slice(0, 10).map((candidate) => chunksById.get(candidate.chunkId)?.noteId ?? ""),
   ]);
   const lanes: LtmRankLane[] = [];
 
@@ -613,6 +639,14 @@ export async function retrieveLongTermMemory(
       name: "bm25",
       weight: weights.lexical,
       items: bm25Items,
+    });
+  }
+
+  if (weights.keyword > 0 && keywordItems.length > 0) {
+    lanes.push({
+      name: "keyword",
+      weight: weights.keyword,
+      items: keywordItems,
     });
   }
 
@@ -681,6 +715,7 @@ export async function retrieveLongTermMemory(
           lexical: weights.lexical,
           graph: weights.graph,
           metadata: weights.metadata,
+          keyword: weights.keyword,
         },
         activeLanes,
         skippedLanes,
@@ -692,6 +727,7 @@ export async function retrieveLongTermMemory(
           statusFiltered:
             filterCounts?.resolvedFiltered ?? 0,
           metadataCandidates: laneCount("metadata"),
+          keywordCandidates: laneCount("keyword"),
           vectorCandidates: laneCount("vector"),
           bm25Candidates: laneCount("bm25"),
           graphCandidates: laneCount("graph"),

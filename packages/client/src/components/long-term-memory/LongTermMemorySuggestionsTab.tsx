@@ -48,7 +48,7 @@ type SuggestionGroup = "new" | "rewrite";
 type BatchAction = "keep" | "skip";
 type LatestExtractionResult = Pick<ExtractLongTermMemorySourceResponse, "diagnostics" | "draft" | "outcome">;
 
-const rewriteKinds = new Set<LtmDraftMutation["kind"]>(["append_section", "update_section", "add_link", "set_status"]);
+const rewriteKinds = new Set<LtmDraftMutation["kind"]>(["append_section", "update_section", "add_link", "set_keywords", "set_status"]);
 
 function isSourceMemory(note: LtmNote) {
   return isLtmSourceLikeNote(note);
@@ -781,5 +781,4 @@ function SuggestionDrawer({
     </section>
   );
 }
-
 

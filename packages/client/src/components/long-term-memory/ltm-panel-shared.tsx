@@ -94,6 +94,8 @@ export const LTM_WEIGHT_PATCH_KEY_MAP = {
   semantic: "longTermMemorySemanticWeight",
   lexical: "longTermMemoryLexicalWeight",
   graph: "longTermMemoryGraphWeight",
+  metadata: "longTermMemoryMetadataWeight",
+  keyword: "longTermMemoryKeywordWeight",
 } as const;
 
 export const TIMELINE_LINK_RELATIONS = new Set(["occurred_in", "triggered_by", "resolved_in", "evidenced_by"]);
@@ -153,6 +155,7 @@ export function readLongTermMemoryRecallSearchSettings(settings: LtmResolvedGlob
         lexicalWeight: settings.longTermMemoryLexicalWeight,
         graphWeight: settings.longTermMemoryGraphWeight,
         metadataWeight: settings.longTermMemoryMetadataWeight,
+        keywordWeight: settings.longTermMemoryKeywordWeight,
       }
     : styleWeights;
   return {
@@ -207,6 +210,8 @@ export function mutationKindLabel(kind: LtmDraftMutation["kind"]) {
       return "Rewrite detail";
     case "add_link":
       return "Related memory";
+    case "set_keywords":
+      return "Keywords";
     case "set_status":
       return "Status change";
   }
@@ -265,6 +270,7 @@ export function compactMutationText(mutation: LtmDraftMutation, noteLookup: Map<
     const targetLabel = targetNote ? friendlyNoteTitle(targetNote) : friendlyIdentifier(mutation.link.target);
     return `${friendlyIdentifier(mutation.link.relation)}: ${targetLabel}`;
   }
+  if (mutation.kind === "set_keywords") return mutation.keywords.join(", ");
   if (mutation.kind === "set_status") return friendlyStatus(mutation.status);
   return "Unknown mutation";
 }
@@ -405,6 +411,8 @@ export function mutationText(mutation: LtmDraftMutation) {
       return `${friendlyIdentifier(mutation.noteId)} ${friendlyIdentifier(mutation.link.relation).toLowerCase()} ${friendlyIdentifier(
         mutation.link.target,
       )}`;
+    case "set_keywords":
+      return `Update keywords for ${friendlyIdentifier(mutation.noteId)}`;
     case "set_status":
       return `Mark ${friendlyIdentifier(mutation.noteId)} as ${friendlyStatus(mutation.status).toLowerCase()}`;
   }

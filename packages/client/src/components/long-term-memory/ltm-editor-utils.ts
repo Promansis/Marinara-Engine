@@ -208,6 +208,20 @@ export function normalizeTagsInput(value: string) {
     .filter((item, index, list) => list.indexOf(item) === index);
 }
 
+export function normalizeKeywordsInput(value: string) {
+  const seen = new Set<string>();
+  return value
+    .split(/[,\n]+/)
+    .map((item) => item.trim().replace(/\s+/g, " "))
+    .filter(Boolean)
+    .filter((item) => {
+      const normalized = item.toLocaleLowerCase();
+      if (seen.has(normalized)) return false;
+      seen.add(normalized);
+      return true;
+    });
+}
+
 export function normalizeIdentifierList(value: string, fallbackPrefix = "item") {
   return value
     .split(/[,\n]+/)
@@ -256,6 +270,7 @@ export function createNoteInput(data: {
   modes: LtmMode[];
   scope: LtmScope;
   tags: string[];
+  keywords?: string[];
   sectionKey: string;
   sectionText: string;
   links?: LtmLink[];
@@ -272,6 +287,7 @@ export function createNoteInput(data: {
     modes: data.modes.length > 0 ? data.modes : ["roleplay"],
     scope: data.scope,
     tags: data.tags,
+    keywords: data.keywords ?? [],
     links: data.links ?? [],
     sections: {
       [sectionKey]: {
@@ -292,6 +308,7 @@ export function editablePatchFromDraft(draft: LtmNote): UpdateLongTermMemoryNote
     modes: draft.modes,
     scope: draft.scope,
     tags: draft.tags,
+    keywords: draft.keywords,
     links: draft.links,
     sections: draft.sections,
     conflicts: draft.conflicts,
