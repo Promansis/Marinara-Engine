@@ -8,6 +8,7 @@ import { writeJsonAtomic } from "./atomic-json.js";
 import { buildLtmBm25Index, type LtmBm25Index } from "./bm25.js";
 import { chunkNotes, stableJsonHash, type LtmMemoryChunk } from "./chunking.js";
 import { buildLtmGraphIndex, type LtmGraphIndex } from "./graph.js";
+import { buildLtmKeywordIndex, type LtmKeywordIndex } from "./keyword-index.js";
 import { buildLtmMetadataIndex, type LtmMetadataIndex } from "./metadata-index.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
 import { invalidateLongTermMemoryRetrievalCache } from "./retrieval.js";
@@ -127,12 +128,14 @@ async function writeTypedIndexes(root: string, notes: Awaited<ReturnType<LongTer
   const bm25 = buildLtmBm25Index(chunks);
   const graph = buildLtmGraphIndex(notes, chunks);
   const metadata = buildLtmMetadataIndex(chunks);
+  const keywords = buildLtmKeywordIndex(chunks);
   const dirs = getLongTermMemoryDirectories(root);
 
   await writeJsonAtomic(safeJoin(dirs.indexes, "embeddings.json"), embeddings);
   await writeJsonAtomic(safeJoin(dirs.indexes, "bm25.json"), bm25 satisfies LtmBm25Index);
   await writeJsonAtomic(safeJoin(dirs.indexes, "graph.json"), graph satisfies LtmGraphIndex);
   await writeJsonAtomic(safeJoin(dirs.indexes, "metadata.json"), metadata satisfies LtmMetadataIndex);
+  await writeJsonAtomic(safeJoin(dirs.indexes, "keywords.json"), keywords satisfies LtmKeywordIndex);
 
   return { chunks, embeddings };
 }
@@ -147,12 +150,14 @@ async function writeSourceIndexes(
   const bm25 = buildLtmBm25Index(chunks);
   const graph = buildLtmGraphIndex(notes, chunks);
   const metadata = buildLtmMetadataIndex(chunks);
+  const keywords = buildLtmKeywordIndex(chunks);
   const dirs = getLongTermMemoryDirectories(root);
 
   await writeJsonAtomic(safeJoin(dirs.indexes, "source-embeddings.json"), embeddings);
   await writeJsonAtomic(safeJoin(dirs.indexes, "source-bm25.json"), bm25 satisfies LtmBm25Index);
   await writeJsonAtomic(safeJoin(dirs.indexes, "source-graph.json"), graph satisfies LtmGraphIndex);
   await writeJsonAtomic(safeJoin(dirs.indexes, "source-metadata.json"), metadata satisfies LtmMetadataIndex);
+  await writeJsonAtomic(safeJoin(dirs.indexes, "source-keywords.json"), keywords satisfies LtmKeywordIndex);
 
   return { chunks, embeddings };
 }

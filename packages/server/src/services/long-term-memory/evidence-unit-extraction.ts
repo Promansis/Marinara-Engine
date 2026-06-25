@@ -75,6 +75,7 @@ export interface RunLongTermMemoryEvidenceUnitExtractionOptions {
   signal?: AbortSignal;
   operationId?: string;
   allowedBuckets?: LtmEvidenceUnit["bucket"][];
+  aiKeywordExtraction?: boolean;
 }
 
 export interface CompileEvidenceUnitExtractionResult {
@@ -374,6 +375,7 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
           subjectId: "real lowercase_snake_case subject",
           sectionKey: "real lowercase_snake_case section",
           text: "compact memory text, not transcript summary",
+          ...(options.aiKeywordExtraction ? { keywords: "array of 3..5 concise keyword strings" } : {}),
           evidence: "array containing supplied source_note evidence",
           confidence: "0..1",
           salience: "0..1",
@@ -403,6 +405,12 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
         modes: options.modes,
         userInstruction: options.instruction?.trim() || undefined,
         extraInstruction: options.extraInstruction?.trim() || undefined,
+        ...(options.aiKeywordExtraction
+          ? {
+              keywordInstruction:
+                "For each unit, include 3-5 concise keywords or short phrases in keywords. Prefer concrete recall terms and multi-word entities when relevant.",
+            }
+          : {}),
         existingTypedNotes: formatExistingNotes(options.existingNotes, options.maxExistingNoteTokens),
         sourceText: truncateToEstimatedTokens(options.sourceText, options.maxSourceTokens),
       }),
@@ -448,6 +456,7 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
         verbosity: options.verbosity ?? DEFAULT_LTM_EXTRACTION_VERBOSITY,
         maxOutputTokens: options.maxOutputTokens ?? options.provider.maxTokensOverrideValue ?? DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
         temperature: options.temperature ?? 0,
+        aiKeywordExtraction: options.aiKeywordExtraction === true,
       },
     });
   try {

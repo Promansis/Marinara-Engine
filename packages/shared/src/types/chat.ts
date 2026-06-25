@@ -343,6 +343,8 @@ export interface ChatMetadata {
   longTermMemoryGraphWeight?: number | null;
   /** Optional per-chat override for how much metadata matching should matter during LTM recall. Null clears the override. */
   longTermMemoryMetadataWeight?: number | null;
+  /** Optional per-chat override for how much keyword matching should matter during LTM recall. Null clears the override. */
+  longTermMemoryKeywordWeight?: number | null;
   /** When true, resolved thread memories may be recalled during prompt injection. Default: false. */
   longTermMemoryIncludeResolved?: boolean;
   /** When true, log/debug local long-term memory prompt injection decisions for this chat. Default: false. */

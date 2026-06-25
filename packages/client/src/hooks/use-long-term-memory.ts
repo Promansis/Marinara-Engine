@@ -104,6 +104,7 @@ export type LtmSearchInput = {
   lexicalWeight?: number;
   graphWeight?: number;
   metadataWeight?: number;
+  keywordWeight?: number;
 };
 
 export type LtmSearchChunk = {
@@ -145,6 +146,7 @@ export type LtmSearchResponse = {
       lexical: number;
       graph: number;
       metadata: number;
+      keyword: number;
     };
     funnel?: Record<string, number>;
     selected?: LtmSearchDebugCandidate[];
@@ -304,6 +306,7 @@ export type UpdateLongTermMemoryNoteInput = {
   modes?: LtmNote["modes"];
   scope?: LtmNote["scope"];
   tags?: LtmNote["tags"];
+  keywords?: LtmNote["keywords"];
   links?: LtmNote["links"];
   sections?: LtmNote["sections"];
   conflicts?: LtmNote["conflicts"];

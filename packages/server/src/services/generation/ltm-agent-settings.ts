@@ -68,6 +68,9 @@ export function applyLtmAgentChatSettings(
   const metadataWeight = readNumber(chatMetadata.longTermMemoryMetadataWeight);
   if (metadataWeight !== undefined) next.longTermMemoryMetadataWeight = metadataWeight;
 
+  const keywordWeight = readNumber(chatMetadata.longTermMemoryKeywordWeight);
+  if (keywordWeight !== undefined) next.longTermMemoryKeywordWeight = keywordWeight;
+
   const includeResolved = readBoolean(chatMetadata.longTermMemoryIncludeResolved);
   if (includeResolved !== undefined) next.longTermMemoryIncludeResolved = includeResolved;
 

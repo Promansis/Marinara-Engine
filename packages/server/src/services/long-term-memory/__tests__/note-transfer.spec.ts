@@ -30,6 +30,7 @@ function baseNote(input: Partial<LtmNote> & Pick<LtmNote, "id" | "type">): LtmNo
     modes: input.modes ?? ["roleplay"],
     scope: input.scope ?? {},
     tags: input.tags ?? ["typed_memory"],
+    keywords: input.keywords ?? [],
     createdAt: input.createdAt ?? timestamp,
     updatedAt: input.updatedAt ?? timestamp,
     links: input.links ?? [],

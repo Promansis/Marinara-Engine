@@ -143,6 +143,7 @@ export function buildGenerationLongTermMemoryPlan(
         lexicalWeight: settings.longTermMemoryLexicalWeight,
         graphWeight: settings.longTermMemoryGraphWeight,
         metadataWeight: settings.longTermMemoryMetadataWeight ?? styleWeights.metadataWeight,
+        keywordWeight: settings.longTermMemoryKeywordWeight ?? styleWeights.keywordWeight,
       }
     : readLtmRecallWeightOverrides(input.chatMeta, styleWeights);
   const debugEnabled = settings

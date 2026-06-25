@@ -4,7 +4,7 @@ import { tokenizeLtmText, buildLtmBm25Index, searchLtmBm25 } from "../bm25.js";
 import type { LtmMemoryChunk } from "../chunking.js";
 
 function chunk(text: string, id = "test"): LtmMemoryChunk {
-  return { id, noteId: "note_1", sectionKey: "section", text, sourceHash: "hash", noteType: "character", status: "active", tags: [], scope: {}, updatedAt: new Date().toISOString() };
+  return { id, noteId: "note_1", sectionKey: "section", text, sourceHash: "hash", noteType: "character", status: "active", tags: [], keywords: [], scope: {}, updatedAt: new Date().toISOString() };
 }
 
 test("tokenizeLtmText — lowercases, filters length-1 tokens", () => {

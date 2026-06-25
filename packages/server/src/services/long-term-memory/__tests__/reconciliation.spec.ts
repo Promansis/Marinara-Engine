@@ -60,6 +60,16 @@ async function readJsonText(path: string) {
   return readFile(path, "utf8");
 }
 
+function withKeywords<T extends Record<string, unknown>>(value: T): T & { keywords: string[] } {
+  const keywords = Array.isArray((value as { keywords?: unknown }).keywords)
+    ? ((value as { keywords?: string[] }).keywords ?? [])
+    : [];
+  return {
+    ...value,
+    keywords,
+  };
+}
+
 function estimateLtmTestTokens(text: string) {
   return Math.max(1, Math.ceil(text.length / 4));
 }
@@ -90,26 +100,28 @@ test("source-like note detection uses exact summary tags only", () => {
 test("long-term memory chunks keep prompt text free of index labels", () => {
   const chunks = chunkNotes([
     {
-      id: "sample_memory_note",
-      type: "world",
-      status: "active",
-      modes: ["conversation"],
-      scope: {
-        chatId: "sample_chat",
-        groupId: "sample_group",
-        characterIds: ["sample_character"],
-      },
-      tags: ["typed_memory"],
-      links: [],
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      version: 1,
-      sections: {
-        facts: {
-          text: "A sample instruction remains available for later retrieval.",
-          updatedAt: timestamp,
+      ...withKeywords({
+        id: "sample_memory_note",
+        type: "world",
+        status: "active",
+        modes: ["conversation"],
+        scope: {
+          chatId: "sample_chat",
+          groupId: "sample_group",
+          characterIds: ["sample_character"],
         },
-      },
+        tags: ["typed_memory"],
+        links: [],
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        version: 1,
+        sections: {
+          facts: {
+            text: "A sample instruction remains available for later retrieval.",
+            updatedAt: timestamp,
+          },
+        },
+      }),
     },
   ]);
 
@@ -226,23 +238,25 @@ test("long-term memory note list filters compose scope with type status and tag 
 test("long-term memory chunks strip legacy inline evidence labels", () => {
   const chunks = chunkNotes([
     {
-      id: "sample_memory_note",
-      type: "relationship",
-      status: "active",
-      modes: ["roleplay"],
-      scope: { chatId: "sample_chat" },
-      tags: ["typed_memory"],
-      links: [],
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      version: 1,
-      sections: {
-        history: {
-          text: "- Rika softened after the bridge argument. [evidence:source_note:source_import_chat_rika_rp_f3c3957d08,chat:v5bijiUY6rB_cVcQ7Q_DT]",
-          updatedAt: timestamp,
-          evidence: ["source_note:source_import_chat_rika_rp_f3c3957d08", "chat:v5bijiUY6rB_cVcQ7Q_DT"],
+      ...withKeywords({
+        id: "sample_memory_note",
+        type: "relationship",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "sample_chat" },
+        tags: ["typed_memory"],
+        links: [],
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        version: 1,
+        sections: {
+          history: {
+            text: "- Rika softened after the bridge argument. [evidence:source_note:source_import_chat_rika_rp_f3c3957d08,chat:v5bijiUY6rB_cVcQ7Q_DT]",
+            updatedAt: timestamp,
+            evidence: ["source_note:source_import_chat_rika_rp_f3c3957d08", "chat:v5bijiUY6rB_cVcQ7Q_DT"],
+          },
         },
-      },
+      }),
     },
   ]);
 
@@ -262,6 +276,7 @@ test("long-term memory prompt injection contains prose only", () => {
         status: "active",
         scope: {},
         tags: ["typed_memory"],
+        keywords: [],
         updatedAt: timestamp,
         sourceHash,
       },
@@ -293,6 +308,7 @@ test("long-term memory prompt injection can include a recall preamble", () => {
           status: "active",
           scope: {},
           tags: ["typed_memory"],
+          keywords: [],
           updatedAt: timestamp,
           sourceHash,
         },
@@ -332,6 +348,7 @@ test("long-term memory prompt injection inserts a system message before chat his
           status: "active",
           scope: {},
           tags: ["typed_memory"],
+          keywords: [],
           updatedAt: timestamp,
           sourceHash,
         },
@@ -488,6 +505,7 @@ test("generation long-term memory uses global retrieval settings and injects aft
       longTermMemoryLexicalWeight: 0.75,
       longTermMemoryGraphWeight: 0.15,
       longTermMemoryMetadataWeight: 0.25,
+      longTermMemoryKeywordWeight: 0.25,
       longTermMemoryIncludeResolved: true,
       longTermMemoryRecallPreamble: DEFAULT_LTM_RECALL_PREAMBLE,
       longTermMemoryDebug: true,
@@ -517,6 +535,7 @@ test("generation long-term memory uses global retrieval settings and injects aft
               status: "active",
               scope: {},
               tags: ["typed_memory"],
+              keywords: [],
               updatedAt: timestamp,
               sourceHash,
             },
@@ -782,6 +801,7 @@ test("long-term memory budget uses prompt-clean text for legacy chunks", () => {
     status: "active",
     scope: {},
     tags: ["typed_memory"],
+    keywords: [],
     updatedAt: timestamp,
     sourceHash,
   } satisfies LtmBudgetedChunk["chunk"];
@@ -811,6 +831,7 @@ test("long-term memory prompt and budget dedupe exact normalized chunk text", ()
         status: "active",
         scope: {},
         tags: ["typed_memory"],
+        keywords: [],
         updatedAt: timestamp,
         sourceHash,
       },
@@ -826,6 +847,7 @@ test("long-term memory prompt and budget dedupe exact normalized chunk text", ()
         status: "active",
         scope: {},
         tags: ["typed_memory"],
+        keywords: [],
         updatedAt: timestamp,
         sourceHash,
       },
@@ -909,6 +931,7 @@ function threadCreateMutation(
       modes: ["roleplay"],
       scope: {},
       tags: [],
+      keywords: [],
       links: [],
       sections: {
         setup: {
@@ -1092,6 +1115,7 @@ test("source extraction auto-applies all low-risk typed-memory mutation kinds", 
         modes: ["roleplay"],
         scope: {},
         tags: ["typed_memory", "timeline_event"],
+        keywords: [],
         links: [],
         sections: {
           event: {
@@ -1370,6 +1394,7 @@ test("source extraction auto-apply allows low-risk creates with embedded links t
         modes: ["roleplay"],
         scope: {},
         tags: ["typed_memory", "timeline_event"],
+        keywords: [],
         links: [],
         sections: {
           event: {
@@ -1867,6 +1892,7 @@ test("source extraction auto-apply includes low-risk link targets created in the
         modes: ["roleplay"],
         scope: {},
         tags: ["typed_memory", "timeline_event"],
+        keywords: [],
         links: [],
         sections: {
           event: {
@@ -2005,7 +2031,7 @@ test("ltm scope ignores removed legacy scope keys", () => {
 
 test("ltm metadata index buckets legacy chatId and every chatIds entry", () => {
   const chunks = chunkNotes([
-    {
+    withKeywords({
       id: "scene_scope_index",
       type: "scene",
       status: "active",
@@ -2022,7 +2048,7 @@ test("ltm metadata index buckets legacy chatId and every chatIds entry", () => {
         },
       },
       version: 1,
-    },
+    }),
   ]);
   const index = buildLtmMetadataIndex(chunks);
 
@@ -2528,7 +2554,7 @@ test("source note extraction includes relevant typed notes from other source not
 
 
 test("evidence unit extraction normalizes model-owned ids and source hashes", async () => {
-  const sourceNote: LtmNote = {
+  const sourceNote: LtmNote = withKeywords({
     id: "scene_source_test",
     type: "scene",
     status: "active",
@@ -2546,7 +2572,7 @@ test("evidence unit extraction normalizes model-owned ids and source hashes", as
       },
     },
     version: 1,
-  };
+  });
 
   const provider = {
     maxTokensOverrideValue: undefined,
@@ -2604,7 +2630,7 @@ test("evidence unit extraction normalizes model-owned ids and source hashes", as
 });
 
 test("evidence unit extraction prompt uses a non-copyable response contract", async () => {
-  const sourceNote: LtmNote = {
+  const sourceNote: LtmNote = withKeywords({
     id: "scene_source_test",
     type: "scene",
     status: "active",
@@ -2622,7 +2648,7 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
       },
     },
     version: 1,
-  };
+  });
 
   let userPayload: any;
   let chatOptions: any;
@@ -2744,7 +2770,7 @@ test("default ltm extraction prompt forbids thinking and non-json wrapper text",
 });
 
 test("evidence unit extraction retries reasoning none with low when provider rejects it", async () => {
-  const sourceNote: LtmNote = {
+  const sourceNote: LtmNote = withKeywords({
     id: "scene_source_test",
     type: "scene",
     status: "active",
@@ -2762,7 +2788,7 @@ test("evidence unit extraction retries reasoning none with low when provider rej
       },
     },
     version: 1,
-  };
+  });
   const reasoningEfforts: string[] = [];
   const provider = {
     maxTokensOverrideValue: undefined,
@@ -2795,7 +2821,7 @@ test("evidence unit extraction retries reasoning none with low when provider rej
 });
 
 test("evidence unit extraction accepts and compiles multiple typed buckets", async () => {
-  const sourceNote: LtmNote = {
+  const sourceNote: LtmNote = withKeywords({
     id: "scene_source_test",
     type: "scene",
     status: "active",
@@ -2817,7 +2843,7 @@ test("evidence unit extraction accepts and compiles multiple typed buckets", asy
       },
     },
     version: 1,
-  };
+  });
 
   const provider = {
     maxTokensOverrideValue: undefined,
@@ -2908,7 +2934,7 @@ test("evidence unit extraction accepts and compiles multiple typed buckets", asy
 });
 
 test("evidence unit extraction recovers a truncated json response", async () => {
-  const sourceNote: LtmNote = {
+  const sourceNote: LtmNote = withKeywords({
     id: "scene_source_test",
     type: "scene",
     status: "active",
@@ -2926,7 +2952,7 @@ test("evidence unit extraction recovers a truncated json response", async () => 
       },
     },
     version: 1,
-  };
+  });
 
   const provider = {
     maxTokensOverrideValue: undefined,
@@ -2956,7 +2982,7 @@ test("evidence unit extraction recovers a truncated json response", async () => 
 });
 
 test("evidence unit extraction recovers valid units from malformed partial json", async () => {
-  const sourceNote: LtmNote = {
+  const sourceNote: LtmNote = withKeywords({
     id: "scene_source_test",
     type: "scene",
     status: "active",
@@ -2974,7 +3000,7 @@ test("evidence unit extraction recovers valid units from malformed partial json"
       },
     },
     version: 1,
-  };
+  });
 
   const recoveredUnitId = randomUUID();
   const provider = {
@@ -3010,7 +3036,7 @@ test("evidence unit extraction recovers valid units from malformed partial json"
 });
 
 test("evidence unit extraction throws on empty/garbage response", async () => {
-  const sourceNote: LtmNote = {
+  const sourceNote: LtmNote = withKeywords({
     id: "scene_source_test",
     type: "scene",
     status: "active",
@@ -3028,7 +3054,7 @@ test("evidence unit extraction throws on empty/garbage response", async () => {
       },
     },
     version: 1,
-  };
+  });
 
   const provider = {
     maxTokensOverrideValue: undefined,
@@ -3051,7 +3077,7 @@ test("evidence unit extraction throws on empty/garbage response", async () => {
 });
 
 test("evidence unit extraction validation rejects copied placeholder values", () => {
-  const sourceNote: LtmNote = {
+  const sourceNote: LtmNote = withKeywords({
     id: "scene_source_test",
     type: "scene",
     status: "active",
@@ -3069,7 +3095,7 @@ test("evidence unit extraction validation rejects copied placeholder values", ()
       },
     },
     version: 1,
-  };
+  });
   const unitResponse = {
     summary: "Placeholder leak",
     units: [
@@ -3109,7 +3135,7 @@ test("evidence unit extraction validation rejects copied placeholder values", ()
 });
 
 test("source-summary extraction validation drops transient character state candidates", () => {
-  const sourceNote: LtmNote = {
+  const sourceNote: LtmNote = withKeywords({
     id: "scene_source_test",
     type: "scene",
     status: "active",
@@ -3127,7 +3153,7 @@ test("source-summary extraction validation drops transient character state candi
       },
     },
     version: 1,
-  };
+  });
 
   const compiled = compileEvidenceUnitExtraction({
     unitResponse: {
@@ -3160,7 +3186,7 @@ test("source-summary extraction validation drops transient character state candi
 });
 
 test("source-summary extraction validation drops event-shaped character facts but keeps developments", () => {
-  const sourceNote: LtmNote = {
+  const sourceNote: LtmNote = withKeywords({
     id: "scene_source_test",
     type: "scene",
     status: "active",
@@ -3178,7 +3204,7 @@ test("source-summary extraction validation drops event-shaped character facts bu
       },
     },
     version: 1,
-  };
+  });
 
   const compiled = compileEvidenceUnitExtraction({
     unitResponse: {
@@ -3216,7 +3242,7 @@ test("source-summary extraction validation drops event-shaped character facts bu
 });
 
 test("relationship state candidates require relationship history support", () => {
-  const sourceNote: LtmNote = {
+  const sourceNote: LtmNote = withKeywords({
     id: "scene_source_test",
     type: "scene",
     status: "active",
@@ -3234,7 +3260,7 @@ test("relationship state candidates require relationship history support", () =>
       },
     },
     version: 1,
-  };
+  });
 
   const unsupported = compileEvidenceUnitExtraction({
     unitResponse: {
@@ -3292,7 +3318,7 @@ test("relationship state candidates require relationship history support", () =>
 });
 
 test("relationship state support ignores same-pass events dropped during validation", () => {
-  const sourceNote: LtmNote = {
+  const sourceNote: LtmNote = withKeywords({
     id: "scene_source_test",
     type: "scene",
     status: "active",
@@ -3310,7 +3336,7 @@ test("relationship state support ignores same-pass events dropped during validat
       },
     },
     version: 1,
-  };
+  });
 
   const compiled = compileEvidenceUnitExtraction({
     unitResponse: {
@@ -3346,7 +3372,7 @@ test("relationship state support ignores same-pass events dropped during validat
 });
 
 test("source-summary thread validation accepts explicit resolver phrasing", () => {
-  const sourceNote: LtmNote = {
+  const sourceNote: LtmNote = withKeywords({
     id: "scene_source_test",
     type: "scene",
     status: "active",
@@ -3369,7 +3395,7 @@ test("source-summary thread validation accepts explicit resolver phrasing", () =
       },
     },
     version: 1,
-  };
+  });
 
   const compiled = compileEvidenceUnitExtraction({
     unitResponse: {
@@ -3414,7 +3440,7 @@ test("source-summary thread validation accepts explicit resolver phrasing", () =
 });
 
 test("source-summary thread validation still drops unresolved threads without a resolver", () => {
-  const sourceNote: LtmNote = {
+  const sourceNote: LtmNote = withKeywords({
     id: "scene_source_test",
     type: "scene",
     status: "active",
@@ -3432,7 +3458,7 @@ test("source-summary thread validation still drops unresolved threads without a 
       },
     },
     version: 1,
-  };
+  });
 
   const compiled = compileEvidenceUnitExtraction({
     unitResponse: {
@@ -3459,7 +3485,7 @@ test("source-summary thread validation still drops unresolved threads without a 
 });
 
 test("evidence unit compiler reports when suggested changes exceed the draft cap", () => {
-  const sourceNote: LtmNote = {
+  const sourceNote: LtmNote = withKeywords({
     id: "scene_source_test",
     type: "scene",
     status: "active",
@@ -3477,7 +3503,7 @@ test("evidence unit compiler reports when suggested changes exceed the draft cap
       },
     },
     version: 1,
-  };
+  });
   const units = Array.from({ length: 30 }, (_, index) =>
     evidenceUnit("world_fact", {
       subjectId: `cap_test_${index + 1}`,
@@ -3639,7 +3665,7 @@ test("evidence unit schema rejects invalid bucket and empty evidence", () => {
 });
 
 test("source notes are excluded from normal chunks and kept for source audit chunks", () => {
-  const sourceNote: LtmNote = {
+  const sourceNote: LtmNote = withKeywords({
     id: "scene_source_test",
     type: "scene",
     status: "active",
@@ -3657,8 +3683,8 @@ test("source notes are excluded from normal chunks and kept for source audit chu
       },
     },
     version: 1,
-  };
-  const typedNote: LtmNote = {
+  });
+  const typedNote: LtmNote = withKeywords({
     id: "char_mara",
     type: "character",
     status: "active",
@@ -3676,7 +3702,7 @@ test("source notes are excluded from normal chunks and kept for source audit chu
       },
     },
     version: 1,
-  };
+  });
 
   assert.deepEqual(
     chunkNotes([sourceNote, typedNote]).map((chunk) => chunk.noteId),
@@ -3834,7 +3860,7 @@ test("source rebuild refreshes source audit indexes without changing typed metad
 });
 
 test("archived notes remain chunked regardless of status", () => {
-  const archivedNote: LtmNote = {
+  const archivedNote: LtmNote = withKeywords({
     id: "world_kiseki_academy",
     type: "world",
     status: "archived",
@@ -3852,7 +3878,7 @@ test("archived notes remain chunked regardless of status", () => {
       },
     },
     version: 1,
-  };
+  });
 
   assert.equal(chunkNotes([archivedNote]).length, 1);
 });
@@ -4182,6 +4208,7 @@ test("bulk skip removes only selected pending draft mutations", async () => {
               modes: ["roleplay"],
               scope: {},
               tags: ["typed_memory"],
+              keywords: [],
               links: [],
               sections: {
                 facts: {
@@ -4729,7 +4756,7 @@ test("evidence unit compiler gates low-risk typed-memory suggestions by confiden
       }),
     ],
     existingNotes: [
-      {
+      withKeywords({
         id: "world_veil",
         type: "world",
         status: "active",
@@ -4747,7 +4774,7 @@ test("evidence unit compiler gates low-risk typed-memory suggestions by confiden
             evidence: ["source_note:scene_old"],
           },
         },
-      },
+      }),
     ],
     scope: {},
     modes: ["roleplay"],
@@ -4854,7 +4881,7 @@ test("timeline event units create historical notes and typed memories link to th
 });
 
 test("evidence unit compiler applies explicit bucket lifecycle rules", () => {
-  const existingRelationship: LtmNote = {
+  const existingRelationship: LtmNote = withKeywords({
     id: "rel_mara_jules",
     type: "relationship",
     status: "active",
@@ -4872,8 +4899,8 @@ test("evidence unit compiler applies explicit bucket lifecycle rules", () => {
       },
     },
     version: 1,
-  };
-  const existingCharacter: LtmNote = {
+  });
+  const existingCharacter: LtmNote = withKeywords({
     id: "char_mara",
     type: "character",
     status: "active",
@@ -4891,8 +4918,8 @@ test("evidence unit compiler applies explicit bucket lifecycle rules", () => {
       },
     },
     version: 1,
-  };
-  const existingThread: LtmNote = {
+  });
+  const existingThread: LtmNote = withKeywords({
     id: "thread_lantern",
     type: "thread",
     status: "active",
@@ -4910,7 +4937,7 @@ test("evidence unit compiler applies explicit bucket lifecycle rules", () => {
       },
     },
     version: 1,
-  };
+  });
 
   const response = compileLtmEvidenceUnits({
     units: [
@@ -4970,7 +4997,7 @@ test("evidence unit compiler applies explicit bucket lifecycle rules", () => {
 });
 
 test("evidence unit compiler keeps relationship state unchanged when only new events arrive", () => {
-  const existingRelationship: LtmNote = {
+  const existingRelationship: LtmNote = withKeywords({
     id: "rel_mara_jules",
     type: "relationship",
     status: "active",
@@ -4995,7 +5022,7 @@ test("evidence unit compiler keeps relationship state unchanged when only new ev
       },
     },
     version: 1,
-  };
+  });
 
   const response = compileLtmEvidenceUnits({
     units: [
@@ -5028,7 +5055,7 @@ test("evidence unit compiler keeps relationship state unchanged when only new ev
 });
 
 test("evidence unit compiler skips duplicate cumulative lines from overlapping summaries", () => {
-  const existingRelationship: LtmNote = {
+  const existingRelationship: LtmNote = withKeywords({
     id: "rel_mara_jules",
     type: "relationship",
     status: "active",
@@ -5046,7 +5073,7 @@ test("evidence unit compiler skips duplicate cumulative lines from overlapping s
       },
     },
     version: 1,
-  };
+  });
 
   const response = compileLtmEvidenceUnits({
     units: [

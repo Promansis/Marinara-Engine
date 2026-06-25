@@ -8,7 +8,7 @@ import type { LtmBudgetedChunk } from "../budget.js";
 
 function budgetedChunk(id: string, tokens = 100): LtmBudgetedChunk {
   return {
-    chunk: { id, noteId: "note_1", sectionKey: "sec", text: "text", sourceHash: "h", noteType: "character", status: "active", tags: [], scope: {}, updatedAt: new Date().toISOString() },
+    chunk: { id, noteId: "note_1", sectionKey: "sec", text: "text", sourceHash: "h", noteType: "character", status: "active", tags: [], keywords: [], scope: {}, updatedAt: new Date().toISOString() },
     score: 1, normalizedScore: 1, finalNormalizedScore: 1, reasons: [], lanes: [],
     tier: 1, estimatedTokens: tokens,
   };

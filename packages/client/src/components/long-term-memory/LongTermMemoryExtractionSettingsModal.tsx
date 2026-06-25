@@ -69,6 +69,7 @@ type ExtractionSettingsDraft = {
   maxExistingNoteTokens: string;
   existingNoteMaxChunks: string;
   existingNoteMaxTokens: string;
+  aiKeywordExtraction: boolean;
 };
 
 const DEFAULT_SETTINGS = {
@@ -95,6 +96,7 @@ function draftFromSettings(settings: LtmResolvedExtractionSettings): ExtractionS
     maxExistingNoteTokens: String(settings.maxExistingNoteTokens),
     existingNoteMaxChunks: String(settings.existingNoteMaxChunks),
     existingNoteMaxTokens: String(settings.existingNoteMaxTokens),
+    aiKeywordExtraction: settings.aiKeywordExtraction,
   };
 }
 
@@ -139,6 +141,7 @@ function payloadFromDraft(draft: ExtractionSettingsDraft): LtmExtractionSettings
     16_384,
     DEFAULT_SETTINGS.existingNoteMaxTokens,
   );
+  payload.aiKeywordExtraction = draft.aiKeywordExtraction;
   return payload;
 }
 
@@ -164,6 +167,7 @@ function resolvedFromDraft(draft: ExtractionSettingsDraft, current: LtmResolvedE
       16_384,
       DEFAULT_SETTINGS.existingNoteMaxTokens,
     ),
+    aiKeywordExtraction: draft.aiKeywordExtraction,
     version: current.version,
   };
 }
@@ -180,7 +184,8 @@ function isDraftDirty(draft: ExtractionSettingsDraft, current: LtmResolvedExtrac
     resolved.maxSourceTokens !== current.maxSourceTokens ||
     resolved.maxExistingNoteTokens !== current.maxExistingNoteTokens ||
     resolved.existingNoteMaxChunks !== current.existingNoteMaxChunks ||
-    resolved.existingNoteMaxTokens !== current.existingNoteMaxTokens
+    resolved.existingNoteMaxTokens !== current.existingNoteMaxTokens ||
+    resolved.aiKeywordExtraction !== current.aiKeywordExtraction
   );
 }
 
@@ -611,6 +616,15 @@ export function LongTermMemoryExtractionSettingsEditor({
             className={cn(textareaClassName, "min-h-24")}
           />
         </SettingField>
+        <label className="flex items-center gap-2 rounded-lg px-1 py-1 text-xs text-[var(--foreground)]">
+          <input
+            type="checkbox"
+            checked={draft.aiKeywordExtraction}
+            onChange={(event) => set("aiKeywordExtraction", event.target.checked)}
+            className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+          />
+          <span>Ask AI extraction to propose keywords for each evidence unit</span>
+        </label>
       </section>
 
       <section className={cn("space-y-3", sectionCardClassName)}>
@@ -699,4 +713,3 @@ export function LongTermMemoryExtractionSettingsEditor({
     </div>
   );
 }
-

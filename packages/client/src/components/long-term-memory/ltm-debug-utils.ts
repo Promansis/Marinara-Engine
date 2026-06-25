@@ -8,6 +8,8 @@ export function labelLtmLane(value: string) {
       return "Words matched current context";
     case "graph":
       return "Connected to another matched memory";
+    case "keyword":
+      return "Matched note keywords";
     default:
       return value
         .split("_")
@@ -28,6 +30,7 @@ export function summarizeLtmCandidateSignals(lanes: string[], reasons: string[])
     lanes.includes("vector") ? "meaning" : null,
     lanes.includes("bm25") ? "words" : null,
     lanes.includes("graph") ? "linked memory" : null,
+    lanes.includes("keyword") ? "keywords" : null,
   ].filter((item): item is string => Boolean(item));
 
   if (contextSignals.length > 0) signals.push(`context match (${contextSignals.join(", ")})`);

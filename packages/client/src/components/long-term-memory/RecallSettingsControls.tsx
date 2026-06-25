@@ -23,6 +23,8 @@ export type RecallSettingsValues = {
   longTermMemorySemanticWeight: number | null;
   longTermMemoryLexicalWeight: number | null;
   longTermMemoryGraphWeight: number | null;
+  longTermMemoryMetadataWeight: number | null;
+  longTermMemoryKeywordWeight: number | null;
   longTermMemoryIncludeResolved: boolean;
   longTermMemoryDebug: boolean;
 };
@@ -90,12 +92,16 @@ export function RecallSettingsControls({
   const semanticWeight = values.longTermMemorySemanticWeight ?? LTM_RECALL_STYLE_WEIGHTS[recallStyle].semanticWeight;
   const lexicalWeight = values.longTermMemoryLexicalWeight ?? LTM_RECALL_STYLE_WEIGHTS[recallStyle].lexicalWeight;
   const graphWeight = values.longTermMemoryGraphWeight ?? LTM_RECALL_STYLE_WEIGHTS[recallStyle].graphWeight;
+  const metadataWeight = values.longTermMemoryMetadataWeight ?? LTM_RECALL_STYLE_WEIGHTS[recallStyle].metadataWeight;
+  const keywordWeight = values.longTermMemoryKeywordWeight ?? LTM_RECALL_STYLE_WEIGHTS[recallStyle].keywordWeight;
 
   const resetWeightOverrides = () => {
     onChange({
       longTermMemorySemanticWeight: null,
       longTermMemoryLexicalWeight: null,
       longTermMemoryGraphWeight: null,
+      longTermMemoryMetadataWeight: null,
+      longTermMemoryKeywordWeight: null,
     });
   };
 
@@ -221,6 +227,8 @@ export function RecallSettingsControls({
               { label: "Meaning", key: "longTermMemorySemanticWeight" as const, value: semanticWeight, max: 1 },
               { label: "Exact Words", key: "longTermMemoryLexicalWeight" as const, value: lexicalWeight, max: 1 },
               { label: "Memory Links", key: "longTermMemoryGraphWeight" as const, value: graphWeight, max: 1 },
+              { label: "Metadata", key: "longTermMemoryMetadataWeight" as const, value: metadataWeight, max: 2 },
+              { label: "Keywords", key: "longTermMemoryKeywordWeight" as const, value: keywordWeight, max: 1 },
             ].map((item) => (
               <div key={item.key} className="grid grid-cols-[4.5rem_1fr_4.75rem] items-center gap-3">
                 <label className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">

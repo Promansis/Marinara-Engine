@@ -25,6 +25,8 @@ export function mutationKindLabel(kind: LtmDraftMutation["kind"]) {
       return "Update existing";
     case "add_link":
       return "Link";
+    case "set_keywords":
+      return "Keywords";
     case "set_status":
       return "Status";
   }

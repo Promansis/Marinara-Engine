@@ -46,6 +46,7 @@ import {
   humanRelationLabel,
   modeOptions,
   normalizeIdentifier,
+  normalizeKeywordsInput,
   normalizeTagsInput,
   noteTypeOptions,
   resolveEvidenceDisplay,
@@ -109,6 +110,7 @@ export function LongTermMemoryNoteEditor({
   const [draft, setDraft] = useState(note);
   const [titleText, setTitleText] = useState(note.title ?? "");
   const [tagsText, setTagsText] = useState(note.tags.join(", "));
+  const [keywordsText, setKeywordsText] = useState(note.keywords.join(", "));
   const [linkDraft, setLinkDraft] = useState<LtmLink>({ target: "", relation: "" });
   const [floatingSectionKey, setFloatingSectionKey] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"details" | "suggestions">("details");
@@ -121,6 +123,7 @@ export function LongTermMemoryNoteEditor({
     setDraft(note);
     setTitleText(note.title ?? "");
     setTagsText(note.tags.join(", "));
+    setKeywordsText(note.keywords.join(", "));
     setActiveTab("details");
   }, [note]);
 
@@ -422,6 +425,14 @@ export function LongTermMemoryNoteEditor({
               value={tagsText}
               onChange={(event) => setTagsText(event.target.value)}
               onBlur={() => setDraft((current) => ({ ...current, tags: normalizeTagsInput(tagsText) }))}
+              className={compactInputClassName}
+            />
+          </SettingField>
+          <SettingField label="Keywords">
+            <input
+              value={keywordsText}
+              onChange={(event) => setKeywordsText(event.target.value)}
+              onBlur={() => setDraft((current) => ({ ...current, keywords: normalizeKeywordsInput(keywordsText) }))}
               className={compactInputClassName}
             />
           </SettingField>

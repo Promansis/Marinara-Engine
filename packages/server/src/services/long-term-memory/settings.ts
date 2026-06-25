@@ -23,6 +23,7 @@ const RECALL_WEIGHT_KEYS = [
   "longTermMemoryLexicalWeight",
   "longTermMemoryGraphWeight",
   "longTermMemoryMetadataWeight",
+  "longTermMemoryKeywordWeight",
 ] as const satisfies Array<keyof LtmGlobalSettings>;
 
 function setRecallWeightOverride<K extends keyof Pick<
@@ -31,6 +32,7 @@ function setRecallWeightOverride<K extends keyof Pick<
   | "longTermMemoryLexicalWeight"
   | "longTermMemoryGraphWeight"
   | "longTermMemoryMetadataWeight"
+  | "longTermMemoryKeywordWeight"
 >>(
   target: LtmGlobalSettings,
   key: K,
@@ -87,6 +89,12 @@ function normalizePersistedSettings(input: LtmGlobalSettings): LtmGlobalSettings
     input.longTermMemoryMetadataWeight,
     styleWeights.metadataWeight,
   );
+  setRecallWeightOverride(
+    next,
+    "longTermMemoryKeywordWeight",
+    input.longTermMemoryKeywordWeight,
+    styleWeights.keywordWeight,
+  );
   setIfChanged(
     "longTermMemoryIncludeResolved",
     input.longTermMemoryIncludeResolved ?? DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryIncludeResolved,
@@ -114,6 +122,7 @@ function resolveGlobalSettings(config: LtmGlobalSettings): LtmResolvedGlobalSett
     longTermMemoryLexicalWeight: config.longTermMemoryLexicalWeight ?? styleWeights.lexicalWeight,
     longTermMemoryGraphWeight: config.longTermMemoryGraphWeight ?? styleWeights.graphWeight,
     longTermMemoryMetadataWeight: config.longTermMemoryMetadataWeight ?? styleWeights.metadataWeight,
+    longTermMemoryKeywordWeight: config.longTermMemoryKeywordWeight ?? styleWeights.keywordWeight,
     longTermMemoryRecallPreamble:
       config.longTermMemoryRecallPreamble === undefined
         ? DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryRecallPreamble

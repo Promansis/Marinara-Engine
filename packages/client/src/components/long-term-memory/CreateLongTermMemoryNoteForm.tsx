@@ -32,6 +32,7 @@ import {
   isAllowedNoteId,
   modeOptions,
   normalizeIdentifier,
+  normalizeKeywordsInput,
   normalizeTagsInput,
   noteTypeOptions,
   statusOptions,
@@ -55,6 +56,7 @@ export type CreateLongTermMemoryNoteDraft = {
   status: LtmNote["status"];
   modes: LtmMode[];
   tagsText: string;
+  keywordsText: string;
   scopeDraft: {
     chatIds: string[];
     groupId: string;
@@ -63,6 +65,7 @@ export type CreateLongTermMemoryNoteDraft = {
   sectionKey: string;
   sectionText: string;
   tags?: string[];
+  keywords?: string[];
   links?: LtmLink[];
   evidence?: string[];
   salience?: number;
@@ -99,6 +102,7 @@ function createDefaultDraft({
     status: "active",
     modes: [defaultMode],
     tagsText: "",
+    keywordsText: "",
     scopeDraft: {
       chatIds: activeChat?.id ? [activeChat.id] : [],
       groupId: activeChat?.groupId ?? "",
@@ -141,7 +145,7 @@ export function CreateLongTermMemoryNoteForm({
     () => serializedCreateDraft(draft) !== serializedCreateDraft(defaultDraft),
     [defaultDraft, draft],
   );
-  const { type, id, title, status, modes, tagsText, scopeDraft, sectionKey, sectionText } = draft;
+  const { type, id, title, status, modes, tagsText, keywordsText, scopeDraft, sectionKey, sectionText } = draft;
 
   useEffect(() => {
     if (initialDraft) return;
@@ -200,6 +204,7 @@ export function CreateLongTermMemoryNoteForm({
           modes,
           scope: emptyScopeFromDraft(scopeDraft),
           tags: draft.tags ?? normalizeTagsInput(tagsText),
+          keywords: draft.keywords ?? normalizeKeywordsInput(keywordsText),
           sectionKey,
           sectionText,
           links: draft.links,
@@ -260,6 +265,17 @@ export function CreateLongTermMemoryNoteForm({
             </select>
           </SettingField>
         </div>
+
+        <SettingField label="Keywords">
+          <textarea
+            value={keywordsText}
+            onChange={(event) => setDraft((current) => ({ ...current, keywordsText: event.target.value }))}
+            rows={2}
+            className="min-h-20 w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs text-[var(--foreground)]"
+            placeholder="captain, silver pact, midnight market"
+          />
+          <p className={helperTextClassName}>Optional recall terms. Use commas or new lines; multi-word phrases are preserved.</p>
+        </SettingField>
 
         <SettingField label="Title">
           <input
