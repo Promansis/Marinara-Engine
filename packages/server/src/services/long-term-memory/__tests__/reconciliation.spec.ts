@@ -1693,6 +1693,123 @@ test("source extraction auto-applies low-risk archived resolved memory status wi
   }
 });
 
+test("non-thread resolved unit coerces to active and self-heals stuck resolved notes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-coerce-resolved-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "rel_mara_jules",
+        type: "relationship",
+        status: "resolved",
+        modes: ["roleplay"] as const,
+        scope: {},
+        tags: ["typed_memory", "relationship_memory"],
+        links: [],
+        sections: { history: { text: "Mara and Jules had a falling out.", updatedAt: timestamp } },
+      },
+      { suppressEvent: true },
+    );
+
+    const response = compileLtmEvidenceUnits({
+      units: [
+        evidenceUnit("relationship_event", {
+          subjectId: "rel_mara_jules",
+          sectionKey: "history",
+          text: "Mara and Jules reconciled after the ordeal.",
+          status: "active",
+        }),
+      ],
+      existingNotes: [(await storage.getNote("rel_mara_jules"))!],
+      scope: {},
+      modes: ["roleplay"],
+      createdAt: timestamp,
+    });
+
+    const statusMutation = response.mutations.find((m) => m.kind === "set_status") as
+      | { kind: "set_status"; status: string }
+      | undefined;
+    assert(statusMutation, "Expected a set_status mutation to flip back to active");
+    assert.equal(statusMutation.status, "active");
+
+    const resolvedMutations = response.mutations.filter(
+      (m) => m.kind === "set_status" && (m as { status: string }).status === "resolved",
+    );
+    assert.equal(resolvedMutations.length, 0, "No mutation should have resolved status");
+
+    const sectionMutation = response.mutations.find(
+      (m) => m.kind === "update_section" || m.kind === "append_section",
+    );
+    assert(sectionMutation, "Expected a section mutation to preserve the content");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("net-new non-thread note from resolved unit starts as active", async () => {
+  const response = compileLtmEvidenceUnits({
+    units: [
+      evidenceUnit("world_fact", {
+        subjectId: "sg_artifact",
+        text: "The artifact glows when truth is spoken nearby.",
+        status: "resolved",
+      }),
+    ],
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    createdAt: timestamp,
+  });
+
+  const createMutation = response.mutations.find((m) => m.kind === "create_note") as
+    | { kind: "create_note"; note: { status: string } }
+    | undefined;
+  assert(createMutation, "Expected a create_note mutation");
+  assert.equal(createMutation.note.status, "active", "Net-new non-thread note should be active, not resolved");
+});
+
+test("archived notes stay archived when targeted by active units", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-archived-sticky-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "char_test",
+        type: "character",
+        status: "archived" as const,
+        modes: ["roleplay"] as const,
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: { facts: { text: "Test fact.", updatedAt: timestamp } },
+      },
+      { suppressEvent: true },
+    );
+
+    const response = compileLtmEvidenceUnits({
+      units: [
+        evidenceUnit("character_fact", {
+          subjectId: "test",
+          text: "Test fact updated.",
+          status: "active",
+        }),
+      ],
+      existingNotes: [(await storage.getNote("char_test"))!],
+      scope: {},
+      modes: ["roleplay"],
+      createdAt: timestamp,
+    });
+
+    const statusMutation = response.mutations.find((m) => m.kind === "set_status");
+    assert(
+      !statusMutation,
+      "Archived note should not emit a set_status mutation (archived is sticky)",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("source extraction auto-apply includes low-risk link targets created in the same draft", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-pending-timeline-link-"));
   try {

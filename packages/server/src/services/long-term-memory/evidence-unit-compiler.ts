@@ -232,6 +232,7 @@ function targetForUnit(unit: LtmEvidenceUnit): UnitTarget {
 
 function statusForUnit(unit: LtmEvidenceUnit): LtmStatus {
   if (isResolvedLoopUnit(unit)) return "archived";
+  if (unit.bucket !== "thread" && unit.status === "resolved") return "active";
   if (unit.status === "resolved") return "resolved";
   return "active";
 }
@@ -389,9 +390,9 @@ function statusForUnits(units: LtmEvidenceUnit[]) {
   return "active";
 }
 
-function shouldSetStatus(units: LtmEvidenceUnit[], existingStatus: LtmStatus, nextStatus: LtmStatus) {
+function shouldSetStatus(units: LtmEvidenceUnit[], existingStatus: LtmStatus, _nextStatus: LtmStatus) {
   if (existingStatus === "archived") return false;
-  return units.some((unit) => LTM_BUCKET_LIFECYCLE[unit.bucket] === "rolling_until_resolved");
+  return true;
 }
 
 function isResolvedLoopUnit(unit: LtmEvidenceUnit) {
