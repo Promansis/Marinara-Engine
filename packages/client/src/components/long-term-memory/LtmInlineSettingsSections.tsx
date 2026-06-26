@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Circle, CircleDot, FileText, Link2, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { cn } from "../../lib/utils";
 import {
   DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS,
   DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
@@ -13,6 +14,7 @@ import {
 } from "@marinara-engine/shared";
 import { useConnections } from "../../hooks/use-connections";
 import { MacroTextarea } from "../ui/MacroTextarea";
+import { textareaClassName } from "./LtmFields";
 import { FieldGroup } from "../agents/AgentEditor";
 
 type PromptTemplate = { id: string; name: string; prompt: string };
@@ -72,20 +74,26 @@ type ExtractionPromptSectionProps = {
   systemPrompt: string;
   promptTemplates: readonly PromptTemplate[];
   activePromptTemplateId: string | null;
+  extraInstruction: string;
+  aiKeywordExtraction: boolean;
   onChangeSystemPrompt: (value: string) => void;
   onChangePromptTemplates: (templates: PromptTemplate[]) => void;
   onChangeActivePromptTemplateId: (id: string | null) => void;
-  onOpenAdvancedSettings?: () => void;
+  onChangeExtraInstruction: (value: string) => void;
+  onChangeAiKeywordExtraction: (value: boolean) => void;
 };
 
 export function LtmExtractionPromptSection({
   systemPrompt,
   promptTemplates,
   activePromptTemplateId,
+  extraInstruction,
+  aiKeywordExtraction,
   onChangeSystemPrompt,
   onChangePromptTemplates,
   onChangeActivePromptTemplateId,
-  onOpenAdvancedSettings,
+  onChangeExtraInstruction,
+  onChangeAiKeywordExtraction,
 }: ExtractionPromptSectionProps) {
   const isUsingDefaultPrompt = !systemPrompt.trim() || systemPrompt === DEFAULT_LTM_EXTRACTION_PROMPT;
   const [editingPrompt, setEditingPrompt] = useState(false);
@@ -311,16 +319,25 @@ export function LtmExtractionPromptSection({
         )}
       </div>
 
-      {onOpenAdvancedSettings && (
-        <p className="mt-2">
-          <button
-            onClick={onOpenAdvancedSettings}
-            className="text-[0.625rem] text-[var(--muted-foreground)] underline-offset-4 hover:underline"
-          >
-            Manage templates →
-          </button>
-        </p>
-      )}
+      <div className="mt-4 space-y-2">
+        <label className="block">
+          <span className="mb-1 block text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">Extra user instruction</span>
+          <textarea
+            value={extraInstruction}
+            onChange={(event) => onChangeExtraInstruction(event.target.value)}
+            className={cn(textareaClassName, "min-h-20")}
+          />
+        </label>
+        <label className="flex items-center gap-2 rounded-lg px-1 py-1 text-xs text-[var(--foreground)]">
+          <input
+            type="checkbox"
+            checked={aiKeywordExtraction}
+            onChange={(event) => onChangeAiKeywordExtraction(event.target.checked)}
+            className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+          />
+          <span>Ask AI extraction to propose keywords for each evidence unit</span>
+        </label>
+      </div>
     </FieldGroup>
   );
 }
