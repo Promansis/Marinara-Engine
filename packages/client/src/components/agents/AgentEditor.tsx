@@ -54,6 +54,10 @@ import {
   DatabaseZap,
   Plug,
   FileJson,
+  BrainCircuit,
+  RefreshCw,
+  Hammer,
+  AlertTriangle,
 } from "lucide-react";
 import { useDeleteAgent } from "../../hooks/use-agents";
 import { useLorebooks, useEntriesAcrossLorebooks } from "../../hooks/use-lorebooks";
@@ -119,9 +123,27 @@ import {
 } from "@marinara-engine/shared";
 import { Modal } from "../ui/Modal";
 import { LtmVaultManagerSection } from "../long-term-memory/LtmVaultManagerSection";
-import { LongTermMemoryExtractionSettingsEditor } from "../long-term-memory/LongTermMemoryExtractionSettingsModal";
 import LtmInlineSettingsSections, { LtmExtractionConnectionSection, LtmExtractionPromptSection } from "../long-term-memory/LtmInlineSettingsSections";
-import { useLongTermMemoryStatus, useLongTermMemoryExtractionSettings, useUpdateLongTermMemoryExtractionSettings } from "../../hooks/use-long-term-memory";
+import {
+  RecallStylePresets,
+  RecallBudgetControls,
+  RecallThresholdControls,
+  RecallRankingWeights,
+  RecallToggles,
+  useDebouncedRecallSettings,
+  type RecallSettingsValues,
+} from "../long-term-memory/RecallSettingsControls";
+import { ToolButton } from "../long-term-memory/LtmPills";
+import {
+  useLongTermMemoryStatus,
+  useLongTermMemoryExtractionSettings,
+  useUpdateLongTermMemoryExtractionSettings,
+  useLongTermMemorySettings,
+  useUpdateLongTermMemorySettings,
+  useRebuildLongTermMemory,
+  useRepairLongTermMemory,
+  useLongTermMemoryIntegrity,
+} from "../../hooks/use-long-term-memory";
 
 function parseActivationKeywordsText(value: string): string[] {
   const seen = new Set<string>();
@@ -534,12 +556,29 @@ export function AgentEditor() {
   const [toolsSectionOpen, setToolsSectionOpen] = useState(false);
   const [vaultOpen, setVaultOpen] = useState<{ initialTab?: "notes" | "import" | "review" | "suggestions"; sourceNoteId?: string } | null>(null);
   const memoriesModalOpen = vaultOpen !== null;
-  const [ltmSettingsOpen, setLtmSettingsOpen] = useState(false);
   const [ltmAdvancedOpen, setLtmAdvancedOpen] = useState(false);
 
   const ltmStatus = useLongTermMemoryStatus();
   const { data: ltmExtractionSettings } = useLongTermMemoryExtractionSettings();
   const updateExtractionSettings = useUpdateLongTermMemoryExtractionSettings();
+  const ltmGlobalSettingsResult = useLongTermMemorySettings();
+  const ltmGlobalSettings = ltmGlobalSettingsResult.data;
+  const updateGlobalSettings = useUpdateLongTermMemorySettings();
+  const globalSettingsRef = useRef(ltmGlobalSettings);
+  useEffect(() => { globalSettingsRef.current = ltmGlobalSettings; }, [ltmGlobalSettings]);
+  const patchGlobalSettings = useCallback(
+    (patch: Partial<RecallSettingsValues>) => {
+      updateGlobalSettings.mutate({ version: 1, ...globalSettingsRef.current, ...patch });
+    },
+    [updateGlobalSettings],
+  );
+  const debouncedPatchGlobal = useDebouncedRecallSettings(patchGlobalSettings, 400);
+  const [recallAdvancedOpen, setRecallAdvancedOpen] = useState(false);
+  const [maintenanceOpen, setMaintenanceOpen] = useState(false);
+  const rebuildMemories = useRebuildLongTermMemory();
+  const repairMemories = useRepairLongTermMemory();
+  const integrity = useLongTermMemoryIntegrity();
+
   const [ltmDraft, setLtmDraft] = useState<{
     connectionId: string;
     model: string;
@@ -558,6 +597,7 @@ export function AgentEditor() {
     existingNoteMaxTokens: number;
     promptTemplates: { id: string; name: string; prompt: string }[];
     activePromptTemplateId: string | null;
+    aiKeywordExtraction: boolean;
   } | null>(null);
   const ltmSeededAgentRef = useRef<string | null>(null);
   const [localLorebookWriteEnabled, setLocalLorebookWriteEnabled] = useState(false);
@@ -919,6 +959,7 @@ export function AgentEditor() {
       existingNoteMaxTokens: ltmExtractionSettings.existingNoteMaxTokens,
       promptTemplates: ltmExtractionSettings.promptTemplates,
       activePromptTemplateId: ltmExtractionSettings.activePromptTemplateId,
+      aiKeywordExtraction: ltmExtractionSettings.aiKeywordExtraction,
     });
   }, [isLtmAgent, dbConfig, ltmExtractionSettings]);
 
@@ -1211,6 +1252,7 @@ export function AgentEditor() {
         if (ltmDraft.existingNoteMaxTokens !== DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS) extractionPayload.existingNoteMaxTokens = ltmDraft.existingNoteMaxTokens;
         if (ltmDraft.promptTemplates.length > 0) extractionPayload.promptTemplates = ltmDraft.promptTemplates;
         if (ltmDraft.activePromptTemplateId !== undefined) extractionPayload.activePromptTemplateId = ltmDraft.activePromptTemplateId;
+        if (ltmDraft.aiKeywordExtraction === true) extractionPayload.aiKeywordExtraction = true;
         await updateExtractionSettings.mutateAsync(extractionPayload as any);
       }
       setDirty(false);
@@ -3693,11 +3735,62 @@ export function AgentEditor() {
             systemPrompt={ltmDraft?.systemPrompt ?? ""}
             promptTemplates={ltmDraft?.promptTemplates ?? []}
             activePromptTemplateId={ltmDraft?.activePromptTemplateId ?? null}
+            extraInstruction={ltmDraft?.extraInstruction ?? ""}
+            aiKeywordExtraction={ltmDraft?.aiKeywordExtraction ?? false}
             onChangeSystemPrompt={(value) => updateLtmDraft({ systemPrompt: value })}
             onChangePromptTemplates={(templates) => updateLtmDraft({ promptTemplates: templates })}
             onChangeActivePromptTemplateId={(id) => updateLtmDraft({ activePromptTemplateId: id })}
-            onOpenAdvancedSettings={() => setLtmSettingsOpen(true)}
+            onChangeExtraInstruction={(value) => updateLtmDraft({ extraInstruction: value })}
+            onChangeAiKeywordExtraction={(value) => updateLtmDraft({ aiKeywordExtraction: value })}
           />
+          <FieldGroup
+            label="Recall defaults"
+            icon={<BrainCircuit size="0.875rem" className="text-[var(--primary)]" />}
+          >
+            <RecallStylePresets
+              values={{ longTermMemoryRecallStyle: ltmGlobalSettings?.longTermMemoryRecallStyle ?? "balanced" }}
+              onChange={(patch) => debouncedPatchGlobal(patch)}
+            />
+            <RecallBudgetControls
+              values={{
+                longTermMemoryBudgetTokens: ltmGlobalSettings?.longTermMemoryBudgetTokens ?? 4096,
+                longTermMemoryMaxChunks: ltmGlobalSettings?.longTermMemoryMaxChunks ?? 20,
+              }}
+              onChange={(patch) => debouncedPatchGlobal(patch)}
+            />
+            <FieldGroup
+              label="Advanced recall"
+              collapsible
+              expanded={recallAdvancedOpen}
+              onExpandedChange={setRecallAdvancedOpen}
+            >
+              <RecallThresholdControls
+                values={{
+                  longTermMemoryScoreThreshold: ltmGlobalSettings?.longTermMemoryScoreThreshold ?? 0,
+                  longTermMemoryRecallContextMessages: ltmGlobalSettings?.longTermMemoryRecallContextMessages ?? 4,
+                }}
+                onChange={(patch) => debouncedPatchGlobal(patch)}
+              />
+              <RecallRankingWeights
+                values={{
+                  longTermMemoryRecallStyle: ltmGlobalSettings?.longTermMemoryRecallStyle ?? "balanced",
+                  longTermMemorySemanticWeight: ltmGlobalSettings?.longTermMemorySemanticWeight ?? null,
+                  longTermMemoryLexicalWeight: ltmGlobalSettings?.longTermMemoryLexicalWeight ?? null,
+                  longTermMemoryGraphWeight: ltmGlobalSettings?.longTermMemoryGraphWeight ?? null,
+                  longTermMemoryMetadataWeight: ltmGlobalSettings?.longTermMemoryMetadataWeight ?? null,
+                  longTermMemoryKeywordWeight: ltmGlobalSettings?.longTermMemoryKeywordWeight ?? null,
+                }}
+                onChange={(patch) => debouncedPatchGlobal(patch)}
+              />
+              <RecallToggles
+                values={{
+                  longTermMemoryIncludeResolved: ltmGlobalSettings?.longTermMemoryIncludeResolved ?? false,
+                  longTermMemoryDebug: ltmGlobalSettings?.longTermMemoryDebug ?? false,
+                }}
+                onChange={(patch) => debouncedPatchGlobal(patch)}
+              />
+            </FieldGroup>
+          </FieldGroup>
           <FieldGroup
             label="Advanced"
             icon={<DatabaseZap size="0.875rem" className="text-[var(--primary)]" />}
@@ -3721,8 +3814,66 @@ export function AgentEditor() {
               onChangeGlobal={(patch) => updateLtmDraft(patch)}
             />
           </FieldGroup>
+          <FieldGroup
+            label="Maintenance"
+            icon={<DatabaseZap size="0.875rem" className="text-[var(--primary)]" />}
+            collapsible
+            expanded={maintenanceOpen}
+            onExpandedChange={setMaintenanceOpen}
+          >
+            <div className="flex flex-wrap gap-2">
+              <ToolButton
+                onClick={() =>
+                  rebuildMemories
+                    .mutateAsync()
+                    .then(() => toast.success("Memory search refreshed"))
+                    .catch((err: Error) => toast.error(err.message))
+                }
+                disabled={rebuildMemories.isPending}
+                tone="primary"
+              >
+                <RefreshCw size="0.875rem" />
+                Reindex Memories
+              </ToolButton>
+              <ToolButton
+                onClick={() =>
+                  repairMemories
+                    .mutateAsync(["quarantine_malformed_notes", "rebuild_indexes"])
+                    .then(() => toast.success("Repair actions finished"))
+                    .catch((err: Error) => toast.error(err.message))
+                }
+                disabled={repairMemories.isPending}
+                tone="danger"
+              >
+                <Hammer size="0.875rem" />
+                Repair Memory Store
+              </ToolButton>
+            </div>
+            <div className="mt-3 space-y-2">
+              {(integrity.data?.issues ?? [])
+                .filter((issue: { severity: string }) => issue.severity !== "info")
+                .slice(0, 8).map((issue: { code: string; path?: string; noteId?: string; message: string; severity: string }) => (
+                <div
+                  key={`${issue.code}-${issue.path ?? issue.noteId ?? issue.message}`}
+                  className="rounded-lg bg-[var(--secondary)]/50 p-3 text-xs ring-1 ring-[var(--border)]"
+                >
+                  <div className="flex items-center gap-2 font-medium">
+                    {issue.severity === "error" ? (
+                      <AlertTriangle size="0.875rem" className="text-rose-300" />
+                    ) : (
+                      <ShieldCheck size="0.875rem" />
+                    )}
+                    {issue.code}
+                  </div>
+                  <p className="mt-1 text-xs text-[var(--muted-foreground)]">{issue.message}</p>
+                </div>
+              ))}
+            </div>
+          </FieldGroup>
         </>
       )}
+
+      {/* ── LTM Memories Modal ── */}
       <Modal
         open={memoriesModalOpen}
         onClose={() => setVaultOpen(null)}
@@ -3737,14 +3888,6 @@ export function AgentEditor() {
             sourceNoteId={vaultOpen?.sourceNoteId}
           />
         )}
-      </Modal>
-      <Modal
-        open={ltmSettingsOpen}
-        onClose={() => setLtmSettingsOpen(false)}
-        title="Long-Term Memory Settings"
-        width="max-w-3xl"
-      >
-        <LongTermMemoryExtractionSettingsEditor mode="modal" onClose={() => setLtmSettingsOpen(false)} />
       </Modal>
         </div>
       </div>

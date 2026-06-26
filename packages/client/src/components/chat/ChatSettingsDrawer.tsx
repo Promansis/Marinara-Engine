@@ -151,7 +151,14 @@ import type {
 } from "@marinara-engine/shared";
 import { useAgentConfigs, useCreateAgent, useUpdateAgent, type AgentConfigRow } from "../../hooks/use-agents";
 import { useLastInjection, useLongTermMemorySettings } from "../../hooks/use-long-term-memory";
-import { RecallSettingsControls } from "../long-term-memory/RecallSettingsControls";
+import {
+  RecallStylePresets,
+  RecallBudgetControls,
+  RecallThresholdControls,
+  RecallToggles,
+  useDebouncedRecallSettings,
+} from "../long-term-memory/RecallSettingsControls";
+import { FieldGroup } from "../agents/AgentEditor";
 import { useAgentStore } from "../../stores/agent.store";
 import {
   BUILT_IN_AGENTS,
@@ -1341,6 +1348,11 @@ export function ChatSettingsDrawer({
   );
   const ltmGlobalSettings = useLongTermMemorySettings({ enabled: ltmActive });
   const ltmLastInjection = useLastInjection(chat.id, { enabled: ltmActive });
+  const [chatRecallAdvancedOpen, setChatRecallAdvancedOpen] = useState(false);
+  const debouncedUpdatePerChat = useDebouncedRecallSettings(
+    useCallback((patch) => updateMeta.mutate({ id: chat.id, ...patch }), [updateMeta, chat.id]),
+    400,
+  );
   const toggleLtmEnabled = useCallback(() => {
     updateMeta.mutate({ id: chat.id, enableLongTermMemory: metadata.enableLongTermMemory === false });
   }, [chat.id, metadata.enableLongTermMemory, updateMeta]);
@@ -6361,84 +6373,44 @@ export function ChatSettingsDrawer({
                               Send a message to see recalled memories.
                             </p>
                           )}
-                        <div className="mt-2">
-                          <RecallSettingsControls
+                        <div className="mt-2 space-y-2">
+                          <RecallStylePresets
+                            values={{
+                              longTermMemoryRecallStyle: metadata.longTermMemoryRecallStyle ?? ltmGlobalSettings.data?.longTermMemoryRecallStyle ?? "balanced",
+                            }}
+                            onChange={(patch) => debouncedUpdatePerChat(patch)}
+                          />
+                          <RecallBudgetControls
                             values={{
                               longTermMemoryBudgetTokens: metadata.longTermMemoryBudgetTokens ?? ltmGlobalSettings.data?.longTermMemoryBudgetTokens ?? 4096,
                               longTermMemoryMaxChunks: metadata.longTermMemoryMaxChunks ?? ltmGlobalSettings.data?.longTermMemoryMaxChunks ?? 20,
-                              longTermMemoryScoreThreshold: metadata.longTermMemoryScoreThreshold ?? ltmGlobalSettings.data?.longTermMemoryScoreThreshold ?? 0,
-                              longTermMemoryRecallContextMessages: metadata.longTermMemoryRecallContextMessages ?? ltmGlobalSettings.data?.longTermMemoryRecallContextMessages ?? 4,
-                              longTermMemoryRecallStyle: metadata.longTermMemoryRecallStyle ?? ltmGlobalSettings.data?.longTermMemoryRecallStyle ?? "balanced",
-                              longTermMemorySemanticWeight: metadata.longTermMemorySemanticWeight ?? ltmGlobalSettings.data?.longTermMemorySemanticWeight ?? null,
-                              longTermMemoryLexicalWeight: metadata.longTermMemoryLexicalWeight ?? ltmGlobalSettings.data?.longTermMemoryLexicalWeight ?? null,
-                              longTermMemoryGraphWeight: metadata.longTermMemoryGraphWeight ?? ltmGlobalSettings.data?.longTermMemoryGraphWeight ?? null,
-                              longTermMemoryMetadataWeight: metadata.longTermMemoryMetadataWeight ?? ltmGlobalSettings.data?.longTermMemoryMetadataWeight ?? null,
-                              longTermMemoryKeywordWeight: metadata.longTermMemoryKeywordWeight ?? ltmGlobalSettings.data?.longTermMemoryKeywordWeight ?? null,
-                              longTermMemoryIncludeResolved: metadata.longTermMemoryIncludeResolved ?? ltmGlobalSettings.data?.longTermMemoryIncludeResolved ?? false,
-                              longTermMemoryDebug: metadata.longTermMemoryDebug ?? ltmGlobalSettings.data?.longTermMemoryDebug ?? false,
                             }}
-                            onChange={(patch) => updateMeta.mutate({ id: chat.id, ...patch })}
-                            showStylesOnly={true}
+                            onChange={(patch) => debouncedUpdatePerChat(patch)}
                           />
                         </div>
-                        <details className="mt-2">
-                          <summary className="cursor-pointer text-xs text-[var(--muted-foreground)]">
-                            Advanced recall settings
-                          </summary>
-                          <div className="mt-2">
-                            <label className="flex flex-col gap-1">
-                              <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                                Max memory size in prompt
-                              </span>
-                              <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                                How many tokens of memory to include. Higher = more context, less room for your message.
-                              </p>
-                              <div className="grid grid-cols-[1fr_5.5rem] items-center gap-3">
-                                <input
-                                  type="range"
-                                  min={128}
-                                  max={16384}
-                                  step={128}
-                                  value={metadata.longTermMemoryBudgetTokens ?? ltmGlobalSettings.data?.longTermMemoryBudgetTokens ?? 4096}
-                                  onChange={(event) =>
-                                    updateMeta.mutate({ id: chat.id, longTermMemoryBudgetTokens: Number(event.target.value) })
-                                  }
-                                  className="min-w-0 accent-[var(--primary)]"
-                                />
-                                <input
-                                  type="number"
-                                  min={128}
-                                  max={16384}
-                                  step={128}
-                                  value={metadata.longTermMemoryBudgetTokens ?? ltmGlobalSettings.data?.longTermMemoryBudgetTokens ?? 4096}
-                                  onChange={(event) =>
-                                    updateMeta.mutate({ id: chat.id, longTermMemoryBudgetTokens: Number(event.target.value) })
-                                  }
-                                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)]"
-                                />
-                              </div>
-                            </label>
-                            <RecallSettingsControls
+                        <div className="mt-2">
+                          <FieldGroup
+                            label="Advanced recall settings"
+                            collapsible
+                            expanded={chatRecallAdvancedOpen}
+                            onExpandedChange={setChatRecallAdvancedOpen}
+                          >
+                            <RecallThresholdControls
                               values={{
-                                longTermMemoryBudgetTokens: metadata.longTermMemoryBudgetTokens ?? ltmGlobalSettings.data?.longTermMemoryBudgetTokens ?? 4096,
-                                longTermMemoryMaxChunks: metadata.longTermMemoryMaxChunks ?? ltmGlobalSettings.data?.longTermMemoryMaxChunks ?? 20,
                                 longTermMemoryScoreThreshold: metadata.longTermMemoryScoreThreshold ?? ltmGlobalSettings.data?.longTermMemoryScoreThreshold ?? 0,
                                 longTermMemoryRecallContextMessages: metadata.longTermMemoryRecallContextMessages ?? ltmGlobalSettings.data?.longTermMemoryRecallContextMessages ?? 4,
-                                longTermMemoryRecallStyle: metadata.longTermMemoryRecallStyle ?? ltmGlobalSettings.data?.longTermMemoryRecallStyle ?? "balanced",
-                                longTermMemorySemanticWeight: metadata.longTermMemorySemanticWeight ?? ltmGlobalSettings.data?.longTermMemorySemanticWeight ?? null,
-                                longTermMemoryLexicalWeight: metadata.longTermMemoryLexicalWeight ?? ltmGlobalSettings.data?.longTermMemoryLexicalWeight ?? null,
-                                longTermMemoryGraphWeight: metadata.longTermMemoryGraphWeight ?? ltmGlobalSettings.data?.longTermMemoryGraphWeight ?? null,
-                                longTermMemoryMetadataWeight: metadata.longTermMemoryMetadataWeight ?? ltmGlobalSettings.data?.longTermMemoryMetadataWeight ?? null,
-                                longTermMemoryKeywordWeight: metadata.longTermMemoryKeywordWeight ?? ltmGlobalSettings.data?.longTermMemoryKeywordWeight ?? null,
+                              }}
+                              onChange={(patch) => debouncedUpdatePerChat(patch)}
+                            />
+                            <RecallToggles
+                              values={{
                                 longTermMemoryIncludeResolved: metadata.longTermMemoryIncludeResolved ?? ltmGlobalSettings.data?.longTermMemoryIncludeResolved ?? false,
                                 longTermMemoryDebug: metadata.longTermMemoryDebug ?? ltmGlobalSettings.data?.longTermMemoryDebug ?? false,
                               }}
-                              onChange={(patch) => updateMeta.mutate({ id: chat.id, ...patch })}
-                              showStylesOnly={false}
-                              showExpert={false}
+                              onChange={(patch) => debouncedUpdatePerChat(patch)}
                             />
-                          </div>
-                        </details>
+                          </FieldGroup>
+                        </div>
                       </AgentSettingsCard>
                     )}
                     {renderActiveCustomAgentSettingsCard()}
