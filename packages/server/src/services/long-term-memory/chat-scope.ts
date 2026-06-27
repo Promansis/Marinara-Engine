@@ -1,4 +1,9 @@
-import { ltmModeSchema, withMergedLtmScopeLinks, type LtmMode, type LtmScope } from "@marinara-engine/shared";
+import {
+  withMergedLtmScopeLinks,
+  ltmModeForChatMode as sharedLtmModeForChatMode,
+  type LtmMode,
+  type LtmScope,
+} from "@marinara-engine/shared";
 import { uniqueStrings } from "./ltm-utils.js";
 
 export function normalizeLtmChatCharacterIds(value: unknown) {
@@ -15,7 +20,7 @@ export function normalizeLtmChatCharacterIds(value: unknown) {
 }
 
 export function ltmModeForChatMode(mode: unknown): LtmMode {
-  return ltmModeSchema.catch("roleplay").parse(mode);
+  return sharedLtmModeForChatMode(mode);
 }
 
 export function resolveChatLtmScope(chat: {

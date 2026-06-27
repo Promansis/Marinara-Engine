@@ -83,7 +83,17 @@ export type LtmInteropPreview = {
   source: LtmInteropSource;
   scanned: number;
   draftable: number;
-  samples: Array<{ sourceId: string; title: string; mutationCount: number; summary: string; snippet: string }>;
+  importedCount: number;
+  samples: Array<{
+    sourceId: string;
+    title: string;
+    mutationCount: number;
+    summary: string;
+    snippet: string;
+    status: "pending" | "imported";
+    existingNoteId?: string;
+    existingNoteTitle?: string;
+  }>;
 };
 
 export type LtmSearchInput = {
@@ -615,7 +625,7 @@ export function useRebuildLongTermMemory() {
 export function useRepairLongTermMemory() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (actions: Array<"rebuild_indexes" | "quarantine_malformed_notes">) =>
+    mutationFn: (actions: Array<"rebuild_indexes" | "quarantine_malformed_notes" | "backfill_imported_source_titles">) =>
       api.post<LtmRepairResponse>("/long-term-memory/repair", { actions }),
     onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
   });
