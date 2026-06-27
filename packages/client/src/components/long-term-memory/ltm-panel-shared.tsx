@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { Chat, LtmDraftMutation, LtmExtractionDraft, LtmNote, LtmNoteType, LtmScope, LtmStatus } from "@marinara-engine/shared";
+import type { Chat, LtmDraftMutation, LtmExtractionDraft, LtmMode, LtmNote, LtmNoteType, LtmScope, LtmStatus } from "@marinara-engine/shared";
 import { isLtmSourceLikeNote } from "@marinara-engine/shared";
 import type { LtmInteropPreview, LtmInteropSource } from "../../hooks/use-long-term-memory";
 import type { LtmResolvedGlobalSettings } from "../../hooks/use-long-term-memory";
@@ -99,6 +99,18 @@ export const LTM_WEIGHT_PATCH_KEY_MAP = {
 } as const;
 
 export const TIMELINE_LINK_RELATIONS = new Set(["occurred_in", "triggered_by", "resolved_in", "evidenced_by"]);
+
+export const MODE_LABELS: Record<LtmMode, string> = {
+  roleplay: "Roleplay",
+  conversation: "Conversation",
+  game: "Game",
+};
+
+export const MODE_BADGE_COLORS: Record<LtmMode, string> = {
+  roleplay: "bg-amber-500/15 text-amber-600 ring-amber-500/30",
+  conversation: "bg-blue-500/15 text-blue-600 ring-blue-500/30",
+  game: "bg-violet-500/15 text-violet-600 ring-violet-500/30",
+};
 
 // ── CSS class constants ────────────────────────
 
@@ -419,6 +431,16 @@ export function mutationText(mutation: LtmDraftMutation) {
 }
 
 // ── Shared small components ────────────────────
+
+export function ModeBadge({ mode }: { mode: LtmMode }) {
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[0.625rem] font-medium ring-1 ring-inset ${MODE_BADGE_COLORS[mode]}`}
+    >
+      {MODE_LABELS[mode]}
+    </span>
+  );
+}
 
 export function Section({ title, children }: { title: string; children: ReactNode }) {
   return (

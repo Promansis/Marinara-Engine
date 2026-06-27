@@ -9,9 +9,11 @@ import {
   DEFAULT_LTM_EXTRACTION_VERBOSITY,
   ltmExtractionSettingsSchema,
   ltmResolvedExtractionSettingsSchema,
-  type LtmExtractionSettings,
-  type LtmResolvedExtractionSettings,
   DEFAULT_LTM_EXTRACTION_PROMPT,
+  DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE,
+  type LtmExtractionSettings,
+  type LtmMode,
+  type LtmResolvedExtractionSettings,
 } from "@marinara-engine/shared";
 import { readJsonFile, writeJsonAtomic } from "./atomic-json.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
@@ -86,30 +88,37 @@ function normalizePersistedConfig(input: LtmExtractionSettings): LtmExtractionSe
   return next;
 }
 
-function resolveExtractionConfig(config: LtmExtractionSettings): LtmResolvedExtractionSettings {
+function defaultPromptForMode(mode?: LtmMode): string {
+  return DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE[mode ?? "roleplay"];
+}
+
+function resolveExtractionConfig(config: LtmExtractionSettings, mode?: LtmMode): LtmResolvedExtractionSettings {
   const promptTemplates = config.promptTemplates ?? [];
-  const activePromptTemplate = config.activePromptTemplateId
+  const activeTemplate = config.activePromptTemplateId
     ? promptTemplates.find((template) => template.id === config.activePromptTemplateId) ?? null
     : null;
+
+  const systemPrompt =
+    (activeTemplate && (!activeTemplate.mode || activeTemplate.mode === mode))
+      ? activeTemplate.prompt.trim()
+      : config.systemPrompt?.trim() || defaultPromptForMode(mode);
+
   const merged = {
     ...DEFAULT_LTM_EXTRACTION_CONFIG,
     ...config,
     version: 1 as const,
-    systemPrompt:
-      activePromptTemplate?.prompt.trim() ||
-      config.systemPrompt?.trim() ||
-      DEFAULT_LTM_EXTRACTION_CONFIG.systemPrompt,
+    systemPrompt,
     extraInstruction: config.extraInstruction?.trim() || "",
     promptTemplates,
-    activePromptTemplateId: activePromptTemplate ? activePromptTemplate.id : null,
+    activePromptTemplateId: activeTemplate ? activeTemplate.id : null,
     aiKeywordExtraction: config.aiKeywordExtraction ?? DEFAULT_LTM_EXTRACTION_CONFIG.aiKeywordExtraction,
   };
   return ltmResolvedExtractionSettingsSchema.parse(merged);
 }
 
-export async function getLtmExtractionConfig(root = getLongTermMemoryRoot()): Promise<LtmResolvedExtractionSettings> {
+export async function getLtmExtractionConfig(root = getLongTermMemoryRoot(), mode?: LtmMode): Promise<LtmResolvedExtractionSettings> {
   const raw = await readJsonFile<unknown>(extractionConfigPath(root), { version: 1 });
-  return resolveExtractionConfig(ltmExtractionSettingsSchema.parse(raw));
+  return resolveExtractionConfig(ltmExtractionSettingsSchema.parse(raw), mode);
 }
 
 export async function updateLtmExtractionConfig(

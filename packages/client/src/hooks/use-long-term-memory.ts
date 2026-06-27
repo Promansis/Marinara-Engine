@@ -10,6 +10,7 @@ import type {
   LtmExtractionResponse,
   LtmExtractionSettings as SharedLtmExtractionSettings,
   LtmGlobalSettings as SharedLtmGlobalSettings,
+  LtmMode,
   LtmNote,
   LtmNoteTransferApplyResponse,
   LtmNoteTransferMode,
@@ -183,6 +184,7 @@ export type ExtractLongTermMemorySourceInput = {
   model?: string;
   instruction?: string;
   applyLowRisk?: boolean;
+  mode?: LtmMode;
 };
 
 export type ImportLongTermMemorySourceNotesInput = {
@@ -195,6 +197,7 @@ export type ImportLongTermMemorySourceNotesInput = {
   instruction?: string;
   applyLowRisk?: boolean;
   importConcurrency?: number;
+  mode?: LtmMode;
 };
 
 export type ExtractLongTermMemorySourceResponse = {
@@ -631,6 +634,7 @@ export function useImportLongTermMemorySourceNotes() {
       instruction,
       applyLowRisk,
       importConcurrency,
+      mode,
     }: ImportLongTermMemorySourceNotesInput) =>
       api.post<ImportLongTermMemorySourceNotesResponse>("/long-term-memory/import/source-notes", {
         source,
@@ -642,6 +646,7 @@ export function useImportLongTermMemorySourceNotes() {
         instruction,
         applyLowRisk,
         importConcurrency,
+        mode,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
   });
@@ -673,7 +678,10 @@ export function useExtractLongTermMemorySourceNote() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ noteId, ...body }: ExtractLongTermMemorySourceInput) =>
-      api.post<ExtractLongTermMemorySourceResponse>(`/long-term-memory/notes/${noteId}/extract`, body),
+      api.post<ExtractLongTermMemorySourceResponse>(`/long-term-memory/notes/${noteId}/extract`, {
+        ...body,
+        mode: body.mode,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
   });
 }

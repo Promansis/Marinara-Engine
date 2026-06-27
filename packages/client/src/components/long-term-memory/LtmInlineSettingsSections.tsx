@@ -8,7 +8,9 @@ import {
   DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
   DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
   DEFAULT_LTM_EXTRACTION_PROMPT,
+  DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE,
   DEFAULT_LTM_EXTRACTION_TEMPERATURE,
+  type LtmMode,
   type LtmExtractionReasoningEffort,
   type LtmExtractionVerbosity,
 } from "@marinara-engine/shared";
@@ -17,7 +19,7 @@ import { MacroTextarea } from "../ui/MacroTextarea";
 import { textareaClassName } from "./LtmFields";
 import { FieldGroup } from "../agents/AgentEditor";
 
-type PromptTemplate = { id: string; name: string; prompt: string };
+type PromptTemplate = { id: string; name: string; prompt: string; mode?: LtmMode | null };
 
 /* ── Extraction Connection Section ── */
 
@@ -96,6 +98,10 @@ export function LtmExtractionPromptSection({
   onChangeAiKeywordExtraction,
 }: ExtractionPromptSectionProps) {
   const isUsingDefaultPrompt = !systemPrompt.trim() || systemPrompt === DEFAULT_LTM_EXTRACTION_PROMPT;
+  const modeDefaultPrompts = useMemo(
+    () => Object.entries(DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE) as Array<[LtmMode, string]>,
+    [],
+  );
   const [editingPrompt, setEditingPrompt] = useState(false);
   const [localPrompt, setLocalPrompt] = useState(systemPrompt);
 
@@ -146,13 +152,13 @@ export function LtmExtractionPromptSection({
 
   const handleAddTemplate = useCallback(() => {
     setLocalTemplates((prev) => {
-      const next = [...prev, { id: crypto.randomUUID(), name: "New template", prompt: "" }];
+      const next = [...prev, { id: crypto.randomUUID(), name: "New template", prompt: "", mode: null }];
       return next;
     });
   }, []);
 
   const handleUpdateTemplate = useCallback(
-    (id: string, patch: Partial<{ name: string; prompt: string }>) => {
+    (id: string, patch: Partial<{ name: string; prompt: string; mode: LtmMode | null }>) => {
       setLocalTemplates((prev) => {
         const next = prev.map((t) => (t.id === id ? { ...t, ...patch } : t));
         const allValid = next.every((t) => t.name.trim().length > 0 && t.prompt.trim().length > 0);
@@ -247,6 +253,25 @@ export function LtmExtractionPromptSection({
           : "The system prompt used for extraction."}
       </p>
 
+      <div className="mt-4 space-y-2 rounded-xl bg-[var(--secondary)]/45 p-3 ring-1 ring-[var(--border)]">
+        <div>
+          <p className="text-xs font-semibold text-[var(--foreground)]">Default prompts by mode</p>
+          <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+            These fall back when no custom prompt or mode-matched option is active.
+          </p>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {modeDefaultPrompts.map(([mode, prompt]) => (
+            <div key={mode} className="rounded-lg bg-[var(--background)] p-2 ring-1 ring-[var(--border)]">
+              <div className="mb-1 text-[0.6875rem] font-semibold text-[var(--foreground)]">{mode}</div>
+              <p className="line-clamp-4 whitespace-pre-wrap text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+                {prompt}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* Named prompt options */}
       <div className="mt-4 space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -277,7 +302,7 @@ export function LtmExtractionPromptSection({
                 key={template.id}
                 className="rounded-xl bg-[var(--secondary)]/70 p-3 ring-1 ring-[var(--border)]"
               >
-                <div className="mb-2 flex items-center gap-2">
+                <div className="mb-2 flex items-start gap-2">
                   <button
                     type="button"
                     onClick={() => handleSetActiveTemplate(activePromptTemplateId === template.id ? null : template.id)}
@@ -296,6 +321,17 @@ export function LtmExtractionPromptSection({
                     className="min-w-0 flex-1 rounded-lg bg-[var(--background)] px-2.5 py-1.5 text-sm ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                     placeholder="Option name"
                   />
+                  <select
+                    value={template.mode ?? ""}
+                    onChange={(e) => handleUpdateTemplate(template.id, { mode: e.target.value ? (e.target.value as LtmMode) : null })}
+                    className="min-w-[8rem] rounded-lg bg-[var(--background)] px-2.5 py-1.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                    title="Limit this option to one mode"
+                  >
+                    <option value="">Any mode</option>
+                    <option value="roleplay">Roleplay</option>
+                    <option value="conversation">Conversation</option>
+                    <option value="game">Game</option>
+                  </select>
                   <button
                     type="button"
                     onClick={() => handleRemoveTemplate(template.id)}

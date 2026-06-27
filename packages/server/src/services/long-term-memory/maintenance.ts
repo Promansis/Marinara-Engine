@@ -516,7 +516,7 @@ async function characterImportCandidates(
         id: noteId,
         type: "character",
         status: "active",
-        modes: ["conversation", "roleplay", "game"],
+        modes: ["roleplay", "conversation", "game"],
         scope: { characterIds: [row.id] },
         tags: readJsonArray(data.tags)
           .map((tag) => normalizeIdentifier(tag, "tag"))
@@ -577,7 +577,7 @@ async function lorebookImportCandidates(
     const noteId = `${prefix}_${normalizeIdentifier(name, "lorebook")}_${hashShort(id)}`;
     const sourceNoteId = `source_import_lorebook_${normalizeIdentifier(name, "lorebook")}_${hashShort(id)}`;
     const evidence = [`lorebook:${id}`];
-    const modes: LtmMode[] = ["conversation", "roleplay", "game"];
+    const modes: LtmMode[] = ["roleplay", "conversation", "game"];
     const mutation: LtmDraftMutation = {
       ...mutationBase(`Import lorebook ${name}`, evidence),
       kind: "create_note",
@@ -754,7 +754,7 @@ export async function previewLongTermMemoryInterop(
 export async function createLongTermMemoryInteropSourceNotes(
   db: DB,
   source: LtmInteropSource,
-  options: { sourceIds: string[]; limit?: number; scope?: LtmScope; operationId?: string } = { sourceIds: [] },
+  options: { sourceIds: string[]; limit?: number; scope?: LtmScope; mode?: LtmMode; operationId?: string } = { sourceIds: [] },
   root = getLongTermMemoryRoot(),
 ): Promise<{ source: LtmInteropSource; imported: LtmInteropSourceNoteImport[] }> {
   return withLtmDebugOperation(
@@ -778,6 +778,11 @@ export async function createLongTermMemoryInteropSourceNotes(
         candidates.flatMap((candidate) => [...(candidate.legacySourceNoteIds ?? []), candidate.sourceNoteId]),
       );
       const imported: LtmInteropSourceNoteImport[] = [];
+      if (options.mode) {
+        for (const candidate of candidates) {
+          candidate.modes = [options.mode];
+        }
+      }
       await recordLtmDebugEvent({
         root,
         operationId,

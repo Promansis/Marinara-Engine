@@ -5,6 +5,7 @@ import {
   DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
   DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
   DEFAULT_LTM_EXTRACTION_VERBOSITY,
+  DEFAULT_LTM_STREAM_DESCRIPTIONS_BY_MODE,
   LTM_DRAFT_MUTATION_LIMIT,
   ltmEvidenceUnitExtractionResponseSchema,
   ltmEvidenceUnitSchema,
@@ -75,6 +76,7 @@ export interface RunLongTermMemoryEvidenceUnitExtractionOptions {
   signal?: AbortSignal;
   operationId?: string;
   allowedBuckets?: LtmEvidenceUnit["bucket"][];
+  mode?: LtmMode;
   aiKeywordExtraction?: boolean;
 }
 
@@ -337,17 +339,20 @@ function formatExistingNotes(notes: LtmNote[], maxTokens = DEFAULT_LTM_EXTRACTIO
 function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOptions): ChatMessage[] {
   const allowedBuckets = options.allowedBuckets ?? DEFAULT_LTM_EVIDENCE_UNIT_ALLOWED_BUCKETS;
   const filteredScanOrder = LTM_EXTRACTION_BUCKET_SCAN_ORDER.filter((bucket) => allowedBuckets.includes(bucket));
+  const modeDescs = options.mode
+    ? DEFAULT_LTM_STREAM_DESCRIPTIONS_BY_MODE[options.mode]
+    : undefined;
   const allBucketDescriptions: Record<string, string> = {
-    timeline_event: "source-summary scene/plot pivot, decision, action, discovery, fight outcome, promise, arrival, or departure; not the live current scene",
-    character_fact: "durable character identity/trait/role/affiliation/backstory/belief/permanent status/development/ability/item/exact voice quote; not ordinary scene action or transient condition",
-    character_state: "legacy/manual current character condition only; source-summary extraction must not use this stream",
-    relationship_event: "evidence-backed interpersonal event or history item",
-    relationship_state: "current reduced relationship state backed by same-pass relationship_event or existing relationship note",
-    relationship_conflict: "unresolved contradiction or instability",
-    world_fact: "stable world/lore fact",
-    thread: "unresolved situation, question, tension, or goal with a clear future resolver",
-    tone: "durable world/session atmospheric register or recurring style only",
-    anchor: "recurring motif, planted callback, or continuity anchor",
+    timeline_event: modeDescs?.timeline_event ?? "source-summary scene/plot pivot, decision, action, discovery, fight outcome, promise, arrival, or departure; not the live current scene",
+    character_fact: modeDescs?.character_fact ?? "durable character identity/trait/role/affiliation/backstory/belief/permanent status/development/ability/item/exact voice quote; not ordinary scene action or transient condition",
+    character_state: modeDescs?.character_state ?? "legacy/manual current character condition only; source-summary extraction must not use this stream",
+    relationship_event: modeDescs?.relationship_event ?? "evidence-backed interpersonal event or history item",
+    relationship_state: modeDescs?.relationship_state ?? "current reduced relationship state backed by same-pass relationship_event or existing relationship note",
+    relationship_conflict: modeDescs?.relationship_conflict ?? "unresolved contradiction or instability",
+    world_fact: modeDescs?.world_fact ?? "stable world/lore fact",
+    thread: modeDescs?.thread ?? "unresolved situation, question, tension, or goal with a clear future resolver",
+    tone: modeDescs?.tone ?? "durable world/session atmospheric register or recurring style only",
+    anchor: modeDescs?.anchor ?? "recurring motif, planted callback, or continuity anchor",
   };
   const filteredBucketDescriptions: Record<string, string> = {};
   for (const bucket of allowedBuckets) {
@@ -605,6 +610,7 @@ export function compileEvidenceUnitExtraction(options: {
   existingNotes: LtmNote[];
   scope: LtmScope;
   modes: LtmMode[];
+  mode?: LtmMode;
   sourceHash: string;
 }): CompileEvidenceUnitExtractionResult {
   const validated = validateLtmEvidenceUnits({
@@ -622,6 +628,7 @@ export function compileEvidenceUnitExtraction(options: {
         existingNotes: options.existingNotes,
         scope: options.scope,
         modes: options.modes,
+        mode: options.mode,
         summary: options.unitResponse.summary,
       })
     : {

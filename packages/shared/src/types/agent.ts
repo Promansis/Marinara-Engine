@@ -95,6 +95,7 @@ export interface AgentPromptTemplateOption {
   id: string;
   name: string;
   promptTemplate: string;
+  mode?: "roleplay" | "conversation" | "game" | null;
   description?: string;
 }
 
@@ -178,6 +179,11 @@ export function normalizeAgentPromptTemplateOptions(value: unknown): AgentPrompt
       id,
       name,
       promptTemplate,
+      ...(typeof entry.mode === "string" && (entry.mode === "roleplay" || entry.mode === "conversation" || entry.mode === "game")
+        ? { mode: entry.mode }
+        : entry.mode === null
+          ? { mode: null }
+          : {}),
       ...(description ? { description } : {}),
     });
   }

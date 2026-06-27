@@ -78,8 +78,10 @@ import {
 import { StatusPill, ToolButton } from "../long-term-memory/LtmPills";
 import { Modal } from "../ui/Modal";
 import { showConfirmDialog } from "../../lib/app-dialogs";
+import type { LtmMode } from "@marinara-engine/shared";
 import {
   IMPORT_SOURCES,
+  MODE_LABELS,
   NOTE_STATUSES,
   NOTE_TYPES,
   TAB_LABELS,
@@ -102,6 +104,7 @@ import {
   sourceNoteTitle,
   suggestionRowKey,
   uniqueNoteIds,
+  ModeBadge,
   Section,
   type MemoryModalMode,
   type MemoryModalTab,
@@ -147,13 +150,8 @@ function extractPanelPrefs(settings: Record<string, unknown>) {
 
 export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSettings, initialTab, sourceNoteId }: LtmVaultManagerSectionProps) {
   const panelPrefs = useMemo(() => extractPanelPrefs(agentSettings ?? {}), [agentSettings]);
-  const autoApplyLowRisk = panelPrefs.autoApplyLowRisk;
-  const connectionId = panelPrefs.connectionId;
-  const importConcurrency = panelPrefs.importConcurrency;
   const importLimit = panelPrefs.importLimit;
   const importSource = panelPrefs.importSource;
-  const instruction = panelPrefs.instruction;
-  const model = panelPrefs.model;
 
   const updateAgentByType = useUpdateAgentByType();
 
@@ -198,6 +196,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const [tab, setTab] = useState<TabId>(initialTabId);
   const [noteType, setNoteType] = useState<"all" | LtmNoteType>("all");
   const [noteStatus, setNoteStatus] = useState<"all" | LtmStatus>("all");
+  const [noteMode, setNoteMode] = useState<"all" | LtmMode>("all");
   const [query, setQuery] = useState("");
   const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(() => new Set());
   const [selectedImportRows, setSelectedImportRows] = useState<Set<string>>(() => new Set());
@@ -215,6 +214,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const [expandedMemoryIds, setExpandedMemoryIds] = useState<Set<string>>(() => new Set());
   const [navigatorSelection, setNavigatorSelection] = useState<LtmNavigatorSelection>({ groupId: null, chatId: null });
   const [navigatorQuery, setNavigatorQuery] = useState("");
+  const [importMode, setImportMode] = useState<LtmMode>("roleplay");
 
   const { data: chats } = useChats();
   const { data: characters } = useCharacters();
@@ -256,6 +256,16 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     () => navigatorSelectionLabel(selectedNavigatorThread, navigatorSelection),
     [navigatorSelection, selectedNavigatorThread],
   );
+  const selectedImportChatMode = useMemo<LtmMode | null>(() => {
+    if (importSource !== "chats") return null;
+    const scopeChatIds = navigatorScope.chatIds ?? (navigatorScope.chatId ? [navigatorScope.chatId] : []);
+    const selectedChatId = scopeChatIds[0] ?? null;
+    if (!selectedChatId || !chats) return null;
+    const selectedChat = (chats as Chat[]).find((chat) => chat.id === selectedChatId);
+    return selectedChat?.mode === "roleplay" || selectedChat?.mode === "conversation" || selectedChat?.mode === "game"
+      ? selectedChat.mode
+      : null;
+  }, [chats, importSource, navigatorScope.chatId, navigatorScope.chatIds]);
   const activeRecallSettings = useMemo(() => readLongTermMemoryRecallSearchSettings(ltmSettings), [ltmSettings]);
   const activeChatMessages = useChatMessages(activeChatId, activeRecallSettings.contextMessages, Boolean(openNoteId));
   const status = useLongTermMemoryStatus();
@@ -292,6 +302,13 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const [recallResultByNoteId, setRecallResultByNoteId] = useState<Record<string, LtmSearchResponse | null>>({});
 
   useEffect(() => {
+    if (importSource !== "chats") return;
+    if (selectedImportChatMode && importMode !== selectedImportChatMode) {
+      setImportMode(selectedImportChatMode);
+    }
+  }, [importMode, importSource, selectedImportChatMode]);
+
+  useEffect(() => {
     if (!activeChatId) return;
     setNavigatorSelection({ groupId: activeChat?.groupId ?? null, chatId: activeChatId });
   }, [activeChat?.groupId, activeChatId]);
@@ -300,6 +317,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     const list = (notes.data ?? []).filter((note) => {
       if (noteStatus !== "all" && note.status !== noteStatus) return false;
       if (noteType !== "all" && note.type !== noteType) return false;
+      if (noteMode !== "all" && !note.modes.includes(noteMode)) return false;
       return true;
     });
     const needle = query.trim().toLowerCase();
@@ -312,7 +330,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
         note.tags.some((tag) => tag.toLowerCase().includes(needle)) ||
         Object.values(note.sections).some((section) => section.text.toLowerCase().includes(needle)),
     );
-  }, [noteStatus, noteType, notes.data, query]);
+  }, [noteStatus, noteType, noteMode, notes.data, query]);
   const groupedBucketNotes = useMemo(() => groupNotesByType(filteredNotes), [filteredNotes]);
   const visibleNoteIds = useMemo(() => filteredNotes.map((note) => note.id), [filteredNotes]);
   const selectedVisibleNoteIds = useMemo(
@@ -425,7 +443,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     return Array.from(groups.entries()).map(([sourceNoteId, sourceDrafts]) => {
       const sourceNote = noteLookup.get(sourceNoteId);
       const totalMutations = sourceDrafts.reduce((sum, d) => sum + d.mutations.length, 0);
-      return { sourceNoteId, sourceNote, sourceDrafts, totalMutations };
+      return { sourceNoteId, sourceNote, sourceDrafts, totalMutations, mode: sourceDrafts[0]?.modes[0] ?? null };
     });
   }, [pendingDraftsForReview.data, noteLookup]);
 
@@ -893,6 +911,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
         instruction: optionalTrimmedText(importInstruction),
         applyLowRisk: importApplyLowRisk || undefined,
         importConcurrency: clampImportConcurrency(importConcurrencySetting),
+        ...(importSource === "chats" ? { mode: importMode } : {}),
       });
       const importedCount = result.imported.length;
       const suggestionCount = result.imported.reduce(
@@ -1026,7 +1045,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
                 New
               </ToolButton>
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <select
                 value={noteType}
                 onChange={(event) => setNoteType(event.target.value as "all" | LtmNoteType)}
@@ -1046,6 +1065,18 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
                 {NOTE_STATUSES.map((statusId) => (
                   <option key={statusId} value={statusId}>
                     {statusId === "all" ? "Any status" : friendlyStatus(statusId)}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={noteMode}
+                onChange={(event) => setNoteMode(event.target.value as "all" | LtmMode)}
+                className={compactInputClassName}
+              >
+                <option value="all">Any mode</option>
+                {(["roleplay", "conversation", "game"] as const).map((mode) => (
+                  <option key={mode} value={mode}>
+                    {MODE_LABELS[mode]}
                   </option>
                 ))}
               </select>
@@ -1149,7 +1180,20 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
             />
           )}
 
-          <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+          <div className={cn("grid gap-2", importSource === "chats" ? "sm:grid-cols-[1fr_1fr_auto]" : "sm:grid-cols-[1fr_auto]") }>
+            {importSource === "chats" && (
+              <select
+                value={importMode}
+                onChange={(event) => setImportMode(event.target.value as LtmMode)}
+                className={compactInputClassName}
+              >
+                {(["roleplay", "conversation", "game"] as const).map((mode) => (
+                  <option key={mode} value={mode}>
+                    {MODE_LABELS[mode]}
+                  </option>
+                ))}
+              </select>
+            )}
             <select
               value={importSource}
               onChange={(event) => handlePrefsChange({ importSource: event.target.value as LtmInteropSource })}
@@ -1239,14 +1283,17 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
           )}
           {!pendingDraftsForReview.isLoading && reviewGroups.length > 0 && (
             <div className="space-y-2">
-              {reviewGroups.map(({ sourceNoteId, sourceNote, sourceDrafts, totalMutations }) => (
+              {reviewGroups.map(({ sourceNoteId, sourceNote, sourceDrafts, totalMutations, mode }) => (
                 <div key={sourceNoteId}>
                   {sourceNote ? (
                     <div className="flex items-center justify-between gap-3 rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-semibold text-[var(--foreground)]">
-                          {memoryRowTitle(sourceNote, chatLookup)}
-                        </p>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <p className="truncate text-xs font-semibold text-[var(--foreground)]">
+                            {memoryRowTitle(sourceNote, chatLookup)}
+                          </p>
+                          {mode ? <ModeBadge mode={mode} /> : null}
+                        </div>
                         <p className="mt-0.5 text-[0.6875rem] text-[var(--muted-foreground)]">
                           {totalMutations} pending suggestion{totalMutations === 1 ? "" : "s"}
                         </p>
@@ -1269,6 +1316,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
                             <span className="truncate text-xs font-semibold text-[var(--foreground)]">
                               {friendlyIdentifier(sourceNoteId)}
                             </span>
+                            {mode ? <ModeBadge mode={mode} /> : null}
                             <StatusPill label="Source deleted" tone="warn" />
                           </div>
                           <p className="mt-0.5 text-[0.6875rem] text-[var(--muted-foreground)]">
