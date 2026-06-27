@@ -37,6 +37,7 @@ import {
   normalizeTextForMatch,
   type APIProvider,
 } from "@marinara-engine/shared";
+import { ltmModeForChatMode } from "../services/long-term-memory/chat-scope.js";
 import type {
   AgentContext,
   AgentCallDebugEvent,
@@ -567,11 +568,6 @@ function normalizeLtmIdentifier(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(trimmed) ? trimmed : undefined;
-}
-
-function ltmModeForChatMode(mode: string): "conversation" | "roleplay" | "game" {
-  if (mode === "conversation" || mode === "game") return mode;
-  return "roleplay";
 }
 
 const DIRECTOR_SECRET_PLOT_DEFAULT_RUN_INTERVAL = 8;

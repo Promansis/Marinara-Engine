@@ -48,7 +48,7 @@ type IntegrityIssue = {
   message: string;
 };
 
-export type LtmRepairAction = "rebuild_indexes" | "quarantine_malformed_notes";
+export type LtmRepairAction = "rebuild_indexes" | "quarantine_malformed_notes" | "backfill_imported_source_titles";
 export type LtmInteropSource = "characters" | "lorebooks" | "chats";
 
 type ImportSourceCandidate = {
@@ -96,6 +96,56 @@ function normalizeLegacyNoteScope(scope: unknown) {
   return withMergedLtmScopeLinks(parsed, {});
 }
 
+function titleCaseFromIdentifier(value: string) {
+  return value
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function stripImportPrefix(value: string) {
+  return value
+    .replace(/^source_import_(character|lorebook|chat)_/, "")
+    .replace(/^scene_import_(character|lorebook|chat)_/, "")
+    .replace(/_[a-f0-9]{10}$/i, "");
+}
+
+function importedSourceTitleFromNote(note: Pick<LtmNote, "id" | "tags" | "title" | "sections">) {
+  const title = note.title?.trim();
+  if (title) return title;
+
+  const evidence = note.sections.source?.evidence ?? [];
+  const chatName = evidence.find((entry) => entry.startsWith("chat_name:"))?.slice("chat_name:".length).trim();
+  const messageRange = evidence.find((entry) => entry.startsWith("message_range:"))?.slice("message_range:".length).trim();
+
+  if (note.tags.includes("imported_chat") && chatName) {
+    return messageRange ? `${chatName}, msgs ${messageRange}` : chatName;
+  }
+
+  if (note.tags.includes("imported_game_journal")) {
+    return `Game Journal — ${titleCaseFromIdentifier(stripImportPrefix(note.id))}`;
+  }
+
+  if (note.tags.includes("imported_character")) {
+    return `Character — ${titleCaseFromIdentifier(stripImportPrefix(note.id))}`;
+  }
+
+  if (note.tags.includes("imported_lorebook")) {
+    return `Lorebook — ${titleCaseFromIdentifier(stripImportPrefix(note.id))}`;
+  }
+
+  if (note.tags.some((tag) => tag.startsWith("imported_"))) {
+    return titleCaseFromIdentifier(stripImportPrefix(note.id)) || "Imported source";
+  }
+
+  return "Imported source";
+}
+
+function isBackfillableImportedSourceNote(note: LtmNote) {
+  return note.type === "source" && note.tags.some((tag) => tag.startsWith("imported_"));
+}
+
 export interface LtmIntegrityResult {
   ok: boolean;
   checkedAt: string;
@@ -114,7 +164,17 @@ export interface LtmInteropPreview {
   source: LtmInteropSource;
   scanned: number;
   draftable: number;
-  samples: Array<{ sourceId: string; title: string; mutationCount: number; summary: string; snippet: string }>;
+  importedCount: number;
+  samples: Array<{
+    sourceId: string;
+    title: string;
+    mutationCount: number;
+    summary: string;
+    snippet: string;
+    status: "pending" | "imported";
+    existingNoteId?: string;
+    existingNoteTitle?: string;
+  }>;
 }
 
 export interface LtmInteropSourceNoteImport {
@@ -446,6 +506,35 @@ export async function repairLongTermMemory(
           continue;
         }
 
+        if (action === "backfill_imported_source_titles") {
+          const storage = new LongTermMemoryStorage(root);
+          const sourceNotes = await storage.listNotes({ type: "source" });
+          let patched = 0;
+          for (const note of sourceNotes) {
+            if (!isBackfillableImportedSourceNote(note)) continue;
+            if (note.title?.trim()) continue;
+            await storage.updateNote(note.id, { title: importedSourceTitleFromNote(note) }, {
+              actor: "maintenance_api",
+              cause: "repair.backfill_imported_source_titles",
+              summary: "Backfilled imported source note title",
+            });
+            patched += 1;
+          }
+          results.push({ action, result: patched > 0 ? "backfilled" : "no_titles_to_backfill", count: patched });
+          if (patched > 0) {
+            await rebuildLongTermMemoryIndexes({ root });
+          }
+          await recordLtmDebugEvent({
+            root,
+            operationId,
+            phase: "repair",
+            action: "repair_backfill_source_titles",
+            status: "ok",
+            counts: { notes: patched },
+          });
+          continue;
+        }
+
         const quarantineDir = join(dirs.root, "quarantine", `malformed-${Date.now()}`);
         let moved = 0;
         for (const file of await listVaultFiles(root)) {
@@ -772,27 +861,28 @@ export async function previewLongTermMemoryInterop(
   const existingNotes = await storage.getNotesByIds(
     candidates.flatMap((candidate) => [candidate.sourceNoteId, ...(candidate.legacySourceNoteIds ?? [])]),
   );
-  const deduped: typeof candidates = [];
-  for (const c of candidates) {
-    const ids = [c.sourceNoteId, ...(c.legacySourceNoteIds ?? [])];
-    const exists = ids.some((id) => existingNotes.has(id));
-    if (!exists) deduped.push(c);
-  }
+  const samples = candidates.map((candidate) => {
+    const ids = [candidate.sourceNoteId, ...(candidate.legacySourceNoteIds ?? [])];
+    const existing = ids.map((id) => existingNotes.get(id)).find((note): note is LtmNote => Boolean(note));
+    const trimmed = candidate.sourceText.trim();
+    const snippet = trimmed.length > 200 ? `${trimmed.slice(0, 200)}…` : trimmed;
+    return {
+      sourceId: candidate.sourceId,
+      title: candidate.title,
+      mutationCount: candidate.response.mutations.length,
+      summary: candidate.response.summary,
+      snippet,
+      status: existing ? ("imported" as const) : ("pending" as const),
+      existingNoteId: existing?.id,
+      existingNoteTitle: existing?.title?.trim() || candidate.title,
+    };
+  });
   return {
     source,
-    scanned: limit,
-    draftable: deduped.length,
-    samples: deduped.map((candidate) => {
-      const trimmed = candidate.sourceText.trim();
-      const snippet = trimmed.length > 200 ? `${trimmed.slice(0, 200)}…` : trimmed;
-      return {
-        sourceId: candidate.sourceId,
-        title: candidate.title,
-        mutationCount: candidate.response.mutations.length,
-        summary: candidate.response.summary,
-        snippet,
-      };
-    }),
+    scanned: candidates.length,
+    draftable: samples.filter((sample) => sample.status === "pending").length,
+    importedCount: samples.filter((sample) => sample.status === "imported").length,
+    samples,
   };
 }
 
@@ -854,6 +944,7 @@ export async function createLongTermMemoryInteropSourceNotes(
         const now = nowIso();
         const noteInput = {
           id: candidate.sourceNoteId,
+          title: candidate.title,
           type: "source" as const,
           status: "active" as const,
           modes: candidate.modes,
@@ -871,10 +962,12 @@ export async function createLongTermMemoryInteropSourceNotes(
         const noteIds = [...(candidate.legacySourceNoteIds ?? []), candidate.sourceNoteId];
         const existing = noteIds.map((noteId) => existingNotes.get(noteId)).find((note): note is LtmNote => Boolean(note));
         if (existing) {
+          const titlePatch = existing.title?.trim() ? {} : { title: candidate.title };
           const note = await storage.updateNote(
             existing.id,
             {
               status: "active",
+              ...titlePatch,
               modes: noteInput.modes,
               scope: noteInput.scope,
               tags: Array.from(new Set([...existing.tags, ...noteInput.tags])),

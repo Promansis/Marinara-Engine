@@ -1,4 +1,4 @@
-import { Import, Loader2 } from "lucide-react";
+import { Check, Import, Loader2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import {
   listRowClassName,
@@ -9,6 +9,7 @@ import {
   rowActionGroupClassName,
   type ImportPreviewRow,
 } from "./ltm-panel-shared";
+import { StatusPill } from "./LtmPills";
 
 export function ImportPreviewRowItem({
   sample,
@@ -25,29 +26,39 @@ export function ImportPreviewRowItem({
   onSelect: (selected: boolean) => void;
   onImport: () => void;
 }) {
+  const imported = sample.status === "imported";
   return (
     <article
       className={cn(
         "group grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3",
         listRowClassName,
         selected && selectedListRowClassName,
+        imported && "bg-amber-500/5 ring-amber-500/20",
       )}
     >
         <input
           type="checkbox"
           checked={selected}
-          disabled={disabled}
+          disabled={disabled || imported}
           onChange={(event) => onSelect(event.target.checked)}
           className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
           aria-label={`Select ${sample.title}`}
         />
       <div className="min-w-0 self-center">
-        <div className="truncate text-xs font-medium text-[var(--foreground)]" title={sample.title}>
-          {sample.title}
+        <div className="flex items-center gap-2">
+          <div className="truncate text-xs font-medium text-[var(--foreground)]" title={sample.title}>
+            {sample.title}
+          </div>
+          {imported && <StatusPill label="Imported" tone="warn" title={sample.existingNoteTitle ?? sample.title} />}
         </div>
         {sample.snippet && (
           <div className="mt-1 truncate text-[10px] leading-relaxed text-[var(--muted-foreground)]" title={sample.snippet}>
             {sample.snippet}
+          </div>
+        )}
+        {imported && sample.existingNoteTitle && (
+          <div className="mt-1 truncate text-[10px] leading-relaxed text-[var(--muted-foreground)]">
+            Already exists as {sample.existingNoteTitle}
           </div>
         )}
       </div>
@@ -55,7 +66,7 @@ export function ImportPreviewRowItem({
         <button
           type="button"
           onClick={onImport}
-          disabled={disabled || importing}
+          disabled={disabled || importing || imported}
           className={cn(
             rowActionButtonClassName,
             "bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary)]/85",
@@ -63,7 +74,7 @@ export function ImportPreviewRowItem({
           aria-label={`Import ${sample.title}`}
           title="Import"
         >
-          {importing ? <Loader2 size="0.875rem" className="animate-spin" /> : <Import size="0.875rem" />}
+          {importing ? <Loader2 size="0.875rem" className="animate-spin" /> : imported ? <Check size="0.875rem" /> : <Import size="0.875rem" />}
         </button>
       </div>
     </article>

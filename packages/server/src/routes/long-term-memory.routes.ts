@@ -166,7 +166,7 @@ const updateNoteBodySchema = z.preprocess(
 
 const rebuildBodySchema = z.object({}).strict().default({});
 
-const repairActionSchema = z.enum(["rebuild_indexes", "quarantine_malformed_notes"]);
+const repairActionSchema = z.enum(["rebuild_indexes", "quarantine_malformed_notes", "backfill_imported_source_titles"]);
 
 const repairBodySchema = z
   .object({

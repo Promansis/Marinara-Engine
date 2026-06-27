@@ -1,4 +1,4 @@
-import type { LtmScope } from "./schema.js";
+import { ltmModeSchema, type LtmMode, type LtmScope } from "./schema.js";
 
 function uniqueStrings(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value))));
@@ -12,6 +12,10 @@ export type LtmScopeMatcherInput = {
 
 export function getLtmScopeChatIds(scope: Pick<LtmScope, "chatId" | "chatIds"> | null | undefined): string[] {
   return uniqueStrings([scope?.chatId, ...(scope?.chatIds ?? [])]);
+}
+
+export function ltmModeForChatMode(mode: unknown): LtmMode {
+  return ltmModeSchema.catch("roleplay").parse(mode);
 }
 
 export function isGlobalLtmScope(scope: LtmScope | null | undefined): boolean {

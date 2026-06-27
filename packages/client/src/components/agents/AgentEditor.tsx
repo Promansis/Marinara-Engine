@@ -3836,7 +3836,11 @@ export function AgentEditor() {
               <ToolButton
                 onClick={() =>
                   repairMemories
-                    .mutateAsync(["quarantine_malformed_notes", "rebuild_indexes"])
+                    .mutateAsync([
+                      "quarantine_malformed_notes",
+                      "backfill_imported_source_titles",
+                      "rebuild_indexes",
+                    ])
                     .then(() => toast.success("Repair actions finished"))
                     .catch((err: Error) => toast.error(err.message))
                 }

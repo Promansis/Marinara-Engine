@@ -201,6 +201,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(() => new Set());
   const [selectedImportRows, setSelectedImportRows] = useState<Set<string>>(() => new Set());
   const [activeImportIds, setActiveImportIds] = useState<Set<string>>(() => new Set());
+  const [importedRowsOpen, setImportedRowsOpen] = useState(false);
   const [debugLogOpen, setDebugLogOpen] = useState(false);
   const [creatingNote, setCreatingNote] = useState(false);
   const [createNoteDraft, setCreateNoteDraft] = useState<CreateLongTermMemoryNoteDraft | null>(null);
@@ -361,33 +362,15 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     return [...byId.values()];
   }, [allDrafts.data]);
   const importRows = useMemo(() => importPreview.data?.samples ?? [], [importPreview.data?.samples]);
-  const visibleImportRows = useMemo(
-    () => {
-      if (importSource !== "chats") return importRows;
-      const scopeChatIds = navigatorScope.chatIds ?? (navigatorScope.chatId ? [navigatorScope.chatId] : []);
-      if (scopeChatIds.length > 0) {
-        const chatIds = new Set(scopeChatIds);
-        return importRows.filter((sample) => chatIds.has(sample.sourceId.split(":")[0] ?? ""));
-      }
-      if (navigatorScope.groupId) {
-        const groupChatIds = new Set(
-          ((chats as Chat[] | undefined) ?? [])
-            .filter((chat) => chat.groupId === navigatorScope.groupId)
-            .map((chat) => chat.id),
-        );
-        return importRows.filter((sample) => groupChatIds.has(sample.sourceId.split(":")[0] ?? ""));
-      }
-      return importRows;
-    },
-    [chats, importRows, importSource, navigatorScope.chatId, navigatorScope.chatIds, navigatorScope.groupId],
-  );
+  const pendingImportRows = useMemo(() => importRows.filter((sample) => sample.status === "pending"), [importRows]);
+  const importedImportRows = useMemo(() => importRows.filter((sample) => sample.status === "imported"), [importRows]);
   const selectedVisibleImportRows = useMemo(
-    () => visibleImportRows.filter((sample) => selectedImportRows.has(importRowKey(importSource, sample.sourceId))),
-    [importSource, selectedImportRows, visibleImportRows],
+    () => pendingImportRows.filter((sample) => selectedImportRows.has(importRowKey(importSource, sample.sourceId))),
+    [importSource, pendingImportRows, selectedImportRows],
   );
   const allVisibleImportRowsSelected =
-    visibleImportRows.length > 0 &&
-    visibleImportRows.every((sample) => selectedImportRows.has(importRowKey(importSource, sample.sourceId)));
+    pendingImportRows.length > 0 &&
+    pendingImportRows.every((sample) => selectedImportRows.has(importRowKey(importSource, sample.sourceId)));
   const combinedNotes = useMemo(() => {
     const byId = new Map<string, LtmNote>();
     for (const note of notes.data ?? []) byId.set(note.id, note);
@@ -884,7 +867,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const setAllVisibleImportRowsSelected = (selected: boolean) => {
     setSelectedImportRows((current) => {
       const next = new Set(current);
-      for (const row of visibleImportRows) {
+      for (const row of pendingImportRows) {
         const key = importRowKey(importSource, row.sourceId);
         if (selected) next.add(key);
         else next.delete(key);
@@ -1161,7 +1144,10 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold text-[var(--foreground)]">
-                  {importPreview.data?.draftable ?? 0} source{importPreview.data?.draftable === 1 ? "" : "s"} ready
+                  {importPreview.data?.draftable ?? 0} pending source{importPreview.data?.draftable === 1 ? "" : "s"} ready
+                </div>
+                <div className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">
+                  {importPreview.data?.importedCount ?? 0} source{importPreview.data?.importedCount === 1 ? "" : "s"} already imported
                 </div>
               </div>
               {importPreview.isLoading ? <Loader2 className="animate-spin" size="1rem" /> : <FileJson size="1rem" />}
@@ -1230,7 +1216,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
                 <input
                   type="checkbox"
                   checked={allVisibleImportRowsSelected}
-                  disabled={visibleImportRows.length === 0}
+                  disabled={pendingImportRows.length === 0}
                   onChange={(event) => setAllVisibleImportRowsSelected(event.target.checked)}
                   className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
                 />
@@ -1253,12 +1239,12 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
 
           <div className="mt-3 space-y-2">
             {importPreview.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
-            {!importPreview.isLoading && visibleImportRows.length === 0 && (
+            {!importPreview.isLoading && pendingImportRows.length === 0 && importedImportRows.length === 0 && (
               <p className={emptyStateClassName}>
                 No sources are ready to bring in.
               </p>
             )}
-            {visibleImportRows.map((sample) => (
+            {pendingImportRows.map((sample) => (
               <ImportPreviewRowItem
                 key={sample.sourceId}
                 sample={sample}
@@ -1269,6 +1255,40 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
                 onImport={() => importRowsToVault([sample.sourceId])}
               />
             ))}
+            {importedImportRows.length > 0 && (
+              <div className={cn(sectionCardClassName, "border-amber-500/20 bg-amber-500/5")}>
+                <button
+                  type="button"
+                  onClick={() => setImportedRowsOpen((current) => !current)}
+                  className="flex w-full items-center justify-between gap-3 text-left"
+                >
+                  <div>
+                    <div className="text-xs font-semibold text-[var(--foreground)]">
+                      Imported source{importedImportRows.length === 1 ? "" : "s"} ({importedImportRows.length})
+                    </div>
+                    <div className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">
+                      Already present in the vault. These stay visible for reference, but cannot be imported again.
+                    </div>
+                  </div>
+                  {importedRowsOpen ? <Check size="0.875rem" /> : <Import size="0.875rem" />}
+                </button>
+                {importedRowsOpen && (
+                  <div className="mt-3 space-y-2">
+                    {importedImportRows.map((sample) => (
+                      <ImportPreviewRowItem
+                        key={sample.sourceId}
+                        sample={sample}
+                        selected={false}
+                        disabled
+                        importing={false}
+                        onSelect={() => {}}
+                        onImport={() => {}}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </Section>
       )}
