@@ -40,6 +40,7 @@ import { getLocalSidecarProvider, LOCAL_SIDECAR_MODEL } from "../services/llm/lo
 import { createChatsStorage } from "../services/storage/chats.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { resolveBaseUrl } from "./generate/generate-route-utils.js";
+import type { BaseLLMProvider } from "../services/llm/base-provider.js";
 import {
   getLongTermMemoryDirectories,
   getLongTermMemoryRoot,
@@ -68,6 +69,7 @@ import {
   extractLongTermMemoryFromSourceNote,
   isLtmSourceNote,
 } from "../services/long-term-memory/source-extraction.js";
+import { directIngestGameJournal } from "../services/long-term-memory/direct-ingest.js";
 import { getLtmExtractionConfig, updateLtmExtractionConfig } from "../services/long-term-memory/extraction-config.js";
 import { getLtmGlobalSettings, updateLtmGlobalSettings } from "../services/long-term-memory/settings.js";
 import { LongTermMemoryStorage } from "../services/long-term-memory/storage.js";
@@ -619,6 +621,43 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
       if (body.chatId && !chat) return reply.status(404).send({ error: "Chat not found" });
 
       const operationId = randomUUID();
+
+      // Game journal source notes are ingested directly without LLM extraction
+      if (sourceNote.tags.includes("imported_game_journal")) {
+        try {
+          const directResult = await directIngestGameJournal(app.db, sourceNote, undefined, operationId);
+          const outcomeState = directResult.appliedMutationIds.length === directResult.mutations.length
+            ? "success" as const
+            : "partial_success" as const;
+          await rebuildLongTermMemoryIndexes({ scope: "typed" });
+          return {
+            draft: null,
+            diagnostics: [],
+            outcome: {
+              state: outcomeState,
+              totalCandidates: directResult.units.length,
+              keptUnits: directResult.units.length,
+              droppedUnits: 0,
+              droppedCandidates: [],
+            },
+            response: { summary: "Direct ingestion of game journal", mutations: directResult.mutations },
+            appliedMutationIds: directResult.appliedMutationIds,
+            skippedMutationIds: [],
+          };
+        } catch (err) {
+          await recordLtmDebugEvent({
+            operationId,
+            phase: "extraction",
+            action: "extract_source_note_route",
+            status: "error",
+            sourceNoteId: id,
+            error: err,
+          });
+          const message = err instanceof Error ? err.message : "Failed to extract long-term memory from source note";
+          return reply.status(502).send({ error: message });
+        }
+      }
+
       try {
         const { provider, model } = await resolveExtractionProvider(body, chat?.connectionId ?? null);
         await recordLtmDebugEvent({
@@ -873,21 +912,59 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
       });
       const importedSourceNoteCount = imported.imported.length;
       const results = [];
-      const { provider, model } = await resolveExtractionProvider(body);
-      await recordLtmDebugEvent({
-        operationId,
-        phase: "extraction",
-        action: "provider_resolved",
-        status: "ok",
-        source: imported.source,
-        provider: provider.constructor.name,
-        model,
-      });
+      const hasNonGameImports = imported.imported.some(
+        (item) => !item.note.tags.includes("imported_game_journal"),
+      );
+      let provider: BaseLLMProvider | null = null;
+      let model = "";
+      if (hasNonGameImports) {
+        const resolved = await resolveExtractionProvider(body);
+        provider = resolved.provider;
+        model = resolved.model;
+        await recordLtmDebugEvent({
+          operationId,
+          phase: "extraction",
+          action: "provider_resolved",
+          status: "ok",
+          source: imported.source,
+          provider: provider.constructor.name,
+          model,
+        });
+      }
 
       const importConcurrency = Math.max(body.importConcurrency ?? 3, 1);
 
       const tasks = imported.imported.map((item) => async () => {
         try {
+          const isGameJournal = item.note.tags.includes("imported_game_journal");
+
+          if (isGameJournal) {
+            const directResult = await directIngestGameJournal(app.db, item.note, undefined, operationId);
+            const outcomeState = directResult.appliedMutationIds.length === directResult.mutations.length
+              ? "success" as const
+              : "partial_success" as const;
+            return {
+              sourceId: item.sourceId,
+              title: item.title,
+              note: item.note,
+              created: item.created,
+              draft: null,
+              diagnostics: [],
+              outcome: {
+                state: outcomeState,
+                totalCandidates: directResult.units.length,
+                keptUnits: directResult.units.length,
+                droppedUnits: 0,
+                droppedCandidates: [],
+              },
+              appliedMutationIds: directResult.appliedMutationIds,
+              skippedMutationIds: [],
+            };
+          }
+
+          if (!provider) {
+            throw new Error("No LLM provider available for non-game source note extraction");
+          }
           const result = await extractLongTermMemoryFromSourceNote({
             noteId: item.note.id,
             provider,

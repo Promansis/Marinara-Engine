@@ -25,6 +25,7 @@ import type { DB } from "../../db/connection.js";
 import { createCharactersStorage } from "../storage/characters.storage.js";
 import { createChatsStorage } from "../storage/chats.storage.js";
 import { createLorebooksStorage } from "../storage/lorebooks.storage.js";
+import { renderGameSourceText } from "./game-journal-mapper.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import {
   getLongTermMemoryDirectories,
@@ -619,6 +620,37 @@ async function lorebookImportCandidates(
   return candidates;
 }
 
+function buildGameImportCandidate(
+  chat: { id: string; name: string; groupId?: string | null; characterIds?: unknown; mode?: unknown },
+  gameJournal: unknown,
+  sessionSummaries: unknown[],
+): ImportSourceCandidate {
+  const chatName = evidenceSafeValue(chat.name) || "Game";
+  const sourceText = renderGameSourceText(gameJournal as any, sessionSummaries as any);
+  const sourceNoteId = `source_import_chat_${normalizeIdentifier(chat.name, "chat")}_${hashShort(chat.id + "_game_journal")}`;
+  const evidence = [`chat:${chat.id}`, "game_journal"];
+  const scope = withMergedLtmScopeLinks(
+    {
+      chatId: chat.id,
+      groupId: typeof chat.groupId === "string" ? chat.groupId : undefined,
+      characterIds: readJsonArray(chat.characterIds),
+    },
+    { chatIds: [chat.id] },
+  );
+
+  return {
+    title: `Game Journal — ${chatName}`,
+    sourceId: `${chat.id}:game_journal`,
+    sourceText,
+    sourceNoteId,
+    sourceTag: "imported_game_journal",
+    evidence,
+    modes: ["game"],
+    scope,
+    response: makeDraftResponse([], `Direct-ingest game journal for ${chatName}`),
+  };
+}
+
 async function chatImportCandidates(
   db: DB,
   limit: number,
@@ -636,13 +668,26 @@ async function chatImportCandidates(
   const rows = sourceIds ? scopedChats : scopedChats.slice(0, limit);
   const candidates = rows.flatMap((chat) => {
     const metadata = readJsonObject(chat.metadata);
+    const mode = chat.mode as LtmMode;
+
+    // Game-mode chats with journal data produce a single game import candidate
+    // (direct ingestion, no LLM extraction needed)
+    if (mode === "game") {
+      const gameJournal = metadata.gameJournal ?? null;
+      const sessionSummaries = Array.isArray(metadata.gamePreviousSessionSummaries)
+        ? metadata.gamePreviousSessionSummaries
+        : [];
+      if (gameJournal || sessionSummaries.length > 0) {
+        return [buildGameImportCandidate(chat, gameJournal, sessionSummaries)];
+      }
+    }
+
     const summary = typeof metadata.summary === "string" ? metadata.summary.trim() : "";
     const entries = normalizeChatSummaryEntries(metadata.summaryEntries, {
       legacySummary: summary,
       legacyFallback: Array.isArray(metadata.summaryEntries) ? false : true,
     }).filter((entry) => entry.enabled,);
     if (entries.length === 0) return [];
-    const mode = chat.mode as LtmMode;
     return entries.map((entry) => {
       const chatName = evidenceSafeValue(chat.name) || "Chat";
       const title = chatSummaryImportTitle(chatName, entry);
@@ -780,7 +825,9 @@ export async function createLongTermMemoryInteropSourceNotes(
       const imported: LtmInteropSourceNoteImport[] = [];
       if (options.mode) {
         for (const candidate of candidates) {
-          candidate.modes = [options.mode];
+          if (candidate.sourceTag !== "imported_game_journal") {
+            candidate.modes = [options.mode];
+          }
         }
       }
       await recordLtmDebugEvent({
