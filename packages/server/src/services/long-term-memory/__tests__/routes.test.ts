@@ -128,6 +128,59 @@ test("LTM routes — POST /notes returns 400 on invalid body", async () => {
   }
 });
 
+test("LTM routes — POST /repair accepts the full 3-action repair payload", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "marinara-ltm-routes-repair-"));
+  const previousDataDir = process.env.DATA_DIR;
+  const previousBasicAuthUser = process.env.BASIC_AUTH_USER;
+  const previousBasicAuthPass = process.env.BASIC_AUTH_PASS;
+  const previousAdminSecret = process.env.ADMIN_SECRET;
+
+  delete process.env.BASIC_AUTH_USER;
+  delete process.env.BASIC_AUTH_PASS;
+  delete process.env.ADMIN_SECRET;
+  process.env.DATA_DIR = dataDir;
+
+  let app: Awaited<ReturnType<typeof buildApp>> | null = null;
+  try {
+    app = await buildApp();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/long-term-memory/repair",
+      payload: {
+        actions: [
+          "quarantine_malformed_notes",
+          "backfill_imported_source_titles",
+          "rebuild_indexes",
+        ],
+      },
+      remoteAddress: "127.0.0.1",
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    const body = JSON.parse(response.body);
+    assert.equal(body.actions.length, 3);
+    assert.deepEqual(
+      body.actions.map((entry: { action: string }) => entry.action),
+      [
+        "quarantine_malformed_notes",
+        "backfill_imported_source_titles",
+        "rebuild_indexes",
+      ],
+    );
+  } finally {
+    if (app) await app.close();
+    if (previousDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = previousDataDir;
+    if (previousBasicAuthUser === undefined) delete process.env.BASIC_AUTH_USER;
+    else process.env.BASIC_AUTH_USER = previousBasicAuthUser;
+    if (previousBasicAuthPass === undefined) delete process.env.BASIC_AUTH_PASS;
+    else process.env.BASIC_AUTH_PASS = previousBasicAuthPass;
+    if (previousAdminSecret === undefined) delete process.env.ADMIN_SECRET;
+    else process.env.ADMIN_SECRET = previousAdminSecret;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("LTM routes — GET /notes/:id returns 404 for missing note", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "marinara-ltm-routes-404-"));
   const previousDataDir = process.env.DATA_DIR;

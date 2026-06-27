@@ -170,7 +170,7 @@ const repairActionSchema = z.enum(["rebuild_indexes", "quarantine_malformed_note
 
 const repairBodySchema = z
   .object({
-    actions: z.array(repairActionSchema).min(1).max(2),
+    actions: z.array(repairActionSchema).min(1).max(3),
   })
   .strict();
 
