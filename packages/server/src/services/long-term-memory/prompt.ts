@@ -43,7 +43,9 @@ export function formatLongTermMemoryBlock(chunks: LtmBudgetedChunk[], options?: 
         const text = cleanLongTermMemoryChunkText(c.chunk.text);
         if (!text) return "";
         if (c.chunk.noteType === "thread") {
-          return `${text} [${c.chunk.status}]`;
+          const tags = c.chunk.tags ?? [];
+          const questTag = tags.includes("quest") ? " quest" : "";
+          return `${text} [${c.chunk.status}${questTag}]`;
         }
         return text;
       })

@@ -2,6 +2,8 @@ import {
   isLtmSourceLikeNote,
   isGlobalLtmScope,
   ltmScopesOverlap,
+  DEFAULT_LTM_ALLOWED_STREAMS_BY_MODE,
+  DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE,
   type LtmExtractionDroppedCandidate,
   type LtmExtractionDraft,
   type LtmExtractionOutcome,
@@ -20,7 +22,6 @@ import {
   summarizeCompiledEvidenceUnitExtraction,
   sourceMetadataForEvidenceUnitDraft,
 } from "./evidence-unit-extraction.js";
-import { DEFAULT_LTM_EXTRACTION_PROMPT } from "@marinara-engine/shared";
 import { getLtmExtractionConfig } from "./extraction-config.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import type { LtmExtractionDiagnostic } from "./diagnostics.js";
@@ -29,18 +30,6 @@ import { noteIdForEvidenceUnit } from "./evidence-unit-validation.js";
 import { retrieveLongTermMemory, type RetrieveLongTermMemoryInput } from "./retrieval.js";
 import { LongTermMemoryStorage } from "./storage.js";
 
-const SOURCE_SUMMARY_ALLOWED_EVIDENCE_BUCKETS: LtmEvidenceUnit["bucket"][] = [
-  "timeline_event",
-  "character_fact",
-  "relationship_event",
-  "relationship_state",
-  "relationship_conflict",
-  "world_fact",
-  "thread",
-  "tone",
-  "anchor",
-];
-
 export type ExtractLongTermMemoryFromSourceNoteOptions = {
   noteId: string;
   provider: BaseLLMProvider;
@@ -48,6 +37,7 @@ export type ExtractLongTermMemoryFromSourceNoteOptions = {
   root?: string;
   scope?: LtmScope;
   modes?: LtmMode[];
+  mode?: LtmMode;
   instruction?: string;
   signal?: AbortSignal;
   embeddingSource?: RetrieveLongTermMemoryInput["embeddingSource"];
@@ -184,7 +174,9 @@ async function extractLongTermMemoryFromSourceNoteInner(
 
   const scope = options.scope ?? sourceNote.scope;
   const modes = options.modes?.length ? options.modes : sourceNote.modes;
-  const extractionConfig = await getLtmExtractionConfig(options.root);
+  const resolvedMode = options.mode ?? modes[0] ?? "roleplay";
+  const allowedBuckets = [...DEFAULT_LTM_ALLOWED_STREAMS_BY_MODE[resolvedMode]];
+  const extractionConfig = await getLtmExtractionConfig(options.root, resolvedMode);
   await recordLtmDebugEvent({
     operationId: options.operationId,
     root: options.root,
@@ -200,6 +192,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
     details: {
       scope,
       tags: sourceNote.tags,
+      mode: resolvedMode,
       extractionSettings: {
         reasoningEffort: extractionConfig.reasoningEffort,
         verbosity: extractionConfig.verbosity,
@@ -211,7 +204,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
         existingNoteMaxTokens: extractionConfig.existingNoteMaxTokens,
         activePromptTemplateId: extractionConfig.activePromptTemplateId,
         usesPromptTemplate: Boolean(extractionConfig.activePromptTemplateId),
-        hasPromptOverride: extractionConfig.systemPrompt !== DEFAULT_LTM_EXTRACTION_PROMPT,
+        hasPromptOverride: extractionConfig.systemPrompt !== DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE[resolvedMode],
         hasExtraInstruction: extractionConfig.extraInstruction.length > 0,
         aiKeywordExtraction: extractionConfig.aiKeywordExtraction,
       },
@@ -272,7 +265,8 @@ async function extractLongTermMemoryFromSourceNoteInner(
     maxExistingNoteTokens: extractionConfig.maxExistingNoteTokens,
     signal: options.signal,
     operationId: options.operationId,
-    allowedBuckets: SOURCE_SUMMARY_ALLOWED_EVIDENCE_BUCKETS,
+    allowedBuckets,
+    mode: resolvedMode,
     aiKeywordExtraction: extractionConfig.aiKeywordExtraction,
   };
 
@@ -364,7 +358,8 @@ async function extractLongTermMemoryFromSourceNoteInner(
     sourceNote,
     existingNotes: compilerExistingNotes,
     scope,
-    modes,
+    modes: [resolvedMode],
+    mode: resolvedMode,
     sourceHash,
   });
   compiled.diagnostics.push(...targetLookup.diagnostics);

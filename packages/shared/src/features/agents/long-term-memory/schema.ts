@@ -127,6 +127,7 @@ export const ltmExtractionPromptTemplateSchema = z
     id: z.string().min(1),
     name: z.string().min(1).max(120),
     prompt: z.string().min(1),
+    mode: ltmModeSchema.optional(),
   })
   .strict();
 

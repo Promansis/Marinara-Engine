@@ -120,6 +120,7 @@ import {
   DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
   DEFAULT_LTM_EXTRACTION_TEMPERATURE,
   DEFAULT_LTM_EXTRACTION_VERBOSITY,
+  type LtmMode,
 } from "@marinara-engine/shared";
 import { Modal } from "../ui/Modal";
 import { LtmVaultManagerSection } from "../long-term-memory/LtmVaultManagerSection";
@@ -595,7 +596,7 @@ export function AgentEditor() {
     maxExistingNoteTokens: number;
     existingNoteMaxChunks: number;
     existingNoteMaxTokens: number;
-    promptTemplates: { id: string; name: string; prompt: string }[];
+    promptTemplates: { id: string; name: string; prompt: string; mode?: LtmMode | null }[];
     activePromptTemplateId: string | null;
     aiKeywordExtraction: boolean;
   } | null>(null);
@@ -1296,9 +1297,6 @@ export function AgentEditor() {
     localLorebookWriteEnabled,
     localWritableLorebookId,
     localMusicProvider,
-    localCustomMusicSource,
-    localCustomMusicFolder,
-    localCustomMusicExternalFolder,
     localSpotifyClientId,
     localUseChatActiveLorebooks,
     localSourceLorebookIds,

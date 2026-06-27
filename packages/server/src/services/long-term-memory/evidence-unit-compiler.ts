@@ -11,7 +11,7 @@ import type {
   LtmSection,
   LtmStatus,
 } from "@marinara-engine/shared";
-import { isLtmSourceLikeNote, LTM_DRAFT_MUTATION_LIMIT } from "@marinara-engine/shared";
+import { isLtmSourceLikeNote, LTM_DRAFT_MUTATION_LIMIT, QUEST_THREAD_SECTION_KEYS } from "@marinara-engine/shared";
 import { mergeKeywords } from "./keyword-extract.js";
 import { noteIdForEvidenceUnit, riskForEvidenceUnit } from "./evidence-unit-validation.js";
 import { uniqueStrings } from "./ltm-utils.js";
@@ -21,6 +21,7 @@ export interface CompileLtmEvidenceUnitsOptions {
   existingNotes: LtmNote[];
   scope: LtmScope;
   modes: LtmMode[];
+  mode?: LtmMode;
   createdAt?: string;
   summary?: string;
 }
@@ -76,7 +77,7 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
   }
 
   for (const [noteId, units] of unitsByNote) {
-    const target = targetForUnit(units[0]!);
+    const target = targetForUnit(units[0]!, options.mode);
     const existing = existingById.get(noteId);
     const sections = sectionsForUnits(units, existing, timestamp);
     const links = uniqueLinks(units.flatMap((unit) => unit.links).filter((link) => link.target !== noteId));
@@ -232,8 +233,11 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
   };
 }
 
-function targetForUnit(unit: LtmEvidenceUnit): UnitTarget {
+function targetForUnit(unit: LtmEvidenceUnit, mode?: LtmMode): UnitTarget {
   const noteId = noteIdForEvidenceUnit(unit);
+  const isQuest = mode === "game"
+    && unit.bucket === "thread"
+    && (QUEST_THREAD_SECTION_KEYS as readonly string[]).includes(unit.sectionKey);
   const base = {
     noteId,
     sectionKey: unit.sectionKey,
@@ -245,7 +249,7 @@ function targetForUnit(unit: LtmEvidenceUnit): UnitTarget {
   if (unit.bucket === "timeline_event") {
     return { ...base, noteType: "timeline_event", tags: ["typed_memory", "timeline_event"] };
   }
-  if (unit.bucket === "thread") return { ...base, noteType: "thread", tags: ["typed_memory"] };
+  if (unit.bucket === "thread") return { ...base, noteType: "thread", tags: isQuest ? ["typed_memory", "quest"] : ["typed_memory"] };
   if (unit.bucket === "world_fact") return { ...base, noteType: "world", tags: ["typed_memory"] };
   if (unit.bucket === "tone") return { ...base, noteType: "tone", tags: ["typed_memory"] };
   if (unit.bucket === "anchor") {

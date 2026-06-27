@@ -193,6 +193,7 @@ const interopImportBodySchema = z
     instruction: z.string().max(2_000).optional(),
     applyLowRisk: z.boolean().optional(),
     importConcurrency: z.number().int().min(1).max(10).optional(),
+    mode: ltmModeSchema.optional(),
   })
   .strict();
 
@@ -229,6 +230,7 @@ const extractSourceNoteBodySchema = z
     model: z.string().min(1).max(240).optional(),
     instruction: z.string().max(2_000).optional(),
     applyLowRisk: z.boolean().optional(),
+    mode: ltmModeSchema.optional(),
   })
   .strict()
   .default({});
@@ -634,6 +636,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
           model,
           scope: chat ? resolveChatLtmScope(chat) : sourceNote.scope,
           modes: chat ? [ltmModeForChatMode(chat.mode)] : sourceNote.modes,
+          mode: body.mode,
           instruction: body.instruction,
           operationId,
         });
@@ -865,6 +868,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
         sourceIds: body.sourceIds,
         limit: body.limit,
         scope: body.scope,
+        mode: body.mode,
         operationId,
       });
       const importedSourceNoteCount = imported.imported.length;
@@ -890,6 +894,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
             model,
             scope: item.note.scope,
             modes: item.note.modes,
+            mode: body.mode,
             instruction: body.instruction,
             operationId,
           });

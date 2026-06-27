@@ -1,4 +1,5 @@
 import type { LtmExtractionReasoningEffort, LtmExtractionVerbosity } from "./schema.js";
+import type { LtmEvidenceUnitBucket, LtmMode } from "./schema.js";
 import type { LongTermMemoryRecallStyle } from "../../../types/chat.js";
 
 export const DEFAULT_LTM_EXTRACTION_REASONING_EFFORT = "low" satisfies LtmExtractionReasoningEffort;
@@ -10,6 +11,8 @@ export const DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS = 4_096;
 export const DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS = 12;
 export const DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS = 4_096;
 export const LTM_DRAFT_MUTATION_LIMIT = 25;
+
+export const QUEST_THREAD_SECTION_KEYS = ["objective", "stage", "resolution"] as const;
 
 export const DEFAULT_LTM_EXTRACTION_PROMPT = [
   "You extract structured memory-stream evidence units from a source note.",
@@ -59,6 +62,179 @@ export const DEFAULT_LTM_EXTRACTION_PROMPT = [
   "\"resolved\" status is reserved for thread memories only. Never set status \"resolved\" on relationship, character, world, timeline, tone, or anchor streams.",
   "For enum fields, choose exactly one string from the allowed arrays. Do not join multiple values with |.",
 ].join("\n");
+
+export const DEFAULT_LTM_EXTRACTION_PROMPT_CONVERSATION = [
+  "You extract structured memory-stream evidence units from a chat transcript.",
+  "Return strict JSON only. Do not explain.",
+  "Do not include thinking, analysis, markdown, or <think> tags. Output JSON object only.",
+  "Source notes are audit evidence, not active recall memory.",
+  "Do not output source summaries, transcript summaries, or final write operations.",
+  "Extract only durable, high-confidence facts that would be useful across future conversations.",
+  "Emit zero or more units per stream. Prefer a few substantial units that capture the complete fact over many fragmentary observations.",
+  "Scan stream groups explicitly: character preferences or traits (character_fact); general knowledge or stated facts (world_fact); open questions or unresolved topics (thread); conversational style (tone); recurring motifs or inside jokes (anchor).",
+  "Do not extract scene beats, arrivals, departures, relationship conflicts, fight outcomes, or plot-like events. This is a casual conversation, not a story.",
+  "Use one best stream per fact. If a detail fits both a character and a world stream, emit the character's fact as character_fact and general facts as world_fact.",
+  "Do not duplicate the same fact across streams or sections.",
+  "Write durable facts in present tense unless the fact is a past event that has lasting relevance.",
+  "",
+  "SOURCE CONCEPT MAPPING:",
+  "- User preferences, stated intents, personality traits → character_fact with subjectId \"user_<id>\" and sectionKey \"facts\".",
+  "- Speaker voice or style quotes → character_fact with sectionKey \"voice\" and exact quote from source.",
+  "- General knowledge or stated facts → world_fact with sectionKey \"facts\".",
+  "- Open questions or unresolved topics → thread with sectionKey \"summary\".",
+  "- Recurring motifs or callbacks → anchor.",
+  "- Session or topic register → tone with sectionKey \"observations\".",
+  "",
+  "SECTION KEY CONVENTIONS:",
+  "- character_fact: facts, developments, or voice. Never use it for ordinary conversational turns, transient opinions, or one-off statements.",
+  "- world_fact: facts. Only for verified information, not speculation.",
+  "- thread: summary. The text must describe an unresolved topic and what would resolve it.",
+  "- tone: observations. Conversation-level register or recurring style only, not single-message mood.",
+  "- anchor: the source section key. Recurring motif or planted callback only.",
+  "",
+  "Apply a high confidence bar. Only emit a unit when the fact is clearly durable — not a one-off mention, transient opinion, or casual aside.",
+  "Each unit must include at least one supplied evidence string, including source_note:<id>.",
+  "Use real lowercase snake_case subjectId and sectionKey values derived from the source.",
+  "Never output placeholder values such as lowercase_snake_case_scope_id, lowercase_snake_case, target_note_id, or copied schema/example text.",
+  "Omit optional fields unless they are real and evidence-backed.",
+  "Use sourceHash exactly as supplied.",
+  "Set confidence and salience from 0 to 1.",
+  "Only output character_fact with sectionKey \"items\" when items are durably tied to a speaker (e.g. a pet, a house).",
+  "Do not emit timeline_event, relationship_* streams, character_state, or scene-like units.",
+  "\"resolved\" status is reserved for thread memories only.",
+  "For enum fields, choose exactly one string from the allowed arrays. Do not join multiple values with |.",
+].join("\n");
+
+export const DEFAULT_LTM_EXTRACTION_PROMPT_GAME = [
+  "You extract structured memory-stream evidence units from a game session transcript.",
+  "Return strict JSON only. Do not explain.",
+  "Do not include thinking, analysis, markdown, or <think> tags. Output JSON object only.",
+  "Source notes are audit evidence, not active recall memory.",
+  "Do not output source summaries, transcript summaries, or final write operations.",
+  "Extract every distinct durable memory stream supported by the source.",
+  "Emit zero or more units per stream. Prefer a few substantial units that capture the complete fact over many fragmentary observations.",
+  "Scan stream groups explicitly: timeline beats (timeline_event); relationships (relationship_event, relationship_state, relationship_conflict); open quests and objectives (thread); character facts (character_fact); world facts (world_fact); style and motifs (tone, anchor).",
+  "Use one best stream per fact. If a detail fits both a timeline and character/relationship stream, emit the plot-changing action as timeline_event or relationship_event and reserve character_fact for durable identity, backstory, permanent development, ability, item, or exact voice evidence.",
+  "Do not duplicate the same fact across streams or sections.",
+  "Write source-extracted memories in past-tense/outcome phrasing unless the fact is a durable present-tense rule or trait.",
+  "",
+  "QUEST TRACKING:",
+  "- Quests, objectives, and party goals → thread with sectionKey \"objective\", \"stage\", or \"resolution\".",
+  "- A quest objective describes what the party is trying to achieve.",
+  "- A quest stage describes progress or a completed milestone, with the stage number or name.",
+  "- A quest resolution describes how the quest concluded and what changed as a result.",
+  "- When a quest thread has multiple active objectives, emit separate thread units for each distinct goal.",
+  "",
+  "SOURCE CONCEPT MAPPING:",
+  "- Character developments (irreversible changes) → character_fact with sectionKey \"developments\".",
+  "- Character abilities → character_fact with sectionKey \"abilities\".",
+  "- Character voice/quotes → character_fact with sectionKey \"voice\".",
+  "- Items acquired or lost → timeline_event for the event; superseding character_fact with sectionKey \"items\" for current holdings.",
+  "- Items not tied to a character → world_fact with sectionKey \"items\".",
+  "- Level, XP, reputation, or progression changes → character_fact with sectionKey \"progression\". Use superseding lifecycle (single current value).",
+  "- Callbacks → thread. Prepend [CALLBACK] in the text. Include planted element, payoff target, and status.",
+  "",
+  "SECTION KEY CONVENTIONS:",
+  "- character_fact: facts, developments, abilities, voice, items, or progression. Never use it for ordinary actions, scene beats, or transient conditions like HP or buffs.",
+  "- relationship_event: history.",
+  "- relationship_state: state, only when backed by a same-pass relationship_event or existing relationship note.",
+  "- relationship_conflict: conflict.",
+  "- world_fact: facts or items.",
+  "- timeline_event: event.",
+  "- thread: objective, stage, or summary. The text must describe an unresolved situation and what would resolve it. When the thread is marked resolved, you MUST also emit a parallel relationship_event or timeline_event capturing what changed.",
+  "- tone: observations. World/session-level atmospheric register only, not one-scene mood.",
+  "- anchor: the source section key. Recurring motif or planted callback only.",
+  "",
+  "Do not track transient mechanical state such as HP, buffs, debuffs, or temporary conditions. Those belong to character_state which is manual-only and not used in extraction.",
+  "Each unit must include at least one supplied evidence string, including source_note:<id>.",
+  "Use real lowercase snake_case subjectId and sectionKey values derived from the source.",
+  "Never output placeholder values.",
+  "Omit optional fields unless they are real and evidence-backed.",
+  "Use timeline_event for historical game beats; never call those current_scene.",
+  "Use sourceHash exactly as supplied.",
+  "Set confidence and salience from 0 to 1.",
+  "\"resolved\" status is reserved for thread (quest) memories only. Never set status \"resolved\" on relationship, character, world, timeline, tone, or anchor streams.",
+  "For enum fields, choose exactly one string from the allowed arrays. Do not join multiple values with |.",
+].join("\n");
+
+export const DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE = {
+  roleplay: DEFAULT_LTM_EXTRACTION_PROMPT,
+  conversation: DEFAULT_LTM_EXTRACTION_PROMPT_CONVERSATION,
+  game: DEFAULT_LTM_EXTRACTION_PROMPT_GAME,
+} as const satisfies Record<LtmMode, string>;
+
+export const DEFAULT_LTM_ALLOWED_STREAMS_BY_MODE: Record<LtmMode, readonly LtmEvidenceUnitBucket[]> = {
+  roleplay: [
+    "timeline_event",
+    "character_fact",
+    "relationship_event",
+    "relationship_state",
+    "relationship_conflict",
+    "world_fact",
+    "thread",
+    "tone",
+    "anchor",
+  ],
+  conversation: [
+    "character_fact",
+    "world_fact",
+    "thread",
+    "tone",
+    "anchor",
+  ],
+  game: [
+    "timeline_event",
+    "character_fact",
+    "relationship_event",
+    "relationship_state",
+    "relationship_conflict",
+    "world_fact",
+    "thread",
+    "tone",
+    "anchor",
+  ],
+};
+
+export const DEFAULT_LTM_STREAM_DESCRIPTIONS_BY_MODE: Record<LtmMode, Partial<Record<LtmEvidenceUnitBucket, string>>> = {
+  roleplay: {
+    timeline_event: "source-summary scene/plot pivot, decision, action, discovery, fight outcome, promise, arrival, or departure; not the live current scene",
+    character_fact: "durable character identity/trait/role/affiliation/backstory/belief/permanent status/development/ability/item/exact voice quote; not ordinary scene action or transient condition",
+    character_state: "legacy/manual current character condition only; source-summary extraction must not use this stream",
+    relationship_event: "evidence-backed interpersonal event or history item",
+    relationship_state: "current reduced relationship state backed by same-pass relationship_event or existing relationship note",
+    relationship_conflict: "unresolved contradiction or instability",
+    world_fact: "stable world/lore fact",
+    thread: "unresolved situation, question, tension, or goal with a clear future resolver",
+    tone: "durable world/session atmospheric register or recurring style only",
+    anchor: "recurring motif, planted callback, or continuity anchor",
+  },
+  conversation: {
+    character_fact: "durable user preference, trait, intent, or stated attribute; not a one-off opinion or transient mood",
+    character_state: "legacy/manual current character condition only; source-summary extraction must not use this stream",
+    world_fact: "verified factual statement from the conversation",
+    thread: "unresolved question, topic, or goal with a clear future resolver",
+    tone: "durable conversation register or recurring style only",
+    anchor: "recurring motif, planted callback, or inside joke",
+  },
+  game: {
+    timeline_event: "game session scene/plot pivot, decision, action, discovery, fight outcome, promise, arrival, or departure; not the live current scene",
+    character_fact: "durable character identity/trait/role/affiliation/backstory/belief/permanent development/ability/item/progression/voice quote; not ordinary scene action or transient condition",
+    character_state: "legacy/manual current character condition only; source-summary extraction must not use this stream",
+    relationship_event: "evidence-backed interpersonal event or history item",
+    relationship_state: "current reduced relationship state backed by same-pass relationship_event or existing relationship note",
+    relationship_conflict: "unresolved contradiction or instability",
+    world_fact: "stable world/lore fact",
+    thread: "quest objective, stage, or summary of an unresolved situation with a clear future resolver",
+    tone: "durable world/session atmospheric register or recurring style only",
+    anchor: "recurring motif, planted callback, or continuity anchor",
+  },
+};
+
+export const DEFAULT_LTM_RECALL_STYLE_BY_MODE: Record<LtmMode, LongTermMemoryRecallStyle> = {
+  roleplay: "story",
+  conversation: "balanced",
+  game: "exact",
+};
 
 export const DEFAULT_LTM_RECALL_STYLE = "balanced" satisfies LongTermMemoryRecallStyle;
 export const DEFAULT_LTM_RECALL_PREAMBLE = "Relevant long-term memories for this reply:";

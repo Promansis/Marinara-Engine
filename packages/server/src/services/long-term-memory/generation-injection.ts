@@ -2,6 +2,7 @@ import {
   LTM_RECALL_STYLE_WEIGHTS,
   parseLongTermMemoryRecallStyle,
   readLtmRecallWeightOverrides,
+  DEFAULT_LTM_RECALL_STYLE_BY_MODE,
   withMergedLtmScopeLinks,
   type LtmResolvedGlobalSettings,
   type LongTermMemoryRecallStyle,
@@ -11,6 +12,7 @@ import {
 import { logger } from "../../lib/logger.js";
 import type { ChatMessage } from "../llm/base-provider.js";
 import type { MemoryRecallEmbeddingSource } from "../memory-recall.js";
+import { ltmModeForChatMode } from "./chat-scope.js";
 import {
   retrieveLongTermMemory,
   type RetrieveLongTermMemoryInput,
@@ -133,8 +135,9 @@ export function buildGenerationLongTermMemoryPlan(
   const scoreThreshold =
     parseLongTermMemoryScoreThreshold(settings?.longTermMemoryScoreThreshold) ??
     parseLongTermMemoryScoreThreshold(input.chatMeta.longTermMemoryScoreThreshold);
+  const modeFallback = DEFAULT_LTM_RECALL_STYLE_BY_MODE[ltmModeForChatMode(input.chatMode)];
   const recallStyle = parseLongTermMemoryRecallStyle(
-    settings?.longTermMemoryRecallStyle ?? input.chatMeta.longTermMemoryRecallStyle,
+    settings?.longTermMemoryRecallStyle ?? input.chatMeta.longTermMemoryRecallStyle ?? modeFallback,
   );
   const styleWeights = LTM_RECALL_STYLE_WEIGHTS[recallStyle];
   const weights = settings
