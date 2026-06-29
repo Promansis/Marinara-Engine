@@ -7,7 +7,6 @@ import {
   DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
   DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
   DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
-  DEFAULT_LTM_EXTRACTION_PROMPT,
   DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE,
   DEFAULT_LTM_EXTRACTION_TEMPERATURE,
   type LtmMode,
@@ -15,6 +14,7 @@ import {
   type LtmExtractionVerbosity,
 } from "@marinara-engine/shared";
 import { useConnections } from "../../hooks/use-connections";
+import { MODE_LABELS } from "./ltm-panel-shared";
 import { MacroTextarea } from "../ui/MacroTextarea";
 import { textareaClassName } from "./LtmFields";
 import { FieldGroup } from "../agents/AgentEditor";
@@ -97,11 +97,8 @@ export function LtmExtractionPromptSection({
   onChangeExtraInstruction,
   onChangeAiKeywordExtraction,
 }: ExtractionPromptSectionProps) {
-  const isUsingDefaultPrompt = !systemPrompt.trim() || systemPrompt === DEFAULT_LTM_EXTRACTION_PROMPT;
-  const modeDefaultPrompts = useMemo(
-    () => Object.entries(DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE) as Array<[LtmMode, string]>,
-    [],
-  );
+  const [selectedMode, setSelectedMode] = useState<LtmMode>("conversation");
+  const isUsingDefaultPrompt = !systemPrompt.trim();
   const [editingPrompt, setEditingPrompt] = useState(false);
   const [localPrompt, setLocalPrompt] = useState(systemPrompt);
 
@@ -119,17 +116,18 @@ export function LtmExtractionPromptSection({
   }, [promptTemplates]);
 
   const handleLoadDefault = useCallback(() => {
+    const prompt = DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE[selectedMode];
     setEditingPrompt(true);
-    setLocalPrompt(DEFAULT_LTM_EXTRACTION_PROMPT);
-    onChangeSystemPrompt(DEFAULT_LTM_EXTRACTION_PROMPT);
-  }, [onChangeSystemPrompt]);
+    setLocalPrompt(prompt);
+    onChangeSystemPrompt(prompt);
+  }, [onChangeSystemPrompt, selectedMode]);
 
   const handleResetPrompt = useCallback(() => {
     setEditingPrompt(false);
-    setLocalPrompt(DEFAULT_LTM_EXTRACTION_PROMPT);
+    setLocalPrompt(DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE[selectedMode]);
     // undefined means "use default" on the server
     onChangeSystemPrompt("");
-  }, [onChangeSystemPrompt]);
+  }, [onChangeSystemPrompt, selectedMode]);
 
   const handlePromptChange = useCallback(
     (value: string) => {
@@ -198,6 +196,24 @@ export function LtmExtractionPromptSection({
       icon={<FileText size="0.875rem" className="text-[var(--primary)]" />}
       help="The system prompt used for the extraction process."
     >
+      <div className="flex gap-1 mb-3">
+        {(["roleplay", "conversation", "game"] as LtmMode[]).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            onClick={() => setSelectedMode(mode)}
+            className={cn(
+              "rounded-lg px-3 py-1.5 text-[0.6875rem] font-medium transition-colors",
+              selectedMode === mode
+                ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
+                : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+            )}
+          >
+            {MODE_LABELS[mode]}
+          </button>
+        ))}
+      </div>
+
       <div className="flex items-center gap-2 mb-2">
         {isUsingDefaultPrompt && !editingPrompt ? (
           <span className="flex items-center gap-1 rounded-lg bg-emerald-400/10 px-2.5 py-1 text-[0.625rem] font-medium text-emerald-400">
@@ -230,10 +246,10 @@ export function LtmExtractionPromptSection({
       {isUsingDefaultPrompt && !editingPrompt ? (
         <div className="relative">
           <pre className="w-full max-h-[30vh] overflow-y-auto resize-y rounded-xl bg-[var(--secondary)] px-4 py-3 font-mono text-xs leading-relaxed ring-1 ring-[var(--border)] text-[var(--muted-foreground)] whitespace-pre-wrap">
-            {DEFAULT_LTM_EXTRACTION_PROMPT}
+            {DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE[selectedMode]}
           </pre>
           <span className="absolute right-3 top-2 rounded-md bg-[var(--card)] px-1.5 py-0.5 text-[0.5625rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-            Default — click "Copy default to edit" to customize
+            {MODE_LABELS[selectedMode]} default — click "Copy default to edit" to customize
           </span>
         </div>
       ) : (
@@ -252,25 +268,6 @@ export function LtmExtractionPromptSection({
           ? "Leave as default to use the built-in extraction prompt. Edit to override."
           : "The system prompt used for extraction."}
       </p>
-
-      <div className="mt-4 space-y-2 rounded-xl bg-[var(--secondary)]/45 p-3 ring-1 ring-[var(--border)]">
-        <div>
-          <p className="text-xs font-semibold text-[var(--foreground)]">Default prompts by mode</p>
-          <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-            These fall back when no custom prompt or mode-matched option is active.
-          </p>
-        </div>
-        <div className="grid gap-2 sm:grid-cols-3">
-          {modeDefaultPrompts.map(([mode, prompt]) => (
-            <div key={mode} className="rounded-lg bg-[var(--background)] p-2 ring-1 ring-[var(--border)]">
-              <div className="mb-1 text-[0.6875rem] font-semibold text-[var(--foreground)]">{mode}</div>
-              <p className="line-clamp-4 whitespace-pre-wrap text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-                {prompt}
-              </p>
-            </div>
-          ))}
-        </div>
-      </div>
 
       {/* Named prompt options */}
       <div className="mt-4 space-y-2">
