@@ -147,6 +147,7 @@ const ltmExtractionSettingsShape = z
     promptTemplates: z.array(ltmExtractionPromptTemplateSchema).max(50).optional(),
     activePromptTemplateId: z.string().min(1).max(64).nullable().optional(),
     aiKeywordExtraction: z.boolean().optional(),
+    refinePass: z.boolean().optional(),
   })
   .strict();
 
@@ -172,6 +173,7 @@ export const ltmResolvedExtractionSettingsSchema = z
     promptTemplates: z.array(ltmExtractionPromptTemplateSchema).max(50),
     activePromptTemplateId: z.string().min(1).max(64).nullable(),
     aiKeywordExtraction: z.boolean(),
+    refinePass: z.boolean(),
   })
   .strict();
 

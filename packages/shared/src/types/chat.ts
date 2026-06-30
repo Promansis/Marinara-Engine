@@ -349,6 +349,8 @@ export interface ChatMetadata {
   longTermMemoryIncludeResolved?: boolean;
   /** When true, log/debug local long-term memory prompt injection decisions for this chat. Default: false. */
   longTermMemoryDebug?: boolean;
+  /** When true, imported game summaries run a second LTM refinement pass before writing notes. Default: false. */
+  refinePass?: boolean;
   /** Discord webhook URL to mirror messages to a Discord channel. */
   discordWebhookUrl?: string;
   /** Per-chat ephemeral / enabled overrides for lorebook entries (entryId → state).

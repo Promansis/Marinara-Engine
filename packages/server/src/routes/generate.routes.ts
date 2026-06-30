@@ -2179,7 +2179,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
         sendProgress("assembling");
         const _tAssemble = Date.now();
-        if (presetId && resolvedPreset && chatMode !== "conversation" && chatMode !== "game") {
+        if (presetId && resolvedPreset && chatMode !== "conversation") {
           const preset = resolvedPreset;
           wrapFormat = (preset.wrapFormat as "xml" | "markdown" | "none") || "xml";
           const [sections, groups, choiceBlocks] = await Promise.all([
@@ -2187,7 +2187,7 @@ export async function generateRoutes(app: FastifyInstance) {
             presets.listGroups(presetId),
             presets.listChoiceBlocksForPreset(presetId),
           ]);
-          const presetGameState = null;
+          const presetGameState = await selectedGameStateForPrompt();
           for (const section of sections) {
             if (section.enabled !== "true" || section.isMarker !== "true" || !section.markerConfig) continue;
             try {

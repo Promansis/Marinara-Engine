@@ -1,11 +1,17 @@
 import { withMergedLtmScopeLinks, type LtmDraftMutation, type LtmEvidenceUnit, type LtmNote, type LtmScope, type SessionSummary } from "@marinara-engine/shared";
 import { getLtmScopeChatIds } from "@marinara-engine/shared";
+import { LOCAL_SIDECAR_CONNECTION_ID } from "@marinara-engine/shared";
 import { logger } from "../../lib/logger.js";
 import type { DB } from "../../db/connection.js";
 import type { Journal } from "../game/journal.service.js";
+import { createLLMProvider } from "../llm/provider-registry.js";
+import { getLocalSidecarProvider, LOCAL_SIDECAR_MODEL } from "../llm/local-sidecar.js";
 import { createChatsStorage } from "../storage/chats.storage.js";
+import { createConnectionsStorage } from "../storage/connections.storage.js";
 import { compileLtmEvidenceUnits } from "./evidence-unit-compiler.js";
-import { mapGameJournalToEvidenceUnits, computeGameSourceHash } from "./game-journal-mapper.js";
+import { mapGameJournalToEvidenceUnits, computeGameSourceHash, renderGameSourceText } from "./game-journal-mapper.js";
+import { compileEvidenceUnitExtraction, runLongTermMemoryEvidenceUnitExtraction } from "./evidence-unit-extraction.js";
+import { getLtmExtractionConfig } from "./extraction-config.js";
 import { nowIso, uniqueStrings } from "./ltm-utils.js";
 import { getLongTermMemoryRoot } from "./paths.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
@@ -30,6 +36,60 @@ function uniqueLinks(links: LtmNote["links"]) {
     seen.add(key);
     return true;
   });
+}
+
+function resolveBaseUrl(connection: { baseUrl: string | null; provider: string }): string {
+  if (connection.baseUrl) return connection.baseUrl.replace(/\/+$/, "");
+  if (connection.provider === "claude_subscription") return "claude-agent-sdk://local";
+  if (connection.provider === "openai_chatgpt") return "openai-chatgpt://codex-auth";
+  const providerDefaults: Record<string, string> = {
+    openai: "https://api.openai.com/v1",
+    openrouter: "https://openrouter.ai/api/v1",
+    anthropic: "https://api.anthropic.com/v1",
+    cohere: "https://api.cohere.ai/compatibility/v1",
+    google: "https://generativelanguage.googleapis.com/v1beta",
+    google_vertex: "https://generativelanguage.googleapis.com/v1beta",
+    mistral: "https://api.mistral.ai/v1",
+    xai: "https://api.x.ai/v1",
+    nanogpt: "https://api.nanogpt.com/v1",
+    custom: "",
+  };
+  return providerDefaults[connection.provider] ?? "";
+}
+
+async function resolveGameJournalExtractionProvider(db: DB, chatConnectionId: string | null | undefined) {
+  if (chatConnectionId === LOCAL_SIDECAR_CONNECTION_ID) {
+    return { provider: getLocalSidecarProvider(), model: LOCAL_SIDECAR_MODEL };
+  }
+  const connections = createConnectionsStorage(db);
+  const defaultAgentConn = await connections.getDefaultForAgents();
+  let conn = chatConnectionId ? await connections.getWithKey(chatConnectionId) : defaultAgentConn;
+
+  if (!conn) {
+    const defaultConn = await connections.getDefault();
+    conn = defaultConn ? await connections.getWithKey(defaultConn.id) : null;
+  }
+
+  if (!conn) {
+    throw new Error("No API connection configured for LTM source extraction");
+  }
+
+  if (conn.id === LOCAL_SIDECAR_CONNECTION_ID) {
+    return { provider: getLocalSidecarProvider(), model: LOCAL_SIDECAR_MODEL };
+  }
+
+  return {
+    provider: createLLMProvider(
+      conn.provider,
+      resolveBaseUrl(conn),
+      conn.apiKey,
+      conn.maxContext,
+      conn.openrouterProvider,
+      conn.maxTokensOverride,
+      conn.claudeFastMode === "true",
+    ),
+    model: conn.model,
+  };
 }
 
 function mergeScopes(existing: LtmNote["scope"], incoming: LtmNote["scope"]) {
@@ -210,6 +270,7 @@ export async function directIngestGameJournal(
   sourceNote: LtmNote,
   root?: string,
   operationId?: string,
+  options: { refinePass?: boolean } = {},
 ): Promise<DirectIngestGameJournalResult> {
   return withLtmDebugOperation(
     {
@@ -264,14 +325,68 @@ export async function directIngestGameJournal(
         return { units: [], mutations: [], appliedMutationIds: [] };
       }
 
-      const compiled = compileLtmEvidenceUnits({
+      const extractionConfig = await getLtmExtractionConfig(rootDir, "game");
+      const refinePass = options.refinePass ?? (metadata.refinePass === true || extractionConfig.refinePass === true);
+      const existingNotes = refinePass ? await storage.listNotes({ scope, includeGlobal: true }) : [];
+      const sourceText = renderGameSourceText(gameJournal as Journal | null, sessionSummaries as SessionSummary[]);
+
+      let compiled = compileLtmEvidenceUnits({
         units,
-        existingNotes: [],
+        existingNotes,
         scope,
         modes: ["game"],
         mode: "game",
         summary: `Direct ingestion of game journal + ${sessionSummaries.length} session summaries`,
       });
+
+      if (refinePass) {
+        try {
+          const { provider, model } = await resolveGameJournalExtractionProvider(db, chat.connectionId);
+          const refined = await runLongTermMemoryEvidenceUnitExtraction({
+            sourceNote,
+            sourceText,
+            existingNotes,
+            candidateUnits: units,
+            provider,
+            model,
+            scope,
+            modes: ["game"],
+            sourceHash,
+            systemPrompt: extractionConfig.systemPrompt,
+            extraInstruction: extractionConfig.extraInstruction,
+            reasoningEffort: extractionConfig.reasoningEffort,
+            verbosity: extractionConfig.verbosity,
+            maxOutputTokens: extractionConfig.maxOutputTokens,
+            temperature: extractionConfig.temperature,
+            maxSourceTokens: extractionConfig.maxSourceTokens,
+            maxExistingNoteTokens: extractionConfig.maxExistingNoteTokens,
+            operationId: opId,
+            mode: "game",
+            aiKeywordExtraction: extractionConfig.aiKeywordExtraction,
+            refinePass: true,
+          });
+          const refinedCompiled = compileEvidenceUnitExtraction({
+            unitResponse: refined.response,
+            totalCandidates: refined.totalCandidates,
+            parserDroppedCandidates: refined.droppedCandidates,
+            sourceText,
+            sourceNote,
+            existingNotes,
+            scope,
+            modes: ["game"],
+            mode: "game",
+            sourceHash,
+          });
+          if (refinedCompiled.compiledResponse.mutations.length > 0) {
+            compiled = {
+              ...refinedCompiled.compiledResponse,
+              suggestionCap: refinedCompiled.suggestionCap,
+            };
+          }
+        } catch (err) {
+          logger.warn(err, "[ltm] Game journal refine pass failed, falling back to structural ingestion for %s", chatId);
+        }
+      }
 
       if (compiled.mutations.length === 0) {
         logger.info("[ltm] directIngestGameJournal: compiler produced no mutations for chat %s", chatId);
