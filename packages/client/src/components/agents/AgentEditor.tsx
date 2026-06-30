@@ -599,6 +599,7 @@ export function AgentEditor() {
     promptTemplates: { id: string; name: string; prompt: string; mode?: LtmMode | null }[];
     activePromptTemplateId: string | null;
     aiKeywordExtraction: boolean;
+    refinePass: boolean;
   } | null>(null);
   const ltmSeededAgentRef = useRef<string | null>(null);
   const [localLorebookWriteEnabled, setLocalLorebookWriteEnabled] = useState(false);
@@ -960,10 +961,11 @@ export function AgentEditor() {
       maxExistingNoteTokens: ltmExtractionSettings.maxExistingNoteTokens,
       existingNoteMaxChunks: ltmExtractionSettings.existingNoteMaxChunks,
       existingNoteMaxTokens: ltmExtractionSettings.existingNoteMaxTokens,
-      promptTemplates: ltmExtractionSettings.promptTemplates,
-      activePromptTemplateId: ltmExtractionSettings.activePromptTemplateId,
-      aiKeywordExtraction: ltmExtractionSettings.aiKeywordExtraction,
-    });
+        promptTemplates: ltmExtractionSettings.promptTemplates,
+        activePromptTemplateId: ltmExtractionSettings.activePromptTemplateId,
+        aiKeywordExtraction: ltmExtractionSettings.aiKeywordExtraction,
+        refinePass: ltmExtractionSettings.refinePass,
+      });
   }, [isLtmAgent, dbConfig, ltmExtractionSettings]);
 
   // Detect when both knowledge agents will actually run in parallel. Shows a
@@ -1265,6 +1267,7 @@ export function AgentEditor() {
         if (ltmDraft.promptTemplates.length > 0) extractionPayload.promptTemplates = ltmDraft.promptTemplates;
         if (ltmDraft.activePromptTemplateId !== undefined) extractionPayload.activePromptTemplateId = ltmDraft.activePromptTemplateId;
         if (ltmDraft.aiKeywordExtraction === true) extractionPayload.aiKeywordExtraction = true;
+        if (ltmDraft.refinePass === true) extractionPayload.refinePass = true;
         await updateExtractionSettings.mutateAsync(extractionPayload as any);
       }
       setDirty(false);
@@ -3806,11 +3809,13 @@ export function AgentEditor() {
             activePromptTemplateId={ltmDraft?.activePromptTemplateId ?? null}
             extraInstruction={ltmDraft?.extraInstruction ?? ""}
             aiKeywordExtraction={ltmDraft?.aiKeywordExtraction ?? false}
+            refinePass={ltmDraft?.refinePass ?? false}
             onChangeSystemPrompt={(value) => updateLtmDraft({ systemPrompt: value })}
             onChangePromptTemplates={(templates) => updateLtmDraft({ promptTemplates: templates })}
             onChangeActivePromptTemplateId={(id) => updateLtmDraft({ activePromptTemplateId: id })}
             onChangeExtraInstruction={(value) => updateLtmDraft({ extraInstruction: value })}
             onChangeAiKeywordExtraction={(value) => updateLtmDraft({ aiKeywordExtraction: value })}
+            onChangeRefinePass={(value) => updateLtmDraft({ refinePass: value })}
           />
           <FieldGroup
             label="Recall defaults"

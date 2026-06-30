@@ -78,11 +78,13 @@ type ExtractionPromptSectionProps = {
   activePromptTemplateId: string | null;
   extraInstruction: string;
   aiKeywordExtraction: boolean;
+  refinePass: boolean;
   onChangeSystemPrompt: (value: string) => void;
   onChangePromptTemplates: (templates: PromptTemplate[]) => void;
   onChangeActivePromptTemplateId: (id: string | null) => void;
   onChangeExtraInstruction: (value: string) => void;
   onChangeAiKeywordExtraction: (value: boolean) => void;
+  onChangeRefinePass: (value: boolean) => void;
 };
 
 export function LtmExtractionPromptSection({
@@ -91,11 +93,13 @@ export function LtmExtractionPromptSection({
   activePromptTemplateId,
   extraInstruction,
   aiKeywordExtraction,
+  refinePass,
   onChangeSystemPrompt,
   onChangePromptTemplates,
   onChangeActivePromptTemplateId,
   onChangeExtraInstruction,
   onChangeAiKeywordExtraction,
+  onChangeRefinePass,
 }: ExtractionPromptSectionProps) {
   const [selectedMode, setSelectedMode] = useState<LtmMode>("conversation");
   const isUsingDefaultPrompt = !systemPrompt.trim();
@@ -369,6 +373,15 @@ export function LtmExtractionPromptSection({
             className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
           />
           <span>Ask AI extraction to propose keywords for each evidence unit</span>
+        </label>
+        <label className="flex items-center gap-2 rounded-lg px-1 py-1 text-xs text-[var(--foreground)]">
+          <input
+            type="checkbox"
+            checked={refinePass}
+            onChange={(event) => onChangeRefinePass(event.target.checked)}
+            className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+          />
+          <span>Run a second refine pass over imported game summaries</span>
         </label>
       </div>
     </FieldGroup>

@@ -155,7 +155,7 @@ import type {
   PromptPreset,
 } from "@marinara-engine/shared";
 import { useAgentConfigs, useCreateAgent, useUpdateAgent, type AgentConfigRow } from "../../hooks/use-agents";
-import { useLastInjection, useLongTermMemorySettings } from "../../hooks/use-long-term-memory";
+import { useLastInjection, useLongTermMemorySettings, useLongTermMemoryExtractionSettings } from "../../hooks/use-long-term-memory";
 import {
   RecallStylePresets,
   RecallBudgetControls,
@@ -1457,6 +1457,7 @@ export function ChatSettingsDrawer({
     [chat.id, updateMeta],
   );
   const ltmGlobalSettings = useLongTermMemorySettings({ enabled: ltmActive });
+  const ltmExtractionSettings = useLongTermMemoryExtractionSettings({ enabled: ltmActive });
   const ltmLastInjection = useLastInjection(chat.id, { enabled: ltmActive });
   const [chatRecallAdvancedOpen, setChatRecallAdvancedOpen] = useState(false);
   const debouncedUpdatePerChat = useDebouncedRecallSettings(
@@ -1466,6 +1467,8 @@ export function ChatSettingsDrawer({
   const toggleLtmEnabled = useCallback(() => {
     updateMeta.mutate({ id: chat.id, enableLongTermMemory: metadata.enableLongTermMemory === false });
   }, [chat.id, metadata.enableLongTermMemory, updateMeta]);
+  const refinePassEnabled =
+    metadata.refinePass ?? ltmExtractionSettings.data?.refinePass ?? false;
   const getKnowledgeAgentSourceSettings = useCallback(
     (agentType: KnowledgeAgentType) => {
       const config = agentConfigsByType.get(agentType);
@@ -6551,6 +6554,17 @@ export function ChatSettingsDrawer({
                               }}
                               onChange={(patch) => debouncedUpdatePerChat(patch)}
                             />
+                            {isGame && (
+                              <label className="flex items-center gap-2 rounded-lg px-1 py-1 text-xs text-[var(--foreground)]">
+                                <input
+                                  type="checkbox"
+                                  checked={refinePassEnabled}
+                                  onChange={(event) => debouncedUpdatePerChat({ refinePass: event.target.checked } as any)}
+                                  className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+                                />
+                                <span>Run a second refine pass over imported game summaries</span>
+                              </label>
+                            )}
                           </FieldGroup>
                         </div>
                       </AgentSettingsCard>

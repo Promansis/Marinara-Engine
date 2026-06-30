@@ -6,6 +6,7 @@ import {
   DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
   DEFAULT_LTM_EXTRACTION_VERBOSITY,
   DEFAULT_LTM_STREAM_DESCRIPTIONS_BY_MODE,
+  DEFAULT_LTM_EXTRACTION_PROMPT_GAME_REFINE,
   LTM_DRAFT_MUTATION_LIMIT,
   ltmEvidenceUnitExtractionResponseSchema,
   ltmEvidenceUnitSchema,
@@ -59,6 +60,7 @@ export interface RunLongTermMemoryEvidenceUnitExtractionOptions {
   sourceNote: LtmNote;
   sourceText: string;
   existingNotes: LtmNote[];
+  candidateUnits?: LtmEvidenceUnit[];
   provider: BaseLLMProvider;
   model: string;
   scope: LtmScope;
@@ -78,6 +80,7 @@ export interface RunLongTermMemoryEvidenceUnitExtractionOptions {
   allowedBuckets?: LtmEvidenceUnit["bucket"][];
   mode?: LtmMode;
   aiKeywordExtraction?: boolean;
+  refinePass?: boolean;
 }
 
 export interface CompileEvidenceUnitExtractionResult {
@@ -365,7 +368,11 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
   return [
     {
       role: "system",
-      content: options.systemPrompt?.trim() || DEFAULT_LTM_EXTRACTION_PROMPT,
+      content:
+        options.systemPrompt?.trim() ||
+        (options.refinePass && options.mode === "game"
+          ? DEFAULT_LTM_EXTRACTION_PROMPT_GAME_REFINE
+          : DEFAULT_LTM_EXTRACTION_PROMPT),
     },
     {
       role: "user",
@@ -410,6 +417,9 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
         modes: options.modes,
         userInstruction: options.instruction?.trim() || undefined,
         extraInstruction: options.extraInstruction?.trim() || undefined,
+        ...(options.candidateUnits?.length
+          ? { candidateUnits: options.candidateUnits }
+          : {}),
         ...(options.aiKeywordExtraction
           ? {
               keywordInstruction:
@@ -418,6 +428,7 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
           : {}),
         existingTypedNotes: formatExistingNotes(options.existingNotes, options.maxExistingNoteTokens),
         sourceText: truncateToEstimatedTokens(options.sourceText, options.maxSourceTokens),
+        refinePass: options.refinePass === true,
       }),
     },
   ];

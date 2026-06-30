@@ -33,6 +33,7 @@ export const DEFAULT_LTM_EXTRACTION_CONFIG = ltmResolvedExtractionSettingsSchema
   promptTemplates: [],
   activePromptTemplateId: null,
   aiKeywordExtraction: false,
+  refinePass: false,
 });
 
 function extractionConfigPath(root = getLongTermMemoryRoot()) {
@@ -85,6 +86,9 @@ function normalizePersistedConfig(input: LtmExtractionSettings): LtmExtractionSe
   if (input.aiKeywordExtraction !== undefined && input.aiKeywordExtraction !== DEFAULT_LTM_EXTRACTION_CONFIG.aiKeywordExtraction) {
     next.aiKeywordExtraction = input.aiKeywordExtraction;
   }
+  if (input.refinePass !== undefined && input.refinePass !== DEFAULT_LTM_EXTRACTION_CONFIG.refinePass) {
+    next.refinePass = input.refinePass;
+  }
   return next;
 }
 
@@ -112,6 +116,7 @@ function resolveExtractionConfig(config: LtmExtractionSettings, mode?: LtmMode):
     promptTemplates,
     activePromptTemplateId: activeTemplate ? activeTemplate.id : null,
     aiKeywordExtraction: config.aiKeywordExtraction ?? DEFAULT_LTM_EXTRACTION_CONFIG.aiKeywordExtraction,
+    refinePass: config.refinePass ?? DEFAULT_LTM_EXTRACTION_CONFIG.refinePass,
   };
   return ltmResolvedExtractionSettingsSchema.parse(merged);
 }
