@@ -660,7 +660,6 @@ export function ChatSettingsDrawer({
     () => (typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {})),
     [chat.metadata],
   );
-  const { data: currentPromptPresetFull } = usePresetFull(isRoleplayMode ? (chat.promptPresetId ?? null) : null);
   const promptPresetOptionsLoaded = Array.isArray(presets);
   const promptPresetOptions = useMemo(() => (presets ?? []) as PromptPreset[], [presets]);
   const marinaraUniversalPromptPreset = useMemo(
@@ -693,6 +692,7 @@ export function ChatSettingsDrawer({
       (fallbackPromptPreset?.id === effectiveModePromptPresetId ? fallbackPromptPreset : null)
     );
   }, [effectiveModePromptPresetId, fallbackPromptPreset, promptPresetOptions]);
+  const { data: effectivePromptPresetFull } = usePresetFull(effectiveModePromptPresetId);
   const { data: connections } = useConnections();
   const imageConnectionsList = useMemo(
     () =>
@@ -2106,9 +2106,9 @@ export function ChatSettingsDrawer({
     onClose();
   };
 
-  const currentPromptPresetHasVariables = (currentPromptPresetFull?.choiceBlocks?.length ?? 0) > 0;
+  const currentPromptPresetHasVariables = (effectivePromptPresetFull?.choiceBlocks?.length ?? 0) > 0;
   const currentPromptPresetHasLorebookMarker = useMemo(() => {
-    const sections = currentPromptPresetFull?.sections ?? [];
+    const sections = effectivePromptPresetFull?.sections ?? [];
     return sections.some((section) => {
       const enabled = (section as { enabled?: boolean | string }).enabled;
       const isMarker = (section as { isMarker?: boolean | string }).isMarker;
@@ -2124,7 +2124,23 @@ export function ChatSettingsDrawer({
         return false;
       }
     });
-  }, [currentPromptPresetFull?.sections]);
+  }, [effectivePromptPresetFull?.sections]);
+  const currentPromptPresetHasLongTermMemoryMarker = useMemo(() => {
+    const sections = effectivePromptPresetFull?.sections ?? [];
+    return sections.some((section) => {
+      const enabled = (section as { enabled?: boolean | string }).enabled;
+      const isMarker = (section as { isMarker?: boolean | string }).isMarker;
+      if (enabled === false || enabled === "false") return false;
+      if (isMarker !== true && isMarker !== "true") return false;
+      try {
+        const config =
+          typeof section.markerConfig === "string" ? JSON.parse(section.markerConfig) : section.markerConfig;
+        return config?.type === "long_term_memory";
+      } catch {
+        return false;
+      }
+    });
+  }, [effectivePromptPresetFull?.sections]);
   const hasScopedOrGlobalLorebooks = useMemo(() => {
     return ((lorebooks ?? []) as Lorebook[]).some(
       (lorebook) =>
@@ -2159,6 +2175,12 @@ export function ChatSettingsDrawer({
     !isGame &&
     hasScopedOrGlobalLorebooks &&
     !currentPromptPresetHasLorebookMarker;
+  const showLongTermMemoryPromptBlockWarning =
+    ltmActive &&
+    metadata.enableLongTermMemory !== false &&
+    !!effectiveModePromptPresetId &&
+    !!effectivePromptPresetFull &&
+    !currentPromptPresetHasLongTermMemoryMarker;
 
   const [choiceModalPresetId, setChoiceModalPresetId] = useState<string | null>(null);
   const setPreset = useCallback(
@@ -3200,15 +3222,16 @@ export function ChatSettingsDrawer({
           {modeCapabilities.supportsPromptPresets && isRoleplayMode && !metadata.sceneSystemPrompt && (
             <div style={{ order: CHAT_SETTINGS_ORDER.promptPreset }}>
               <PromptPresetSection
-                promptPresetId={chat.promptPresetId ?? null}
-                presets={promptPresetOptions}
-                hasVariables={currentPromptPresetHasVariables}
-                showLorebookMarkerWarning={showLorebookMarkerWarning}
-                onEditVariables={() => {
-                  if (chat.promptPresetId) setChoiceModalPresetId(chat.promptPresetId);
-                }}
-                onPromptPresetChange={setPreset}
-              />
+              promptPresetId={chat.promptPresetId ?? null}
+              presets={promptPresetOptions}
+              hasVariables={currentPromptPresetHasVariables}
+              showLorebookMarkerWarning={showLorebookMarkerWarning}
+              showLongTermMemoryBlockWarning={showLongTermMemoryPromptBlockWarning}
+              onEditVariables={() => {
+                if (chat.promptPresetId) setChoiceModalPresetId(chat.promptPresetId);
+              }}
+              onPromptPresetChange={setPreset}
+            />
             </div>
           )}
 
@@ -3217,15 +3240,16 @@ export function ChatSettingsDrawer({
             <div style={{ order: CHAT_SETTINGS_ORDER.promptPreset }}>
               <ConversationPromptSection
                 chatId={chat.id}
-                customPrompt={(metadata.customSystemPrompt as string) ?? ""}
-                promptPresetId={effectiveModePromptPresetId}
-                promptPresets={promptPresetOptions}
-                selectedPresetName={selectedModePromptPreset?.name ?? null}
-                selectedPresetPrompt={selectedModePromptPreset?.conversationPrompt ?? ""}
-                onCustomPromptChange={(id, customSystemPrompt) => updateMeta.mutate({ id, customSystemPrompt })}
-                onPromptPresetChange={handleModePromptPresetChange}
-                onOpenPromptPreset={openSelectedModePromptPreset}
-              />
+              customPrompt={(metadata.customSystemPrompt as string) ?? ""}
+              promptPresetId={effectiveModePromptPresetId}
+              promptPresets={promptPresetOptions}
+              selectedPresetName={selectedModePromptPreset?.name ?? null}
+              selectedPresetPrompt={selectedModePromptPreset?.conversationPrompt ?? ""}
+              showLongTermMemoryBlockWarning={showLongTermMemoryPromptBlockWarning}
+              onCustomPromptChange={(id, customSystemPrompt) => updateMeta.mutate({ id, customSystemPrompt })}
+              onPromptPresetChange={handleModePromptPresetChange}
+              onOpenPromptPreset={openSelectedModePromptPreset}
+            />
             </div>
           )}
 
@@ -3235,15 +3259,16 @@ export function ChatSettingsDrawer({
                 expanded={gamePromptExpanded}
                 storedValue={(metadata.gameSystemPrompt as string) ?? ""}
                 value={gamePromptDraft}
-                specialInstructionsValue={gameSpecialInstructionsDraft}
-                promptPresetId={effectiveModePromptPresetId}
-                promptPresets={promptPresetOptions}
-                selectedPresetName={selectedModePromptPreset?.name ?? null}
-                selectedPresetPrompt={selectedModePromptPreset?.gamePrompt ?? ""}
-                onCommit={(gameSystemPrompt) => updateMeta.mutate({ id: chat.id, gameSystemPrompt })}
-                onSpecialInstructionsCommit={(gameSpecialInstructions) =>
-                  updateMeta.mutate({ id: chat.id, gameSpecialInstructions })
-                }
+              specialInstructionsValue={gameSpecialInstructionsDraft}
+              promptPresetId={effectiveModePromptPresetId}
+              promptPresets={promptPresetOptions}
+              selectedPresetName={selectedModePromptPreset?.name ?? null}
+              selectedPresetPrompt={selectedModePromptPreset?.gamePrompt ?? ""}
+              showLongTermMemoryBlockWarning={showLongTermMemoryPromptBlockWarning}
+              onCommit={(gameSystemPrompt) => updateMeta.mutate({ id: chat.id, gameSystemPrompt })}
+              onSpecialInstructionsCommit={(gameSpecialInstructions) =>
+                updateMeta.mutate({ id: chat.id, gameSpecialInstructions })
+              }
                 onExpandedChange={setGamePromptExpanded}
                 onValueChange={setGamePromptDraft}
                 onSpecialInstructionsChange={setGameSpecialInstructionsDraft}
@@ -6376,6 +6401,15 @@ export function ChatSettingsDrawer({
                               Send a message to see recalled memories.
                             </p>
                           )}
+                        {showLongTermMemoryPromptBlockWarning && (
+                          <div className="flex items-start gap-2 rounded-lg bg-amber-400/10 px-3 py-2 text-[0.6875rem] text-amber-200 ring-1 ring-amber-400/25">
+                            <AlertTriangle size="0.75rem" className="mt-[0.125rem] shrink-0" />
+                            <p className="leading-snug">
+                              This chat can recall long-term memories, but the selected prompt preset has no Long-Term
+                              Memory block.
+                            </p>
+                          </div>
+                        )}
                         <div className="mt-2 space-y-2">
                           <RecallStylePresets
                             values={{

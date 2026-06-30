@@ -1,4 +1,5 @@
 import { ExternalLink, Pencil, Sliders, Trash2 } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { DEFAULT_GAME_SYSTEM_PROMPT } from "@marinara-engine/shared";
 import { ExpandedTextarea } from "../../../components/ui/ExpandedTextarea";
 import { ChatSettingsSection } from "../ChatSettingsSection";
@@ -18,6 +19,7 @@ interface GameExtraPromptSectionProps {
   promptPresets: PromptPresetOption[];
   selectedPresetName: string | null;
   selectedPresetPrompt: string;
+  showLongTermMemoryBlockWarning: boolean;
   onCommit: (value: string | null) => void;
   onSpecialInstructionsCommit: (value: string | null) => void;
   onExpandedChange: (expanded: boolean) => void;
@@ -36,6 +38,7 @@ export function GameExtraPromptSection({
   promptPresets,
   selectedPresetName,
   selectedPresetPrompt,
+  showLongTermMemoryBlockWarning,
   onCommit,
   onSpecialInstructionsCommit,
   onExpandedChange,
@@ -135,6 +138,12 @@ export function GameExtraPromptSection({
               </button>
             )}
           </div>
+          {showLongTermMemoryBlockWarning && (
+            <div className="flex items-start gap-2 rounded-lg bg-amber-400/10 px-3 py-2 text-[0.6875rem] text-amber-200 ring-1 ring-amber-400/25">
+              <AlertTriangle size="0.75rem" className="mt-[0.125rem] shrink-0" />
+              <span>Long-Term Memory is on, but this prompt preset has no Long-Term Memory block.</span>
+            </div>
+          )}
           <label className="flex flex-col gap-1.5">
             <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Extra instructions</span>
             <textarea
