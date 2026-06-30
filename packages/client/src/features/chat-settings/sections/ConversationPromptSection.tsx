@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ExternalLink, Pencil, Sliders, Trash2 } from "lucide-react";
+import { AlertTriangle, ExternalLink, Pencil, Sliders, Trash2 } from "lucide-react";
 import { DEFAULT_CONVERSATION_PROMPT } from "@marinara-engine/shared";
 import { ExpandedTextarea } from "../../../components/ui/ExpandedTextarea";
 import { ChatSettingsSection } from "../ChatSettingsSection";
@@ -17,6 +17,7 @@ interface ConversationPromptSectionProps {
   promptPresets: PromptPresetOption[];
   selectedPresetName: string | null;
   selectedPresetPrompt: string;
+  showLongTermMemoryBlockWarning: boolean;
   onCustomPromptChange: (chatId: string, customPrompt: string | null) => void;
   onPromptPresetChange: (presetId: string | null) => void;
   onOpenPromptPreset: () => void;
@@ -29,6 +30,7 @@ export function ConversationPromptSection({
   promptPresets,
   selectedPresetName,
   selectedPresetPrompt,
+  showLongTermMemoryBlockWarning,
   onCustomPromptChange,
   onPromptPresetChange,
   onOpenPromptPreset,
@@ -125,6 +127,12 @@ export function ConversationPromptSection({
               </button>
             )}
           </div>
+          {showLongTermMemoryBlockWarning && (
+            <div className="flex items-start gap-2 rounded-lg bg-amber-400/10 px-3 py-2 text-[0.6875rem] text-amber-200 ring-1 ring-amber-400/25">
+              <AlertTriangle size="0.75rem" className="mt-[0.125rem] shrink-0" />
+              <span>Long-Term Memory is on, but this prompt preset has no Long-Term Memory block.</span>
+            </div>
+          )}
         </div>
       </ChatSettingsSection>
       <ExpandedTextarea

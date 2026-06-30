@@ -11,6 +11,7 @@ interface PromptPresetSectionProps {
   presets: PromptPresetOption[];
   hasVariables: boolean;
   showLorebookMarkerWarning: boolean;
+  showLongTermMemoryBlockWarning: boolean;
   onEditVariables: () => void;
   onPromptPresetChange: (presetId: string | null) => void;
 }
@@ -20,6 +21,7 @@ export function PromptPresetSection({
   presets,
   hasVariables,
   showLorebookMarkerWarning,
+  showLongTermMemoryBlockWarning,
   onEditVariables,
   onPromptPresetChange,
 }: PromptPresetSectionProps) {
@@ -58,6 +60,12 @@ export function PromptPresetSection({
         <div className="mt-2 flex items-start gap-2 rounded-lg bg-amber-400/10 px-3 py-2 text-[0.6875rem] text-amber-200 ring-1 ring-amber-400/25">
           <AlertTriangle size="0.75rem" className="mt-[0.125rem] shrink-0" />
           <span>This preset has active lorebooks available, but no lorebook marker.</span>
+        </div>
+      )}
+      {showLongTermMemoryBlockWarning && (
+        <div className="mt-2 flex items-start gap-2 rounded-lg bg-amber-400/10 px-3 py-2 text-[0.6875rem] text-amber-200 ring-1 ring-amber-400/25">
+          <AlertTriangle size="0.75rem" className="mt-[0.125rem] shrink-0" />
+          <span>Long-Term Memory is on, but this prompt preset has no Long-Term Memory block.</span>
         </div>
       )}
     </ChatSettingsSection>
