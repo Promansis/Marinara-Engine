@@ -143,6 +143,11 @@ const CONVERSATION_STEPS: WizardStep[] = [
     body: "Choose your persona and the characters in this private DM or group chat.",
   },
   {
+    key: "memory",
+    title: "Memory",
+    body: "Optionally let Long-Term Memory recall notes from this conversation's vault into the prompt.",
+  },
+  {
     key: "automation",
     title: "Automation",
     body: "Decide whether characters can message first, use schedules, and send hidden commands.",
@@ -734,6 +739,7 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
   const [conversationCommandToggles, setConversationCommandToggles] = useState<
     Partial<Record<ConversationCommandKey, boolean>>
   >(() => readConversationCommandToggles(metadata.conversationCommandToggles));
+  const [enableLtm, setEnableLtm] = useState(() => metadata.enableLongTermMemory === true);
   const connectionOptions = useMemo(
     () =>
       appendLocalSidecarConnectionOption(
@@ -911,6 +917,10 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
       trimmedConversationSystemPrompt !== baseConversationPromptText
         ? trimmedConversationSystemPrompt
         : null;
+    const currentActiveAgentIds = readChatActiveAgentIds(chat);
+    const nextActiveAgentIds = enableLtm
+      ? Array.from(new Set([...currentActiveAgentIds, "long-term-memory"]))
+      : currentActiveAgentIds.filter((id) => id !== "long-term-memory");
     await updateMeta.mutateAsync({
       id: chat.id,
       autonomousMessages: autonomousEnabled,
@@ -919,6 +929,9 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
       conversationCommandToggles,
       chatParameters: customizeParameters ? generationParameters : null,
       customSystemPrompt,
+      enableLongTermMemory: enableLtm,
+      enableAgents: enableLtm ? true : undefined,
+      activeAgentIds: nextActiveAgentIds,
     });
     if (autonomousEnabled && generateSchedule) {
       setScheduleState("generating");
@@ -942,7 +955,6 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
   }, [
     hasConnection,
     hasCharacters,
-    chat.id,
     chatCharIds,
     onFinish,
     autonomousEnabled,
@@ -952,6 +964,8 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
     generationParameters,
     commandsEnabled,
     conversationCommandToggles,
+    enableLtm,
+    chat,
     queryClient,
     customConversationPromptEnabled,
     conversationSystemPromptDraft,
@@ -1368,6 +1382,44 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
     </div>
   );
 
+  const renderMemoryStep = () => (
+    <div className="space-y-2">
+      <button
+        onClick={() => setEnableLtm((value) => !value)}
+        className={cn(
+          "mari-chat-option-field flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
+          enableLtm && "mari-chat-option-field--active",
+        )}
+      >
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <BookOpen
+            size="0.875rem"
+            className={enableLtm ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]"}
+          />
+          <div>
+            <span className="text-xs font-medium">Long-Term Memory</span>
+            <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+              Recall notes from this conversation's memory vault into character prompts.
+            </p>
+          </div>
+        </div>
+        <div
+          className={cn(
+            "mari-chat-option-switch h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+            enableLtm && "mari-chat-option-switch--active",
+          )}
+        >
+          <div
+            className={cn(
+              "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+              enableLtm && "translate-x-3.5",
+            )}
+          />
+        </div>
+      </button>
+    </div>
+  );
+
   const content =
     currentStep.key === "connection"
       ? renderConnectionStep()
@@ -1375,6 +1427,8 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
         ? renderPromptStep()
       : currentStep.key === "participants"
         ? renderParticipantsStep()
+        : currentStep.key === "memory"
+          ? renderMemoryStep()
         : renderAutomationStep();
   const busyContent =
     scheduleState === "generating" ? (
