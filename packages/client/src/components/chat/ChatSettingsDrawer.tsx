@@ -1465,8 +1465,17 @@ export function ChatSettingsDrawer({
     400,
   );
   const toggleLtmEnabled = useCallback(() => {
-    updateMeta.mutate({ id: chat.id, enableLongTermMemory: metadata.enableLongTermMemory === false });
-  }, [chat.id, metadata.enableLongTermMemory, updateMeta]);
+    const enabling = metadata.enableLongTermMemory === false;
+    const nextActiveAgentIds = enabling
+      ? Array.from(new Set([...readLatestActiveAgentIds(), "long-term-memory"]))
+      : readLatestActiveAgentIds().filter((id) => id !== "long-term-memory");
+    updateMeta.mutate({
+      id: chat.id,
+      enableLongTermMemory: enabling,
+      enableAgents: enabling ? true : undefined,
+      activeAgentIds: nextActiveAgentIds,
+    });
+  }, [chat.id, metadata.enableLongTermMemory, readLatestActiveAgentIds, updateMeta]);
   const refinePassEnabled =
     metadata.refinePass ?? ltmExtractionSettings.data?.refinePass ?? false;
   const getKnowledgeAgentSourceSettings = useCallback(
@@ -1591,6 +1600,7 @@ export function ChatSettingsDrawer({
     (metadata.enableAgents ? 1 : 0) +
     (gameLorebookKeeperEnabled ? 1 : 0) +
     (gameMusicDjEnabled ? 1 : 0) +
+    (ltmActive ? 1 : 0) +
     activeCustomAgents.length;
   const lorebookKeeperTargetLorebookId =
     typeof metadata.lorebookKeeperTargetLorebookId === "string" ? metadata.lorebookKeeperTargetLorebookId : "";
@@ -5646,6 +5656,108 @@ export function ChatSettingsDrawer({
                   </AgentSettingsCard>
                 )}
 
+                {(ltmActive || isGame) && (
+                  <AgentSettingsCard
+                    icon={<BrainCircuit size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
+                    title="Memory"
+                    description="Long-term memory recalls facts and events from past conversations."
+                  >
+                    <AgentSettingsToggle
+                      label="Use memory in this chat"
+                      description="When disabled, the LTM agent still extracts but does not inject memories into the prompt."
+                      enabled={metadata.enableLongTermMemory !== false}
+                      onToggle={toggleLtmEnabled}
+                    />
+                    {metadata.enableLongTermMemory === false && (
+                      <p className="text-xs text-[var(--muted-foreground)]">
+                        Memory is off for this chat — turn it on to recall facts into your messages.
+                      </p>
+                    )}
+                    {metadata.enableLongTermMemory !== false &&
+                      (ltmLastInjection.data?.memoryCount ?? 0) === 0 &&
+                      !ltmLastInjection.isLoading && (
+                        <p className="text-xs text-[var(--muted-foreground)]">
+                          Send a message to see recalled memories.
+                        </p>
+                      )}
+                    {showLongTermMemoryPromptBlockWarning && (
+                      <div className="flex items-start gap-2 rounded-lg bg-amber-400/10 px-3 py-2 text-[0.6875rem] text-amber-200 ring-1 ring-amber-400/25">
+                        <AlertTriangle size="0.75rem" className="mt-[0.125rem] shrink-0" />
+                        <p className="leading-snug">
+                          This chat can recall long-term memories, but the selected prompt preset has no Long-Term
+                          Memory block.
+                        </p>
+                      </div>
+                    )}
+                    <div className="mt-2 space-y-2">
+                      <RecallStylePresets
+                        values={{
+                          longTermMemoryRecallStyle:
+                            metadata.longTermMemoryRecallStyle ??
+                            ltmGlobalSettings.data?.longTermMemoryRecallStyle ??
+                            "balanced",
+                        }}
+                        onChange={(patch) => debouncedUpdatePerChat(patch)}
+                      />
+                      <RecallBudgetControls
+                        values={{
+                          longTermMemoryBudgetTokens:
+                            metadata.longTermMemoryBudgetTokens ??
+                            ltmGlobalSettings.data?.longTermMemoryBudgetTokens ??
+                            4096,
+                          longTermMemoryMaxChunks:
+                            metadata.longTermMemoryMaxChunks ?? ltmGlobalSettings.data?.longTermMemoryMaxChunks ?? 20,
+                        }}
+                        onChange={(patch) => debouncedUpdatePerChat(patch)}
+                      />
+                    </div>
+                    <div className="mt-2">
+                      <FieldGroup
+                        label="Advanced recall settings"
+                        collapsible
+                        expanded={chatRecallAdvancedOpen}
+                        onExpandedChange={setChatRecallAdvancedOpen}
+                      >
+                        <RecallThresholdControls
+                          values={{
+                            longTermMemoryScoreThreshold:
+                              metadata.longTermMemoryScoreThreshold ??
+                              ltmGlobalSettings.data?.longTermMemoryScoreThreshold ??
+                              0,
+                            longTermMemoryRecallContextMessages:
+                              metadata.longTermMemoryRecallContextMessages ??
+                              ltmGlobalSettings.data?.longTermMemoryRecallContextMessages ??
+                              4,
+                          }}
+                          onChange={(patch) => debouncedUpdatePerChat(patch)}
+                        />
+                        <RecallToggles
+                          values={{
+                            longTermMemoryIncludeResolved:
+                              metadata.longTermMemoryIncludeResolved ??
+                              ltmGlobalSettings.data?.longTermMemoryIncludeResolved ??
+                              false,
+                            longTermMemoryDebug:
+                              metadata.longTermMemoryDebug ?? ltmGlobalSettings.data?.longTermMemoryDebug ?? false,
+                          }}
+                          onChange={(patch) => debouncedUpdatePerChat(patch)}
+                        />
+                        {isGame && (
+                          <label className="flex items-center gap-2 rounded-lg px-1 py-1 text-xs text-[var(--foreground)]">
+                            <input
+                              type="checkbox"
+                              checked={refinePassEnabled}
+                              onChange={(event) => debouncedUpdatePerChat({ refinePass: event.target.checked } as any)}
+                              className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+                            />
+                            <span>Run a second refine pass over imported game summaries</span>
+                          </label>
+                        )}
+                      </FieldGroup>
+                    </div>
+                  </AgentSettingsCard>
+                )}
+
                 {!isGame && (
                   <div className="flex flex-col gap-2">
                     {metadata.enableAgents && !isGame && lorebookKeeperActive && (
@@ -6519,90 +6631,6 @@ export function ChatSettingsDrawer({
                       </AgentSettingsCard>
                     )}
 
-                    {ltmActive && (
-                      <AgentSettingsCard
-                        icon={<BrainCircuit size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
-                        title="Memory"
-                        description="Long-term memory recalls facts and events from past conversations."
-                      >
-                        <AgentSettingsToggle
-                          label="Use memory in this chat"
-                          description="When disabled, the LTM agent still extracts but does not inject memories into the prompt."
-                          enabled={metadata.enableLongTermMemory !== false}
-                          onToggle={toggleLtmEnabled}
-                        />
-                        {(metadata.enableLongTermMemory === false) && (
-                          <p className="text-xs text-[var(--muted-foreground)]">
-                            Memory is off for this chat — turn it on to recall facts into your messages.
-                          </p>
-                        )}
-                        {metadata.enableLongTermMemory !== false &&
-                          (ltmLastInjection.data?.memoryCount ?? 0) === 0 &&
-                          !ltmLastInjection.isLoading && (
-                            <p className="text-xs text-[var(--muted-foreground)]">
-                              Send a message to see recalled memories.
-                            </p>
-                          )}
-                        {showLongTermMemoryPromptBlockWarning && (
-                          <div className="flex items-start gap-2 rounded-lg bg-amber-400/10 px-3 py-2 text-[0.6875rem] text-amber-200 ring-1 ring-amber-400/25">
-                            <AlertTriangle size="0.75rem" className="mt-[0.125rem] shrink-0" />
-                            <p className="leading-snug">
-                              This chat can recall long-term memories, but the selected prompt preset has no Long-Term
-                              Memory block.
-                            </p>
-                          </div>
-                        )}
-                        <div className="mt-2 space-y-2">
-                          <RecallStylePresets
-                            values={{
-                              longTermMemoryRecallStyle: metadata.longTermMemoryRecallStyle ?? ltmGlobalSettings.data?.longTermMemoryRecallStyle ?? "balanced",
-                            }}
-                            onChange={(patch) => debouncedUpdatePerChat(patch)}
-                          />
-                          <RecallBudgetControls
-                            values={{
-                              longTermMemoryBudgetTokens: metadata.longTermMemoryBudgetTokens ?? ltmGlobalSettings.data?.longTermMemoryBudgetTokens ?? 4096,
-                              longTermMemoryMaxChunks: metadata.longTermMemoryMaxChunks ?? ltmGlobalSettings.data?.longTermMemoryMaxChunks ?? 20,
-                            }}
-                            onChange={(patch) => debouncedUpdatePerChat(patch)}
-                          />
-                        </div>
-                        <div className="mt-2">
-                          <FieldGroup
-                            label="Advanced recall settings"
-                            collapsible
-                            expanded={chatRecallAdvancedOpen}
-                            onExpandedChange={setChatRecallAdvancedOpen}
-                          >
-                            <RecallThresholdControls
-                              values={{
-                                longTermMemoryScoreThreshold: metadata.longTermMemoryScoreThreshold ?? ltmGlobalSettings.data?.longTermMemoryScoreThreshold ?? 0,
-                                longTermMemoryRecallContextMessages: metadata.longTermMemoryRecallContextMessages ?? ltmGlobalSettings.data?.longTermMemoryRecallContextMessages ?? 4,
-                              }}
-                              onChange={(patch) => debouncedUpdatePerChat(patch)}
-                            />
-                            <RecallToggles
-                              values={{
-                                longTermMemoryIncludeResolved: metadata.longTermMemoryIncludeResolved ?? ltmGlobalSettings.data?.longTermMemoryIncludeResolved ?? false,
-                                longTermMemoryDebug: metadata.longTermMemoryDebug ?? ltmGlobalSettings.data?.longTermMemoryDebug ?? false,
-                              }}
-                              onChange={(patch) => debouncedUpdatePerChat(patch)}
-                            />
-                            {isGame && (
-                              <label className="flex items-center gap-2 rounded-lg px-1 py-1 text-xs text-[var(--foreground)]">
-                                <input
-                                  type="checkbox"
-                                  checked={refinePassEnabled}
-                                  onChange={(event) => debouncedUpdatePerChat({ refinePass: event.target.checked } as any)}
-                                  className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-                                />
-                                <span>Run a second refine pass over imported game summaries</span>
-                              </label>
-                            )}
-                          </FieldGroup>
-                        </div>
-                      </AgentSettingsCard>
-                    )}
                     {renderActiveCustomAgentSettingsCard()}
 
                     {/* Haptic Feedback — not for game mode */}
