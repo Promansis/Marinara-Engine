@@ -96,7 +96,6 @@ export const ltmResolvedGlobalSettingsSchema = z
     longTermMemorySemanticWeight: z.number().finite().min(0).max(1),
     longTermMemoryLexicalWeight: z.number().finite().min(0).max(1),
     longTermMemoryGraphWeight: z.number().finite().min(0).max(1),
-    longTermMemoryMetadataWeight: z.number().finite().min(0).max(2),
     longTermMemoryKeywordWeight: z.number().finite().min(0).max(1),
     longTermMemoryIncludeResolved: z.boolean(),
     longTermMemoryRecallPreamble: z.string().max(500),
@@ -115,7 +114,6 @@ export const DEFAULT_LTM_GLOBAL_SETTINGS = ltmResolvedGlobalSettingsSchema.parse
   longTermMemorySemanticWeight: DEFAULT_LTM_RECALL_STYLE_WEIGHTS.semanticWeight,
   longTermMemoryLexicalWeight: DEFAULT_LTM_RECALL_STYLE_WEIGHTS.lexicalWeight,
   longTermMemoryGraphWeight: DEFAULT_LTM_RECALL_STYLE_WEIGHTS.graphWeight,
-  longTermMemoryMetadataWeight: DEFAULT_LTM_RECALL_STYLE_WEIGHTS.metadataWeight,
   longTermMemoryKeywordWeight: DEFAULT_LTM_RECALL_STYLE_WEIGHTS.keywordWeight,
   longTermMemoryIncludeResolved: false,
   longTermMemoryRecallPreamble: DEFAULT_LTM_RECALL_PREAMBLE,
@@ -542,13 +540,12 @@ const ltmRetrievalConfigShape = z
     semanticWeight: z.number().finite().min(0).max(1).default(0.6),
     lexicalWeight: z.number().finite().min(0).max(1).default(0.3),
     graphWeight: z.number().finite().min(0).max(1).default(0.1),
-    metadataWeight: z.number().finite().min(0).max(2).default(1),
     keywordWeight: z.number().finite().min(0).max(1).default(0.2),
   })
   .strict()
   .refine(
     (value) =>
-      value.semanticWeight + value.lexicalWeight + value.graphWeight + value.metadataWeight + value.keywordWeight > 0,
+      value.semanticWeight + value.lexicalWeight + value.graphWeight + value.keywordWeight > 0,
     "At least one retrieval weight must be positive.",
   );
 
@@ -872,7 +869,6 @@ const ltmAgentSettingsShape = z
     longTermMemorySemanticWeight: z.number().finite().min(0).max(1).nullable().optional(),
     longTermMemoryLexicalWeight: z.number().finite().min(0).max(1).nullable().optional(),
     longTermMemoryGraphWeight: z.number().finite().min(0).max(1).nullable().optional(),
-    longTermMemoryMetadataWeight: z.number().finite().min(0).max(2).nullable().optional(),
     longTermMemoryKeywordWeight: z.number().finite().min(0).max(1).nullable().optional(),
     longTermMemoryIncludeResolved: z.boolean().optional(),
     longTermMemoryRecallPreamble: z.string().max(500).optional(),

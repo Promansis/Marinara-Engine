@@ -114,7 +114,6 @@ export type LtmSearchInput = {
   semanticWeight?: number;
   lexicalWeight?: number;
   graphWeight?: number;
-  metadataWeight?: number;
   keywordWeight?: number;
 };
 

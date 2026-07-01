@@ -53,9 +53,8 @@ export interface RetrieveLongTermMemoryInput extends MemoryRecallEmbeddingOption
   semanticWeight?: number;
   lexicalWeight?: number;
   graphWeight?: number;
-  metadataWeight?: number;
   keywordWeight?: number;
-  metadataMode?: "filter_only" | "rank";
+  metadataMode?: "filter_only";
   dedupeExactText?: boolean;
   applyUsageCooldown?: boolean;
 }
@@ -95,12 +94,11 @@ export interface LtmRetrievalDebugInfo {
     semantic: number;
     lexical: number;
     graph: number;
-    metadata: number;
     keyword: number;
   };
   activeLanes: string[];
   skippedLanes: string[];
-  metadataMode: "filter_only" | "rank";
+  metadataMode: "filter_only";
   funnel: Record<string, number>;
   selected: LtmRetrievalDebugCandidate[];
   rejected: LtmRetrievalDebugCandidate[];
@@ -223,9 +221,8 @@ function resolveRetrievalWeights(config: LtmRetrievalConfig, input: RetrieveLong
   const semantic = input.semanticWeight ?? config.semanticWeight;
   const lexical = input.lexicalWeight ?? config.lexicalWeight;
   const graph = input.graphWeight ?? config.graphWeight;
-  const metadata = input.metadataWeight ?? config.metadataWeight;
   const keyword = input.keywordWeight ?? config.keywordWeight;
-  return { semantic, lexical, graph, metadata, keyword };
+  return { semantic, lexical, graph, keyword };
 }
 
 function uniqueSorted(values: string[]) {
@@ -320,31 +317,23 @@ function compactScoreMap(scores: Record<string, number> | undefined) {
 }
 
 function activeRelevanceLanes(
-  weights: { semantic: number; lexical: number; graph: number; metadata: number; keyword: number },
-  metadataMode: "filter_only" | "rank",
+  weights: { semantic: number; lexical: number; graph: number; keyword: number },
 ) {
   return [
     ...(weights.semantic > 0 ? ["vector"] : []),
     ...(weights.lexical > 0 ? ["bm25"] : []),
     ...(weights.graph > 0 ? ["graph"] : []),
-    ...(metadataMode === "rank" && weights.metadata > 0 ? ["metadata"] : []),
     ...(weights.keyword > 0 ? ["keyword"] : []),
   ];
 }
 
 function skippedRelevanceLanes(
-  weights: { semantic: number; lexical: number; graph: number; metadata: number; keyword: number },
-  metadataMode: "filter_only" | "rank",
+  weights: { semantic: number; lexical: number; graph: number; keyword: number },
 ) {
   return [
     ...(weights.semantic <= 0 ? ["vector:zero_weight"] : []),
     ...(weights.lexical <= 0 ? ["bm25:zero_weight"] : []),
     ...(weights.graph <= 0 ? ["graph:zero_weight"] : []),
-    ...(metadataMode === "filter_only"
-      ? ["metadata:filter_only"]
-      : weights.metadata <= 0
-        ? ["metadata:zero_weight"]
-        : []),
     ...(weights.keyword <= 0 ? ["keyword:zero_weight"] : []),
   ];
 }
@@ -437,13 +426,13 @@ export async function retrieveLongTermMemory(
   const root = input.root ?? getLongTermMemoryRoot();
   logger.debug({ root, queryLength: input.queryText?.length }, "[ltm] Retrieval started");
   const includeDebug = input.debug === true || input.explain === true;
-  const metadataMode = input.metadataMode ?? "rank";
+  const metadataMode: "filter_only" = "filter_only";
   const bundle = await loadRetrievalBundle(root, input.includeSourceNotes === true);
   const { metadata, bm25, graph, keywords, embeddings, config } = bundle;
   const warnings = [...bundle.warnings];
   const weights = resolveRetrievalWeights(config, input);
-  const activeLanes = activeRelevanceLanes(weights, metadataMode);
-  const skippedLanes = skippedRelevanceLanes(weights, metadataMode);
+  const activeLanes = activeRelevanceLanes(weights);
+  const skippedLanes = skippedRelevanceLanes(weights);
   const generationLanesDisabled = activeLanes.length === 0;
 
   if (!metadata) {
@@ -471,7 +460,6 @@ export async function retrieveLongTermMemory(
                 semantic: weights.semantic,
                 lexical: weights.lexical,
                 graph: weights.graph,
-                metadata: weights.metadata,
                 keyword: weights.keyword,
               },
               activeLanes,
@@ -531,7 +519,6 @@ export async function retrieveLongTermMemory(
                 semantic: weights.semantic,
                 lexical: weights.lexical,
                 graph: weights.graph,
-                metadata: weights.metadata,
                 keyword: weights.keyword,
               },
               activeLanes,
@@ -603,12 +590,9 @@ export async function retrieveLongTermMemory(
             : [];
         })
       : [];
-  const metadataGraphSeedMatches =
-    metadataMode === "rank"
-      ? metadataMatches
-      : metadataMatches.filter((match) =>
-          match.reasons.some((reason) => reason.startsWith("note:") || reason.startsWith("tag:")),
-        );
+  const metadataGraphSeedMatches = metadataMatches.filter((match) =>
+    match.reasons.some((reason) => reason.startsWith("note:") || reason.startsWith("tag:")),
+  );
   const graphSeeds = uniqueSorted([
     ...signals.noteIds,
     ...metadataGraphSeedMatches.slice(0, 10).map((candidate) => chunksById.get(candidate.chunkId)?.noteId ?? ""),
@@ -617,18 +601,6 @@ export async function retrieveLongTermMemory(
     ...keywordItems.slice(0, 10).map((candidate) => chunksById.get(candidate.chunkId)?.noteId ?? ""),
   ]);
   const lanes: LtmRankLane[] = [];
-
-  if (metadataMode === "rank" && weights.metadata > 0) {
-    lanes.push({
-      name: "metadata",
-      weight: weights.metadata,
-      items: metadataMatches.map((match) => ({
-        chunkId: match.chunkId,
-        reason: match.reasons.join(","),
-        rawScore: match.score,
-      })),
-    });
-  }
 
   if (weights.semantic > 0 && vector.items.length > 0) {
     lanes.push({ name: "vector", weight: weights.semantic, items: vector.items });
@@ -714,7 +686,6 @@ export async function retrieveLongTermMemory(
           semantic: weights.semantic,
           lexical: weights.lexical,
           graph: weights.graph,
-          metadata: weights.metadata,
           keyword: weights.keyword,
         },
         activeLanes,
@@ -726,7 +697,6 @@ export async function retrieveLongTermMemory(
           scopeFiltered: filterCounts?.scopeFiltered ?? 0,
           statusFiltered:
             filterCounts?.resolvedFiltered ?? 0,
-          metadataCandidates: laneCount("metadata"),
           keywordCandidates: laneCount("keyword"),
           vectorCandidates: laneCount("vector"),
           bm25Candidates: laneCount("bm25"),

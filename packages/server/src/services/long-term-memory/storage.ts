@@ -90,7 +90,6 @@ function normalizeRetrievalConfig(raw: unknown) {
     semanticWeight: input.semanticWeight,
     lexicalWeight: input.lexicalWeight,
     graphWeight: input.graphWeight,
-    metadataWeight: input.metadataWeight,
     keywordWeight: input.keywordWeight,
   };
 }

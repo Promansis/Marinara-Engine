@@ -504,7 +504,6 @@ test("generation long-term memory uses global retrieval settings and injects aft
       longTermMemorySemanticWeight: 0.2,
       longTermMemoryLexicalWeight: 0.75,
       longTermMemoryGraphWeight: 0.15,
-      longTermMemoryMetadataWeight: 0.25,
       longTermMemoryKeywordWeight: 0.25,
       longTermMemoryIncludeResolved: true,
       longTermMemoryRecallPreamble: DEFAULT_LTM_RECALL_PREAMBLE,
@@ -567,7 +566,7 @@ test("generation long-term memory uses global retrieval settings and injects aft
   assert.equal(retrievalInput.semanticWeight, 0.2);
   assert.equal(retrievalInput.lexicalWeight, 0.75);
   assert.equal(retrievalInput.graphWeight, 0.15);
-  assert.equal(retrievalInput.metadataWeight, 0.25);
+  assert.equal((retrievalInput as { metadataWeight?: unknown }).metadataWeight, undefined);
   assert.equal(retrievalInput.metadataMode, "filter_only");
   assert.equal(retrievalInput.dedupeExactText, true);
   assert.equal(retrievalInput.applyUsageCooldown, true);
@@ -2318,21 +2317,21 @@ test("ltm global settings change recall styles without pinning old style weights
     assert.equal(defaults.longTermMemorySemanticWeight, 0.6);
     assert.equal(defaults.longTermMemoryLexicalWeight, 0.3);
     assert.equal(defaults.longTermMemoryGraphWeight, 0.1);
-    assert.equal(defaults.longTermMemoryMetadataWeight, 1);
+    assert.equal(defaults.longTermMemoryKeywordWeight, 0.2);
 
     const story = await updateLtmGlobalSettings({ version: 1, longTermMemoryRecallStyle: "story" }, root);
     assert.equal(story.longTermMemoryRecallStyle, "story");
     assert.equal(story.longTermMemorySemanticWeight, 0.45);
     assert.equal(story.longTermMemoryLexicalWeight, 0.25);
     assert.equal(story.longTermMemoryGraphWeight, 0.35);
-    assert.equal(story.longTermMemoryMetadataWeight, 0.8);
+    assert.equal(story.longTermMemoryKeywordWeight, 0.25);
 
     const exact = await updateLtmGlobalSettings({ version: 1, longTermMemoryRecallStyle: "exact" }, root);
     assert.equal(exact.longTermMemoryRecallStyle, "exact");
     assert.equal(exact.longTermMemorySemanticWeight, 0.15);
     assert.equal(exact.longTermMemoryLexicalWeight, 1);
     assert.equal(exact.longTermMemoryGraphWeight, 0);
-    assert.equal(exact.longTermMemoryMetadataWeight, 0.3);
+    assert.equal(exact.longTermMemoryKeywordWeight, 0.8);
 
     const overridden = await updateLtmGlobalSettings({ version: 1, longTermMemorySemanticWeight: 0.4 }, root);
     assert.equal(overridden.longTermMemoryRecallStyle, "exact");
@@ -2344,7 +2343,7 @@ test("ltm global settings change recall styles without pinning old style weights
     assert.equal(broad.longTermMemorySemanticWeight, 0.55);
     assert.equal(broad.longTermMemoryLexicalWeight, 0.2);
     assert.equal(broad.longTermMemoryGraphWeight, 0.8);
-    assert.equal(broad.longTermMemoryMetadataWeight, 0.8);
+    assert.equal(broad.longTermMemoryKeywordWeight, 0.15);
 
     const broadOverride = await updateLtmGlobalSettings(
       { version: 1, longTermMemoryRecallStyle: "broad", longTermMemorySemanticWeight: 0.4 },
@@ -5928,7 +5927,6 @@ test("retrieval excludes source notes by default and prioritizes relationship st
       semanticWeight: 0.15,
       lexicalWeight: 1,
       graphWeight: 0,
-      metadataWeight: 0.3,
       localEmbedder: async (texts) => texts.map(() => []),
     });
     assert.equal(exactStyle.chunks[0]?.chunk.id, "rel_mara_jules::history");
@@ -5941,7 +5939,6 @@ test("retrieval excludes source notes by default and prioritizes relationship st
       semanticWeight: 0.45,
       lexicalWeight: 0.25,
       graphWeight: 0.35,
-      metadataWeight: 0.8,
       localEmbedder: async (texts) => texts.map(() => []),
     });
     assert.equal(storyStyle.chunks[0]?.chunk.id, "rel_mara_jules::history");
@@ -6277,7 +6274,6 @@ test("generation retrieval treats metadata as filter only and honors zero-weight
       semanticWeight: 0,
       lexicalWeight: 0,
       graphWeight: 0,
-      metadataWeight: 2,
       metadataMode: "filter_only",
       debug: true,
       localEmbedder: async () => {
@@ -6304,7 +6300,6 @@ test("generation retrieval treats metadata as filter only and honors zero-weight
       semanticWeight: 0,
       lexicalWeight: 1,
       graphWeight: 0,
-      metadataWeight: 2,
       metadataMode: "filter_only",
       debug: true,
       localEmbedder: async () => {
@@ -6383,7 +6378,6 @@ test("generation graph recall is not seeded by scope-only metadata", async () =>
       semanticWeight: 0,
       lexicalWeight: 0,
       graphWeight: 1,
-      metadataWeight: 2,
       metadataMode: "filter_only",
       debug: true,
       localEmbedder: async () => {
@@ -6467,7 +6461,6 @@ test("retrieval score threshold excludes weak vector-only candidates", async () 
       semanticWeight: 1,
       lexicalWeight: 0,
       graphWeight: 0,
-      metadataWeight: 0,
       debug: true,
       localEmbedder: embedder,
     });

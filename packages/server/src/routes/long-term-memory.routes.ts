@@ -266,7 +266,6 @@ const searchBodySchema = z
     semanticWeight: z.number().finite().min(0).max(1).optional(),
     lexicalWeight: z.number().finite().min(0).max(1).optional(),
     graphWeight: z.number().finite().min(0).max(1).optional(),
-    metadataWeight: z.number().finite().min(0).max(2).optional(),
     keywordWeight: z.number().finite().min(0).max(1).optional(),
   })
   .strict()

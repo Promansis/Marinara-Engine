@@ -3851,7 +3851,6 @@ export function AgentEditor() {
                   longTermMemorySemanticWeight: ltmGlobalSettings?.longTermMemorySemanticWeight ?? null,
                   longTermMemoryLexicalWeight: ltmGlobalSettings?.longTermMemoryLexicalWeight ?? null,
                   longTermMemoryGraphWeight: ltmGlobalSettings?.longTermMemoryGraphWeight ?? null,
-                  longTermMemoryMetadataWeight: ltmGlobalSettings?.longTermMemoryMetadataWeight ?? null,
                   longTermMemoryKeywordWeight: ltmGlobalSettings?.longTermMemoryKeywordWeight ?? null,
                 }}
                 onChange={(patch) => debouncedPatchGlobal(patch)}

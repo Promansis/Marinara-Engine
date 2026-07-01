@@ -65,9 +65,6 @@ export function applyLtmAgentChatSettings(
   const graphWeight = readNumber(chatMetadata.longTermMemoryGraphWeight);
   if (graphWeight !== undefined) next.longTermMemoryGraphWeight = graphWeight;
 
-  const metadataWeight = readNumber(chatMetadata.longTermMemoryMetadataWeight);
-  if (metadataWeight !== undefined) next.longTermMemoryMetadataWeight = metadataWeight;
-
   const keywordWeight = readNumber(chatMetadata.longTermMemoryKeywordWeight);
   if (keywordWeight !== undefined) next.longTermMemoryKeywordWeight = keywordWeight;
 

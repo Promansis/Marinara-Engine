@@ -262,28 +262,24 @@ export const LTM_RECALL_STYLE_WEIGHTS = {
     semanticWeight: 0.6,
     lexicalWeight: 0.3,
     graphWeight: 0.1,
-    metadataWeight: 1,
     keywordWeight: 0.2,
   },
   exact: {
     semanticWeight: 0.15,
     lexicalWeight: 1,
     graphWeight: 0,
-    metadataWeight: 0.3,
     keywordWeight: 0.8,
   },
   broad: {
     semanticWeight: 0.55,
     lexicalWeight: 0.2,
     graphWeight: 0.8,
-    metadataWeight: 0.8,
     keywordWeight: 0.15,
   },
   story: {
     semanticWeight: 0.45,
     lexicalWeight: 0.25,
     graphWeight: 0.35,
-    metadataWeight: 0.8,
     keywordWeight: 0.25,
   },
 } as const satisfies Record<
@@ -292,7 +288,6 @@ export const LTM_RECALL_STYLE_WEIGHTS = {
     semanticWeight: number;
     lexicalWeight: number;
     graphWeight: number;
-    metadataWeight: number;
     keywordWeight: number;
   }
 >;
@@ -303,7 +298,6 @@ export type LtmRecallWeights = {
   semanticWeight: number;
   lexicalWeight: number;
   graphWeight: number;
-  metadataWeight: number;
   keywordWeight: number;
 };
 
@@ -321,7 +315,6 @@ export function readLtmRecallWeightOverrides(
     semanticWeight: read(metadata.longTermMemorySemanticWeight, fallback.semanticWeight, 0, 1),
     lexicalWeight: read(metadata.longTermMemoryLexicalWeight, fallback.lexicalWeight, 0, 1),
     graphWeight: read(metadata.longTermMemoryGraphWeight, fallback.graphWeight, 0, 1),
-    metadataWeight: read(metadata.longTermMemoryMetadataWeight, fallback.metadataWeight, 0, 2),
     keywordWeight: read(metadata.longTermMemoryKeywordWeight, fallback.keywordWeight, 0, 1),
   };
 }

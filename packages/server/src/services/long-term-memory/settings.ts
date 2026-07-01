@@ -18,29 +18,25 @@ function normalizeText(value: string | undefined, max: number) {
   return value?.trim().slice(0, max) ?? "";
 }
 
+type PersistedSettingKey = Exclude<keyof typeof DEFAULT_LTM_GLOBAL_SETTINGS, "version">;
+
 const RECALL_WEIGHT_KEYS = [
   "longTermMemorySemanticWeight",
   "longTermMemoryLexicalWeight",
   "longTermMemoryGraphWeight",
-  "longTermMemoryMetadataWeight",
   "longTermMemoryKeywordWeight",
 ] as const satisfies Array<keyof LtmGlobalSettings>;
 
-function setRecallWeightOverride<K extends keyof Pick<
-  LtmGlobalSettings,
-  | "longTermMemorySemanticWeight"
-  | "longTermMemoryLexicalWeight"
-  | "longTermMemoryGraphWeight"
-  | "longTermMemoryMetadataWeight"
-  | "longTermMemoryKeywordWeight"
->>(
+type RecallWeightKey = (typeof RECALL_WEIGHT_KEYS)[number];
+
+function setRecallWeightOverride(
   target: LtmGlobalSettings,
-  key: K,
-  value: LtmGlobalSettings[K],
-  styleDefault: LtmGlobalSettings[K],
+  key: RecallWeightKey,
+  value: LtmGlobalSettings[RecallWeightKey],
+  styleDefault: LtmGlobalSettings[RecallWeightKey],
 ) {
   if (value === null || value === undefined || value === styleDefault) return;
-  target[key] = value;
+  target[key] = value as never;
 }
 
 function normalizePersistedSettings(input: LtmGlobalSettings): LtmGlobalSettings {
@@ -48,8 +44,10 @@ function normalizePersistedSettings(input: LtmGlobalSettings): LtmGlobalSettings
   const styleWeights = LTM_RECALL_STYLE_WEIGHTS[recallStyle];
   const next: LtmGlobalSettings = { version: 1 };
 
-  const setIfChanged = <K extends keyof LtmGlobalSettings>(key: K, value: LtmGlobalSettings[K]) => {
-    if (value !== DEFAULT_LTM_GLOBAL_SETTINGS[key]) next[key] = value;
+  const setIfChanged = <K extends PersistedSettingKey>(key: K, value: (typeof DEFAULT_LTM_GLOBAL_SETTINGS)[K]) => {
+    if (value !== DEFAULT_LTM_GLOBAL_SETTINGS[key]) {
+      next[key] = value as never;
+    }
   };
 
   setIfChanged("enableLongTermMemory", input.enableLongTermMemory ?? DEFAULT_LTM_GLOBAL_SETTINGS.enableLongTermMemory);
@@ -85,12 +83,6 @@ function normalizePersistedSettings(input: LtmGlobalSettings): LtmGlobalSettings
   setRecallWeightOverride(next, "longTermMemoryGraphWeight", input.longTermMemoryGraphWeight, styleWeights.graphWeight);
   setRecallWeightOverride(
     next,
-    "longTermMemoryMetadataWeight",
-    input.longTermMemoryMetadataWeight,
-    styleWeights.metadataWeight,
-  );
-  setRecallWeightOverride(
-    next,
     "longTermMemoryKeywordWeight",
     input.longTermMemoryKeywordWeight,
     styleWeights.keywordWeight,
@@ -121,7 +113,6 @@ function resolveGlobalSettings(config: LtmGlobalSettings): LtmResolvedGlobalSett
     longTermMemorySemanticWeight: config.longTermMemorySemanticWeight ?? styleWeights.semanticWeight,
     longTermMemoryLexicalWeight: config.longTermMemoryLexicalWeight ?? styleWeights.lexicalWeight,
     longTermMemoryGraphWeight: config.longTermMemoryGraphWeight ?? styleWeights.graphWeight,
-    longTermMemoryMetadataWeight: config.longTermMemoryMetadataWeight ?? styleWeights.metadataWeight,
     longTermMemoryKeywordWeight: config.longTermMemoryKeywordWeight ?? styleWeights.keywordWeight,
     longTermMemoryRecallPreamble:
       config.longTermMemoryRecallPreamble === undefined

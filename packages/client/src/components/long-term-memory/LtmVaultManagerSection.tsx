@@ -600,7 +600,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
         semanticWeight: activeRecallSettings.semanticWeight,
         lexicalWeight: activeRecallSettings.lexicalWeight,
         graphWeight: activeRecallSettings.graphWeight,
-        metadataWeight: activeRecallSettings.metadataWeight,
         debug: true,
       });
       setRecallResultByNoteId((current) => ({ ...current, [openNote.id]: result }));

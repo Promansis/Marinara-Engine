@@ -94,7 +94,6 @@ export const LTM_WEIGHT_PATCH_KEY_MAP = {
   semantic: "longTermMemorySemanticWeight",
   lexical: "longTermMemoryLexicalWeight",
   graph: "longTermMemoryGraphWeight",
-  metadata: "longTermMemoryMetadataWeight",
   keyword: "longTermMemoryKeywordWeight",
 } as const;
 
@@ -166,7 +165,6 @@ export function readLongTermMemoryRecallSearchSettings(settings: LtmResolvedGlob
         semanticWeight: settings.longTermMemorySemanticWeight,
         lexicalWeight: settings.longTermMemoryLexicalWeight,
         graphWeight: settings.longTermMemoryGraphWeight,
-        metadataWeight: settings.longTermMemoryMetadataWeight,
         keywordWeight: settings.longTermMemoryKeywordWeight,
       }
     : styleWeights;
