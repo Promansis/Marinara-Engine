@@ -1,5 +1,4 @@
-import { ExternalLink, Pencil, Sliders, Trash2 } from "lucide-react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, ExternalLink, Pencil, Sliders, Trash2 } from "lucide-react";
 import { DEFAULT_GAME_SYSTEM_PROMPT } from "@marinara-engine/shared";
 import { ExpandedTextarea } from "../../../components/ui/ExpandedTextarea";
 import { ChatSettingsSection } from "../ChatSettingsSection";

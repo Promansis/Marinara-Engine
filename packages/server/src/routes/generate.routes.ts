@@ -2245,7 +2245,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 "longTermMemoryScoreThreshold", "longTermMemoryRecallContextMessages",
                 "longTermMemoryRecallStyle", "longTermMemorySemanticWeight",
                 "longTermMemoryLexicalWeight", "longTermMemoryGraphWeight",
-                "longTermMemoryMetadataWeight", "longTermMemoryKeywordWeight", "longTermMemoryIncludeResolved",
+                "longTermMemoryKeywordWeight", "longTermMemoryIncludeResolved",
                 "longTermMemoryDebug", "longTermMemoryRecallPreamble",
                 "enableLongTermMemory",
               ];
