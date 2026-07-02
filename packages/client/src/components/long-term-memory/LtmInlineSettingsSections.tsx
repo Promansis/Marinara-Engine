@@ -372,7 +372,7 @@ export function LtmExtractionPromptSection({
             onChange={(event) => onChangeAiKeywordExtraction(event.target.checked)}
             className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
           />
-          <span>Ask AI extraction to propose keywords for each evidence unit</span>
+          <span>Ask AI to suggest keywords for extracted memories</span>
         </label>
         <label className="flex items-center gap-2 rounded-lg px-1 py-1 text-xs text-[var(--foreground)]">
           <input

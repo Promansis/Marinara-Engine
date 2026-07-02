@@ -304,10 +304,10 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
 
   useEffect(() => {
     if (importSource !== "chats") return;
-    if (selectedImportChatMode && importMode !== selectedImportChatMode) {
+    if (selectedImportChatMode) {
       setImportMode(selectedImportChatMode);
     }
-  }, [importMode, importSource, selectedImportChatMode]);
+  }, [importSource, selectedImportChatMode]);
 
   useEffect(() => {
     if (!activeChatId) return;
