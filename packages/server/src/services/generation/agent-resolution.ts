@@ -355,7 +355,6 @@ export async function resolveAgentPipelineAgents({
     const effectiveConnectionId = resolveAgentConnectionId({
       requestedConnectionId: cfg.connectionId as string | null,
       defaultAgentConnectionId: defaultAgentConn?.id ?? null,
-      chatMetadata,
       localSidecarAvailable: localSidecarAvailableForTrackers,
     });
 
