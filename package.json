@@ -28,6 +28,7 @@
     "lint": "pnpm -r run lint",
     "regression": "pnpm regression:prompt && pnpm smoke:ui",
     "regression:prompt": "pnpm build:shared && pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/prompt.regression.ts",
+    "ltm:migrate": "pnpm --filter @marinara-engine/server exec tsx src/services/long-term-memory/migration/migrate-remove-buckets.ts",
     "smoke:ui": "playwright test -c playwright.config.ts",
     "test": "node ./scripts/check-windows-installer-layout.mjs && pnpm -r run test",
     "version:sync": "node ./scripts/sync-version.mjs",

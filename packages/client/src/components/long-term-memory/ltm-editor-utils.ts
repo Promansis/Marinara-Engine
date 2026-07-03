@@ -166,6 +166,17 @@ export function humanScopeLabel(note: Pick<LtmNote, "scope">, chatLookup?: Map<s
 
 export function humanRelationLabel(relation: string) {
   if (relation === "extracted_from") return "Source";
+  if (relation === "occurred_in") return "Occurred in";
+  if (relation === "triggered_by") return "Triggered by";
+  if (relation === "resolved_in") return "Resolved in";
+  if (relation === "evidenced_by") return "Evidenced by";
+  if (relation === "affects_relationship") return "Affects relationship";
+  if (relation === "affects_character") return "Affects character";
+  if (relation === "caused_by") return "Caused by";
+  if (relation === "involves") return "Involves";
+  if (relation === "blocks") return "Blocks";
+  if (relation === "planted_in") return "Planted in";
+  if (relation === "paid_off_in") return "Paid off in";
   if (relation === "timeline_event" || relation.includes("timeline")) return "Timeline";
   if (relation === "source" || relation === "source_note") return "Source";
   return "Related memory";

@@ -26,10 +26,7 @@ export const ltmEvidenceUnitStatusSchema = z.enum(["active", "resolved", "archiv
 export const ltmEvidenceUnitBucketSchema = z.enum([
   "timeline_event",
   "character_fact",
-  "character_state",
-  "relationship_event",
   "relationship_state",
-  "relationship_conflict",
   "world_fact",
   "thread",
   "tone",
@@ -335,9 +332,48 @@ export const ltmNoteTransferPreviewResponseSchema = z
 export const ltmLinkSchema = z
   .object({
     target: ltmNoteIdSchema,
-    relation: ltmIdentifierSchema,
+    relation: z.enum([
+      "occurred_in",
+      "triggered_by",
+      "resolved_in",
+      "evidenced_by",
+      "affects_relationship",
+      "affects_character",
+      "caused_by",
+      "involves",
+      "blocks",
+      "planted_in",
+      "paid_off_in",
+      "extracted_from",
+    ]),
+    aspect: z.string().max(50).optional(),
   })
   .strict();
+
+/**
+ * Structured extraction importance. Used by compilation, UI editing, and
+ * retrieval weighting instead of encoding markers into section text.
+ */
+export const ltmImportanceSchema = z.enum(["critical", "major", "moderate", "minor"]);
+
+/**
+ * Relationship dimensions are optional 0-100 scores. Omitted values are treated
+ * as the neutral baseline by consumers.
+ */
+export const ltmRelationshipDimensionsSchema = z
+  .object({
+    trust: z.number().int().min(0).max(100).optional(),
+    intimacy: z.number().int().min(0).max(100).optional(),
+    tension: z.number().int().min(0).max(100).optional(),
+    hostility: z.number().int().min(0).max(100).optional(),
+    dependency: z.number().int().min(0).max(100).optional(),
+    affection: z.number().int().min(0).max(100).optional(),
+    lust: z.number().int().min(0).max(100).optional(),
+    protectiveness: z.number().int().min(0).max(100).optional(),
+  })
+  .strict();
+
+export const ltmRelationshipDimensionChangesSchema = z.record(z.number().int().min(-100).max(100));
 
 export const ltmEvidenceUnitSchema = z
   .object({
@@ -346,6 +382,7 @@ export const ltmEvidenceUnitSchema = z
     subjectId: ltmIdentifierSchema,
     sectionKey: ltmSectionKeySchema,
     text: z.string().min(1).max(2_000),
+    importance: ltmImportanceSchema.default("moderate"),
     keywords: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
     evidence: z.array(z.string().min(1).max(240)).min(1).max(20),
     confidence: z.number().finite().min(0).max(1),
@@ -354,15 +391,24 @@ export const ltmEvidenceUnitSchema = z
     links: z.array(ltmLinkSchema).max(50).default([]),
     mergeHint: z.string().min(1).max(240).optional(),
     sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
+    dimensions: ltmRelationshipDimensionsSchema.optional(),
+    dimensionChanges: ltmRelationshipDimensionChangesSchema.optional(),
   })
   .strip();
 
+/**
+ * Compiled note sections store metadata as structured fields. The text remains
+ * user-editable prose; callers must not parse importance or dimensions from it.
+ */
 export const ltmSectionSchema = z
   .object({
     text: z.string().min(1).max(20_000),
     updatedAt: ltmIsoTimestampSchema,
     salience: z.number().finite().min(0).max(1).optional(),
     confidence: z.number().finite().min(0).max(1).optional(),
+    importance: ltmImportanceSchema.optional(),
+    dimensions: ltmRelationshipDimensionsSchema.optional(),
+    dimensionChanges: ltmRelationshipDimensionChangesSchema.optional(),
     evidence: z.array(z.string().min(1).max(240)).max(100).optional(),
   })
   .strip();
@@ -660,6 +706,9 @@ export const ltmDraftMutationSchema = z.discriminatedUnion("kind", [
       sectionKey: ltmSectionKeySchema,
       text: z.string().min(1).max(20_000),
       salience: z.number().finite().min(0).max(1).optional(),
+      importance: ltmImportanceSchema.optional(),
+      dimensions: ltmRelationshipDimensionsSchema.optional(),
+      dimensionChanges: ltmRelationshipDimensionChangesSchema.optional(),
     })
     .strip(),
   ltmDraftMutationBaseSchema
@@ -801,6 +850,9 @@ export type LtmNoteType = z.infer<typeof ltmNoteTypeSchema>;
 export type LtmStatus = z.infer<typeof ltmStatusSchema>;
 export type LtmEvidenceUnitStatus = z.infer<typeof ltmEvidenceUnitStatusSchema>;
 export type LtmEvidenceUnitBucket = z.infer<typeof ltmEvidenceUnitBucketSchema>;
+export type LtmImportance = z.infer<typeof ltmImportanceSchema>;
+export type LtmRelationshipDimensions = z.infer<typeof ltmRelationshipDimensionsSchema>;
+export type LtmRelationshipDimensionChanges = z.infer<typeof ltmRelationshipDimensionChangesSchema>;
 export type LtmExtractionReasoningEffort = z.infer<typeof ltmExtractionReasoningEffortSchema>;
 export type LtmExtractionVerbosity = z.infer<typeof ltmExtractionVerbositySchema>;
 export type LtmGlobalSettings = z.infer<typeof ltmGlobalSettingsSchema>;

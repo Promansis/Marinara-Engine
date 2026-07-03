@@ -11,7 +11,7 @@ import type {
   LtmSection,
   LtmStatus,
 } from "@marinara-engine/shared";
-import { isLtmSourceLikeNote, LTM_DRAFT_MUTATION_LIMIT, QUEST_THREAD_SECTION_KEYS } from "@marinara-engine/shared";
+import { isLtmSourceLikeNote, LTM_DRAFT_MUTATION_LIMIT, QUEST_THREAD_SECTION_KEYS, uniqueLinks } from "@marinara-engine/shared";
 import { mergeKeywords } from "./keyword-extract.js";
 import { noteIdForEvidenceUnit, riskForEvidenceUnit } from "./evidence-unit-validation.js";
 import { uniqueStrings } from "./ltm-utils.js";
@@ -53,10 +53,7 @@ type LtmCompilerLifecycle =
 const LTM_BUCKET_LIFECYCLE: Record<LtmEvidenceUnit["bucket"], LtmCompilerLifecycle> = {
   timeline_event: "cumulative",
   character_fact: "superseding",
-  character_state: "superseding",
-  relationship_event: "cumulative",
   relationship_state: "superseding",
-  relationship_conflict: "superseding",
   world_fact: "superseding",
   thread: "rolling_until_resolved",
   tone: "superseding",
@@ -138,6 +135,9 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
           sectionKey,
           text: section.text,
           salience: section.salience,
+          importance: section.importance,
+          dimensions: section.dimensions,
+          dimensionChanges: section.dimensionChanges,
         });
       } else {
         const sectionUnits = unitsForSection(units, sectionKey);
@@ -198,7 +198,12 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
 
     for (const link of links) {
       if (
-        !existing.links.some((candidate) => candidate.target === link.target && candidate.relation === link.relation)
+        !existing.links.some(
+          (candidate) =>
+            candidate.target === link.target &&
+            candidate.relation === link.relation &&
+            candidate.aspect === link.aspect,
+        )
       ) {
         mutations.push({
           id: randomUUID(),
@@ -282,6 +287,9 @@ function sectionsForUnits(units: LtmEvidenceUnit[], existing: LtmNote | undefine
       updatedAt: timestamp,
       salience: Math.max(sections[sectionKey]?.salience ?? 0, unit.salience),
       confidence: Math.max(sections[sectionKey]?.confidence ?? 0, unit.confidence),
+      importance: highestImportance(sections[sectionKey]?.importance, unit.importance),
+      dimensions: unit.dimensions ?? sections[sectionKey]?.dimensions,
+      dimensionChanges: unit.dimensionChanges ?? sections[sectionKey]?.dimensionChanges,
       evidence: uniqueStrings([
         ...(sections[sectionKey]?.evidence ?? []),
         ...(existingSection?.evidence ?? []),
@@ -332,13 +340,27 @@ function sectionsForUnits(units: LtmEvidenceUnit[], existing: LtmNote | undefine
 
 function sectionKeyForUnit(unit: LtmEvidenceUnit) {
   if (unit.bucket === "timeline_event") return unit.sectionKey || "event";
-  if (unit.bucket === "relationship_event") return "history";
   if (unit.bucket === "relationship_state") return "state";
-  if (unit.bucket === "character_state") return "current_state";
   if (unit.bucket === "character_fact") return unit.sectionKey || "facts";
   if (unit.bucket === "tone") return "observations";
   if ((unit.bucket === "thread") && unit.status === "resolved") return "summary";
   return unit.sectionKey;
+}
+
+const IMPORTANCE_RANK: Record<NonNullable<LtmSection["importance"]>, number> = {
+  critical: 4,
+  major: 3,
+  moderate: 2,
+  minor: 1,
+};
+
+function highestImportance(
+  existing: LtmSection["importance"] | undefined,
+  incoming: LtmSection["importance"] | undefined,
+) {
+  if (!incoming) return existing;
+  if (!existing) return incoming;
+  return IMPORTANCE_RANK[incoming] > IMPORTANCE_RANK[existing] ? incoming : existing;
 }
 
 function cumulativeLine(unit: LtmEvidenceUnit) {
@@ -464,16 +486,4 @@ function maxRisk(risks: LtmDraftRisk[]): LtmDraftRisk {
   if (risks.includes("high")) return "high";
   if (risks.includes("medium")) return "medium";
   return "low";
-}
-
-
-
-function uniqueLinks(links: LtmEvidenceUnit["links"]) {
-  const seen = new Set<string>();
-  return links.filter((link) => {
-    const key = `${link.target}\0${link.relation}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
 }

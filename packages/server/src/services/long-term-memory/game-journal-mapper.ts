@@ -37,6 +37,7 @@ function unitBase(
     evidence: extra.evidence ?? [`chat:${ctx.chatId}`],
     confidence: 0.95,
     salience: 0.7,
+    importance: extra.importance ?? "moderate",
     status: extra.status ?? "active",
     links: extra.links ?? [],
     mergeHint: extra.mergeHint,
@@ -142,7 +143,7 @@ function mapNpcLog(
     const evidence = [`npc_log:${npc.npcName}`, `chat:${ctx.chatId}`];
     const text = `${npc.npcName}: ${npc.interactions.join("; ")}`;
     return [
-      unitBase("relationship_event", subjectId, "history", text, ctx, { evidence }),
+      unitBase("timeline_event", subjectId, "event", text, ctx, { evidence }),
     ];
   });
 }
@@ -183,7 +184,7 @@ function mapSessionSummary(summary: SessionSummary, ctx: GameJournalMappingConte
 
   if (summary.partyDynamics.trim()) {
     units.push(
-      unitBase("relationship_event", "party", "history", summary.partyDynamics, ctx, {
+      unitBase("relationship_state", "party", "state", summary.partyDynamics, ctx, {
         evidence: sessionEvidence,
         mergeHint: `Session ${summary.sessionNumber} party dynamics`,
       }),
@@ -192,7 +193,7 @@ function mapSessionSummary(summary: SessionSummary, ctx: GameJournalMappingConte
 
   if (summary.partyState.trim()) {
     units.push(
-      unitBase("character_fact", "party", "current_state", summary.partyState, ctx, {
+      unitBase("character_fact", "party", "state", summary.partyState, ctx, {
         evidence: sessionEvidence,
         mergeHint: `Session ${summary.sessionNumber} party state`,
       }),
@@ -213,7 +214,7 @@ function mapSessionSummary(summary: SessionSummary, ctx: GameJournalMappingConte
     if (!moment.trim()) continue;
     const slug = slugify(moment, "moment");
     units.push(
-      unitBase("relationship_event", `char_${slug}`, "history", moment, ctx, {
+      unitBase("timeline_event", `char_${slug}`, "event", moment, ctx, {
         evidence: sessionEvidence,
       }),
     );
@@ -233,7 +234,7 @@ function mapSessionSummary(summary: SessionSummary, ctx: GameJournalMappingConte
     if (!update.trim()) continue;
     const slug = slugify(update, "npc_update");
     units.push(
-      unitBase("relationship_event", `npc_${slug}`, "history", update, ctx, {
+      unitBase("timeline_event", `npc_${slug}`, "event", update, ctx, {
         evidence: sessionEvidence,
       }),
     );

@@ -28,18 +28,16 @@ import { DEFAULT_LTM_EXTRACTION_PROMPT } from "@marinara-engine/shared";
 import { stableJsonHash } from "./chunking.js";
 import { recordLtmDebugEvent } from "./debug-log.js";
 import type { LtmExtractionDiagnostic } from "./diagnostics.js";
+import { deduplicateUnits } from "./dedup.js";
 import { compileLtmEvidenceUnits } from "./evidence-unit-compiler.js";
 import type { LtmSuggestionCapMetadata } from "./evidence-unit-compiler.js";
 import { validateLtmEvidenceUnits } from "./evidence-unit-validation.js";
 
 const LTM_EXTRACTION_BUCKET_SCAN_ORDER = [
   "timeline_event",
-  "relationship_event",
   "relationship_state",
-  "relationship_conflict",
   "thread",
   "character_fact",
-  "character_state",
   "world_fact",
   "tone",
   "anchor",
@@ -47,9 +45,7 @@ const LTM_EXTRACTION_BUCKET_SCAN_ORDER = [
 export const DEFAULT_LTM_EVIDENCE_UNIT_ALLOWED_BUCKETS = [
   "timeline_event",
   "character_fact",
-  "relationship_event",
   "relationship_state",
-  "relationship_conflict",
   "world_fact",
   "thread",
   "tone",
@@ -348,10 +344,7 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
   const allBucketDescriptions: Record<string, string> = {
     timeline_event: modeDescs?.timeline_event ?? "source-summary scene/plot pivot, decision, action, discovery, fight outcome, promise, arrival, or departure; not the live current scene",
     character_fact: modeDescs?.character_fact ?? "durable character identity/trait/role/affiliation/backstory/belief/permanent status/development/ability/item/exact voice quote; not ordinary scene action or transient condition",
-    character_state: modeDescs?.character_state ?? "legacy/manual current character condition only; source-summary extraction must not use this stream",
-    relationship_event: modeDescs?.relationship_event ?? "evidence-backed interpersonal event or history item",
-    relationship_state: modeDescs?.relationship_state ?? "current reduced relationship state backed by same-pass relationship_event or existing relationship note",
-    relationship_conflict: modeDescs?.relationship_conflict ?? "unresolved contradiction or instability",
+    relationship_state: modeDescs?.relationship_state ?? "relationship state or dimension change backed by a caused_by event link or existing relationship note",
     world_fact: modeDescs?.world_fact ?? "stable world/lore fact",
     thread: modeDescs?.thread ?? "unresolved situation, question, tension, or goal with a clear future resolver",
     tone: modeDescs?.tone ?? "durable world/session atmospheric register or recurring style only",
@@ -632,10 +625,15 @@ export function compileEvidenceUnitExtraction(options: {
     expectedSourceHash: options.sourceHash,
   });
   const keptUnits = validated.keptUnits;
+  const dedupResult = deduplicateUnits({
+    units: keptUnits,
+    existingNotes: options.existingNotes,
+    options: { withinExtraction: true },
+  });
   const droppedCandidates = [...(options.parserDroppedCandidates ?? []), ...validated.droppedCandidates];
-  const compiled = keptUnits.length
+  const compiled = dedupResult.deduplicated.length
     ? compileLtmEvidenceUnits({
-        units: keptUnits,
+        units: dedupResult.deduplicated,
         existingNotes: options.existingNotes,
         scope: options.scope,
         modes: options.modes,
@@ -648,7 +646,7 @@ export function compileEvidenceUnitExtraction(options: {
         suggestionCap: { limit: LTM_DRAFT_MUTATION_LIMIT, generated: 0, returned: 0, capped: 0 },
       };
   const { suggestionCap, ...compiledResponse } = compiled;
-  const diagnostics = [...validated.diagnostics];
+  const diagnostics = [...validated.diagnostics, ...dedupResult.diagnostics];
   if (suggestionCap.capped > 0) {
     diagnostics.push({
       severity: "warning",
@@ -659,7 +657,7 @@ export function compileEvidenceUnitExtraction(options: {
   const totalCandidates = options.totalCandidates ?? options.unitResponse.units.length + droppedCandidates.length;
   const outcome = summarizeExtractionOutcome({
     totalCandidates,
-    keptUnits: keptUnits.length,
+    keptUnits: dedupResult.deduplicated.length,
     droppedCandidates,
     mutations: compiledResponse.mutations.length,
     suggestionCap,

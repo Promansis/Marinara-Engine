@@ -31,7 +31,7 @@ function readJsonObject(raw: unknown): Record<string, unknown> {
 function uniqueLinks(links: LtmNote["links"]) {
   const seen = new Set<string>();
   return links.filter((link) => {
-    const key = `${link.target}\u0000${link.relation}`;
+    const key = `${link.target}\u0000${link.relation}\u0000${link.aspect ?? ""}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -103,7 +103,7 @@ function mergeScopes(existing: LtmNote["scope"], incoming: LtmNote["scope"]) {
 }
 
 function withEvidence(
-  section: Pick<LtmNote["sections"][string], "text" | "updatedAt" | "salience" | "confidence">,
+  section: LtmNote["sections"][string],
   evidence: string[],
 ): LtmNote["sections"][string] {
   return {
@@ -142,6 +142,9 @@ function mergeSection(
       updatedAt: nowIso(),
       salience: Math.max(existing?.salience ?? 0, incoming.salience ?? 0) || undefined,
       confidence: Math.max(existing?.confidence ?? 0, incoming.confidence ?? 0) || undefined,
+      importance: incoming.importance ?? existing?.importance,
+      dimensions: incoming.dimensions ?? existing?.dimensions,
+      dimensionChanges: incoming.dimensionChanges ?? existing?.dimensionChanges,
     },
     [...(existing?.evidence ?? []), ...(incoming.evidence ?? [])],
   );
@@ -222,6 +225,9 @@ async function applyMutation(
             updatedAt: nowIso(),
             salience: mutation.salience ?? existingSection?.salience,
             confidence: Math.max(existingSection?.confidence ?? 0, mutation.confidence),
+            importance: mutation.importance ?? existingSection?.importance,
+            dimensions: mutation.dimensions ?? existingSection?.dimensions,
+            dimensionChanges: mutation.dimensionChanges ?? existingSection?.dimensionChanges,
           },
           mutation.evidence,
         ),

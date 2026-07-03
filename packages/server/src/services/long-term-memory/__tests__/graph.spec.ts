@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildLtmGraphIndex, expandLtmGraph } from "../graph.js";
-import type { LtmNote } from "@marinara-engine/shared";
+import type { LtmLink, LtmNote } from "@marinara-engine/shared";
 import type { LtmMemoryChunk } from "../chunking.js";
 
-function note(id: string, links: Array<{ target: string; relation: string }> = []): LtmNote {
+function note(id: string, links: LtmLink[] = []): LtmNote {
   return { id, type: "character", status: "active", tags: [], keywords: [], links, sections: {}, scope: {}, modes: ["roleplay"], version: 1, createdAt: "2024-01-01T00:00:00.000Z", updatedAt: "2024-01-01T00:00:00.000Z" };
 }
 
@@ -13,7 +13,7 @@ function chunk(noteId: string, chunkId = `${noteId}_chunk`): LtmMemoryChunk {
 }
 
 test("buildLtmGraphIndex — correct edges from note links", () => {
-  const notes = [note("a", [{ target: "b", relation: "knows" }]), note("b")];
+  const notes = [note("a", [{ target: "b", relation: "involves" }]), note("b")];
   const result = buildLtmGraphIndex(notes, [chunk("a", "a_chunk"), chunk("b", "b_chunk")]);
   const aNode = result.nodes.a!;
   const bNode = result.nodes.b!;
@@ -23,8 +23,8 @@ test("buildLtmGraphIndex — correct edges from note links", () => {
 
 test("buildLtmGraphIndex — bidirectional adjacency", () => {
   const notes = [
-    note("a", [{ target: "b", relation: "knows" }]),
-    note("b", [{ target: "a", relation: "friend" }]),
+    note("a", [{ target: "b", relation: "involves" }]),
+    note("b", [{ target: "a", relation: "involves" }]),
   ];
   const result = buildLtmGraphIndex(notes, [chunk("a"), chunk("b")]);
   assert.equal(result.nodes.a?.outgoing.length, 1);
@@ -35,7 +35,7 @@ test("buildLtmGraphIndex — bidirectional adjacency", () => {
 
 test("expandLtmGraph — BFS returns correct nodes at distance 1", () => {
   const notes = [
-    note("a", [{ target: "b", relation: "knows" }, { target: "c", relation: "knows" }]),
+    note("a", [{ target: "b", relation: "involves" }, { target: "c", relation: "involves" }]),
     note("b"),
     note("c"),
   ];
@@ -47,8 +47,8 @@ test("expandLtmGraph — BFS returns correct nodes at distance 1", () => {
 
 test("expandLtmGraph — respects max distance", () => {
   const notes = [
-    note("a", [{ target: "b", relation: "knows" }]),
-    note("b", [{ target: "c", relation: "knows" }]),
+    note("a", [{ target: "b", relation: "involves" }]),
+    note("b", [{ target: "c", relation: "involves" }]),
     note("c"),
   ];
   const graph = buildLtmGraphIndex(notes, [chunk("a"), chunk("b"), chunk("c")]);
@@ -61,8 +61,8 @@ test("expandLtmGraph — respects max distance", () => {
 
 test("expandLtmGraph — handles cycles without infinite loop", () => {
   const notes = [
-    note("a", [{ target: "b", relation: "rel" }]),
-    note("b", [{ target: "a", relation: "rel" }]),
+    note("a", [{ target: "b", relation: "involves" }]),
+    note("b", [{ target: "a", relation: "involves" }]),
   ];
   const graph = buildLtmGraphIndex(notes, [chunk("a"), chunk("b")]);
   const results = expandLtmGraph(graph, ["a"], { maxHops: 3 });
@@ -81,8 +81,8 @@ test("expandLtmGraph — seed not in graph returns []", () => {
 
 test("expandLtmGraph — score decreases with distance", () => {
   const notes = [
-    note("a", [{ target: "b", relation: "rel" }]),
-    note("b", [{ target: "c", relation: "rel" }]),
+    note("a", [{ target: "b", relation: "involves" }]),
+    note("b", [{ target: "c", relation: "involves" }]),
     note("c"),
   ];
   const graph = buildLtmGraphIndex(notes, [chunk("a"), chunk("b"), chunk("c")]);

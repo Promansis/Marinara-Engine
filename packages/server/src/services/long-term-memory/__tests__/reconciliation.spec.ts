@@ -1568,7 +1568,7 @@ test("source extraction duplicate new state drafts replace superseding sections 
 
     const firstResponse = compileLtmEvidenceUnits({
       units: [
-        evidenceUnit("character_state", {
+        evidenceUnit("character_fact", {
           subjectId: "mara",
           text: "Mara is wounded.",
         }),
@@ -1580,7 +1580,7 @@ test("source extraction duplicate new state drafts replace superseding sections 
     });
     const secondResponse = compileLtmEvidenceUnits({
       units: [
-        evidenceUnit("character_state", {
+        evidenceUnit("character_fact", {
           subjectId: "mara",
           text: "Mara steadies herself.",
         }),
@@ -1737,7 +1737,7 @@ test("non-thread resolved unit coerces to active and self-heals stuck resolved n
 
     const response = compileLtmEvidenceUnits({
       units: [
-        evidenceUnit("relationship_event", {
+        evidenceUnit("timeline_event", {
           subjectId: "rel_mara_jules",
           sectionKey: "history",
           text: "Mara and Jules reconciled after the ordeal.",
@@ -2167,7 +2167,7 @@ test("derived scope apply merges only extracted_from children", async () => {
         modes: ["roleplay"],
         scope: { chatId: "chat_old" },
         tags: [],
-        links: [{ target: "scene_source_links", relation: "mentioned_in" }],
+        links: [{ target: "scene_source_links", relation: "evidenced_by" }],
         sections: {
           setup: {
             text: "Unrelated thread.",
@@ -2664,7 +2664,7 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
           units: [
             {
               id: randomUUID(),
-              bucket: "relationship_event",
+              bucket: "timeline_event",
               subjectId: "rika_damo",
               sectionKey: "history",
               text: "Alex and Casey study together in the library.",
@@ -2702,7 +2702,7 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
   assert.equal(userPayload.unitFields.sourceHash, sourceHash);
   assert.deepEqual(userPayload.streamScanOrder.slice(0, 4), [
     "timeline_event",
-    "relationship_event",
+    "timeline_event",
     "relationship_state",
     "relationship_conflict",
   ]);
@@ -2716,7 +2716,7 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
   assert.deepEqual(userPayload.allowedStreams, [
     "timeline_event",
     "character_fact",
-    "relationship_event",
+    "timeline_event",
     "relationship_state",
     "relationship_conflict",
     "world_fact",
@@ -2742,7 +2742,7 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
   assert(!payloadJson.includes("relationship_arc"));
   assert(!payloadJson.includes("current_scene"));
   assert(!payloadJson.includes("current_state"));
-  assert(!payloadJson.includes("character_state"));
+  assert(!payloadJson.includes("character_fact"));
   assert(!payloadJson.includes("boundary"));
   assert(!payloadJson.includes("preference"));
   assert(!payloadJson.includes("550e8400-e29b-41d4-a716-446655440000"));
@@ -2852,7 +2852,7 @@ test("evidence unit extraction accepts and compiles multiple typed buckets", asy
         units: [
           {
             id: randomUUID(),
-            bucket: "relationship_event",
+            bucket: "timeline_event",
             subjectId: "mara_jules",
             sectionKey: "history",
             text: "Mara trusts Jules with the tower key.",
@@ -3108,7 +3108,7 @@ test("evidence unit extraction validation rejects copied placeholder values", ()
         confidence: 0.9,
         salience: 0.7,
         status: "active",
-        links: [{ target: "target_note_id", relation: "related_to" }],
+        links: [{ target: "target_note_id", relation: "involves" }],
         mergeHint: "optional note for deterministic compiler",
         sourceHash,
       }),
@@ -3158,7 +3158,7 @@ test("source-summary extraction validation drops transient character state candi
     unitResponse: {
       summary: "Transient condition",
       units: [
-        evidenceUnit("character_state", {
+        evidenceUnit("character_fact", {
           subjectId: "mara",
           sectionKey: "current_state",
           text: "Mara is wounded but steadies herself before entering the archive.",
@@ -3287,7 +3287,7 @@ test("relationship state candidates require relationship history support", () =>
     unitResponse: {
       summary: "Supported state",
       units: [
-        evidenceUnit("relationship_event", {
+        evidenceUnit("timeline_event", {
           subjectId: "mara_jules",
           sectionKey: "history",
           text: "Mara trusted Jules after he returned the archive key.",
@@ -3341,7 +3341,7 @@ test("relationship state support ignores same-pass events dropped during validat
     unitResponse: {
       summary: "Invalid support",
       units: [
-        evidenceUnit("relationship_event", {
+        evidenceUnit("timeline_event", {
           subjectId: "mara_jules",
           sectionKey: "history",
           text: "Mara trusted Jules after he returned the archive key.",
@@ -3581,7 +3581,7 @@ test("source note extraction skips draft creation when every candidate is droppe
               confidence: 0.9,
               salience: 0.7,
               status: "active",
-              links: [{ target: "target_note_id", relation: "related_to" }],
+              links: [{ target: "target_note_id", relation: "involves" }],
               sourceHash: sourceHashForEvidenceUnitExtraction((await storage.getNote("scene_source_test"))!),
             },
           ],
@@ -3894,7 +3894,7 @@ test("archived notes stay in the vault and remain indexed", async () => {
         modes: ["roleplay"],
         scope: {},
         tags: ["typed_memory"],
-        links: [{ target: "world_active_neighbor", relation: "related_to" }],
+        links: [{ target: "world_active_neighbor", relation: "involves" }],
         sections: {
           facts: {
             text: "Archived lore stays visible.",
@@ -3912,7 +3912,7 @@ test("archived notes stay in the vault and remain indexed", async () => {
         modes: ["roleplay"],
         scope: {},
         tags: ["typed_memory"],
-        links: [{ target: "world_archive_sealed", relation: "related_to" }],
+        links: [{ target: "world_archive_sealed", relation: "involves" }],
         sections: {
           facts: {
             text: "Live lore remains visible.",
@@ -4122,7 +4122,7 @@ test("typed note type changes rewrite note links and pending draft references", 
         modes: ["roleplay"],
         scope: {},
         tags: ["typed_memory"],
-        links: [{ target: "world_reference_target", relation: "related_to" }],
+        links: [{ target: "world_reference_target", relation: "involves" }],
         sections: {
           facts: {
             text: "Holds a link.",
@@ -4153,7 +4153,7 @@ test("typed note type changes rewrite note links and pending draft references", 
             id: randomUUID(),
             kind: "add_link",
             noteId: "char_reference_holder",
-            link: { target: "world_reference_target", relation: "related_to" },
+            link: { target: "world_reference_target", relation: "involves" },
             risk: "medium",
             confidence: 0.7,
             summary: "Link target",
@@ -4166,7 +4166,7 @@ test("typed note type changes rewrite note links and pending draft references", 
     await storage.updateNote("world_reference_target", { type: "thread" }, { suppressEvent: true });
 
     const holder = await storage.getNote("char_reference_holder");
-    assert.deepEqual(holder?.links, [{ target: "thread_reference_target", relation: "related_to" }]);
+    assert.deepEqual(holder?.links, [{ target: "thread_reference_target", relation: "involves" }]);
     const rewrittenDraft = await draftStore.getDraft(draft.id);
     assert.equal(rewrittenDraft?.mutations[0]?.kind, "append_section");
     assert.equal(
@@ -4685,8 +4685,8 @@ test("evidence unit compiler maps buckets to typed memory draft mutations", () =
   const cases: Array<[LtmEvidenceUnit["bucket"], string, string]> = [
     ["timeline_event", "timeline_mara_jules_archive", "timeline_event"],
     ["character_fact", "char_mara", "character"],
-    ["character_state", "char_mara", "character"],
-    ["relationship_event", "rel_mara_jules", "relationship"],
+    ["character_fact", "char_mara", "character"],
+    ["timeline_event", "rel_mara_jules", "relationship"],
     ["relationship_state", "rel_mara_jules", "relationship"],
     ["world_fact", "world_veil", "world"],
     ["thread", "thread_missing_key", "thread"],
@@ -4813,7 +4813,7 @@ test("timeline event units create historical notes and typed memories link to th
         sectionKey: "event",
         text: "Mara confronts Jules in the archive.",
       }),
-      evidenceUnit("relationship_event", {
+      evidenceUnit("timeline_event", {
         subjectId: "mara_jules",
         sectionKey: "history",
         text: "Mara trusts Jules with the hidden key during the archive confrontation.",
@@ -4940,12 +4940,12 @@ test("evidence unit compiler applies explicit bucket lifecycle rules", () => {
 
   const response = compileLtmEvidenceUnits({
     units: [
-      evidenceUnit("relationship_event", {
+      evidenceUnit("timeline_event", {
         subjectId: "mara_jules",
         sectionKey: "history",
         text: "Mara trusts Jules again when he returns the tower archive key.",
       }),
-      evidenceUnit("character_state", {
+      evidenceUnit("character_fact", {
         subjectId: "mara",
         sectionKey: "current_state",
         text: "Mara is openly relieved around Jules.",
@@ -5025,7 +5025,7 @@ test("evidence unit compiler keeps relationship state unchanged when only new ev
 
   const response = compileLtmEvidenceUnits({
     units: [
-      evidenceUnit("relationship_event", {
+      evidenceUnit("timeline_event", {
         subjectId: "mara_jules",
         sectionKey: "history",
         text: "Mara trusts Jules again when he protects her and returns the tower archive key.",
@@ -5076,7 +5076,7 @@ test("evidence unit compiler skips duplicate cumulative lines from overlapping s
 
   const response = compileLtmEvidenceUnits({
     units: [
-      evidenceUnit("relationship_event", {
+      evidenceUnit("timeline_event", {
         subjectId: "mara_jules",
         sectionKey: "history",
         text: "mara trusted jules after he returned the archive key",
@@ -5411,7 +5411,7 @@ test("source extraction updates existing typed note from another source instead 
       unitResponse: {
         summary: "Second relationship event",
         units: [
-          evidenceUnit("relationship_event", {
+          evidenceUnit("timeline_event", {
             subjectId: "mara_jules",
             sectionKey: "history",
             text: secondSourceText,
@@ -5536,7 +5536,7 @@ test("source note extraction target lookup prevents duplicate creates across sou
           units: [
             {
               id: randomUUID(),
-              bucket: "relationship_event",
+              bucket: "timeline_event",
               subjectId: "mara_jules",
               sectionKey: "history",
               text: secondSourceText,
@@ -5633,7 +5633,7 @@ test("source note extraction target lookup updates matching scoped notes only", 
           units: [
             {
               id: randomUUID(),
-              bucket: "relationship_event",
+              bucket: "timeline_event",
               subjectId: "mara_jules",
               sectionKey: "history",
               text: secondSourceText,
@@ -5748,7 +5748,7 @@ test("source note extraction keeps in-scope targets and drops out-of-scope targe
           units: [
             {
               id: randomUUID(),
-              bucket: "relationship_event",
+              bucket: "timeline_event",
               subjectId: "mara_jules",
               sectionKey: "history",
               text: "Mara trusts Jules again.",
@@ -6335,7 +6335,7 @@ test("generation graph recall is not seeded by scope-only metadata", async () =>
         modes: ["roleplay"],
         scope: { chatId: "chat_graph_filter_only" },
         tags: ["typed_memory"],
-        links: [{ target: "world_graph_neighbor", relation: "related" }],
+        links: [{ target: "world_graph_neighbor", relation: "involves" }],
         sections: {
           facts: {
             text: "A scoped anchor about porcelain cups.",

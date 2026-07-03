@@ -12,7 +12,44 @@ export const DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS = 12;
 export const DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS = 4_096;
 export const LTM_DRAFT_MUTATION_LIMIT = 25;
 
+export const IMPORTANCE_LEVELS = {
+  critical: { emoji: "🔴", value: 5, label: "Critical" },
+  major: { emoji: "🟠", value: 4, label: "Major" },
+  moderate: { emoji: "🟡", value: 3, label: "Moderate" },
+  minor: { emoji: "🟢", value: 2, label: "Minor" },
+} as const;
+
+export const RELATIONSHIP_DIMENSIONS = [
+  "trust",
+  "intimacy",
+  "tension",
+  "hostility",
+  "dependency",
+  "affection",
+  "lust",
+  "protectiveness",
+] as const;
+
+export const DEFAULT_RELATIONSHIP_BASELINE = 50;
+
 export const QUEST_THREAD_SECTION_KEYS = ["objective", "stage", "resolution"] as const;
+
+export const CORE_LTM_EXTRACTION_RULES = [
+  "Use exactly one extraction pass for all durable memory streams.",
+  "Allowed buckets are timeline_event, character_fact, relationship_state, world_fact, thread, tone, and anchor.",
+  "Never emit removed relationship-history, relationship-conflict, transient-character, or live-state buckets.",
+  "Timeline events are canonical story history. Relationship and character facts should link to the event with caused_by, affects_relationship, or affects_character instead of duplicating event prose.",
+  "Every unit must include importance: critical, major, moderate, or minor.",
+  "Relationship_state units may include dimensions on a 0-100 scale and dimensionChanges from -100 to 100. Omit dimensions that stay at the neutral baseline.",
+  "Relationship_state units describing a change must include a caused_by link to a timeline_event from the same extraction or an existing note.",
+  "Do not emit the same fact twice. Near-duplicate units in the same extraction are rejected.",
+].join("\n");
+
+export const LTM_EXTRACTION_EXAMPLE = [
+  "Example unit shape:",
+  "{\"bucket\":\"timeline_event\",\"subjectId\":\"alice_confession\",\"sectionKey\":\"event\",\"text\":\"Alice confessed the map was stolen to protect Rowan.\",\"importance\":\"major\",\"links\":[{\"target\":\"char_alice\",\"relation\":\"affects_character\",\"aspect\":\"development\"}],\"confidence\":0.92,\"salience\":0.8,\"status\":\"active\"}",
+  "{\"bucket\":\"relationship_state\",\"subjectId\":\"alice_rowan\",\"sectionKey\":\"state\",\"text\":\"Alice and Rowan's trust is strained by the confession but not broken.\",\"importance\":\"major\",\"dimensions\":{\"trust\":38,\"tension\":72},\"dimensionChanges\":{\"trust\":-18,\"tension\":24},\"links\":[{\"target\":\"timeline_alice_confession\",\"relation\":\"caused_by\"}],\"confidence\":0.9,\"salience\":0.82,\"status\":\"active\"}",
+].join("\n");
 
 export const DEFAULT_LTM_EXTRACTION_PROMPT = [
   "You extract structured memory-stream evidence units from a source note.",
@@ -22,8 +59,9 @@ export const DEFAULT_LTM_EXTRACTION_PROMPT = [
   "Do not output source summaries, transcript summaries, or final write operations.",
   "Extract every distinct durable memory stream supported by the source.",
   "Emit zero or more units per stream. Prefer a few substantial units that capture the complete fact over many fragmentary observations.",
-  "Scan stream groups explicitly: timeline beats (timeline_event); relationships (relationship_event, relationship_state, relationship_conflict); open loops (thread); character facts (character_fact); world facts (world_fact); style and motifs (tone, anchor).",
-  "Use one best stream per fact. If a detail fits both a timeline and character/relationship stream, emit the plot-changing action as timeline_event or relationship_event and reserve character_fact for durable identity, backstory, permanent development, ability, item, or exact voice evidence.",
+  CORE_LTM_EXTRACTION_RULES,
+  "Scan stream groups explicitly: timeline beats (timeline_event); relationship state changes (relationship_state); open loops (thread); character facts (character_fact); world facts (world_fact); style and motifs (tone, anchor).",
+  "Use one best stream per fact. If a detail fits both a timeline and character/relationship stream, emit the plot-changing action as timeline_event and link relationship_state or character_fact to it instead of duplicating the event text.",
   "Do not duplicate the same fact across streams or sections.",
   "Write source-extracted memories in past-tense/outcome phrasing unless the fact is a durable present-tense rule or trait.",
   "",
@@ -37,12 +75,10 @@ export const DEFAULT_LTM_EXTRACTION_PROMPT = [
   "",
   "SECTION KEY CONVENTIONS:",
   "- character_fact: facts, developments, abilities, voice, or items. Never use it for ordinary actions, scene beats, decisions, arrivals, departures, promises, discoveries, relationship moments, moods, wounds, resources, aims, or location.",
-  "- relationship_event: history.",
-  "- relationship_state: state, only when backed by a same-pass relationship_event or existing relationship note.",
-  "- relationship_conflict: conflict.",
+  "- relationship_state: state. Include dimensions/dimensionChanges when the source supports them; relationship changes need a caused_by link.",
   "- world_fact: facts or items.",
   "- timeline_event: event.",
-  "- thread: summary. The text must describe an unresolved situation and what would resolve it. When the thread is marked resolved, you MUST also emit a parallel relationship_event (sectionKey history) for each affected relationship subject, or a timeline_event (sectionKey event) if no relationship subject — capturing what changed because of the resolution in past-tense outcome phrasing. Link fan-out units back to the thread note id with relation \"resolved_in\".",
+  "- thread: summary. The text must describe an unresolved situation and what would resolve it. When the thread is marked resolved, also emit a timeline_event capturing what changed in past-tense outcome phrasing. Link fan-out units back to the thread note id with relation \"resolved_in\".",
   "- tone: observations. World/session-level atmospheric register only, not one-scene mood.",
   "- anchor: the source section key. Recurring motif or planted callback only.",
   "",
@@ -53,12 +89,13 @@ export const DEFAULT_LTM_EXTRACTION_PROMPT = [
   "Do not copy schema/example placeholder values.",
   "Omit optional fields unless they are real and evidence-backed.",
   "Use timeline_event for historical source-summary scenes or beats; never call those current_scene.",
-  "Memory streams may link to timeline_event notes using occurred_in, triggered_by, resolved_in, or evidenced_by.",
+  "Memory streams may link to timeline_event notes using occurred_in, triggered_by, resolved_in, evidenced_by, caused_by, affects_character, or affects_relationship.",
   "Keep source-note provenance as source_note evidence; timeline links describe story structure, not source provenance.",
+  "Use structured importance, dimensions, and dimensionChanges fields. Do not prefix text with importance symbols or dimension labels.",
   "Use sourceHash exactly as supplied.",
   "Set confidence and salience from 0 to 1.",
   "For voice/tone quotes, quote only exact text present in the source.",
-  "Do not emit current scene, current state, character_state, relationship arc, boundary, or preference memories from source-summary extraction.",
+  "Do not emit live scene state, transient character condition, relationship arc, boundary, or preference memories from source-summary extraction.",
   "\"resolved\" status is reserved for thread memories only. Never set status \"resolved\" on relationship, character, world, timeline, tone, or anchor streams.",
   "For enum fields, choose exactly one string from the allowed arrays. Do not join multiple values with |.",
 ].join("\n");
@@ -100,7 +137,7 @@ export const DEFAULT_LTM_EXTRACTION_PROMPT_CONVERSATION = [
   "Use sourceHash exactly as supplied.",
   "Set confidence and salience from 0 to 1.",
   "Only output character_fact with sectionKey \"items\" when items are durably tied to a speaker (e.g. a pet, a house).",
-  "Do not emit timeline_event, relationship_* streams, character_state, or scene-like units.",
+  "Do not emit timeline_event, relationship_state, or scene-like units.",
   "\"resolved\" status is reserved for thread memories only.",
   "For enum fields, choose exactly one string from the allowed arrays. Do not join multiple values with |.",
 ].join("\n");
@@ -113,8 +150,9 @@ export const DEFAULT_LTM_EXTRACTION_PROMPT_GAME = [
   "Do not output source summaries, transcript summaries, or final write operations.",
   "Extract every distinct durable memory stream supported by the source.",
   "Emit zero or more units per stream. Prefer a few substantial units that capture the complete fact over many fragmentary observations.",
-  "Scan stream groups explicitly: timeline beats (timeline_event); relationships (relationship_event, relationship_state, relationship_conflict); open quests and objectives (thread); character facts (character_fact); world facts (world_fact); style and motifs (tone, anchor).",
-  "Use one best stream per fact. If a detail fits both a timeline and character/relationship stream, emit the plot-changing action as timeline_event or relationship_event and reserve character_fact for durable identity, backstory, permanent development, ability, item, or exact voice evidence.",
+  CORE_LTM_EXTRACTION_RULES,
+  "Scan stream groups explicitly: timeline beats (timeline_event); relationship state changes (relationship_state); open quests and objectives (thread); character facts (character_fact); world facts (world_fact); style and motifs (tone, anchor).",
+  "Use one best stream per fact. If a detail fits both a timeline and character/relationship stream, emit the plot-changing action as timeline_event and link relationship_state or character_fact to it instead of duplicating the event text.",
   "Do not duplicate the same fact across streams or sections.",
   "Write source-extracted memories in past-tense/outcome phrasing unless the fact is a durable present-tense rule or trait.",
   "",
@@ -136,21 +174,20 @@ export const DEFAULT_LTM_EXTRACTION_PROMPT_GAME = [
   "",
   "SECTION KEY CONVENTIONS:",
   "- character_fact: facts, developments, abilities, voice, items, or progression. Never use it for ordinary actions, scene beats, or transient conditions like HP or buffs.",
-  "- relationship_event: history.",
-  "- relationship_state: state, only when backed by a same-pass relationship_event or existing relationship note.",
-  "- relationship_conflict: conflict.",
+  "- relationship_state: state. Include dimensions/dimensionChanges when the source supports them; relationship changes need a caused_by link.",
   "- world_fact: facts or items.",
   "- timeline_event: event.",
-  "- thread: objective, stage, or summary. The text must describe an unresolved situation and what would resolve it. When the thread is marked resolved, you MUST also emit a parallel relationship_event or timeline_event capturing what changed.",
+  "- thread: objective, stage, or summary. The text must describe an unresolved situation and what would resolve it. When the thread is marked resolved, also emit a timeline_event capturing what changed.",
   "- tone: observations. World/session-level atmospheric register only, not one-scene mood.",
   "- anchor: the source section key. Recurring motif or planted callback only.",
   "",
-  "Do not track transient mechanical state such as HP, buffs, debuffs, or temporary conditions. Those belong to character_state which is manual-only and not used in extraction.",
+  "Do not track transient mechanical state such as HP, buffs, debuffs, or temporary conditions.",
   "Each unit must include at least one supplied evidence string, including source_note:<id>.",
   "Use real lowercase snake_case subjectId and sectionKey values derived from the source.",
   "Never output placeholder values.",
   "Omit optional fields unless they are real and evidence-backed.",
   "Use timeline_event for historical game beats; never call those current_scene.",
+  "Use structured importance, dimensions, and dimensionChanges fields. Do not prefix text with importance symbols or dimension labels.",
   "Use sourceHash exactly as supplied.",
   "Set confidence and salience from 0 to 1.",
   "\"resolved\" status is reserved for thread (quest) memories only. Never set status \"resolved\" on relationship, character, world, timeline, tone, or anchor streams.",
@@ -185,9 +222,7 @@ export const DEFAULT_LTM_ALLOWED_STREAMS_BY_MODE: Record<LtmMode, readonly LtmEv
   roleplay: [
     "timeline_event",
     "character_fact",
-    "relationship_event",
     "relationship_state",
-    "relationship_conflict",
     "world_fact",
     "thread",
     "tone",
@@ -203,9 +238,7 @@ export const DEFAULT_LTM_ALLOWED_STREAMS_BY_MODE: Record<LtmMode, readonly LtmEv
   game: [
     "timeline_event",
     "character_fact",
-    "relationship_event",
     "relationship_state",
-    "relationship_conflict",
     "world_fact",
     "thread",
     "tone",
@@ -217,10 +250,7 @@ export const DEFAULT_LTM_STREAM_DESCRIPTIONS_BY_MODE: Record<LtmMode, Partial<Re
   roleplay: {
     timeline_event: "source-summary scene/plot pivot, decision, action, discovery, fight outcome, promise, arrival, or departure; not the live current scene",
     character_fact: "durable character identity/trait/role/affiliation/backstory/belief/permanent status/development/ability/item/exact voice quote; not ordinary scene action or transient condition",
-    character_state: "legacy/manual current character condition only; source-summary extraction must not use this stream",
-    relationship_event: "evidence-backed interpersonal event or history item",
-    relationship_state: "current reduced relationship state backed by same-pass relationship_event or existing relationship note",
-    relationship_conflict: "unresolved contradiction or instability",
+    relationship_state: "relationship state or dimension change backed by a caused_by event link or existing relationship note",
     world_fact: "stable world/lore fact",
     thread: "unresolved situation, question, tension, or goal with a clear future resolver",
     tone: "durable world/session atmospheric register or recurring style only",
@@ -228,7 +258,6 @@ export const DEFAULT_LTM_STREAM_DESCRIPTIONS_BY_MODE: Record<LtmMode, Partial<Re
   },
   conversation: {
     character_fact: "durable user preference, trait, intent, or stated attribute; not a one-off opinion or transient mood",
-    character_state: "legacy/manual current character condition only; source-summary extraction must not use this stream",
     world_fact: "verified factual statement from the conversation",
     thread: "unresolved question, topic, or goal with a clear future resolver",
     tone: "durable conversation register or recurring style only",
@@ -237,10 +266,7 @@ export const DEFAULT_LTM_STREAM_DESCRIPTIONS_BY_MODE: Record<LtmMode, Partial<Re
   game: {
     timeline_event: "game session scene/plot pivot, decision, action, discovery, fight outcome, promise, arrival, or departure; not the live current scene",
     character_fact: "durable character identity/trait/role/affiliation/backstory/belief/permanent development/ability/item/progression/voice quote; not ordinary scene action or transient condition",
-    character_state: "legacy/manual current character condition only; source-summary extraction must not use this stream",
-    relationship_event: "evidence-backed interpersonal event or history item",
-    relationship_state: "current reduced relationship state backed by same-pass relationship_event or existing relationship note",
-    relationship_conflict: "unresolved contradiction or instability",
+    relationship_state: "relationship state or dimension change backed by a caused_by event link or existing relationship note",
     world_fact: "stable world/lore fact",
     thread: "quest objective, stage, or summary of an unresolved situation with a clear future resolver",
     tone: "durable world/session atmospheric register or recurring style only",
