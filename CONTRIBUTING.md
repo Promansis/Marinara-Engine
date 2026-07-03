@@ -247,6 +247,19 @@ Key files:
 - `packages/server/src/services/agents/long-term-memory-agent.ts` — connectionless executor registration
 - `packages/server/src/services/generation/agent-pipeline.ts` — connectionless routing
 
+### Long-Term Memory Extraction Model
+
+LTM extraction uses one structured pass over the source and emits only these evidence buckets: `timeline_event`, `character_fact`, `relationship_state`, `world_fact`, `thread`, `tone`, and `anchor`.
+
+Keep these invariants intact when changing extraction code:
+
+- Timeline events are canonical history. Relationship and character memories should link to timeline events rather than duplicating the same event text.
+- Importance is stored in `section.importance` or `unit.importance`, never as a text prefix.
+- Relationship dimensions are stored in `dimensions` and `dimensionChanges`, using the 0-100 scale and 50 baseline documented in `docs/CONFIGURATION.md`.
+- Deduplication runs after validation and before compilation, with exact and lexical lanes always available and semantic lanes allowed to degrade gracefully.
+- Retrieval still uses the existing multi-lane fusion architecture; importance is a ranking multiplier, not a replacement lane.
+- Migration and rollback instructions live in `docs/CONFIGURATION.md` and `docs/TROUBLESHOOTING.md`.
+
 ## Immediate Way Forward
 
 - Add launcher and installer smoke tests so startup parity is exercised automatically, not just by manual verification.

@@ -242,6 +242,31 @@ Outbound provider, image, TTS, DeepLX, and webhook requests reject private/LAN/m
 
 Security headers and API rate limits are enabled by default. Chat HTML is sanitized after rendering transforms; SVG uploads/proxies are not accepted for avatar/background/image upload paths.
 
+## Long-Term Memory Extraction
+
+Long-term memory extraction stores durable retrospective memories in seven buckets:
+
+- `timeline_event`: canonical story or session history.
+- `character_fact`: durable character identity, development, abilities, items, or voice.
+- `relationship_state`: current relationship state and structured dimension changes.
+- `world_fact`: stable world, lore, rules, locations, or items.
+- `thread`: unresolved or resolved story loops, quests, callbacks, and goals.
+- `tone`: durable session or world register.
+- `anchor`: recurring motifs or planted callbacks.
+
+Compiled memory sections may include `importance` as `critical`, `major`, `moderate`, or `minor`. Retrieval gives critical and major memories a small ranking boost, and minor memories a small penalty, while keeping the normal semantic, lexical, keyword, metadata, and graph lanes intact.
+
+Relationship memories can store dimensions on a 0-100 scale: `trust`, `intimacy`, `tension`, `hostility`, `dependency`, `affection`, `lust`, and `protectiveness`. A value of 50 is the neutral baseline. Sections can also store `dimensionChanges` from -100 to 100 when a memory changed the relationship.
+
+Use the migration helper after updating older LTM vaults:
+
+```bash
+pnpm ltm:migrate -- --dry-run
+pnpm ltm:migrate -- --backup=/path/to/backup
+```
+
+The first command previews changed notes. The second writes a JSON backup before updating notes through the normal `LongTermMemoryStorage` API.
+
 ## Notes
 
 - The shell launchers (`start.bat`, `start.sh`, `start-termux.sh`) source `.env` automatically. If you run `pnpm start` directly, make sure the variables are set in your environment or `.env` file.

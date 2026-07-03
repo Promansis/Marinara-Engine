@@ -15,6 +15,7 @@ import {
   listRowClassName,
   selectedListRowClassName,
 } from "./LtmFields";
+import { ImportanceBadge } from "./ImportanceBadge";
 import { StatusPill } from "./LtmPills";
 import {
   DisclosureHeader,
@@ -35,6 +36,15 @@ import {
   type LtmBucketGroup,
   type SourceSummaryGroup,
 } from "./ltm-panel-shared";
+
+const importanceRank = { critical: 4, major: 3, moderate: 2, minor: 1 } as const;
+
+function primaryImportance(note: LtmNote) {
+  return Object.values(note.sections)
+    .map((section) => section.importance)
+    .filter((importance): importance is NonNullable<typeof importance> => Boolean(importance))
+    .sort((left, right) => importanceRank[right] - importanceRank[left])[0];
+}
 
 export function NoteRow({
   note,
@@ -69,6 +79,7 @@ export function NoteRow({
     "";
   const displayTitle = title ?? friendlyNoteTitle(note);
   const showSourceSummary = isSourceSummaryNote(note);
+  const importance = primaryImportance(note);
   return (
     <article
       className={cn("group", listRowClassName, (open || bulkSelected) && selectedListRowClassName)}
@@ -99,6 +110,7 @@ export function NoteRow({
                 <StatusPill label={friendlyStatus(note.status)} tone={note.status === "active" ? "good" : "neutral"} />
               )}
               {note.extracted && <StatusPill label="Extracted" />}
+              {importance && <ImportanceBadge importance={importance} />}
               {sectionCount > 1 && <StatusPill label={`${sectionCount} details`} />}
             </div>
             {children}
@@ -229,6 +241,7 @@ export function TypeMemoryGroups({
                   const sourcesCount = sourceLinkIds(note).length;
                   const derivedCount = derivedCountBySource.get(note.id) ?? 0;
                   const selected = selectedNoteIds.has(note.id);
+                  const importance = primaryImportance(note);
                   return (
                     <article
                       key={note.id}
@@ -281,6 +294,7 @@ export function TypeMemoryGroups({
                               />
                             )}
                             {sourcesCount === 0 && note.type !== "source" && <StatusPill label="Manual" />}
+                            {importance && <ImportanceBadge importance={importance} />}
                             {isSourceSummaryNote(note) && derivedCount > 0 && (
                               <StatusPill label={`${derivedCount} memory stream${derivedCount === 1 ? "" : "s"}`} />
                             )}

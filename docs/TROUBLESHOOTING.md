@@ -181,6 +181,26 @@ Then restart Marinara and click **Reapply Cleanup** in the sprite generation rev
 
 ---
 
+## Long-Term Memory Migration Rollback
+
+The LTM migration command creates a JSON backup unless you pass `--no-backup`.
+
+To preview a migration without writing:
+
+```bash
+pnpm ltm:migrate -- --dry-run
+```
+
+To run with an explicit backup folder:
+
+```bash
+pnpm ltm:migrate -- --backup=/path/to/ltm-backups
+```
+
+If you need to roll back, stop Marinara, open the backup JSON, and restore the listed notes into the LTM vault folder for your data directory. After restoring, start Marinara and rebuild memory search from the LTM vault manager so the retrieval indexes match the restored notes.
+
+---
+
 ## Still Stuck?
 
 - Check the [open issues](https://github.com/Pasta-Devs/Marinara-Engine/issues) on GitHub.

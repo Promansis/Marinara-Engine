@@ -6,6 +6,8 @@ import {
   ltmRetrievalConfigSchema,
   isGlobalLtmScope,
   matchesLtmScope,
+  jaccardSimilarity,
+  tokenize,
   type LtmRetrievalConfig,
   type LtmScope,
 } from "@marinara-engine/shared";
@@ -30,7 +32,14 @@ const COOLDOWN_TIER_2_MINUTES = 15;
 const COOLDOWN_PENALTY_TIER_1 = 0.65;
 const COOLDOWN_PENALTY_TIER_2 = 0.8;
 const COOLDOWN_PENALTY_TIER_3 = 0.9;
-import { reciprocalRankFuse, type LtmRankLane } from "./ranking.js";
+const IMPORTANCE_SCORE_MULTIPLIER = {
+  critical: 1.3,
+  major: 1.15,
+  moderate: 1,
+  minor: 0.85,
+} as const;
+const ACTIVE_CONTEXT_DEDUP_THRESHOLD = 0.85;
+import { reciprocalRankFuse, type LtmRankedCandidate, type LtmRankLane } from "./ranking.js";
 import { readLongTermMemoryUsage } from "./usage.js";
 
 export interface RetrieveLongTermMemoryInput extends MemoryRecallEmbeddingOptions {
@@ -56,6 +65,7 @@ export interface RetrieveLongTermMemoryInput extends MemoryRecallEmbeddingOption
   keywordWeight?: number;
   metadataMode?: "filter_only";
   dedupeExactText?: boolean;
+  dedupeAgainstRecentContext?: boolean;
   applyUsageCooldown?: boolean;
 }
 
@@ -420,6 +430,51 @@ async function vectorLane(
   return { items, available: items.length > 0 };
 }
 
+function applyImportanceMultiplier(
+  ranked: LtmRankedCandidate[],
+  chunksById: Map<string, LtmMemoryChunk>,
+): LtmRankedCandidate[] {
+  const boosted = ranked.map((candidate) => {
+    const importance = chunksById.get(candidate.chunkId)?.importance;
+    if (!importance) return candidate;
+    const multiplier = IMPORTANCE_SCORE_MULTIPLIER[importance];
+    if (multiplier === 1) return candidate;
+    return {
+      ...candidate,
+      score: candidate.score * multiplier,
+      reasons: [...candidate.reasons, `importance:${importance}:${multiplier.toFixed(2)}`],
+    };
+  });
+  const sorted = boosted.sort((a, b) => b.score - a.score || a.chunkId.localeCompare(b.chunkId));
+  const topScore = sorted[0]?.score ?? 0;
+  return sorted.map((candidate) => ({
+    ...candidate,
+    normalizedScore: topScore > 0 ? candidate.score / topScore : 0,
+    finalNormalizedScore: topScore > 0 ? candidate.score / topScore : 0,
+  }));
+}
+
+function filterRecentContextDuplicates(
+  ranked: LtmRankedCandidate[],
+  chunksById: Map<string, LtmMemoryChunk>,
+  input: RetrieveLongTermMemoryInput,
+) {
+  if (input.dedupeAgainstRecentContext === false) return { ranked, skipped: 0 };
+  const messages = [...(input.recentMessages ?? []), input.recentUserMessage ?? ""]
+    .map((message) => message.trim())
+    .filter(Boolean);
+  if (messages.length === 0) return { ranked, skipped: 0 };
+  const recentTokens = messages.map((message) => tokenize(message));
+  const filtered = ranked.filter((candidate) => {
+    const chunk = chunksById.get(candidate.chunkId);
+    if (!chunk) return true;
+    const chunkTokens = tokenize(chunk.text);
+    if (chunkTokens.size === 0) return true;
+    return !recentTokens.some((messageTokens) => jaccardSimilarity(chunkTokens, messageTokens) > ACTIVE_CONTEXT_DEDUP_THRESHOLD);
+  });
+  return { ranked: filtered, skipped: ranked.length - filtered.length };
+}
+
 export async function retrieveLongTermMemory(
   input: RetrieveLongTermMemoryInput = {},
 ): Promise<RetrieveLongTermMemoryResult> {
@@ -659,9 +714,10 @@ export async function retrieveLongTermMemory(
         ];
       })
     : [];
-  const ranked = reciprocalRankFuse(lanes, { cooldowns });
-  logger.debug({ laneCount: lanes.length, rankedCount: ranked.length }, "[ltm] Retrieval lanes fused");
-  const budgeted = applyLtmBudget(ranked, chunksById, {
+  const ranked = applyImportanceMultiplier(reciprocalRankFuse(lanes, { cooldowns }), chunksById);
+  const activeContextDedup = filterRecentContextDuplicates(ranked, chunksById, input);
+  logger.debug({ laneCount: lanes.length, rankedCount: activeContextDedup.ranked.length }, "[ltm] Retrieval lanes fused");
+  const budgeted = applyLtmBudget(activeContextDedup.ranked, chunksById, {
     maxChunks: input.maxChunks ?? config.maxChunks,
     maxTokens: input.maxTokens ?? config.maxTokens,
     normalizedScoreThreshold: input.minScore,
@@ -701,7 +757,7 @@ export async function retrieveLongTermMemory(
           vectorCandidates: laneCount("vector"),
           bm25Candidates: laneCount("bm25"),
           graphCandidates: laneCount("graph"),
-          rankedCandidates: ranked.length,
+          rankedCandidates: activeContextDedup.ranked.length,
           selectedCandidates: budgeted.chunks.length,
           tokenBudgetSkippedCandidates: budgeted.rejected.filter((candidate) => candidate.rejectionReason === "budget")
             .length,
@@ -712,6 +768,7 @@ export async function retrieveLongTermMemory(
             (candidate) => candidate.rejectionReason === "duplicate_text",
           ).length,
           cooldownPenalizedCandidates: ranked.filter((candidate) => candidate.cooldownPenalty !== undefined).length,
+          activeContextDuplicateSkippedCandidates: activeContextDedup.skipped,
         },
         selected: budgeted.chunks.map(formatSelectedCandidate),
         rejected: budgeted.rejected.map((candidate) => formatRejectedCandidate(candidate, chunksById)),

@@ -73,6 +73,9 @@ function appendSection(
       updatedAt: timestamp,
       salience: mutation.salience ?? existing?.salience,
       confidence: Math.max(existing?.confidence ?? 0, mutation.confidence),
+      importance: mutation.importance ?? existing?.importance,
+      dimensions: mutation.dimensions ?? existing?.dimensions,
+      dimensionChanges: mutation.dimensionChanges ?? existing?.dimensionChanges,
     },
     mutation.evidence,
   );
@@ -102,6 +105,9 @@ function mergeSection(existing: LtmSection | undefined, incoming: LtmSection, ap
       updatedAt: nowIso(),
       salience: Math.max(existing?.salience ?? 0, incoming.salience ?? 0) || undefined,
       confidence: Math.max(existing?.confidence ?? 0, incoming.confidence ?? 0) || undefined,
+      importance: incoming.importance ?? existing?.importance,
+      dimensions: incoming.dimensions ?? existing?.dimensions,
+      dimensionChanges: incoming.dimensionChanges ?? existing?.dimensionChanges,
     },
     [...(existing?.evidence ?? []), ...(incoming.evidence ?? [])],
   );
@@ -110,7 +116,7 @@ function mergeSection(existing: LtmSection | undefined, incoming: LtmSection, ap
 function uniqueLinks(links: LtmLink[]) {
   const seen = new Set<string>();
   return links.filter((link) => {
-    const key = `${link.target}\u0000${link.relation}`;
+    const key = `${link.target}\u0000${link.relation}\u0000${link.aspect ?? ""}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

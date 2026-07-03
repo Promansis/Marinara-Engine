@@ -6,6 +6,7 @@ import {
   isLtmSourceLikeNote,
   withMergedLtmScopeLinks,
   type LtmExtractionDroppedCandidate,
+  type LtmImportance,
   type LtmLink,
   type LtmMode,
   type LtmNote,
@@ -53,6 +54,9 @@ import {
   statusOptions,
   type LtmDisplayLookupContext,
 } from "./ltm-editor-utils";
+import { ImportanceBadge } from "./ImportanceBadge";
+import { LinkedContextPanel } from "./LinkedContextPanel";
+import { RelationshipDimensionsEditor } from "./RelationshipDimensionsEditor";
 
 type LongTermMemoryNoteEditorProps = {
   note: LtmNote;
@@ -93,6 +97,28 @@ function isSourceMemory(note: LtmNote) {
   return isLtmSourceLikeNote(note);
 }
 
+const importanceOptions: LtmImportance[] = ["critical", "major", "moderate", "minor"];
+const linkRelationOptions: LtmLink["relation"][] = [
+  "occurred_in",
+  "triggered_by",
+  "resolved_in",
+  "evidenced_by",
+  "affects_relationship",
+  "affects_character",
+  "caused_by",
+  "involves",
+  "blocks",
+  "planted_in",
+  "paid_off_in",
+  "extracted_from",
+];
+
+type LinkDraft = {
+  target: string;
+  relation: LtmLink["relation"] | "";
+  aspect: string;
+};
+
 export function LongTermMemoryNoteEditor({
   note,
   onCancel,
@@ -111,7 +137,7 @@ export function LongTermMemoryNoteEditor({
   const [titleText, setTitleText] = useState(note.title ?? "");
   const [tagsText, setTagsText] = useState(note.tags.join(", "));
   const [keywordsText, setKeywordsText] = useState(note.keywords.join(", "));
-  const [linkDraft, setLinkDraft] = useState<LtmLink>({ target: "", relation: "" });
+  const [linkDraft, setLinkDraft] = useState<LinkDraft>({ target: "", relation: "", aspect: "" });
   const [floatingSectionKey, setFloatingSectionKey] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"details" | "suggestions">("details");
   const updateNote = useUpdateLongTermMemoryNote();
@@ -239,10 +265,14 @@ export function LongTermMemoryNoteEditor({
 
   const addLink = () => {
     const target = normalizeIdentifier(linkDraft.target, "note");
-    const relation = normalizeIdentifier(linkDraft.relation, "relation");
+    const relation = linkDraft.relation;
+    const aspect = normalizeIdentifier(linkDraft.aspect, "aspect");
     if (!target || !relation) return;
-    setDraft((current) => ({ ...current, links: [...current.links, { target, relation }] }));
-    setLinkDraft({ target: "", relation: "" });
+    setDraft((current) => ({
+      ...current,
+      links: [...current.links, { target, relation, ...(aspect ? { aspect } : {}) }],
+    }));
+    setLinkDraft({ target: "", relation: "", aspect: "" });
   };
 
   const setLinkedScope = (next: { chatIds: string[]; characterIds: string[]; groupId?: string }) => {
@@ -533,6 +563,11 @@ export function LongTermMemoryNoteEditor({
           </div>
           {Object.entries(draft.sections).map(([key, section]) => (
             <section key={key} className={sectionCardClassName}>
+              {section.importance && (
+                <div className="mb-2 flex justify-end">
+                  <ImportanceBadge importance={section.importance} />
+                </div>
+              )}
               <div className="mb-2 grid grid-cols-[1fr_auto] gap-2">
                 <input
                   defaultValue={key}
@@ -567,7 +602,7 @@ export function LongTermMemoryNoteEditor({
                   {section.text.trim() || "No memory text yet."}
                 </span>
               </button>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
                 <label className="block">
                   <span className="mb-1 inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
                     Relevance
@@ -610,7 +645,41 @@ export function LongTermMemoryNoteEditor({
                     className={compactInputClassName}
                   />
                 </label>
+                <label className="block">
+                  <span className="mb-1 inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                    Importance
+                  </span>
+                  <select
+                    value={section.importance ?? ""}
+                    onChange={(event) =>
+                      setSection(key, (current) => ({
+                        ...current,
+                        importance: event.target.value ? (event.target.value as LtmImportance) : undefined,
+                      }))
+                    }
+                    className={compactInputClassName}
+                  >
+                    <option value="">Unspecified</option>
+                    {importanceOptions.map((importance) => (
+                      <option key={importance} value={importance}>
+                        {friendlyIdentifier(importance)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
+              {draft.type === "relationship" && (
+                <div className="mt-3">
+                  <RelationshipDimensionsEditor
+                    dimensions={section.dimensions}
+                    dimensionChanges={section.dimensionChanges}
+                    onDimensionsChange={(dimensions) => setSection(key, (current) => ({ ...current, dimensions }))}
+                    onDimensionChangesChange={(dimensionChanges) =>
+                      setSection(key, (current) => ({ ...current, dimensionChanges }))
+                    }
+                  />
+                </div>
+              )}
               <label className="mt-3 block">
                 <span className="mb-1 inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
                   Supporting Evidence
@@ -729,6 +798,7 @@ export function LongTermMemoryNoteEditor({
                 </div>
                 <div className="mt-0.5 truncate text-[var(--foreground)]">
                   {friendlyIdentifier(link.target)}
+                  {link.aspect ? `, ${friendlyIdentifier(link.aspect)}` : ""}
                 </div>
               </div>
               <button
@@ -746,17 +816,31 @@ export function LongTermMemoryNoteEditor({
               </button>
             </div>
           ))}
-          <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+          <div className="grid gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]">
             <input
               value={linkDraft.target}
               onChange={(event) => setLinkDraft((current) => ({ ...current, target: event.target.value }))}
               placeholder="related memory"
               className={compactInputClassName}
             />
-            <input
+            <select
               value={linkDraft.relation}
-              onChange={(event) => setLinkDraft((current) => ({ ...current, relation: event.target.value }))}
-              placeholder="relationship"
+              onChange={(event) =>
+                setLinkDraft((current) => ({ ...current, relation: event.target.value as LtmLink["relation"] }))
+              }
+              className={compactInputClassName}
+            >
+              <option value="">Relation</option>
+              {linkRelationOptions.map((relation) => (
+                <option key={relation} value={relation}>
+                  {humanRelationLabel(relation)}
+                </option>
+              ))}
+            </select>
+            <input
+              value={linkDraft.aspect}
+              onChange={(event) => setLinkDraft((current) => ({ ...current, aspect: event.target.value }))}
+              placeholder="aspect"
               className={compactInputClassName}
             />
             <ToolButton onClick={addLink}>
@@ -765,6 +849,8 @@ export function LongTermMemoryNoteEditor({
             </ToolButton>
           </div>
         </div>
+
+        <LinkedContextPanel note={draft} notes={displayContext?.notes} />
 
         <div className={actionRowClassName}>
           <ToolButton onClick={() => save()} disabled={!dirty || busy} tone="primary">

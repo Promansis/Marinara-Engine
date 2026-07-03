@@ -5,6 +5,7 @@ import {
   type LtmNoteType,
   type LtmScope,
   type LtmStatus,
+  type LtmImportance,
 } from "@marinara-engine/shared";
 import { extractNoteKeywords } from "./keyword-extract.js";
 
@@ -20,6 +21,7 @@ export interface LtmMemoryChunk {
   keywords: string[];
   salience?: number;
   confidence?: number;
+  importance?: LtmImportance;
   updatedAt: string;
   sourceHash: string;
 }
@@ -88,6 +90,7 @@ export function chunkNoteSections(note: LtmNote): LtmMemoryChunk[] {
           note.sections.profile?.confidence ?? 0,
           note.sections.observations?.confidence ?? 0,
         ),
+        importance: note.sections.profile?.importance ?? note.sections.observations?.importance,
         updatedAt: note.sections.profile?.updatedAt ?? note.sections.observations?.updatedAt ?? "",
         sourceHash: stableJsonHash({
           noteId: note.id,
@@ -119,6 +122,7 @@ export function chunkNoteSections(note: LtmNote): LtmMemoryChunk[] {
         keywords,
         salience: section.salience,
         confidence: section.confidence,
+        importance: section.importance,
         updatedAt: section.updatedAt,
         sourceHash: stableJsonHash({
           noteId: note.id,

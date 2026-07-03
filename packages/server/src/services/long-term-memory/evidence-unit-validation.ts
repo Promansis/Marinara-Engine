@@ -5,15 +5,13 @@ import type {
   LtmExtractionRecoveryHint,
   LtmNote,
 } from "@marinara-engine/shared";
-import { isLtmSourceLikeNote } from "@marinara-engine/shared";
+import { isLtmSourceLikeNote, RELATIONSHIP_DIMENSIONS, tokenize } from "@marinara-engine/shared";
 import type { LtmExtractionDiagnostic } from "./diagnostics.js";
 import { safeSnippet } from "./ltm-utils.js";
 
 const DIALOGUE_BUCKETS = new Set<LtmEvidenceUnit["bucket"]>(["tone"]);
-const RISK_BUCKETS = new Set<LtmEvidenceUnit["bucket"]>(["relationship_conflict"]);
 const PLACEHOLDER_UUID = "550e8400-e29b-41d4-a716-446655440000";
 const PLACEHOLDER_MERGE_HINT = "optional note for deterministic compiler";
-const SOURCE_EXTRACTION_DISALLOWED_BUCKETS = new Set<LtmEvidenceUnit["bucket"]>(["character_state"]);
 const CHARACTER_FACT_EVENT_SECTION_KEYS = new Set(["facts", "core", "profile"]);
 const CHARACTER_FACT_DURABLE_SECTION_KEYS = new Set(["developments", "abilities", "items", "voice"]);
 const EVENT_SHAPED_CHARACTER_FACT_PATTERN =
@@ -21,15 +19,9 @@ const EVENT_SHAPED_CHARACTER_FACT_PATTERN =
 const THREAD_RESOLUTION_PATTERN =
   /\b(?:resolve|resolved|resolver|resolution|would resolve|will resolve|until|when|if|requires|needs|awaits|pending|unresolved|open question|pay off|payoff|future|follow-?up|goal|must|should|cool(?:s|ed|ing)?|confess(?:ion|es|ed|ing)?|confront(?:s|ed|ing)?|dy(?:e|ing) down|explain(?:s|ed|ing|ation)?|updates?)\b/i;
 const SCENE_ONLY_TONE_PATTERN = /\b(?:this scene|single scene|momentarily|for the scene|scene tone|currently|right now)\b/i;
-
-function tokenize(value: string) {
-  return new Set(
-    value
-      .toLowerCase()
-      .match(/[a-z0-9]{4,}/g)
-      ?.slice(0, 500) ?? [],
-  );
-}
+const RELATIONSHIP_CHANGE_PATTERN =
+  /\b(?:became|becomes|grew|grows|shifted|shifts|changed|changes|strained|softened|worsened|improved|lost trust|gained trust|trusted|distrusted|forgave|resented|confessed|betrayed|reconciled)\b/i;
+const RELATIONSHIP_DIMENSION_KEYS = new Set<string>(RELATIONSHIP_DIMENSIONS);
 
 function lexicalOverlap(sourceText: string, proposedText: string) {
   const sourceTokens = tokenize(sourceText);
@@ -48,7 +40,17 @@ function quotedStrings(text: string) {
 
 function hasRelationshipSupport(unit: LtmEvidenceUnit, units: LtmEvidenceUnit[], existingNotes: LtmNote[]) {
   if (unit.bucket !== "relationship_state") return true;
-  if (units.some((candidate) => candidate.bucket === "relationship_event" && candidate.subjectId === unit.subjectId)) {
+  const currentTimelineNoteIds = new Set(
+    units.filter((candidate) => candidate.bucket === "timeline_event").map((candidate) => noteIdForEvidenceUnit(candidate)),
+  );
+  const existingNoteIds = new Set(existingNotes.map((note) => note.id));
+  if (
+    unit.links.some(
+      (link) =>
+        link.relation === "caused_by" &&
+        (currentTimelineNoteIds.has(link.target) || existingNoteIds.has(link.target)),
+    )
+  ) {
     return true;
   }
   return existingNotes.some(
@@ -63,10 +65,7 @@ function isSourceNote(note: LtmNote) {
 }
 
 export function riskForEvidenceUnit(unit: LtmEvidenceUnit): "low" | "medium" | "high" {
-  if (RISK_BUCKETS.has(unit.bucket)) return "medium";
-  if (unit.bucket === "relationship_state" || unit.bucket === "character_state") {
-    return "medium";
-  }
+  if (unit.bucket === "relationship_state") return "medium";
   return "low";
 }
 
@@ -102,6 +101,11 @@ export function validateLtmEvidenceUnits({
   const keptUnits: LtmEvidenceUnit[] = [];
   const keptCandidateIndexes = new Map<LtmEvidenceUnit, number>();
   const sourceEvidence = sourceNote ? `source_note:${sourceNote.id}` : null;
+  const validLinkTargets = new Set<string>([
+    ...(sourceNote ? [sourceNote.id] : []),
+    ...existingNotes.map((note) => note.id),
+    ...units.map((unit) => noteIdForEvidenceUnit(unit)),
+  ]);
 
   if (sourceNote && !isSourceNote(sourceNote)) {
     diagnostics.push({
@@ -188,17 +192,6 @@ export function validateLtmEvidenceUnits({
       });
     }
 
-    if (sourceNote && isSourceNote(sourceNote) && SOURCE_EXTRACTION_DISALLOWED_BUCKETS.has(unit.bucket)) {
-      unitDiagnostics.push({
-        severity: "error",
-        code: "unsupported_source_extraction_bucket",
-        candidateIndex,
-        mutationId: unit.id,
-        noteId,
-        message: "Source-summary extraction does not support this memory stream.",
-      });
-    }
-
     if (isEventShapedCharacterFact(unit)) {
       unitDiagnostics.push({
         severity: "error",
@@ -231,6 +224,10 @@ export function validateLtmEvidenceUnits({
         message: "Tone and anchor candidates must describe durable atmosphere, motifs, or callbacks.",
       });
     }
+
+    unitDiagnostics.push(...relationshipDimensionDiagnostics(unit, candidateIndex, noteId));
+    unitDiagnostics.push(...relationshipCausedByDiagnostics(unit, candidateIndex, noteId, validLinkTargets));
+    unitDiagnostics.push(...linkTargetDiagnostics(unit, candidateIndex, noteId, validLinkTargets));
 
     for (const quote of DIALOGUE_BUCKETS.has(unit.bucket) ? quotedStrings(unit.text) : []) {
       if (!sourceText.includes(quote)) {
@@ -312,7 +309,7 @@ export function validateLtmEvidenceUnits({
     const hasFanOut = finalKeptUnits.some(
       (other) =>
         other !== unit &&
-        (other.bucket === "relationship_event" || other.bucket === "timeline_event") &&
+        other.bucket === "timeline_event" &&
         threadSubjects.has(other.subjectId),
     );
     if (!hasFanOut) {
@@ -321,7 +318,7 @@ export function validateLtmEvidenceUnits({
         code: "resolved_thread_missing_fanout",
         mutationId: unit.id,
         noteId: noteIdForEvidenceUnit(unit),
-        message: `Resolved thread '${unit.subjectId}' has no parallel relationship_event/timeline_event capturing the resolution as history.`,
+        message: `Resolved thread '${unit.subjectId}' has no parallel timeline_event capturing the resolution as history.`,
       });
     }
   }
@@ -410,6 +407,85 @@ function isSceneOnlyToneOrAnchor(unit: LtmEvidenceUnit) {
   return SCENE_ONLY_TONE_PATTERN.test(unit.text);
 }
 
+function relationshipDimensionDiagnostics(
+  unit: LtmEvidenceUnit,
+  candidateIndex: number,
+  noteId: string,
+): LtmExtractionDiagnostic[] {
+  if (unit.bucket !== "relationship_state") return [];
+  const diagnostics: LtmExtractionDiagnostic[] = [];
+  for (const key of Object.keys(unit.dimensions ?? {})) {
+    if (!RELATIONSHIP_DIMENSION_KEYS.has(key)) {
+      diagnostics.push({
+        severity: "error",
+        code: "invalid_relationship_dimension",
+        candidateIndex,
+        mutationId: unit.id,
+        noteId,
+        message: `Relationship dimension '${key}' is not supported.`,
+      });
+    }
+  }
+  for (const key of Object.keys(unit.dimensionChanges ?? {})) {
+    if (!RELATIONSHIP_DIMENSION_KEYS.has(key)) {
+      diagnostics.push({
+        severity: "error",
+        code: "invalid_relationship_dimension_change",
+        candidateIndex,
+        mutationId: unit.id,
+        noteId,
+        message: `Relationship dimension change '${key}' is not supported.`,
+      });
+    }
+  }
+  return diagnostics;
+}
+
+function relationshipCausedByDiagnostics(
+  unit: LtmEvidenceUnit,
+  candidateIndex: number,
+  noteId: string,
+  validLinkTargets: Set<string>,
+): LtmExtractionDiagnostic[] {
+  if (unit.bucket !== "relationship_state") return [];
+  const describesChange = Object.keys(unit.dimensionChanges ?? {}).length > 0 || RELATIONSHIP_CHANGE_PATTERN.test(unit.text);
+  if (!describesChange) return [];
+  const hasCausedBy = unit.links.some((link) => link.relation === "caused_by" && validLinkTargets.has(link.target));
+  if (hasCausedBy) return [];
+  return [
+    {
+      severity: "error",
+      code: "relationship_state_missing_caused_by",
+      candidateIndex,
+      mutationId: unit.id,
+      noteId,
+      message: "Relationship changes must link to a timeline event or existing note with relation caused_by.",
+    },
+  ];
+}
+
+function linkTargetDiagnostics(
+  unit: LtmEvidenceUnit,
+  candidateIndex: number,
+  noteId: string,
+  validLinkTargets: Set<string>,
+): LtmExtractionDiagnostic[] {
+  return unit.links.flatMap((link) =>
+    validLinkTargets.has(link.target)
+      ? []
+      : [
+          {
+            severity: "error" as const,
+            code: "unknown_link_target",
+            candidateIndex,
+            mutationId: unit.id,
+            noteId,
+            message: `Link target '${link.target}' does not exist in the extraction batch or existing notes.`,
+          },
+        ],
+  );
+}
+
 export function noteIdForEvidenceUnit(unit: Pick<LtmEvidenceUnit, "bucket" | "subjectId" | "sectionKey">) {
   if (unit.bucket === "timeline_event") return prefixed("timeline", unit.subjectId);
   if (unit.bucket === "thread") return prefixed("thread", unit.subjectId);
@@ -468,9 +544,7 @@ function targetNoteTypeForUnit(unit: LtmEvidenceUnit): LtmNote["type"] {
 
 function noteIdSectionKeyForUnit(unit: LtmEvidenceUnit) {
   if (unit.bucket === "timeline_event") return unit.sectionKey || "event";
-  if (unit.bucket === "relationship_event") return "history";
   if (unit.bucket === "relationship_state") return "state";
-  if (unit.bucket === "character_state") return "current_state";
   if (unit.bucket === "character_fact") return unit.sectionKey || "facts";
   if (unit.bucket === "tone") return "observations";
   if (unit.bucket === "thread" && unit.status === "resolved") return "summary";
@@ -500,6 +574,10 @@ function diagnosticToDropReason(code: string): LtmExtractionDropReason | null {
   if (
     code === "unsupported_source_extraction_bucket" ||
     code === "relationship_state_without_history" ||
+    code === "relationship_state_missing_caused_by" ||
+    code === "invalid_relationship_dimension" ||
+    code === "invalid_relationship_dimension_change" ||
+    code === "unknown_link_target" ||
     code === "event_shaped_character_fact" ||
     code === "vague_thread" ||
     code === "scene_only_tone_or_anchor"
