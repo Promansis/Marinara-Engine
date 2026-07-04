@@ -80,7 +80,7 @@ import { useTTSConfig } from "../../hooks/use-tts";
 import { achievementKeys, trackAchievementEvent } from "../../hooks/use-achievements";
 import { buildTTSVoiceRequests, normalizeTTSCharacterName, withTTSVoiceRequestCacheKeys } from "../../lib/tts-dialogue";
 import { CHAT_SCROLL_TO_BOTTOM_EVENT, type ChatScrollToBottomDetail } from "../../lib/chat-scroll-events";
-import { CHAT_FLOATING_UI_DISMISS_EVENT } from "../../lib/chat-floating-ui-events";
+import { CHAT_FLOATING_UI_DISMISS_EVENT, announceChatFloatingUiDismiss } from "../../lib/chat-floating-ui-events";
 import { CHAT_TOOLBAR_ACTION_EVENT, readChatToolbarFloatingPanelAnchor } from "./ChatToolbarControls";
 import { mirrorSpritePlacements, normalizeSpritePlacements } from "./sprite-placement";
 import {
@@ -562,6 +562,7 @@ export function ChatArea() {
   }, [activeChatId]);
   const handleOpenVault = useCallback(
     (payload?: { initialTab?: "notes" | "import" | "review" | "suggestions"; sourceNoteId?: string }) => {
+      announceChatFloatingUiDismiss();
       if (payload?.initialTab === "review") {
         setReviewQueueOpen(true);
         return;
@@ -2530,6 +2531,34 @@ export function ChatArea() {
           }
         : undefined;
   const surfaceFallback = <div className="flex flex-1 overflow-hidden" />;
+  const longTermMemoryOverlays =
+    vaultOpenBool || reviewQueueOpen ? (
+      <>
+        <Modal
+          open={vaultOpenBool}
+          onClose={() => setVaultOpen(null)}
+          title="Long-Term Memory"
+          width="max-w-5xl"
+        >
+          {vaultOpenBool && ltmAgentConfig && (
+            <LtmVaultManagerSection
+              agentConfig={ltmAgentConfig}
+              agentSettings={JSON.parse(ltmAgentConfig.settings ?? "{}") as Record<string, unknown>}
+              initialTab={vaultOpen?.initialTab}
+              sourceNoteId={vaultOpen?.sourceNoteId}
+            />
+          )}
+        </Modal>
+        <LongTermMemoryReviewQueueModal
+          open={reviewQueueOpen}
+          onClose={() => setReviewQueueOpen(false)}
+          onOpenSource={(noteId) => {
+            setReviewQueueOpen(false);
+            setVaultOpen({ initialTab: "notes", sourceNoteId: noteId });
+          }}
+        />
+      </>
+    ) : null;
 
   // ═══════════════════════════════════════════════
   // Game mode — RPG surface with GM narration, map, party chat
@@ -2600,6 +2629,7 @@ export function ChatArea() {
             onSelectAllBelowSelection={handleSelectAllBelowSelection}
           />
         </>
+        {longTermMemoryOverlays}
       </Suspense>
     );
   }
@@ -2685,6 +2715,7 @@ export function ChatArea() {
             onClose={() => useChatStore.getState().setPendingNewChatMode(null)}
           />
         )}
+        {longTermMemoryOverlays}
       </>
     );
   }
@@ -2832,29 +2863,7 @@ export function ChatArea() {
           onClose={() => useChatStore.getState().setPendingNewChatMode(null)}
         />
       )}
-      <Modal
-        open={vaultOpenBool}
-        onClose={() => setVaultOpen(null)}
-        title="Long-Term Memory"
-        width="max-w-5xl"
-      >
-        {vaultOpenBool && ltmAgentConfig && (
-          <LtmVaultManagerSection
-            agentConfig={ltmAgentConfig}
-            agentSettings={JSON.parse(ltmAgentConfig.settings ?? "{}") as Record<string, unknown>}
-            initialTab={vaultOpen?.initialTab}
-            sourceNoteId={vaultOpen?.sourceNoteId}
-          />
-        )}
-      </Modal>
-      <LongTermMemoryReviewQueueModal
-        open={reviewQueueOpen}
-        onClose={() => setReviewQueueOpen(false)}
-        onOpenSource={(noteId) => {
-          setReviewQueueOpen(false);
-          setVaultOpen({ initialTab: "notes", sourceNoteId: noteId });
-        }}
-      />
+      {longTermMemoryOverlays}
     </>
   );
 }

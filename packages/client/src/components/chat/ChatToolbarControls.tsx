@@ -9,6 +9,7 @@ import {
 } from "react";
 import { MoreHorizontal } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { CHAT_FLOATING_UI_DISMISS_EVENT } from "../../lib/chat-floating-ui-events";
 import { ROLEPLAY_POPOVER_SHELL } from "./roleplay-popover-styles";
 
 type ChatToolbarButtonClassInput = {
@@ -118,11 +119,13 @@ export function ChatToolbarMenu({
   className,
   desktopChildren,
   mobileChildren,
+  highlightOverflowButton = false,
 }: {
   children?: ReactNode;
   className?: string;
   desktopChildren?: ReactNode;
   mobileChildren?: ReactNode;
+  highlightOverflowButton?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [overflowCollapsed, setOverflowCollapsed] = useState(false);
@@ -208,6 +211,13 @@ export function ChatToolbarMenu({
     return () => document.removeEventListener("mousedown", handle);
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    const handleDismiss = () => setOpen(false);
+    window.addEventListener(CHAT_FLOATING_UI_DISMISS_EVENT, handleDismiss);
+    return () => window.removeEventListener(CHAT_FLOATING_UI_DISMISS_EVENT, handleDismiss);
+  }, [open]);
+
   return (
     <div
       ref={rootRef}
@@ -223,7 +233,10 @@ export function ChatToolbarMenu({
         <button
           type="button"
           onClick={() => setOpen(!open)}
-          className={getChatToolbarButtonClass({ className: CHAT_TOOLBAR_OVERFLOW_BUTTON_SIZE_CLASS, open })}
+          className={getChatToolbarButtonClass({
+            className: cn(CHAT_TOOLBAR_OVERFLOW_BUTTON_SIZE_CLASS, highlightOverflowButton && !open && "animate-pulse-ring"),
+            open,
+          })}
           title="More options"
           aria-label="More options"
           aria-haspopup="menu"

@@ -111,6 +111,59 @@ test("memory recall modal accepts clicks from chat settings", async ({ page }, t
   await expect(drawer.getByRole("heading", { name: "Chat Settings" })).toBeVisible();
 });
 
+test("mobile LTM overflow actions open modals and advertise pending review", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("mobile"), "Mobile LTM overflow regression is covered on mobile.");
+
+  const response = await page.request.post("/api/chats", {
+    data: {
+      name: "Mobile LTM Overflow Smoke",
+      mode: "conversation",
+      characterIds: [],
+    },
+  });
+  expect(response.ok()).toBeTruthy();
+  const chat = (await response.json()) as { id: string };
+
+  await page.addInitScript((chatId) => {
+    localStorage.setItem("marinara-active-chat-id", chatId);
+  }, chat.id);
+
+  await page.route("**/api/long-term-memory/drafts/pending-count", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ count: 1 }),
+    });
+  });
+  await page.route(/\/api\/long-term-memory\/drafts(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    });
+  });
+
+  await page.goto("/");
+
+  const moreOptions = page.getByRole("button", { name: "More options" });
+  await expect(moreOptions).toHaveClass(/animate-pulse-ring/);
+
+  await moreOptions.click();
+  await page.getByRole("button", { name: "Active Context" }).click();
+  await page.getByRole("button", { name: "Import →" }).click();
+
+  const vaultDialog = page.getByRole("dialog", { name: "Long-Term Memory" });
+  await expect(vaultDialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(vaultDialog).toBeHidden();
+
+  await moreOptions.click();
+  await page.getByRole("button", { name: "Active Context" }).click();
+  await page.getByRole("button", { name: "1 suggestion to review" }).click();
+
+  await expect(page.getByRole("dialog", { name: "Review Memory Suggestions" })).toBeVisible();
+});
+
 test("mobile topbar remains reachable while sidebars switch", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("mobile"), "Mobile shell smoke only runs in the mobile project.");
 

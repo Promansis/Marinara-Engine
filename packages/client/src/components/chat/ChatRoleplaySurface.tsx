@@ -44,6 +44,7 @@ import { useChatStore } from "../../stores/chat.store";
 import { useGameStateStore } from "../../stores/game-state.store";
 import { useThrottledStreamBuffer } from "../../hooks/use-throttled-stream-buffer";
 import { usePresetFull } from "../../hooks/use-presets";
+import { usePendingDraftsCount } from "../../hooks/use-long-term-memory";
 import { ChatMessage } from "./ChatMessage";
 import { ChatInput } from "./ChatInput";
 import { CyoaChoices } from "./CyoaChoices";
@@ -1124,6 +1125,8 @@ export function ChatRoleplaySurface({
       : undefined;
   const hideSummarisedMessages =
     typeof chatMeta.hideSummarisedMessages === "boolean" ? chatMeta.hideSummarisedMessages : undefined;
+  const { data: pendingDrafts } = usePendingDraftsCount();
+  const hasPendingLtmDrafts = (pendingDrafts?.count ?? 0) > 0;
   const summaryTailMessages =
     typeof chatMeta.summaryTailMessages === "number" && Number.isFinite(chatMeta.summaryTailMessages)
       ? chatMeta.summaryTailMessages
@@ -1204,7 +1207,7 @@ export function ChatRoleplaySurface({
                     groupId={chat?.groupId ?? null}
                     variant="roleplay"
                   />
-                  <ChatToolbarMenu>
+                  <ChatToolbarMenu highlightOverflowButton={hasPendingLtmDrafts}>
                     <SummaryButton
                       chatId={chat?.id ?? null}
                       summary={chatMeta.summary ?? null}
@@ -1302,7 +1305,7 @@ export function ChatRoleplaySurface({
                       data-roleplay-top-controls="right"
                       className={cn("ml-auto flex shrink-0 items-center", CHAT_TOOLBAR_ICON_GAP_CLASS)}
                     >
-                      <ChatToolbarMenu>
+                      <ChatToolbarMenu highlightOverflowButton={hasPendingLtmDrafts}>
                         <ChatBranchSelector
                           activeChatId={activeChatId}
                           activeChatName={chat?.name}
@@ -1376,7 +1379,7 @@ export function ChatRoleplaySurface({
                   <div
                     className={cn("flex w-full items-center justify-end px-2 pb-1 pt-2", CHAT_TOOLBAR_ICON_GAP_CLASS)}
                   >
-                    <ChatToolbarMenu>
+                    <ChatToolbarMenu highlightOverflowButton={hasPendingLtmDrafts}>
                       <ChatBranchSelector
                         activeChatId={activeChatId}
                         activeChatName={chat?.name}

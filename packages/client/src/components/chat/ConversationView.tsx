@@ -41,6 +41,7 @@ import { getTranscriptRenderWindow, TRANSCRIPT_RENDER_WINDOW_STEP } from "../../
 import { useThrottledStreamBuffer } from "../../hooks/use-throttled-stream-buffer";
 import { useConversationCustomEmojis } from "../../hooks/use-conversation-custom-emojis";
 import { useConversationCustomStickers } from "../../hooks/use-conversation-custom-stickers";
+import { usePendingDraftsCount } from "../../hooks/use-long-term-memory";
 import type { CharacterMap, MessageSelectionToggle, PersonaInfo } from "./chat-area.types";
 import { normalizeTextForMatch, type Message } from "@marinara-engine/shared";
 
@@ -382,6 +383,8 @@ export function ConversationView({
   // a CSS variable so custom themes can override the conversation background.
   const convoGradient = useUIStore((s) => s.convoGradient);
   const theme = useUIStore((s) => s.theme);
+  const { data: pendingDrafts } = usePendingDraftsCount();
+  const hasPendingLtmDrafts = (pendingDrafts?.count ?? 0) > 0;
   const gradientStyle = useMemo(() => {
     const g = convoGradient[theme];
     const isDefaultDark = convoGradient.dark.from === "#0a0a0e" && convoGradient.dark.to === "#1c2133";
@@ -1010,6 +1013,7 @@ export function ConversationView({
             className="flex-1"
             desktopChildren={renderToolbarActions()}
             mobileChildren={renderToolbarActions(true)}
+            highlightOverflowButton={hasPendingLtmDrafts}
           />
         </div>
 

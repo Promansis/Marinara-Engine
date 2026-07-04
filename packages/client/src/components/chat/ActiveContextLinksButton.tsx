@@ -10,13 +10,14 @@ import {
   User,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { CHAT_FLOATING_UI_DISMISS_EVENT, announceChatFloatingUiDismiss } from "../../lib/chat-floating-ui-events";
 import { useUIStore } from "../../stores/ui.store";
 import { useActiveLorebookEntries, useLorebooks } from "../../hooks/use-lorebooks";
 import { usePresets } from "../../hooks/use-presets";
 import { usePendingDraftsCount } from "../../hooks/use-long-term-memory";
 import { MemoryOverviewNotice } from "./MemoryOverviewNotice";
 import { ChatCommonOverlays } from "./ChatCommonOverlays";
-import { getChatToolbarButtonClass } from "./ChatToolbarControls";
+import { CHAT_FLOATING_PANEL_SELECTOR, getChatToolbarButtonClass } from "./ChatToolbarControls";
 import {
   ROLEPLAY_POPOVER_SCROLL_AREA,
   ROLEPLAY_POPOVER_SHELL,
@@ -70,6 +71,8 @@ export function ActiveContextLinksButton({
     if (!open) return;
     const handle = (event: MouseEvent) => {
       const target = event.target as Node;
+      const targetElement = target instanceof Element ? target : target.parentElement;
+      if (targetElement?.closest(CHAT_FLOATING_PANEL_SELECTOR)) return;
       if (ref.current?.contains(target) || panelRef.current?.contains(target)) return;
       setOpen(false);
     };
@@ -96,6 +99,13 @@ export function ActiveContextLinksButton({
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleDismiss = () => setOpen(false);
+    window.addEventListener(CHAT_FLOATING_UI_DISMISS_EVENT, handleDismiss);
+    return () => window.removeEventListener(CHAT_FLOATING_UI_DISMISS_EVENT, handleDismiss);
   }, [open]);
 
   if (!chat) return null;
@@ -151,6 +161,7 @@ export function ActiveContextLinksButton({
   };
 
   const handleOpenVault = (payload?: { initialTab?: "notes" | "import" | "review" | "suggestions"; sourceNoteId?: string }) => {
+    announceChatFloatingUiDismiss();
     if (onOpenVault) {
       onOpenVault(payload);
     } else if (onViewAll) {
@@ -278,6 +289,7 @@ export function ActiveContextLinksButton({
           createPortal(
             <div
               ref={panelRef}
+              data-chat-floating-panel
               role="menu"
               className={cn(ROLEPLAY_POPOVER_SHELL, ROLEPLAY_POPOVER_SCROLL_AREA, "fixed z-[9999] overflow-y-auto p-2")}
               style={
@@ -290,6 +302,8 @@ export function ActiveContextLinksButton({
                     }
                   : undefined
               }
+              onMouseDown={(event) => event.stopPropagation()}
+              onTouchStart={(event) => event.stopPropagation()}
             >
               {activeContextContent}
             </div>,
@@ -298,12 +312,15 @@ export function ActiveContextLinksButton({
         ) : (
           <div
             ref={panelRef}
+            data-chat-floating-panel
             role="menu"
             className={cn(
               ROLEPLAY_POPOVER_SHELL,
               ROLEPLAY_POPOVER_SCROLL_AREA,
               "absolute right-0 top-full z-50 mt-2 max-h-[min(32rem,calc(100vh-6rem))] w-72 overflow-y-auto p-2",
             )}
+            onMouseDown={(event) => event.stopPropagation()}
+            onTouchStart={(event) => event.stopPropagation()}
           >
             {activeContextContent}
           </div>
