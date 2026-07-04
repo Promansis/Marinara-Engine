@@ -32,7 +32,10 @@ import {
   SettingField,
 } from "./LtmFields";
 import { LtmScopePicker } from "./LtmScopePicker";
-import { LongTermMemorySuggestionsTab } from "./LongTermMemorySuggestionsTab";
+import {
+  LongTermMemorySuggestionsTab,
+  type LongTermMemoryLatestExtractionResult,
+} from "./LongTermMemorySuggestionsTab";
 import { ToolButton } from "./LtmPills";
 import {
   dedupeEvidenceEntries,
@@ -140,6 +143,7 @@ export function LongTermMemoryNoteEditor({
   const [linkDraft, setLinkDraft] = useState<LinkDraft>({ target: "", relation: "", aspect: "" });
   const [floatingSectionKey, setFloatingSectionKey] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"details" | "suggestions">("details");
+  const [latestExtractionResult, setLatestExtractionResult] = useState<LongTermMemoryLatestExtractionResult | null>(null);
   const updateNote = useUpdateLongTermMemoryNote();
   const applyScopeToDerived = useApplyLongTermMemoryScopeToDerived();
   const rebuild = useRebuildLongTermMemory();
@@ -151,6 +155,7 @@ export function LongTermMemoryNoteEditor({
     setTagsText(note.tags.join(", "));
     setKeywordsText(note.keywords.join(", "));
     setActiveTab("details");
+    setLatestExtractionResult(null);
   }, [note]);
 
   const dirty = useMemo(() => serializedEditable(draft) !== serializedEditable(savedBaseline), [draft, savedBaseline]);
@@ -390,7 +395,12 @@ export function LongTermMemoryNoteEditor({
       )}
 
       {!embedded && activeTab === "suggestions" && onRecoverDroppedCandidate ? (
-        <LongTermMemorySuggestionsTab note={savedBaseline} onRecoverDroppedCandidate={onRecoverDroppedCandidate} />
+        <LongTermMemorySuggestionsTab
+          note={savedBaseline}
+          latestExtractionResult={latestExtractionResult}
+          onLatestExtractionResultChange={setLatestExtractionResult}
+          onRecoverDroppedCandidate={onRecoverDroppedCandidate}
+        />
       ) : null}
 
       {(embedded || activeTab === "details") && (

@@ -55,6 +55,7 @@ import { LongTermMemoryDebugLogModal } from "../long-term-memory/LongTermMemoryD
 import { MemoryNoteModal, defaultMemoryModalTab } from "../long-term-memory/LongTermMemoryNoteModal";
 import { TypeMemoryGroups } from "../long-term-memory/LongTermMemoryNoteList";
 import { ImportPreviewRowItem } from "../long-term-memory/LongTermMemoryImportSection";
+import { type LongTermMemoryLatestExtractionResult } from "../long-term-memory/LongTermMemorySuggestionsTab";
 import { LongTermMemoryNoteTransferModal } from "../long-term-memory/LongTermMemoryNoteTransferModal";
 import { friendlyIdentifier, friendlyNoteType, friendlyStatus, type LtmDisplayLookupContext } from "../long-term-memory/ltm-editor-utils";
 import {
@@ -206,6 +207,9 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const [creatingNote, setCreatingNote] = useState(false);
   const [createNoteDraft, setCreateNoteDraft] = useState<CreateLongTermMemoryNoteDraft | null>(null);
   const [createNoteDirty, setCreateNoteDirty] = useState(false);
+  const [latestExtractionResultsBySourceNoteId, setLatestExtractionResultsBySourceNoteId] = useState<
+    Record<string, LongTermMemoryLatestExtractionResult>
+  >({});
   const [openNoteId, setOpenNoteId] = useState<string | null>(null);
   const [memoryModalMode, setMemoryModalMode] = useState<MemoryModalMode>("view");
   const [memoryModalTab, setMemoryModalTab] = useState<MemoryModalTab>("overview");
@@ -411,6 +415,10 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
           )
         : [],
     [combinedDrafts, openNote],
+  );
+  const latestExtractionResultForOpenNote = useMemo(
+    () => (openNote ? latestExtractionResultsBySourceNoteId[openNote.id] ?? null : null),
+    [latestExtractionResultsBySourceNoteId, openNote],
   );
 
   const reviewGroups = useMemo(() => {
@@ -653,6 +661,21 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     });
     setCreatingNote(true);
   };
+
+  const setLatestExtractionResultForSourceNote = useCallback(
+    (sourceNoteId: string, result: LongTermMemoryLatestExtractionResult | null) => {
+      setLatestExtractionResultsBySourceNoteId((current) => {
+        if (result === null) {
+          if (!(sourceNoteId in current)) return current;
+          const next = { ...current };
+          delete next[sourceNoteId];
+          return next;
+        }
+        return { ...current, [sourceNoteId]: result };
+      });
+    },
+    [],
+  );
 
   const setNoteSelected = (id: string, selected: boolean) => {
     setSelectedNoteIds((current) => {
@@ -1398,8 +1421,8 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
       )}
 
       <Modal
-       open={creatingNote}
-       onClose={() => {
+        open={creatingNote}
+        onClose={() => {
           void confirmDiscardCreate().then((ok) => {
             if (ok) closeCreateForm();
           });
@@ -1411,7 +1434,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
           initialDraft={createNoteDraft}
           defaultScopeDraft={scopeDraftFromLtmScope(navigatorScope)}
           displayContext={displayContext}
-         onCancel={() => {
+          onCancel={() => {
             void confirmDiscardCreate().then((ok) => {
               if (ok) closeCreateForm();
             });
@@ -1440,6 +1463,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
         recallResult={viewingRecallResult}
         recallPending={searchMemory.isPending}
         editorDirty={editedNoteDirty}
+        latestExtractionResult={latestExtractionResultForOpenNote}
         onClose={closeOpenMemory}
         onModeChange={setMemoryModeWithGuard}
         onTabChange={setMemoryModalTab}
@@ -1455,6 +1479,10 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
           setOpenNoteId(saved.id);
           setMemoryModalMode("view");
           setMemoryModalTab(defaultMemoryModalTab(saved));
+        }}
+        onLatestExtractionResultChange={(result) => {
+          if (!openNote) return;
+          setLatestExtractionResultForSourceNote(openNote.id, result);
         }}
         onRecoverDroppedCandidate={openRecoveryDraft}
       />

@@ -111,6 +111,119 @@ test("memory recall modal accepts clicks from chat settings", async ({ page }, t
   await expect(drawer.getByRole("heading", { name: "Chat Settings" })).toBeVisible();
 });
 
+test("manual memory recovery survives dismissing the create modal", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "LTM recovery regression is covered on desktop.");
+
+  const response = await page.request.post("/api/chats", {
+    data: {
+      name: "LTM Recovery Persistence",
+      mode: "conversation",
+      characterIds: [],
+    },
+  });
+  expect(response.ok()).toBeTruthy();
+  const chat = (await response.json()) as { id: string };
+
+  const sourceNoteId = `source_review_reopen_${Date.now()}`;
+  const sourceTitle = "Dropped Candidate Source";
+  const createSourceNote = await page.request.post("/api/long-term-memory/notes", {
+    data: {
+      id: sourceNoteId,
+      title: sourceTitle,
+      type: "source",
+      status: "active",
+      modes: ["conversation"],
+      scope: { chatIds: [chat.id] },
+      tags: ["imported_chat"],
+      links: [],
+      sections: {
+        source: {
+          text: "A short imported source summary for review testing.",
+          updatedAt: new Date().toISOString(),
+          evidence: ["chat_name:LTM Recovery Persistence", "message_range:1-3"],
+        },
+      },
+      version: 1,
+    },
+  });
+  expect(createSourceNote.ok()).toBeTruthy();
+
+  await page.route(`**/api/long-term-memory/notes/${sourceNoteId}/extract`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        draft: null,
+        diagnostics: [],
+        outcome: {
+          state: "no_suggestions_created",
+          totalCandidates: 1,
+          keptUnits: 0,
+          droppedUnits: 1,
+          droppedCandidates: [
+            {
+              index: 0,
+              reason: "unsupported_bucket",
+              message: "Needs a manual memory instead of an automatic suggestion.",
+              snippet: "Captain Vale promised to return at dawn with the key.",
+              recovery: {
+                noteType: "scene",
+                noteId: "scene_captain_vale_returns",
+                sectionKey: "summary",
+                status: "active",
+              },
+            },
+          ],
+        },
+        response: {},
+        appliedMutationIds: [],
+        skippedMutationIds: [],
+      }),
+    });
+  });
+  await page.route("**/api/long-term-memory/drafts/pending-count", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ count: 1 }),
+    });
+  });
+
+  await page.addInitScript((chatId) => {
+    localStorage.setItem("marinara-active-chat-id", chatId);
+  }, chat.id);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Active Context" }).click();
+  await page.getByRole("button", { name: "Import →" }).click();
+
+  const vaultDialog = page.getByRole("dialog", { name: "Long-Term Memory" });
+  await expect(vaultDialog).toBeVisible();
+  await vaultDialog.getByRole("button", { name: "Memories" }).click();
+  await vaultDialog.getByRole("button", { name: /^Source/ }).click();
+  await vaultDialog.getByRole("button", { name: `Open ${sourceTitle}` }).click();
+
+  await page.getByRole("button", { name: "Re-run extraction" }).click();
+  await page.getByRole("dialog", { name: "Re-run extraction?" }).getByRole("button", { name: "Re-run" }).click();
+  await expect(page.getByRole("button", { name: "Create manual memory" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Create manual memory" }).click();
+  const createMemoryDialog = page.getByRole("dialog", { name: "New Memory" });
+  await expect(createMemoryDialog).toBeVisible();
+  await createMemoryDialog.getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("dialog", { name: "Discard Draft" }).getByRole("button", { name: "Discard" }).click();
+  await expect(createMemoryDialog).toBeHidden();
+
+  await vaultDialog.getByRole("button", { name: `Open ${sourceTitle}` }).click();
+  await expect(page.getByRole("button", { name: "Create manual memory" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Remove all" }).click();
+  await expect(page.getByRole("button", { name: "Create manual memory" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Remove all" })).toHaveCount(0);
+  await expect(page.getByText("No usable suggestions were created from the latest extraction.")).toBeVisible();
+  await expect(page.getByText("No memory stream suggestions need review for this source.")).toBeVisible();
+});
+
 test("mobile LTM overflow actions open modals and advertise pending review", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("mobile"), "Mobile LTM overflow regression is covered on mobile.");
 

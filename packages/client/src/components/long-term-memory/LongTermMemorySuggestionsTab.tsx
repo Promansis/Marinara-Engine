@@ -46,7 +46,7 @@ import {
 
 type SuggestionGroup = "new" | "rewrite";
 type BatchAction = "keep" | "skip";
-type LatestExtractionResult = Pick<ExtractLongTermMemorySourceResponse, "diagnostics" | "draft" | "outcome">;
+export type LongTermMemoryLatestExtractionResult = Pick<ExtractLongTermMemorySourceResponse, "diagnostics" | "outcome">;
 
 const rewriteKinds = new Set<LtmDraftMutation["kind"]>(["append_section", "update_section", "add_link", "set_keywords", "set_status"]);
 
@@ -70,6 +70,18 @@ function outcomeLabel(outcome: LtmExtractionOutcome) {
   if (outcome.state === "success") return "Success";
   if (outcome.state === "partial_success") return "Partial success";
   return "No suggestions created";
+}
+
+function clearDroppedCandidatesOutcome(outcome: LtmExtractionOutcome): LtmExtractionOutcome {
+  if (outcome.droppedUnits === 0 && outcome.droppedCandidates.length === 0) {
+    return outcome;
+  }
+  return {
+    ...outcome,
+    state: outcome.keptUnits > 0 ? "success" : "no_suggestions_created",
+    droppedUnits: 0,
+    droppedCandidates: [],
+  };
 }
 
 function outcomeSummary(outcome: LtmExtractionOutcome) {
@@ -138,9 +150,13 @@ function summarizeBulkSkip(skippedCount: number, failedDraftCount: number) {
 
 export function LongTermMemorySuggestionsTab({
   note,
+  latestExtractionResult,
+  onLatestExtractionResultChange,
   onRecoverDroppedCandidate,
 }: {
   note: LtmNote;
+  latestExtractionResult: LongTermMemoryLatestExtractionResult | null;
+  onLatestExtractionResultChange: (result: LongTermMemoryLatestExtractionResult | null) => void;
   onRecoverDroppedCandidate: (candidate: LtmExtractionDroppedCandidate, note: LtmNote) => void;
 }) {
   const drafts = useLongTermMemoryDrafts({}, { enabled: isSourceMemory(note) });
@@ -154,7 +170,6 @@ export function LongTermMemorySuggestionsTab({
   const instruction = "";
   const model = "";
   const autoApplyLowRisk = false;
-  const [latestResult, setLatestResult] = useState<LatestExtractionResult | null>(null);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<Set<string>>(() => new Set());
   const [editedMutations, setEditedMutations] = useState<Record<string, LtmDraftMutation>>({});
@@ -201,8 +216,7 @@ export function LongTermMemorySuggestionsTab({
         model: model.trim() || undefined,
       })
       .then((result) => {
-        setLatestResult({
-          draft: result.draft,
+        onLatestExtractionResultChange({
           outcome: result.outcome,
           diagnostics: result.diagnostics,
         });
@@ -212,7 +226,6 @@ export function LongTermMemorySuggestionsTab({
   };
 
   useEffect(() => {
-    setLatestResult(null);
     setSelectMode(false);
     setSelectedRowKeys(new Set());
     setEditedMutations({});
@@ -488,11 +501,17 @@ export function LongTermMemorySuggestionsTab({
         </div>
       </div>
 
-      {latestResult?.outcome ? (
+      {latestExtractionResult?.outcome ? (
         <ExtractionOutcomePanel
           note={note}
-          outcome={latestResult.outcome}
-          diagnostics={latestResult.diagnostics}
+          outcome={latestExtractionResult.outcome}
+          diagnostics={latestExtractionResult.diagnostics}
+          onClearDroppedCandidates={() =>
+            onLatestExtractionResultChange({
+              ...latestExtractionResult,
+              outcome: clearDroppedCandidatesOutcome(latestExtractionResult.outcome),
+            })
+          }
           onRecoverDroppedCandidate={onRecoverDroppedCandidate}
         />
       ) : null}
@@ -594,11 +613,13 @@ function ExtractionOutcomePanel({
   note,
   outcome,
   diagnostics,
+  onClearDroppedCandidates,
   onRecoverDroppedCandidate,
 }: {
   note: LtmNote;
   outcome: LtmExtractionOutcome;
   diagnostics?: ExtractLongTermMemorySourceResponse["diagnostics"];
+  onClearDroppedCandidates: () => void;
   onRecoverDroppedCandidate: (candidate: LtmExtractionDroppedCandidate, note: LtmNote) => void;
 }) {
   const [showAllDropped, setShowAllDropped] = useState(false);
@@ -638,9 +659,15 @@ function ExtractionOutcomePanel({
 
       {outcome.droppedUnits > 0 ? (
         <div className="mt-3 space-y-2">
-          <div className="flex items-center gap-2 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-            <AlertCircle size="0.75rem" />
-            Dropped candidates
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+              <AlertCircle size="0.75rem" />
+              Dropped candidates
+            </div>
+            <ToolButton onClick={onClearDroppedCandidates}>
+              <X size="0.875rem" />
+              Remove all
+            </ToolButton>
           </div>
           {visibleDropped.map((candidate) => (
             <article
@@ -781,4 +808,3 @@ function SuggestionDrawer({
     </section>
   );
 }
-

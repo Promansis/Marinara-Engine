@@ -18,7 +18,10 @@ import {
   type LtmDisplayLookupContext,
 } from "./ltm-editor-utils";
 import { LongTermMemoryNoteEditor } from "./LongTermMemoryNoteEditor";
-import { LongTermMemorySuggestionsTab } from "./LongTermMemorySuggestionsTab";
+import {
+  LongTermMemorySuggestionsTab,
+  type LongTermMemoryLatestExtractionResult,
+} from "./LongTermMemorySuggestionsTab";
 import { Modal } from "../ui/Modal";
 import { cn } from "../../lib/utils";
 import type { LtmSearchResponse } from "../../hooks/use-long-term-memory";
@@ -619,6 +622,7 @@ export function MemoryNoteModal({
   recallResult,
   recallPending,
   editorDirty,
+  latestExtractionResult,
   onClose,
   onModeChange,
   onTabChange,
@@ -627,6 +631,7 @@ export function MemoryNoteModal({
   onRunRecall,
   onEditorDirtyChange,
   onSaved,
+  onLatestExtractionResultChange,
   onRecoverDroppedCandidate,
 }: {
   note: LtmNote | null;
@@ -643,6 +648,7 @@ export function MemoryNoteModal({
   recallResult: LtmSearchResponse | null;
   recallPending: boolean;
   editorDirty: boolean;
+  latestExtractionResult: LongTermMemoryLatestExtractionResult | null;
   onClose: () => void;
   onModeChange: (mode: MemoryModalMode) => void;
   onTabChange: (tab: MemoryModalTab) => void;
@@ -651,6 +657,7 @@ export function MemoryNoteModal({
   onRunRecall: () => void;
   onEditorDirtyChange: (dirty: boolean) => void;
   onSaved: (note: LtmNote) => void;
+  onLatestExtractionResultChange: (result: LongTermMemoryLatestExtractionResult | null) => void;
   onRecoverDroppedCandidate: (candidate: LtmExtractionDroppedCandidate, note: LtmNote) => void;
 }) {
   const isSourceNote = note ? isSourceSummaryNote(note) : false;
@@ -752,7 +759,12 @@ export function MemoryNoteModal({
                 />
               )}
               {safeActiveTab === "suggestions" && isSourceNote && (
-                <LongTermMemorySuggestionsTab note={note} onRecoverDroppedCandidate={onRecoverDroppedCandidate} />
+                <LongTermMemorySuggestionsTab
+                  note={note}
+                  latestExtractionResult={latestExtractionResult}
+                  onLatestExtractionResultChange={onLatestExtractionResultChange}
+                  onRecoverDroppedCandidate={onRecoverDroppedCandidate}
+                />
               )}
             </>
           )}
