@@ -164,7 +164,9 @@ function mapSessionSummary(summary: SessionSummary, ctx: GameJournalMappingConte
   const units: LtmEvidenceUnit[] = [];
   const sessionEvidence = [`session:${summary.sessionNumber}`, `chat:${ctx.chatId}`];
 
-  if (summary.summary.trim()) {
+  const hasSessionRecap = summary.summary.trim().length > 0;
+
+  if (hasSessionRecap) {
     units.push(
       unitBase("timeline_event", `session_${summary.sessionNumber}`, "event", summary.summary, ctx, {
         evidence: sessionEvidence,
@@ -182,11 +184,17 @@ function mapSessionSummary(summary: SessionSummary, ctx: GameJournalMappingConte
     );
   }
 
+  const sessionTimelineId = `timeline_session_${summary.sessionNumber}`;
+  const partyLinks = hasSessionRecap
+    ? [{ target: sessionTimelineId, relation: "caused_by" as const }]
+    : undefined;
+
   if (summary.partyDynamics.trim()) {
     units.push(
       unitBase("relationship_state", "party", "state", summary.partyDynamics, ctx, {
         evidence: sessionEvidence,
         mergeHint: `Session ${summary.sessionNumber} party dynamics`,
+        links: partyLinks,
       }),
     );
   }

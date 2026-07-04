@@ -23,6 +23,10 @@ const RELATIONSHIP_CHANGE_PATTERN =
   /\b(?:became|becomes|grew|grows|shifted|shifts|changed|changes|strained|softened|worsened|improved|lost trust|gained trust|trusted|distrusted|forgave|resented|confessed|betrayed|reconciled)\b/i;
 const RELATIONSHIP_DIMENSION_KEYS = new Set<string>(RELATIONSHIP_DIMENSIONS);
 
+function relationshipDescribesChange(unit: LtmEvidenceUnit): boolean {
+  return Object.keys(unit.dimensionChanges ?? {}).length > 0 || RELATIONSHIP_CHANGE_PATTERN.test(unit.text);
+}
+
 function lexicalOverlap(sourceText: string, proposedText: string) {
   const sourceTokens = tokenize(sourceText);
   const proposedTokens = tokenize(proposedText);
@@ -40,6 +44,7 @@ function quotedStrings(text: string) {
 
 function hasRelationshipSupport(unit: LtmEvidenceUnit, units: LtmEvidenceUnit[], existingNotes: LtmNote[]) {
   if (unit.bucket !== "relationship_state") return true;
+  if (!relationshipDescribesChange(unit)) return true;
   const currentTimelineNoteIds = new Set(
     units.filter((candidate) => candidate.bucket === "timeline_event").map((candidate) => noteIdForEvidenceUnit(candidate)),
   );
@@ -79,6 +84,7 @@ type DroppedCandidateInput = {
   candidateIndex: number;
   reason: LtmExtractionDropReason;
   message: string;
+  code?: string;
   unit?: LtmEvidenceUnit;
   snippet?: string;
 };
@@ -120,8 +126,10 @@ export function validateLtmEvidenceUnits({
     const noteId = noteIdForEvidenceUnit(unit);
     const unitDiagnostics: LtmExtractionDiagnostic[] = [];
     const drop = (input: DroppedCandidateInput) => {
+      const message = input.code ? userFacingDropMessageForCode(input.code, input.reason) : input.message;
       const dropped = droppedCandidate({
         ...input,
+        message,
         unit,
       });
       droppedCandidates.push(dropped);
@@ -261,6 +269,7 @@ export function validateLtmEvidenceUnits({
           candidateIndex,
           reason,
           message: userFacingDropMessage(reason),
+          code: dropDiagnostic.code,
         });
       } else {
         diagnostics.push(...unitDiagnostics);
@@ -281,10 +290,11 @@ export function validateLtmEvidenceUnits({
     }
     const candidateIndex = keptCandidateIndexes.get(unit) ?? 0;
     const noteId = noteIdForEvidenceUnit(unit);
+    const message = userFacingDropMessageForCode("relationship_state_missing_caused_by", "unsupported_bucket");
     const dropped = droppedCandidate({
       candidateIndex,
       reason: "unsupported_bucket",
-      message: userFacingDropMessage("unsupported_bucket"),
+      message,
       unit,
     });
     droppedCandidates.push(dropped);
@@ -448,7 +458,7 @@ function relationshipCausedByDiagnostics(
   validLinkTargets: Set<string>,
 ): LtmExtractionDiagnostic[] {
   if (unit.bucket !== "relationship_state") return [];
-  const describesChange = Object.keys(unit.dimensionChanges ?? {}).length > 0 || RELATIONSHIP_CHANGE_PATTERN.test(unit.text);
+  const describesChange = relationshipDescribesChange(unit);
   if (!describesChange) return [];
   const hasCausedBy = unit.links.some((link) => link.relation === "caused_by" && validLinkTargets.has(link.target));
   if (hasCausedBy) return [];
@@ -607,6 +617,13 @@ function dropReasonDiagnosticCode(reason: LtmExtractionDropReason) {
     case "invalid_format":
       return "candidate_dropped_invalid_format";
   }
+}
+
+function userFacingDropMessageForCode(code: string, reason: LtmExtractionDropReason): string {
+  if (code === "relationship_state_missing_caused_by") {
+    return "Dropped a relationship_state change missing a caused_by link to a timeline event or existing note.";
+  }
+  return userFacingDropMessage(reason);
 }
 
 function userFacingDropMessage(reason: LtmExtractionDropReason) {

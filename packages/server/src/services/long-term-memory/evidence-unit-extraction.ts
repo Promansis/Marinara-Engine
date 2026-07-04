@@ -335,7 +335,7 @@ function formatExistingNotes(notes: LtmNote[], maxTokens = DEFAULT_LTM_EXTRACTIO
   return blocks.length ? blocks.join("\n\n---\n\n") : "(no relevant memory streams)";
 }
 
-function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOptions): ChatMessage[] {
+export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOptions): ChatMessage[] {
   const allowedBuckets = options.allowedBuckets ?? DEFAULT_LTM_EVIDENCE_UNIT_ALLOWED_BUCKETS;
   const filteredScanOrder = LTM_EXTRACTION_BUCKET_SCAN_ORDER.filter((bucket) => allowedBuckets.includes(bucket));
   const modeDescs = options.mode
@@ -395,7 +395,7 @@ function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOp
           allowedBuckets.map((bucket) => [bucket, bucket === "thread" ? ["active", "resolved"] : ["active"]]),
         ),
         streamScanOrder: filteredScanOrder,
-        allowedTimelineRelations: ["occurred_in", "triggered_by", "resolved_in", "evidenced_by"],
+        allowedTimelineRelations: ["occurred_in", "triggered_by", "resolved_in", "evidenced_by", "caused_by", "affects_relationship", "affects_character"],
         streamDescriptions: filteredBucketDescriptions,
         sourceNote: {
           id: options.sourceNote.id,
