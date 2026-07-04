@@ -22,6 +22,7 @@ import {
   LongTermMemorySuggestionsTab,
   type LongTermMemoryLatestExtractionResult,
 } from "./LongTermMemorySuggestionsTab";
+import { type LtmManagedExtractionPrefs } from "./ltm-managed-extraction-prefs";
 import { Modal } from "../ui/Modal";
 import { cn } from "../../lib/utils";
 import type { LtmSearchResponse } from "../../hooks/use-long-term-memory";
@@ -612,6 +613,7 @@ export function MemoryNoteModal({
   open,
   mode,
   activeTab,
+  extractionPrefs,
   activeNotes,
   noteLookup,
   chatLookup,
@@ -638,6 +640,7 @@ export function MemoryNoteModal({
   open: boolean;
   mode: MemoryModalMode;
   activeTab: MemoryModalTab;
+  extractionPrefs?: LtmManagedExtractionPrefs;
   activeNotes: LtmNote[];
   noteLookup: Map<string, LtmNote>;
   chatLookup?: Map<string, Chat>;
@@ -761,6 +764,7 @@ export function MemoryNoteModal({
               {safeActiveTab === "suggestions" && isSourceNote && (
                 <LongTermMemorySuggestionsTab
                   note={note}
+                  extractionPrefs={extractionPrefs}
                   latestExtractionResult={latestExtractionResult}
                   onLatestExtractionResultChange={onLatestExtractionResultChange}
                   onRecoverDroppedCandidate={onRecoverDroppedCandidate}
@@ -776,6 +780,7 @@ export function MemoryNoteModal({
               onDirtyChange={onEditorDirtyChange}
               onSaved={onSaved}
               onRecoverDroppedCandidate={onRecoverDroppedCandidate}
+              extractionPrefs={extractionPrefs}
               embedded
               displayContext={displayContext}
             />

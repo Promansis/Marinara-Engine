@@ -1,4 +1,16 @@
-import { withMergedLtmScopeLinks, type LtmDraftMutation, type LtmEvidenceUnit, type LtmExtractionDroppedCandidate, type LtmNote, type LtmScope, type SessionSummary } from "@marinara-engine/shared";
+import {
+  isLtmSourceLikeNote,
+  withMergedLtmScopeLinks,
+  type LtmDraftMutation,
+  type LtmEvidenceUnit,
+  type LtmExtractionDraft,
+  type LtmExtractionDroppedCandidate,
+  type LtmExtractionOutcome,
+  type LtmExtractionResponse,
+  type LtmNote,
+  type LtmScope,
+  type SessionSummary,
+} from "@marinara-engine/shared";
 import { getLtmScopeChatIds } from "@marinara-engine/shared";
 import { LOCAL_SIDECAR_CONNECTION_ID } from "@marinara-engine/shared";
 import { logger } from "../../lib/logger.js";
@@ -8,14 +20,14 @@ import { createLLMProvider } from "../llm/provider-registry.js";
 import { getLocalSidecarProvider, LOCAL_SIDECAR_MODEL } from "../llm/local-sidecar.js";
 import { createChatsStorage } from "../storage/chats.storage.js";
 import { createConnectionsStorage } from "../storage/connections.storage.js";
-import { compileLtmEvidenceUnits } from "./evidence-unit-compiler.js";
 import { mapGameJournalToEvidenceUnits, computeGameSourceHash, renderGameSourceText } from "./game-journal-mapper.js";
 import { compileEvidenceUnitExtraction, runLongTermMemoryEvidenceUnitExtraction } from "./evidence-unit-extraction.js";
-import { validateLtmEvidenceUnits } from "./evidence-unit-validation.js";
+import { LongTermMemoryDraftStore } from "./draft-store.js";
 import { getLtmExtractionConfig } from "./extraction-config.js";
 import { nowIso, uniqueStrings } from "./ltm-utils.js";
 import { getLongTermMemoryRoot } from "./paths.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
+import { isLowRiskSourceExtractionMutation } from "./reconciliation.js";
 import { LongTermMemoryStorage, type UpdateLtmNotePatch } from "./storage.js";
 import type { LtmExtractionDiagnostic } from "./diagnostics.js";
 
@@ -208,8 +220,7 @@ async function applyMutation(
 
   const existing = await storage.getNote(mutation.noteId);
   if (!existing) {
-    logger.warn("[ltm] Direct-ingest target note not found, skipping mutation %s on note %s", mutation.id, mutation.noteId);
-    return;
+    throw new Error(`Direct-ingest target note not found: ${mutation.noteId}`);
   }
 
   let patch: UpdateLtmNotePatch;
@@ -267,13 +278,103 @@ async function applyMutation(
   }
 }
 
+function noteIdForMutation(mutation: LtmDraftMutation) {
+  return mutation.kind === "create_note" ? mutation.note.id : mutation.noteId;
+}
+
+function isLowRiskGameJournalAutoApplyMutation(mutation: LtmDraftMutation) {
+  return isLowRiskSourceExtractionMutation(mutation);
+}
+
+export type AutoApplyGameJournalDraftResult = {
+  draft: LtmExtractionDraft;
+  appliedMutationIds: string[];
+  skippedMutationIds: string[];
+  diagnostics: LtmExtractionDiagnostic[];
+};
+
+export async function autoApplyGameJournalDraft(options: {
+  draftId: string;
+  root?: string;
+}): Promise<AutoApplyGameJournalDraftResult> {
+  const root = options.root ?? getLongTermMemoryRoot();
+  const store = new LongTermMemoryDraftStore(root);
+  return store.withDraftLock(options.draftId, async () => {
+    const draft = await store.getDraft(options.draftId);
+    if (!draft) {
+      throw new Error(`Long-term memory draft not found: ${options.draftId}`);
+    }
+    if (draft.status !== "pending") {
+      throw new Error(`Long-term memory draft is not pending: ${options.draftId}`);
+    }
+    if (!draft.source.sourceNoteId) {
+      throw new Error(`Long-term memory draft is not tied to a source note: ${options.draftId}`);
+    }
+
+    const storage = new LongTermMemoryStorage(root);
+    const selectedMutations = draft.mutations.filter(isLowRiskGameJournalAutoApplyMutation);
+    const selectedMutationIds = new Set(selectedMutations.map((mutation) => mutation.id));
+    const appliedMutationIds: string[] = [];
+    const skippedMutationIds = draft.mutations
+      .filter((mutation) => !selectedMutationIds.has(mutation.id))
+      .map((mutation) => mutation.id);
+    const diagnostics: LtmExtractionDiagnostic[] = [];
+
+    for (const mutation of selectedMutations) {
+      try {
+        await applyMutation(storage, mutation, draft.source.sourceNoteId);
+        appliedMutationIds.push(mutation.id);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to auto-apply game journal mutation";
+        logger.error(
+          err,
+          "[ltm] directIngestGameJournal: failed to auto-apply mutation %s for draft %s",
+          mutation.id,
+          draft.id,
+        );
+        skippedMutationIds.push(mutation.id);
+        diagnostics.push({
+          severity: "error",
+          code: "game_journal_auto_apply_failed",
+          mutationId: mutation.id,
+          noteId: noteIdForMutation(mutation),
+          message,
+        });
+      }
+    }
+
+    const uniqueSkippedMutationIds = Array.from(new Set(skippedMutationIds));
+    const partialApply = uniqueSkippedMutationIds.length > 0;
+    const remainingMutations = partialApply
+      ? draft.mutations.filter((mutation) => uniqueSkippedMutationIds.includes(mutation.id))
+      : draft.mutations;
+    const updated = await store.updateDraftStatus(draft.id, partialApply ? "pending" : "auto_applied", {
+      appliedAt: appliedMutationIds.length > 0 ? nowIso() : draft.appliedAt,
+      mutations: remainingMutations,
+      appliedMutationIds: Array.from(new Set([...(draft.appliedMutationIds ?? []), ...appliedMutationIds])),
+      skippedMutationIds: uniqueSkippedMutationIds,
+    });
+    if (!updated) {
+      throw new Error(`Long-term memory draft disappeared during direct game journal auto-apply: ${draft.id}`);
+    }
+
+    return {
+      draft: updated,
+      appliedMutationIds,
+      skippedMutationIds: uniqueSkippedMutationIds,
+      diagnostics,
+    };
+  });
+}
+
 export interface DirectIngestGameJournalResult {
   units: LtmEvidenceUnit[];
-  keptUnitCount: number;
-  droppedCandidates: LtmExtractionDroppedCandidate[];
+  draft: LtmExtractionDraft | null;
   diagnostics: LtmExtractionDiagnostic[];
-  mutations: LtmDraftMutation[];
+  outcome: LtmExtractionOutcome;
+  response: LtmExtractionResponse;
   appliedMutationIds: string[];
+  skippedMutationIds: string[];
 }
 
 export async function directIngestGameJournal(
@@ -281,7 +382,7 @@ export async function directIngestGameJournal(
   sourceNote: LtmNote,
   root?: string,
   operationId?: string,
-  options: { refinePass?: boolean } = {},
+  options: { refinePass?: boolean; applyLowRisk?: boolean } = {},
 ): Promise<DirectIngestGameJournalResult> {
   return withLtmDebugOperation(
     {
@@ -300,11 +401,26 @@ export async function directIngestGameJournal(
 
       const rootDir = root ?? getLongTermMemoryRoot();
       const storage = new LongTermMemoryStorage(rootDir);
+      const draftStore = new LongTermMemoryDraftStore(rootDir);
 
       const chat = await createChatsStorage(db).getById(chatId);
       if (!chat) {
         logger.warn("[ltm] directIngestGameJournal: chat %s not found, aborting", chatId);
-        return { units: [], keptUnitCount: 0, droppedCandidates: [], diagnostics: [], mutations: [], appliedMutationIds: [] };
+        return {
+          units: [],
+          draft: null,
+          diagnostics: [],
+          outcome: {
+            state: "no_suggestions_created",
+            totalCandidates: 0,
+            keptUnits: 0,
+            droppedUnits: 0,
+            droppedCandidates: [],
+          },
+          response: { summary: "", mutations: [] },
+          appliedMutationIds: [],
+          skippedMutationIds: [],
+        };
       }
 
       const metadata = readJsonObject(chat.metadata);
@@ -315,7 +431,21 @@ export async function directIngestGameJournal(
 
       if (!gameJournal && sessionSummaries.length === 0) {
         logger.warn("[ltm] directIngestGameJournal: no game data found for chat %s, aborting", chatId);
-        return { units: [], keptUnitCount: 0, droppedCandidates: [], diagnostics: [], mutations: [], appliedMutationIds: [] };
+        return {
+          units: [],
+          draft: null,
+          diagnostics: [],
+          outcome: {
+            state: "no_suggestions_created",
+            totalCandidates: 0,
+            keptUnits: 0,
+            droppedUnits: 0,
+            droppedCandidates: [],
+          },
+          response: { summary: "", mutations: [] },
+          appliedMutationIds: [],
+          skippedMutationIds: [],
+        };
       }
 
       const sourceHash = computeGameSourceHash(
@@ -333,7 +463,21 @@ export async function directIngestGameJournal(
 
       if (units.length === 0) {
         logger.info("[ltm] directIngestGameJournal: no evidence units from game data for chat %s", chatId);
-        return { units: [], keptUnitCount: 0, droppedCandidates: [], diagnostics: [], mutations: [], appliedMutationIds: [] };
+        return {
+          units: [],
+          draft: null,
+          diagnostics: [],
+          outcome: {
+            state: "no_suggestions_created",
+            totalCandidates: 0,
+            keptUnits: 0,
+            droppedUnits: 0,
+            droppedCandidates: [],
+          },
+          response: { summary: "", mutations: [] },
+          appliedMutationIds: [],
+          skippedMutationIds: [],
+        };
       }
 
       const sourceEvidence = `source_note:${sourceNote.id}`;
@@ -344,40 +488,28 @@ export async function directIngestGameJournal(
       );
       const extractionConfig = await getLtmExtractionConfig(rootDir, "game");
       const refinePass = options.refinePass ?? (metadata.refinePass === true || extractionConfig.refinePass === true);
-      const existingNotes = refinePass ? await storage.listNotes({ scope, includeGlobal: true }) : [];
+      const existingNotes = (await storage.listNotes({ scope, includeGlobal: true })).filter(
+        (note) => !isLtmSourceLikeNote(note) && note.type !== "scene",
+      );
       const sourceText = renderGameSourceText(gameJournal as Journal | null, sessionSummaries as SessionSummary[]);
-      const validated = validateLtmEvidenceUnits({
-        units: structuralUnits,
+      const structuralSummary = `Direct ingestion of game journal + ${sessionSummaries.length} session summaries`;
+      const structuralCompiled = compileEvidenceUnitExtraction({
+        unitResponse: {
+          summary: structuralSummary,
+          units: structuralUnits,
+        },
+        totalCandidates: structuralUnits.length,
         sourceText,
         sourceNote,
-        existingNotes,
-        expectedSourceHash: sourceHash,
-      });
-      const keptUnits = validated.keptUnits;
-      let keptUnitCount = keptUnits.length;
-      let droppedCandidates = validated.droppedCandidates;
-      let diagnostics = validated.diagnostics;
-
-      if (keptUnits.length === 0) {
-        logger.info("[ltm] directIngestGameJournal: validation dropped all structural evidence units for chat %s", chatId);
-        return {
-          units: structuralUnits,
-          keptUnitCount,
-          droppedCandidates,
-          diagnostics,
-          mutations: [],
-          appliedMutationIds: [],
-        };
-      }
-
-      let compiled = compileLtmEvidenceUnits({
-        units: keptUnits,
         existingNotes,
         scope,
         modes: ["game"],
         mode: "game",
-        summary: `Direct ingestion of game journal + ${sessionSummaries.length} session summaries`,
+        sourceHash,
       });
+      let response = structuralCompiled.compiledResponse;
+      let diagnostics = structuralCompiled.diagnostics;
+      let outcome = structuralCompiled.outcome;
 
       if (refinePass) {
         try {
@@ -418,65 +550,90 @@ export async function directIngestGameJournal(
             sourceHash,
           });
           if (refinedCompiled.compiledResponse.mutations.length > 0) {
-            compiled = {
-              ...refinedCompiled.compiledResponse,
-              suggestionCap: refinedCompiled.suggestionCap,
-            };
-            keptUnitCount = refinedCompiled.outcome.keptUnits;
-            droppedCandidates = refinedCompiled.outcome.droppedCandidates;
+            response = refinedCompiled.compiledResponse;
             diagnostics = refinedCompiled.diagnostics;
+            outcome = refinedCompiled.outcome;
           }
         } catch (err) {
           logger.warn(err, "[ltm] Game journal refine pass failed, falling back to structural ingestion for %s", chatId);
         }
       }
 
-      if (compiled.mutations.length === 0) {
+      if (response.mutations.length === 0) {
         logger.info("[ltm] directIngestGameJournal: compiler produced no mutations for chat %s", chatId);
         return {
           units: structuralUnits,
-          keptUnitCount,
-          droppedCandidates,
+          draft: null,
           diagnostics,
-          mutations: [],
+          outcome,
+          response,
           appliedMutationIds: [],
+          skippedMutationIds: [],
         };
       }
 
-      const appliedMutationIds: string[] = [];
-      for (const mutation of compiled.mutations) {
-        try {
-          await applyMutation(storage, mutation, sourceNote.id);
-          appliedMutationIds.push(mutation.id);
-        } catch (err) {
-          logger.error(err, "[ltm] directIngestGameJournal: failed to apply mutation %s for chat %s", mutation.id, chatId);
-        }
+      const draft = await draftStore.createDraft({
+        scope,
+        modes: ["game"],
+        source: {
+          chatId,
+          sourceNoteId: sourceNote.id,
+          sourceHash,
+        },
+        summary: response.summary,
+        response,
+      });
+
+      let updatedDraft: LtmExtractionDraft | null = draft;
+      let appliedMutationIds: string[] = [];
+      let skippedMutationIds: string[] = [];
+
+      if (options.applyLowRisk) {
+        const autoApplyResult = await autoApplyGameJournalDraft({ draftId: draft.id, root: rootDir });
+        updatedDraft = autoApplyResult.draft;
+        appliedMutationIds = autoApplyResult.appliedMutationIds;
+        skippedMutationIds = autoApplyResult.skippedMutationIds;
+        diagnostics = [...diagnostics, ...autoApplyResult.diagnostics];
       }
 
+      const debugStatus =
+        diagnostics.some((diagnostic) => diagnostic.severity === "error") ||
+        (options.applyLowRisk === true && skippedMutationIds.length > 0)
+          ? "warning"
+          : "ok";
       await recordLtmDebugEvent({
         root: rootDir,
         operationId: opId,
         phase: "extraction",
         action: "direct_ingest_completed",
-        status: "ok",
+        status: debugStatus,
         sourceNoteId: sourceNote.id,
-        message: `Direct-ingested ${keptUnitCount}/${structuralUnits.length} units → ${compiled.mutations.length} mutations, ${appliedMutationIds.length} applied`,
+        draftId: updatedDraft?.id ?? undefined,
+        mutationIds: response.mutations.map((mutation) => mutation.id),
+        message: `Direct-ingested ${outcome.keptUnits}/${structuralUnits.length} units → ${response.mutations.length} mutations, ${appliedMutationIds.length} applied`,
         counts: {
           units: structuralUnits.length,
-          keptUnits: keptUnitCount,
-          droppedUnits: droppedCandidates.length,
-          mutations: compiled.mutations.length,
+          keptUnits: outcome.keptUnits,
+          droppedUnits: outcome.droppedUnits,
+          mutations: response.mutations.length,
           applied: appliedMutationIds.length,
+          skipped: skippedMutationIds.length,
+        },
+        diagnostics,
+        details: {
+          applyLowRisk: options.applyLowRisk === true,
+          skippedMutationIds,
         },
       });
 
       return {
         units: structuralUnits,
-        keptUnitCount,
-        droppedCandidates,
+        draft: updatedDraft,
         diagnostics,
-        mutations: compiled.mutations,
+        outcome,
+        response,
         appliedMutationIds,
+        skippedMutationIds,
       };
     },
   );

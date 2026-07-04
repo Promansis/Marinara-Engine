@@ -36,6 +36,7 @@ import {
   LongTermMemorySuggestionsTab,
   type LongTermMemoryLatestExtractionResult,
 } from "./LongTermMemorySuggestionsTab";
+import { type LtmManagedExtractionPrefs } from "./ltm-managed-extraction-prefs";
 import { ToolButton } from "./LtmPills";
 import {
   dedupeEvidenceEntries,
@@ -67,6 +68,7 @@ type LongTermMemoryNoteEditorProps = {
   onDirtyChange?: (dirty: boolean) => void;
   onSaved?: (note: LtmNote) => void;
   onRecoverDroppedCandidate?: (candidate: LtmExtractionDroppedCandidate, note: LtmNote) => void;
+  extractionPrefs?: LtmManagedExtractionPrefs;
   embedded?: boolean;
   displayContext?: LtmDisplayLookupContext;
 };
@@ -128,6 +130,7 @@ export function LongTermMemoryNoteEditor({
   onDirtyChange,
   onSaved,
   onRecoverDroppedCandidate,
+  extractionPrefs,
   embedded = false,
   displayContext,
 }: LongTermMemoryNoteEditorProps) {
@@ -397,6 +400,7 @@ export function LongTermMemoryNoteEditor({
       {!embedded && activeTab === "suggestions" && onRecoverDroppedCandidate ? (
         <LongTermMemorySuggestionsTab
           note={savedBaseline}
+          extractionPrefs={extractionPrefs}
           latestExtractionResult={latestExtractionResult}
           onLatestExtractionResultChange={setLatestExtractionResult}
           onRecoverDroppedCandidate={onRecoverDroppedCandidate}

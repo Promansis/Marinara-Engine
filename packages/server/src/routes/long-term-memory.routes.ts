@@ -624,24 +624,19 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
       // Game journal source notes are ingested directly without LLM extraction
       if (sourceNote.tags.includes("imported_game_journal")) {
         try {
-          const directResult = await directIngestGameJournal(app.db, sourceNote, undefined, operationId);
-          const outcomeState = directResult.appliedMutationIds.length === directResult.mutations.length
-            ? "success" as const
-            : "partial_success" as const;
-          await rebuildLongTermMemoryIndexes({ scope: "typed" });
+          const directResult = await directIngestGameJournal(app.db, sourceNote, undefined, operationId, {
+            applyLowRisk: body.applyLowRisk,
+          });
+          if (directResult.appliedMutationIds.length > 0) {
+            await rebuildLongTermMemoryIndexes({ scope: "typed" });
+          }
           return {
-            draft: null,
+            draft: directResult.draft,
             diagnostics: directResult.diagnostics,
-            outcome: {
-              state: outcomeState,
-              totalCandidates: directResult.units.length,
-              keptUnits: directResult.keptUnitCount,
-              droppedUnits: directResult.droppedCandidates.length,
-              droppedCandidates: directResult.droppedCandidates,
-            },
-            response: { summary: "Direct ingestion of game journal", mutations: directResult.mutations },
+            outcome: directResult.outcome,
+            response: directResult.response,
             appliedMutationIds: directResult.appliedMutationIds,
-            skippedMutationIds: [],
+            skippedMutationIds: directResult.skippedMutationIds,
           };
         } catch (err) {
           await recordLtmDebugEvent({
@@ -938,26 +933,19 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
           const isGameJournal = item.note.tags.includes("imported_game_journal");
 
           if (isGameJournal) {
-            const directResult = await directIngestGameJournal(app.db, item.note, undefined, operationId);
-            const outcomeState = directResult.appliedMutationIds.length === directResult.mutations.length
-              ? "success" as const
-              : "partial_success" as const;
+            const directResult = await directIngestGameJournal(app.db, item.note, undefined, operationId, {
+              applyLowRisk: body.applyLowRisk,
+            });
             return {
               sourceId: item.sourceId,
               title: item.title,
               note: item.note,
               created: item.created,
-              draft: null,
+              draft: directResult.draft,
               diagnostics: directResult.diagnostics,
-              outcome: {
-                state: outcomeState,
-                totalCandidates: directResult.units.length,
-                keptUnits: directResult.keptUnitCount,
-                droppedUnits: directResult.droppedCandidates.length,
-                droppedCandidates: directResult.droppedCandidates,
-              },
+              outcome: directResult.outcome,
               appliedMutationIds: directResult.appliedMutationIds,
-              skippedMutationIds: [],
+              skippedMutationIds: directResult.skippedMutationIds,
             };
           }
 

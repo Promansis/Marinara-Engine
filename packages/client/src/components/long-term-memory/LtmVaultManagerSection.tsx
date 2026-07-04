@@ -57,6 +57,10 @@ import { TypeMemoryGroups } from "../long-term-memory/LongTermMemoryNoteList";
 import { ImportPreviewRowItem } from "../long-term-memory/LongTermMemoryImportSection";
 import { type LongTermMemoryLatestExtractionResult } from "../long-term-memory/LongTermMemorySuggestionsTab";
 import { LongTermMemoryNoteTransferModal } from "../long-term-memory/LongTermMemoryNoteTransferModal";
+import {
+  readLtmManagedExtractionPrefs,
+  type LtmManagedExtractionPrefs,
+} from "../long-term-memory/ltm-managed-extraction-prefs";
 import { friendlyIdentifier, friendlyNoteType, friendlyStatus, type LtmDisplayLookupContext } from "../long-term-memory/ltm-editor-utils";
 import {
   compactInputClassName,
@@ -133,8 +137,7 @@ function extractPanelPrefs(settings: Record<string, unknown>) {
       ? rawImportSource
       : "chats";
   return {
-    autoApplyLowRisk: settings.autoApplyLowRisk === true,
-    connectionId: typeof settings.connectionId === "string" ? settings.connectionId : "",
+    ...readLtmManagedExtractionPrefs(settings),
     importConcurrency:
       typeof settings.importConcurrency === "number"
         ? Math.max(1, Math.min(10, Math.round(settings.importConcurrency)))
@@ -144,8 +147,6 @@ function extractPanelPrefs(settings: Record<string, unknown>) {
         ? Math.max(1, Math.min(100, Math.round(settings.importLimit)))
         : 25,
     importSource,
-    instruction: typeof settings.instruction === "string" ? settings.instruction : "",
-    model: typeof settings.model === "string" ? settings.model : "",
   };
 }
 
@@ -247,6 +248,15 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const importConcurrencySetting = panelPrefs.importConcurrency;
   const importInstruction = panelPrefs.instruction;
   const importModel = panelPrefs.model;
+  const extractionPrefs = useMemo<LtmManagedExtractionPrefs>(
+    () => ({
+      autoApplyLowRisk: panelPrefs.autoApplyLowRisk,
+      connectionId: panelPrefs.connectionId,
+      instruction: panelPrefs.instruction,
+      model: panelPrefs.model,
+    }),
+    [panelPrefs.autoApplyLowRisk, panelPrefs.connectionId, panelPrefs.instruction, panelPrefs.model],
+  );
   const sourceNoteOpenedRef = useRef<string | null>(null);
   const selectedNavigatorThread = useMemo(
     () => findNavigatorThread(navigatorThreads, navigatorSelection),
@@ -1453,6 +1463,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
         open={Boolean(openNote)}
         mode={memoryModalMode}
         activeTab={memoryModalTab}
+        extractionPrefs={extractionPrefs}
         activeNotes={activeNotes.data ?? []}
         noteLookup={noteLookup}
         chatLookup={chatLookup}

@@ -43,6 +43,7 @@ import {
   type SuggestionRowModel,
   suggestionRowKeyFor,
 } from "./LtmSuggestionRow";
+import { type LtmManagedExtractionPrefs } from "./ltm-managed-extraction-prefs";
 
 type SuggestionGroup = "new" | "rewrite";
 type BatchAction = "keep" | "skip";
@@ -150,11 +151,13 @@ function summarizeBulkSkip(skippedCount: number, failedDraftCount: number) {
 
 export function LongTermMemorySuggestionsTab({
   note,
+  extractionPrefs,
   latestExtractionResult,
   onLatestExtractionResultChange,
   onRecoverDroppedCandidate,
 }: {
   note: LtmNote;
+  extractionPrefs?: LtmManagedExtractionPrefs;
   latestExtractionResult: LongTermMemoryLatestExtractionResult | null;
   onLatestExtractionResultChange: (result: LongTermMemoryLatestExtractionResult | null) => void;
   onRecoverDroppedCandidate: (candidate: LtmExtractionDroppedCandidate, note: LtmNote) => void;
@@ -166,10 +169,10 @@ export function LongTermMemorySuggestionsTab({
   const deleteDraftMutation = useDeleteLongTermMemoryDraftMutation();
   const extractSourceNote = useExtractLongTermMemorySourceNote();
   const skipDraftMutations = useSkipLongTermMemoryDraftMutations();
-  const connectionId = "";
-  const instruction = "";
-  const model = "";
-  const autoApplyLowRisk = false;
+  const connectionId = extractionPrefs?.connectionId ?? "";
+  const instruction = extractionPrefs?.instruction ?? "";
+  const model = extractionPrefs?.model ?? "";
+  const autoApplyLowRisk = extractionPrefs?.autoApplyLowRisk ?? false;
   const [selectMode, setSelectMode] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<Set<string>>(() => new Set());
   const [editedMutations, setEditedMutations] = useState<Record<string, LtmDraftMutation>>({});
