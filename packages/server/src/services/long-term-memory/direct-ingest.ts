@@ -28,6 +28,7 @@ import { nowIso, uniqueStrings } from "./ltm-utils.js";
 import { getLongTermMemoryRoot } from "./paths.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import { isLowRiskSourceExtractionMutation } from "./reconciliation.js";
+import { canUpdateLtmScopedTarget, resolveScopedEvidenceUnitTargets } from "./scoped-targets.js";
 import { LongTermMemoryStorage, type UpdateLtmNotePatch } from "./storage.js";
 import type { LtmExtractionDiagnostic } from "./diagnostics.js";
 
@@ -185,6 +186,11 @@ async function applyMutation(
     if (!existing) {
       await storage.createNote(mutation.note, eventContext);
       return;
+    }
+    if (!canUpdateLtmScopedTarget(existing.scope, mutation.note.scope)) {
+      throw new Error(
+        `Direct LTM ingest cannot merge scoped create ${mutation.note.id} into an existing note from another scope.`,
+      );
     }
 
     const sections: LtmNote["sections"] = { ...existing.sections };
@@ -493,22 +499,28 @@ export async function directIngestGameJournal(
       );
       const sourceText = renderGameSourceText(gameJournal as Journal | null, sessionSummaries as SessionSummary[]);
       const structuralSummary = `Direct ingestion of game journal + ${sessionSummaries.length} session summaries`;
+      const structuralTargetResolution = await resolveScopedEvidenceUnitTargets({
+        storage,
+        existingNotes,
+        units: structuralUnits,
+        scope,
+      });
       const structuralCompiled = compileEvidenceUnitExtraction({
         unitResponse: {
           summary: structuralSummary,
-          units: structuralUnits,
+          units: structuralTargetResolution.units,
         },
         totalCandidates: structuralUnits.length,
         sourceText,
         sourceNote,
-        existingNotes,
+        existingNotes: structuralTargetResolution.existingNotes,
         scope,
         modes: ["game"],
         mode: "game",
         sourceHash,
       });
       let response = structuralCompiled.compiledResponse;
-      let diagnostics = structuralCompiled.diagnostics;
+      let diagnostics = [...structuralCompiled.diagnostics, ...structuralTargetResolution.diagnostics];
       let outcome = structuralCompiled.outcome;
 
       if (refinePass) {
@@ -538,13 +550,22 @@ export async function directIngestGameJournal(
             aiKeywordExtraction: extractionConfig.aiKeywordExtraction,
             refinePass: true,
           });
+          const refinedTargetResolution = await resolveScopedEvidenceUnitTargets({
+            storage,
+            existingNotes,
+            units: refined.response.units,
+            scope,
+          });
           const refinedCompiled = compileEvidenceUnitExtraction({
-            unitResponse: refined.response,
+            unitResponse: {
+              ...refined.response,
+              units: refinedTargetResolution.units,
+            },
             totalCandidates: refined.totalCandidates,
             parserDroppedCandidates: refined.droppedCandidates,
             sourceText,
             sourceNote,
-            existingNotes,
+            existingNotes: refinedTargetResolution.existingNotes,
             scope,
             modes: ["game"],
             mode: "game",
@@ -552,7 +573,7 @@ export async function directIngestGameJournal(
           });
           if (refinedCompiled.compiledResponse.mutations.length > 0) {
             response = refinedCompiled.compiledResponse;
-            diagnostics = refinedCompiled.diagnostics;
+            diagnostics = [...refinedCompiled.diagnostics, ...refinedTargetResolution.diagnostics];
             outcome = refinedCompiled.outcome;
           }
         } catch (err) {

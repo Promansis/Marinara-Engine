@@ -1,16 +1,12 @@
 import {
   isLtmSourceLikeNote,
-  isGlobalLtmScope,
-  ltmScopesOverlap,
   DEFAULT_LTM_ALLOWED_STREAMS_BY_MODE,
   DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE,
-  type LtmExtractionDroppedCandidate,
   type LtmExtractionDraft,
   type LtmExtractionOutcome,
   type LtmExtractionResponse,
   type LtmMode,
   type LtmNote,
-  type LtmEvidenceUnit,
   type LtmScope,
 } from "@marinara-engine/shared";
 import type { BaseLLMProvider } from "../llm/base-provider.js";
@@ -26,8 +22,8 @@ import { getLtmExtractionConfig } from "./extraction-config.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import type { LtmExtractionDiagnostic } from "./diagnostics.js";
 import { LongTermMemoryDraftStore } from "./draft-store.js";
-import { noteIdForEvidenceUnit } from "./evidence-unit-validation.js";
 import { retrieveLongTermMemory, type RetrieveLongTermMemoryInput } from "./retrieval.js";
+import { canUpdateLtmScopedTarget, resolveScopedEvidenceUnitTargets } from "./scoped-targets.js";
 import { LongTermMemoryStorage } from "./storage.js";
 
 export type ExtractLongTermMemoryFromSourceNoteOptions = {
@@ -85,58 +81,9 @@ async function getExistingTypedNotes(options: {
   return noteIds.map((noteId) => notesById.get(noteId)).filter((note): note is LtmNote => {
     if (!note) return false;
     if (isLtmSourceNote(note)) return false;
-    if (!scopeOverlaps(note.scope, options.scope)) return false;
+    if (!canUpdateLtmScopedTarget(note.scope, options.scope)) return false;
     return true;
   });
-}
-
-async function getExistingTypedNotesForTargets(options: {
-  storage: LongTermMemoryStorage;
-  existingNotes: LtmNote[];
-  targetNoteIds: string[];
-  scope: LtmScope;
-}): Promise<{
-  notes: LtmNote[];
-  diagnostics: LtmExtractionDiagnostic[];
-  droppedTargetNoteIds: string[];
-}> {
-  const existingById = new Map(options.existingNotes.map((note) => [note.id, note]));
-  const missingTargetIds = Array.from(new Set(options.targetNoteIds.filter((noteId) => !existingById.has(noteId))));
-  const diagnostics: LtmExtractionDiagnostic[] = [];
-  const droppedTargetNoteIds: string[] = [];
-  if (missingTargetIds.length === 0) return { notes: options.existingNotes, diagnostics, droppedTargetNoteIds };
-
-  const targetNotesById = await options.storage.getNotesByIds(missingTargetIds);
-  const targetNotes = missingTargetIds.map((noteId) => targetNotesById.get(noteId)).filter(Boolean);
-  for (const note of targetNotes) {
-    if (!note) continue;
-    if (isLtmSourceNote(note)) continue;
-    if (!scopeOverlaps(note.scope, options.scope)) {
-      diagnostics.push({
-        severity: "warning",
-        code: "target_note_scope_mismatch",
-        noteId: note.id,
-        message: `Evidence target ${note.id} was validly shaped but belongs to a different scope, so it was not updated from this source note.`,
-        details: {
-          sourceScope: options.scope,
-          targetScope: note.scope,
-        },
-      });
-      droppedTargetNoteIds.push(note.id);
-      continue;
-    }
-    existingById.set(note.id, note);
-  }
-  return {
-    notes: Array.from(existingById.values()).sort((a, b) => a.id.localeCompare(b.id)),
-    diagnostics,
-    droppedTargetNoteIds,
-  };
-}
-
-function scopeOverlaps(noteScope: LtmScope, extractionScope: LtmScope) {
-  if (isGlobalLtmScope(noteScope) || isGlobalLtmScope(extractionScope)) return true;
-  return ltmScopesOverlap(noteScope, extractionScope);
 }
 
 export async function extractLongTermMemoryFromSourceNote(
@@ -277,84 +224,39 @@ async function extractLongTermMemoryFromSourceNoteInner(
 
   const extractionPayload = await runLongTermMemoryEvidenceUnitExtraction(baseExtractionOptions);
   const unitResponse = extractionPayload.response;
-  const targetLookup = await getExistingTypedNotesForTargets({
+  const targetResolution = await resolveScopedEvidenceUnitTargets({
     storage,
     existingNotes,
-    targetNoteIds: unitResponse.units.map(noteIdForEvidenceUnit),
+    units: unitResponse.units,
     scope,
   });
-  const compilerExistingNotes = targetLookup.notes;
-  if (compilerExistingNotes.length !== existingNotes.length) {
+  const compilerExistingNotes = targetResolution.existingNotes;
+  if (compilerExistingNotes.length !== existingNotes.length || targetResolution.remaps.size > 0) {
     await recordLtmDebugEvent({
       operationId: options.operationId,
       root: options.root,
       phase: "retrieval",
       action: "existing_target_notes_loaded",
-      status: "ok",
+      status: targetResolution.remaps.size > 0 ? "warning" : "ok",
       sourceNoteId: sourceNote.id,
       counts: {
         existingNotes: compilerExistingNotes.length,
         addedTargetNotes: compilerExistingNotes.length - existingNotes.length,
+        scopedTargetRemaps: targetResolution.remaps.size,
       },
       details: {
         noteIds: compilerExistingNotes.map((note) => note.id).slice(0, 80),
+        scopedTargetRemaps: Object.fromEntries(targetResolution.remaps),
       },
     });
   }
-  const scopedUnits = unitResponse.units.filter((unit) => !targetLookup.droppedTargetNoteIds.includes(noteIdForEvidenceUnit(unit)));
-  const droppedScopeCandidates: LtmExtractionDroppedCandidate[] = unitResponse.units
-    .map((unit, index) => ({ unit, index }))
-    .filter(({ unit }) => targetLookup.droppedTargetNoteIds.includes(noteIdForEvidenceUnit(unit)))
-    .map(({ unit, index }) => ({
-      index,
-      reason: "target_note_outside_scope" as const,
-      message: "Dropped a candidate that targeted a memory outside this source's scope.",
-      snippet: unit.text.length > 280 ? `${unit.text.slice(0, 277).trim()}...` : unit.text,
-      recovery: {
-        noteType:
-          unit.bucket.startsWith("relationship_")
-            ? "relationship"
-            : unit.bucket === "timeline_event"
-              ? "timeline_event"
-              : unit.bucket === "thread"
-                ? "thread"
-                : unit.bucket === "world_fact"
-                  ? "world"
-                  : unit.bucket === "tone"
-                    ? "tone"
-                    : unit.bucket === "anchor"
-                      ? noteIdForEvidenceUnit(unit).startsWith("tone_")
-                        ? "tone"
-                        : "world"
-                      : "character",
-        noteId: noteIdForEvidenceUnit(unit),
-        sectionKey:
-          unit.bucket === "timeline_event"
-            ? unit.sectionKey || "event"
-            : unit.bucket === "relationship_state"
-                ? "state"
-                : unit.bucket === "character_fact"
-                    ? unit.sectionKey || "facts"
-                    : unit.bucket === "tone"
-                      ? "observations"
-                      : unit.bucket === "thread" && unit.status === "resolved"
-                        ? "summary"
-                        : unit.sectionKey,
-        status:
-          unit.status === "archived"
-            ? "archived"
-            : unit.status === "resolved"
-              ? "resolved"
-              : "active",
-      },
-    }));
   const compiled = compileEvidenceUnitExtraction({
     unitResponse: {
       ...unitResponse,
-      units: scopedUnits,
+      units: targetResolution.units,
     },
     totalCandidates: extractionPayload.totalCandidates,
-    parserDroppedCandidates: [...extractionPayload.droppedCandidates, ...droppedScopeCandidates],
+    parserDroppedCandidates: extractionPayload.droppedCandidates,
     sourceText,
     sourceNote,
     existingNotes: compilerExistingNotes,
@@ -363,7 +265,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
     mode: resolvedMode,
     sourceHash,
   });
-  compiled.diagnostics.push(...targetLookup.diagnostics);
+  compiled.diagnostics.push(...targetResolution.diagnostics);
   const compiledSummary = summarizeCompiledEvidenceUnitExtraction(compiled);
   await recordLtmDebugEvent({
     operationId: options.operationId,

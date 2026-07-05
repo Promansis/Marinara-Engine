@@ -98,6 +98,70 @@ test("copy to another branch adds destination branch scope without changing the 
   });
 });
 
+test("copy and move preserve scoped variant note ids", async () => {
+  await withStorage(async (storage) => {
+    await storage.createNote(
+      baseNote({
+        id: "char_damo_d1cc804891",
+        type: "character",
+        scope: {
+          chatId: "branch_source",
+          chatIds: ["branch_source"],
+          characterIds: ["char_source"],
+        },
+      }),
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      baseNote({
+        id: "rel_damo_lisa_d1cc804891",
+        type: "relationship",
+        scope: {
+          chatId: "branch_source",
+          chatIds: ["branch_source"],
+          characterIds: ["char_source"],
+        },
+      }),
+      { suppressEvent: true },
+    );
+
+    await applyLtmNoteTransfer(
+      {
+        noteIds: ["char_damo_d1cc804891"],
+        mode: "copy",
+        destinationChatId: DESTINATION_CHAT.id,
+        includeDerived: false,
+      },
+      DESTINATION_CHAT,
+      { storage },
+    );
+    await applyLtmNoteTransfer(
+      {
+        noteIds: ["rel_damo_lisa_d1cc804891"],
+        mode: "move",
+        destinationChatId: DESTINATION_CHAT.id,
+        includeDerived: false,
+      },
+      DESTINATION_CHAT,
+      { storage },
+    );
+
+    const copied = await storage.getNote("char_damo_d1cc804891");
+    const moved = await storage.getNote("rel_damo_lisa_d1cc804891");
+    assert.ok(copied);
+    assert.ok(moved);
+    assert.deepEqual(copied.scope.chatIds, ["branch_source", DESTINATION_CHAT.id]);
+    assert.deepEqual(moved.scope, {
+      chatId: DESTINATION_CHAT.id,
+      chatIds: [DESTINATION_CHAT.id],
+      groupId: DESTINATION_CHAT.groupId,
+      characterIds: DESTINATION_CHAT.characterIds,
+    });
+    assert.equal(await storage.getNote("char_damo"), null);
+    assert.equal(await storage.getNote("rel_damo_lisa"), null);
+  });
+});
+
 test("move replaces full scope with destination branch scope", async () => {
   await withStorage(async (storage) => {
     await storage.createNote(

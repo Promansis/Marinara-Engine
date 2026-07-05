@@ -14,6 +14,7 @@ import { nowIso, uniqueStrings } from "./ltm-utils.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import { LongTermMemoryDraftStore } from "./draft-store.js";
 import { rebuildLongTermMemoryIndexes } from "./rebuild.js";
+import { canUpdateLtmScopedTarget } from "./scoped-targets.js";
 import { LongTermMemoryStorage, type UpdateLtmNotePatch } from "./storage.js";
 
 export interface ApplyLtmDraftOptions {
@@ -282,6 +283,11 @@ async function applyMutation(
       );
       return;
     }
+    if (!canUpdateLtmScopedTarget(existing.scope, mutation.note.scope)) {
+      throw new Error(
+        `Long-term memory draft cannot merge scoped create ${mutation.note.id} into an existing note from another scope.`,
+      );
+    }
 
     const sections: LtmNote["sections"] = { ...existing.sections };
     for (const [sectionKey, section] of Object.entries(mutation.note.sections)) {
@@ -313,6 +319,11 @@ async function applyMutation(
   const existing = await storage.getNote(mutation.noteId);
   if (!existing) {
     throw new Error(`Long-term memory note not found for draft mutation: ${mutation.noteId}`);
+  }
+  if (!canUpdateLtmScopedTarget(existing.scope, draft.scope)) {
+    throw new Error(
+      `Long-term memory draft cannot mutate ${mutation.noteId} because it belongs to another scope.`,
+    );
   }
 
   let patch: UpdateLtmNotePatch;

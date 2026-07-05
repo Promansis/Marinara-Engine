@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { LtmEvidenceUnit, LtmNote, SessionSummary } from "@marinara-engine/shared";
+import type { LtmDraftMutation, LtmEvidenceUnit, LtmNote, SessionSummary } from "@marinara-engine/shared";
 import { deduplicateUnits } from "../dedup.js";
 import { validateLtmEvidenceUnits } from "../evidence-unit-validation.js";
 import {
@@ -329,7 +329,7 @@ test("malformed evidence unit drops include actionable schema issues", () => {
   assert.ok(parsed.droppedCandidates[0]?.issues?.some((issue) => issue.includes("professional_curiosity")));
 });
 
-test("source extraction reports out-of-scope target collisions with scope details", async () => {
+test("source extraction creates a scoped variant for out-of-scope target collisions", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-out-of-scope-target-"));
   try {
     const storage = new LongTermMemoryStorage(root);
@@ -412,12 +412,335 @@ test("source extraction reports out-of-scope target collisions with scope detail
       },
     });
 
-    assert.equal(result.draft, null);
-    assert.equal(result.outcome.droppedCandidates[0]?.reason, "target_note_outside_scope");
-    const diagnostic = result.diagnostics.find((entry) => entry.code === "target_note_scope_mismatch");
+    assert(result.draft);
+    const create = result.draft.mutations.find((mutation) => mutation.kind === "create_note");
+    assert.equal(create?.kind, "create_note");
+    assert.match(create.note.id, /^timeline_mara_jules_[a-f0-9]{10}$/);
+    assert.deepEqual(create.note.scope, { chatId: "chat_a", chatIds: ["chat_a"] });
+    assert.equal(result.outcome.droppedCandidates.length, 0);
+    const diagnostic = result.diagnostics.find((entry) => entry.code === "target_note_scoped_variant");
     assert.equal(diagnostic?.severity, "warning");
     assert.deepEqual(diagnostic?.details?.sourceScope, { chatId: "chat_a", chatIds: ["chat_a"] });
     assert.deepEqual(diagnostic?.details?.targetScope, { chatId: "chat_b", chatIds: ["chat_b"] });
+    assert.equal(diagnostic?.details?.originalNoteId, "timeline_mara_jules");
+    assert.equal(diagnostic?.details?.resolvedNoteId, create.note.id);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source extraction creates scoped variants for every typed bucket and rewrites remapped links", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-all-scoped-targets-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    const sourceText = [
+      "Damo has a silver key tattoo linked to the archive.",
+      "Lisa returns the archive key before dawn.",
+      "Damo and Lisa's trust improved after Lisa returned the archive key.",
+      "The old city archive floats above the lantern river.",
+      "Open thread: Damo must recover the missing key before the archive door will resolve.",
+      "Noir banter remains sharp and intimate around the archive.",
+      "The silver key symbol marks promises around the archive.",
+    ].join(" ");
+    await storage.createNote(
+      {
+        id: "scene_source_all_scoped",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_a" },
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: sourceText,
+            updatedAt: timestamp,
+            evidence: ["chat:chat_a"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const createExisting = async (id: string, type: LtmNote["type"], sectionKey: string) => {
+      await storage.createNote(
+        {
+          id,
+          type,
+          status: "active",
+          modes: ["roleplay"],
+          scope: { chatId: "chat_b" },
+          tags: type === "relationship" ? ["typed_memory", "relationship_memory"] : ["typed_memory"],
+          links: [],
+          sections: {
+            [sectionKey]: {
+              text: `Existing out-of-scope ${id}.`,
+              updatedAt: timestamp,
+              evidence: ["source_note:scene_source_elsewhere"],
+            },
+          },
+        },
+        { suppressEvent: true },
+      );
+    };
+
+    await createExisting("char_damo", "character", "facts");
+    await createExisting("timeline_archive_return", "timeline_event", "event");
+    await createExisting("rel_damo_lisa", "relationship", "state");
+    await createExisting("world_old_city_archive", "world", "facts");
+    await createExisting("thread_missing_key", "thread", "summary");
+    await createExisting("tone_noir", "tone", "observations");
+    await createExisting("world_anchor_symbol", "world", "motif");
+
+    const sourceNote = await storage.getNote("scene_source_all_scoped");
+    assert.ok(sourceNote);
+    const unitSourceHash = sourceHashForEvidenceUnitExtraction(sourceNote);
+    const provider = {
+      maxTokensOverrideValue: undefined,
+      chatComplete: async () => ({
+        content: JSON.stringify({
+          summary: "All scoped targets",
+          units: [
+            {
+              id: randomUUID(),
+              bucket: "character_fact",
+              subjectId: "damo",
+              sectionKey: "facts",
+              text: "Damo has a silver key tattoo linked to the archive.",
+              importance: "major",
+              evidence: ["source_note:scene_source_all_scoped"],
+              confidence: 0.9,
+              salience: 0.8,
+              status: "active",
+              links: [],
+              sourceHash: unitSourceHash,
+            },
+            {
+              id: randomUUID(),
+              bucket: "timeline_event",
+              subjectId: "archive_return",
+              sectionKey: "event",
+              text: "Lisa returns the archive key before dawn.",
+              importance: "major",
+              evidence: ["source_note:scene_source_all_scoped"],
+              confidence: 0.9,
+              salience: 0.8,
+              status: "active",
+              links: [],
+              sourceHash: unitSourceHash,
+            },
+            {
+              id: randomUUID(),
+              bucket: "relationship_state",
+              subjectId: "damo_lisa",
+              sectionKey: "state",
+              text: "Damo and Lisa's trust improved after Lisa returned the archive key.",
+              importance: "major",
+              evidence: ["source_note:scene_source_all_scoped"],
+              confidence: 0.9,
+              salience: 0.8,
+              status: "active",
+              links: [{ target: "timeline_archive_return", relation: "caused_by" }],
+              sourceHash: unitSourceHash,
+              dimensions: { trust: 70 },
+              dimensionChanges: { trust: 20 },
+            },
+            {
+              id: randomUUID(),
+              bucket: "world_fact",
+              subjectId: "old_city_archive",
+              sectionKey: "facts",
+              text: "The old city archive floats above the lantern river.",
+              importance: "major",
+              evidence: ["source_note:scene_source_all_scoped"],
+              confidence: 0.9,
+              salience: 0.8,
+              status: "active",
+              links: [],
+              sourceHash: unitSourceHash,
+            },
+            {
+              id: randomUUID(),
+              bucket: "thread",
+              subjectId: "missing_key",
+              sectionKey: "summary",
+              text: "Open thread: Damo must recover the missing key before the archive door will resolve.",
+              importance: "major",
+              evidence: ["source_note:scene_source_all_scoped"],
+              confidence: 0.9,
+              salience: 0.8,
+              status: "active",
+              links: [],
+              sourceHash: unitSourceHash,
+            },
+            {
+              id: randomUUID(),
+              bucket: "tone",
+              subjectId: "noir",
+              sectionKey: "observations",
+              text: "Noir banter remains sharp and intimate around the archive.",
+              importance: "major",
+              evidence: ["source_note:scene_source_all_scoped"],
+              confidence: 0.9,
+              salience: 0.8,
+              status: "active",
+              links: [],
+              sourceHash: unitSourceHash,
+            },
+            {
+              id: randomUUID(),
+              bucket: "anchor",
+              subjectId: "anchor_symbol",
+              sectionKey: "motif",
+              text: "The silver key symbol marks promises around the archive.",
+              importance: "major",
+              evidence: ["source_note:scene_source_all_scoped"],
+              confidence: 0.9,
+              salience: 0.8,
+              status: "active",
+              links: [],
+              sourceHash: unitSourceHash,
+            },
+          ],
+        }),
+      }),
+    } as any;
+
+    const result = await extractLongTermMemoryFromSourceNote({
+      noteId: "scene_source_all_scoped",
+      provider,
+      model: "test-model",
+      root,
+      operationId: randomUUID(),
+      embeddingSource: {
+        label: "test",
+        embed: async (texts) => texts.map(() => []),
+      },
+    });
+
+    assert(result.draft);
+    const creates = result.draft.mutations.filter(
+      (mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> => mutation.kind === "create_note",
+    );
+    assert.equal(creates.length, 7);
+    const ids = creates.map((mutation) => mutation.note.id).sort();
+    for (const prefix of [
+      "char_damo",
+      "rel_damo_lisa",
+      "thread_missing_key",
+      "timeline_archive_return",
+      "tone_noir",
+      "world_anchor_symbol",
+      "world_old_city_archive",
+    ]) {
+      assert(ids.some((id) => new RegExp(`^${prefix}_[a-f0-9]{10}$`).test(id)), `missing ${prefix} variant`);
+    }
+    const timelineCreate = creates.find((mutation) => mutation.note.id.startsWith("timeline_archive_return_"));
+    const relationshipCreate = creates.find((mutation) => mutation.note.id.startsWith("rel_damo_lisa_"));
+    assert(timelineCreate);
+    assert(relationshipCreate);
+    assert(
+      relationshipCreate.note.links.some(
+        (link) => link.relation === "caused_by" && link.target === timelineCreate.note.id,
+      ),
+    );
+    assert(!relationshipCreate.note.links.some((link) => link.target === "timeline_archive_return"));
+    assert.equal(result.outcome.droppedCandidates.length, 0);
+    assert.equal(result.diagnostics.filter((diagnostic) => diagnostic.code === "target_note_scoped_variant").length, 7);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source extraction treats a global same-id note as a scoped collision", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-global-target-collision-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    const sourceText = "Damo keeps a silver compass hidden inside his coat.";
+    await storage.createNote(
+      {
+        id: "scene_source_global_collision",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_a" },
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: sourceText,
+            updatedAt: timestamp,
+            evidence: ["chat:chat_a"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "char_damo",
+        type: "character",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: {
+            text: "A global Damo note from another setup.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const sourceNote = await storage.getNote("scene_source_global_collision");
+    assert.ok(sourceNote);
+    const provider = {
+      maxTokensOverrideValue: undefined,
+      chatComplete: async () => ({
+        content: JSON.stringify({
+          summary: "Global collision",
+          units: [
+            {
+              id: randomUUID(),
+              bucket: "character_fact",
+              subjectId: "damo",
+              sectionKey: "facts",
+              text: sourceText,
+              importance: "major",
+              evidence: ["source_note:scene_source_global_collision"],
+              confidence: 0.9,
+              salience: 0.8,
+              status: "active",
+              links: [],
+              sourceHash: sourceHashForEvidenceUnitExtraction(sourceNote),
+            },
+          ],
+        }),
+      }),
+    } as any;
+
+    const result = await extractLongTermMemoryFromSourceNote({
+      noteId: "scene_source_global_collision",
+      provider,
+      model: "test-model",
+      root,
+      operationId: randomUUID(),
+      embeddingSource: {
+        label: "test",
+        embed: async (texts) => texts.map(() => []),
+      },
+    });
+
+    assert(result.draft);
+    const create = result.draft.mutations.find((mutation) => mutation.kind === "create_note");
+    assert.equal(create?.kind, "create_note");
+    assert.match(create.note.id, /^char_damo_[a-f0-9]{10}$/);
+    assert.deepEqual(create.note.scope, { chatId: "chat_a", chatIds: ["chat_a"] });
+    const diagnostic = result.diagnostics.find((entry) => entry.code === "target_note_scoped_variant");
+    assert.deepEqual(diagnostic?.details?.targetScope, {});
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -944,6 +944,81 @@ function threadCreateMutation(
   };
 }
 
+test("draft apply refuses to merge a create_note into an existing note from another scope", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-scoped-create-guard-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "char_damo",
+        type: "character",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_a" },
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: {
+            text: "Damo belongs to the first branch.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const mutation: Extract<LtmDraftMutation, { kind: "create_note" }> = {
+      id: randomUUID(),
+      kind: "create_note",
+      risk: "low",
+      confidence: 0.95,
+      summary: "Create scoped Damo",
+      evidence: ["source_note:scene_source_second"],
+      note: {
+        id: "char_damo",
+        type: "character",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_b", chatIds: ["chat_b"] },
+        tags: ["typed_memory"],
+        keywords: [],
+        links: [],
+        sections: {
+          facts: {
+            text: "Damo belongs to the second branch.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_second"],
+          },
+        },
+      },
+    };
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      scope: { chatId: "chat_b", chatIds: ["chat_b"] },
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_source_second" },
+      response: {
+        summary: "Out-of-scope create collision",
+        mutations: [mutation],
+      },
+    });
+
+    await assert.rejects(
+      applyLongTermMemoryDraft(draft.id, {
+        root,
+        actor: "test",
+        rebuildIndexes: false,
+      }),
+      /existing note from another scope/,
+    );
+
+    const existing = await storage.getNote("char_damo");
+    assert.equal(existing?.sections.facts?.text, "Damo belongs to the first branch.");
+    assert.deepEqual(existing?.scope, { chatId: "chat_a", chatIds: ["chat_a"] });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("source extraction auto-apply still blocks source note mutations even when marked low risk", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-reconciliation-"));
   try {
@@ -1542,7 +1617,7 @@ test("source extraction accepts duplicate new note drafts by merging into the cr
   }
 });
 
-test("source extraction duplicate new state drafts replace superseding sections and merge scope", async () => {
+test("source extraction duplicate new state drafts refuse cross-scope create merges", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-duplicate-state-scope-"));
   try {
     const storage = new LongTermMemoryStorage(root);
@@ -1610,19 +1685,20 @@ test("source extraction duplicate new state drafts replace superseding sections 
       actor: "test",
       rebuildIndexes: false,
     });
-    const secondResult = await applyLongTermMemoryDraft(secondDraft.id, {
-      root,
-      actor: "test",
-      rebuildIndexes: false,
-    });
+    await assert.rejects(
+      applyLongTermMemoryDraft(secondDraft.id, {
+        root,
+        actor: "test",
+        rebuildIndexes: false,
+      }),
+      /existing note from another scope/,
+    );
 
     const note = await storage.getNote("char_mara");
-    assert.equal(secondResult.appliedMutationIds.length, 1);
-    assert.equal(secondResult.draft.status, "accepted");
-    assert.equal(note?.sections.current_state?.text, "Mara steadies herself.");
-    assert.deepEqual(note?.scope.chatIds, ["chat_a", "chat_b"]);
+    assert.equal(note?.sections.facts?.text, "Mara is wounded.");
+    assert.deepEqual(note?.scope.chatIds, ["chat_a"]);
     assert.equal(note?.scope.chatId, "chat_a");
-    assert.deepEqual(note?.scope.characterIds, ["char_a", "char_b"]);
+    assert.deepEqual(note?.scope.characterIds, ["char_a"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -5342,7 +5418,7 @@ test("source extraction updates existing typed note from another source instead 
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-cross-source-update-"));
   try {
     const storage = new LongTermMemoryStorage(root);
-    const secondSourceText = "Mara trusts Jules again when he returns the tower archive key.";
+    const secondSourceText = "Mara and Jules share steady mutual trust at the tower archive.";
     await storage.createNote(
       {
         id: "scene_source_first",
@@ -5461,11 +5537,11 @@ test("source extraction updates existing typed note from another source instead 
   }
 });
 
-test("source note extraction target lookup prevents duplicate creates across source notes", async () => {
+test("source note extraction creates a scoped relationship variant across source notes", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-target-lookup-"));
   try {
     const storage = new LongTermMemoryStorage(root);
-    const secondSourceText = "Mara trusts Jules again when he returns the tower archive key.";
+    const secondSourceText = "Mara and Jules share steady mutual trust at the tower archive.";
     await storage.createNote(
       {
         id: "scene_source_first",
@@ -5536,9 +5612,9 @@ test("source note extraction target lookup prevents duplicate creates across sou
           units: [
             {
               id: randomUUID(),
-              bucket: "timeline_event",
+              bucket: "relationship_state",
               subjectId: "mara_jules",
-              sectionKey: "history",
+              sectionKey: "state",
               text: secondSourceText,
               evidence: ["source_note:scene_source_second"],
               confidence: 0.9,
@@ -5564,14 +5640,18 @@ test("source note extraction target lookup prevents duplicate creates across sou
       },
     });
 
-    assert.equal(result.draft, null);
+    assert(result.draft);
+    const create = result.draft.mutations.find((mutation) => mutation.kind === "create_note");
+    assert.equal(create?.kind, "create_note");
+    assert.match(create.note.id, /^rel_mara_jules_[a-f0-9]{10}$/);
+    assert.deepEqual(create.note.scope, { chatId: "chat_b", chatIds: ["chat_b"] });
     assert(
       result.diagnostics.some(
-        (diagnostic) => diagnostic.severity === "warning" && diagnostic.code === "target_note_scope_mismatch",
+        (diagnostic) => diagnostic.severity === "warning" && diagnostic.code === "target_note_scoped_variant",
       ),
     );
-    assert.equal(result.outcome.state, "no_suggestions_created");
-    assert.deepEqual(result.outcome.droppedCandidates.map((candidate) => candidate.reason), ["target_note_outside_scope"]);
+    assert.equal(result.outcome.state, "success");
+    assert.deepEqual(result.outcome.droppedCandidates, []);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -5633,10 +5713,10 @@ test("source note extraction target lookup updates matching scoped notes only", 
           units: [
             {
               id: randomUUID(),
-              bucket: "timeline_event",
+              bucket: "relationship_state",
               subjectId: "mara_jules",
-              sectionKey: "history",
-              text: secondSourceText,
+              sectionKey: "state",
+              text: "Mara and Jules share steady mutual trust at the tower archive.",
               evidence: ["source_note:scene_source_second"],
               confidence: 0.9,
               salience: 0.7,
@@ -5665,7 +5745,7 @@ test("source note extraction target lookup updates matching scoped notes only", 
     assert(!result.draft.mutations.some((mutation) => mutation.kind === "create_note"));
     assert(
       result.draft.mutations.some(
-        (mutation) => mutation.kind === "append_section" && mutation.noteId === "rel_mara_jules",
+        (mutation) => mutation.kind === "update_section" && mutation.noteId === "rel_mara_jules",
       ),
     );
   } finally {
@@ -5673,11 +5753,11 @@ test("source note extraction target lookup updates matching scoped notes only", 
   }
 });
 
-test("source note extraction keeps in-scope targets and drops out-of-scope targets in the same pass", async () => {
+test("source note extraction updates in-scope targets and creates scoped variants in the same pass", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-target-lookup-mixed-scope-"));
   try {
     const storage = new LongTermMemoryStorage(root);
-    const sourceText = "Mara trusts Jules again, and the old city archive still floats above the lantern river.";
+    const sourceText = "Mara and Jules share steady mutual trust, and the old city archive still floats above the lantern river.";
     await storage.createNote(
       {
         id: "scene_source_second",
@@ -5748,10 +5828,10 @@ test("source note extraction keeps in-scope targets and drops out-of-scope targe
           units: [
             {
               id: randomUUID(),
-              bucket: "timeline_event",
+              bucket: "relationship_state",
               subjectId: "mara_jules",
-              sectionKey: "history",
-              text: "Mara trusts Jules again.",
+              sectionKey: "state",
+              text: "Mara and Jules share steady mutual trust.",
               evidence: ["source_note:scene_source_second"],
               confidence: 0.9,
               salience: 0.7,
@@ -5790,23 +5870,22 @@ test("source note extraction keeps in-scope targets and drops out-of-scope targe
     });
 
     assert(result.draft);
-    assert.equal(result.outcome.state, "partial_success");
-    assert.deepEqual(result.outcome.droppedCandidates.map((candidate) => candidate.reason), ["target_note_outside_scope"]);
+    assert.equal(result.outcome.state, "success");
+    assert.deepEqual(result.outcome.droppedCandidates, []);
     assert(
       result.diagnostics.some(
-        (diagnostic) => diagnostic.severity === "warning" && diagnostic.code === "target_note_scope_mismatch",
+        (diagnostic) => diagnostic.severity === "warning" && diagnostic.code === "target_note_scoped_variant",
       ),
     );
     assert(
       result.draft.mutations.some(
-        (mutation) => mutation.kind === "append_section" && mutation.noteId === "rel_mara_jules",
+        (mutation) => mutation.kind === "update_section" && mutation.noteId === "rel_mara_jules",
       ),
     );
     assert(
-      !result.draft.mutations.some((mutation) => {
-        if (mutation.kind === "create_note") return mutation.note.id === "world_old_city_archive";
-        return mutation.noteId === "world_old_city_archive";
-      }),
+      result.draft.mutations.some(
+        (mutation) => mutation.kind === "create_note" && /^world_old_city_archive_[a-f0-9]{10}$/.test(mutation.note.id),
+      ),
     );
   } finally {
     await rm(root, { recursive: true, force: true });
