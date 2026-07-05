@@ -29,6 +29,7 @@ import {
   type AcceptLongTermMemoryDraftResponse,
   type ExtractLongTermMemorySourceResponse,
 } from "../../hooks/use-long-term-memory";
+import type { LongTermMemoryLatestExtractionResult } from "../../stores/ltm-extraction-results.store";
 import { cn } from "../../lib/utils";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import {
@@ -47,7 +48,6 @@ import { type LtmManagedExtractionPrefs } from "./ltm-managed-extraction-prefs";
 
 type SuggestionGroup = "new" | "rewrite";
 type BatchAction = "keep" | "skip";
-export type LongTermMemoryLatestExtractionResult = Pick<ExtractLongTermMemorySourceResponse, "diagnostics" | "outcome">;
 
 const rewriteKinds = new Set<LtmDraftMutation["kind"]>(["append_section", "update_section", "add_link", "set_keywords", "set_status"]);
 
@@ -677,9 +677,9 @@ function ExtractionOutcomePanel({
               key={`${candidate.index}-${candidate.reason}-${candidate.snippet}`}
               className={insetSectionCardClassName}
             >
-              <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs leading-relaxed text-[var(--foreground)]">{candidate.snippet}</p>
+                  <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--foreground)]">{candidate.snippet}</p>
                   <p className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">{candidate.message}</p>
                 </div>
                 <ToolButton onClick={() => onRecoverDroppedCandidate(candidate, note)}>

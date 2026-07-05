@@ -32,11 +32,9 @@ import {
   SettingField,
 } from "./LtmFields";
 import { LtmScopePicker } from "./LtmScopePicker";
-import {
-  LongTermMemorySuggestionsTab,
-  type LongTermMemoryLatestExtractionResult,
-} from "./LongTermMemorySuggestionsTab";
+import { LongTermMemorySuggestionsTab } from "./LongTermMemorySuggestionsTab";
 import { type LtmManagedExtractionPrefs } from "./ltm-managed-extraction-prefs";
+import type { LongTermMemoryLatestExtractionResult } from "../../stores/ltm-extraction-results.store";
 import { ToolButton } from "./LtmPills";
 import {
   dedupeEvidenceEntries,

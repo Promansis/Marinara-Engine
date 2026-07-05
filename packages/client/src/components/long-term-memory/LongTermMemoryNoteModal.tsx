@@ -18,14 +18,12 @@ import {
   type LtmDisplayLookupContext,
 } from "./ltm-editor-utils";
 import { LongTermMemoryNoteEditor } from "./LongTermMemoryNoteEditor";
-import {
-  LongTermMemorySuggestionsTab,
-  type LongTermMemoryLatestExtractionResult,
-} from "./LongTermMemorySuggestionsTab";
+import { LongTermMemorySuggestionsTab } from "./LongTermMemorySuggestionsTab";
 import { type LtmManagedExtractionPrefs } from "./ltm-managed-extraction-prefs";
 import { Modal } from "../ui/Modal";
 import { cn } from "../../lib/utils";
 import type { LtmSearchResponse } from "../../hooks/use-long-term-memory";
+import type { LongTermMemoryLatestExtractionResult } from "../../stores/ltm-extraction-results.store";
 import {
   emptyStateClassName,
   inputClassName,

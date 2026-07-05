@@ -55,7 +55,10 @@ import { LongTermMemoryDebugLogModal } from "../long-term-memory/LongTermMemoryD
 import { MemoryNoteModal, defaultMemoryModalTab } from "../long-term-memory/LongTermMemoryNoteModal";
 import { TypeMemoryGroups } from "../long-term-memory/LongTermMemoryNoteList";
 import { ImportPreviewRowItem } from "../long-term-memory/LongTermMemoryImportSection";
-import { type LongTermMemoryLatestExtractionResult } from "../long-term-memory/LongTermMemorySuggestionsTab";
+import {
+  type LongTermMemoryLatestExtractionResult,
+  useLtmExtractionResultsStore,
+} from "../../stores/ltm-extraction-results.store";
 import { LongTermMemoryNoteTransferModal } from "../long-term-memory/LongTermMemoryNoteTransferModal";
 import {
   readLtmManagedExtractionPrefs,
@@ -208,9 +211,8 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const [creatingNote, setCreatingNote] = useState(false);
   const [createNoteDraft, setCreateNoteDraft] = useState<CreateLongTermMemoryNoteDraft | null>(null);
   const [createNoteDirty, setCreateNoteDirty] = useState(false);
-  const [latestExtractionResultsBySourceNoteId, setLatestExtractionResultsBySourceNoteId] = useState<
-    Record<string, LongTermMemoryLatestExtractionResult>
-  >({});
+  const resultsBySourceNoteId = useLtmExtractionResultsStore((s) => s.resultsBySourceNoteId);
+  const setExtractionResult = useLtmExtractionResultsStore((s) => s.setResult);
   const [openNoteId, setOpenNoteId] = useState<string | null>(null);
   const [memoryModalMode, setMemoryModalMode] = useState<MemoryModalMode>("view");
   const [memoryModalTab, setMemoryModalTab] = useState<MemoryModalTab>("overview");
@@ -427,8 +429,8 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     [combinedDrafts, openNote],
   );
   const latestExtractionResultForOpenNote = useMemo(
-    () => (openNote ? latestExtractionResultsBySourceNoteId[openNote.id] ?? null : null),
-    [latestExtractionResultsBySourceNoteId, openNote],
+    () => (openNote ? resultsBySourceNoteId[openNote.id] ?? null : null),
+    [resultsBySourceNoteId, openNote],
   );
 
   const reviewGroups = useMemo(() => {
@@ -674,17 +676,9 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
 
   const setLatestExtractionResultForSourceNote = useCallback(
     (sourceNoteId: string, result: LongTermMemoryLatestExtractionResult | null) => {
-      setLatestExtractionResultsBySourceNoteId((current) => {
-        if (result === null) {
-          if (!(sourceNoteId in current)) return current;
-          const next = { ...current };
-          delete next[sourceNoteId];
-          return next;
-        }
-        return { ...current, [sourceNoteId]: result };
-      });
+      setExtractionResult(sourceNoteId, result);
     },
-    [],
+    [setExtractionResult],
   );
 
   const setNoteSelected = (id: string, selected: boolean) => {
@@ -1387,7 +1381,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
                                 key={suggestionRowKey(draft.id, mutation.id)}
                                 className="rounded-lg bg-[var(--card)] p-3 ring-1 ring-[var(--border)]"
                               >
-                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                   <div className="min-w-0 flex-1">
                                     <div className="flex flex-wrap items-center gap-1.5">
                                       <StatusPill label={mutationKindLabel(mutation.kind)} />
