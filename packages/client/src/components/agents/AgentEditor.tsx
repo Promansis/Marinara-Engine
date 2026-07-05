@@ -175,6 +175,10 @@ const MESSAGE_EDIT_TOOL_NAME = "edit_chat_message";
 const DEFAULT_PROSE_GUARDIAN_BANNED_WORDS = "ozone";
 type MusicProvider = "spotify" | "youtube" | "custom";
 type CustomMusicSource = "game-assets" | "folder";
+type LtmPromptTemplate = { id: string; name: string; prompt: string; mode?: LtmMode };
+type LtmSystemPromptsByMode = Partial<Record<LtmMode, string>>;
+type LtmActivePromptTemplateIdsByMode = Partial<Record<LtmMode, string | null>>;
+const LTM_EXTRACTION_MODES = ["roleplay", "conversation", "game"] as const satisfies readonly LtmMode[];
 const DEFAULT_PROSE_GUARDIAN_AVOID =
   "no repetition of any phrases or sentence structure from the last messages, if the last output started with dialogue line, this one needs to start with narration, no purple prose";
 
@@ -583,7 +587,7 @@ export function AgentEditor() {
     instruction: string;
     importConcurrency: number;
     autoApplyLowRisk: boolean;
-    systemPrompt: string;
+    systemPromptsByMode: LtmSystemPromptsByMode;
     extraInstruction: string;
     reasoningEffort: string;
     verbosity: string;
@@ -593,8 +597,8 @@ export function AgentEditor() {
     maxExistingNoteTokens: number;
     existingNoteMaxChunks: number;
     existingNoteMaxTokens: number;
-    promptTemplates: { id: string; name: string; prompt: string; mode?: LtmMode | null }[];
-    activePromptTemplateId: string | null;
+    promptTemplates: LtmPromptTemplate[];
+    activePromptTemplateIdsByMode: LtmActivePromptTemplateIdsByMode;
     aiKeywordExtraction: boolean;
     refinePass: boolean;
   } | null>(null);
@@ -948,7 +952,7 @@ export function AgentEditor() {
         ? Math.max(1, Math.min(10, Math.round(settings.importConcurrency)))
         : 3,
       autoApplyLowRisk: settings.autoApplyLowRisk === true,
-      systemPrompt: ltmExtractionSettings.systemPrompt,
+      systemPromptsByMode: { ...ltmExtractionSettings.systemPromptsByMode },
       extraInstruction: ltmExtractionSettings.extraInstruction,
       reasoningEffort: ltmExtractionSettings.reasoningEffort,
       verbosity: ltmExtractionSettings.verbosity,
@@ -958,11 +962,11 @@ export function AgentEditor() {
       maxExistingNoteTokens: ltmExtractionSettings.maxExistingNoteTokens,
       existingNoteMaxChunks: ltmExtractionSettings.existingNoteMaxChunks,
       existingNoteMaxTokens: ltmExtractionSettings.existingNoteMaxTokens,
-        promptTemplates: ltmExtractionSettings.promptTemplates,
-        activePromptTemplateId: ltmExtractionSettings.activePromptTemplateId,
-        aiKeywordExtraction: ltmExtractionSettings.aiKeywordExtraction,
-        refinePass: ltmExtractionSettings.refinePass,
-      });
+      promptTemplates: ltmExtractionSettings.promptTemplates,
+      activePromptTemplateIdsByMode: { ...ltmExtractionSettings.activePromptTemplateIdsByMode },
+      aiKeywordExtraction: ltmExtractionSettings.aiKeywordExtraction,
+      refinePass: ltmExtractionSettings.refinePass,
+    });
   }, [isLtmAgent, dbConfig, ltmExtractionSettings]);
 
   // Detect when both knowledge agents will actually run in parallel. Shows a
@@ -1249,9 +1253,22 @@ export function AgentEditor() {
       }
       if (isLtmAgent && ltmDraft) {
         const extractionPayload: Record<string, unknown> = { version: 1 };
-        const systemPrompt = ltmDraft.systemPrompt.trim();
+        const systemPromptsByMode = Object.fromEntries(
+          LTM_EXTRACTION_MODES.flatMap((mode) => {
+            const prompt = ltmDraft.systemPromptsByMode[mode]?.trim();
+            return prompt ? [[mode, prompt]] : [];
+          }),
+        );
+        const activePromptTemplateIdsByMode = Object.fromEntries(
+          LTM_EXTRACTION_MODES.flatMap((mode) => {
+            const id = ltmDraft.activePromptTemplateIdsByMode[mode];
+            return id ? [[mode, id]] : [];
+          }),
+        );
         const extraInstruction = ltmDraft.extraInstruction.trim();
-        if (systemPrompt) extractionPayload.systemPrompt = systemPrompt;
+        if (Object.keys(systemPromptsByMode).length > 0) {
+          extractionPayload.systemPromptsByMode = systemPromptsByMode;
+        }
         if (extraInstruction) extractionPayload.extraInstruction = extraInstruction;
         if (ltmDraft.reasoningEffort !== DEFAULT_LTM_EXTRACTION_REASONING_EFFORT) extractionPayload.reasoningEffort = ltmDraft.reasoningEffort;
         if (ltmDraft.verbosity !== DEFAULT_LTM_EXTRACTION_VERBOSITY) extractionPayload.verbosity = ltmDraft.verbosity;
@@ -1262,7 +1279,9 @@ export function AgentEditor() {
         if (ltmDraft.existingNoteMaxChunks !== DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS) extractionPayload.existingNoteMaxChunks = ltmDraft.existingNoteMaxChunks;
         if (ltmDraft.existingNoteMaxTokens !== DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS) extractionPayload.existingNoteMaxTokens = ltmDraft.existingNoteMaxTokens;
         if (ltmDraft.promptTemplates.length > 0) extractionPayload.promptTemplates = ltmDraft.promptTemplates;
-        if (ltmDraft.activePromptTemplateId !== undefined) extractionPayload.activePromptTemplateId = ltmDraft.activePromptTemplateId;
+        if (Object.keys(activePromptTemplateIdsByMode).length > 0) {
+          extractionPayload.activePromptTemplateIdsByMode = activePromptTemplateIdsByMode;
+        }
         if (ltmDraft.aiKeywordExtraction === true) extractionPayload.aiKeywordExtraction = true;
         if (ltmDraft.refinePass === true) extractionPayload.refinePass = true;
         await updateExtractionSettings.mutateAsync(extractionPayload as any);
@@ -3801,15 +3820,24 @@ export function AgentEditor() {
             onChangeConnectionId={(value) => updateLtmDraft({ connectionId: value })}
           />
           <LtmExtractionPromptSection
-            systemPrompt={ltmDraft?.systemPrompt ?? ""}
+            systemPromptsByMode={ltmDraft?.systemPromptsByMode ?? {}}
             promptTemplates={ltmDraft?.promptTemplates ?? []}
-            activePromptTemplateId={ltmDraft?.activePromptTemplateId ?? null}
+            activePromptTemplateIdsByMode={ltmDraft?.activePromptTemplateIdsByMode ?? {}}
             extraInstruction={ltmDraft?.extraInstruction ?? ""}
             aiKeywordExtraction={ltmDraft?.aiKeywordExtraction ?? false}
             refinePass={ltmDraft?.refinePass ?? false}
-            onChangeSystemPrompt={(value) => updateLtmDraft({ systemPrompt: value })}
+            onChangeSystemPrompt={(mode, value) =>
+              updateLtmDraft({
+                systemPromptsByMode: {
+                  ...(ltmDraft?.systemPromptsByMode ?? {}),
+                  [mode]: value,
+                },
+              })
+            }
             onChangePromptTemplates={(templates) => updateLtmDraft({ promptTemplates: templates })}
-            onChangeActivePromptTemplateId={(id) => updateLtmDraft({ activePromptTemplateId: id })}
+            onChangeActivePromptTemplateIdsByMode={(value) =>
+              updateLtmDraft({ activePromptTemplateIdsByMode: value })
+            }
             onChangeExtraInstruction={(value) => updateLtmDraft({ extraInstruction: value })}
             onChangeAiKeywordExtraction={(value) => updateLtmDraft({ aiKeywordExtraction: value })}
             onChangeRefinePass={(value) => updateLtmDraft({ refinePass: value })}

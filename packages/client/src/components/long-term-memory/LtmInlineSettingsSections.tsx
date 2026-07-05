@@ -19,7 +19,45 @@ import { MacroTextarea } from "../ui/MacroTextarea";
 import { textareaClassName } from "./LtmFields";
 import { FieldGroup } from "../agents/AgentEditor";
 
-type PromptTemplate = { id: string; name: string; prompt: string; mode?: LtmMode | null };
+type PromptTemplate = { id: string; name: string; prompt: string; mode?: LtmMode };
+type SystemPromptsByMode = Partial<Record<LtmMode, string>>;
+type ActivePromptTemplateIdsByMode = Partial<Record<LtmMode, string | null>>;
+type PromptTemplatePatch = Partial<Pick<PromptTemplate, "name" | "prompt" | "mode">>;
+
+const LTM_EXTRACTION_MODES = ["roleplay", "conversation", "game"] as const satisfies readonly LtmMode[];
+
+function templateAppliesToMode(template: PromptTemplate, mode: LtmMode) {
+  return !template.mode || template.mode === mode;
+}
+
+function sanitizeActivePromptTemplateIdsByMode(
+  activeIds: ActivePromptTemplateIdsByMode,
+  templates: readonly PromptTemplate[],
+) {
+  const next: ActivePromptTemplateIdsByMode = {};
+  for (const mode of LTM_EXTRACTION_MODES) {
+    const id = activeIds[mode];
+    if (!id) continue;
+    const template = templates.find((candidate) => candidate.id === id);
+    if (template && templateAppliesToMode(template, mode)) {
+      next[mode] = id;
+    }
+  }
+  return next;
+}
+
+function activePromptTemplateIdsEqual(left: ActivePromptTemplateIdsByMode, right: ActivePromptTemplateIdsByMode) {
+  return LTM_EXTRACTION_MODES.every((mode) => (left[mode] ?? null) === (right[mode] ?? null));
+}
+
+function normalizePromptTemplate(template: PromptTemplate): PromptTemplate {
+  const base = {
+    id: template.id,
+    name: template.name,
+    prompt: template.prompt,
+  };
+  return template.mode ? { ...base, mode: template.mode } : base;
+}
 
 /* ── Extraction Connection Section ── */
 
@@ -73,96 +111,95 @@ export function LtmExtractionConnectionSection({
 /* ── Extraction Prompt Section ── */
 
 type ExtractionPromptSectionProps = {
-  systemPrompt: string;
+  systemPromptsByMode: SystemPromptsByMode;
   promptTemplates: readonly PromptTemplate[];
-  activePromptTemplateId: string | null;
+  activePromptTemplateIdsByMode: ActivePromptTemplateIdsByMode;
   extraInstruction: string;
   aiKeywordExtraction: boolean;
   refinePass: boolean;
-  onChangeSystemPrompt: (value: string) => void;
+  onChangeSystemPrompt: (mode: LtmMode, value: string) => void;
   onChangePromptTemplates: (templates: PromptTemplate[]) => void;
-  onChangeActivePromptTemplateId: (id: string | null) => void;
+  onChangeActivePromptTemplateIdsByMode: (value: ActivePromptTemplateIdsByMode) => void;
   onChangeExtraInstruction: (value: string) => void;
   onChangeAiKeywordExtraction: (value: boolean) => void;
   onChangeRefinePass: (value: boolean) => void;
 };
 
 export function LtmExtractionPromptSection({
-  systemPrompt,
+  systemPromptsByMode,
   promptTemplates,
-  activePromptTemplateId,
+  activePromptTemplateIdsByMode,
   extraInstruction,
   aiKeywordExtraction,
   refinePass,
   onChangeSystemPrompt,
   onChangePromptTemplates,
-  onChangeActivePromptTemplateId,
+  onChangeActivePromptTemplateIdsByMode,
   onChangeExtraInstruction,
   onChangeAiKeywordExtraction,
   onChangeRefinePass,
 }: ExtractionPromptSectionProps) {
   const [selectedMode, setSelectedMode] = useState<LtmMode>("conversation");
-  const isUsingDefaultPrompt = !systemPrompt.trim();
-  const [editingPrompt, setEditingPrompt] = useState(false);
-  const [localPrompt, setLocalPrompt] = useState(systemPrompt);
+  const selectedSystemPrompt = systemPromptsByMode[selectedMode] ?? "";
+  const selectedActivePromptTemplateId = activePromptTemplateIdsByMode[selectedMode] ?? null;
+  const isUsingDefaultPrompt = !selectedSystemPrompt.trim();
+  const [localPrompt, setLocalPrompt] = useState(selectedSystemPrompt);
 
   useEffect(() => {
-    if (!editingPrompt) {
-      setLocalPrompt(systemPrompt);
-    }
-  }, [systemPrompt, editingPrompt]);
+    setLocalPrompt(selectedSystemPrompt);
+  }, [selectedMode, selectedSystemPrompt]);
 
   // Local state for prompt templates (responsive typing mirror)
-  const [localTemplates, setLocalTemplates] = useState<PromptTemplate[]>([...promptTemplates]);
+  const [localTemplates, setLocalTemplates] = useState<PromptTemplate[]>(
+    promptTemplates.map(normalizePromptTemplate),
+  );
 
   useEffect(() => {
-    setLocalTemplates([...promptTemplates]);
+    setLocalTemplates(promptTemplates.map(normalizePromptTemplate));
   }, [promptTemplates]);
 
   const handleLoadDefault = useCallback(() => {
     const prompt = DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE[selectedMode];
-    setEditingPrompt(true);
     setLocalPrompt(prompt);
-    onChangeSystemPrompt(prompt);
+    onChangeSystemPrompt(selectedMode, prompt);
   }, [onChangeSystemPrompt, selectedMode]);
 
   const handleResetPrompt = useCallback(() => {
-    setEditingPrompt(false);
-    setLocalPrompt(DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE[selectedMode]);
-    // undefined means "use default" on the server
-    onChangeSystemPrompt("");
+    setLocalPrompt("");
+    onChangeSystemPrompt(selectedMode, "");
   }, [onChangeSystemPrompt, selectedMode]);
 
   const handlePromptChange = useCallback(
     (value: string) => {
       setLocalPrompt(value);
-      onChangeSystemPrompt(value);
+      onChangeSystemPrompt(selectedMode, value);
     },
-    [onChangeSystemPrompt],
+    [onChangeSystemPrompt, selectedMode],
   );
 
   const syncTemplates = useCallback(
     (next: PromptTemplate[]) => {
-      const adjusted = [...next];
-      if (activePromptTemplateId && !adjusted.some((t) => t.id === activePromptTemplateId)) {
-        onChangeActivePromptTemplateId(null);
+      const adjusted = next.map(normalizePromptTemplate);
+      const adjustedActiveIds = sanitizeActivePromptTemplateIdsByMode(activePromptTemplateIdsByMode, adjusted);
+      if (!activePromptTemplateIdsEqual(activePromptTemplateIdsByMode, adjustedActiveIds)) {
+        onChangeActivePromptTemplateIdsByMode(adjustedActiveIds);
       }
       onChangePromptTemplates(adjusted);
     },
-    [activePromptTemplateId, onChangePromptTemplates, onChangeActivePromptTemplateId],
+    [activePromptTemplateIdsByMode, onChangePromptTemplates, onChangeActivePromptTemplateIdsByMode],
   );
 
   const handleAddTemplate = useCallback(() => {
     setLocalTemplates((prev) => {
-      const next = [...prev, { id: generateClientId(), name: "New template", prompt: "", mode: null }];
+      const next = [...prev, { id: generateClientId(), name: "New template", prompt: "", mode: selectedMode }];
       return next;
     });
-  }, []);
+  }, [selectedMode]);
 
   const handleUpdateTemplate = useCallback(
-    (id: string, patch: Partial<{ name: string; prompt: string; mode: LtmMode | null }>) => {
+    (id: string, patch: PromptTemplatePatch) => {
       setLocalTemplates((prev) => {
-        const next = prev.map((t) => (t.id === id ? { ...t, ...patch } : t));
+        const next = prev.map((t) => (t.id === id ? normalizePromptTemplate({ ...t, ...patch }) : t));
         const allValid = next.every((t) => t.name.trim().length > 0 && t.prompt.trim().length > 0);
         if (allValid) {
           syncTemplates(next);
@@ -189,9 +226,12 @@ export function LtmExtractionPromptSection({
 
   const handleSetActiveTemplate = useCallback(
     (id: string | null) => {
-      onChangeActivePromptTemplateId(id);
+      const next = { ...activePromptTemplateIdsByMode };
+      if (id) next[selectedMode] = id;
+      else delete next[selectedMode];
+      onChangeActivePromptTemplateIdsByMode(sanitizeActivePromptTemplateIdsByMode(next, localTemplates));
     },
-    [onChangeActivePromptTemplateId],
+    [activePromptTemplateIdsByMode, localTemplates, onChangeActivePromptTemplateIdsByMode, selectedMode],
   );
 
   return (
@@ -219,7 +259,7 @@ export function LtmExtractionPromptSection({
       </div>
 
       <div className="flex items-center gap-2 mb-2">
-        {isUsingDefaultPrompt && !editingPrompt ? (
+        {isUsingDefaultPrompt ? (
           <span className="flex items-center gap-1 rounded-lg bg-emerald-400/10 px-2.5 py-1 text-[0.625rem] font-medium text-emerald-400">
             <Check size="0.625rem" /> Using built-in default
           </span>
@@ -229,7 +269,7 @@ export function LtmExtractionPromptSection({
           </span>
         )}
         <div className="flex-1" />
-        {!isUsingDefaultPrompt && !editingPrompt && (
+        {!isUsingDefaultPrompt && (
           <button
             onClick={handleResetPrompt}
             className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
@@ -237,7 +277,7 @@ export function LtmExtractionPromptSection({
             <RotateCcw size="0.625rem" /> Reset to default
           </button>
         )}
-        {isUsingDefaultPrompt && !editingPrompt && (
+        {isUsingDefaultPrompt && (
           <button
             onClick={handleLoadDefault}
             className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
@@ -247,7 +287,7 @@ export function LtmExtractionPromptSection({
         )}
       </div>
 
-      {isUsingDefaultPrompt && !editingPrompt ? (
+      {isUsingDefaultPrompt ? (
         <div className="relative">
           <pre className="w-full max-h-[30vh] overflow-y-auto resize-y rounded-xl bg-[var(--secondary)] px-4 py-3 font-mono text-xs leading-relaxed ring-1 ring-[var(--border)] text-[var(--muted-foreground)] whitespace-pre-wrap">
             {DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE[selectedMode]}
@@ -268,7 +308,7 @@ export function LtmExtractionPromptSection({
       )}
 
       <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-        {isUsingDefaultPrompt && !editingPrompt
+        {isUsingDefaultPrompt
           ? "Leave as default to use the built-in extraction prompt. Edit to override."
           : "The system prompt used for extraction."}
       </p>
@@ -298,24 +338,41 @@ export function LtmExtractionPromptSection({
           </p>
         ) : (
           <div className="space-y-3">
-            {localTemplates.map((template) => (
-              <div
-                key={template.id}
-                className="rounded-xl bg-[var(--secondary)]/70 p-3 ring-1 ring-[var(--border)]"
-              >
-                <div className="mb-2 flex items-start gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleSetActiveTemplate(activePromptTemplateId === template.id ? null : template.id)}
-                    className="flex h-6 w-6 shrink-0 items-center justify-center"
-                    title={activePromptTemplateId === template.id ? "Active extraction prompt" : "Set as active extraction prompt"}
-                  >
-                    {activePromptTemplateId === template.id ? (
-                      <CircleDot size="0.75rem" className="text-[var(--primary)]" />
-                    ) : (
-                      <Circle size="0.75rem" className="text-[var(--muted-foreground)]" />
-                    )}
-                  </button>
+            {localTemplates.map((template) => {
+              const appliesToSelectedMode = templateAppliesToMode(template, selectedMode);
+              const isActiveForSelectedMode =
+                appliesToSelectedMode && selectedActivePromptTemplateId === template.id;
+              return (
+                <div
+                  key={template.id}
+                  className="rounded-xl bg-[var(--secondary)]/70 p-3 ring-1 ring-[var(--border)]"
+                >
+                  <div className="mb-2 flex items-start gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        appliesToSelectedMode &&
+                        handleSetActiveTemplate(isActiveForSelectedMode ? null : template.id)
+                      }
+                      disabled={!appliesToSelectedMode}
+                      className={cn(
+                        "flex h-6 w-6 shrink-0 items-center justify-center",
+                        !appliesToSelectedMode && "cursor-not-allowed opacity-40",
+                      )}
+                      title={
+                        appliesToSelectedMode
+                          ? isActiveForSelectedMode
+                            ? `Active ${MODE_LABELS[selectedMode]} extraction prompt`
+                            : `Set as ${MODE_LABELS[selectedMode]} extraction prompt`
+                          : `This option is limited to ${MODE_LABELS[template.mode ?? selectedMode]}`
+                      }
+                    >
+                      {isActiveForSelectedMode ? (
+                        <CircleDot size="0.75rem" className="text-[var(--primary)]" />
+                      ) : (
+                        <Circle size="0.75rem" className="text-[var(--muted-foreground)]" />
+                      )}
+                    </button>
                   <input
                     value={template.name}
                     onChange={(e) => handleUpdateTemplate(template.id, { name: e.target.value })}
@@ -324,7 +381,11 @@ export function LtmExtractionPromptSection({
                   />
                   <select
                     value={template.mode ?? ""}
-                    onChange={(e) => handleUpdateTemplate(template.id, { mode: e.target.value ? (e.target.value as LtmMode) : null })}
+                    onChange={(e) =>
+                      handleUpdateTemplate(template.id, {
+                        mode: e.target.value ? (e.target.value as LtmMode) : undefined,
+                      })
+                    }
                     className="min-w-[8rem] rounded-lg bg-[var(--background)] px-2.5 py-1.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                     title="Limit this option to one mode"
                   >
@@ -350,8 +411,9 @@ export function LtmExtractionPromptSection({
                   className="w-full resize-y rounded-lg bg-[var(--background)] px-3 py-2 font-mono text-xs leading-relaxed ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                   placeholder="Write the prompt for this option…"
                 />
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

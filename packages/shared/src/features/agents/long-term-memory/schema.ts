@@ -126,10 +126,28 @@ export const ltmExtractionPromptTemplateSchema = z
   })
   .strict();
 
+const ltmSystemPromptsByModeSchema = z
+  .object({
+    roleplay: z.string().min(1).max(20_000).optional(),
+    conversation: z.string().min(1).max(20_000).optional(),
+    game: z.string().min(1).max(20_000).optional(),
+  })
+  .strict();
+
+const ltmActivePromptTemplateIdsByModeSchema = z
+  .object({
+    roleplay: z.string().min(1).max(64).nullable().optional(),
+    conversation: z.string().min(1).max(64).nullable().optional(),
+    game: z.string().min(1).max(64).nullable().optional(),
+  })
+  .strict();
+
 const ltmExtractionSettingsShape = z
   .object({
     version: z.literal(1).default(1),
+    /** Legacy global override. New clients should use systemPromptsByMode. */
     systemPrompt: z.string().min(1).max(20_000).optional(),
+    systemPromptsByMode: ltmSystemPromptsByModeSchema.optional(),
     extraInstruction: z.string().max(4_000).optional(),
     reasoningEffort: ltmExtractionReasoningEffortSchema.optional(),
     verbosity: ltmExtractionVerbositySchema.optional(),
@@ -140,7 +158,9 @@ const ltmExtractionSettingsShape = z
     existingNoteMaxChunks: z.number().int().min(1).max(100).optional(),
     existingNoteMaxTokens: z.number().int().min(128).max(16_384).optional(),
     promptTemplates: z.array(ltmExtractionPromptTemplateSchema).max(50).optional(),
+    /** Legacy global active option. New clients should use activePromptTemplateIdsByMode. */
     activePromptTemplateId: z.string().min(1).max(64).nullable().optional(),
+    activePromptTemplateIdsByMode: ltmActivePromptTemplateIdsByModeSchema.optional(),
     aiKeywordExtraction: z.boolean().optional(),
     refinePass: z.boolean().optional(),
   })
@@ -156,6 +176,7 @@ export const ltmResolvedExtractionSettingsSchema = z
   .object({
     version: z.literal(1),
     systemPrompt: z.string().min(1).max(20_000),
+    systemPromptsByMode: ltmSystemPromptsByModeSchema,
     extraInstruction: z.string().max(4_000),
     reasoningEffort: ltmExtractionReasoningEffortSchema,
     verbosity: ltmExtractionVerbositySchema,
@@ -167,6 +188,7 @@ export const ltmResolvedExtractionSettingsSchema = z
     existingNoteMaxTokens: z.number().int().min(128).max(16_384),
     promptTemplates: z.array(ltmExtractionPromptTemplateSchema).max(50),
     activePromptTemplateId: z.string().min(1).max(64).nullable(),
+    activePromptTemplateIdsByMode: ltmActivePromptTemplateIdsByModeSchema,
     aiKeywordExtraction: z.boolean(),
     refinePass: z.boolean(),
   })

@@ -9,6 +9,7 @@ import {
   DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
   DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
   DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
+  DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE,
   DEFAULT_LTM_RECALL_PREAMBLE,
   isLtmSourceLikeNote,
   ltmEvidenceUnitSchema,
@@ -2336,7 +2337,12 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
         prompt: "Use a compact extraction prompt.",
       },
     ]);
-    assert.equal(persisted.activePromptTemplateId, "compact");
+    assert.equal(persisted.activePromptTemplateId, undefined);
+    assert.deepEqual(persisted.activePromptTemplateIdsByMode, {
+      roleplay: "compact",
+      conversation: "compact",
+      game: "compact",
+    });
 
     const reset = await updateLtmExtractionConfig({}, root);
     assert.equal(reset.reasoningEffort, "low");
@@ -2345,6 +2351,148 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
     assert.equal(reset.extraInstruction, "");
     assert.equal(reset.activePromptTemplateId, null);
     assert.deepEqual(reset.promptTemplates, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ltm extraction config resolves prompts and active named options per mode", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-extraction-config-modes-"));
+  try {
+    const roleplayDefault = await getLtmExtractionConfig(root, "roleplay");
+    const conversationDefault = await getLtmExtractionConfig(root, "conversation");
+    const gameDefault = await getLtmExtractionConfig(root, "game");
+
+    assert.equal(roleplayDefault.systemPrompt, DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE.roleplay);
+    assert.equal(conversationDefault.systemPrompt, DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE.conversation);
+    assert.equal(gameDefault.systemPrompt, DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE.game);
+    assert.notEqual(roleplayDefault.systemPrompt, conversationDefault.systemPrompt);
+    assert.notEqual(gameDefault.systemPrompt, conversationDefault.systemPrompt);
+
+    await updateLtmExtractionConfig(
+      {
+        systemPromptsByMode: {
+          conversation: "Conversation custom extraction prompt.",
+          game: "Game custom extraction prompt.",
+        },
+        promptTemplates: [
+          {
+            id: "roleplay_template",
+            name: "Roleplay template",
+            prompt: "Roleplay template prompt.",
+            mode: "roleplay",
+          },
+          {
+            id: "shared_template",
+            name: "Shared template",
+            prompt: "Shared template prompt.",
+          },
+          {
+            id: "game_template",
+            name: "Game template",
+            prompt: "Game template prompt.",
+            mode: "game",
+          },
+        ],
+        activePromptTemplateIdsByMode: {
+          roleplay: "roleplay_template",
+          conversation: "shared_template",
+          game: "game_template",
+        },
+      },
+      root,
+    );
+
+    const roleplay = await getLtmExtractionConfig(root, "roleplay");
+    const conversation = await getLtmExtractionConfig(root, "conversation");
+    const game = await getLtmExtractionConfig(root, "game");
+
+    assert.equal(roleplay.systemPrompt, "Roleplay template prompt.");
+    assert.equal(conversation.systemPrompt, "Shared template prompt.");
+    assert.equal(game.systemPrompt, "Game template prompt.");
+    assert.equal(roleplay.activePromptTemplateId, "roleplay_template");
+    assert.equal(conversation.activePromptTemplateId, "shared_template");
+    assert.equal(game.activePromptTemplateId, "game_template");
+    assert.deepEqual(game.systemPromptsByMode, {
+      conversation: "Conversation custom extraction prompt.",
+      game: "Game custom extraction prompt.",
+    });
+    assert.deepEqual(game.activePromptTemplateIdsByMode, {
+      roleplay: "roleplay_template",
+      conversation: "shared_template",
+      game: "game_template",
+    });
+
+    await updateLtmExtractionConfig(
+      {
+        systemPromptsByMode: {
+          conversation: "Conversation custom extraction prompt.",
+        },
+        promptTemplates: [
+          {
+            id: "game_template",
+            name: "Game template",
+            prompt: "Game template prompt.",
+            mode: "game",
+          },
+        ],
+        activePromptTemplateIdsByMode: {
+          conversation: "game_template",
+        },
+      },
+      root,
+    );
+
+    const incompatible = await getLtmExtractionConfig(root, "conversation");
+    assert.equal(incompatible.systemPrompt, "Conversation custom extraction prompt.");
+    assert.equal(incompatible.activePromptTemplateId, null);
+    assert.deepEqual(incompatible.activePromptTemplateIdsByMode, {});
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ltm extraction config expands legacy global prompt and active option safely", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-extraction-config-legacy-"));
+  try {
+    await updateLtmExtractionConfig(
+      {
+        systemPrompt: "Legacy global extraction prompt.",
+        promptTemplates: [
+          {
+            id: "game_only",
+            name: "Game only",
+            prompt: "Legacy game template prompt.",
+            mode: "game",
+          },
+        ],
+        activePromptTemplateId: "game_only",
+      },
+      root,
+    );
+
+    const roleplay = await getLtmExtractionConfig(root, "roleplay");
+    const conversation = await getLtmExtractionConfig(root, "conversation");
+    const game = await getLtmExtractionConfig(root, "game");
+
+    assert.equal(roleplay.systemPrompt, "Legacy global extraction prompt.");
+    assert.equal(conversation.systemPrompt, "Legacy global extraction prompt.");
+    assert.equal(game.systemPrompt, "Legacy game template prompt.");
+    assert.equal(roleplay.activePromptTemplateId, null);
+    assert.equal(conversation.activePromptTemplateId, null);
+    assert.equal(game.activePromptTemplateId, "game_only");
+    assert.deepEqual(game.activePromptTemplateIdsByMode, { game: "game_only" });
+
+    const dirs = getLongTermMemoryDirectories(root);
+    const persisted = JSON.parse(await readFile(join(dirs.config, "extraction.json"), "utf8"));
+    assert.equal(persisted.systemPrompt, undefined);
+    assert.equal(persisted.activePromptTemplateId, undefined);
+    assert.deepEqual(persisted.systemPromptsByMode, {
+      roleplay: "Legacy global extraction prompt.",
+      conversation: "Legacy global extraction prompt.",
+      game: "Legacy global extraction prompt.",
+    });
+    assert.deepEqual(persisted.activePromptTemplateIdsByMode, { game: "game_only" });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -2441,6 +2589,64 @@ test("ltm extraction config accepts reasoning effort none", async () => {
     const dirs = getLongTermMemoryDirectories(root);
     const persisted = JSON.parse(await readFile(join(dirs.config, "extraction.json"), "utf8"));
     assert.equal(persisted.reasoningEffort, "none");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source note extraction sends the resolved prompt for the source mode", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-extraction-config-source-mode-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "source_conversation_mode",
+        type: "source",
+        status: "active",
+        modes: ["conversation"],
+        scope: {},
+        tags: [],
+        links: [],
+        sections: {
+          source: {
+            text: "The user says they prefer slow weekend planning and remembers old cafe names.".repeat(10),
+            updatedAt: timestamp,
+            evidence: ["chat:conversation_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await updateLtmExtractionConfig(
+      {
+        systemPromptsByMode: {
+          roleplay: "Roleplay source prompt.",
+          conversation: "Conversation source prompt.",
+        },
+      },
+      root,
+    );
+
+    let systemPrompt = "";
+    const provider = {
+      maxTokensOverrideValue: 9999,
+      chatComplete: async (messages: Array<{ role: string; content: string }>) => {
+        systemPrompt = messages.find((message) => message.role === "system")?.content ?? "";
+        return {
+          content: JSON.stringify({ summary: "No units", units: [] }),
+        };
+      },
+    } as any;
+
+    await extractLongTermMemoryFromSourceNote({
+      noteId: "source_conversation_mode",
+      provider,
+      model: "test-model",
+      root,
+      operationId: randomUUID(),
+    });
+
+    assert.equal(systemPrompt, "Conversation source prompt.");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
