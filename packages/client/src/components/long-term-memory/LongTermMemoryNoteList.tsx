@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ChevronDown, ChevronRight, Eye, RotateCcw, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Eye, RotateCcw, Trash2, Unlink2 } from "lucide-react";
 import type { Chat, LtmNote } from "@marinara-engine/shared";
 import {
   displayNoteTitle,
@@ -173,6 +173,8 @@ export function TypeMemoryGroups({
   onOpen,
   onOpenSource,
   onSelect,
+  canRemoveFromScope,
+  onRemoveFromScope,
   onDelete,
   chatLookup,
 }: {
@@ -188,6 +190,8 @@ export function TypeMemoryGroups({
   onOpen: (id: string) => void;
   onOpenSource: (id: string) => void;
   onSelect: (id: string, selected: boolean) => void;
+  canRemoveFromScope: (note: LtmNote) => boolean;
+  onRemoveFromScope: (note: LtmNote) => void;
   onDelete: (note: LtmNote) => void;
   chatLookup?: Map<string, Chat>;
 }) {
@@ -363,6 +367,20 @@ export function TypeMemoryGroups({
                         >
                           <Eye size="0.875rem" />
                         </button>
+                        {canRemoveFromScope(note) && (
+                          <button
+                            type="button"
+                            onClick={() => onRemoveFromScope(note)}
+                            className={cn(
+                              rowActionButtonClassName,
+                              "hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                            )}
+                            aria-label={`Remove ${memoryRowTitle(note, chatLookup)} from chat`}
+                            title="Remove from chat"
+                          >
+                            <Unlink2 size="0.875rem" />
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => onDelete(note)}

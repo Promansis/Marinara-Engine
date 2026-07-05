@@ -121,6 +121,18 @@ const listNotesQuerySchema = z
   })
   .strict();
 
+const removeNoteScopeBodySchema = z
+  .object({
+    chatIds: z.array(z.string().min(1).max(120)).max(100).optional(),
+    groupId: z.string().min(1).max(120).optional(),
+    characterIds: z.array(z.string().min(1).max(120)).max(100).optional(),
+  })
+  .strict()
+  .refine(
+    (body) => (body.chatIds?.length ?? 0) > 0 || Boolean(body.groupId) || (body.characterIds?.length ?? 0) > 0,
+    { message: "At least one scope link is required." },
+  );
+
 const createNoteBodySchema = z
   .object({
     id: ltmNoteIdSchema,
@@ -807,27 +819,24 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     async (req, reply) => {
       if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory note scope removal" })) return;
       const id = ltmNoteIdSchema.parse(req.params.id);
-      const body = z
-        .object({
-          chatIds: z.array(z.string().min(1).max(120)).min(1).max(100),
-        })
-        .strict()
-        .parse(req.body ?? {});
+      const body = removeNoteScopeBodySchema.parse(req.body ?? {});
       const existing = await storage.getNote(id);
       if (!existing) return reply.status(404).send({ error: "Long-term memory note not found" });
 
-      const result = await storage.removeNoteFromChatScope(id, body.chatIds, {
+      const result = await storage.removeNoteFromScope(id, body, {
         actor: "maintenance_api",
         cause: "api.unscope",
-        summary: "Removed from chat scope via long-term memory maintenance API",
+        summary: "Removed from scope via long-term memory maintenance API",
       });
-      await rebuildLongTermMemoryIndexes({
-        scope: result.deleted ? rebuildScopeForNote(existing) : rebuildScopeForNote(result.note!),
-      });
+      if (result.deleted || result.changed) {
+        await rebuildLongTermMemoryIndexes({
+          scope: result.deleted ? rebuildScopeForNote(existing) : rebuildScopeForNote(result.note!),
+        });
+      }
       if (result.deleted) {
         return { deleted: true, unscoped: false, id: existing.id };
       }
-      return { deleted: false, unscoped: true, id: result.note!.id, note: result.note };
+      return { deleted: false, unscoped: result.changed, id: result.note!.id, note: result.note };
     },
   );
 

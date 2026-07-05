@@ -14,17 +14,20 @@ import {
   RotateCcw,
   Search,
   Trash2,
+  Unlink2,
   X,
 } from "lucide-react";
 import type {
   Chat,
   LtmExtractionDraft,
   LtmExtractionDroppedCandidate,
+  LtmMode,
   LtmNote,
+  LtmScope,
   LtmNoteType,
   LtmStatus,
 } from "@marinara-engine/shared";
-import { getLtmScopeChatIds, isGlobalLtmScope } from "@marinara-engine/shared";
+import { getLtmScopeChatIds } from "@marinara-engine/shared";
 import {
   useAcceptLongTermMemoryDraft,
   useDeleteLongTermMemoryDraftMutation,
@@ -86,7 +89,6 @@ import {
 import { StatusPill, ToolButton } from "../long-term-memory/LtmPills";
 import { Modal } from "../ui/Modal";
 import { showConfirmDialog } from "../../lib/app-dialogs";
-import type { LtmMode } from "@marinara-engine/shared";
 import {
   IMPORT_SOURCES,
   MODE_LABELS,
@@ -126,6 +128,12 @@ import {
 
 type LtmImportSource = "characters" | "lorebooks" | "chats";
 
+type RemovableLtmScope = {
+  chatIds?: string[];
+  groupId?: string;
+  characterIds?: string[];
+};
+
 interface LtmVaultManagerSectionProps {
   agentConfig: AgentConfigRow;
   agentSettings: Record<string, unknown>;
@@ -151,6 +159,43 @@ function extractPanelPrefs(settings: Record<string, unknown>) {
         : 25,
     importSource,
   };
+}
+
+function hasRemovableLtmScope(scope: RemovableLtmScope | null | undefined) {
+  return Boolean(scope && ((scope.chatIds?.length ?? 0) > 0 || scope.groupId || (scope.characterIds?.length ?? 0) > 0));
+}
+
+function removableScopeForContext(noteScope: LtmScope, contextScope: LtmScope): RemovableLtmScope | null {
+  const contextChatIds = new Set(getLtmScopeChatIds(contextScope));
+  const contextCharacterIds = new Set(contextScope.characterIds ?? []);
+  const chatIds = getLtmScopeChatIds(noteScope).filter((chatId) => contextChatIds.has(chatId));
+  const groupId = noteScope.groupId && noteScope.groupId === contextScope.groupId ? noteScope.groupId : undefined;
+  const characterIds = (noteScope.characterIds ?? []).filter((characterId) => contextCharacterIds.has(characterId));
+  const scope = {
+    ...(chatIds.length > 0 ? { chatIds } : {}),
+    ...(groupId ? { groupId } : {}),
+    ...(characterIds.length > 0 ? { characterIds } : {}),
+  };
+  return hasRemovableLtmScope(scope) ? scope : null;
+}
+
+function removeScopeLinks(scope: LtmScope, removal: RemovableLtmScope): LtmScope {
+  const chatIdsToRemove = new Set(removal.chatIds ?? []);
+  const characterIdsToRemove = new Set(removal.characterIds ?? []);
+  const chatIds = getLtmScopeChatIds(scope).filter((chatId) => !chatIdsToRemove.has(chatId));
+  const characterIds = (scope.characterIds ?? []).filter((characterId) => !characterIdsToRemove.has(characterId));
+  const next: LtmScope = {};
+  if (chatIds.length > 0) {
+    next.chatId = chatIds[0];
+    next.chatIds = chatIds;
+  }
+  if (scope.groupId && scope.groupId !== removal.groupId) next.groupId = scope.groupId;
+  if (characterIds.length > 0) next.characterIds = characterIds;
+  return next;
+}
+
+function scopeHasLinks(scope: LtmScope) {
+  return getLtmScopeChatIds(scope).length > 0 || Boolean(scope.groupId) || Boolean(scope.characterIds?.length);
 }
 
 export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSettings, initialTab, sourceNoteId }: LtmVaultManagerSectionProps) {
@@ -315,6 +360,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const removeNotesFromScope = useRemoveLongTermMemoryNotesFromScope();
   const importSourceNotes = useImportLongTermMemorySourceNotes();
   const searchMemory = useSearchLongTermMemory();
+  const noteActionPending = deleteNotes.isPending || removeNotesFromScope.isPending;
   const [recallQueryByNoteId, setRecallQueryByNoteId] = useState<Record<string, string>>({});
   const [recallResultByNoteId, setRecallResultByNoteId] = useState<Record<string, LtmSearchResponse | null>>({});
 
@@ -701,33 +747,57 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     });
   };
 
-  const activeScopeChatIds = useMemo(
-    () => getLtmScopeChatIds(navigatorScope),
+  const contextRemovalScope = useMemo(() => {
+    const chatIds = getLtmScopeChatIds(navigatorScope);
+    const scope = {
+      ...(chatIds.length > 0 ? { chatIds } : {}),
+      ...(navigatorScope.groupId ? { groupId: navigatorScope.groupId } : {}),
+      ...(navigatorScope.characterIds?.length ? { characterIds: navigatorScope.characterIds } : {}),
+    };
+    return hasRemovableLtmScope(scope) ? scope : null;
+  }, [navigatorScope]);
+
+  const getNoteRemovalScope = useCallback(
+    (note: LtmNote) => removableScopeForContext(note.scope, navigatorScope),
     [navigatorScope],
   );
 
-  const noteIsSharedBeyondScope = useCallback(
-    (note: LtmNote): boolean => {
-      if (isGlobalLtmScope(note.scope)) return true;
-      const noteChatIds = new Set(getLtmScopeChatIds(note.scope));
-      const hasGroupId = Boolean(note.scope.groupId);
-      const hasCharacterIds = Boolean(note.scope.characterIds?.length);
-      if (hasGroupId || hasCharacterIds) {
-        if (noteChatIds.size > 0) return true;
-        return activeScopeChatIds.length === 0;
-      }
-      if (activeScopeChatIds.length === 0) return true;
-      return noteChatIds.size > activeScopeChatIds.filter((id) => noteChatIds.has(id)).length;
-    },
-    [activeScopeChatIds],
+  const canRemoveMemoryFromCurrentScope = useCallback(
+    (note: LtmNote) => hasRemovableLtmScope(getNoteRemovalScope(note)),
+    [getNoteRemovalScope],
   );
 
-  const removeMemoriesFromScopeById = async (ids: string[], chatIds: string[]) => {
-    const uniqueIds = uniqueNoteIds(ids);
-    if (uniqueIds.length === 0 || chatIds.length === 0) return;
+  const removalWouldDeleteMemory = useCallback(
+    (note: LtmNote) => {
+      const removal = getNoteRemovalScope(note);
+      return removal ? !scopeHasLinks(removeScopeLinks(note.scope, removal)) : false;
+    },
+    [getNoteRemovalScope],
+  );
+
+  const selectedRemovableNoteIds = useMemo(
+    () =>
+      selectedVisibleNoteIds.filter((id) => {
+        const note = noteLookup.get(id);
+        return note ? canRemoveMemoryFromCurrentScope(note) : false;
+      }),
+    [canRemoveMemoryFromCurrentScope, noteLookup, selectedVisibleNoteIds],
+  );
+
+  const removeMemoriesFromCurrentScopeById = async (ids: string[], skippedCount = 0) => {
+    const uniqueIds = uniqueNoteIds(
+      ids.filter((id) => {
+        const note = noteLookup.get(id);
+        return note ? canRemoveMemoryFromCurrentScope(note) : false;
+      }),
+    );
+    if (uniqueIds.length === 0 || !contextRemovalScope) {
+      toast.error("No selected memories are linked to this chat context.");
+      return;
+    }
 
     try {
-      const result = await removeNotesFromScope.mutateAsync({ ids: uniqueIds, chatIds });
+      const result = await removeNotesFromScope.mutateAsync({ ids: uniqueIds, scope: contextRemovalScope });
       const allAffected = [...result.removedIds, ...result.deletedIds];
       setSelectedNoteIds((current) => {
         const next = new Set(current);
@@ -743,18 +813,26 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
         closeMemoryModal();
       }
 
+      const totalSkipped = skippedCount + result.unchangedIds.length;
+      const skippedSuffix = totalSkipped > 0 ? `, ${totalSkipped} skipped` : "";
       if (result.failedIds.length > 0) {
         toast.error(
-          `${allAffected.length} memor${allAffected.length === 1 ? "y" : "ies"} affected, ${result.failedIds.length} failed.`,
+          `${allAffected.length} memor${allAffected.length === 1 ? "y" : "ies"} affected, ${result.failedIds.length} failed${skippedSuffix}.`,
         );
+      } else if (allAffected.length === 0 && result.unchangedIds.length > 0) {
+        toast.error("Selected memories are no longer linked to this chat context.");
       } else if (result.deletedIds.length > 0 && result.removedIds.length > 0) {
         toast.success(
-          `${result.removedIds.length} removed from this chat, ${result.deletedIds.length} permanently deleted`,
+          `${result.removedIds.length} removed from this chat, ${result.deletedIds.length} permanently deleted${skippedSuffix}`,
         );
       } else if (result.deletedIds.length > 0) {
-        toast.success(`${result.deletedIds.length} memor${result.deletedIds.length === 1 ? "y" : "ies"} deleted`);
+        toast.success(
+          `${result.deletedIds.length} memor${result.deletedIds.length === 1 ? "y" : "ies"} permanently deleted${skippedSuffix}`,
+        );
       } else {
-        toast.success(`${result.removedIds.length} memor${result.removedIds.length === 1 ? "y" : "ies"} removed from this chat`);
+        toast.success(
+          `${result.removedIds.length} memor${result.removedIds.length === 1 ? "y" : "ies"} removed from this chat${skippedSuffix}`,
+        );
       }
     } catch (err) {
       toast.error((err as Error).message);
@@ -793,7 +871,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     }
   };
 
-  const confirmDerivedDeleteIds = async (ids: string[]) => {
+  const confirmDerivedDeleteIds = async (ids: string[], action: "delete" | "remove" = "delete") => {
     const selectedIds = new Set(ids);
     const sourceIds = new Set(
       ids.filter((id) => {
@@ -805,31 +883,45 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     if (unselectedDerivedIds.length === 0) return ids;
 
     const includeDerived = await showConfirmDialog({
-      title: "Delete Extracted Memories",
-      message: `${sourceIds.size} selected source memor${sourceIds.size === 1 ? "y has" : "ies have"} ${unselectedDerivedIds.length} extracted memor${unselectedDerivedIds.length === 1 ? "y" : "ies"}. Delete extracted memories too?`,
-      confirmLabel: "Delete All",
+      title: action === "remove" ? "Remove Extracted Memories" : "Delete Extracted Memories",
+      message: `${sourceIds.size} selected source memor${sourceIds.size === 1 ? "y has" : "ies have"} ${unselectedDerivedIds.length} extracted memor${unselectedDerivedIds.length === 1 ? "y" : "ies"}. ${
+        action === "remove" ? "Remove extracted memories from this chat too?" : "Delete extracted memories too?"
+      }`,
+      confirmLabel: action === "remove" ? "Remove All" : "Delete All",
       tone: "destructive",
     });
     return includeDerived ? uniqueNoteIds([...ids, ...unselectedDerivedIds]) : ids;
   };
 
-  const deleteMemory = async (note: LtmNote) => {
+  const removeMemoryFromCurrentScope = async (note: LtmNote) => {
     const title = memoryRowTitle(note, chatLookup);
-    const scopeChatIds = activeScopeChatIds;
-
-    if (scopeChatIds.length > 0 && noteIsSharedBeyondScope(note)) {
-      const choice = await showConfirmDialog({
-        title: "Remove Memory",
-        message: `Remove "${title}" from this chat? It will still be available in other chats it belongs to.`,
-        confirmLabel: "Remove from chat",
-        tone: "destructive",
-      });
-      if (!choice) return;
-      const ids = await confirmDerivedDeleteIds([note.id]);
-      void removeMemoriesFromScopeById(ids, scopeChatIds);
+    if (!canRemoveMemoryFromCurrentScope(note)) {
+      toast.error("This memory is not linked to the current chat context.");
       return;
     }
+    const ids = await confirmDerivedDeleteIds([note.id], "remove");
+    const removableNotes = ids
+      .map((id) => noteLookup.get(id))
+      .filter((item): item is LtmNote => item !== undefined && canRemoveMemoryFromCurrentScope(item));
+    const skippedCount = ids.length - removableNotes.length;
+    const willDeleteCount = removableNotes.filter(removalWouldDeleteMemory).length;
+    const choice = await showConfirmDialog({
+      title: "Remove Memory",
+      message:
+        willDeleteCount > 0
+          ? `${willDeleteCount} memor${willDeleteCount === 1 ? "y is" : "ies are"} only linked to this chat context. Removing ${
+              willDeleteCount === 1 ? "it" : "them"
+            } will permanently delete ${willDeleteCount === 1 ? "it" : "them"}. This cannot be undone.`
+          : `Remove "${title}" from this chat? It will remain anywhere else it is linked.`,
+      confirmLabel: "Remove from chat",
+      tone: "destructive",
+    });
+    if (!choice) return;
+    void removeMemoriesFromCurrentScopeById(ids, skippedCount);
+  };
 
+  const deleteMemory = async (note: LtmNote) => {
+    const title = memoryRowTitle(note, chatLookup);
     if (
       !(await showConfirmDialog({
         title: "Permanently Delete",
@@ -842,26 +934,44 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     void deleteMemoriesById(await confirmDerivedDeleteIds([note.id]));
   };
 
+  const removeSelectedMemoriesFromCurrentScope = async () => {
+    const ids = selectedVisibleNoteIds;
+    if (ids.length === 0) return;
+    if (selectedRemovableNoteIds.length === 0) {
+      toast.error("No selected memories are linked to this chat context.");
+      return;
+    }
+    const allIds = await confirmDerivedDeleteIds(selectedRemovableNoteIds, "remove");
+    const removableNotes = allIds
+      .map((id) => noteLookup.get(id))
+      .filter((item): item is LtmNote => item !== undefined && canRemoveMemoryFromCurrentScope(item));
+    const skippedCount = allIds.length - removableNotes.length + (ids.length - selectedRemovableNoteIds.length);
+    const willDeleteCount = removableNotes.filter(removalWouldDeleteMemory).length;
+    const removeOnlyCount = removableNotes.length - willDeleteCount;
+    const choice = await showConfirmDialog({
+      title: "Remove Memories",
+      message:
+        willDeleteCount > 0
+          ? `${
+              removeOnlyCount > 0
+                ? `${removeOnlyCount} memor${removeOnlyCount === 1 ? "y" : "ies"} will be removed from this chat, and `
+                : ""
+            }${willDeleteCount} memor${willDeleteCount === 1 ? "y" : "ies"} will be permanently deleted because ${
+              willDeleteCount === 1 ? "it has" : "they have"
+            } no other scope links. This cannot be undone.`
+          : `Remove ${removableNotes.length} selected memor${removableNotes.length === 1 ? "y" : "ies"} from this chat? ${
+              removableNotes.length === 1 ? "It" : "They"
+            } will remain anywhere else linked.`,
+      confirmLabel: "Remove from chat",
+      tone: "destructive",
+    });
+    if (!choice) return;
+    void removeMemoriesFromCurrentScopeById(allIds, skippedCount);
+  };
+
   const deleteSelectedMemories = async () => {
     const ids = selectedVisibleNoteIds;
     if (ids.length === 0) return;
-    const scopeChatIds = activeScopeChatIds;
-    const selectedNotes = ids.map((id) => noteLookup.get(id)).filter((n): n is LtmNote => Boolean(n));
-    const anyShared = selectedNotes.some((note) => noteIsSharedBeyondScope(note));
-
-    if (scopeChatIds.length > 0 && anyShared) {
-      const choice = await showConfirmDialog({
-        title: "Remove Memories",
-        message: `Remove ${ids.length} selected memor${ids.length === 1 ? "y" : "ies"} from this chat? Memories that are only in this chat will be permanently deleted; shared memories will remain in other chats.`,
-        confirmLabel: "Remove from chat",
-        tone: "destructive",
-      });
-      if (!choice) return;
-      const allIds = await confirmDerivedDeleteIds(ids);
-      void removeMemoriesFromScopeById(allIds, scopeChatIds);
-      return;
-    }
-
     if (
       !(await showConfirmDialog({
         title: "Permanently Delete",
@@ -1096,7 +1206,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
                   <input
                     type="checkbox"
                     checked={allVisibleNotesSelected}
-                    disabled={visibleNoteIds.length === 0 || deleteNotes.isPending}
+                    disabled={visibleNoteIds.length === 0 || noteActionPending}
                     onChange={(event) => setAllVisibleNotesSelected(event.target.checked)}
                     className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
                   />
@@ -1108,21 +1218,32 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
                 />
                 {selectedVisibleNoteIds.length > 0 && (
                   <>
-                    <ToolButton onClick={() => openTransferModal("copy")} disabled={deleteNotes.isPending}>
+                    <ToolButton onClick={() => openTransferModal("copy")} disabled={noteActionPending}>
                       <Copy size="0.875rem" />
                       Copy selected
                     </ToolButton>
-                    <ToolButton onClick={() => openTransferModal("move")} disabled={deleteNotes.isPending}>
+                    <ToolButton onClick={() => openTransferModal("move")} disabled={noteActionPending}>
                       <ArrowRightLeft size="0.875rem" />
                       Move selected
                     </ToolButton>
-                    <ToolButton onClick={() => setAllVisibleNotesSelected(false)} disabled={deleteNotes.isPending}>
+                    <ToolButton onClick={() => setAllVisibleNotesSelected(false)} disabled={noteActionPending}>
                       <RotateCcw size="0.875rem" />
                       Clear selection
                     </ToolButton>
                     <ToolButton
+                      onClick={removeSelectedMemoriesFromCurrentScope}
+                      disabled={selectedRemovableNoteIds.length === 0 || noteActionPending}
+                    >
+                      {removeNotesFromScope.isPending ? (
+                        <Loader2 size="0.875rem" className="animate-spin" />
+                      ) : (
+                        <Unlink2 size="0.875rem" />
+                      )}
+                      Remove from chat
+                    </ToolButton>
+                    <ToolButton
                       onClick={deleteSelectedMemories}
-                      disabled={selectedVisibleNoteIds.length === 0 || deleteNotes.isPending}
+                      disabled={selectedVisibleNoteIds.length === 0 || noteActionPending}
                       tone="danger"
                     >
                       {deleteNotes.isPending ? (
@@ -1156,6 +1277,8 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
                   onOpen={(id) => openMemory(id, { mode: "view" })}
                   onOpenSource={(id) => openMemory(id, { mode: "view" })}
                   onSelect={setNoteSelected}
+                  canRemoveFromScope={canRemoveMemoryFromCurrentScope}
+                  onRemoveFromScope={removeMemoryFromCurrentScope}
                   onDelete={deleteMemory}
                 />
               )}

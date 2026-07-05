@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type {
   LtmDraftMutation,
   LtmDraftStatus,
@@ -329,6 +329,21 @@ export type DeleteLongTermMemoryNotesResponse = {
   failedIds: string[];
 };
 
+function pruneNotesFromListCaches(qc: QueryClient, ids: string[]) {
+  if (ids.length === 0) return;
+  const idSet = new Set(ids);
+  qc.setQueriesData<LtmNote[]>(
+    {
+      predicate: (query) =>
+        Array.isArray(query.queryKey) &&
+        query.queryKey[0] === longTermMemoryKeys.all[0] &&
+        query.queryKey[1] === "notes" &&
+        typeof query.queryKey[2] === "object",
+    },
+    (current) => (Array.isArray(current) ? current.filter((note) => !idSet.has(note.id)) : current),
+  );
+}
+
 export type PreviewLongTermMemoryNoteTransferInput = LtmNoteTransferPreviewRequest;
 
 export type ApplyLongTermMemoryNoteTransferInput = {
@@ -422,6 +437,7 @@ export function useDeleteLongTermMemoryNote() {
     mutationFn: (id: string) => api.delete<{ deleted: true; id: string }>(`/long-term-memory/notes/${id}/permanent`),
     onSuccess: (_, id) => {
       qc.removeQueries({ queryKey: longTermMemoryKeys.note(id) });
+      pruneNotesFromListCaches(qc, [id]);
       qc.invalidateQueries({ queryKey: longTermMemoryKeys.all });
     },
   });
@@ -449,6 +465,7 @@ export function useDeleteLongTermMemoryNotes() {
       for (const id of result.deletedIds) {
         qc.removeQueries({ queryKey: longTermMemoryKeys.note(id) });
       }
+      pruneNotesFromListCaches(qc, result.deletedIds);
       qc.invalidateQueries({ queryKey: longTermMemoryKeys.all });
     },
   });
@@ -457,7 +474,15 @@ export function useDeleteLongTermMemoryNotes() {
 export type RemoveLongTermMemoryNotesFromScopeResponse = {
   removedIds: string[];
   deletedIds: string[];
+  unchangedIds: string[];
   failedIds: string[];
+  notes: LtmNote[];
+};
+
+export type RemoveLongTermMemoryNoteScopeInput = {
+  chatIds?: string[];
+  groupId?: string;
+  characterIds?: string[];
 };
 
 /**
@@ -468,33 +493,45 @@ export type RemoveLongTermMemoryNotesFromScopeResponse = {
 export function useRemoveLongTermMemoryNotesFromScope() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { ids: string[]; chatIds: string[] }) => {
+    mutationFn: async (input: { ids: string[]; scope: RemoveLongTermMemoryNoteScopeInput }) => {
       const results = await Promise.allSettled(
         input.ids.map((id) =>
-          api.delete<{ deleted: boolean; unscoped: boolean; id: string }>(
+          api.delete<{ deleted: boolean; unscoped: boolean; id: string; note?: LtmNote }>(
             `/long-term-memory/notes/${id}/scope`,
-            { chatIds: input.chatIds },
+            input.scope,
           ),
         ),
       );
       const removedIds: string[] = [];
       const deletedIds: string[] = [];
+      const unchangedIds: string[] = [];
       const failedIds: string[] = [];
+      const notes: LtmNote[] = [];
       results.forEach((result, index) => {
         const id = input.ids[index]!;
         if (result.status === "fulfilled") {
           if (result.value.deleted) deletedIds.push(id);
-          else removedIds.push(id);
+          else if (result.value.unscoped) {
+            removedIds.push(id);
+            if (result.value.note) notes.push(result.value.note);
+          } else {
+            unchangedIds.push(id);
+            if (result.value.note) notes.push(result.value.note);
+          }
         } else {
           failedIds.push(id);
         }
       });
-      return { removedIds, deletedIds, failedIds } satisfies RemoveLongTermMemoryNotesFromScopeResponse;
+      return { removedIds, deletedIds, unchangedIds, failedIds, notes } satisfies RemoveLongTermMemoryNotesFromScopeResponse;
     },
     onSuccess: (result) => {
       for (const id of result.deletedIds) {
         qc.removeQueries({ queryKey: longTermMemoryKeys.note(id) });
       }
+      for (const note of result.notes) {
+        qc.setQueryData(longTermMemoryKeys.note(note.id), note);
+      }
+      pruneNotesFromListCaches(qc, [...result.removedIds, ...result.deletedIds]);
       qc.invalidateQueries({ queryKey: longTermMemoryKeys.all });
     },
   });

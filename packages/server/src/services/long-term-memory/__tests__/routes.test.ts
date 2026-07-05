@@ -256,6 +256,141 @@ test("LTM routes — POST /notes creates and GET /notes/:id retrieves it", async
   }
 });
 
+test("LTM routes — DELETE /notes/:id/scope removes the selected context links", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "marinara-ltm-routes-unscope-context-"));
+  const previousDataDir = process.env.DATA_DIR;
+
+  delete process.env.BASIC_AUTH_USER;
+  delete process.env.BASIC_AUTH_PASS;
+  delete process.env.ADMIN_SECRET;
+  process.env.DATA_DIR = dataDir;
+
+  let app: Awaited<ReturnType<typeof buildApp>> | null = null;
+  try {
+    app = await buildApp();
+    const updatedAt = new Date().toISOString();
+    const baseNote = {
+      type: "world",
+      status: "active",
+      modes: ["roleplay"],
+      tags: [],
+      links: [],
+      sections: { facts: { text: "Scoped route test memory.", updatedAt } },
+      version: 1,
+    };
+    const createScoped = async (id: string, scope: Record<string, unknown>) => {
+      const response = await app!.inject({
+        method: "POST",
+        url: "/api/long-term-memory/notes",
+        payload: { ...baseNote, id, scope },
+        remoteAddress: "127.0.0.1",
+      });
+      assert.equal(response.statusCode, 201, response.body);
+    };
+
+    await createScoped("world_route_context_keep", {
+      chatId: "branch_a",
+      chatIds: ["branch_a", "branch_b"],
+      groupId: "thread_alpha",
+      characterIds: ["char_mara", "char_else"],
+    });
+    await createScoped("world_route_context_delete", {
+      chatId: "branch_a",
+      chatIds: ["branch_a"],
+      groupId: "thread_alpha",
+      characterIds: ["char_mara"],
+    });
+    await createScoped("world_route_context_noop", {
+      chatId: "branch_c",
+      chatIds: ["branch_c"],
+    });
+    await createScoped("world_route_context_global", {});
+
+    const removePayload = {
+      chatIds: ["branch_a"],
+      groupId: "thread_alpha",
+      characterIds: ["char_mara"],
+    };
+
+    const keep = await app.inject({
+      method: "DELETE",
+      url: "/api/long-term-memory/notes/world_route_context_keep/scope",
+      payload: removePayload,
+      remoteAddress: "127.0.0.1",
+    });
+    assert.equal(keep.statusCode, 200, keep.body);
+    const keepBody = JSON.parse(keep.body);
+    assert.equal(keepBody.deleted, false);
+    assert.equal(keepBody.unscoped, true);
+    assert.deepEqual(keepBody.note.scope, {
+      chatId: "branch_b",
+      chatIds: ["branch_b"],
+      characterIds: ["char_else"],
+    });
+
+    const noop = await app.inject({
+      method: "DELETE",
+      url: "/api/long-term-memory/notes/world_route_context_noop/scope",
+      payload: removePayload,
+      remoteAddress: "127.0.0.1",
+    });
+    assert.equal(noop.statusCode, 200, noop.body);
+    const noopBody = JSON.parse(noop.body);
+    assert.equal(noopBody.deleted, false);
+    assert.equal(noopBody.unscoped, false);
+    assert.deepEqual(noopBody.note.scope, {
+      chatId: "branch_c",
+      chatIds: ["branch_c"],
+    });
+
+    const globalNoop = await app.inject({
+      method: "DELETE",
+      url: "/api/long-term-memory/notes/world_route_context_global/scope",
+      payload: removePayload,
+      remoteAddress: "127.0.0.1",
+    });
+    assert.equal(globalNoop.statusCode, 200, globalNoop.body);
+    const globalNoopBody = JSON.parse(globalNoop.body);
+    assert.equal(globalNoopBody.deleted, false);
+    assert.equal(globalNoopBody.unscoped, false);
+    assert.deepEqual(globalNoopBody.note.scope, {});
+
+    const scopedList = await app.inject({
+      method: "GET",
+      url: "/api/long-term-memory/notes?scopeChatIds=branch_a&scopeGroupId=thread_alpha&scopeCharacterIds=char_mara&includeGlobal=false",
+      remoteAddress: "127.0.0.1",
+    });
+    assert.equal(scopedList.statusCode, 200, scopedList.body);
+    assert.deepEqual(
+      JSON.parse(scopedList.body).map((note: { id: string }) => note.id),
+      ["world_route_context_delete"],
+    );
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: "/api/long-term-memory/notes/world_route_context_delete/scope",
+      payload: removePayload,
+      remoteAddress: "127.0.0.1",
+    });
+    assert.equal(deleted.statusCode, 200, deleted.body);
+    const deletedBody = JSON.parse(deleted.body);
+    assert.equal(deletedBody.deleted, true);
+    assert.equal(deletedBody.unscoped, false);
+
+    const getDeleted = await app.inject({
+      method: "GET",
+      url: "/api/long-term-memory/notes/world_route_context_delete",
+      remoteAddress: "127.0.0.1",
+    });
+    assert.equal(getDeleted.statusCode, 404, getDeleted.body);
+  } finally {
+    if (app) await app.close();
+    if (previousDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = previousDataDir;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("LTM routes — read endpoints tolerate legacy previousHash notes", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "marinara-ltm-routes-legacy-note-"));
   const previousDataDir = process.env.DATA_DIR;
