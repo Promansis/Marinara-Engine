@@ -80,6 +80,36 @@ test("chat mode tabs and new-chat actions stay reachable", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test("LTM extraction prompt options work without crypto.randomUUID", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "LTM prompt option UUID fallback is covered on desktop.");
+
+  await page.addInitScript(() => {
+    const webCrypto = globalThis.crypto as (Crypto & { randomUUID?: unknown }) | undefined;
+    if (!webCrypto) return;
+    try {
+      Object.defineProperty(webCrypto, "randomUUID", { configurable: true, value: undefined });
+    } catch {
+      delete webCrypto.randomUUID;
+    }
+  });
+
+  const errors = collectUnexpectedErrors(page);
+  await page.goto("/");
+
+  await page.locator('[data-tour="panel-agents"]').click();
+  await page.getByRole("button", { name: /Long-Term Memory/ }).click();
+
+  await expect(page.locator(".mari-editor-title-input")).toHaveValue("Long-Term Memory");
+  const extractionPromptPanel = page
+    .locator(".mari-editor-panel")
+    .filter({ has: page.getByRole("heading", { name: "Extraction Prompt" }) });
+  await expect(extractionPromptPanel).toBeVisible();
+
+  await extractionPromptPanel.getByRole("button", { name: "Add option" }).click();
+  await expect(extractionPromptPanel.getByPlaceholder("Option name")).toHaveValue("New template");
+  expect(errors).toEqual([]);
+});
+
 test("memory recall modal accepts clicks from chat settings", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("desktop"), "Memory recall modal regression is covered on desktop.");
 

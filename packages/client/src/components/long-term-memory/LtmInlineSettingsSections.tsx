@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Circle, CircleDot, FileText, Link2, Plus, RotateCcw, Trash2 } from "lucide-react";
-import { cn } from "../../lib/utils";
+import { cn, generateClientId } from "../../lib/utils";
 import {
   DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS,
   DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
@@ -154,7 +154,7 @@ export function LtmExtractionPromptSection({
 
   const handleAddTemplate = useCallback(() => {
     setLocalTemplates((prev) => {
-      const next = [...prev, { id: crypto.randomUUID(), name: "New template", prompt: "", mode: null }];
+      const next = [...prev, { id: generateClientId(), name: "New template", prompt: "", mode: null }];
       return next;
     });
   }, []);

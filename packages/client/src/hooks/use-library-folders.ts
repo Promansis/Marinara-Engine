@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { generateClientId } from "../lib/utils";
 
 export type LibraryFolderScope = "lorebooks" | "presets" | "agents";
 
@@ -21,10 +22,7 @@ export const libraryFolderKeys = {
 };
 
 function createId() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `folder-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return generateClientId();
 }
 
 function readFolders(): LibraryFolder[] {

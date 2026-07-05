@@ -66,7 +66,7 @@ import {
   useUploadKnowledgeSource,
   useDeleteKnowledgeSource,
 } from "../../hooks/use-knowledge-sources";
-import { cn } from "../../lib/utils";
+import { cn, generateClientId } from "../../lib/utils";
 import { MacroTextarea } from "../ui/MacroTextarea";
 import {
   getAgentRunIntervalMeta,
@@ -166,10 +166,7 @@ function createCustomAgentType(name: string): string {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/(^-|-$)/g, "") || "agent";
-  const suffix =
-    globalThis.crypto && "randomUUID" in globalThis.crypto
-      ? globalThis.crypto.randomUUID()
-      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const suffix = generateClientId();
   return `custom-${slug}-${suffix}`;
 }
 
