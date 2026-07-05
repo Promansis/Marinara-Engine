@@ -1,11 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { LtmEvidenceUnit, LtmNote, SessionSummary } from "@marinara-engine/shared";
 import { deduplicateUnits } from "../dedup.js";
 import { validateLtmEvidenceUnits } from "../evidence-unit-validation.js";
-import { evidenceUnitMessages } from "../evidence-unit-extraction.js";
+import {
+  evidenceUnitMessages,
+  evidenceUnitResponseFormat,
+  parseEvidenceUnitPayload,
+  sourceHashForEvidenceUnitExtraction,
+} from "../evidence-unit-extraction.js";
 import { mapGameJournalToEvidenceUnits, renderGameSourceText } from "../game-journal-mapper.js";
+import { extractLongTermMemoryFromSourceNote } from "../source-extraction.js";
+import { LongTermMemoryStorage } from "../storage.js";
 
 const timestamp = "2024-01-01T00:00:00.000Z";
 const sourceHash = "a".repeat(64);
@@ -225,4 +235,190 @@ test("prompt contract advertises caused_by in allowedTimelineRelations", () => {
   assert.ok(relations.includes("affects_relationship"), "allowedTimelineRelations should include affects_relationship");
   assert.ok(relations.includes("affects_character"), "allowedTimelineRelations should include affects_character");
   assert.ok(relations.includes("occurred_in"), "allowedTimelineRelations should include occurred_in");
+});
+
+test("prompt contract advertises schema-critical relationship and target rules", () => {
+  const sourceNote = note("source_test", {
+    source: {
+      text: "Alice told Bob the truth about the stolen map.",
+      updatedAt: timestamp,
+    },
+  });
+
+  const messages = evidenceUnitMessages({
+    sourceNote,
+    sourceText: sourceNote.sections.source!.text,
+    existingNotes: [],
+    provider: null as never,
+    model: "test-model",
+    scope: {},
+    modes: ["roleplay"],
+    sourceHash,
+  });
+
+  const userMsg = messages.find((m) => m.role === "user")!;
+  const parsed = JSON.parse(userMsg.content) as {
+    unitFields: Record<string, unknown>;
+    allowedRelationshipDimensions: string[];
+    targetNoteRules: string[];
+  };
+
+  assert.equal(parsed.unitFields.importance, "one of critical, major, moderate, minor");
+  assert.ok(String(parsed.unitFields.dimensions).includes("allowedRelationshipDimensions"));
+  assert.ok(parsed.allowedRelationshipDimensions.includes("trust"));
+  assert.ok(parsed.allowedRelationshipDimensions.includes("protectiveness"));
+  assert.ok(parsed.targetNoteRules.some((rule) => rule.includes("timeline_<subjectId>")));
+  assert.ok(parsed.targetNoteRules.some((rule) => rule.includes("specific event or beat")));
+});
+
+test("evidence unit response format constrains target shape and relationship dimensions", () => {
+  const responseFormat = evidenceUnitResponseFormat({
+    allowedBuckets: ["timeline_event", "relationship_state"],
+    sourceHash,
+  });
+  const jsonSchema = responseFormat.json_schema as {
+    schema: {
+      properties: {
+        units: {
+          items: {
+            required: string[];
+            properties: Record<string, any>;
+          };
+        };
+      };
+    };
+  };
+  const unitSchema = jsonSchema.schema.properties.units.items;
+
+  assert.equal(responseFormat.type, "json_schema");
+  assert.ok(unitSchema.required.includes("importance"));
+  assert.deepEqual(unitSchema.properties.bucket.enum, ["timeline_event", "relationship_state"]);
+  assert.deepEqual(unitSchema.properties.sourceHash.enum, [sourceHash]);
+  assert.equal(unitSchema.properties.dimensions.additionalProperties, false);
+  assert.ok(unitSchema.properties.dimensions.properties.trust);
+  assert.ok(unitSchema.properties.dimensionChanges.properties.tension);
+});
+
+test("malformed evidence unit drops include actionable schema issues", () => {
+  const parsed = parseEvidenceUnitPayload(
+    {
+      summary: "Relationship update",
+      units: [
+        {
+          id: randomUUID(),
+          bucket: "relationship_state",
+          subjectId: "alice_bob",
+          sectionKey: "state",
+          text: "Alice and Bob's professional curiosity rose after the confession.",
+          importance: "major",
+          evidence: ["source_note:source_test"],
+          confidence: 0.9,
+          salience: 0.8,
+          status: "active",
+          links: [],
+          sourceHash,
+          dimensions: { professional_curiosity: 70 },
+        },
+      ],
+    },
+    sourceHash,
+  );
+
+  assert.equal(parsed.response.units.length, 0);
+  assert.equal(parsed.droppedCandidates[0]?.reason, "invalid_format");
+  assert.ok(parsed.droppedCandidates[0]?.issues?.some((issue) => issue.includes("professional_curiosity")));
+});
+
+test("source extraction reports out-of-scope target collisions with scope details", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-out-of-scope-target-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    const sourceText = "Mara trusted Jules again after he returned the tower archive key.";
+    await storage.createNote(
+      {
+        id: "scene_source_second",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_a" },
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: sourceText,
+            updatedAt: timestamp,
+            evidence: ["chat:chat_a"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "timeline_mara_jules",
+        type: "timeline_event",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_b" },
+        tags: ["typed_memory", "timeline_event"],
+        links: [],
+        sections: {
+          event: {
+            text: "Mara first trusted Jules with the hidden key.",
+            updatedAt: timestamp,
+            evidence: ["source_note:scene_source_first"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const sourceNote = await storage.getNote("scene_source_second");
+    assert.ok(sourceNote);
+    const provider = {
+      maxTokensOverrideValue: undefined,
+      chatComplete: async () => ({
+        content: JSON.stringify({
+          summary: "Out-of-scope target collision",
+          units: [
+            {
+              id: randomUUID(),
+              bucket: "timeline_event",
+              subjectId: "mara_jules",
+              sectionKey: "event",
+              text: sourceText,
+              importance: "major",
+              evidence: ["source_note:scene_source_second"],
+              confidence: 0.9,
+              salience: 0.8,
+              status: "active",
+              links: [],
+              sourceHash: sourceHashForEvidenceUnitExtraction(sourceNote),
+            },
+          ],
+        }),
+      }),
+    } as any;
+
+    const result = await extractLongTermMemoryFromSourceNote({
+      noteId: "scene_source_second",
+      provider,
+      model: "test-model",
+      root,
+      operationId: randomUUID(),
+      embeddingSource: {
+        label: "test",
+        embed: async (texts) => texts.map(() => []),
+      },
+    });
+
+    assert.equal(result.draft, null);
+    assert.equal(result.outcome.droppedCandidates[0]?.reason, "target_note_outside_scope");
+    const diagnostic = result.diagnostics.find((entry) => entry.code === "target_note_scope_mismatch");
+    assert.equal(diagnostic?.severity, "warning");
+    assert.deepEqual(diagnostic?.details?.sourceScope, { chatId: "chat_a", chatIds: ["chat_a"] });
+    assert.deepEqual(diagnostic?.details?.targetScope, { chatId: "chat_b", chatIds: ["chat_b"] });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

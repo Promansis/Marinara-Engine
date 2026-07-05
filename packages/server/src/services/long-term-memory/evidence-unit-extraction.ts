@@ -8,9 +8,9 @@ import {
   DEFAULT_LTM_STREAM_DESCRIPTIONS_BY_MODE,
   DEFAULT_LTM_EXTRACTION_PROMPT_GAME_REFINE,
   LTM_DRAFT_MUTATION_LIMIT,
+  RELATIONSHIP_DIMENSIONS,
   ltmEvidenceUnitExtractionResponseSchema,
   ltmEvidenceUnitSchema,
-  ltmEvidenceUnitStatusSchema,
   type LtmEvidenceUnit,
   type LtmEvidenceUnitExtractionResponse,
   type LtmExtractionDroppedCandidate,
@@ -52,6 +52,22 @@ export const DEFAULT_LTM_EVIDENCE_UNIT_ALLOWED_BUCKETS = [
   "anchor",
 ] as const satisfies LtmEvidenceUnit["bucket"][];
 
+const LTM_EXTRACTION_IMPORTANCE_VALUES = ["critical", "major", "moderate", "minor"] as const;
+const LTM_EXTRACTION_LINK_RELATIONS = [
+  "occurred_in",
+  "triggered_by",
+  "resolved_in",
+  "evidenced_by",
+  "affects_relationship",
+  "affects_character",
+  "caused_by",
+  "involves",
+  "blocks",
+  "planted_in",
+  "paid_off_in",
+  "extracted_from",
+] as const;
+
 export interface RunLongTermMemoryEvidenceUnitExtractionOptions {
   sourceNote: LtmNote;
   sourceText: string;
@@ -59,6 +75,7 @@ export interface RunLongTermMemoryEvidenceUnitExtractionOptions {
   candidateUnits?: LtmEvidenceUnit[];
   provider: BaseLLMProvider;
   model: string;
+  root?: string;
   scope: LtmScope;
   modes: LtmMode[];
   sourceHash: string;
@@ -206,6 +223,110 @@ function isReasoningNoneUnsupportedError(error: unknown) {
   );
 }
 
+function isResponseFormatUnsupportedError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    /\b(?:response_format|response format|json_schema|json schema|structured output|schema)\b/i.test(message) &&
+    /\b(?:unsupported|invalid|unrecognized|not supported|bad request|400)\b/i.test(message)
+  );
+}
+
+function relationshipDimensionSchema(minimum: number, maximum: number) {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: Object.fromEntries(
+      RELATIONSHIP_DIMENSIONS.map((dimension) => [
+        dimension,
+        { type: "integer", minimum, maximum },
+      ]),
+    ),
+  };
+}
+
+export function evidenceUnitResponseFormat(options: {
+  allowedBuckets: readonly LtmEvidenceUnit["bucket"][];
+  sourceHash: string;
+}): NonNullable<ChatOptions["responseFormat"]> {
+  return {
+    type: "json_schema",
+    json_schema: {
+      name: "ltm_evidence_unit_extraction",
+      strict: false,
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["summary", "units"],
+        properties: {
+          summary: { type: "string", maxLength: 2_000 },
+          units: {
+            type: "array",
+            maxItems: 40,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: [
+                "id",
+                "bucket",
+                "subjectId",
+                "sectionKey",
+                "text",
+                "importance",
+                "evidence",
+                "confidence",
+                "salience",
+                "status",
+                "links",
+                "sourceHash",
+              ],
+              properties: {
+                id: { type: "string", format: "uuid" },
+                bucket: { type: "string", enum: options.allowedBuckets },
+                subjectId: { type: "string", pattern: "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$", maxLength: 120 },
+                sectionKey: { type: "string", pattern: "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$", maxLength: 80 },
+                text: { type: "string", minLength: 1, maxLength: 2_000 },
+                importance: { type: "string", enum: LTM_EXTRACTION_IMPORTANCE_VALUES },
+                keywords: {
+                  type: "array",
+                  maxItems: 20,
+                  items: { type: "string", minLength: 1, maxLength: 80 },
+                },
+                evidence: {
+                  type: "array",
+                  minItems: 1,
+                  maxItems: 20,
+                  items: { type: "string", minLength: 1, maxLength: 240 },
+                },
+                confidence: { type: "number", minimum: 0, maximum: 1 },
+                salience: { type: "number", minimum: 0, maximum: 1 },
+                status: { type: "string", enum: ["active", "resolved"] },
+                links: {
+                  type: "array",
+                  maxItems: 50,
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["target", "relation"],
+                    properties: {
+                      target: { type: "string", pattern: "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$", maxLength: 120 },
+                      relation: { type: "string", enum: LTM_EXTRACTION_LINK_RELATIONS },
+                      aspect: { type: "string", maxLength: 50 },
+                    },
+                  },
+                },
+                mergeHint: { type: "string", minLength: 1, maxLength: 240 },
+                sourceHash: { type: "string", enum: [options.sourceHash] },
+                dimensions: relationshipDimensionSchema(0, 100),
+                dimensionChanges: relationshipDimensionSchema(-100, 100),
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
 async function chatCompleteWithReasoningFallback({
   messages,
   chatOptions,
@@ -218,12 +339,36 @@ async function chatCompleteWithReasoningFallback({
   try {
     return await extractionOptions.provider.chatComplete(messages, chatOptions);
   } catch (err) {
+    if (chatOptions.responseFormat && isResponseFormatUnsupportedError(err)) {
+      await recordLtmDebugEvent({
+        operationId: extractionOptions.operationId,
+        root: extractionOptions.root,
+        phase: "llm",
+        action: "evidence_unit_response_format_fallback",
+        status: "warning",
+        sourceNoteId: extractionOptions.sourceNote.id,
+        provider: extractionOptions.provider.constructor.name,
+        model: extractionOptions.model,
+        error: err,
+        details: {
+          requestedResponseFormat: chatOptions.responseFormat.type,
+          appliedResponseFormat: "none",
+        },
+      });
+      return chatCompleteWithReasoningFallback({
+        messages,
+        chatOptions: { ...chatOptions, responseFormat: undefined },
+        extractionOptions,
+      });
+    }
+
     if (chatOptions.reasoningEffort !== "none" || !isReasoningNoneUnsupportedError(err)) {
       logger.warn(err, "[ltm] LLM chat complete failed for evidence unit extraction");
       throw err;
     }
     await recordLtmDebugEvent({
       operationId: extractionOptions.operationId,
+      root: extractionOptions.root,
       phase: "llm",
       action: "evidence_unit_reasoning_fallback",
       status: "warning",
@@ -236,9 +381,13 @@ async function chatCompleteWithReasoningFallback({
         appliedReasoningEffort: DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
       },
     });
-    return extractionOptions.provider.chatComplete(messages, {
-      ...chatOptions,
-      reasoningEffort: DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
+    return chatCompleteWithReasoningFallback({
+      messages,
+      chatOptions: {
+        ...chatOptions,
+        reasoningEffort: DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
+      },
+      extractionOptions,
     });
   }
 }
@@ -270,7 +419,12 @@ function extractCandidateSnippet(candidate: unknown) {
   return typeof text === "string" ? safeSnippet(text) : undefined;
 }
 
-function parseEvidenceUnitPayload(raw: unknown, expectedSourceHash: string): ParsedEvidenceUnitPayload {
+function formatZodIssue(issue: { path: Array<string | number>; message: string }) {
+  const path = issue.path.length ? issue.path.join(".") : "(root)";
+  return `${path}: ${issue.message}`;
+}
+
+export function parseEvidenceUnitPayload(raw: unknown, expectedSourceHash: string): ParsedEvidenceUnitPayload {
   const normalized = normalizeEvidenceUnitResponse(raw, expectedSourceHash);
   const record = normalized && typeof normalized === "object" && !Array.isArray(normalized)
     ? (normalized as Record<string, unknown>)
@@ -291,6 +445,7 @@ function parseEvidenceUnitPayload(raw: unknown, expectedSourceHash: string): Par
       reason: "invalid_format",
       message: "Dropped a malformed candidate.",
       ...(extractCandidateSnippet(candidate) ? { snippet: extractCandidateSnippet(candidate) } : {}),
+      issues: parsed.error.issues.map(formatZodIssue).slice(0, 8),
     });
   }
 
@@ -380,6 +535,7 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
           subjectId: "real lowercase_snake_case subject",
           sectionKey: "real lowercase_snake_case section",
           text: "compact memory text, not transcript summary",
+          importance: "one of critical, major, moderate, minor",
           ...(options.aiKeywordExtraction ? { keywords: "array of 3..5 concise keyword strings" } : {}),
           evidence: "array containing supplied source_note evidence",
           confidence: "0..1",
@@ -387,10 +543,14 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
           status: "one allowedStatuses value",
           links: "real links only, otherwise []",
           mergeHint: "optional evidence-backed compiler note only",
+          dimensions: "relationship_state only: optional object with allowedRelationshipDimensions keys and 0..100 integer values",
+          dimensionChanges: "relationship_state only: optional object with allowedRelationshipDimensions keys and -100..100 integer deltas",
           sourceHash: options.sourceHash,
         },
         allowedStreams: allowedBuckets,
         allowedStatuses: ["active", "resolved"],
+        allowedImportance: LTM_EXTRACTION_IMPORTANCE_VALUES,
+        allowedRelationshipDimensions: RELATIONSHIP_DIMENSIONS,
         streamAllowedStatuses: Object.fromEntries(
           allowedBuckets.map((bucket) => [bucket, bucket === "thread" ? ["active", "resolved"] : ["active"]]),
         ),
@@ -408,6 +568,12 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
         requiredEvidence: evidenceFromSourceNote(options.sourceNote),
         scope: options.scope,
         modes: options.modes,
+        targetNoteRules: [
+          "The compiler derives the target note id from bucket + subjectId: timeline_event -> timeline_<subjectId>, character_fact -> char_<subjectId>, relationship_state -> rel_<subjectId>, world_fact or anchor -> world_<subjectId> unless anchor sectionKey starts with tone, thread -> thread_<subjectId>, tone -> tone_<subjectId>.",
+          "For timeline_event, subjectId must name the specific event or beat, not just a person, character, place, or broad entity. Use damo_arrival or lisa_minimizing_damo instead of damo_korvak.",
+          "Do not intentionally target an existing note id unless that exact note appears in existingTypedNotes. If a broad note is not listed, use a source-specific subjectId for a new in-scope note.",
+          "relationship_state dimension keys must come only from allowedRelationshipDimensions. Put professional curiosity, reputation, gossip, or attention as text/thread/world/timeline facts, not dimensions.",
+        ],
         userInstruction: options.instruction?.trim() || undefined,
         extraInstruction: options.extraInstruction?.trim() || undefined,
         ...(options.candidateUnits?.length
@@ -442,9 +608,14 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
     verbosity: options.verbosity ?? DEFAULT_LTM_EXTRACTION_VERBOSITY,
     stream: true,
     signal: options.signal,
+    responseFormat: evidenceUnitResponseFormat({
+      allowedBuckets: options.allowedBuckets ?? DEFAULT_LTM_EVIDENCE_UNIT_ALLOWED_BUCKETS,
+      sourceHash: options.sourceHash,
+    }),
   };
   await recordLtmDebugEvent({
     operationId: options.operationId,
+    root: options.root,
     phase: "llm",
     action: "evidence_unit_request",
     status: "started",
@@ -466,6 +637,7 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
         maxOutputTokens: options.maxOutputTokens ?? options.provider.maxTokensOverrideValue ?? DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
         temperature: options.temperature ?? 0,
         aiKeywordExtraction: options.aiKeywordExtraction === true,
+        responseFormat: chatOptions.responseFormat?.type,
       },
     });
   try {
@@ -478,6 +650,7 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
     const content = result.content?.trim() ?? "";
     await recordLtmDebugEvent({
       operationId: options.operationId,
+      root: options.root,
       phase: "llm",
       action: "evidence_unit_response",
       status: content ? "ok" : "skipped",
@@ -508,6 +681,7 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
       const parsed = parseEvidenceUnitPayload(JSON.parse(extractJsonObject(content)), options.sourceHash);
       await recordLtmDebugEvent({
         operationId: options.operationId,
+        root: options.root,
         phase: "llm",
         action: "evidence_unit_json_parse",
         status: "ok",
@@ -526,6 +700,7 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
         const parsed = parseEvidenceUnitPayload(JSON.parse(repaired), options.sourceHash);
         await recordLtmDebugEvent({
           operationId: options.operationId,
+          root: options.root,
           phase: "llm",
           action: "evidence_unit_json_parse",
           status: "ok",
@@ -558,6 +733,7 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
           const parsed = parseEvidenceUnitPayload(syntheticResponse, options.sourceHash);
           await recordLtmDebugEvent({
             operationId: options.operationId,
+            root: options.root,
             phase: "llm",
             action: "evidence_unit_json_parse",
             status: "ok",
@@ -578,6 +754,7 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
 
       await recordLtmDebugEvent({
         operationId: options.operationId,
+        root: options.root,
         phase: "llm",
         action: "evidence_unit_json_parse",
         status: "error",
@@ -592,6 +769,7 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
     logger.error(err, "[ltm] Evidence unit extraction failed for note %s", options.sourceNote.id);
     await recordLtmDebugEvent({
       operationId: options.operationId,
+      root: options.root,
       phase: "llm",
       action: "evidence_unit_request",
       status: "error",

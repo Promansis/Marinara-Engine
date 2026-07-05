@@ -5,4 +5,5 @@ export type LtmExtractionDiagnostic = {
   mutationId?: string;
   noteId?: string;
   message: string;
+  details?: Record<string, unknown>;
 };

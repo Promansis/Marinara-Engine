@@ -212,6 +212,23 @@ export class OpenAIProvider extends BaseLLMProvider {
     return responseFormat;
   }
 
+  private normalizeResponsesResponseFormat(responseFormat?: { type: string; [key: string]: unknown }): unknown | undefined {
+    if (!responseFormat) return undefined;
+    const jsonSchema = responseFormat.json_schema;
+    if (
+      responseFormat.type === "json_schema" &&
+      jsonSchema &&
+      typeof jsonSchema === "object" &&
+      !Array.isArray(jsonSchema)
+    ) {
+      return {
+        type: "json_schema",
+        ...(jsonSchema as Record<string, unknown>),
+      };
+    }
+    return responseFormat;
+  }
+
   /**
    * Extract text and thinking from an OpenRouter/Anthropic-style content block array.
    * OpenRouter may return `content` as an array of typed blocks instead of a plain string:
@@ -752,8 +769,9 @@ export class OpenAIProvider extends BaseLLMProvider {
       textOptions.verbosity = options.verbosity;
     }
 
-    if (options.responseFormat) {
-      textOptions.format = options.responseFormat;
+    const normalizedResponseFormat = this.normalizeResponsesResponseFormat(options.responseFormat);
+    if (normalizedResponseFormat) {
+      textOptions.format = normalizedResponseFormat;
     }
 
     if (Object.keys(textOptions).length > 0) {

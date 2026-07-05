@@ -521,6 +521,7 @@ export async function directIngestGameJournal(
             candidateUnits: structuralUnits,
             provider,
             model,
+            root: rootDir,
             scope,
             modes: ["game"],
             sourceHash,

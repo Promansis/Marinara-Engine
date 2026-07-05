@@ -116,7 +116,11 @@ async function getExistingTypedNotesForTargets(options: {
         severity: "warning",
         code: "target_note_scope_mismatch",
         noteId: note.id,
-        message: `Evidence targets existing note ${note.id}, but that note belongs to a different scope.`,
+        message: `Evidence target ${note.id} was validly shaped but belongs to a different scope, so it was not updated from this source note.`,
+        details: {
+          sourceScope: options.scope,
+          targetScope: note.scope,
+        },
       });
       droppedTargetNoteIds.push(note.id);
       continue;
@@ -251,6 +255,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
     existingNotes,
     provider: options.provider,
     model: options.model,
+    root: options.root,
     scope,
     modes,
     sourceHash,
