@@ -105,8 +105,16 @@ test("LTM extraction prompt options work without crypto.randomUUID", async ({ pa
     .filter({ has: page.getByRole("heading", { name: "Extraction Prompt" }) });
   await expect(extractionPromptPanel).toBeVisible();
 
-  await extractionPromptPanel.getByRole("button", { name: "Add option" }).click();
-  await expect(extractionPromptPanel.getByPlaceholder("Option name")).toHaveValue("New template");
+  const promptOptionSelect = extractionPromptPanel.getByLabel("Prompt option");
+  await expect(promptOptionSelect).toContainText("Default Conversation prompt");
+
+  await extractionPromptPanel.getByRole("button", { name: "Add" }).click();
+  const promptNameInput = extractionPromptPanel.getByLabel("Prompt name");
+  await expect(promptNameInput).toHaveValue("Conversation prompt");
+
+  await promptNameInput.fill("Smoke prompt");
+  await extractionPromptPanel.getByRole("button", { name: "Save Prompt" }).click();
+  await expect(promptOptionSelect).toContainText("Smoke prompt");
   expect(errors).toEqual([]);
 });
 

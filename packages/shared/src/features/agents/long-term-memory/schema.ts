@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE,
   DEFAULT_LTM_RECALL_PREAMBLE,
   DEFAULT_LTM_RECALL_STYLE,
   DEFAULT_LTM_RECALL_STYLE_WEIGHTS,
@@ -34,6 +35,7 @@ export const ltmEvidenceUnitBucketSchema = z.enum([
 ]);
 
 export const ltmModeSchema = z.enum(["roleplay", "conversation", "game"]);
+const LTM_EXTRACTION_MODES = ltmModeSchema.options;
 
 export const ltmExtractionReasoningEffortSchema = z.enum(["none", "low", "medium", "high"]);
 
@@ -122,17 +124,124 @@ export const ltmExtractionPromptTemplateSchema = z
     id: z.string().min(1),
     name: z.string().min(1).max(120),
     prompt: z.string().min(1),
-    mode: ltmModeSchema.optional(),
   })
   .strict();
 
-const ltmSystemPromptsByModeSchema = z
-  .object({
-    roleplay: z.string().min(1).max(20_000).optional(),
-    conversation: z.string().min(1).max(20_000).optional(),
-    game: z.string().min(1).max(20_000).optional(),
-  })
-  .strict();
+const LTM_EXTRACTION_MODE_LABELS = {
+  roleplay: "Roleplay",
+  conversation: "Conversation",
+  game: "Game",
+} as const satisfies Record<(typeof LTM_EXTRACTION_MODES)[number], string>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function isLtmExtractionMode(value: unknown): value is (typeof LTM_EXTRACTION_MODES)[number] {
+  return value === "roleplay" || value === "conversation" || value === "game";
+}
+
+function stripLegacyPromptTemplateMode(template: unknown) {
+  if (!isRecord(template)) return template;
+  const { mode: _mode, ...rest } = template;
+  return rest;
+}
+
+function nextLegacyPromptTemplateId(mode: (typeof LTM_EXTRACTION_MODES)[number], usedIds: Set<string>) {
+  const base = `legacy_${mode}_system_prompt`;
+  if (!usedIds.has(base)) {
+    usedIds.add(base);
+    return base;
+  }
+  let suffix = 2;
+  while (usedIds.has(`${base}_${suffix}`)) suffix += 1;
+  const id = `${base}_${suffix}`;
+  usedIds.add(id);
+  return id;
+}
+
+function normalizeLegacyExtractionSettings(value: unknown) {
+  if (!isRecord(value)) return value;
+  const input = value;
+  const normalized: Record<string, unknown> = { ...input };
+  delete normalized.rejectPlaceholderOutput;
+  delete normalized.systemPrompt;
+  delete normalized.systemPromptsByMode;
+  delete normalized.activePromptTemplateId;
+
+  const rawTemplates = Array.isArray(input.promptTemplates) ? input.promptTemplates : [];
+  const promptTemplates = rawTemplates.map(stripLegacyPromptTemplateMode);
+  const templateIds = new Set<string>();
+  const legacyTemplateModes = new Map<string, (typeof LTM_EXTRACTION_MODES)[number]>();
+  for (const template of rawTemplates) {
+    if (!isRecord(template) || typeof template.id !== "string") continue;
+    templateIds.add(template.id);
+    if (isLtmExtractionMode(template.mode)) legacyTemplateModes.set(template.id, template.mode);
+  }
+
+  if (rawTemplates.length > 0) normalized.promptTemplates = promptTemplates;
+
+  const modeIds = isRecord(input.activePromptTemplateIdsByMode) ? input.activePromptTemplateIdsByMode : {};
+  const legacyActiveId = typeof input.activePromptTemplateId === "string" ? input.activePromptTemplateId : null;
+  const hasLegacyPromptOverrides = typeof input.systemPrompt === "string" || isRecord(input.systemPromptsByMode);
+  const hasLegacyActiveShape = Boolean(legacyActiveId) || legacyTemplateModes.size > 0 || hasLegacyPromptOverrides;
+  let activePromptTemplateIdsByMode: Record<string, string | null> = {};
+
+  if (hasLegacyActiveShape) {
+    for (const mode of LTM_EXTRACTION_MODES) {
+      const hasModeId = Object.prototype.hasOwnProperty.call(modeIds, mode);
+      const modeId = modeIds[mode];
+      if (
+        typeof modeId === "string" &&
+        templateIds.has(modeId) &&
+        (!legacyTemplateModes.has(modeId) || legacyTemplateModes.get(modeId) === mode)
+      ) {
+        activePromptTemplateIdsByMode[mode] = modeId;
+      } else if (modeId === null) {
+        activePromptTemplateIdsByMode[mode] = null;
+      } else if (
+        !hasModeId &&
+        legacyActiveId &&
+        templateIds.has(legacyActiveId) &&
+        (!legacyTemplateModes.has(legacyActiveId) || legacyTemplateModes.get(legacyActiveId) === mode)
+      ) {
+        activePromptTemplateIdsByMode[mode] = legacyActiveId;
+      }
+    }
+  } else if (isRecord(input.activePromptTemplateIdsByMode)) {
+    activePromptTemplateIdsByMode = { ...input.activePromptTemplateIdsByMode } as Record<string, string | null>;
+  }
+
+  const systemPromptsByMode = isRecord(input.systemPromptsByMode) ? input.systemPromptsByMode : {};
+  const legacySystemPrompt = typeof input.systemPrompt === "string" ? input.systemPrompt.trim() : "";
+  const migratedTemplates = [...promptTemplates];
+  for (const mode of LTM_EXTRACTION_MODES) {
+    const modePrompt = typeof systemPromptsByMode[mode] === "string" ? systemPromptsByMode[mode].trim() : "";
+    const prompt =
+      modePrompt && modePrompt !== DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE[mode]
+        ? modePrompt
+        : legacySystemPrompt && legacySystemPrompt !== DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE[mode]
+          ? legacySystemPrompt
+          : "";
+    if (!prompt || migratedTemplates.length >= 50) continue;
+    const id = nextLegacyPromptTemplateId(mode, templateIds);
+    migratedTemplates.push({
+      id,
+      name: `Legacy ${LTM_EXTRACTION_MODE_LABELS[mode]} prompt`,
+      prompt,
+    });
+    if (!activePromptTemplateIdsByMode[mode]) activePromptTemplateIdsByMode[mode] = id;
+  }
+
+  if (migratedTemplates.length > 0) normalized.promptTemplates = migratedTemplates;
+  if (Object.keys(activePromptTemplateIdsByMode).length > 0) {
+    normalized.activePromptTemplateIdsByMode = activePromptTemplateIdsByMode;
+  } else {
+    delete normalized.activePromptTemplateIdsByMode;
+  }
+
+  return normalized;
+}
 
 const ltmActivePromptTemplateIdsByModeSchema = z
   .object({
@@ -145,9 +254,6 @@ const ltmActivePromptTemplateIdsByModeSchema = z
 const ltmExtractionSettingsShape = z
   .object({
     version: z.literal(1).default(1),
-    /** Legacy global override. New clients should use systemPromptsByMode. */
-    systemPrompt: z.string().min(1).max(20_000).optional(),
-    systemPromptsByMode: ltmSystemPromptsByModeSchema.optional(),
     extraInstruction: z.string().max(4_000).optional(),
     reasoningEffort: ltmExtractionReasoningEffortSchema.optional(),
     verbosity: ltmExtractionVerbositySchema.optional(),
@@ -158,8 +264,6 @@ const ltmExtractionSettingsShape = z
     existingNoteMaxChunks: z.number().int().min(1).max(100).optional(),
     existingNoteMaxTokens: z.number().int().min(128).max(16_384).optional(),
     promptTemplates: z.array(ltmExtractionPromptTemplateSchema).max(50).optional(),
-    /** Legacy global active option. New clients should use activePromptTemplateIdsByMode. */
-    activePromptTemplateId: z.string().min(1).max(64).nullable().optional(),
     activePromptTemplateIdsByMode: ltmActivePromptTemplateIdsByModeSchema.optional(),
     aiKeywordExtraction: z.boolean().optional(),
     refinePass: z.boolean().optional(),
@@ -167,16 +271,13 @@ const ltmExtractionSettingsShape = z
   .strict();
 
 export const ltmExtractionSettingsSchema = z.preprocess((value) => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const { rejectPlaceholderOutput: _rejectPlaceholderOutput, ...rest } = value as Record<string, unknown>;
-  return rest;
+  return normalizeLegacyExtractionSettings(value);
 }, ltmExtractionSettingsShape);
 
 export const ltmResolvedExtractionSettingsSchema = z
   .object({
     version: z.literal(1),
     systemPrompt: z.string().min(1).max(20_000),
-    systemPromptsByMode: ltmSystemPromptsByModeSchema,
     extraInstruction: z.string().max(4_000),
     reasoningEffort: ltmExtractionReasoningEffortSchema,
     verbosity: ltmExtractionVerbositySchema,
@@ -233,10 +334,7 @@ export function hasLtmSourceSummarySceneTag(tags: readonly string[]) {
   return LTM_SOURCE_SUMMARY_SCENE_TAGS.some((tag) => tags.includes(tag));
 }
 
-export function isLtmSourceLikeNote(note: {
-  type: z.infer<typeof ltmNoteTypeSchema>;
-  tags: readonly string[];
-}) {
+export function isLtmSourceLikeNote(note: { type: z.infer<typeof ltmNoteTypeSchema>; tags: readonly string[] }) {
   return note.type === "source" || (note.type === "scene" && hasLtmSourceSummarySceneTag(note.tags));
 }
 
@@ -612,8 +710,7 @@ const ltmRetrievalConfigShape = z
   })
   .strict()
   .refine(
-    (value) =>
-      value.semanticWeight + value.lexicalWeight + value.graphWeight + value.keywordWeight > 0,
+    (value) => value.semanticWeight + value.lexicalWeight + value.graphWeight + value.keywordWeight > 0,
     "At least one retrieval weight must be positive.",
   );
 
