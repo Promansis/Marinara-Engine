@@ -312,7 +312,8 @@ test("mobile LTM overflow actions open modals and advertise pending review", asy
   await page.getByRole("button", { name: "Active Context" }).click();
   await page.getByRole("button", { name: "1 suggestion to review" }).click();
 
-  await expect(page.getByRole("dialog", { name: "Review Memory Suggestions" })).toBeVisible();
+  await expect(vaultDialog).toBeVisible();
+  await expect(vaultDialog.getByText("No pending suggestions to review.")).toBeVisible();
 });
 
 test("mobile topbar remains reachable while sidebars switch", async ({ page }, testInfo) => {

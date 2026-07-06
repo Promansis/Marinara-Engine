@@ -70,7 +70,6 @@ import { cn, parseAvatarCropJson } from "../../lib/utils";
 import { Modal } from "../ui/Modal";
 import { useAgentConfigs, type AgentConfigRow } from "../../hooks/use-agents";
 import { LtmVaultManagerSection } from "../long-term-memory/LtmVaultManagerSection";
-import { LongTermMemoryReviewQueueModal } from "../long-term-memory/LongTermMemoryReviewQueueModal";
 import { useEncounter } from "../../hooks/use-encounter";
 import { useScene } from "../../hooks/use-scene";
 import { useEncounterStore } from "../../stores/encounter.store";
@@ -483,7 +482,6 @@ export function ChatArea() {
   const homeProfessorChatOpenRef = useRef(false);
   const [vaultOpen, setVaultOpen] = useState<{ initialTab?: "notes" | "import" | "review" | "suggestions"; sourceNoteId?: string } | null>(null);
   const vaultOpenBool = vaultOpen !== null;
-  const [reviewQueueOpen, setReviewQueueOpen] = useState(false);
   const { data: agentConfigs } = useAgentConfigs();
   const ltmAgentConfig = useMemo(
     () => (agentConfigs as AgentConfigRow[] | undefined)?.find((a) => a.type === "long-term-memory") ?? null,
@@ -563,10 +561,6 @@ export function ChatArea() {
   const handleOpenVault = useCallback(
     (payload?: { initialTab?: "notes" | "import" | "review" | "suggestions"; sourceNoteId?: string }) => {
       announceChatFloatingUiDismiss();
-      if (payload?.initialTab === "review") {
-        setReviewQueueOpen(true);
-        return;
-      }
       setVaultOpen(payload ?? {});
     },
     [],
@@ -2532,32 +2526,22 @@ export function ChatArea() {
         : undefined;
   const surfaceFallback = <div className="flex flex-1 overflow-hidden" />;
   const longTermMemoryOverlays =
-    vaultOpenBool || reviewQueueOpen ? (
-      <>
-        <Modal
-          open={vaultOpenBool}
-          onClose={() => setVaultOpen(null)}
-          title="Long-Term Memory"
-          width="max-w-5xl"
-        >
-          {vaultOpenBool && ltmAgentConfig && (
-            <LtmVaultManagerSection
-              agentConfig={ltmAgentConfig}
-              agentSettings={JSON.parse(ltmAgentConfig.settings ?? "{}") as Record<string, unknown>}
-              initialTab={vaultOpen?.initialTab}
-              sourceNoteId={vaultOpen?.sourceNoteId}
-            />
-          )}
-        </Modal>
-        <LongTermMemoryReviewQueueModal
-          open={reviewQueueOpen}
-          onClose={() => setReviewQueueOpen(false)}
-          onOpenSource={(noteId) => {
-            setReviewQueueOpen(false);
-            setVaultOpen({ initialTab: "notes", sourceNoteId: noteId });
-          }}
-        />
-      </>
+    vaultOpenBool ? (
+      <Modal
+        open={vaultOpenBool}
+        onClose={() => setVaultOpen(null)}
+        title="Long-Term Memory"
+        width="max-w-5xl"
+      >
+        {vaultOpenBool && ltmAgentConfig && (
+          <LtmVaultManagerSection
+            agentConfig={ltmAgentConfig}
+            agentSettings={JSON.parse(ltmAgentConfig.settings ?? "{}") as Record<string, unknown>}
+            initialTab={vaultOpen?.initialTab}
+            sourceNoteId={vaultOpen?.sourceNoteId}
+          />
+        )}
+      </Modal>
     ) : null;
 
   // ═══════════════════════════════════════════════

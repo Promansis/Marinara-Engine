@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import type {
   Chat,
+  LtmDraftMutation,
   LtmExtractionDraft,
   LtmExtractionDroppedCandidate,
   LtmMode,
@@ -268,6 +269,8 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const [navigatorSelection, setNavigatorSelection] = useState<LtmNavigatorSelection>({ groupId: null, chatId: null });
   const [navigatorQuery, setNavigatorQuery] = useState("");
   const [importMode, setImportMode] = useState<LtmMode>("roleplay");
+  const [reviewBatchAction, setReviewBatchAction] = useState<"keep-low" | "skip-all" | null>(null);
+  const reviewBatchLockRef = useRef(false);
 
   const { data: chats } = useChats();
   const { data: characters } = useCharacters();
@@ -333,6 +336,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const status = useLongTermMemoryStatus();
   const integrity = useLongTermMemoryIntegrity();
   const notes = useLongTermMemoryNotes(navigatorNoteFilter, { enabled: Boolean(selectedNavigatorThread) });
+  const reviewNotes = useLongTermMemoryNotes({}, { enabled: tab === "review" });
   const activeNotes = useLongTermMemoryNotes(
     { ...navigatorNoteFilter, status: "active" },
     { enabled: tab === "notes" || Boolean(openNoteId) },
@@ -436,9 +440,10 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const combinedNotes = useMemo(() => {
     const byId = new Map<string, LtmNote>();
     for (const note of notes.data ?? []) byId.set(note.id, note);
+    for (const note of reviewNotes.data ?? []) byId.set(note.id, note);
     if (exactViewingNote.data) byId.set(exactViewingNote.data.id, exactViewingNote.data);
     return [...byId.values()];
-  }, [exactViewingNote.data, notes.data]);
+  }, [exactViewingNote.data, notes.data, reviewNotes.data]);
   const noteLookup = useMemo(() => buildNoteLookup(combinedNotes), [combinedNotes]);
   const displayContext = useMemo<LtmDisplayLookupContext>(
     () => ({ chats: chatLookup, notes: noteLookup, groups: groupLookup }),
@@ -495,6 +500,19 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
       return { sourceNoteId, sourceNote, sourceDrafts, totalMutations, mode: sourceDrafts[0]?.modes[0] ?? null };
     });
   }, [pendingDraftsForReview.data, noteLookup]);
+  const reviewMutations = useMemo(
+    () =>
+      reviewGroups.flatMap(({ sourceDrafts }) =>
+        sourceDrafts.flatMap((draft) => draft.mutations.map((mutation) => ({ draft, mutation }))),
+      ),
+    [reviewGroups],
+  );
+  const reviewBusy =
+    reviewBatchAction !== null ||
+    acceptDraft.isPending ||
+    deleteDraftMutation.isPending ||
+    skipDraftMutations.isPending;
+  const reviewLoading = pendingDraftsForReview.isLoading || reviewNotes.isLoading;
 
   useEffect(() => {
     const availableIds = new Set((notes.data ?? []).map((note) => note.id));
@@ -583,6 +601,115 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
       }
     }
     toast.success("All orphaned suggestions skipped");
+  };
+
+  const withReviewBatchLock = async <T,>(action: () => Promise<T>) => {
+    if (reviewBatchLockRef.current) return null;
+    reviewBatchLockRef.current = true;
+    try {
+      return await action();
+    } finally {
+      reviewBatchLockRef.current = false;
+    }
+  };
+
+  const keepAllLowRiskReviewMutations = async () => {
+    const lowRiskByDraft = new Map<string, LtmDraftMutation[]>();
+    for (const row of reviewMutations) {
+      if (row.mutation.risk !== "low") continue;
+      const existing = lowRiskByDraft.get(row.draft.id);
+      if (existing) existing.push(row.mutation);
+      else lowRiskByDraft.set(row.draft.id, [row.mutation]);
+    }
+    if (lowRiskByDraft.size === 0) {
+      toast.info("No low-risk suggestions to keep.");
+      return;
+    }
+
+    const completed = await withReviewBatchLock(async () => {
+      setReviewBatchAction("keep-low");
+      let keptCount = 0;
+      let failedDraftCount = 0;
+      let autoIncludedCount = 0;
+      try {
+        for (const [draftId, mutations] of lowRiskByDraft) {
+          try {
+            const result = await acceptDraft.mutateAsync({
+              id: draftId,
+              mutationIds: mutations.map((mutation) => mutation.id),
+              lowRiskOnly: true,
+            });
+            keptCount += mutations.length;
+            autoIncludedCount += result.autoIncludedMutationIds.length;
+          } catch {
+            failedDraftCount += 1;
+          }
+        }
+      } finally {
+        setReviewBatchAction(null);
+      }
+      return { keptCount, failedDraftCount, autoIncludedCount };
+    });
+
+    if (!completed) return;
+    if (completed.failedDraftCount > 0) {
+      toast.error(
+        `Kept ${completed.keptCount} suggestion${completed.keptCount === 1 ? "" : "s"}; ${completed.failedDraftCount} draft${completed.failedDraftCount === 1 ? "" : "s"} failed.`,
+      );
+      return;
+    }
+    const depNote = completed.autoIncludedCount
+      ? ` Also created ${completed.autoIncludedCount} note${completed.autoIncludedCount === 1 ? "" : "s"} to support changes.`
+      : "";
+    toast.success(
+      `Kept ${completed.keptCount} low-risk suggestion${completed.keptCount === 1 ? "" : "s"}.` + depNote,
+    );
+  };
+
+  const skipAllReviewMutations = async () => {
+    if (reviewMutations.length === 0) return;
+    const confirmed = await showConfirmDialog({
+      title: "Skip all suggestions?",
+      message: `This will skip all ${reviewMutations.length} pending suggestion${reviewMutations.length === 1 ? "" : "s"}. This cannot be undone.`,
+      confirmLabel: "Skip all",
+      tone: "destructive",
+    });
+    if (!confirmed) return;
+
+    const groups = new Map<string, string[]>();
+    for (const row of reviewMutations) {
+      const existing = groups.get(row.draft.id);
+      if (existing) existing.push(row.mutation.id);
+      else groups.set(row.draft.id, [row.mutation.id]);
+    }
+
+    const completed = await withReviewBatchLock(async () => {
+      setReviewBatchAction("skip-all");
+      let skippedCount = 0;
+      let failedDraftCount = 0;
+      try {
+        for (const [draftId, mutationIds] of groups) {
+          try {
+            await skipDraftMutations.mutateAsync({ id: draftId, mutationIds });
+            skippedCount += mutationIds.length;
+          } catch {
+            failedDraftCount += 1;
+          }
+        }
+      } finally {
+        setReviewBatchAction(null);
+      }
+      return { skippedCount, failedDraftCount };
+    });
+
+    if (!completed) return;
+    if (completed.failedDraftCount > 0) {
+      toast.error(
+        `Skipped ${completed.skippedCount} suggestion${completed.skippedCount === 1 ? "" : "s"}; ${completed.failedDraftCount} draft${completed.failedDraftCount === 1 ? "" : "s"} failed.`,
+      );
+      return;
+    }
+    toast.success(`Skipped ${completed.skippedCount} suggestion${completed.skippedCount === 1 ? "" : "s"}.`);
   };
 
   const setTabWithGuards = async (nextTab: TabId) => {
@@ -1444,14 +1571,50 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
 
       {tab === "review" && (
         <Section title="Review">
-          {pendingDraftsForReview.isLoading && (
+          {reviewLoading && (
             <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />
           )}
-          {!pendingDraftsForReview.isLoading && reviewGroups.length === 0 && (
+          {!reviewLoading && reviewGroups.length === 0 && (
             <p className={emptyStateClassName}>No pending suggestions to review.</p>
           )}
-          {!pendingDraftsForReview.isLoading && reviewGroups.length > 0 && (
+          {!reviewLoading && reviewGroups.length > 0 && (
             <div className="space-y-2">
+              <div className={sectionCardClassName}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className={helperTextClassName}>
+                    <span className="font-semibold text-[var(--foreground)]">{reviewMutations.length}</span> pending
+                    suggestion{reviewMutations.length === 1 ? "" : "s"} across{" "}
+                    <span className="font-semibold text-[var(--foreground)]">{reviewGroups.length}</span> source
+                    {reviewGroups.length === 1 ? "" : "s"}
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    <ToolButton
+                      onClick={() => void keepAllLowRiskReviewMutations()}
+                      disabled={reviewBusy || reviewMutations.length === 0}
+                      tone="primary"
+                    >
+                      {reviewBatchAction === "keep-low" ? (
+                        <Loader2 size="0.875rem" className="animate-spin" />
+                      ) : (
+                        <Check size="0.875rem" />
+                      )}
+                      Keep all low-risk
+                    </ToolButton>
+                    <ToolButton
+                      onClick={() => void skipAllReviewMutations()}
+                      disabled={reviewBusy || reviewMutations.length === 0}
+                      tone="danger"
+                    >
+                      {reviewBatchAction === "skip-all" ? (
+                        <Loader2 size="0.875rem" className="animate-spin" />
+                      ) : (
+                        <X size="0.875rem" />
+                      )}
+                      Skip all
+                    </ToolButton>
+                  </div>
+                </div>
+              </div>
               {reviewGroups.map(({ sourceNoteId, sourceNote, sourceDrafts, totalMutations, mode }) => (
                 <div key={sourceNoteId}>
                   {sourceNote ? (
