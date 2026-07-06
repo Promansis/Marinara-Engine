@@ -23,7 +23,6 @@ const LTM_EXTRACTION_MODES = ["roleplay", "conversation", "game"] as const satis
 export const DEFAULT_LTM_EXTRACTION_CONFIG = ltmResolvedExtractionSettingsSchema.parse({
   version: 1,
   systemPrompt: DEFAULT_LTM_EXTRACTION_PROMPT,
-  extraInstruction: "",
   reasoningEffort: DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
   verbosity: DEFAULT_LTM_EXTRACTION_VERBOSITY,
   maxOutputTokens: DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
@@ -74,11 +73,9 @@ function normalizeActivePromptTemplateIdsByMode(
 
 function normalizePersistedConfig(input: LtmExtractionSettings): LtmExtractionSettings {
   const next: LtmExtractionSettings = { version: 1 };
-  const extraInstruction = input.extraInstruction?.trim();
   const promptTemplates = Array.isArray(input.promptTemplates) ? input.promptTemplates.slice(0, 50) : [];
   const activePromptTemplateIdsByMode = normalizeActivePromptTemplateIdsByMode(input, promptTemplates);
 
-  if (extraInstruction) next.extraInstruction = extraInstruction;
   if (input.reasoningEffort && input.reasoningEffort !== DEFAULT_LTM_EXTRACTION_CONFIG.reasoningEffort) {
     next.reasoningEffort = input.reasoningEffort;
   }
@@ -142,7 +139,6 @@ function resolveExtractionConfig(config: LtmExtractionSettings, mode?: LtmMode):
     ...config,
     version: 1 as const,
     systemPrompt,
-    extraInstruction: config.extraInstruction?.trim() || "",
     promptTemplates,
     activePromptTemplateId: activeTemplate?.id ?? null,
     activePromptTemplateIdsByMode,

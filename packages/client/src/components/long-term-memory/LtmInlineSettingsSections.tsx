@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, FileText, Link2, Plus, Save, Trash2 } from "lucide-react";
+import { Check, FileText, Link2, Pencil, Plus, Save, Trash2 } from "lucide-react";
 import { cn, generateClientId } from "../../lib/utils";
 import {
   DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS,
@@ -14,9 +14,9 @@ import {
   type LtmExtractionVerbosity,
 } from "@marinara-engine/shared";
 import { useConnections } from "../../hooks/use-connections";
+import { showAlertDialog, showPromptDialog } from "../../lib/app-dialogs";
 import { MODE_LABELS } from "./ltm-panel-shared";
 import { MacroTextarea } from "../ui/MacroTextarea";
-import { textareaClassName } from "./LtmFields";
 import { FieldGroup } from "../agents/AgentEditor";
 
 type PromptTemplate = { id: string; name: string; prompt: string };
@@ -193,12 +193,10 @@ export function LtmExtractionConnectionSection({
 type ExtractionPromptSectionProps = {
   promptTemplates: readonly PromptTemplate[];
   activePromptTemplateIdsByMode: ActivePromptTemplateIdsByMode;
-  extraInstruction: string;
   aiKeywordExtraction: boolean;
   refinePass: boolean;
   onChangePromptTemplates: (templates: PromptTemplate[]) => void;
   onChangeActivePromptTemplateIdsByMode: (value: ActivePromptTemplateIdsByMode) => void;
-  onChangeExtraInstruction: (value: string) => void;
   onChangeAiKeywordExtraction: (value: boolean) => void;
   onChangeRefinePass: (value: boolean) => void;
   onPromptDraftDirtyChange?: (dirty: boolean) => void;
@@ -207,12 +205,10 @@ type ExtractionPromptSectionProps = {
 export function LtmExtractionPromptSection({
   promptTemplates,
   activePromptTemplateIdsByMode,
-  extraInstruction,
   aiKeywordExtraction,
   refinePass,
   onChangePromptTemplates,
   onChangeActivePromptTemplateIdsByMode,
-  onChangeExtraInstruction,
   onChangeAiKeywordExtraction,
   onChangeRefinePass,
   onPromptDraftDirtyChange,
@@ -227,18 +223,15 @@ export function LtmExtractionPromptSection({
   const selectedTemplateId = activePromptTemplateIdsByMode[selectedMode] ?? "";
   const selectedTemplate = localTemplates.find((template) => template.id === selectedTemplateId) ?? null;
   const selectedPromptSource = selectedTemplate?.prompt ?? DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE[selectedMode];
-  const selectedNameSource = selectedTemplate?.name ?? `${MODE_LABELS[selectedMode]} default`;
   const isUsingDefaultPrompt = !selectedTemplate;
   const [localPrompt, setLocalPrompt] = useState(selectedPromptSource);
-  const [localName, setLocalName] = useState(selectedNameSource);
 
   useEffect(() => {
     setLocalPrompt(selectedPromptSource);
-    setLocalName(selectedNameSource);
-  }, [selectedNameSource, selectedPromptSource]);
+  }, [selectedPromptSource]);
 
-  const hasPromptDraftEdits = localPrompt !== selectedPromptSource || localName !== selectedNameSource;
-  const canSavePrompt = localPrompt.trim().length > 0 && (isUsingDefaultPrompt || localName.trim().length > 0);
+  const hasPromptDraftEdits = localPrompt !== selectedPromptSource;
+  const canSavePrompt = localPrompt.trim().length > 0;
 
   useEffect(() => {
     onPromptDraftDirtyChange?.(hasPromptDraftEdits);
@@ -298,10 +291,9 @@ export function LtmExtractionPromptSection({
     if (!prompt.trim()) return;
 
     if (selectedTemplate) {
-      const name = localName.trim() || selectedTemplate.name;
       publishTemplates(
         localTemplates.map((template) =>
-          template.id === selectedTemplate.id ? { ...template, name, prompt } : template,
+          template.id === selectedTemplate.id ? { ...template, prompt } : template,
         ),
       );
       return;
@@ -316,7 +308,6 @@ export function LtmExtractionPromptSection({
     publishTemplates([...localTemplates, template], nextActiveIds);
   }, [
     activePromptTemplateIdsByMode,
-    localName,
     localPrompt,
     localTemplates,
     publishTemplates,
@@ -324,6 +315,32 @@ export function LtmExtractionPromptSection({
     selectedPromptSource,
     selectedTemplate,
   ]);
+
+  const handleRenameTemplate = useCallback(async () => {
+    if (!selectedTemplate) return;
+    const nextName = await showPromptDialog({
+      title: "Rename Prompt",
+      message: "Set a display name for this extraction prompt option.",
+      defaultValue: selectedTemplate.name,
+      placeholder: "Prompt name",
+      confirmLabel: "Rename",
+    });
+    if (nextName === null) return;
+    const name = nextName.trim();
+    if (!name || name === selectedTemplate.name) return;
+    if (name.length > 120) {
+      await showAlertDialog({
+        title: "Name Too Long",
+        message: "Prompt names must be 120 characters or fewer.",
+      });
+      return;
+    }
+    publishTemplates(
+      localTemplates.map((template) =>
+        template.id === selectedTemplate.id ? { ...template, name } : template,
+      ),
+    );
+  }, [localTemplates, publishTemplates, selectedTemplate]);
 
   const handleRemoveTemplate = useCallback(
     (id: string | null) => {
@@ -403,6 +420,16 @@ export function LtmExtractionPromptSection({
           </button>
           <button
             type="button"
+            onClick={() => void handleRenameTemplate()}
+            disabled={!selectedTemplate}
+            className="flex h-10 items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 text-[0.6875rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[var(--secondary)]"
+            title={selectedTemplate ? "Rename prompt" : "Default prompts cannot be renamed"}
+          >
+            <Pencil size="0.6875rem" />
+            Rename
+          </button>
+          <button
+            type="button"
             onClick={() => handleRemoveTemplate(selectedTemplate?.id ?? null)}
             disabled={!selectedTemplate}
             className="flex h-10 items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 text-[0.6875rem] font-medium text-[var(--destructive)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--destructive)]/15 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[var(--secondary)]"
@@ -412,20 +439,6 @@ export function LtmExtractionPromptSection({
           </button>
         </div>
       </div>
-
-      {selectedTemplate && (
-        <label className="mb-3 block">
-          <span className="mb-1 block text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
-            Prompt name
-          </span>
-          <input
-            value={localName}
-            onChange={(event) => setLocalName(event.target.value)}
-            className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-            placeholder="Prompt name"
-          />
-        </label>
-      )}
 
       <div className="mb-2 flex items-center gap-2">
         {isUsingDefaultPrompt ? (
@@ -454,16 +467,6 @@ export function LtmExtractionPromptSection({
       />
 
       <div className="mt-4 space-y-2">
-        <label className="block">
-          <span className="mb-1 block text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
-            Extra user instruction
-          </span>
-          <textarea
-            value={extraInstruction}
-            onChange={(event) => onChangeExtraInstruction(event.target.value)}
-            className={cn(textareaClassName, "min-h-20")}
-          />
-        </label>
         <label className="flex items-center gap-2 rounded-lg px-1 py-1 text-xs text-[var(--foreground)]">
           <input
             type="checkbox"

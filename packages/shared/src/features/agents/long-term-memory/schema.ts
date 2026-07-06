@@ -254,7 +254,6 @@ const ltmActivePromptTemplateIdsByModeSchema = z
 const ltmExtractionSettingsShape = z
   .object({
     version: z.literal(1).default(1),
-    extraInstruction: z.string().max(4_000).optional(),
     reasoningEffort: ltmExtractionReasoningEffortSchema.optional(),
     verbosity: ltmExtractionVerbositySchema.optional(),
     maxOutputTokens: z.number().int().min(512).max(32_768).optional(),
@@ -278,7 +277,6 @@ export const ltmResolvedExtractionSettingsSchema = z
   .object({
     version: z.literal(1),
     systemPrompt: z.string().min(1).max(20_000),
-    extraInstruction: z.string().max(4_000),
     reasoningEffort: ltmExtractionReasoningEffortSchema,
     verbosity: ltmExtractionVerbositySchema,
     maxOutputTokens: z.number().int().min(512).max(32_768),

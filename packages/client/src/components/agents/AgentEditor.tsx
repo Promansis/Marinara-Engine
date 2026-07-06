@@ -688,7 +688,6 @@ export function AgentEditor() {
     instruction: string;
     importConcurrency: number;
     autoApplyLowRisk: boolean;
-    extraInstruction: string;
     reasoningEffort: string;
     verbosity: string;
     maxOutputTokens: number;
@@ -1052,7 +1051,6 @@ export function AgentEditor() {
           ? Math.max(1, Math.min(10, Math.round(settings.importConcurrency)))
           : 3,
       autoApplyLowRisk: settings.autoApplyLowRisk === true,
-      extraInstruction: ltmExtractionSettings.extraInstruction,
       reasoningEffort: ltmExtractionSettings.reasoningEffort,
       verbosity: ltmExtractionSettings.verbosity,
       maxOutputTokens: ltmExtractionSettings.maxOutputTokens,
@@ -1400,8 +1398,6 @@ export function AgentEditor() {
             return id ? [[mode, id]] : [];
           }),
         );
-        const extraInstruction = ltmDraft.extraInstruction.trim();
-        if (extraInstruction) extractionPayload.extraInstruction = extraInstruction;
         if (ltmDraft.reasoningEffort !== DEFAULT_LTM_EXTRACTION_REASONING_EFFORT)
           extractionPayload.reasoningEffort = ltmDraft.reasoningEffort;
         if (ltmDraft.verbosity !== DEFAULT_LTM_EXTRACTION_VERBOSITY) extractionPayload.verbosity = ltmDraft.verbosity;
@@ -4006,14 +4002,12 @@ export function AgentEditor() {
               <LtmExtractionPromptSection
                 promptTemplates={ltmDraft?.promptTemplates ?? []}
                 activePromptTemplateIdsByMode={ltmDraft?.activePromptTemplateIdsByMode ?? {}}
-                extraInstruction={ltmDraft?.extraInstruction ?? ""}
                 aiKeywordExtraction={ltmDraft?.aiKeywordExtraction ?? false}
                 refinePass={ltmDraft?.refinePass ?? false}
                 onChangePromptTemplates={(templates) => updateLtmDraft({ promptTemplates: templates })}
                 onChangeActivePromptTemplateIdsByMode={(value) =>
                   updateLtmDraft({ activePromptTemplateIdsByMode: value })
                 }
-                onChangeExtraInstruction={(value) => updateLtmDraft({ extraInstruction: value })}
                 onChangeAiKeywordExtraction={(value) => updateLtmDraft({ aiKeywordExtraction: value })}
                 onChangeRefinePass={(value) => updateLtmDraft({ refinePass: value })}
                 onPromptDraftDirtyChange={handleLtmPromptDraftDirtyChange}

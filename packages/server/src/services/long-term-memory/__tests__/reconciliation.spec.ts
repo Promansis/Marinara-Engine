@@ -2289,9 +2289,10 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
     assert.deepEqual(defaults.promptTemplates, []);
     assert.equal(defaults.activePromptTemplateId, null);
 
+    await assert.rejects(() => updateLtmExtractionConfig({ extraInstruction: "Legacy instruction" }, root), /unrecognized/i);
+
     const updated = await updateLtmExtractionConfig(
       {
-        extraInstruction: "Prefer threads when source text sets up later payoff.",
         reasoningEffort: "medium",
         verbosity: "high",
         maxOutputTokens: 4096,
@@ -2315,7 +2316,6 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
       },
       root,
     );
-    assert.equal(updated.extraInstruction, "Prefer threads when source text sets up later payoff.");
     assert.equal(updated.reasoningEffort, "medium");
     assert.equal(updated.verbosity, "high");
     assert.equal(updated.maxOutputTokens, 4096);
@@ -2331,7 +2331,6 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
     const dirs = getLongTermMemoryDirectories(root);
     const persisted = JSON.parse(await readFile(join(dirs.config, "extraction.json"), "utf8"));
     assert.equal(persisted.systemPrompt, undefined);
-    assert.equal(persisted.extraInstruction, "Prefer threads when source text sets up later payoff.");
     assert.equal(persisted.maxSourceTokens, 3_000);
     assert.equal(persisted.maxExistingNoteTokens, 1_500);
     assert.deepEqual(persisted.promptTemplates, [
@@ -2351,7 +2350,6 @@ test("ltm extraction config reads defaults, writes overrides, and resets", async
     assert.equal(reset.reasoningEffort, "low");
     assert.equal(reset.verbosity, "low");
     assert.equal(reset.maxOutputTokens, DEFAULT_LTM_EXTRACTION_MAX_TOKENS);
-    assert.equal(reset.extraInstruction, "");
     assert.equal(reset.activePromptTemplateId, null);
     assert.deepEqual(reset.promptTemplates, []);
   } finally {
@@ -2692,7 +2690,6 @@ test("source note extraction applies saved extraction config to llm request", as
     );
     await updateLtmExtractionConfig(
       {
-        extraInstruction: "Treat lantern hum as a thread.",
         reasoningEffort: "high",
         verbosity: "medium",
         maxOutputTokens: 1024,
@@ -2739,7 +2736,7 @@ test("source note extraction applies saved extraction config to llm request", as
       messages.find((message) => message.role === "system")!.content,
       "Return JSON with compact test units only.",
     );
-    assert.equal(userPayload.extraInstruction, "Treat lantern hum as a thread.");
+    assert.equal(Object.prototype.hasOwnProperty.call(userPayload, "extraInstruction"), false);
     assert.ok(estimateLtmTestTokens(userPayload.sourceText) <= 250);
     assert.equal(userPayload.sourceText, sourceText.slice(0, 1000));
     assert.equal(chatOptions.maxTokens, 1024);

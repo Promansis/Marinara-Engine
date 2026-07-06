@@ -82,7 +82,6 @@ export interface RunLongTermMemoryEvidenceUnitExtractionOptions {
   modes: LtmMode[];
   sourceHash: string;
   instruction?: string;
-  extraInstruction?: string;
   systemPrompt?: string;
   reasoningEffort?: NonNullable<ChatOptions["reasoningEffort"]>;
   verbosity?: NonNullable<ChatOptions["verbosity"]>;
@@ -577,7 +576,6 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
           "relationship_state dimension keys must come only from allowedRelationshipDimensions. Put professional curiosity, reputation, gossip, or attention as text/thread/world/timeline facts, not dimensions.",
         ],
         userInstruction: options.instruction?.trim() || undefined,
-        extraInstruction: options.extraInstruction?.trim() || undefined,
         ...(options.candidateUnits?.length
           ? { candidateUnits: options.candidateUnits }
           : {}),

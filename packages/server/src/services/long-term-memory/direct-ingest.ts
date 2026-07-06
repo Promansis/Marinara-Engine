@@ -538,7 +538,6 @@ export async function directIngestGameJournal(
             modes: ["game"],
             sourceHash,
             systemPrompt: extractionConfig.systemPrompt,
-            extraInstruction: extractionConfig.extraInstruction,
             reasoningEffort: extractionConfig.reasoningEffort,
             verbosity: extractionConfig.verbosity,
             maxOutputTokens: extractionConfig.maxOutputTokens,
