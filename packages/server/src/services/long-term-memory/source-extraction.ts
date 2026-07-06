@@ -25,6 +25,7 @@ import { LongTermMemoryDraftStore } from "./draft-store.js";
 import { retrieveLongTermMemory, type RetrieveLongTermMemoryInput } from "./retrieval.js";
 import { canUpdateLtmScopedTarget, resolveScopedEvidenceUnitTargets } from "./scoped-targets.js";
 import { LongTermMemoryStorage } from "./storage.js";
+import { normalizeStructuredSummaryEvidenceUnits } from "./structured-summary-normalizer.js";
 
 export type ExtractLongTermMemoryFromSourceNoteOptions = {
   noteId: string;
@@ -223,7 +224,23 @@ async function extractLongTermMemoryFromSourceNoteInner(
   };
 
   const extractionPayload = await runLongTermMemoryEvidenceUnitExtraction(baseExtractionOptions);
-  const unitResponse = extractionPayload.response;
+  const normalizedExtraction = normalizeStructuredSummaryEvidenceUnits({
+    units: extractionPayload.response.units,
+    sourceText,
+    sourceNote,
+    sourceHash,
+    allowedBuckets,
+    mode: resolvedMode,
+    modes,
+  });
+  const unitResponse = {
+    ...extractionPayload.response,
+    units: normalizedExtraction.units,
+  };
+  const totalCandidates = Math.max(
+    extractionPayload.totalCandidates + normalizedExtraction.addedUnits,
+    unitResponse.units.length + extractionPayload.droppedCandidates.length,
+  );
   const targetResolution = await resolveScopedEvidenceUnitTargets({
     storage,
     existingNotes,
@@ -255,7 +272,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
       ...unitResponse,
       units: targetResolution.units,
     },
-    totalCandidates: extractionPayload.totalCandidates,
+    totalCandidates,
     parserDroppedCandidates: extractionPayload.droppedCandidates,
     sourceText,
     sourceNote,
@@ -264,6 +281,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
     modes: [resolvedMode],
     mode: resolvedMode,
     sourceHash,
+    allowedBuckets,
   });
   compiled.diagnostics.push(...targetResolution.diagnostics);
   const compiledSummary = summarizeCompiledEvidenceUnitExtraction(compiled);

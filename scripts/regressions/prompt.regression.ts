@@ -14,6 +14,8 @@ import {
   type AgentContext,
   type ChatMLMessage,
   DEFAULT_AGENT_PROMPTS,
+  type LtmEvidenceUnit,
+  type LtmNote,
 } from "../../packages/shared/src/index.js";
 import { renderAgentPromptTemplate } from "../../packages/server/src/services/agents/agent-executor.js";
 import type { ResolvedAgent } from "../../packages/server/src/services/agents/agent-pipeline.js";
@@ -43,6 +45,7 @@ import { resolveGenerationPromptPresetChoices } from "../../packages/server/src/
 import { scanForActivatedEntries } from "../../packages/server/src/services/lorebook/keyword-scanner.js";
 import { fitMessagesForModelAccess } from "../../packages/server/src/services/generation/model-access-policy.js";
 import { assemblePrompt, type AssemblerInput } from "../../packages/server/src/services/prompt/index.js";
+import { compileEvidenceUnitExtraction } from "../../packages/server/src/services/long-term-memory/evidence-unit-extraction.js";
 
 type RegressionCase = {
   name: string;
@@ -1152,6 +1155,165 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       assert.equal(activated.length, 1);
       assert.equal(activated[0]?.entry.id, "entry-semantic");
       assert.match(activated[0]?.matchedKeys[0] ?? "", /^\[semantic:/);
+    },
+  },
+  {
+    name: "structured LTM summaries normalize validator-sensitive evidence units",
+    run() {
+      const sourceHash = "a".repeat(64);
+      const sourceText = [
+        "### timeline_event",
+        "eventId: reunion_foundry",
+        "summary: Damo and Lisa reunited at the foundry after the long absence.",
+        "",
+        "### relationship_state",
+        "subject: lisa_damo",
+        "dimensions: protectiveness 60, trust 80, hostility -3, lust 120",
+        "dimensionChanges: trust +5, protectiveness +10, tension +120",
+        "caused_by: reunion_foundry",
+        "text: Lisa and Damo's reunion left trust warmer while Lisa stayed watchful.",
+        "",
+        "### character_fact",
+        "subject: lisa_imai",
+        "sectionKey: items",
+        "text: Lisa's friendship bracelet matters as a keepsake from Damo.",
+        "",
+        "### thread",
+        "subject: damo_first_day",
+        "resolver: first day scene",
+        "text: Damo still needs to navigate his first day after the reunion.",
+        "",
+        "### tone",
+        "Quiet foundry warmth, restrained permission, and watchful friendship carry the session.",
+      ].join("\n");
+      const sourceNote: LtmNote = {
+        id: "source_structured_summary",
+        title: "Structured summary",
+        type: "source",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_structured" },
+        tags: ["source"],
+        keywords: [],
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:00:00.000Z",
+        links: [],
+        sections: {
+          source: {
+            text: sourceText,
+            updatedAt: "2026-07-06T00:00:00.000Z",
+          },
+        },
+        version: 1,
+      };
+      const baseUnit = {
+        importance: "major",
+        keywords: [],
+        evidence: [`source_note:${sourceNote.id}`],
+        confidence: 0.92,
+        salience: 0.8,
+        status: "active",
+        sourceHash,
+      } satisfies Pick<
+        LtmEvidenceUnit,
+        "importance" | "keywords" | "evidence" | "confidence" | "salience" | "status" | "sourceHash"
+      >;
+      const units: LtmEvidenceUnit[] = [
+        {
+          ...baseUnit,
+          id: "10000000-0000-4000-8000-000000000001",
+          bucket: "timeline_event",
+          subjectId: "damo_reunion_foundry",
+          sectionKey: "event",
+          text: "Damo and Lisa reunited at the foundry after the long absence.",
+          links: [],
+        },
+        {
+          ...baseUnit,
+          id: "10000000-0000-4000-8000-000000000002",
+          bucket: "relationship_state",
+          subjectId: "lisa_damo",
+          sectionKey: "state",
+          text: "Lisa and Damo's reunion left trust warmer while Lisa stayed watchful.",
+          links: [{ target: "reunion_foundry", relation: "caused_by" }],
+        },
+        {
+          ...baseUnit,
+          id: "10000000-0000-4000-8000-000000000003",
+          bucket: "thread",
+          subjectId: "damo_first_day",
+          sectionKey: "summary",
+          text: "Damo's first day after the reunion remains open.",
+          links: [],
+        },
+        {
+          ...baseUnit,
+          id: "10000000-0000-4000-8000-000000000004",
+          bucket: "character_fact",
+          subjectId: "lisa_imai",
+          sectionKey: "facts",
+          text: "Lisa gave Damo a friendship bracelet that matters as a keepsake.",
+          links: [],
+        },
+      ];
+
+      const result = compileEvidenceUnitExtraction({
+        unitResponse: { summary: "structured source", units },
+        sourceText,
+        sourceNote,
+        existingNotes: [],
+        scope: sourceNote.scope,
+        modes: ["roleplay"],
+        mode: "roleplay",
+        sourceHash,
+      });
+
+      assert.deepEqual(result.outcome.droppedCandidates, []);
+      const createdNotes = result.compiledResponse.mutations
+        .filter((mutation) => mutation.kind === "create_note")
+        .map((mutation) => mutation.note);
+      const byId = new Map(createdNotes.map((note) => [note.id, note]));
+
+      assert.ok(byId.has("timeline_reunion_foundry"));
+      assert.equal(byId.get("rel_lisa_damo")?.sections.state?.dimensions?.protectiveness, 60);
+      assert.equal(byId.get("rel_lisa_damo")?.sections.state?.dimensions?.trust, 80);
+      assert.equal(byId.get("rel_lisa_damo")?.sections.state?.dimensions?.hostility, undefined);
+      assert.equal(byId.get("rel_lisa_damo")?.sections.state?.dimensions?.lust, undefined);
+      assert.equal(byId.get("rel_lisa_damo")?.sections.state?.dimensionChanges?.trust, 5);
+      assert.equal(byId.get("rel_lisa_damo")?.sections.state?.dimensionChanges?.tension, undefined);
+      assert.equal(byId.get("rel_lisa_damo")?.links.some((link) => link.target === "timeline_reunion_foundry"), true);
+      assert.match(byId.get("thread_damo_first_day")?.sections.summary?.text ?? "", /Resolver: first day scene/);
+      assert.match(byId.get("char_lisa_imai")?.sections.items?.text ?? "", /friendship bracelet/);
+      assert.ok(byId.has("tone_session"));
+
+      const resultWithModelTone = compileEvidenceUnitExtraction({
+        unitResponse: {
+          summary: "structured source with model tone",
+          units: [
+            ...units,
+            {
+              ...baseUnit,
+              id: "10000000-0000-4000-8000-000000000005",
+              bucket: "tone",
+              subjectId: "foundry",
+              sectionKey: "observations",
+              text: "Quiet foundry warmth, restrained permission, and watchful friendship carry the session.",
+              links: [],
+            },
+          ],
+        },
+        sourceText,
+        sourceNote,
+        existingNotes: [],
+        scope: sourceNote.scope,
+        modes: ["roleplay"],
+        mode: "roleplay",
+        sourceHash,
+      });
+      const toneNoteIds = resultWithModelTone.compiledResponse.mutations
+        .filter((mutation) => mutation.kind === "create_note" && mutation.note.type === "tone")
+        .map((mutation) => mutation.note.id);
+      assert.deepEqual(toneNoteIds, ["tone_session"]);
     },
   },
 ];

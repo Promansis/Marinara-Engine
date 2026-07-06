@@ -5,6 +5,7 @@ import {
   DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
   DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
   DEFAULT_LTM_EXTRACTION_VERBOSITY,
+  DEFAULT_LTM_ALLOWED_STREAMS_BY_MODE,
   DEFAULT_LTM_STREAM_DESCRIPTIONS_BY_MODE,
   DEFAULT_LTM_EXTRACTION_PROMPT_GAME_REFINE,
   LTM_DRAFT_MUTATION_LIMIT,
@@ -32,6 +33,7 @@ import { deduplicateUnits } from "./dedup.js";
 import { compileLtmEvidenceUnits } from "./evidence-unit-compiler.js";
 import type { LtmSuggestionCapMetadata } from "./evidence-unit-compiler.js";
 import { validateLtmEvidenceUnits } from "./evidence-unit-validation.js";
+import { normalizeStructuredSummaryEvidenceUnits } from "./structured-summary-normalizer.js";
 
 const LTM_EXTRACTION_BUCKET_SCAN_ORDER = [
   "timeline_event",
@@ -794,9 +796,21 @@ export function compileEvidenceUnitExtraction(options: {
   modes: LtmMode[];
   mode?: LtmMode;
   sourceHash: string;
+  allowedBuckets?: readonly LtmEvidenceUnit["bucket"][];
 }): CompileEvidenceUnitExtractionResult {
-  const validated = validateLtmEvidenceUnits({
+  const normalized = normalizeStructuredSummaryEvidenceUnits({
     units: options.unitResponse.units,
+    sourceText: options.sourceText,
+    sourceNote: options.sourceNote,
+    sourceHash: options.sourceHash,
+    allowedBuckets:
+      options.allowedBuckets ??
+      DEFAULT_LTM_ALLOWED_STREAMS_BY_MODE[options.mode ?? options.modes[0] ?? "roleplay"],
+    mode: options.mode,
+    modes: options.modes,
+  });
+  const validated = validateLtmEvidenceUnits({
+    units: normalized.units,
     sourceText: options.sourceText,
     sourceNote: options.sourceNote,
     existingNotes: options.existingNotes,
@@ -832,7 +846,10 @@ export function compileEvidenceUnitExtraction(options: {
       message: `Created ${suggestionCap.returned} of ${suggestionCap.generated} suggested changes. Extract again on a smaller source or split the source note to review more.`,
     });
   }
-  const totalCandidates = options.totalCandidates ?? options.unitResponse.units.length + droppedCandidates.length;
+  const totalCandidates = Math.max(
+    options.totalCandidates ?? 0,
+    normalized.units.length + droppedCandidates.length,
+  );
   const outcome = summarizeExtractionOutcome({
     totalCandidates,
     keptUnits: dedupResult.deduplicated.length,
@@ -841,7 +858,7 @@ export function compileEvidenceUnitExtraction(options: {
     suggestionCap,
   });
   return {
-    unitResponse: options.unitResponse,
+    unitResponse: { ...options.unitResponse, units: normalized.units },
     compiledResponse,
     diagnostics,
     outcome,
