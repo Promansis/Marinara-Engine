@@ -120,6 +120,8 @@ import {
   DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
   DEFAULT_LTM_EXTRACTION_TEMPERATURE,
   DEFAULT_LTM_EXTRACTION_VERBOSITY,
+  DEFAULT_LTM_GLOBAL_SETTINGS,
+  type LtmGlobalSettings,
   type LtmMode,
 } from "@marinara-engine/shared";
 import { Modal } from "../ui/Modal";
@@ -139,6 +141,7 @@ import {
 } from "../long-term-memory/RecallSettingsControls";
 import { ToolButton } from "../long-term-memory/LtmPills";
 import {
+  longTermMemoryKeys,
   useLongTermMemoryStatus,
   useLongTermMemoryExtractionSettings,
   useUpdateLongTermMemoryExtractionSettings,
@@ -450,6 +453,67 @@ function normalizePositiveInteger(value: unknown, fallback: number, max: number)
   return Math.max(1, Math.min(max, Math.trunc(numeric)));
 }
 
+function normalizeBoundedNumber(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+  options: { integer?: boolean } = {},
+) {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  const normalized = options.integer === false ? numeric : Math.trunc(numeric);
+  return Math.max(min, Math.min(max, normalized));
+}
+
+function normalizeNullableRecallWeight(value: number | null | undefined) {
+  if (value === null) return null;
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : null;
+}
+
+function createLtmRecallDraft(settings?: Partial<RecallSettingsValues> | null): RecallSettingsValues {
+  return {
+    longTermMemoryBudgetTokens: normalizeBoundedNumber(
+      settings?.longTermMemoryBudgetTokens,
+      DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryBudgetTokens,
+      128,
+      16_384,
+    ),
+    longTermMemoryMaxChunks: normalizeBoundedNumber(
+      settings?.longTermMemoryMaxChunks,
+      DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryMaxChunks,
+      1,
+      100,
+    ),
+    longTermMemoryScoreThreshold: normalizeBoundedNumber(
+      settings?.longTermMemoryScoreThreshold,
+      DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryScoreThreshold,
+      0,
+      1,
+      { integer: false },
+    ),
+    longTermMemoryRecallContextMessages: normalizeBoundedNumber(
+      settings?.longTermMemoryRecallContextMessages,
+      DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryRecallContextMessages,
+      1,
+      20,
+    ),
+    longTermMemoryRecallStyle:
+      settings?.longTermMemoryRecallStyle ?? DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryRecallStyle,
+    longTermMemorySemanticWeight: normalizeNullableRecallWeight(settings?.longTermMemorySemanticWeight),
+    longTermMemoryLexicalWeight: normalizeNullableRecallWeight(settings?.longTermMemoryLexicalWeight),
+    longTermMemoryGraphWeight: normalizeNullableRecallWeight(settings?.longTermMemoryGraphWeight),
+    longTermMemoryKeywordWeight: normalizeNullableRecallWeight(settings?.longTermMemoryKeywordWeight),
+    longTermMemoryIncludeResolved:
+      settings?.longTermMemoryIncludeResolved ?? DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryIncludeResolved,
+    longTermMemoryDebug: settings?.longTermMemoryDebug ?? DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryDebug,
+  };
+}
+
+function createLtmRecallSettingsPayload(values: RecallSettingsValues): LtmGlobalSettings {
+  return { version: 1, ...values };
+}
+
 function normalizeStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
@@ -533,6 +597,8 @@ export function AgentEditor() {
     isCustomAgent || isNewCustomAgent
       ? getAgentRunIntervalMeta(isNewCustomAgent ? "__new__" : (dbConfig?.type ?? agentDetailId ?? ""), false)
       : null;
+  // Managed long-term-memory agent — renders dedicated LTM settings instead of generic fields.
+  const isLtmAgent = dbConfig?.type === "long-term-memory";
 
   // ── Local editable state ──
   const [localName, setLocalName] = useState("");
@@ -571,17 +637,45 @@ export function AgentEditor() {
   const ltmGlobalSettingsResult = useLongTermMemorySettings();
   const ltmGlobalSettings = ltmGlobalSettingsResult.data;
   const updateGlobalSettings = useUpdateLongTermMemorySettings();
-  const globalSettingsRef = useRef(ltmGlobalSettings);
+  const [ltmRecallDraft, setLtmRecallDraft] = useState<RecallSettingsValues | null>(null);
+  const ltmRecallHasLocalEditsRef = useRef(false);
+  const ltmRecallRevisionRef = useRef(0);
   useEffect(() => {
-    globalSettingsRef.current = ltmGlobalSettings;
-  }, [ltmGlobalSettings]);
+    if (!isLtmAgent) {
+      ltmRecallHasLocalEditsRef.current = false;
+      setLtmRecallDraft(null);
+      return;
+    }
+    if (!ltmGlobalSettings || ltmRecallHasLocalEditsRef.current) return;
+    const next = createLtmRecallDraft(ltmGlobalSettings);
+    setLtmRecallDraft(next);
+  }, [isLtmAgent, ltmGlobalSettings]);
   const patchGlobalSettings = useCallback(
-    (patch: Partial<RecallSettingsValues>) => {
-      updateGlobalSettings.mutate({ version: 1, ...globalSettingsRef.current, ...patch });
+    (values: RecallSettingsValues) => {
+      const revision = ltmRecallRevisionRef.current;
+      updateGlobalSettings.mutate(createLtmRecallSettingsPayload(values), {
+        onSuccess: (settings) => {
+          if (revision !== ltmRecallRevisionRef.current) return;
+          const next = createLtmRecallDraft(settings);
+          ltmRecallHasLocalEditsRef.current = false;
+          setLtmRecallDraft(next);
+          qc.setQueryData(longTermMemoryKeys.settings(), settings);
+        },
+        onError: (err) => {
+          if (revision !== ltmRecallRevisionRef.current) return;
+          toast.error(err instanceof Error ? err.message : "Failed to save memory recall settings");
+        },
+      });
     },
-    [updateGlobalSettings],
+    [qc, updateGlobalSettings],
   );
-  const debouncedPatchGlobal = useDebouncedRecallSettings(patchGlobalSettings, 400);
+  const autosaveLtmRecallDraft = useCallback(
+    (values: Partial<RecallSettingsValues>) => {
+      patchGlobalSettings(createLtmRecallDraft(values));
+    },
+    [patchGlobalSettings],
+  );
+  const debouncedPatchGlobal = useDebouncedRecallSettings(autosaveLtmRecallDraft, 400);
   const [recallAdvancedOpen, setRecallAdvancedOpen] = useState(false);
   const [maintenanceOpen, setMaintenanceOpen] = useState(false);
   const rebuildMemories = useRebuildLongTermMemory();
@@ -936,9 +1030,6 @@ export function AgentEditor() {
   // Immersive HTML agent — shares the rewrite reveal timing control.
   const isHtmlAgent = agentDetailId === "html" || dbConfig?.type === "html";
 
-  // Managed long-term-memory agent — renders the vault manager section instead of generic fields.
-  const isLtmAgent = dbConfig?.type === "long-term-memory";
-
   // Seed LTM draft when the agent first loads (one-time per agent, not on every refetch)
   useEffect(() => {
     if (!isLtmAgent) {
@@ -1266,6 +1357,43 @@ export function AgentEditor() {
       }
       if (isLtmAgent && ltmDraft) {
         const extractionPayload: Record<string, unknown> = { version: 1 };
+        const maxOutputTokens = normalizeBoundedNumber(
+          ltmDraft.maxOutputTokens,
+          DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
+          512,
+          32_768,
+        );
+        const temperature = normalizeBoundedNumber(
+          ltmDraft.temperature,
+          DEFAULT_LTM_EXTRACTION_TEMPERATURE,
+          0,
+          2,
+          { integer: false },
+        );
+        const maxSourceTokens = normalizeBoundedNumber(
+          ltmDraft.maxSourceTokens,
+          DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
+          128,
+          65_536,
+        );
+        const maxExistingNoteTokens = normalizeBoundedNumber(
+          ltmDraft.maxExistingNoteTokens,
+          DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
+          128,
+          32_768,
+        );
+        const existingNoteMaxChunks = normalizeBoundedNumber(
+          ltmDraft.existingNoteMaxChunks,
+          DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS,
+          1,
+          100,
+        );
+        const existingNoteMaxTokens = normalizeBoundedNumber(
+          ltmDraft.existingNoteMaxTokens,
+          DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
+          128,
+          16_384,
+        );
         const activePromptTemplateIdsByMode = Object.fromEntries(
           LTM_EXTRACTION_MODES.flatMap((mode) => {
             const id = ltmDraft.activePromptTemplateIdsByMode[mode];
@@ -1277,25 +1405,25 @@ export function AgentEditor() {
         if (ltmDraft.reasoningEffort !== DEFAULT_LTM_EXTRACTION_REASONING_EFFORT)
           extractionPayload.reasoningEffort = ltmDraft.reasoningEffort;
         if (ltmDraft.verbosity !== DEFAULT_LTM_EXTRACTION_VERBOSITY) extractionPayload.verbosity = ltmDraft.verbosity;
-        if (ltmDraft.maxOutputTokens !== DEFAULT_LTM_EXTRACTION_MAX_TOKENS)
-          extractionPayload.maxOutputTokens = ltmDraft.maxOutputTokens;
-        if (ltmDraft.temperature !== DEFAULT_LTM_EXTRACTION_TEMPERATURE)
-          extractionPayload.temperature = ltmDraft.temperature;
-        if (ltmDraft.maxSourceTokens !== DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS)
-          extractionPayload.maxSourceTokens = ltmDraft.maxSourceTokens;
-        if (ltmDraft.maxExistingNoteTokens !== DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS)
-          extractionPayload.maxExistingNoteTokens = ltmDraft.maxExistingNoteTokens;
-        if (ltmDraft.existingNoteMaxChunks !== DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS)
-          extractionPayload.existingNoteMaxChunks = ltmDraft.existingNoteMaxChunks;
-        if (ltmDraft.existingNoteMaxTokens !== DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS)
-          extractionPayload.existingNoteMaxTokens = ltmDraft.existingNoteMaxTokens;
+        if (maxOutputTokens !== DEFAULT_LTM_EXTRACTION_MAX_TOKENS)
+          extractionPayload.maxOutputTokens = maxOutputTokens;
+        if (temperature !== DEFAULT_LTM_EXTRACTION_TEMPERATURE) extractionPayload.temperature = temperature;
+        if (maxSourceTokens !== DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS)
+          extractionPayload.maxSourceTokens = maxSourceTokens;
+        if (maxExistingNoteTokens !== DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS)
+          extractionPayload.maxExistingNoteTokens = maxExistingNoteTokens;
+        if (existingNoteMaxChunks !== DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS)
+          extractionPayload.existingNoteMaxChunks = existingNoteMaxChunks;
+        if (existingNoteMaxTokens !== DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS)
+          extractionPayload.existingNoteMaxTokens = existingNoteMaxTokens;
         if (ltmDraft.promptTemplates.length > 0) extractionPayload.promptTemplates = ltmDraft.promptTemplates;
         if (Object.keys(activePromptTemplateIdsByMode).length > 0) {
           extractionPayload.activePromptTemplateIdsByMode = activePromptTemplateIdsByMode;
         }
         if (ltmDraft.aiKeywordExtraction === true) extractionPayload.aiKeywordExtraction = true;
         if (ltmDraft.refinePass === true) extractionPayload.refinePass = true;
-        await updateExtractionSettings.mutateAsync(extractionPayload as any);
+        const savedExtractionSettings = await updateExtractionSettings.mutateAsync(extractionPayload as any);
+        qc.setQueryData(longTermMemoryKeys.extractionSettings(), savedExtractionSettings);
       }
       setDirty(false);
       setSavedFlash(true);
@@ -1367,6 +1495,7 @@ export function AgentEditor() {
     updateAgent,
     updateExtractionSettings,
     createAgent,
+    qc,
     openAgentDetail,
     normalizeTextConnectionOverride,
     normalizeImageConnectionOverride,
@@ -1512,6 +1641,20 @@ export function AgentEditor() {
       markDirty();
     },
     [markDirty],
+  );
+
+  const updateLtmRecallDraft = useCallback(
+    (patch: Partial<RecallSettingsValues>) => {
+      setLtmRecallDraft((current) => {
+        if (!current) return current;
+        const next = createLtmRecallDraft({ ...current, ...patch });
+        ltmRecallRevisionRef.current += 1;
+        ltmRecallHasLocalEditsRef.current = true;
+        debouncedPatchGlobal(next);
+        return next;
+      });
+    },
+    [debouncedPatchGlobal],
   );
   const handleLtmPromptDraftDirtyChange = useCallback(
     (nextDirty: boolean) => {
@@ -3879,48 +4022,56 @@ export function AgentEditor() {
                 label="Recall defaults"
                 icon={<BrainCircuit size="0.875rem" className="text-[var(--primary)]" />}
               >
-                <RecallStylePresets
-                  values={{ longTermMemoryRecallStyle: ltmGlobalSettings?.longTermMemoryRecallStyle ?? "balanced" }}
-                  onChange={(patch) => debouncedPatchGlobal(patch)}
-                />
-                <RecallBudgetControls
-                  values={{
-                    longTermMemoryBudgetTokens: ltmGlobalSettings?.longTermMemoryBudgetTokens ?? 4096,
-                    longTermMemoryMaxChunks: ltmGlobalSettings?.longTermMemoryMaxChunks ?? 20,
-                  }}
-                  onChange={(patch) => debouncedPatchGlobal(patch)}
-                />
-                <FieldGroup
-                  label="Advanced recall"
-                  collapsible
-                  expanded={recallAdvancedOpen}
-                  onExpandedChange={setRecallAdvancedOpen}
-                >
-                  <RecallThresholdControls
-                    values={{
-                      longTermMemoryScoreThreshold: ltmGlobalSettings?.longTermMemoryScoreThreshold ?? 0,
-                      longTermMemoryRecallContextMessages: ltmGlobalSettings?.longTermMemoryRecallContextMessages ?? 4,
-                    }}
-                    onChange={(patch) => debouncedPatchGlobal(patch)}
-                  />
-                  <RecallRankingWeights
-                    values={{
-                      longTermMemoryRecallStyle: ltmGlobalSettings?.longTermMemoryRecallStyle ?? "balanced",
-                      longTermMemorySemanticWeight: ltmGlobalSettings?.longTermMemorySemanticWeight ?? null,
-                      longTermMemoryLexicalWeight: ltmGlobalSettings?.longTermMemoryLexicalWeight ?? null,
-                      longTermMemoryGraphWeight: ltmGlobalSettings?.longTermMemoryGraphWeight ?? null,
-                      longTermMemoryKeywordWeight: ltmGlobalSettings?.longTermMemoryKeywordWeight ?? null,
-                    }}
-                    onChange={(patch) => debouncedPatchGlobal(patch)}
-                  />
-                  <RecallToggles
-                    values={{
-                      longTermMemoryIncludeResolved: ltmGlobalSettings?.longTermMemoryIncludeResolved ?? false,
-                      longTermMemoryDebug: ltmGlobalSettings?.longTermMemoryDebug ?? false,
-                    }}
-                    onChange={(patch) => debouncedPatchGlobal(patch)}
-                  />
-                </FieldGroup>
+                {ltmRecallDraft ? (
+                  <>
+                    <RecallStylePresets
+                      values={{ longTermMemoryRecallStyle: ltmRecallDraft.longTermMemoryRecallStyle }}
+                      onChange={updateLtmRecallDraft}
+                    />
+                    <RecallBudgetControls
+                      values={{
+                        longTermMemoryBudgetTokens: ltmRecallDraft.longTermMemoryBudgetTokens,
+                        longTermMemoryMaxChunks: ltmRecallDraft.longTermMemoryMaxChunks,
+                      }}
+                      onChange={updateLtmRecallDraft}
+                    />
+                    <FieldGroup
+                      label="Advanced recall"
+                      collapsible
+                      expanded={recallAdvancedOpen}
+                      onExpandedChange={setRecallAdvancedOpen}
+                    >
+                      <RecallThresholdControls
+                        values={{
+                          longTermMemoryScoreThreshold: ltmRecallDraft.longTermMemoryScoreThreshold,
+                          longTermMemoryRecallContextMessages: ltmRecallDraft.longTermMemoryRecallContextMessages,
+                        }}
+                        onChange={updateLtmRecallDraft}
+                      />
+                      <RecallRankingWeights
+                        values={{
+                          longTermMemoryRecallStyle: ltmRecallDraft.longTermMemoryRecallStyle,
+                          longTermMemorySemanticWeight: ltmRecallDraft.longTermMemorySemanticWeight,
+                          longTermMemoryLexicalWeight: ltmRecallDraft.longTermMemoryLexicalWeight,
+                          longTermMemoryGraphWeight: ltmRecallDraft.longTermMemoryGraphWeight,
+                          longTermMemoryKeywordWeight: ltmRecallDraft.longTermMemoryKeywordWeight,
+                        }}
+                        onChange={updateLtmRecallDraft}
+                      />
+                      <RecallToggles
+                        values={{
+                          longTermMemoryIncludeResolved: ltmRecallDraft.longTermMemoryIncludeResolved,
+                          longTermMemoryDebug: ltmRecallDraft.longTermMemoryDebug,
+                        }}
+                        onChange={updateLtmRecallDraft}
+                      />
+                    </FieldGroup>
+                  </>
+                ) : (
+                  <p className="rounded-xl bg-[var(--secondary)]/60 px-3 py-2 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                    Loading recall defaults...
+                  </p>
+                )}
               </FieldGroup>
               <FieldGroup
                 label="Advanced"

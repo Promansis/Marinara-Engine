@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Info, RotateCcw } from "lucide-react";
 import { LTM_RECALL_STYLE_WEIGHTS } from "@marinara-engine/shared";
 import { cn } from "../../lib/utils";
@@ -63,6 +63,85 @@ function SettingGroup({ label, children }: { label: string; children: ReactNode 
       <div className="mb-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">{label}</div>
       {children}
     </div>
+  );
+}
+
+function parseDraftNumber(value: string, integer: boolean) {
+  if (!value.trim()) return null;
+  const parsed = integer ? parseInt(value, 10) : Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return integer ? Math.trunc(parsed) : parsed;
+}
+
+function clampDraftNumber(value: number, min: number, max: number, integer: boolean) {
+  const normalized = integer ? Math.trunc(value) : value;
+  return Math.max(min, Math.min(max, normalized));
+}
+
+function DraftNumberInput({
+  value,
+  min,
+  max,
+  step,
+  integer = false,
+  className,
+  onChange,
+}: {
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  integer?: boolean;
+  className: string;
+  onChange: (value: number) => void;
+}) {
+  const [focused, setFocused] = useState(false);
+  const [draft, setDraft] = useState(String(value));
+
+  useEffect(() => {
+    if (!focused) setDraft(String(value));
+  }, [focused, value]);
+
+  const commit = useCallback(
+    (rawValue: string, mode: "valid-only" | "clamp") => {
+      const parsed = parseDraftNumber(rawValue, integer);
+      if (parsed === null) {
+        if (mode === "clamp") setDraft(String(value));
+        return;
+      }
+      if (mode === "valid-only") {
+        if (parsed >= min && parsed <= max) onChange(parsed);
+        return;
+      }
+      const next = clampDraftNumber(parsed, min, max, integer);
+      setDraft(String(next));
+      onChange(next);
+    },
+    [integer, max, min, onChange, value],
+  );
+
+  return (
+    <input
+      type="number"
+      min={min}
+      max={max}
+      step={step}
+      value={focused ? draft : value}
+      onFocus={() => {
+        setFocused(true);
+        setDraft(String(value));
+      }}
+      onChange={(event) => {
+        const next = event.target.value;
+        setDraft(next);
+        commit(next, "valid-only");
+      }}
+      onBlur={() => {
+        setFocused(false);
+        commit(draft, "clamp");
+      }}
+      className={className}
+    />
   );
 }
 
@@ -137,25 +216,25 @@ export function RecallBudgetControls({
             onChange={(event) => onChange({ longTermMemoryBudgetTokens: Number(event.target.value) })}
             className="min-w-0 accent-[var(--primary)]"
           />
-          <input
-            type="number"
+          <DraftNumberInput
             min={128}
             max={16384}
             step={128}
+            integer
             value={budgetTokens}
-            onChange={(event) => onChange({ longTermMemoryBudgetTokens: Number(event.target.value) })}
+            onChange={(value) => onChange({ longTermMemoryBudgetTokens: value })}
             className={compactInputClassName}
           />
         </div>
       </SettingField>
       <SettingField label="Max memories">
-        <input
-          type="number"
+        <DraftNumberInput
           min={1}
           max={100}
           step={1}
+          integer
           value={maxChunks}
-          onChange={(event) => onChange({ longTermMemoryMaxChunks: Number(event.target.value) })}
+          onChange={(value) => onChange({ longTermMemoryMaxChunks: value })}
           className={compactInputClassName}
         />
       </SettingField>
@@ -175,13 +254,13 @@ export function RecallThresholdControls({
   return (
     <>
       <SettingField label="Context messages">
-        <input
-          type="number"
+        <DraftNumberInput
           min={1}
           max={20}
           step={1}
+          integer
           value={contextMessages}
-          onChange={(event) => onChange({ longTermMemoryRecallContextMessages: Number(event.target.value) })}
+          onChange={(value) => onChange({ longTermMemoryRecallContextMessages: value })}
           className={compactInputClassName}
         />
       </SettingField>
@@ -197,13 +276,12 @@ export function RecallThresholdControls({
             onChange={(event) => onChange({ longTermMemoryScoreThreshold: Number(event.target.value) })}
             className="min-w-0 accent-[var(--primary)]"
           />
-          <input
-            type="number"
+          <DraftNumberInput
             min={0}
             max={1}
             step={0.05}
             value={scoreThreshold}
-            onChange={(event) => onChange({ longTermMemoryScoreThreshold: Number(event.target.value) })}
+            onChange={(value) => onChange({ longTermMemoryScoreThreshold: value })}
             className={compactInputClassName}
           />
         </div>
@@ -257,13 +335,12 @@ export function RecallRankingWeights({
               onChange={(event) => onChange({ [item.key]: Number(event.target.value) })}
               className="min-w-0 accent-[var(--primary)]"
             />
-            <input
-              type="number"
+            <DraftNumberInput
               min={LTM_WEIGHT_MIN}
               max={item.max}
               step={LTM_WEIGHT_STEP}
               value={item.value}
-              onChange={(event) => onChange({ [item.key]: Number(event.target.value) })}
+              onChange={(value) => onChange({ [item.key]: value })}
               className={compactInputClassName}
             />
           </div>
@@ -316,13 +393,12 @@ export function useDebouncedRecallSettings(onChange: (patch: Partial<RecallSetti
   }, []);
 
   const debouncedOnChange = useCallback(
-    (patch: Partial<RecallSettingsValues>) => {
+    (values: Partial<RecallSettingsValues>) => {
       if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => onChange(patch), delay);
+      timerRef.current = setTimeout(() => onChange(values), delay);
     },
     [onChange, delay],
   );
 
   return debouncedOnChange;
 }
-

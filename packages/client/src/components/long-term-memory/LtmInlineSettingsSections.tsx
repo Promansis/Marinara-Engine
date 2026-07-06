@@ -55,6 +55,89 @@ function createPromptName(mode: LtmMode, templates: readonly PromptTemplate[]) {
   return `${base} ${suffix}`;
 }
 
+function parseDraftNumber(value: string, integer: boolean) {
+  if (!value.trim()) return null;
+  const parsed = integer ? parseInt(value, 10) : Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return integer ? Math.trunc(parsed) : parsed;
+}
+
+function clampDraftNumber(value: number, min: number, max: number, integer: boolean) {
+  const normalized = integer ? Math.trunc(value) : value;
+  return Math.max(min, Math.min(max, normalized));
+}
+
+const ltmNumberInputClassName =
+  "w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]";
+
+function LtmDraftNumberInput({
+  value,
+  min,
+  max,
+  step,
+  integer = false,
+  placeholder,
+  onChange,
+}: {
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  integer?: boolean;
+  placeholder?: string;
+  onChange: (value: number) => void;
+}) {
+  const [focused, setFocused] = useState(false);
+  const [draft, setDraft] = useState(String(value));
+
+  useEffect(() => {
+    if (!focused) setDraft(String(value));
+  }, [focused, value]);
+
+  const commit = useCallback(
+    (rawValue: string, mode: "valid-only" | "clamp") => {
+      const parsed = parseDraftNumber(rawValue, integer);
+      if (parsed === null) {
+        if (mode === "clamp") setDraft(String(value));
+        return;
+      }
+      if (mode === "valid-only") {
+        if (parsed >= min && parsed <= max) onChange(parsed);
+        return;
+      }
+      const next = clampDraftNumber(parsed, min, max, integer);
+      setDraft(String(next));
+      onChange(next);
+    },
+    [integer, max, min, onChange, value],
+  );
+
+  return (
+    <input
+      type="number"
+      min={min}
+      max={max}
+      step={step}
+      value={focused ? draft : value}
+      placeholder={placeholder}
+      onFocus={() => {
+        setFocused(true);
+        setDraft(String(value));
+      }}
+      onChange={(event) => {
+        const next = event.target.value;
+        setDraft(next);
+        commit(next, "valid-only");
+      }}
+      onBlur={() => {
+        setFocused(false);
+        commit(draft, "clamp");
+      }}
+      className={ltmNumberInputClassName}
+    />
+  );
+}
+
 /* ── Extraction Connection Section ── */
 
 export function LtmExtractionConnectionSection({
@@ -437,32 +520,26 @@ export default function LtmInlineSettingsSections({
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="flex flex-col gap-1.5">
             <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Max AI response length</span>
-            <input
-              type="number"
+            <LtmDraftNumberInput
               min={512}
               max={32768}
+              integer
               value={extractionSettings.maxOutputTokens}
-              onChange={(e) =>
-                onChangeExtraction({ maxOutputTokens: Math.max(512, Math.min(32768, parseInt(e.target.value) || 0)) })
-              }
+              onChange={(value) => onChangeExtraction({ maxOutputTokens: value })}
               placeholder={String(DEFAULT_LTM_EXTRACTION_MAX_TOKENS)}
-              className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
             />
           </label>
           <label className="flex flex-col gap-1.5">
             <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
               How much text the AI reads at once
             </span>
-            <input
-              type="number"
+            <LtmDraftNumberInput
               min={128}
               max={65536}
+              integer
               value={extractionSettings.maxSourceTokens}
-              onChange={(e) =>
-                onChangeExtraction({ maxSourceTokens: Math.max(128, Math.min(65536, parseInt(e.target.value) || 0)) })
-              }
+              onChange={(value) => onChangeExtraction({ maxSourceTokens: value })}
               placeholder={String(DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS)}
-              className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
             />
           </label>
         </div>
@@ -502,67 +579,50 @@ export default function LtmInlineSettingsSections({
           </label>
           <label className="flex flex-col gap-1.5">
             <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Temperature</span>
-            <input
-              type="number"
+            <LtmDraftNumberInput
               min={0}
               max={2}
               step={0.1}
               value={extractionSettings.temperature}
-              onChange={(e) =>
-                onChangeExtraction({ temperature: Math.max(0, Math.min(2, Number(e.target.value) || 0)) })
-              }
+              onChange={(value) => onChangeExtraction({ temperature: value })}
               placeholder={String(DEFAULT_LTM_EXTRACTION_TEMPERATURE)}
-              className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
             />
           </label>
           <label className="flex flex-col gap-1.5">
             <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Max existing-note text</span>
-            <input
-              type="number"
+            <LtmDraftNumberInput
               min={128}
               max={32768}
+              integer
               value={extractionSettings.maxExistingNoteTokens}
-              onChange={(e) =>
-                onChangeExtraction({
-                  maxExistingNoteTokens: Math.max(128, Math.min(32768, parseInt(e.target.value) || 0)),
-                })
-              }
+              onChange={(value) => onChangeExtraction({ maxExistingNoteTokens: value })}
               placeholder={String(DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS)}
-              className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
             />
           </label>
           <label className="flex flex-col gap-1.5">
             <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
               Existing-note max chunks
             </span>
-            <input
-              type="number"
+            <LtmDraftNumberInput
               min={1}
               max={100}
+              integer
               value={extractionSettings.existingNoteMaxChunks}
-              onChange={(e) =>
-                onChangeExtraction({ existingNoteMaxChunks: Math.max(1, Math.min(100, parseInt(e.target.value) || 0)) })
-              }
+              onChange={(value) => onChangeExtraction({ existingNoteMaxChunks: value })}
               placeholder={String(DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS)}
-              className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
             />
           </label>
           <label className="flex flex-col gap-1.5">
             <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
               Existing-note max tokens
             </span>
-            <input
-              type="number"
+            <LtmDraftNumberInput
               min={128}
               max={16384}
+              integer
               value={extractionSettings.existingNoteMaxTokens}
-              onChange={(e) =>
-                onChangeExtraction({
-                  existingNoteMaxTokens: Math.max(128, Math.min(16384, parseInt(e.target.value) || 0)),
-                })
-              }
+              onChange={(value) => onChangeExtraction({ existingNoteMaxTokens: value })}
               placeholder={String(DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS)}
-              className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm tabular-nums ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
             />
           </label>
         </div>
