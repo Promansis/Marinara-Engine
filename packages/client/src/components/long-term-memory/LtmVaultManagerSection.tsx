@@ -7,7 +7,6 @@ import {
   Copy,
   Eye,
   FileJson,
-  History,
   Import,
   Loader2,
   Plus,
@@ -55,7 +54,7 @@ import {
   CreateLongTermMemoryNoteForm,
   type CreateLongTermMemoryNoteDraft,
 } from "../long-term-memory/CreateLongTermMemoryNoteForm";
-import { LongTermMemoryDebugLogModal } from "../long-term-memory/LongTermMemoryDebugLogModal";
+import { LongTermMemoryDebugLogPanel } from "../long-term-memory/LongTermMemoryDebugLogModal";
 import { MemoryNoteModal, defaultMemoryModalTab } from "../long-term-memory/LongTermMemoryNoteModal";
 import { TypeMemoryGroups } from "../long-term-memory/LongTermMemoryNoteList";
 import { ImportPreviewRowItem } from "../long-term-memory/LongTermMemoryImportSection";
@@ -138,7 +137,7 @@ type RemovableLtmScope = {
 interface LtmVaultManagerSectionProps {
   agentConfig: AgentConfigRow;
   agentSettings: Record<string, unknown>;
-  initialTab?: "notes" | "import" | "review" | "suggestions";
+  initialTab?: TabId | "suggestions";
   sourceNoteId?: string;
 }
 
@@ -243,7 +242,13 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   );
 
   const initialTabId: TabId =
-    initialTab === "review" ? "review" : initialTab === "import" ? "import" : "notes";
+    initialTab === "review"
+      ? "review"
+      : initialTab === "import"
+        ? "import"
+        : initialTab === "debug"
+          ? "debug"
+          : "notes";
   const [tab, setTab] = useState<TabId>(initialTabId);
   const [noteType, setNoteType] = useState<"all" | LtmNoteType>("all");
   const [noteStatus, setNoteStatus] = useState<"all" | LtmStatus>("all");
@@ -253,7 +258,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const [selectedImportRows, setSelectedImportRows] = useState<Set<string>>(() => new Set());
   const [activeImportIds, setActiveImportIds] = useState<Set<string>>(() => new Set());
   const [importedRowsOpen, setImportedRowsOpen] = useState(false);
-  const [debugLogOpen, setDebugLogOpen] = useState(false);
   const [creatingNote, setCreatingNote] = useState(false);
   const [createNoteDraft, setCreateNoteDraft] = useState<CreateLongTermMemoryNoteDraft | null>(null);
   const [createNoteDirty, setCreateNoteDirty] = useState(false);
@@ -1211,32 +1215,21 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   return (
     <div className="flex min-h-full flex-col gap-3 p-3 text-[var(--foreground)]">
       <div className="sticky top-0 z-10 -mx-3 bg-[var(--background)]/95 px-3 py-2 backdrop-blur-sm">
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-          <div className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--secondary)]/35 p-1 ring-1 ring-[var(--border)]/80">
-            {(["notes", "import", "review"] as TabId[]).map((id) => (
-              <button
-                key={id}
-                onClick={() => setTabWithGuards(id)}
-                className={cn(
-                  "min-w-0 truncate rounded-lg px-2 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60",
-                  tab === id
-                    ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
-                    : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                )}
-              >
-                {TAB_LABELS[id]}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={() => setDebugLogOpen(true)}
-            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
-            aria-label="Open memory debug log"
-            title="Debug log"
-          >
-            <History size="0.875rem" />
-          </button>
+        <div className="grid grid-cols-4 gap-1 rounded-xl bg-[var(--secondary)]/35 p-1 ring-1 ring-[var(--border)]/80">
+          {(["notes", "import", "review", "debug"] as TabId[]).map((id) => (
+            <button
+              key={id}
+              onClick={() => setTabWithGuards(id)}
+              className={cn(
+                "min-w-0 truncate rounded-lg px-2 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60",
+                tab === id
+                  ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
+                  : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+              )}
+            >
+              {TAB_LABELS[id]}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -1710,6 +1703,12 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
         </Section>
       )}
 
+      {tab === "debug" && (
+        <Section title="Debug">
+          <LongTermMemoryDebugLogPanel />
+        </Section>
+      )}
+
       <Modal
         open={creatingNote}
         onClose={() => {
@@ -1778,7 +1777,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
         onRecoverDroppedCandidate={openRecoveryDraft}
       />
 
-      <LongTermMemoryDebugLogModal open={debugLogOpen} onClose={() => setDebugLogOpen(false)} />
       <LongTermMemoryNoteTransferModal
         open={transferModalMode !== null}
         mode={transferModalMode ?? "copy"}

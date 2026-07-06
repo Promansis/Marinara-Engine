@@ -20,7 +20,7 @@ import { StatusPill } from "./LtmPills";
 
 // ── Types ──────────────────────────────────────
 
-export type TabId = "notes" | "import" | "review";
+export type TabId = "notes" | "import" | "review" | "debug";
 export type MemoryModalMode = "view" | "edit";
 export type MemoryModalTab = "overview" | "content" | "links" | "recall" | "suggestions";
 export type LtmRecallStyle = "balanced" | "exact" | "broad" | "story";
@@ -71,6 +71,7 @@ export const TAB_LABELS: Record<TabId, string> = {
   notes: "Memories",
   import: "Import",
   review: "Review",
+  debug: "Debug",
 };
 
 export const LTM_GLOBAL_SETTINGS_MIGRATION_KEY = "ltm:global-settings-migrated:v1";

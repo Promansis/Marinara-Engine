@@ -19,8 +19,7 @@ import {
   useExportLongTermMemoryDebugLog,
   useLongTermMemoryDebugLog,
 } from "../../hooks/use-long-term-memory";
-import { Modal } from "../ui/Modal";
-import { helperTextClassName, modalIntroCardClassName, sectionCardClassName } from "./LtmFields";
+import { helperTextClassName, panelIntroCardClassName, sectionCardClassName } from "./LtmFields";
 import { StatusPill, ToolButton } from "./LtmPills";
 import { labelLtmTier, labelRejectionReason, summarizeLtmCandidateSignals } from "./ltm-debug-utils";
 
@@ -619,7 +618,7 @@ function OperationDrawer({ summary, defaultOpen }: { summary: OperationSummary; 
   );
 }
 
-export function LongTermMemoryDebugLogModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function LongTermMemoryDebugLogPanel() {
   const [phase, setPhase] = useState<(typeof PHASE_FILTERS)[number]>("all");
   const filter = useMemo(
     () => ({
@@ -629,7 +628,7 @@ export function LongTermMemoryDebugLogModal({ open, onClose }: { open: boolean; 
     }),
     [phase],
   );
-  const log = useLongTermMemoryDebugLog(filter, { enabled: open });
+  const log = useLongTermMemoryDebugLog(filter);
   const clearLog = useClearLongTermMemoryDebugLog();
   const exportLog = useExportLongTermMemoryDebugLog();
   const events = log.data?.events ?? EMPTY_EVENTS;
@@ -664,85 +663,83 @@ export function LongTermMemoryDebugLogModal({ open, onClose }: { open: boolean; 
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="LTM Debug Log" width="max-w-5xl">
-      <div className="space-y-3">
-        <div className={modalIntroCardClassName}>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold text-[var(--foreground)]">Memory operations timeline</span>
-            <StatusPill label={`${grouped.length} operation${grouped.length === 1 ? "" : "s"}`} />
-          </div>
-          <p className={cn("mt-2", helperTextClassName)}>
-            Review imports, extraction, injection, rebuilds, and failures without leaving the memory workflow.
-          </p>
+    <div className="space-y-3">
+      <div className={panelIntroCardClassName}>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold text-[var(--foreground)]">Memory operations timeline</span>
+          <StatusPill label={`${grouped.length} operation${grouped.length === 1 ? "" : "s"}`} />
         </div>
+        <p className={cn("mt-2", helperTextClassName)}>
+          Review imports, extraction, injection, rebuilds, and failures without leaving the memory workflow.
+        </p>
+      </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <select
-            value={phase}
-            onChange={(event) => setPhase(event.target.value as (typeof PHASE_FILTERS)[number])}
-            className="min-h-8 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] focus:ring-[var(--primary)]"
-            aria-label="Filter debug log phase"
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <select
+          value={phase}
+          onChange={(event) => setPhase(event.target.value as (typeof PHASE_FILTERS)[number])}
+          className="min-h-8 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] focus:ring-[var(--primary)]"
+          aria-label="Filter debug log phase"
+        >
+          {PHASE_FILTERS.map((item) => (
+            <option key={item} value={item}>
+              {item === "all" ? "All events" : item === "errors" ? "Errors only" : phaseLabel(item)}
+            </option>
+          ))}
+        </select>
+        <div className="flex flex-wrap items-center gap-2">
+          <ToolButton onClick={() => log.refetch()} disabled={log.isFetching}>
+            {log.isFetching ? <Loader2 size="0.875rem" className="animate-spin" /> : <RefreshCw size="0.875rem" />}
+            Refresh
+          </ToolButton>
+          <ToolButton onClick={copyVisible} disabled={events.length === 0}>
+            <Clipboard size="0.875rem" />
+            Copy
+          </ToolButton>
+          <ToolButton
+            onClick={() => exportLog.mutate(undefined, { onError: (err) => toast.error((err as Error).message) })}
+            disabled={exportLog.isPending}
           >
-            {PHASE_FILTERS.map((item) => (
-              <option key={item} value={item}>
-                {item === "all" ? "All events" : item === "errors" ? "Errors only" : phaseLabel(item)}
-              </option>
-            ))}
-          </select>
-          <div className="flex flex-wrap items-center gap-2">
-            <ToolButton onClick={() => log.refetch()} disabled={log.isFetching}>
-              {log.isFetching ? <Loader2 size="0.875rem" className="animate-spin" /> : <RefreshCw size="0.875rem" />}
-              Refresh
-            </ToolButton>
-            <ToolButton onClick={copyVisible} disabled={events.length === 0}>
-              <Clipboard size="0.875rem" />
-              Copy
-            </ToolButton>
-            <ToolButton
-              onClick={() => exportLog.mutate(undefined, { onError: (err) => toast.error((err as Error).message) })}
-              disabled={exportLog.isPending}
-            >
-              {exportLog.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Download size="0.875rem" />}
-              Export
-            </ToolButton>
-            <ToolButton onClick={clearVisible} disabled={clearLog.isPending} tone="danger">
-              {clearLog.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Trash2 size="0.875rem" />}
-              Clear
-            </ToolButton>
-          </div>
-        </div>
-
-        <div className={cn(sectionCardClassName, "p-2")}>
-          {log.isLoading ? (
-            <div className="space-y-2">
-              {[0, 1, 2, 3].map((item) => (
-                <div key={item} className="h-16 animate-pulse rounded-lg bg-[var(--muted)]/45" />
-              ))}
-            </div>
-          ) : events.length === 0 ? (
-            <div className="flex min-h-44 flex-col items-center justify-center gap-2 text-center text-[var(--muted-foreground)]">
-              <Bug size="1.25rem" />
-              <div className="text-sm font-medium text-[var(--foreground)]">No LTM debug events yet.</div>
-              <div className="max-w-md text-xs leading-relaxed">
-                Import a source, run extraction, accept a suggestion, or rebuild indexes to populate this timeline.
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {grouped.map((summary, index) => (
-                <OperationDrawer
-                  key={summary.operationId}
-                  summary={summary}
-                  defaultOpen={
-                    summary.operationId === latestAlertOperationId ||
-                    (latestAlertOperationId === undefined && index === 0 && summary.finalStatus !== "ok")
-                  }
-                />
-              ))}
-            </div>
-          )}
+            {exportLog.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Download size="0.875rem" />}
+            Export
+          </ToolButton>
+          <ToolButton onClick={clearVisible} disabled={clearLog.isPending} tone="danger">
+            {clearLog.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Trash2 size="0.875rem" />}
+            Clear
+          </ToolButton>
         </div>
       </div>
-    </Modal>
+
+      <div className={cn(sectionCardClassName, "p-2")}>
+        {log.isLoading ? (
+          <div className="space-y-2">
+            {[0, 1, 2, 3].map((item) => (
+              <div key={item} className="h-16 animate-pulse rounded-lg bg-[var(--muted)]/45" />
+            ))}
+          </div>
+        ) : events.length === 0 ? (
+          <div className="flex min-h-44 flex-col items-center justify-center gap-2 text-center text-[var(--muted-foreground)]">
+            <Bug size="1.25rem" />
+            <div className="text-sm font-medium text-[var(--foreground)]">No LTM debug events yet.</div>
+            <div className="max-w-md text-xs leading-relaxed">
+              Import a source, run extraction, accept a suggestion, or rebuild indexes to populate this timeline.
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {grouped.map((summary, index) => (
+              <OperationDrawer
+                key={summary.operationId}
+                summary={summary}
+                defaultOpen={
+                  summary.operationId === latestAlertOperationId ||
+                  (latestAlertOperationId === undefined && index === 0 && summary.finalStatus !== "ok")
+                }
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
