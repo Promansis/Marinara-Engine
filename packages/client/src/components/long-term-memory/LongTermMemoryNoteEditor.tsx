@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Check, Loader2, Pencil, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
+import { Check, Loader2, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
 import {
   getLtmScopeChatIds,
   isLtmSourceLikeNote,
@@ -21,7 +21,6 @@ import {
 import { useChat } from "../../hooks/use-chats";
 import { cn } from "../../lib/utils";
 import { useChatStore } from "../../stores/chat.store";
-import { FloatingMessageEditor } from "../chat/FloatingMessageEditor";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import {
   actionRowClassName,
@@ -30,6 +29,7 @@ import {
   insetSectionCardClassName,
   sectionCardClassName,
   SettingField,
+  textareaClassName,
 } from "./LtmFields";
 import { LtmScopePicker } from "./LtmScopePicker";
 import { LongTermMemorySuggestionsTab } from "./LongTermMemorySuggestionsTab";
@@ -142,7 +142,6 @@ export function LongTermMemoryNoteEditor({
   const [tagsText, setTagsText] = useState(note.tags.join(", "));
   const [keywordsText, setKeywordsText] = useState(note.keywords.join(", "));
   const [linkDraft, setLinkDraft] = useState<LinkDraft>({ target: "", relation: "", aspect: "" });
-  const [floatingSectionKey, setFloatingSectionKey] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"details" | "suggestions">("details");
   const [latestExtractionResult, setLatestExtractionResult] = useState<LongTermMemoryLatestExtractionResult | null>(null);
   const updateNote = useUpdateLongTermMemoryNote();
@@ -333,7 +332,6 @@ export function LongTermMemoryNoteEditor({
     }
   };
 
-  const floatingSection = floatingSectionKey ? draft.sections[floatingSectionKey] : null;
   const [advancedEvidenceKey, setAdvancedEvidenceKey] = useState<string | null>(null);
   const [advancedEvidenceValue, setAdvancedEvidenceValue] = useState("");
 
@@ -596,24 +594,22 @@ export function LongTermMemoryNoteEditor({
                   <Trash2 size="0.875rem" />
                 </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setFloatingSectionKey(key)}
-                className="group/summary flex min-h-28 w-full flex-col rounded-xl bg-[var(--background)] px-3 py-3 text-left text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/45 focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
-              >
-                <span className="mb-2 inline-flex items-center gap-1.5 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                  <Pencil size="0.75rem" />
-                  Edit memory text
+              <label className="block">
+                <span className="mb-1 inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                  Memory Text
                 </span>
-                <span
-                  className={cn(
-                    "line-clamp-4 whitespace-pre-wrap",
-                    !section.text.trim() && "text-[var(--muted-foreground)]/70",
-                  )}
-                >
-                  {section.text.trim() || "No memory text yet."}
-                </span>
-              </button>
+                <textarea
+                  value={section.text}
+                  onChange={(event) =>
+                    setSection(key, (current) => ({
+                      ...current,
+                      text: event.target.value,
+                    }))
+                  }
+                  placeholder="No memory text yet."
+                  className={cn(textareaClassName, "min-h-28")}
+                />
+              </label>
               <div className="mt-3 grid gap-2 sm:grid-cols-3">
                 <label className="block">
                   <span className="mb-1 inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
@@ -771,23 +767,6 @@ export function LongTermMemoryNoteEditor({
               </label>
             </section>
           ))}
-          {floatingSectionKey && floatingSection && (
-            <FloatingMessageEditor
-              open
-              title={`Edit ${friendlySectionKey(floatingSectionKey)}`}
-              initialContent={floatingSection.text}
-              fontSize={13}
-              showFormatting
-              onSave={(content) => {
-                setSection(floatingSectionKey, (current) => ({
-                  ...current,
-                  text: content,
-                }));
-                setFloatingSectionKey(null);
-              }}
-              onCancel={() => setFloatingSectionKey(null)}
-            />
-          )}
         </div>
 
         <div className={sectionCardClassName}>
