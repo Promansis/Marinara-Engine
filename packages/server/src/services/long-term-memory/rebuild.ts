@@ -6,7 +6,12 @@ import { isEnoent } from "./ltm-utils.js";
 import { embedMemoryRecallTexts, type MemoryRecallEmbeddingOptions } from "../memory-recall.js";
 import { writeJsonAtomic } from "./atomic-json.js";
 import { buildLtmBm25Index, type LtmBm25Index } from "./bm25.js";
-import { chunkNotes, stableJsonHash, type LtmMemoryChunk } from "./chunking.js";
+import {
+  CURRENT_LTM_CHUNK_FORMAT_VERSION,
+  chunkNotes,
+  stableJsonHash,
+  type LtmMemoryChunk,
+} from "./chunking.js";
 import { buildLtmGraphIndex, type LtmGraphIndex } from "./graph.js";
 import { buildLtmKeywordIndex, type LtmKeywordIndex } from "./keyword-index.js";
 import { buildLtmMetadataIndex, type LtmMetadataIndex } from "./metadata-index.js";
@@ -180,6 +185,7 @@ export async function rebuildLongTermMemoryIndexes(options: LtmRebuildOptions = 
   const sourceHash = stableJsonHash(sourceFiles);
   const manifest: LtmIndexMetadata = {
     version: 1,
+    chunkFormatVersion: CURRENT_LTM_CHUNK_FORMAT_VERSION,
     generatedAt,
     sourceHash,
     noteCount: notes.length,

@@ -723,6 +723,7 @@ export const ltmRetrievalConfigSchema = z.preprocess((value) => {
 export const ltmIndexMetadataSchema = z
   .object({
     version: z.literal(1),
+    chunkFormatVersion: z.number().int().min(1).optional(),
     generatedAt: ltmIsoTimestampSchema,
     sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
     noteCount: z.number().int().min(0),

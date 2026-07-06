@@ -6,8 +6,12 @@ import {
   type LtmScope,
   type LtmStatus,
   type LtmImportance,
+  type LtmRelationshipDimensionChanges,
+  type LtmRelationshipDimensions,
 } from "@marinara-engine/shared";
 import { extractNoteKeywords } from "./keyword-extract.js";
+
+export const CURRENT_LTM_CHUNK_FORMAT_VERSION = 2;
 
 export interface LtmMemoryChunk {
   id: string;
@@ -22,6 +26,8 @@ export interface LtmMemoryChunk {
   salience?: number;
   confidence?: number;
   importance?: LtmImportance;
+  dimensions?: LtmRelationshipDimensions;
+  dimensionChanges?: LtmRelationshipDimensionChanges;
   updatedAt: string;
   sourceHash: string;
 }
@@ -91,6 +97,8 @@ export function chunkNoteSections(note: LtmNote): LtmMemoryChunk[] {
           note.sections.observations?.confidence ?? 0,
         ),
         importance: note.sections.profile?.importance ?? note.sections.observations?.importance,
+        dimensions: section.dimensions,
+        dimensionChanges: section.dimensionChanges,
         updatedAt: note.sections.profile?.updatedAt ?? note.sections.observations?.updatedAt ?? "",
         sourceHash: stableJsonHash({
           noteId: note.id,
@@ -123,6 +131,8 @@ export function chunkNoteSections(note: LtmNote): LtmMemoryChunk[] {
         salience: section.salience,
         confidence: section.confidence,
         importance: section.importance,
+        dimensions: section.dimensions,
+        dimensionChanges: section.dimensionChanges,
         updatedAt: section.updatedAt,
         sourceHash: stableJsonHash({
           noteId: note.id,

@@ -1,4 +1,5 @@
-import { cleanLongTermMemoryChunkText, type LtmMemoryChunk } from "./chunking.js";
+import type { LtmMemoryChunk } from "./chunking.js";
+import { formatLtmChunkPromptText } from "./prompt-text.js";
 import type { LtmRankedCandidate } from "./ranking.js";
 
 export interface LtmBudgetedChunk {
@@ -60,7 +61,7 @@ function tierFor(chunk: LtmMemoryChunk): 1 | 2 | 3 {
 }
 
 function normalizedComparableText(chunk: LtmMemoryChunk) {
-  return cleanLongTermMemoryChunkText(chunk.text)
+  return formatLtmChunkPromptText(chunk)
     .replace(/\s+/g, " ")
     .trim()
     .toLocaleLowerCase();
@@ -86,7 +87,7 @@ function pushRejected(
     laneScores: candidate.laneScores,
     rawLaneScores: candidate.rawLaneScores,
     cooldownPenalty: candidate.cooldownPenalty,
-    estimatedTokens: chunk ? estimateTokens(cleanLongTermMemoryChunkText(chunk.text)) : undefined,
+    estimatedTokens: chunk ? estimateTokens(formatLtmChunkPromptText(chunk)) : undefined,
     rejectionReason: chunk ? rejectionReason : "missing_chunk",
   });
 }
@@ -139,7 +140,7 @@ export function applyLtmBudget(
       continue;
     }
 
-    const estimatedTokens = estimateTokens(cleanLongTermMemoryChunkText(chunk.text));
+    const estimatedTokens = estimateTokens(formatLtmChunkPromptText(chunk));
     if (usedTokens + estimatedTokens > options.maxTokens) {
       if (options.explain && rejected.length < rejectedLimit) {
         pushRejected(rejected, rejectedLimit, candidate, chunk, "budget");

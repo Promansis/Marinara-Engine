@@ -1,5 +1,5 @@
 import type { LtmBudgetedChunk } from "./budget.js";
-import { cleanLongTermMemoryChunkText } from "./chunking.js";
+import { formatLtmChunkPromptText } from "./prompt-text.js";
 import type { ChatMessage } from "../llm/base-provider.js";
 
 interface FormatLongTermMemoryBlockOptions {
@@ -23,7 +23,7 @@ export function formatLongTermMemoryBlock(chunks: LtmBudgetedChunk[], options?: 
   const groups = new Map<string, LtmBudgetedChunk[]>();
   const seenText = new Set<string>();
   for (const c of chunks) {
-    const text = cleanLongTermMemoryChunkText(c.chunk.text);
+    const text = formatLtmChunkPromptText(c.chunk);
     const comparable = normalizedPromptText(text);
     if (!comparable || seenText.has(comparable)) continue;
     seenText.add(comparable);
@@ -40,14 +40,7 @@ export function formatLongTermMemoryBlock(chunks: LtmBudgetedChunk[], options?: 
   for (const [label, items] of groups) {
     const lines = items
       .map((c) => {
-        const text = cleanLongTermMemoryChunkText(c.chunk.text);
-        if (!text) return "";
-        if (c.chunk.noteType === "thread") {
-          const tags = c.chunk.tags ?? [];
-          const questTag = tags.includes("quest") ? " quest" : "";
-          return `${text} [${c.chunk.status}${questTag}]`;
-        }
-        return text;
+        return formatLtmChunkPromptText(c.chunk);
       })
       .filter(Boolean);
     if (lines.length > 0) {

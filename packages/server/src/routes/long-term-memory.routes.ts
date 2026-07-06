@@ -470,6 +470,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
         sourceHash: manifest?.sourceHash ?? null,
         noteCount: manifest?.noteCount ?? null,
         chunkCount: manifest?.chunkCount ?? null,
+        chunkFormatVersion: manifest?.chunkFormatVersion ?? null,
         embeddingsAvailable: Boolean(embeddings?.embeddedChunkCount),
         embeddedChunkCount: embeddings?.embeddedChunkCount ?? 0,
       },

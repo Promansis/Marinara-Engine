@@ -36,7 +36,7 @@ import {
   vaultFolderForNoteType,
 } from "./paths.js";
 import { rebuildLongTermMemoryIndexes } from "./rebuild.js";
-import { stableJsonHash } from "./chunking.js";
+import { CURRENT_LTM_CHUNK_FORMAT_VERSION, stableJsonHash } from "./chunking.js";
 import { LongTermMemoryStorage } from "./storage.js";
 
 type IntegritySeverity = "info" | "warning" | "error";
@@ -346,6 +346,21 @@ async function checkIndexCoherence(
       code: "manifest_note_mismatch",
       path: relative(root, manifestPath),
       message: `Manifest reports ${manifest.noteCount} notes but vault has ${vaultNoteCount}.`,
+    });
+  }
+
+  if (manifest.chunkFormatVersion !== CURRENT_LTM_CHUNK_FORMAT_VERSION) {
+    issues.push({
+      severity: "warning",
+      code:
+        manifest.chunkFormatVersion === undefined
+          ? "manifest_chunk_format_missing"
+          : "manifest_chunk_format_stale",
+      path: relative(root, manifestPath),
+      message:
+        manifest.chunkFormatVersion === undefined
+          ? `Manifest is missing chunk format version ${CURRENT_LTM_CHUNK_FORMAT_VERSION}; rebuild indexes before relying on relationship score injection.`
+          : `Manifest chunk format version ${manifest.chunkFormatVersion} is stale; rebuild indexes for version ${CURRENT_LTM_CHUNK_FORMAT_VERSION}.`,
     });
   }
 

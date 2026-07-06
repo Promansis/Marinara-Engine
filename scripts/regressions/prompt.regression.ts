@@ -46,6 +46,13 @@ import { scanForActivatedEntries } from "../../packages/server/src/services/lore
 import { fitMessagesForModelAccess } from "../../packages/server/src/services/generation/model-access-policy.js";
 import { assemblePrompt, type AssemblerInput } from "../../packages/server/src/services/prompt/index.js";
 import { compileEvidenceUnitExtraction } from "../../packages/server/src/services/long-term-memory/evidence-unit-extraction.js";
+import { applyLtmBudget, type LtmBudgetedChunk } from "../../packages/server/src/services/long-term-memory/budget.js";
+import {
+  chunkNoteSections,
+  type LtmMemoryChunk,
+} from "../../packages/server/src/services/long-term-memory/chunking.js";
+import { formatLongTermMemoryBlock } from "../../packages/server/src/services/long-term-memory/prompt.js";
+import type { LtmRankedCandidate } from "../../packages/server/src/services/long-term-memory/ranking.js";
 
 type RegressionCase = {
   name: string;
@@ -78,6 +85,32 @@ const keywordOptions = {
   matchWholeWords: false,
   caseSensitive: false,
 };
+
+function regressionLtmChunk(
+  overrides: Pick<LtmMemoryChunk, "id" | "noteId" | "noteType" | "sectionKey" | "text"> &
+    Partial<LtmMemoryChunk>,
+): LtmMemoryChunk {
+  return {
+    status: "active",
+    scope: {},
+    tags: [],
+    keywords: [],
+    updatedAt: "2026-07-06T00:00:00.000Z",
+    sourceHash: "0".repeat(64),
+    ...overrides,
+  };
+}
+
+function regressionBudgetedChunk(chunk: LtmMemoryChunk, score = 1): LtmBudgetedChunk {
+  return {
+    chunk,
+    score,
+    reasons: ["regression"],
+    lanes: ["regression"],
+    tier: 3,
+    estimatedTokens: 1,
+  };
+}
 
 const cases: RegressionCase[] = [
   {
@@ -1282,6 +1315,11 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       assert.equal(byId.get("rel_lisa_damo")?.sections.state?.dimensionChanges?.trust, 5);
       assert.equal(byId.get("rel_lisa_damo")?.sections.state?.dimensionChanges?.tension, undefined);
       assert.equal(byId.get("rel_lisa_damo")?.links.some((link) => link.target === "timeline_reunion_foundry"), true);
+      const relationshipChunk = chunkNoteSections(byId.get("rel_lisa_damo")!).find(
+        (chunk) => chunk.sectionKey === "state",
+      );
+      assert.equal(relationshipChunk?.dimensions?.trust, 80);
+      assert.equal(relationshipChunk?.dimensionChanges?.trust, 5);
       assert.match(byId.get("thread_damo_first_day")?.sections.summary?.text ?? "", /Resolver: first day scene/);
       assert.match(byId.get("char_lisa_imai")?.sections.items?.text ?? "", /friendship bracelet/);
       assert.ok(byId.has("tone_session"));
@@ -1314,6 +1352,108 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
         .filter((mutation) => mutation.kind === "create_note" && mutation.note.type === "tone")
         .map((mutation) => mutation.note.id);
       assert.deepEqual(toneNoteIds, ["tone_session"]);
+    },
+  },
+  {
+    name: "LTM relationship prompt blocks include explicit relationship metadata",
+    run() {
+      const relationshipChunk = regressionLtmChunk({
+        id: "rel_alice_rowan::state",
+        noteId: "rel_alice_rowan",
+        noteType: "relationship",
+        sectionKey: "state",
+        text: "Alice and Rowan's trust is strained by the confession but not broken.",
+        dimensions: { trust: 38, tension: 72 },
+        dimensionChanges: { trust: -18, tension: 24 },
+      });
+      const deltaOnlyChunk = regressionLtmChunk({
+        id: "rel_alice_mira::state",
+        noteId: "rel_alice_mira",
+        noteType: "relationship",
+        sectionKey: "state",
+        text: "Alice is newly protective of Mira after the ambush.",
+        dimensionChanges: { protectiveness: 18 },
+      });
+      const plainRelationshipChunk = regressionLtmChunk({
+        id: "rel_alice_jules::state",
+        noteId: "rel_alice_jules",
+        noteType: "relationship",
+        sectionKey: "state",
+        text: "Alice and Jules keep their distance.",
+      });
+      const characterChunk = regressionLtmChunk({
+        id: "char_alice::facts",
+        noteId: "char_alice",
+        noteType: "character",
+        sectionKey: "facts",
+        text: "Alice hides worries behind practical jokes.",
+        dimensions: { trust: 99 },
+        dimensionChanges: { trust: 1 },
+      });
+
+      const block = formatLongTermMemoryBlock([
+        regressionBudgetedChunk(relationshipChunk),
+        regressionBudgetedChunk(deltaOnlyChunk),
+        regressionBudgetedChunk(plainRelationshipChunk),
+        regressionBudgetedChunk(characterChunk),
+      ]);
+
+      assert.match(
+        block,
+        /\[RELATIONSHIPS\]\nRelationship scores: trust 38\/100 \(-18\), tension 72\/100 \(\+24\)\nAlice and Rowan's trust is strained by the confession but not broken\./,
+      );
+      assert.match(
+        block,
+        /Relationship scores: protectiveness change \+18\nAlice is newly protective of Mira after the ambush\./,
+      );
+      assert.match(block, /Alice and Jules keep their distance\./);
+      assert.doesNotMatch(block, /intimacy 50\/100/);
+      assert.match(block, /\[CHARACTERS\]\nAlice hides worries behind practical jokes\./);
+      assert.doesNotMatch(block, /trust 99\/100/);
+    },
+  },
+  {
+    name: "LTM relationship metadata participates in budget text and exact-text dedupe",
+    run() {
+      const firstChunk = regressionLtmChunk({
+        id: "rel_alice_rowan::state",
+        noteId: "rel_alice_rowan",
+        noteType: "relationship",
+        sectionKey: "state",
+        text: "Their alliance is fragile.",
+        dimensions: { trust: 38 },
+      });
+      const secondChunk = regressionLtmChunk({
+        id: "rel_alice_mira::state",
+        noteId: "rel_alice_mira",
+        noteType: "relationship",
+        sectionKey: "state",
+        text: "Their alliance is fragile.",
+        dimensions: { tension: 72 },
+      });
+      const candidates: LtmRankedCandidate[] = [
+        { chunkId: firstChunk.id, score: 1, reasons: ["first"], lanes: ["test"] },
+        { chunkId: secondChunk.id, score: 0.9, reasons: ["second"], lanes: ["test"] },
+      ];
+
+      const result = applyLtmBudget(
+        candidates,
+        new Map([
+          [firstChunk.id, firstChunk],
+          [secondChunk.id, secondChunk],
+        ]),
+        {
+          maxChunks: 2,
+          maxTokens: 1_000,
+          dedupeExactText: true,
+        },
+      );
+
+      assert.deepEqual(
+        result.chunks.map((item) => item.chunk.id),
+        [firstChunk.id, secondChunk.id],
+      );
+      assert.ok(result.chunks[0]!.estimatedTokens > Math.ceil(firstChunk.text.length / 4));
     },
   },
 ];
