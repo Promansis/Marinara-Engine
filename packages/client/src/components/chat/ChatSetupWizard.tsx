@@ -34,6 +34,7 @@ import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
 import { api } from "../../lib/api-client";
+import { getAgentUiCategory } from "../../lib/agent-display";
 import { appendLocalSidecarConnectionOption } from "../../lib/connection-filters";
 import { getAgentRunIntervalMeta } from "../../lib/agent-cadence";
 import { getCharacterTitle, parseCharacterDisplayData } from "../../lib/character-display";
@@ -1629,7 +1630,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
           id: config.type,
           name: config.name,
           description: config.description,
-          category: "memory",
+          category: getAgentUiCategory(config.type),
           phase: normalizeAgentPhaseForType(config.type, config.phase),
           builtIn: false,
           managed: true,
@@ -1928,6 +1929,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
       updateMeta.mutate({
         id: chat.id,
         activeAgentIds: latestActiveAgentIds.filter((id) => id !== agentId),
+        ...(agentId === "long-term-memory" ? { enableLongTermMemory: false } : {}),
       });
       if (agentAddPreview?.agent.id === agentId) setAgentAddPreview(null);
     },
@@ -1980,6 +1982,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
         id: chat.id,
         enableAgents: true,
         activeAgentIds: Array.from(new Set([...readLatestActiveAgentIds(), agent.id])),
+        ...(agent.id === "long-term-memory" ? { enableLongTermMemory: true } : {}),
         ...buildAgentAddMetadataPatch(agent.id, setup, metadata, {
           allowSecretPlot: supportsNarrativeDirectorSecretPlot,
         }),
@@ -2333,6 +2336,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
               id: chat.id,
               enableAgents: !agentsEnabled,
               activeAgentIds: !agentsEnabled ? readLatestActiveAgentIds() : [],
+              ...(!agentsEnabled ? {} : { enableLongTermMemory: false }),
             })
           }
           className={cn(

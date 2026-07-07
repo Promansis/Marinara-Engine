@@ -166,6 +166,7 @@ import {
 import { FieldGroup } from "../agents/AgentEditor";
 import { useAgentStore } from "../../stores/agent.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
+import { getAgentUiCategory } from "../../lib/agent-display";
 import {
   BUILT_IN_AGENTS,
   BUILT_IN_TOOLS,
@@ -1162,7 +1163,7 @@ export function ChatSettingsDrawer({
               id: c.type,
               name: c.name,
               description: c.description,
-              category: "memory",
+              category: getAgentUiCategory(c.type),
               phase: normalizeAgentPhaseForType(c.type, c.phase),
               builtIn: false,
               managed: true,
@@ -1300,6 +1301,7 @@ export function ChatSettingsDrawer({
       : "standard";
   const agentWriteApprovalRequired = metadata.agentWriteApprovalRequired === true;
   const ltmActive = activeAgentIds.includes("long-term-memory");
+  const ltmRecallEnabled = ltmActive && metadata.enableLongTermMemory !== false;
   const knowledgeRetrievalActive = activeAgentIds.includes("knowledge-retrieval");
   const knowledgeRouterActive = activeAgentIds.includes("knowledge-router");
   const illustratorConfig = agentConfigsByType.get("illustrator");
@@ -1464,18 +1466,20 @@ export function ChatSettingsDrawer({
     useCallback((patch) => updateMeta.mutate({ id: chat.id, ...patch }), [updateMeta, chat.id]),
     400,
   );
-  const toggleLtmEnabled = useCallback(() => {
-    const enabling = metadata.enableLongTermMemory === false;
-    const nextActiveAgentIds = enabling
+  const setLtmAgentEnabled = useCallback((enabled: boolean) => {
+    const nextActiveAgentIds = enabled
       ? Array.from(new Set([...readLatestActiveAgentIds(), "long-term-memory"]))
       : readLatestActiveAgentIds().filter((id) => id !== "long-term-memory");
     updateMeta.mutate({
       id: chat.id,
-      enableLongTermMemory: enabling,
-      enableAgents: enabling ? true : undefined,
+      enableLongTermMemory: enabled,
+      enableAgents: enabled ? true : undefined,
       activeAgentIds: nextActiveAgentIds,
     });
-  }, [chat.id, metadata.enableLongTermMemory, readLatestActiveAgentIds, updateMeta]);
+  }, [chat.id, readLatestActiveAgentIds, updateMeta]);
+  const toggleLtmEnabled = useCallback(() => {
+    setLtmAgentEnabled(!ltmRecallEnabled);
+  }, [ltmRecallEnabled, setLtmAgentEnabled]);
   const refinePassEnabled =
     metadata.refinePass ?? ltmExtractionSettings.data?.refinePass ?? false;
   const getKnowledgeAgentSourceSettings = useCallback(
@@ -2120,6 +2124,11 @@ export function ChatSettingsDrawer({
   };
 
   const toggleAgent = async (agentId: string, options?: { skipDirectorRemovalWarning?: boolean }) => {
+    if (agentId === "long-term-memory") {
+      setLtmAgentEnabled(!readLatestActiveAgentIds().includes(agentId));
+      return;
+    }
+
     const wasRemoving = readLatestActiveAgentIds().includes(agentId);
     if (wasRemoving && agentId === "director" && !options?.skipDirectorRemovalWarning) {
       const warningMessage = await getNarrativeDirectorRemovalWarning();
@@ -2452,7 +2461,7 @@ export function ChatSettingsDrawer({
     () =>
       availableAgents.filter(
         (agent) =>
-          agent.builtIn &&
+          (agent.builtIn || agent.managed) &&
           agent.id !== "spotify" &&
           agent.id !== "youtube" &&
           agent.id !== "lorebook-keeper" &&
@@ -2633,6 +2642,7 @@ export function ChatSettingsDrawer({
         id: chat.id,
         enableAgents: true,
         activeAgentIds: Array.from(new Set([...readLatestActiveAgentIds(), agent.id])),
+        ...(agent.id === "long-term-memory" ? { enableLongTermMemory: true } : {}),
         ...buildAgentAddMetadataPatch(agent.id, setup, metadata, {
           allowSecretPlot: supportsNarrativeDirectorSecretPlot,
         }),
@@ -5664,16 +5674,16 @@ export function ChatSettingsDrawer({
                   >
                     <AgentSettingsToggle
                       label="Use memory in this chat"
-                      description="When disabled, the LTM agent still extracts but does not inject memories into the prompt."
-                      enabled={metadata.enableLongTermMemory !== false}
+                      description="Adds the LTM agent to this chat and recalls vault notes into the prompt."
+                      enabled={ltmRecallEnabled}
                       onToggle={toggleLtmEnabled}
                     />
-                    {metadata.enableLongTermMemory === false && (
+                    {!ltmRecallEnabled && (
                       <p className="text-xs text-[var(--muted-foreground)]">
                         Memory is off for this chat — turn it on to recall facts into your messages.
                       </p>
                     )}
-                    {metadata.enableLongTermMemory !== false &&
+                    {ltmRecallEnabled &&
                       (ltmLastInjection.data?.memoryCount ?? 0) === 0 &&
                       !ltmLastInjection.isLoading && (
                         <p className="text-xs text-[var(--muted-foreground)]">
@@ -6872,6 +6882,10 @@ export function ChatSettingsDrawer({
                                 <div key={agent.id} className="space-y-1.5">
                                   <button
                                     onClick={() => {
+                                      if (agent.id === "long-term-memory") {
+                                        void toggleAgent(agent.id);
+                                        return;
+                                      }
                                       const latestActiveAgentIds = readLatestActiveAgentIds();
                                       if (active) {
                                         updateMeta.mutate({

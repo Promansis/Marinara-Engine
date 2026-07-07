@@ -57,6 +57,7 @@ import {
   importCustomToolEntries,
   serializeCustomToolForTransfer,
 } from "../../lib/custom-tool-transfer";
+import { getAgentUiCategory, isUserCustomAgentType } from "../../lib/agent-display";
 import {
   collectFolderPackageEntries,
   readTextFilesFromFileList,
@@ -301,13 +302,24 @@ export function AgentsPanel() {
     () => BUILT_IN_AGENTS.filter((agent) => !agent.libraryHidden && !deletedBuiltInTypes.has(agent.id)),
     [deletedBuiltInTypes],
   );
-  // Custom agents = DB entries whose type doesn't match any built-in
+  const managedAgents = useMemo(
+    () =>
+      visibleAgentConfigs.filter(
+        (config) =>
+          !BUILT_IN_AGENT_TYPE_SET.has(config.type) &&
+          !isRetiredBuiltInAgentId(config.type) &&
+          !isUserCustomAgentType(config.type),
+      ),
+    [visibleAgentConfigs],
+  );
+  // Custom agents = user-authored DB entries whose type doesn't match built-in or managed agents.
   const customAgents = useMemo(
     () =>
       visibleAgentConfigs.filter(
         (config) =>
           !BUILT_IN_AGENT_TYPE_SET.has(config.type) &&
-          !isRetiredBuiltInAgentId(config.type),
+          !isRetiredBuiltInAgentId(config.type) &&
+          isUserCustomAgentType(config.type),
       ),
     [visibleAgentConfigs],
   );
@@ -333,7 +345,10 @@ export function AgentsPanel() {
     () => visibleBuiltInAgents.map((agent) => createBuiltInAgentConfigRow(agent, configByType.get(agent.id))),
     [configByType, visibleBuiltInAgents],
   );
-  const selectableAgents = useMemo(() => [...builtInExportRows, ...customAgents], [builtInExportRows, customAgents]);
+  const selectableAgents = useMemo(
+    () => [...builtInExportRows, ...managedAgents, ...customAgents],
+    [builtInExportRows, customAgents, managedAgents],
+  );
   const selectableAgentById = useMemo(
     () => new Map(selectableAgents.map((agent) => [agent.id, agent])),
     [selectableAgents],
@@ -356,9 +371,7 @@ export function AgentsPanel() {
   const getAgentSearchData = (agent: AgentConfigRow) => ({
     name: agent.name,
     description: agent.description,
-    category: BUILT_IN_AGENT_TYPE_SET.has(agent.type)
-      ? (BUILT_IN_AGENTS.find((entry) => entry.id === agent.type)?.category ?? "misc")
-      : "custom",
+    category: getAgentUiCategory(agent.type),
   });
   const agentCategorySections: Array<{ category: AgentCategory; title: string; icon: ReactNode }> = [
     { category: "writer", title: "Writer Agents", icon: <PenLine size="0.8125rem" /> },
@@ -389,6 +402,12 @@ export function AgentsPanel() {
     agentCategorySections.some((section) =>
       visibleBuiltInDisplayAgents.some(
         (agent) => !folderedAgentIds.has(agent.id) && agent.category === section.category && matchesAgentSearch(agent),
+      ) ||
+      managedAgents.some(
+        (agent) =>
+          !folderedAgentIds.has(agent.id) &&
+          getAgentUiCategory(agent.type) === section.category &&
+          matchesAgentSearch(getAgentSearchData(agent)),
       ),
     ) ||
     visibleCustomAgents.length > 0 ||
@@ -650,8 +669,8 @@ export function AgentsPanel() {
   const renderFolderAgentCard = useCallback(
     (agent: AgentConfigRow) => {
       const builtInMeta = BUILT_IN_AGENTS.find((entry) => entry.id === agent.type);
-      const custom = !builtInMeta;
-      const category = custom ? "custom" : builtInMeta.category;
+      const category = getAgentUiCategory(agent.type);
+      const custom = category === "custom";
       return renderAgentCard({
         id: agent.id,
         type: agent.type,
@@ -690,7 +709,7 @@ export function AgentsPanel() {
               tone: "destructive",
             })
           ) {
-            deleteAgent.mutate(custom ? agent.id : agent.type);
+            deleteAgent.mutate(custom || !builtInMeta ? agent.id : agent.type);
           }
         },
       });
@@ -1015,13 +1034,25 @@ export function AgentsPanel() {
 
       {agentCategorySections.map((section) => {
         const visibleAgents = sortBasicPanelItems(
-          visibleBuiltInDisplayAgents.filter(
-            (agent) =>
-              !folderedAgentIds.has(agent.id) && agent.category === section.category && matchesAgentSearch(agent),
-          ),
+          [
+            ...visibleBuiltInDisplayAgents
+              .filter(
+                (agent) =>
+                  !folderedAgentIds.has(agent.id) && agent.category === section.category && matchesAgentSearch(agent),
+              )
+              .map((agent) => ({ kind: "built-in" as const, agent })),
+            ...managedAgents
+              .filter(
+                (agent) =>
+                  !folderedAgentIds.has(agent.id) &&
+                  getAgentUiCategory(agent.type) === section.category &&
+                  matchesAgentSearch(getAgentSearchData(agent)),
+              )
+              .map((agent) => ({ kind: "managed" as const, agent })),
+          ],
           sort,
-          (agent) => agent.name,
-          (agent) => agent.createdAt || agent.updatedAt,
+          (entry) => entry.agent.name,
+          (entry) => entry.agent.createdAt || entry.agent.updatedAt,
         );
         if (visibleAgents.length === 0 && agentSearchQuery) return null;
         return (
@@ -1031,29 +1062,34 @@ export function AgentsPanel() {
                 No {section.title.toLowerCase()} yet.
               </p>
             ) : (
-              visibleAgents.map((agent) => {
-                const sourceAgent = createBuiltInAgentConfigRow(agent, configByType.get(agent.id));
+              visibleAgents.map((entry) => {
+                const sourceAgent =
+                  entry.kind === "built-in"
+                    ? createBuiltInAgentConfigRow(entry.agent, configByType.get(entry.agent.id))
+                    : entry.agent;
+                const category = getAgentUiCategory(sourceAgent.type);
+                const custom = category === "custom";
                 return renderAgentCard({
-                  id: agent.id,
-                  type: agent.id,
-                  name: agent.name,
-                  description: agent.description,
-                  category: agent.category,
+                  id: sourceAgent.id,
+                  type: sourceAgent.type,
+                  name: getAgentLibraryDisplayName(sourceAgent),
+                  description: sourceAgent.description,
+                  category,
                   imagePath: sourceAgent.imagePath,
-                  custom: false,
+                  custom,
                   openAgentDetail,
                   onDuplicate: () => void handleDuplicateAgent(sourceAgent),
-                  onImagePick: () => handlePickAgentImage(agent.id),
+                  onImagePick: () => handlePickAgentImage(custom ? sourceAgent.id : sourceAgent.type),
                   selectionMode,
-                  selected: selectedAgentIds.has(agent.id),
-                  onToggleSelected: () => toggleAgentSelection(agent.id),
-                  isDragging: draggedAgentId === agent.id,
+                  selected: selectedAgentIds.has(sourceAgent.id),
+                  onToggleSelected: () => toggleAgentSelection(sourceAgent.id),
+                  isDragging: draggedAgentId === sourceAgent.id,
                   onDragStart: (event) => {
-                    const ids = getDraggedAgentIds(agent.id);
-                    setDraggedAgentId(agent.id);
+                    const ids = getDraggedAgentIds(sourceAgent.id);
+                    setDraggedAgentId(sourceAgent.id);
                     event.dataTransfer.effectAllowed = "move";
                     event.dataTransfer.setData("application/x-marinara-agent-ids", JSON.stringify(ids));
-                    event.dataTransfer.setData("text/plain", agent.id);
+                    event.dataTransfer.setData("text/plain", sourceAgent.id);
                   },
                   onDragEnd: () => setDraggedAgentId(null),
                   nativeDragEnabled: nativeAgentDragEnabled,
@@ -1061,7 +1097,9 @@ export function AgentsPanel() {
                   suppressClickRef: suppressAgentClickRef,
                   onDelete: async () => {
                     const deleteMessage =
-                      `Delete "${agent.name}"? ` + "This basic agent will be hidden from the library and pickers.";
+                      entry.kind === "built-in"
+                        ? `Delete "${entry.agent.name}"? This basic agent will be hidden from the library and pickers.`
+                        : `Delete "${sourceAgent.name}"?`;
                     if (
                       await showConfirmDialog({
                         title: "Delete Agent",
@@ -1070,7 +1108,7 @@ export function AgentsPanel() {
                         tone: "destructive",
                       })
                     ) {
-                      deleteAgent.mutate(agent.id);
+                      deleteAgent.mutate(entry.kind === "built-in" ? sourceAgent.type : sourceAgent.id);
                     }
                   },
                 });
