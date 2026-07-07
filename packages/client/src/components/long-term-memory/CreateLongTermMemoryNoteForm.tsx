@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Loader2, Pencil, Plus } from "lucide-react";
+import { Loader2, Plus } from "lucide-react";
 import type { Chat, LtmLink, LtmMode, LtmNote, LtmNoteType } from "@marinara-engine/shared";
 import { useChat } from "../../hooks/use-chats";
 import { useCreateLongTermMemoryNote } from "../../hooks/use-long-term-memory";
 import { useChatStore } from "../../stores/chat.store";
 import { cn } from "../../lib/utils";
-import { FloatingMessageEditor } from "../chat/FloatingMessageEditor";
 import {
   actionRowClassName,
   compactInputClassName,
@@ -14,6 +13,7 @@ import {
   modalIntroCardClassName,
   sectionCardClassName,
   SettingField,
+  textareaClassName,
 } from "./LtmFields";
 import { LtmScopePicker } from "./LtmScopePicker";
 import { ToolButton } from "./LtmPills";
@@ -140,7 +140,6 @@ export function CreateLongTermMemoryNoteForm({
     [activeChat, defaultMode, defaultScopeDraft],
   );
   const [draft, setDraft] = useState<CreateLongTermMemoryNoteDraft>(initialDraft ?? defaultDraft);
-  const [summaryEditorOpen, setSummaryEditorOpen] = useState(false);
   const dirty = useMemo(
     () => serializedCreateDraft(draft) !== serializedCreateDraft(defaultDraft),
     [defaultDraft, draft],
@@ -380,41 +379,22 @@ export function CreateLongTermMemoryNoteForm({
             <input
               value={sectionKey}
               onChange={(event) => setDraft((current) => ({ ...current, sectionKey: event.target.value }))}
-            placeholder={friendlySectionKey(sectionKey)}
-            className={compactInputClassName}
-          />
+              placeholder={friendlySectionKey(sectionKey)}
+              className={compactInputClassName}
+            />
           </SettingField>
-          <p className={helperTextClassName}>Start with the clearest single section for this memory. You can expand it later.</p>
-          <button
-            type="button"
-            onClick={() => setSummaryEditorOpen(true)}
-            className="group/summary flex min-h-28 w-full flex-col rounded-xl bg-[var(--background)] px-3 py-3 text-left text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/45 focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
-          >
-            <span className="mb-2 inline-flex items-center gap-1.5 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-              <Pencil size="0.75rem" />
-              Edit memory text
+          <p className={helperTextClassName}>Start with the clearest single section for this memory.</p>
+          <label className="block">
+            <span className="mb-1 inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+              Memory Text
             </span>
-            <span
-              className={cn(
-                "line-clamp-4 whitespace-pre-wrap",
-                !sectionText.trim() && "text-[var(--muted-foreground)]/70",
-              )}
-            >
-              {sectionText.trim() || "No memory text yet."}
-            </span>
-          </button>
-          <FloatingMessageEditor
-            open={summaryEditorOpen}
-            title="Edit memory text"
-            initialContent={sectionText}
-            fontSize={13}
-            showFormatting
-            onSave={(content) => {
-              setDraft((current) => ({ ...current, sectionText: content }));
-              setSummaryEditorOpen(false);
-            }}
-            onCancel={() => setSummaryEditorOpen(false)}
-          />
+            <textarea
+              value={sectionText}
+              onChange={(event) => setDraft((current) => ({ ...current, sectionText: event.target.value }))}
+              placeholder="No memory text yet."
+              className={cn(textareaClassName, "min-h-28")}
+            />
+          </label>
         </div>
 
         <div className={actionRowClassName}>
