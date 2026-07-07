@@ -287,7 +287,8 @@ export const longTermMemoryKeys = {
   debugLogs: () => [...longTermMemoryKeys.all, "debug-log"] as const,
   debugLog: (filter?: LtmDebugLogFilter) => [...longTermMemoryKeys.all, "debug-log", filter ?? {}] as const,
   lastInjection: (chatId: string) => ["long-term-memory", "last-injection", chatId] as const,
-  pendingDraftsCount: () => ["long-term-memory", "drafts", "pending-count"] as const,
+  pendingDraftsCount: (chatId?: string | null) =>
+    ["long-term-memory", "drafts", "pending-count", { chatId: chatId ?? null }] as const,
 };
 
 export type LtmNoteFilter = {
@@ -754,10 +755,11 @@ export function useLastInjection(chatId: string | undefined, options: { enabled?
   });
 }
 
-export function usePendingDraftsCount(options: { enabled?: boolean } = {}) {
+export function usePendingDraftsCount(options: { chatId?: string | null; enabled?: boolean } = {}) {
+  const chatId = options.chatId ?? undefined;
   return useQuery({
-    queryKey: longTermMemoryKeys.pendingDraftsCount(),
-    queryFn: () => api.get<LtmPendingDraftsCountResponse>("/long-term-memory/drafts/pending-count"),
+    queryKey: longTermMemoryKeys.pendingDraftsCount(chatId),
+    queryFn: () => api.get<LtmPendingDraftsCountResponse>(`/long-term-memory/drafts/pending-count${qs({ chatId })}`),
     enabled: options.enabled ?? true,
     staleTime: 15_000,
   });

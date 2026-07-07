@@ -1086,9 +1086,10 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     return draftStore.listDrafts(query);
   });
 
-  app.get("/drafts/pending-count", async (req, reply) => {
+  app.get<{ Querystring: unknown }>("/drafts/pending-count", async (req, reply) => {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory pending draft count" })) return;
-    const drafts = await draftStore.listDrafts({ status: "pending" });
+    const query = listDraftsQuerySchema.parse(req.query);
+    const drafts = await draftStore.listDrafts({ status: "pending", chatId: query.chatId });
     return { count: drafts.length };
   });
 

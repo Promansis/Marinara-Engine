@@ -1,9 +1,11 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildApp } from "../../../app.js";
+import { LongTermMemoryDraftStore } from "../draft-store.js";
 
 test("LTM routes — guarded endpoints return 403 from non-loopback without auth", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "marinara-ltm-routes-auth-"));
@@ -33,6 +35,7 @@ test("LTM routes — guarded endpoints return 403 from non-loopback without auth
     await expect403("/api/long-term-memory/extraction-settings", "GET");
     await expect403("/api/long-term-memory/debug-log", "GET");
     await expect403("/api/long-term-memory/drafts", "GET");
+    await expect403("/api/long-term-memory/drafts/pending-count", "GET");
     await expect403("/api/long-term-memory/drafts/nonexistent", "GET");
     await expect403("/api/long-term-memory/search", "POST");
     await expect403("/api/long-term-memory/notes", "POST");
@@ -96,6 +99,82 @@ test("LTM routes — guarded endpoints work from loopback without auth", async (
     if (app) await app.close();
     if (previousDataDir === undefined) delete process.env.DATA_DIR;
     else process.env.DATA_DIR = previousDataDir;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("LTM routes — GET /drafts/pending-count can be scoped to a chat", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "marinara-ltm-routes-pending-count-"));
+  const previousDataDir = process.env.DATA_DIR;
+  const previousBasicAuthUser = process.env.BASIC_AUTH_USER;
+  const previousBasicAuthPass = process.env.BASIC_AUTH_PASS;
+  const previousAdminSecret = process.env.ADMIN_SECRET;
+
+  delete process.env.BASIC_AUTH_USER;
+  delete process.env.BASIC_AUTH_PASS;
+  delete process.env.ADMIN_SECRET;
+  process.env.DATA_DIR = dataDir;
+
+  let app: Awaited<ReturnType<typeof buildApp>> | null = null;
+  try {
+    app = await buildApp();
+    const draftStore = new LongTermMemoryDraftStore(join(dataDir, "long-term-memory"));
+    let sourceIndex = 0;
+    const createDraft = async (chatId: string) => {
+      sourceIndex += 1;
+      const sourceNoteId = `source_${chatId}_${sourceIndex}`;
+      return draftStore.createDraft({
+        source: { chatId, sourceNoteId },
+        modes: ["roleplay"],
+        response: {
+          summary: "Pending suggestions",
+          mutations: [
+            {
+              id: randomUUID(),
+              kind: "append_section",
+              noteId: "world_pending_count",
+              sectionKey: "facts",
+              text: `Memory from ${chatId}`,
+              risk: "medium",
+              confidence: 0.8,
+              summary: "Append chat-scoped detail",
+              evidence: [`source_note:${sourceNoteId}`],
+            },
+          ],
+        },
+      });
+    };
+
+    await createDraft("chat_a");
+    await createDraft("chat_a");
+    const acceptedDraft = await createDraft("chat_a");
+    await draftStore.updateDraftStatus(acceptedDraft.id, "accepted");
+    await createDraft("chat_b");
+
+    const fetchCount = async (query = "") => {
+      const response = await app!.inject({
+        method: "GET",
+        url: `/api/long-term-memory/drafts/pending-count${query}`,
+        remoteAddress: "127.0.0.1",
+      });
+      assert.equal(response.statusCode, 200, response.body);
+      return JSON.parse(response.body) as { count: number };
+    };
+
+    assert.deepEqual(await fetchCount(), { count: 3 });
+    assert.deepEqual(await fetchCount("?chatId=chat_a"), { count: 2 });
+    assert.deepEqual(await fetchCount("?chatId=chat_b"), { count: 1 });
+    assert.deepEqual(await fetchCount("?chatId=chat_c"), { count: 0 });
+  } finally {
+    if (app) await app.close();
+    if (previousDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = previousDataDir;
+    if (previousBasicAuthUser === undefined) delete process.env.BASIC_AUTH_USER;
+    else process.env.BASIC_AUTH_USER = previousBasicAuthUser;
+    if (previousBasicAuthPass === undefined) delete process.env.BASIC_AUTH_PASS;
+    else process.env.BASIC_AUTH_PASS = previousBasicAuthPass;
+    if (previousAdminSecret === undefined) delete process.env.ADMIN_SECRET;
+    else process.env.ADMIN_SECRET = previousAdminSecret;
     await rm(dataDir, { recursive: true, force: true });
   }
 });

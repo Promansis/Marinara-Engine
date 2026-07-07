@@ -64,7 +64,7 @@ export function ActiveContextLinksButton({
     chat?.id ?? null,
     open && !!chat?.id,
   );
-  const { data: pendingDrafts } = usePendingDraftsCount();
+  const { data: pendingDrafts } = usePendingDraftsCount({ chatId: chat?.id, enabled: !!chat?.id });
   const pendingCount = pendingDrafts?.count ?? 0;
 
   useEffect(() => {

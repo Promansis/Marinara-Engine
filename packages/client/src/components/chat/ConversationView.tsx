@@ -383,7 +383,7 @@ export function ConversationView({
   // a CSS variable so custom themes can override the conversation background.
   const convoGradient = useUIStore((s) => s.convoGradient);
   const theme = useUIStore((s) => s.theme);
-  const { data: pendingDrafts } = usePendingDraftsCount();
+  const { data: pendingDrafts } = usePendingDraftsCount({ chatId });
   const hasPendingLtmDrafts = (pendingDrafts?.count ?? 0) > 0;
   const gradientStyle = useMemo(() => {
     const g = convoGradient[theme];

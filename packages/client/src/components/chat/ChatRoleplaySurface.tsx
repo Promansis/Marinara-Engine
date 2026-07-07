@@ -1125,7 +1125,7 @@ export function ChatRoleplaySurface({
       : undefined;
   const hideSummarisedMessages =
     typeof chatMeta.hideSummarisedMessages === "boolean" ? chatMeta.hideSummarisedMessages : undefined;
-  const { data: pendingDrafts } = usePendingDraftsCount();
+  const { data: pendingDrafts } = usePendingDraftsCount({ chatId: activeChatId });
   const hasPendingLtmDrafts = (pendingDrafts?.count ?? 0) > 0;
   const summaryTailMessages =
     typeof chatMeta.summaryTailMessages === "number" && Number.isFinite(chatMeta.summaryTailMessages)
