@@ -35,13 +35,11 @@ import {
   useDeleteLongTermMemoryNotes,
   useLongTermMemoryDrafts,
   useLongTermMemoryImportPreview,
-  useLongTermMemoryIntegrity,
   useLongTermMemoryNote,
   useLongTermMemoryNotes,
   useLongTermMemorySettings,
   useRemoveLongTermMemoryNotesFromScope,
   useSkipLongTermMemoryDraftMutations,
-  useLongTermMemoryStatus,
   useSearchLongTermMemory,
   type LtmSearchResponse,
   type LtmInteropSource,
@@ -337,8 +335,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   }, [chats, importSource, navigatorScope.chatId, navigatorScope.chatIds]);
   const activeRecallSettings = useMemo(() => readLongTermMemoryRecallSearchSettings(ltmSettings), [ltmSettings]);
   const activeChatMessages = useChatMessages(activeChatId, activeRecallSettings.contextMessages, Boolean(openNoteId));
-  const status = useLongTermMemoryStatus();
-  const integrity = useLongTermMemoryIntegrity();
   const notes = useLongTermMemoryNotes(navigatorNoteFilter, { enabled: Boolean(selectedNavigatorThread) });
   const reviewNotes = useLongTermMemoryNotes({}, { enabled: tab === "review" });
   const activeNotes = useLongTermMemoryNotes(
@@ -453,7 +449,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     () => ({ chats: chatLookup, notes: noteLookup, groups: groupLookup }),
     [chatLookup, noteLookup, groupLookup],
   );
-  const statusTone = integrity.data?.ok ? "good" : integrity.data ? "bad" : "neutral";
   const openNote = useMemo(
     () =>
       openNoteId
@@ -1237,16 +1232,13 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
         <Section title="Memories">
           <div className={panelIntroCardClassName}>
             <div className="flex flex-wrap gap-1.5">
-              <StatusPill label={`${(notes.data ?? []).length} memor${(notes.data ?? []).length === 1 ? "y" : "ies"}`} />
-              <StatusPill label={`${status.data?.indexes.chunkCount ?? 0} search chunks`} />
-              <StatusPill label={integrity.data?.ok ? "Healthy" : "Needs check"} tone={statusTone} />
               <StatusPill
-                label={status.data?.indexes.embeddingsAvailable ? "Smart search" : "Basic search"}
-                tone="neutral"
+                label={`${(notes.data ?? []).length} memor${(notes.data ?? []).length === 1 ? "y" : "ies"} in this scope`}
+                title={`Memories linked to ${navigatorScopeLabel}, plus global memories.`}
               />
             </div>
             <p className={cn("mt-2", helperTextClassName)}>
-              Search, review, and maintain long-term memories.
+              Includes global memories plus memories linked to {navigatorScopeLabel}.
             </p>
           </div>
 
@@ -1789,11 +1781,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
         groupLookup={groupLookup}
         onClose={() => setTransferModalMode(null)}
       />
-      {(status.isLoading || integrity.isLoading) && (
-        <div className="fixed bottom-3 right-3 rounded-full bg-[var(--card)] p-2 shadow-sm ring-1 ring-[var(--border)]">
-          <Loader2 size="1rem" className="animate-spin" />
-        </div>
-      )}
     </div>
   );
 }

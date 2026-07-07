@@ -139,7 +139,7 @@ import {
   useDebouncedRecallSettings,
   type RecallSettingsValues,
 } from "../long-term-memory/RecallSettingsControls";
-import { ToolButton } from "../long-term-memory/LtmPills";
+import { StatusPill, ToolButton } from "../long-term-memory/LtmPills";
 import {
   longTermMemoryKeys,
   useLongTermMemoryStatus,
@@ -632,6 +632,7 @@ export function AgentEditor() {
   const [ltmAdvancedOpen, setLtmAdvancedOpen] = useState(false);
 
   const ltmStatus = useLongTermMemoryStatus();
+  const integrity = useLongTermMemoryIntegrity();
   const { data: ltmExtractionSettings } = useLongTermMemoryExtractionSettings();
   const updateExtractionSettings = useUpdateLongTermMemoryExtractionSettings();
   const ltmGlobalSettingsResult = useLongTermMemorySettings();
@@ -640,6 +641,19 @@ export function AgentEditor() {
   const [ltmRecallDraft, setLtmRecallDraft] = useState<RecallSettingsValues | null>(null);
   const ltmRecallHasLocalEditsRef = useRef(false);
   const ltmRecallRevisionRef = useRef(0);
+  const ltmHasMemories = (ltmStatus.data?.notes.total ?? 0) > 0;
+  const ltmSmartSearchReady = ltmStatus.data?.indexes.embeddingsAvailable === true;
+  const ltmSearchStatusLabel = ltmSmartSearchReady ? "Smart Search Ready" : "Basic Search Only";
+  const ltmSearchStatusTitle = ltmSmartSearchReady
+    ? "Memory search can match related memories by meaning."
+    : "Memory search is available, but smart matching has not been built yet.";
+  const ltmIndexStatusLabel = integrity.data?.ok ? "Memory Index Healthy" : "Memory Index Needs Repair";
+  const ltmIndexStatusTone = integrity.data?.ok ? "good" : "warn";
+  const indexedMemoryChunkCount = ltmStatus.data?.indexes.chunkCount;
+  const indexedMemoryChunkLabel =
+    typeof indexedMemoryChunkCount === "number"
+      ? `${indexedMemoryChunkCount.toLocaleString()} indexed memory chunk${indexedMemoryChunkCount === 1 ? "" : "s"}`
+      : "Memory index not built";
   useEffect(() => {
     if (!isLtmAgent) {
       ltmRecallHasLocalEditsRef.current = false;
@@ -680,7 +694,6 @@ export function AgentEditor() {
   const [maintenanceOpen, setMaintenanceOpen] = useState(false);
   const rebuildMemories = useRebuildLongTermMemory();
   const repairMemories = useRepairLongTermMemory();
-  const integrity = useLongTermMemoryIntegrity();
 
   const [ltmDraft, setLtmDraft] = useState<{
     connectionId: string;
@@ -3943,7 +3956,6 @@ export function AgentEditor() {
                   const connArray = (connections ?? []) as Array<{ id: string }>;
                   const draftConnId = ltmDraft?.connectionId ?? "";
                   const hasConnection = !!draftConnId && connArray.some((c) => c.id === draftConnId);
-                  const hasMemories = (ltmStatus.data?.notes.total ?? 0) > 0;
                   if (!hasConnection) {
                     return (
                       <div className="mb-3 rounded-xl border border-[var(--primary)]/20 bg-[var(--primary)]/8 p-4">
@@ -3959,7 +3971,7 @@ export function AgentEditor() {
                       </div>
                     );
                   }
-                  if (!hasMemories) {
+                  if (!ltmHasMemories) {
                     return (
                       <div className="mb-3 rounded-xl border border-[var(--primary)]/20 bg-[var(--primary)]/8 p-4">
                         <div className="flex items-center gap-2">
@@ -3980,6 +3992,28 @@ export function AgentEditor() {
                   }
                   return null;
                 })()}
+                {ltmHasMemories && (
+                  <div className="mb-3 flex flex-wrap gap-1.5">
+                    {ltmStatus.data && (
+                      <StatusPill
+                        label={ltmSearchStatusLabel}
+                        tone={ltmSmartSearchReady ? "good" : "neutral"}
+                        title={ltmSearchStatusTitle}
+                      />
+                    )}
+                    {integrity.data && (
+                      <StatusPill
+                        label={ltmIndexStatusLabel}
+                        tone={ltmIndexStatusTone}
+                        title={
+                          integrity.data.ok
+                            ? "The memory search index is ready."
+                            : "Open Maintenance to repair the memory search index."
+                        }
+                      />
+                    )}
+                  </div>
+                )}
                 <div className="flex items-center gap-3">
                   <button
                     onClick={() => setVaultOpen({ initialTab: "notes" })}
@@ -4100,6 +4134,12 @@ export function AgentEditor() {
                 expanded={maintenanceOpen}
                 onExpandedChange={setMaintenanceOpen}
               >
+                <div className="mb-3 flex flex-wrap gap-1.5">
+                  <StatusPill
+                    label={indexedMemoryChunkLabel}
+                    title="Technical maintenance count: memory search splits saved memories into chunks before indexing."
+                  />
+                </div>
                 <div className="flex flex-wrap gap-2">
                   <ToolButton
                     onClick={() =>
