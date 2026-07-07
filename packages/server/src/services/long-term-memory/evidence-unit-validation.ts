@@ -11,7 +11,6 @@ import { safeSnippet } from "./ltm-utils.js";
 
 const DIALOGUE_BUCKETS = new Set<LtmEvidenceUnit["bucket"]>(["tone"]);
 const PLACEHOLDER_UUID = "550e8400-e29b-41d4-a716-446655440000";
-const PLACEHOLDER_MERGE_HINT = "optional note for deterministic compiler";
 const CHARACTER_FACT_EVENT_SECTION_KEYS = new Set(["facts", "core", "profile"]);
 const CHARACTER_FACT_DURABLE_SECTION_KEYS = new Set(["developments", "abilities", "items", "voice"]);
 const EVENT_SHAPED_CHARACTER_FACT_PATTERN =
@@ -373,17 +372,6 @@ function placeholderDiagnostics(unit: LtmEvidenceUnit, noteId: string, candidate
     });
   }
 
-  if (unit.mergeHint?.trim().toLowerCase() === PLACEHOLDER_MERGE_HINT) {
-    diagnostics.push({
-      severity: "error",
-      code: "placeholder_merge_hint",
-      candidateIndex,
-      mutationId: unit.id,
-      noteId,
-      message: "Evidence unit mergeHint uses copied schema/example text.",
-    });
-  }
-
   for (const link of unit.links) {
     if (link.target === "target_note_id") {
       diagnostics.push({
@@ -573,7 +561,6 @@ function diagnosticToDropReason(code: string): LtmExtractionDropReason | null {
     code === "placeholder_evidence_unit_id" ||
     code === "placeholder_subject_id" ||
     code === "placeholder_section_key" ||
-    code === "placeholder_merge_hint" ||
     code === "placeholder_link_target"
   ) {
     return "placeholder_output";

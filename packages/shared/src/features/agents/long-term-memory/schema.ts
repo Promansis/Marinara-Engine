@@ -507,7 +507,6 @@ export const ltmEvidenceUnitSchema = z
     salience: z.number().finite().min(0).max(1),
     status: ltmEvidenceUnitStatusSchema,
     links: z.array(ltmLinkSchema).max(50).default([]),
-    mergeHint: z.string().min(1).max(240).optional(),
     sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
     dimensions: ltmRelationshipDimensionsSchema.optional(),
     dimensionChanges: ltmRelationshipDimensionChangesSchema.optional(),

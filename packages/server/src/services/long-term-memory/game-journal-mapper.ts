@@ -40,7 +40,6 @@ function unitBase(
     importance: extra.importance ?? "moderate",
     status: extra.status ?? "active",
     links: extra.links ?? [],
-    mergeHint: extra.mergeHint,
     sourceHash: ctx.sourceHash,
   };
 }
@@ -74,9 +73,6 @@ function mapQuestEntry(quest: QuestEntry, ctx: GameJournalMappingContext): LtmEv
     {
       evidence,
       status,
-      mergeHint: `Quest "${quest.name}" — ${quest.status}. Discovered ${quest.discoveredAt}${
-        quest.completedAt ? `, completed ${quest.completedAt}` : ""
-      }`,
     },
   );
 
@@ -128,7 +124,6 @@ function mapInventoryLog(
     return unitBase("character_fact", "party_inventory", "items", text, ctx, {
       evidence,
       status: entry.action === "acquired" ? "active" : "resolved",
-      mergeHint: `Inventory ${entry.action}: ${entry.item} (#${idx})`,
     });
   });
 }
@@ -170,7 +165,6 @@ function mapSessionSummary(summary: SessionSummary, ctx: GameJournalMappingConte
     units.push(
       unitBase("timeline_event", `session_${summary.sessionNumber}`, "event", summary.summary, ctx, {
         evidence: sessionEvidence,
-        mergeHint: `Session ${summary.sessionNumber} recap`,
       }),
     );
   }
@@ -179,7 +173,6 @@ function mapSessionSummary(summary: SessionSummary, ctx: GameJournalMappingConte
     units.push(
       unitBase("world_fact", `session_${summary.sessionNumber}_resume`, "resume_point", summary.resumePoint, ctx, {
         evidence: sessionEvidence,
-        mergeHint: `Session ${summary.sessionNumber} resume point`,
       }),
     );
   }
@@ -193,7 +186,6 @@ function mapSessionSummary(summary: SessionSummary, ctx: GameJournalMappingConte
     units.push(
       unitBase("relationship_state", "party", "state", summary.partyDynamics, ctx, {
         evidence: sessionEvidence,
-        mergeHint: `Session ${summary.sessionNumber} party dynamics`,
         links: partyLinks,
       }),
     );
@@ -203,7 +195,6 @@ function mapSessionSummary(summary: SessionSummary, ctx: GameJournalMappingConte
     units.push(
       unitBase("character_fact", "party", "state", summary.partyState, ctx, {
         evidence: sessionEvidence,
-        mergeHint: `Session ${summary.sessionNumber} party state`,
       }),
     );
   }
@@ -253,7 +244,6 @@ function mapSessionSummary(summary: SessionSummary, ctx: GameJournalMappingConte
       unitBase("thread", `player_request_${summary.sessionNumber}`, "quest", summary.nextSessionRequest, ctx, {
         evidence: sessionEvidence,
         status: "active",
-        mergeHint: `Session ${summary.sessionNumber} player request`,
       }),
     );
   }

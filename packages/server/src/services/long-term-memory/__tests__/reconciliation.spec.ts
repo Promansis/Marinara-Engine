@@ -3403,7 +3403,6 @@ test("evidence unit extraction validation rejects copied placeholder values", ()
         salience: 0.7,
         status: "active",
         links: [{ target: "target_note_id", relation: "involves" }],
-        mergeHint: "optional note for deterministic compiler",
         sourceHash,
       }),
     ],
