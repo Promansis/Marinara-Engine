@@ -28,6 +28,103 @@ async function prepareFreshClient(page: Page) {
   });
 }
 
+const ltmNow = "2026-07-07T00:00:00.000Z";
+
+function ltmNote(overrides: Partial<Record<string, unknown>> = {}) {
+  const id = (overrides.id as string | undefined) ?? "scene_shared_ui_selection";
+  const type = (overrides.type as string | undefined) ?? "scene";
+  return {
+    id,
+    title: (overrides.title as string | undefined) ?? "Shared UI Selection Memory",
+    type,
+    status: (overrides.status as string | undefined) ?? "active",
+    modes: (overrides.modes as string[] | undefined) ?? ["conversation"],
+    scope: (overrides.scope as Record<string, unknown> | undefined) ?? {},
+    tags: (overrides.tags as string[] | undefined) ?? ["shared_ui"],
+    keywords: [],
+    links: (overrides.links as Array<Record<string, unknown>> | undefined) ?? [],
+    sections: (overrides.sections as Record<string, unknown> | undefined) ?? {
+      summary: {
+        text: "The shared UI convergence memory should be selectable.",
+        updatedAt: ltmNow,
+        evidence: ["e2e:shared-ui"],
+      },
+    },
+    createdAt: ltmNow,
+    updatedAt: ltmNow,
+    version: 1,
+    ...overrides,
+  };
+}
+
+function ltmDraft(sourceNoteId: string) {
+  return {
+    id: "11111111-1111-4111-8111-111111111111",
+    status: "pending",
+    createdAt: ltmNow,
+    updatedAt: ltmNow,
+    source: { sourceNoteId },
+    scope: {},
+    modes: ["conversation"],
+    summary: "One pending suggestion for shared UI selection.",
+    mutations: [
+      {
+        id: "22222222-2222-4222-8222-222222222222",
+        kind: "create_note",
+        risk: "low",
+        confidence: 0.92,
+        summary: "Create a scene memory from the selected source.",
+        evidence: ["e2e:shared-ui"],
+        note: {
+          id: "scene_shared_ui_suggestion",
+          title: "Shared UI Suggestion",
+          type: "scene",
+          status: "active",
+          modes: ["conversation"],
+          scope: {},
+          tags: ["shared_ui"],
+          keywords: [],
+          links: [{ target: sourceNoteId, relation: "extracted_from" }],
+          sections: {
+            summary: {
+              text: "The suggestion row should use the shared selection action bar.",
+              updatedAt: ltmNow,
+              evidence: ["e2e:shared-ui"],
+            },
+          },
+          version: 1,
+        },
+      },
+    ],
+  };
+}
+
+async function openLtmVaultFromAgentEditor(page: Page) {
+  await page.locator('[data-tour="panel-agents"]').click();
+  await page.getByRole("button", { name: /Long-Term Memory/ }).click();
+  await expect(page.locator(".mari-editor-title-input")).toHaveValue("Long-Term Memory");
+  await page.getByRole("button", { name: "Manage Memories" }).click();
+  const vaultDialog = page.getByRole("dialog", { name: "Long-Term Memory" });
+  await expect(vaultDialog).toBeVisible();
+  return vaultDialog;
+}
+
+async function createActiveConversation(page: Page, name: string) {
+  const response = await page.request.post("/api/chats", {
+    data: {
+      name,
+      mode: "conversation",
+      characterIds: [],
+    },
+  });
+  expect(response.ok()).toBeTruthy();
+  const chat = (await response.json()) as { id: string };
+  await page.addInitScript((chatId) => {
+    localStorage.setItem("marinara-active-chat-id", chatId);
+  }, chat.id);
+  return chat;
+}
+
 test.beforeEach(async ({ page }) => {
   await prepareFreshClient(page);
 });
@@ -153,6 +250,133 @@ test("memory recall modal accepts clicks from chat settings", async ({ page }, t
   await expect(drawer.getByRole("heading", { name: "Chat Settings" })).toBeVisible();
 });
 
+test("LTM notes selection uses shared action bar and opens delete confirmation", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "LTM shared action bar notes coverage runs on desktop.");
+
+  const notes = [ltmNote()];
+
+  await page.route(/\/api\/long-term-memory\/notes(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(notes) });
+  });
+  await page.route("**/api/long-term-memory/settings", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({}) });
+  });
+
+  await createActiveConversation(page, "LTM Notes Selection Shared UI");
+  await page.goto("/");
+  const vaultDialog = await openLtmVaultFromAgentEditor(page);
+
+  await vaultDialog.getByRole("button", { name: "Scene 1 memory" }).click();
+  await vaultDialog.getByLabel("Select Shared UI Selection Memory").check();
+  await expect(vaultDialog.getByRole("button", { name: "Copy" })).toBeVisible();
+  await expect(vaultDialog.getByRole("button", { name: "Move", exact: true })).toBeVisible();
+  await expect(vaultDialog.getByRole("button", { name: "Remove from chat" })).toBeDisabled();
+
+  await vaultDialog.getByRole("button", { name: "Clear" }).click();
+  await expect(vaultDialog.getByRole("button", { name: "Copy" })).toHaveCount(0);
+
+  await vaultDialog.getByLabel("Select Shared UI Selection Memory").check();
+  await vaultDialog.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Permanently Delete" })).toBeVisible();
+});
+
+test("LTM import selection shows shared action bar and keeps imported rows disabled", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "LTM shared action bar import coverage runs on desktop.");
+
+  await page.route("**/api/long-term-memory/import/preview", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        source: "chats",
+        scanned: 2,
+        draftable: 1,
+        importedCount: 1,
+        samples: [
+          {
+            sourceId: "chat_pending_shared_ui",
+            title: "Pending shared UI source",
+            mutationCount: 1,
+            summary: "Pending source summary",
+            snippet: "Pending source snippet",
+            status: "pending",
+          },
+          {
+            sourceId: "chat_imported_shared_ui",
+            title: "Imported shared UI source",
+            mutationCount: 0,
+            summary: "Imported source summary",
+            snippet: "Imported source snippet",
+            status: "imported",
+            existingNoteId: "source_imported_shared_ui",
+            existingNoteTitle: "Existing imported memory",
+          },
+        ],
+      }),
+    });
+  });
+  await page.route(/\/api\/long-term-memory\/notes(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+  });
+
+  await createActiveConversation(page, "LTM Import Selection Shared UI");
+  await page.goto("/");
+  const vaultDialog = await openLtmVaultFromAgentEditor(page);
+  await vaultDialog.getByRole("button", { name: "Import" }).click();
+
+  await vaultDialog.getByLabel("Select Pending shared UI source").check();
+  await expect(vaultDialog.getByRole("button", { name: "Import selected" })).toBeVisible();
+  await expect(vaultDialog.getByRole("button", { name: "Clear" })).toBeVisible();
+
+  await vaultDialog.getByRole("button", { name: /Imported source/ }).click();
+  await expect(vaultDialog.getByLabel("Select Imported shared UI source")).toBeDisabled();
+});
+
+test("LTM source suggestions select mode uses shared keep and skip bar", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "LTM suggestion selection coverage runs on desktop.");
+
+  const sourceNote = ltmNote({
+    id: "source_shared_ui_review",
+    title: "Shared UI Review Source",
+    type: "source",
+    tags: ["imported_chat"],
+    sections: {
+      source: {
+        text: "The source note has one suggestion to keep or skip.",
+        updatedAt: ltmNow,
+        evidence: ["e2e:shared-ui"],
+      },
+    },
+  });
+  const draft = ltmDraft(sourceNote.id as string);
+
+  await page.route(/\/api\/long-term-memory\/notes(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([sourceNote]) });
+  });
+  await page.route(/\/api\/long-term-memory\/drafts(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([draft]) });
+  });
+
+  await createActiveConversation(page, "LTM Suggestions Selection Shared UI");
+  await page.goto("/");
+  const vaultDialog = await openLtmVaultFromAgentEditor(page);
+
+  await vaultDialog.getByRole("button", { name: "Review" }).click();
+  await expect(vaultDialog.getByText("Shared UI Review Source")).toBeVisible();
+  await vaultDialog.getByRole("button", { name: "Review" }).nth(1).click();
+  const memoryDialog = page.getByRole("dialog", { name: "Shared UI Review Source" });
+  await expect(memoryDialog).toBeVisible();
+  await memoryDialog.getByRole("button", { name: "Suggestions", exact: true }).click();
+  await memoryDialog.getByRole("button", { name: "Select", exact: true }).click();
+  await memoryDialog.getByRole("button", { name: "New" }).click();
+  await memoryDialog.getByLabel("Select Scene: Shared Ui Suggestion").check();
+
+  await expect(memoryDialog.getByRole("button", { name: "Keep selected" })).toBeVisible();
+  await expect(memoryDialog.getByRole("button", { name: "Skip selected" })).toBeVisible();
+  await memoryDialog.getByRole("button", { name: "Clear" }).last().click();
+  await expect(memoryDialog.getByRole("button", { name: "Keep selected" })).toHaveCount(0);
+});
+
 test("manual memory recovery survives dismissing the create modal", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("desktop"), "LTM recovery regression is covered on desktop.");
 
@@ -223,7 +447,7 @@ test("manual memory recovery survives dismissing the create modal", async ({ pag
       }),
     });
   });
-  await page.route("**/api/long-term-memory/drafts/pending-count", async (route) => {
+  await page.route(/\/api\/long-term-memory\/drafts\/pending-count(?:\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -236,11 +460,7 @@ test("manual memory recovery survives dismissing the create modal", async ({ pag
   }, chat.id);
   await page.goto("/");
 
-  await page.getByRole("button", { name: "Active Context" }).click();
-  await page.getByRole("button", { name: "Import →" }).click();
-
-  const vaultDialog = page.getByRole("dialog", { name: "Long-Term Memory" });
-  await expect(vaultDialog).toBeVisible();
+  const vaultDialog = await openLtmVaultFromAgentEditor(page);
   await vaultDialog.getByRole("button", { name: "Memories" }).click();
   await vaultDialog.getByRole("button", { name: /^Source/ }).click();
   await vaultDialog.getByRole("button", { name: `Open ${sourceTitle}` }).click();
@@ -283,7 +503,7 @@ test("mobile LTM overflow actions open modals and advertise pending review", asy
     localStorage.setItem("marinara-active-chat-id", chatId);
   }, chat.id);
 
-  await page.route("**/api/long-term-memory/drafts/pending-count", async (route) => {
+  await page.route(/\/api\/long-term-memory\/drafts\/pending-count(?:\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",

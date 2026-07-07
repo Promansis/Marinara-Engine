@@ -16,6 +16,7 @@ import { MODE_LABELS } from "./ltm-panel-shared";
 import { MacroTextarea } from "../ui/MacroTextarea";
 import { FieldGroup } from "../agents/AgentEditor";
 import { SettingInfoLabel } from "./LtmFields";
+import { SettingsCheckbox } from "../panels/settings/SettingControls";
 
 type PromptTemplate = { id: string; name: string; prompt: string };
 type ActivePromptTemplateIdsByMode = Partial<Record<LtmMode, string | null>>;
@@ -365,17 +366,16 @@ export function LtmExtractionPromptSection({
       icon={<FileText size="0.875rem" className="text-[var(--primary)]" />}
       help="The system prompt used for the extraction process."
     >
-      <div className="flex gap-1 mb-3">
+      <div className="mari-chrome-segmented mb-3">
         {(["roleplay", "conversation", "game"] as LtmMode[]).map((mode) => (
           <button
             key={mode}
             type="button"
             onClick={() => handleModeChange(mode)}
+            aria-pressed={selectedMode === mode}
             className={cn(
-              "rounded-lg px-3 py-1.5 text-[0.6875rem] font-medium transition-colors",
-              selectedMode === mode
-                ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
-                : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+              "mari-chrome-segmented__button px-3 text-[0.6875rem]",
+              selectedMode === mode && "mari-chrome-segmented__button--selected",
             )}
           >
             {MODE_LABELS[mode]}
@@ -405,7 +405,7 @@ export function LtmExtractionPromptSection({
           <button
             type="button"
             onClick={handleAddTemplate}
-            className="flex h-10 items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 text-[0.6875rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            className="mari-chrome-control mari-chrome-control--small h-10 text-[0.6875rem]"
           >
             <Plus size="0.6875rem" />
             Add
@@ -414,7 +414,7 @@ export function LtmExtractionPromptSection({
             type="button"
             onClick={handleSavePrompt}
             disabled={!hasPromptDraftEdits || !canSavePrompt}
-            className="flex h-10 items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 text-[0.6875rem] font-medium text-[var(--primary-foreground)] transition-colors hover:bg-[var(--primary)]/90 disabled:cursor-not-allowed disabled:opacity-50"
+            className="mari-chrome-control mari-chrome-control--small mari-chrome-control--primary h-10 text-[0.6875rem]"
           >
             <Save size="0.6875rem" />
             Save Prompt
@@ -423,7 +423,7 @@ export function LtmExtractionPromptSection({
             type="button"
             onClick={() => void handleRenameTemplate()}
             disabled={!selectedTemplate}
-            className="flex h-10 items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 text-[0.6875rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[var(--secondary)]"
+            className="mari-chrome-control mari-chrome-control--small h-10 text-[0.6875rem]"
             title={selectedTemplate ? "Rename prompt" : "Default prompts cannot be renamed"}
           >
             <Pencil size="0.6875rem" />
@@ -433,7 +433,7 @@ export function LtmExtractionPromptSection({
             type="button"
             onClick={() => handleRemoveTemplate(selectedTemplate?.id ?? null)}
             disabled={!selectedTemplate}
-            className="flex h-10 items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 text-[0.6875rem] font-medium text-[var(--destructive)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--destructive)]/15 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[var(--secondary)]"
+            className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger h-10 text-[0.6875rem]"
           >
             <Trash2 size="0.6875rem" />
             Remove
@@ -468,24 +468,16 @@ export function LtmExtractionPromptSection({
       />
 
       <div className="mt-4 space-y-2">
-        <label className="flex items-center gap-2 rounded-lg px-1 py-1 text-xs text-[var(--foreground)]">
-          <input
-            type="checkbox"
-            checked={aiKeywordExtraction}
-            onChange={(event) => onChangeAiKeywordExtraction(event.target.checked)}
-            className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-          />
-          <span>Ask AI to suggest keywords for extracted memories</span>
-        </label>
-        <label className="flex items-center gap-2 rounded-lg px-1 py-1 text-xs text-[var(--foreground)]">
-          <input
-            type="checkbox"
-            checked={refinePass}
-            onChange={(event) => onChangeRefinePass(event.target.checked)}
-            className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-          />
-          <span>Run a second refine pass over imported game summaries</span>
-        </label>
+        <SettingsCheckbox
+          label="Ask AI to suggest keywords for extracted memories"
+          checked={aiKeywordExtraction}
+          onChange={onChangeAiKeywordExtraction}
+        />
+        <SettingsCheckbox
+          label="Run a second refine pass over imported game summaries"
+          checked={refinePass}
+          onChange={onChangeRefinePass}
+        />
       </div>
     </FieldGroup>
   );
@@ -604,20 +596,14 @@ export default function LtmInlineSettingsSections({
           </label>
         </div>
 
-        <label className="mt-3 flex items-start gap-2 border-t border-[var(--border)] pt-3">
-          <input
-            type="checkbox"
+        <div className="mt-3 border-t border-[var(--border)] pt-3">
+          <SettingsCheckbox
+            label="Auto-accept safe changes"
+            description="Lets the AI accept obvious (low-risk) facts without asking. Medium/high-risk changes still need review."
             checked={autoApplyLowRisk}
-            onChange={(e) => onChangeGlobal({ autoApplyLowRisk: e.target.checked })}
-            className="mt-0.5 rounded border-[var(--border)] accent-[var(--primary)]"
+            onChange={(checked) => onChangeGlobal({ autoApplyLowRisk: checked })}
           />
-          <div>
-            <span className="text-xs font-medium text-[var(--foreground)]">Auto-accept safe changes</span>
-            <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-              Lets the AI accept obvious (low-risk) facts without asking. Medium/high-risk changes still need review.
-            </p>
-          </div>
-        </label>
+        </div>
       </FieldGroup>
     </>
   );

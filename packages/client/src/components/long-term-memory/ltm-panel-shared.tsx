@@ -115,12 +115,13 @@ export const MODE_BADGE_COLORS: Record<LtmMode, string> = {
 // ── CSS class constants ────────────────────────
 
 export const rowActionButtonClassName =
-  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-45";
+  "mari-chrome-control mari-chrome-control--small h-7 min-h-7 w-7 shrink-0 rounded-md p-0 text-[var(--muted-foreground)] active:scale-90 disabled:cursor-not-allowed disabled:opacity-45";
 
-export const rowActionGroupClassName = "flex shrink-0 items-center justify-end gap-0.5";
+export const rowActionGroupClassName =
+  "absolute right-2 top-1/2 flex shrink-0 -translate-y-1/2 items-center justify-end gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-[var(--border)] transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100";
 
 export const rowActionOverlayClassName =
-  "absolute right-2 bottom-2 flex shrink-0 items-center justify-end gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-[var(--border)] transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100";
+  "absolute right-2 top-1/2 flex shrink-0 -translate-y-1/2 items-center justify-end gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-[var(--border)] transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100";
 
 export const disclosureButtonClassName =
   "flex min-h-11 w-full items-center justify-between gap-3 rounded-xl bg-[var(--secondary)]/35 px-3 py-2 text-left text-xs font-semibold text-[var(--foreground)] ring-1 ring-[var(--border)] transition-[background-color,box-shadow,color] hover:bg-[var(--accent)]/45 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60";

@@ -45,6 +45,7 @@ import {
   suggestionRowKeyFor,
 } from "./LtmSuggestionRow";
 import { type LtmManagedExtractionPrefs } from "./ltm-managed-extraction-prefs";
+import { SelectionActionBar, type SelectionActionBarAction } from "../ui/SelectionActionBar";
 
 type SuggestionGroup = "new" | "rewrite";
 type BatchAction = "keep" | "skip";
@@ -436,6 +437,44 @@ export function LongTermMemorySuggestionsTab({
     else toast.error(summary.message);
   }, [clearEditedMutations, rows, selectedRowKeys, skipDraftMutations, withKeepSkipLock]);
 
+  const selectionActions = useMemo<SelectionActionBarAction[]>(
+    () => [
+      {
+        id: "keep",
+        label: "Keep selected",
+        icon:
+          activeBatchAction === "keep" ? (
+            <Loader2 size="0.75rem" className="animate-spin" />
+          ) : (
+            <Check size="0.75rem" />
+          ),
+        onClick: () => void runBulkKeep(),
+        disabled: selectedRows.length === 0 || rowActionsDisabled,
+        tone: "primary",
+      },
+      {
+        id: "skip",
+        label: "Skip selected",
+        icon:
+          activeBatchAction === "skip" ? (
+            <Loader2 size="0.75rem" className="animate-spin" />
+          ) : (
+            <X size="0.75rem" />
+          ),
+        onClick: () => void runBulkSkip(),
+        disabled: selectedRows.length === 0 || rowActionsDisabled,
+      },
+      {
+        id: "clear",
+        label: "Clear",
+        icon: <X size="0.75rem" />,
+        onClick: () => setSelectedRowKeys(new Set()),
+        disabled: selectedRowKeys.size === 0 || rowActionsDisabled,
+      },
+    ],
+    [activeBatchAction, rowActionsDisabled, runBulkKeep, runBulkSkip, selectedRows.length, selectedRowKeys.size],
+  );
+
   if (!sourceMemory) {
     return (
       <p className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-xs text-[var(--muted-foreground)]">
@@ -532,36 +571,6 @@ export function LongTermMemorySuggestionsTab({
             Select all
           </label>
           <StatusPill label={`${selectedRows.length} selected`} tone={selectedRows.length > 0 ? "warn" : "neutral"} />
-          <button
-            type="button"
-            onClick={() => setSelectedRowKeys(new Set())}
-            disabled={selectedRowKeys.size === 0 || rowActionsDisabled}
-            className="rounded-lg px-2 py-1.5 text-xs font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Clear
-          </button>
-          <div className="ml-auto flex flex-wrap gap-1.5">
-            <ToolButton
-              onClick={() => void runBulkKeep()}
-              disabled={selectedRows.length === 0 || rowActionsDisabled}
-              tone="primary"
-            >
-              {activeBatchAction === "keep" ? (
-                <Loader2 size="0.875rem" className="animate-spin" />
-              ) : (
-                <Check size="0.875rem" />
-              )}
-              Keep selected
-            </ToolButton>
-            <ToolButton onClick={() => void runBulkSkip()} disabled={selectedRows.length === 0 || rowActionsDisabled}>
-              {activeBatchAction === "skip" ? (
-                <Loader2 size="0.875rem" className="animate-spin" />
-              ) : (
-                <X size="0.875rem" />
-              )}
-              Skip selected
-            </ToolButton>
-          </div>
         </div>
       ) : null}
 
@@ -608,6 +617,9 @@ export function LongTermMemorySuggestionsTab({
           />
         </div>
       )}
+      {selectMode && selectedRows.length > 0 ? (
+        <SelectionActionBar selectedCount={selectedRows.length} actions={selectionActions} placement="sticky" />
+      ) : null}
     </div>
   );
 }

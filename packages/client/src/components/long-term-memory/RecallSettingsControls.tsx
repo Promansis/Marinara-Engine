@@ -13,6 +13,7 @@ import {
   LTM_WEIGHT_MIN,
   LTM_WEIGHT_STEP,
 } from "./ltm-panel-shared";
+import { SettingsSwitch } from "../panels/settings/SettingControls";
 
 export type RecallSettingsValues = {
   longTermMemoryBudgetTokens: number;
@@ -27,36 +28,6 @@ export type RecallSettingsValues = {
   longTermMemoryIncludeResolved: boolean;
   longTermMemoryDebug: boolean;
 };
-
-function SettingToggle({
-  label,
-  checked,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  disabled?: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  return (
-    <label
-      className={cn(
-        "flex items-center gap-2.5 rounded-lg p-1 transition-colors hover:bg-[var(--secondary)]/50",
-        disabled && "pointer-events-none opacity-45",
-      )}
-    >
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.checked)}
-        className="h-3.5 w-3.5 shrink-0 rounded border-[var(--border)] accent-[var(--primary)]"
-      />
-      <span className="min-w-0 flex-1 text-xs text-[var(--foreground)]">{label}</span>
-    </label>
-  );
-}
 
 function SettingGroup({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -161,18 +132,16 @@ export function RecallStylePresets({
   const recallStyle = values.longTermMemoryRecallStyle ?? "balanced";
   return (
     <SettingGroup label="Recall style">
-      <div className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--background)] p-1 ring-1 ring-[var(--border)]">
+      <div className="mari-chrome-segmented grid-cols-2">
         {LTM_RECALL_STYLES.map((style) => (
-          <div key={style.id} className="grid grid-cols-[1fr_auto] overflow-hidden rounded-md">
+          <div key={style.id} className="grid grid-cols-[1fr_auto]">
             <button
               type="button"
               onClick={() => onChange({ longTermMemoryRecallStyle: style.id })}
               aria-pressed={recallStyle === style.id}
               className={cn(
-                "min-h-8 px-2 text-left text-xs font-medium transition-colors",
-                recallStyle === style.id
-                  ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
-                  : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                "mari-chrome-segmented__button justify-start px-2 text-left text-xs",
+                recallStyle === style.id && "mari-chrome-segmented__button--selected",
               )}
             >
               {style.label}
@@ -183,10 +152,8 @@ export function RecallStylePresets({
               aria-label={`${style.label} recall style: ${style.description}`}
               onClick={(event) => event.preventDefault()}
               className={cn(
-                "flex h-8 w-8 items-center justify-center transition-colors",
-                recallStyle === style.id
-                  ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
-                  : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                "mari-chrome-segmented__button h-full min-h-10 w-8 p-0",
+                recallStyle === style.id && "mari-chrome-segmented__button--selected",
               )}
             >
               <Info size="0.75rem" />
@@ -388,15 +355,21 @@ export function RecallToggles({
   const debugEnabled = values.longTermMemoryDebug ?? false;
   return (
     <>
-      <SettingToggle
+      <SettingsSwitch
         label="Include resolved threads"
         checked={includeResolved}
         onChange={(checked) => onChange({ longTermMemoryIncludeResolved: checked })}
+        labelPosition="start"
+        className="justify-between gap-3 p-1.5"
+        labelClassName="text-xs"
       />
-      <SettingToggle
+      <SettingsSwitch
         label="Debug retrieval logs"
         checked={debugEnabled}
         onChange={(checked) => onChange({ longTermMemoryDebug: checked })}
+        labelPosition="start"
+        className="justify-between gap-3 p-1.5"
+        labelClassName="text-xs"
       />
     </>
   );

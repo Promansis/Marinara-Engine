@@ -81,6 +81,7 @@ import { Modal } from "../ui/Modal";
 import { ChoiceSelectionModal } from "../presets/ChoiceSelectionModal";
 import { SecretPlotPanel } from "../agents/SecretPlotPanel";
 import { SummariesEditorModal } from "./SummariesEditorModal";
+import { SettingsSwitch } from "../panels/settings/SettingControls";
 import { useCharacters, usePersonas, useCharacterGroups, type SpriteInfo } from "../../hooks/use-characters";
 import { useLorebooks, useEntriesAcrossLorebooks } from "../../hooks/use-lorebooks";
 import { useDefaultPreset, usePresetFull, usePresets } from "../../hooks/use-presets";
@@ -2951,39 +2952,24 @@ export function ChatSettingsDrawer({
     const effectiveValue = metadata.enableMemoryRecall !== undefined ? metadata.enableMemoryRecall === true : defaultOn;
     return (
       <div className="space-y-2">
-        <button
-          onClick={() => {
-            updateMeta.mutate({ id: chat.id, enableMemoryRecall: !effectiveValue });
+        <SettingsSwitch
+          label="Enable Memory Recall"
+          description="Recall relevant fragments from earlier in this chat and inject them as context."
+          checked={effectiveValue}
+          onChange={(enabled) => {
+            updateMeta.mutate({ id: chat.id, enableMemoryRecall: enabled });
           }}
+          labelPosition="start"
           className={cn(
-            "mari-chat-option-field flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
+            "mari-chat-option-field justify-between gap-3 rounded-lg px-3 py-2.5",
             effectiveValue && "mari-chat-option-field--active",
           )}
-        >
-          <div className="flex-1 min-w-0">
-            <span className="text-[0.6875rem] font-medium">Enable Memory Recall</span>
-            <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-              Recall relevant fragments from earlier in this chat and inject them as context.
-            </p>
-          </div>
-          <div
-            className={cn(
-              "mari-chat-option-switch h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
-              effectiveValue && "mari-chat-option-switch--active",
-            )}
-          >
-            <div
-              className={cn(
-                "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                effectiveValue && "translate-x-3.5",
-              )}
-            />
-          </div>
-        </button>
+          labelClassName="text-[0.6875rem] font-medium"
+        />
         <button
           type="button"
           onClick={() => setShowMemoriesModal(true)}
-          className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--secondary)] px-3 py-2 text-[0.6875rem] font-medium text-[var(--foreground)] transition-colors hover:bg-[var(--accent)]"
+          className="mari-chrome-control mari-chrome-control--small w-full text-[0.6875rem]"
         >
           <Brain size="0.75rem" />
           Access memories for this chat

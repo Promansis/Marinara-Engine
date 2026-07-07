@@ -82,9 +82,9 @@ export function NoteRow({
   const importance = primaryImportance(note);
   return (
     <article
-      className={cn("group", listRowClassName, (open || bulkSelected) && selectedListRowClassName)}
+      className={cn("group relative pr-12", listRowClassName, (open || bulkSelected) && selectedListRowClassName)}
     >
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+      <div className="grid gap-2">
         <div className={cn("grid min-w-0 gap-2", onSelect && "grid-cols-[auto_minmax(0,1fr)]")}>
           {onSelect && (
             <input
@@ -124,7 +124,7 @@ export function NoteRow({
             aria-label={`Open ${displayTitle}`}
             title="Open memory"
           >
-            <Eye size="0.875rem" />
+            <Eye size="0.75rem" />
           </button>
           {onRestore && (
             <button
@@ -134,18 +134,18 @@ export function NoteRow({
               aria-label={`Restore ${displayTitle}`}
               title="Restore memory"
             >
-              <RotateCcw size="0.875rem" />
+              <RotateCcw size="0.75rem" />
             </button>
           )}
           {onDelete && (
             <button
               type="button"
               onClick={onDelete}
-              className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
+              className={cn(rowActionButtonClassName, "mari-chrome-control--danger")}
               aria-label={`Delete ${displayTitle}`}
               title="Delete memory"
             >
-              <Trash2 size="0.875rem" />
+              <Trash2 size="0.75rem" />
             </button>
           )}
         </div>
@@ -258,14 +258,14 @@ export function TypeMemoryGroups({
                       <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-2">
                         <div className="grid min-h-16 w-7 shrink-0 grid-rows-[auto_1fr] justify-items-center">
                           <button
-                            type="button"
-                            onClick={() => onToggleMemory(note.id)}
-                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                            aria-label={expanded ? "Hide source details" : "Show source details"}
-                            aria-expanded={expanded}
-                          >
-                            {expanded ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
-                          </button>
+                          type="button"
+                          onClick={() => onToggleMemory(note.id)}
+                          className="mari-chrome-control mari-chrome-control--small h-7 min-h-7 w-7 shrink-0 rounded-md p-0 text-[var(--muted-foreground)] active:scale-90"
+                          aria-label={expanded ? "Hide source details" : "Show source details"}
+                          aria-expanded={expanded}
+                        >
+                          {expanded ? <ChevronDown size="0.75rem" /> : <ChevronRight size="0.75rem" />}
+                        </button>
                           <input
                             type="checkbox"
                             checked={selected}
@@ -365,7 +365,7 @@ export function TypeMemoryGroups({
                           aria-label={`Open ${memoryRowTitle(note, chatLookup)}`}
                           title="Open memory"
                         >
-                          <Eye size="0.875rem" />
+                          <Eye size="0.75rem" />
                         </button>
                         {canRemoveFromScope(note) && (
                           <button
@@ -378,7 +378,7 @@ export function TypeMemoryGroups({
                             aria-label={`Remove ${memoryRowTitle(note, chatLookup)} from chat`}
                             title="Remove from chat"
                           >
-                            <Unlink2 size="0.875rem" />
+                            <Unlink2 size="0.75rem" />
                           </button>
                         )}
                         <button
@@ -386,12 +386,12 @@ export function TypeMemoryGroups({
                           onClick={() => onDelete(note)}
                           className={cn(
                             rowActionButtonClassName,
-                            "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]",
+                            "mari-chrome-control--danger",
                           )}
                           aria-label={`Delete ${memoryRowTitle(note, chatLookup)}`}
                           title="Delete memory"
                         >
-                          <Trash2 size="0.875rem" />
+                          <Trash2 size="0.75rem" />
                         </button>
                       </div>
                     </article>
@@ -478,7 +478,7 @@ function _ArchivedSourceSummaryGroupRow({
           aria-label={`Open ${sourceTitle}`}
           title="Open source memory"
         >
-          <Eye size="0.875rem" />
+          <Eye size="0.75rem" />
         </button>
         <button
           type="button"
@@ -487,16 +487,16 @@ function _ArchivedSourceSummaryGroupRow({
           aria-label={`Restore ${sourceTitle}`}
           title="Restore source memory"
         >
-          <RotateCcw size="0.875rem" />
+          <RotateCcw size="0.75rem" />
         </button>
         <button
           type="button"
           onClick={() => onDelete(group.source)}
-          className={cn(rowActionButtonClassName, "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]")}
+          className={cn(rowActionButtonClassName, "mari-chrome-control--danger")}
           aria-label={`Delete ${sourceTitle}`}
           title="Delete source memory"
         >
-          <Trash2 size="0.875rem" />
+          <Trash2 size="0.75rem" />
         </button>
       </div>
       {group.derived.length > 0 && (
@@ -541,7 +541,7 @@ function _ArchivedSourceSummaryGroupRow({
                   aria-label={`Open ${displayNoteTitle(derivedNote)}`}
                   title="Open memory"
                 >
-                  <Eye size="0.875rem" />
+                  <Eye size="0.75rem" />
                 </button>
                 <button
                   type="button"
@@ -550,19 +550,19 @@ function _ArchivedSourceSummaryGroupRow({
                   aria-label={`Restore ${displayNoteTitle(derivedNote)}`}
                   title="Restore memory"
                 >
-                  <RotateCcw size="0.875rem" />
+                  <RotateCcw size="0.75rem" />
                 </button>
                 <button
                   type="button"
                   onClick={() => onDelete(derivedNote)}
                   className={cn(
                     rowActionButtonClassName,
-                    "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]",
+                    "mari-chrome-control--danger",
                   )}
                   aria-label={`Delete ${displayNoteTitle(derivedNote)}`}
                   title="Delete memory"
                 >
-                  <Trash2 size="0.875rem" />
+                  <Trash2 size="0.75rem" />
                 </button>
               </div>
             </div>

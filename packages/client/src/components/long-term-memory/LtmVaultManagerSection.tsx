@@ -56,6 +56,7 @@ import { LongTermMemoryDebugLogPanel } from "../long-term-memory/LongTermMemoryD
 import { MemoryNoteModal, defaultMemoryModalTab } from "../long-term-memory/LongTermMemoryNoteModal";
 import { TypeMemoryGroups } from "../long-term-memory/LongTermMemoryNoteList";
 import { ImportPreviewRowItem } from "../long-term-memory/LongTermMemoryImportSection";
+import { SelectionActionBar, type SelectionActionBarAction } from "../ui/SelectionActionBar";
 import {
   type LongTermMemoryLatestExtractionResult,
   useLtmExtractionResultsStore,
@@ -1207,6 +1208,75 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     }
   };
 
+  const noteSelectionActions: SelectionActionBarAction[] = [
+    {
+      id: "copy",
+      label: "Copy",
+      icon: <Copy size="0.75rem" />,
+      onClick: () => openTransferModal("copy"),
+      disabled: noteActionPending,
+    },
+    {
+      id: "move",
+      label: "Move",
+      icon: <ArrowRightLeft size="0.75rem" />,
+      onClick: () => openTransferModal("move"),
+      disabled: noteActionPending,
+    },
+    {
+      id: "clear",
+      label: "Clear",
+      icon: <RotateCcw size="0.75rem" />,
+      onClick: () => setAllVisibleNotesSelected(false),
+      disabled: noteActionPending,
+    },
+    {
+      id: "remove-from-chat",
+      label: "Remove from chat",
+      icon: removeNotesFromScope.isPending ? (
+        <Loader2 size="0.75rem" className="animate-spin" />
+      ) : (
+        <Unlink2 size="0.75rem" />
+      ),
+      onClick: () => void removeSelectedMemoriesFromCurrentScope(),
+      disabled: selectedRemovableNoteIds.length === 0 || noteActionPending,
+    },
+    {
+      id: "delete",
+      label: "Delete",
+      icon: deleteNotes.isPending ? (
+        <Loader2 size="0.75rem" className="animate-spin" />
+      ) : (
+        <Trash2 size="0.75rem" />
+      ),
+      onClick: () => void deleteSelectedMemories(),
+      disabled: selectedVisibleNoteIds.length === 0 || noteActionPending,
+      tone: "danger",
+    },
+  ];
+
+  const importSelectionActions: SelectionActionBarAction[] = [
+    {
+      id: "import",
+      label: "Import selected",
+      icon: importSourceNotes.isPending ? (
+        <Loader2 size="0.75rem" className="animate-spin" />
+      ) : (
+        <Import size="0.75rem" />
+      ),
+      onClick: () => void importRowsToVault(selectedVisibleImportRows.map((row) => row.sourceId)),
+      disabled: selectedVisibleImportRows.length === 0 || importSourceNotes.isPending,
+      tone: "primary",
+    },
+    {
+      id: "clear",
+      label: "Clear",
+      icon: <RotateCcw size="0.75rem" />,
+      onClick: () => setAllVisibleImportRowsSelected(false),
+      disabled: importSourceNotes.isPending,
+    },
+  ];
+
   return (
     <div className="flex min-h-full flex-col gap-3 p-3 text-[var(--foreground)]">
       <div className="sticky top-0 z-10 -mx-3 bg-[var(--background)]/95 px-3 py-2 backdrop-blur-sm">
@@ -1328,45 +1398,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
                   label={`${selectedVisibleNoteIds.length} selected`}
                   tone={selectedVisibleNoteIds.length > 0 ? "warn" : "neutral"}
                 />
-                {selectedVisibleNoteIds.length > 0 && (
-                  <>
-                    <ToolButton onClick={() => openTransferModal("copy")} disabled={noteActionPending}>
-                      <Copy size="0.875rem" />
-                      Copy selected
-                    </ToolButton>
-                    <ToolButton onClick={() => openTransferModal("move")} disabled={noteActionPending}>
-                      <ArrowRightLeft size="0.875rem" />
-                      Move selected
-                    </ToolButton>
-                    <ToolButton onClick={() => setAllVisibleNotesSelected(false)} disabled={noteActionPending}>
-                      <RotateCcw size="0.875rem" />
-                      Clear selection
-                    </ToolButton>
-                    <ToolButton
-                      onClick={removeSelectedMemoriesFromCurrentScope}
-                      disabled={selectedRemovableNoteIds.length === 0 || noteActionPending}
-                    >
-                      {removeNotesFromScope.isPending ? (
-                        <Loader2 size="0.875rem" className="animate-spin" />
-                      ) : (
-                        <Unlink2 size="0.875rem" />
-                      )}
-                      Remove from chat
-                    </ToolButton>
-                    <ToolButton
-                      onClick={deleteSelectedMemories}
-                      disabled={selectedVisibleNoteIds.length === 0 || noteActionPending}
-                      tone="danger"
-                    >
-                      {deleteNotes.isPending ? (
-                        <Loader2 size="0.875rem" className="animate-spin" />
-                      ) : (
-                        <Trash2 size="0.875rem" />
-                      )}
-                      Delete selected
-                    </ToolButton>
-                  </>
-                )}
               </div>
             )}
             <div className="space-y-2">
@@ -1395,6 +1426,13 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
                 />
               )}
             </div>
+            {selectedVisibleNoteIds.length > 0 && (
+              <SelectionActionBar
+                selectedCount={selectedVisibleNoteIds.length}
+                actions={noteSelectionActions}
+                placement="sticky"
+              />
+            )}
           </section>
         </Section>
       )}
@@ -1483,18 +1521,10 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
                 />
                 Select visible
               </label>
-              <ToolButton
-                onClick={() => importRowsToVault(selectedVisibleImportRows.map((row) => row.sourceId))}
-                disabled={selectedVisibleImportRows.length === 0 || importSourceNotes.isPending}
-                tone="primary"
-              >
-                {importSourceNotes.isPending ? (
-                  <Loader2 size="0.875rem" className="animate-spin" />
-                ) : (
-                  <Import size="0.875rem" />
-                )}
-                Import selected
-              </ToolButton>
+              <StatusPill
+                label={`${selectedVisibleImportRows.length} selected`}
+                tone={selectedVisibleImportRows.length > 0 ? "warn" : "neutral"}
+              />
             </div>
           </div>
 
@@ -1551,6 +1581,13 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
               </div>
             )}
           </div>
+          {selectedVisibleImportRows.length > 0 && (
+            <SelectionActionBar
+              selectedCount={selectedVisibleImportRows.length}
+              actions={importSelectionActions}
+              placement="sticky"
+            />
+          )}
         </Section>
       )}
 
