@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Save, X } from "lucide-react";
+import { Check, Pencil, X } from "lucide-react";
 import type { LtmDraftMutation, LtmExtractionDraft, LtmNote } from "@marinara-engine/shared";
 import { cn } from "../../lib/utils";
 import {
@@ -134,7 +134,7 @@ export function SuggestionRow({
             </div>
             <div className="flex flex-wrap gap-1.5">
               <ToolButton onClick={editing ? closeEditor : openEditor} disabled={busy}>
-                <Save size="0.875rem" />
+                {editing ? <X size="0.875rem" /> : <Pencil size="0.875rem" />}
                 {editing ? "Cancel edit" : hasEdits ? "Edit again" : "Edit"}
               </ToolButton>
               <ToolButton onClick={onKeep} disabled={busy} tone="primary">
