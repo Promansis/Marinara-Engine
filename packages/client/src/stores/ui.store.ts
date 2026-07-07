@@ -15,16 +15,22 @@ import { isCssGradient, RAINBOW_GRADIENT_PRESET } from "../lib/css-colors";
 import { announceChatFloatingUiDismiss } from "../lib/chat-floating-ui-events";
 import { BASIC_PANEL_SORT_OPTIONS, normalizeBasicPanelSort, type BasicPanelSort } from "../lib/panel-sort";
 
-type Panel =
-  | "chat"
-  | "characters"
-  | "lorebooks"
-  | "presets"
-  | "connections"
-  | "agents"
-  | "personas"
-  | "settings"
-  | "bot-browser";
+const PANEL_OPTIONS = [
+  "chat",
+  "characters",
+  "lorebooks",
+  "presets",
+  "connections",
+  "agents",
+  "personas",
+  "settings",
+  "bot-browser",
+] as const;
+type Panel = (typeof PANEL_OPTIONS)[number];
+const PANEL_OPTION_SET = new Set<string>(PANEL_OPTIONS);
+const LEGACY_RIGHT_PANEL_REDIRECTS: Record<string, Panel> = {
+  "long-term-memory": "agents",
+};
 export type ChatModeShortcut = "conversation" | "roleplay" | "game";
 export const CHARACTER_LIBRARY_SORT_OPTIONS = ["name-asc", "name-desc", "newest", "oldest", "favorites"] as const;
 export type CharacterLibrarySort = (typeof CHARACTER_LIBRARY_SORT_OPTIONS)[number];
@@ -207,6 +213,23 @@ function normalizePanelStringArray(value: unknown) {
 
 function normalizeScrollTop(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+}
+
+function normalizePanel(value: unknown, fallback: Panel = "chat"): Panel {
+  if (typeof value !== "string") return fallback;
+  const redirected = LEGACY_RIGHT_PANEL_REDIRECTS[value];
+  if (redirected) return redirected;
+  return PANEL_OPTION_SET.has(value) ? (value as Panel) : fallback;
+}
+
+function isRenderableRightPanel(panel: Panel) {
+  return panel !== "chat";
+}
+
+function normalizePersistedRightPanelState(persisted: Record<string, unknown>) {
+  const rightPanel = normalizePanel(persisted.rightPanel);
+  persisted.rightPanel = rightPanel;
+  persisted.rightPanelOpen = persisted.rightPanelOpen === true && isRenderableRightPanel(rightPanel);
 }
 
 function isMobileShellViewport() {
@@ -1950,7 +1973,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: "marinara-engine-ui",
-      version: 67,
+      version: 68,
       // Debounce localStorage writes to avoid sync I/O on every state change
       storage: createJSONStorage(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
@@ -2410,6 +2433,7 @@ export const useUIStore = create<UIState>()(
         persisted.presetPanelSort = normalizeBasicPanelSort(persisted.presetPanelSort);
         persisted.connectionPanelSort = normalizeBasicPanelSort(persisted.connectionPanelSort);
         persisted.agentPanelSort = normalizeBasicPanelSort(persisted.agentPanelSort);
+        normalizePersistedRightPanelState(persisted);
         normalizePersistedMainSurface(persisted);
         if (Array.isArray(persisted.recentUserActivities)) {
           persisted.recentUserActivities = persisted.recentUserActivities
