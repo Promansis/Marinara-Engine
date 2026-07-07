@@ -542,7 +542,6 @@ export async function directIngestGameJournal(
             verbosity: extractionConfig.verbosity,
             maxOutputTokens: extractionConfig.maxOutputTokens,
             temperature: extractionConfig.temperature,
-            maxSourceTokens: extractionConfig.maxSourceTokens,
             maxExistingNoteTokens: extractionConfig.maxExistingNoteTokens,
             operationId: opId,
             mode: "game",

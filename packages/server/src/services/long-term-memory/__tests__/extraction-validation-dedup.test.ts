@@ -5,12 +5,20 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LtmDraftMutation, LtmEvidenceUnit, LtmNote, SessionSummary } from "@marinara-engine/shared";
+import {
+  BaseLLMProvider,
+  type ChatCompletionResult,
+  type ChatMessage,
+  type ChatOptions,
+  type LLMUsage,
+} from "../../llm/base-provider.js";
 import { deduplicateUnits } from "../dedup.js";
 import { validateLtmEvidenceUnits } from "../evidence-unit-validation.js";
 import {
   evidenceUnitMessages,
   evidenceUnitResponseFormat,
   parseEvidenceUnitPayload,
+  runLongTermMemoryEvidenceUnitExtraction,
   sourceHashForEvidenceUnitExtraction,
 } from "../evidence-unit-extraction.js";
 import { mapGameJournalToEvidenceUnits, renderGameSourceText } from "../game-journal-mapper.js";
@@ -54,6 +62,27 @@ function unit(bucket: LtmEvidenceUnit["bucket"], patch: Partial<LtmEvidenceUnit>
     sourceHash,
     ...patch,
   };
+}
+
+class RecordingProvider extends BaseLLMProvider {
+  public observedMaxTokens: number | undefined;
+
+  constructor(maxContext: number) {
+    super("", "", maxContext);
+  }
+
+  async *chat(_messages: ChatMessage[], _options: ChatOptions): AsyncGenerator<string, LLMUsage | void, unknown> {
+    return;
+  }
+
+  override async chatComplete(_messages: ChatMessage[], options: ChatOptions): Promise<ChatCompletionResult> {
+    this.observedMaxTokens = options.maxTokens;
+    return {
+      content: JSON.stringify({ summary: "Budget reduced", units: [] }),
+      toolCalls: [],
+      finishReason: "stop",
+    };
+  }
 }
 
 test("relationship_state with dimension changes requires caused_by support", () => {
@@ -297,6 +326,40 @@ test("evidence unit response format constrains target shape and relationship dim
   assert.equal(unitSchema.properties.dimensions.additionalProperties, false);
   assert.ok(unitSchema.properties.dimensions.properties.trust);
   assert.ok(unitSchema.properties.dimensionChanges.properties.tension);
+});
+
+test("evidence extraction reduces completion budget instead of failing when prompt still fits context", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-context-preflight-"));
+  try {
+    const sourceNote = note("source_test", {
+      source: {
+        text: "Alice told Bob the truth about the stolen map.",
+        updatedAt: timestamp,
+      },
+    });
+    const provider = new RecordingProvider(8_819);
+
+    const result = await runLongTermMemoryEvidenceUnitExtraction({
+      sourceNote,
+      sourceText: sourceNote.sections.source!.text,
+      existingNotes: [],
+      provider,
+      model: "test-model",
+      root,
+      scope: {},
+      modes: ["roleplay"],
+      sourceHash,
+      maxOutputTokens: 8_192,
+      operationId: randomUUID(),
+    });
+
+    assert.equal(result.response.summary, "Budget reduced");
+    assert.equal(result.response.units.length, 0);
+    assert.equal(typeof provider.observedMaxTokens, "number");
+    assert.ok(provider.observedMaxTokens! < 8_192);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("malformed evidence unit drops include actionable schema issues", () => {

@@ -112,10 +112,8 @@ import { serializeCustomToolForTransfer } from "../../lib/custom-tool-transfer";
 import { downloadZipFile } from "../../lib/download-zip";
 import { isManagedAgentType } from "@marinara-engine/shared";
 import {
-  DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS,
   DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
   DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
-  DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
   DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
   DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
   DEFAULT_LTM_EXTRACTION_TEMPERATURE,
@@ -1381,30 +1379,13 @@ export function AgentEditor() {
           2,
           { integer: false },
         );
-        const maxSourceTokens = normalizeBoundedNumber(
-          ltmDraft.maxSourceTokens,
-          DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
-          128,
-          65_536,
-        );
         const maxExistingNoteTokens = normalizeBoundedNumber(
           ltmDraft.maxExistingNoteTokens,
           DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
           128,
           32_768,
         );
-        const existingNoteMaxChunks = normalizeBoundedNumber(
-          ltmDraft.existingNoteMaxChunks,
-          DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS,
-          1,
-          100,
-        );
-        const existingNoteMaxTokens = normalizeBoundedNumber(
-          ltmDraft.existingNoteMaxTokens,
-          DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
-          128,
-          16_384,
-        );
+        const existingNoteMaxTokens = maxExistingNoteTokens;
         const activePromptTemplateIdsByMode = Object.fromEntries(
           LTM_EXTRACTION_MODES.flatMap((mode) => {
             const id = ltmDraft.activePromptTemplateIdsByMode[mode];
@@ -1417,12 +1398,8 @@ export function AgentEditor() {
         if (maxOutputTokens !== DEFAULT_LTM_EXTRACTION_MAX_TOKENS)
           extractionPayload.maxOutputTokens = maxOutputTokens;
         if (temperature !== DEFAULT_LTM_EXTRACTION_TEMPERATURE) extractionPayload.temperature = temperature;
-        if (maxSourceTokens !== DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS)
-          extractionPayload.maxSourceTokens = maxSourceTokens;
         if (maxExistingNoteTokens !== DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS)
           extractionPayload.maxExistingNoteTokens = maxExistingNoteTokens;
-        if (existingNoteMaxChunks !== DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS)
-          extractionPayload.existingNoteMaxChunks = existingNoteMaxChunks;
         if (existingNoteMaxTokens !== DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS)
           extractionPayload.existingNoteMaxTokens = existingNoteMaxTokens;
         if (ltmDraft.promptTemplates.length > 0) extractionPayload.promptTemplates = ltmDraft.promptTemplates;
@@ -4114,13 +4091,8 @@ export function AgentEditor() {
                     verbosity: ltmDraft?.verbosity ?? DEFAULT_LTM_EXTRACTION_VERBOSITY,
                     maxOutputTokens: ltmDraft?.maxOutputTokens ?? DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
                     temperature: ltmDraft?.temperature ?? DEFAULT_LTM_EXTRACTION_TEMPERATURE,
-                    maxSourceTokens: ltmDraft?.maxSourceTokens ?? DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
                     maxExistingNoteTokens:
                       ltmDraft?.maxExistingNoteTokens ?? DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
-                    existingNoteMaxChunks:
-                      ltmDraft?.existingNoteMaxChunks ?? DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS,
-                    existingNoteMaxTokens:
-                      ltmDraft?.existingNoteMaxTokens ?? DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
                   }}
                   autoApplyLowRisk={ltmDraft?.autoApplyLowRisk ?? false}
                   onChangeExtraction={(patch) => updateLtmDraft(patch)}

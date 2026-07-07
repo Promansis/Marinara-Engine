@@ -5,6 +5,7 @@ import { cn } from "../../lib/utils";
 import {
   compactInputClassName,
   SettingField,
+  SettingInfoLabel,
 } from "./LtmFields";
 import { ToolButton } from "./LtmPills";
 import {
@@ -85,6 +86,7 @@ function DraftNumberInput({
   step,
   integer = false,
   className,
+  ariaLabel,
   onChange,
 }: {
   value: number;
@@ -93,6 +95,7 @@ function DraftNumberInput({
   step: number;
   integer?: boolean;
   className: string;
+  ariaLabel?: string;
   onChange: (value: number) => void;
 }) {
   const [focused, setFocused] = useState(false);
@@ -127,6 +130,7 @@ function DraftNumberInput({
       max={max}
       step={step}
       value={focused ? draft : value}
+      aria-label={ariaLabel}
       onFocus={() => {
         setFocused(true);
         setDraft(String(value));
@@ -205,7 +209,14 @@ export function RecallBudgetControls({
   const maxChunks = values.longTermMemoryMaxChunks ?? 20;
   return (
     <>
-      <SettingField label="Memory budget">
+      <SettingField
+        label={
+          <SettingInfoLabel
+            label="Recall context budget"
+            help="How many tokens recalled memories can use in the next prompt."
+          />
+        }
+      >
         <div className="grid grid-cols-[1fr_5.5rem] items-center gap-3">
           <input
             type="range"
@@ -214,6 +225,7 @@ export function RecallBudgetControls({
             step={128}
             value={budgetTokens}
             onChange={(event) => onChange({ longTermMemoryBudgetTokens: Number(event.target.value) })}
+            aria-label="Recall context budget"
             className="min-w-0 accent-[var(--primary)]"
           />
           <DraftNumberInput
@@ -224,10 +236,18 @@ export function RecallBudgetControls({
             value={budgetTokens}
             onChange={(value) => onChange({ longTermMemoryBudgetTokens: value })}
             className={compactInputClassName}
+            ariaLabel="Recall context budget"
           />
         </div>
       </SettingField>
-      <SettingField label="Max memories">
+      <SettingField
+        label={
+          <SettingInfoLabel
+            label="Max memories injected"
+            help="The maximum number of memories recall may inject, even when token budget remains."
+          />
+        }
+      >
         <DraftNumberInput
           min={1}
           max={100}
@@ -236,6 +256,7 @@ export function RecallBudgetControls({
           value={maxChunks}
           onChange={(value) => onChange({ longTermMemoryMaxChunks: value })}
           className={compactInputClassName}
+          ariaLabel="Max memories injected"
         />
       </SettingField>
     </>

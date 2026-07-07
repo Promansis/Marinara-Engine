@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Info } from "lucide-react";
 
 export const microLabelClassName =
   "text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]";
@@ -27,12 +28,38 @@ export const emptyStateClassName =
 
 export const actionRowClassName = "flex flex-wrap items-center gap-2 border-t border-[var(--border)]/60 pt-4";
 
-export function SettingField({ label, children }: { label: string; children: ReactNode }) {
+export function SettingInfoLabel({ label, help }: { label: string; help: string }) {
   return (
-    <label className="block">
-      <span className={`mb-1.5 block ${microLabelClassName}`}>{label}</span>
+    <span className="inline-flex min-w-0 items-center gap-1.5">
+      <span className="min-w-0">{label}</span>
+      <button
+        type="button"
+        title={help}
+        aria-label={`${label}: ${help}`}
+        onClick={(event) => event.preventDefault()}
+        className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
+      >
+        <Info size="0.7rem" />
+      </button>
+    </span>
+  );
+}
+
+export function SettingField({ label, children }: { label: ReactNode; children: ReactNode }) {
+  if (typeof label === "string") {
+    return (
+      <label className="block">
+        <span className={`mb-1.5 block ${microLabelClassName}`}>{label}</span>
+        {children}
+      </label>
+    );
+  }
+
+  return (
+    <div className="block">
+      <div className={`mb-1.5 block ${microLabelClassName}`}>{label}</div>
       {children}
-    </label>
+    </div>
   );
 }
 

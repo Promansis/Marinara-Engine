@@ -2,10 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, FileText, Link2, Pencil, Plus, Save, Trash2 } from "lucide-react";
 import { cn, generateClientId } from "../../lib/utils";
 import {
-  DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS,
-  DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
   DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
-  DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
   DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
   DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE,
   DEFAULT_LTM_EXTRACTION_TEMPERATURE,
@@ -18,6 +15,7 @@ import { showAlertDialog, showPromptDialog } from "../../lib/app-dialogs";
 import { MODE_LABELS } from "./ltm-panel-shared";
 import { MacroTextarea } from "../ui/MacroTextarea";
 import { FieldGroup } from "../agents/AgentEditor";
+import { SettingInfoLabel } from "./LtmFields";
 
 type PromptTemplate = { id: string; name: string; prompt: string };
 type ActivePromptTemplateIdsByMode = Partial<Record<LtmMode, string | null>>;
@@ -77,6 +75,7 @@ function LtmDraftNumberInput({
   step,
   integer = false,
   placeholder,
+  ariaLabel,
   onChange,
 }: {
   value: number;
@@ -85,6 +84,7 @@ function LtmDraftNumberInput({
   step?: number;
   integer?: boolean;
   placeholder?: string;
+  ariaLabel?: string;
   onChange: (value: number) => void;
 }) {
   const [focused, setFocused] = useState(false);
@@ -120,6 +120,7 @@ function LtmDraftNumberInput({
       step={step}
       value={focused ? draft : value}
       placeholder={placeholder}
+      aria-label={ariaLabel}
       onFocus={() => {
         setFocused(true);
         setDraft(String(value));
@@ -503,10 +504,7 @@ export default function LtmInlineSettingsSections({
     verbosity: string;
     maxOutputTokens: number;
     temperature: number;
-    maxSourceTokens: number;
     maxExistingNoteTokens: number;
-    existingNoteMaxChunks: number;
-    existingNoteMaxTokens: number;
   };
   autoApplyLowRisk: boolean;
   onChangeExtraction: (patch: Record<string, unknown>) => void;
@@ -514,15 +512,19 @@ export default function LtmInlineSettingsSections({
 }) {
   return (
     <>
-      {/* Section 1 — AI Limits */}
       <FieldGroup
-        label="AI limits"
+        label="Token budgets"
         icon={<FileText size="0.875rem" className="text-[var(--primary)]" />}
-        help="Control token budgets for the extraction process."
+        help="Control what extraction can read from existing memories and what it can write back."
       >
         <div className="grid gap-3 sm:grid-cols-2">
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Max AI response length</span>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+              <SettingInfoLabel
+                label="Extraction output budget"
+                help="How many tokens the AI can use for the extraction result, including summaries and proposed memory updates."
+              />
+            </span>
             <LtmDraftNumberInput
               min={512}
               max={32768}
@@ -530,29 +532,38 @@ export default function LtmInlineSettingsSections({
               value={extractionSettings.maxOutputTokens}
               onChange={(value) => onChangeExtraction({ maxOutputTokens: value })}
               placeholder={String(DEFAULT_LTM_EXTRACTION_MAX_TOKENS)}
+              ariaLabel="Extraction output budget"
             />
-          </label>
-          <label className="flex flex-col gap-1.5">
+          </div>
+          <div className="flex flex-col gap-1.5">
             <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-              How much text the AI reads at once
+              <SettingInfoLabel
+                label="Extraction context budget"
+                help="How many tokens relevant existing memories can use during extraction. Source memory text is always read in full."
+              />
             </span>
             <LtmDraftNumberInput
               min={128}
-              max={65536}
+              max={32768}
               integer
-              value={extractionSettings.maxSourceTokens}
-              onChange={(value) => onChangeExtraction({ maxSourceTokens: value })}
-              placeholder={String(DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS)}
+              value={extractionSettings.maxExistingNoteTokens}
+              onChange={(value) =>
+                onChangeExtraction({
+                  maxExistingNoteTokens: value,
+                  existingNoteMaxTokens: value,
+                })
+              }
+              placeholder={String(DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS)}
+              ariaLabel="Extraction context budget"
             />
-          </label>
+          </div>
         </div>
       </FieldGroup>
 
-      {/* Section 2 — Extraction Behavior */}
       <FieldGroup
         label="Extraction behavior"
         icon={<FileText size="0.875rem" className="text-[var(--primary)]" />}
-        help="Expert tuning for how the AI reasons over source notes and existing memories."
+        help="Expert tuning for how the AI reasons over source notes."
       >
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="flex flex-col gap-1.5">
@@ -589,43 +600,6 @@ export default function LtmInlineSettingsSections({
               value={extractionSettings.temperature}
               onChange={(value) => onChangeExtraction({ temperature: value })}
               placeholder={String(DEFAULT_LTM_EXTRACTION_TEMPERATURE)}
-            />
-          </label>
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Max existing-note text</span>
-            <LtmDraftNumberInput
-              min={128}
-              max={32768}
-              integer
-              value={extractionSettings.maxExistingNoteTokens}
-              onChange={(value) => onChangeExtraction({ maxExistingNoteTokens: value })}
-              placeholder={String(DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS)}
-            />
-          </label>
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-              Existing-note max chunks
-            </span>
-            <LtmDraftNumberInput
-              min={1}
-              max={100}
-              integer
-              value={extractionSettings.existingNoteMaxChunks}
-              onChange={(value) => onChangeExtraction({ existingNoteMaxChunks: value })}
-              placeholder={String(DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_CHUNKS)}
-            />
-          </label>
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-              Existing-note max tokens
-            </span>
-            <LtmDraftNumberInput
-              min={128}
-              max={16384}
-              integer
-              value={extractionSettings.existingNoteMaxTokens}
-              onChange={(value) => onChangeExtraction({ existingNoteMaxTokens: value })}
-              placeholder={String(DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS)}
             />
           </label>
         </div>

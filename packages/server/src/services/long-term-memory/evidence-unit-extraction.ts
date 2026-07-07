@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
   DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
-  DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
   DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
   DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
   DEFAULT_LTM_EXTRACTION_VERBOSITY,
@@ -22,7 +21,7 @@ import {
   type LtmNote,
   type LtmScope,
 } from "@marinara-engine/shared";
-import type { BaseLLMProvider, ChatMessage, ChatOptions } from "../llm/base-provider.js";
+import { fitMessagesToContext, type BaseLLMProvider, type ChatMessage, type ChatOptions } from "../llm/base-provider.js";
 import { logger } from "../../lib/logger.js";
 import { countBy, safeSnippet } from "./ltm-utils.js";
 import { DEFAULT_LTM_EXTRACTION_PROMPT } from "@marinara-engine/shared";
@@ -87,7 +86,6 @@ export interface RunLongTermMemoryEvidenceUnitExtractionOptions {
   verbosity?: NonNullable<ChatOptions["verbosity"]>;
   maxOutputTokens?: number;
   temperature?: number;
-  maxSourceTokens?: number;
   maxExistingNoteTokens?: number;
   signal?: AbortSignal;
   operationId?: string;
@@ -460,14 +458,6 @@ function estimateLtmPromptTokens(text: string) {
   return Math.max(1, Math.ceil(text.length / 4));
 }
 
-function truncateToEstimatedTokens(text: string, maxTokens = DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS) {
-  const budget = Math.max(1, Math.floor(maxTokens));
-  if (estimateLtmPromptTokens(text) <= budget) return text;
-  let end = Math.min(text.length, budget * 4);
-  while (end > 0 && estimateLtmPromptTokens(text.slice(0, end)) > budget) end--;
-  return text.slice(0, end);
-}
-
 function formatExistingNotes(notes: LtmNote[], maxTokens = DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS) {
   let usedTokens = 0;
   const blocks: string[] = [];
@@ -488,6 +478,54 @@ function formatExistingNotes(notes: LtmNote[], maxTokens = DEFAULT_LTM_EXTRACTIO
     blocks.push(block);
   }
   return blocks.length ? blocks.join("\n\n---\n\n") : "(no relevant memory streams)";
+}
+
+async function preflightExtractionPromptContext({
+  messages,
+  chatOptions,
+  extractionOptions,
+}: {
+  messages: ChatMessage[];
+  chatOptions: LtmEvidenceUnitChatOptions;
+  extractionOptions: RunLongTermMemoryEvidenceUnitExtractionOptions;
+}): Promise<number | undefined> {
+  const providerMaxContext = extractionOptions.provider.maxContextValue ?? undefined;
+  if (!providerMaxContext) return;
+
+  const fit = fitMessagesToContext(messages, chatOptions, providerMaxContext);
+  const requestedMaxTokens = chatOptions.maxTokens;
+  const reducedOutputBudget =
+    typeof requestedMaxTokens === "number" && typeof fit.maxTokens === "number" && fit.maxTokens < requestedMaxTokens;
+  if (!fit.trimmed && !reducedOutputBudget) return;
+
+  await recordLtmDebugEvent({
+    operationId: extractionOptions.operationId,
+    root: extractionOptions.root,
+    phase: "llm",
+    action: "evidence_unit_context_preflight",
+    status: fit.trimmed ? "error" : "ok",
+    sourceNoteId: extractionOptions.sourceNote.id,
+    provider: extractionOptions.provider.constructor.name,
+    model: extractionOptions.model,
+    counts: {
+      maxContext: providerMaxContext,
+      requestedOutputTokens: requestedMaxTokens ?? 0,
+      fittedOutputTokens: fit.maxTokens ?? 0,
+      estimatedPromptTokens: fit.estimatedTokensBefore,
+      fittedPromptTokens: fit.estimatedTokensAfter,
+      sourceChars: extractionOptions.sourceText.length,
+      existingNotes: extractionOptions.existingNotes.length,
+    },
+    details: {
+      reason: fit.trimmed ? "prompt_trim_required" : "output_budget_reduced",
+    },
+  });
+
+  if (!fit.trimmed) return fit.maxTokens;
+
+  throw new Error(
+    "Long-term memory extraction source is too large for the selected extraction model context. Source memory text is never truncated; lower the extraction context budget, split the source, or choose a larger-context model.",
+  );
 }
 
 export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOptions): ChatMessage[] {
@@ -584,7 +622,7 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
             }
           : {}),
         existingTypedNotes: formatExistingNotes(options.existingNotes, options.maxExistingNoteTokens),
-        sourceText: truncateToEstimatedTokens(options.sourceText, options.maxSourceTokens),
+        sourceText: options.sourceText,
         refinePass: options.refinePass === true,
       }),
     },
@@ -598,10 +636,14 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
   const promptChars = messages.reduce((total, message) => total + message.content.length, 0);
   const started = Date.now();
   const requestedReasoningEffort = options.reasoningEffort ?? DEFAULT_LTM_EXTRACTION_REASONING_EFFORT;
+  const requestedMaxOutputTokens = options.maxOutputTokens ?? DEFAULT_LTM_EXTRACTION_MAX_TOKENS;
+  const maxOutputTokens = options.provider.maxTokensOverrideValue
+    ? Math.min(requestedMaxOutputTokens, options.provider.maxTokensOverrideValue)
+    : requestedMaxOutputTokens;
   const chatOptions: LtmEvidenceUnitChatOptions = {
     model: options.model,
     temperature: options.temperature ?? 0,
-    maxTokens: options.maxOutputTokens ?? options.provider.maxTokensOverrideValue ?? DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
+    maxTokens: maxOutputTokens,
     reasoningEffort: requestedReasoningEffort,
     verbosity: options.verbosity ?? DEFAULT_LTM_EXTRACTION_VERBOSITY,
     stream: true,
@@ -620,24 +662,31 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
     sourceNoteId: options.sourceNote.id,
     provider: options.provider.constructor.name,
     model: options.model,
-      counts: {
-        messages: messages.length,
-        promptChars,
-        promptTokens: estimateLtmPromptTokens(messages.map((message) => message.content).join("\n")),
-        sourceChars: options.sourceText.length,
-        existingNotes: options.existingNotes.length,
-        maxSourceTokens: options.maxSourceTokens ?? DEFAULT_LTM_EXTRACTION_MAX_SOURCE_TOKENS,
-        maxExistingNoteTokens: options.maxExistingNoteTokens ?? DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
-      },
-      details: {
-        reasoningEffort: requestedReasoningEffort,
-        verbosity: options.verbosity ?? DEFAULT_LTM_EXTRACTION_VERBOSITY,
-        maxOutputTokens: options.maxOutputTokens ?? options.provider.maxTokensOverrideValue ?? DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
-        temperature: options.temperature ?? 0,
-        aiKeywordExtraction: options.aiKeywordExtraction === true,
-        responseFormat: chatOptions.responseFormat?.type,
-      },
-    });
+    counts: {
+      messages: messages.length,
+      promptChars,
+      promptTokens: estimateLtmPromptTokens(messages.map((message) => message.content).join("\n")),
+      sourceChars: options.sourceText.length,
+      existingNotes: options.existingNotes.length,
+      maxExistingNoteTokens: options.maxExistingNoteTokens ?? DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
+    },
+    details: {
+      reasoningEffort: requestedReasoningEffort,
+      verbosity: options.verbosity ?? DEFAULT_LTM_EXTRACTION_VERBOSITY,
+      maxOutputTokens,
+      temperature: options.temperature ?? 0,
+      aiKeywordExtraction: options.aiKeywordExtraction === true,
+      responseFormat: chatOptions.responseFormat?.type,
+    },
+  });
+  const fittedMaxOutputTokens = await preflightExtractionPromptContext({
+    messages,
+    chatOptions,
+    extractionOptions: options,
+  });
+  if (typeof fittedMaxOutputTokens === "number") {
+    chatOptions.maxTokens = fittedMaxOutputTokens;
+  }
   try {
     const result = await chatCompleteWithReasoningFallback({
       messages,

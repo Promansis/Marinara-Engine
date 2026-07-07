@@ -27,6 +27,8 @@ import { canUpdateLtmScopedTarget, resolveScopedEvidenceUnitTargets } from "./sc
 import { LongTermMemoryStorage } from "./storage.js";
 import { normalizeStructuredSummaryEvidenceUnits } from "./structured-summary-normalizer.js";
 
+const LTM_EXTRACTION_EXISTING_NOTE_CANDIDATE_CHUNKS = 100;
+
 export type ExtractLongTermMemoryFromSourceNoteOptions = {
   noteId: string;
   provider: BaseLLMProvider;
@@ -150,9 +152,9 @@ async function extractLongTermMemoryFromSourceNoteInner(
         verbosity: extractionConfig.verbosity,
         maxOutputTokens: extractionConfig.maxOutputTokens,
         temperature: extractionConfig.temperature,
-        maxSourceTokens: extractionConfig.maxSourceTokens,
+        sourceTextPolicy: "full",
         maxExistingNoteTokens: extractionConfig.maxExistingNoteTokens,
-        existingNoteMaxChunks: extractionConfig.existingNoteMaxChunks,
+        existingNoteCandidateChunks: LTM_EXTRACTION_EXISTING_NOTE_CANDIDATE_CHUNKS,
         existingNoteMaxTokens: extractionConfig.existingNoteMaxTokens,
         activePromptTemplateId: extractionConfig.activePromptTemplateId,
         usesPromptTemplate: Boolean(extractionConfig.activePromptTemplateId),
@@ -167,7 +169,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
     sourceNoteId: sourceNote.id,
     sourceText,
     scope,
-    maxChunks: extractionConfig.existingNoteMaxChunks,
+    maxChunks: LTM_EXTRACTION_EXISTING_NOTE_CANDIDATE_CHUNKS,
     maxTokens: extractionConfig.existingNoteMaxTokens,
     embeddingSource: options.embeddingSource,
   });
@@ -212,7 +214,6 @@ async function extractLongTermMemoryFromSourceNoteInner(
     verbosity: extractionConfig.verbosity,
     maxOutputTokens: extractionConfig.maxOutputTokens,
     temperature: extractionConfig.temperature,
-    maxSourceTokens: extractionConfig.maxSourceTokens,
     maxExistingNoteTokens: extractionConfig.maxExistingNoteTokens,
     signal: options.signal,
     operationId: options.operationId,

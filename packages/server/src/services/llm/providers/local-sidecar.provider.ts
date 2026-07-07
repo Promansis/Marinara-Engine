@@ -18,6 +18,11 @@ export class LocalSidecarProvider extends BaseLLMProvider {
     super("", "");
   }
 
+  public override get maxContextValue(): number | null {
+    const contextSize = sidecarModelService.getConfig().contextSize;
+    return typeof contextSize === "number" && Number.isFinite(contextSize) ? contextSize : null;
+  }
+
   private async createDelegate(): Promise<OpenAIProvider> {
     const baseUrl = await sidecarProcessService.ensureReady({ forceStart: true });
     const contextSize = sidecarModelService.getConfig().contextSize;
