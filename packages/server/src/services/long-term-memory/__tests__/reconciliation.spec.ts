@@ -3523,6 +3523,10 @@ test("source-summary extraction validation drops event-shaped character facts bu
   });
 
   assert.deepEqual(compiled.outcome.droppedCandidates.map((candidate) => candidate.reason), ["unsupported_bucket"]);
+  const droppedDiagnostic = compiled.diagnostics.find(
+    (diagnostic) => diagnostic.code === "candidate_dropped_unsupported_bucket",
+  );
+  assert.equal(droppedDiagnostic?.details?.validatorCode, "event_shaped_character_fact");
   const createCharacter = compiled.compiledResponse.mutations.find(
     (mutation) => mutation.kind === "create_note" && mutation.note.id === "char_mara",
   );

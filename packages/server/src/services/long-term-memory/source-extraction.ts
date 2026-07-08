@@ -281,6 +281,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
     mode: resolvedMode,
     sourceHash,
     allowedBuckets,
+    skipStructuredBackfill: true,
   });
   compiled.diagnostics.push(...targetResolution.diagnostics);
   const compiledSummary = summarizeCompiledEvidenceUnitExtraction(compiled);

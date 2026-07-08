@@ -893,6 +893,247 @@ test("structured normalizer folds character, world, and anchor section suffixes 
   assert.ok(creates.find((mutation) => mutation.note.id === "world_friendship_bracelets")?.note.sections.motif);
 });
 
+test("structured roleplay character backfill derives exact timeline links without leaking caused_by n/a", () => {
+  const sourceText = [
+    "### timeline_event",
+    "- `[MAJOR] lisa_imai | bracelet_reveal: Lisa and Damo revealed matching bracelets.`",
+    "### character_fact",
+    "- `[MAJOR] lisa_imai | facts: Wears childhood friendship bracelet for Damo on left wrist; never removed it. | caused_by: n/a`",
+  ].join("\n");
+  const sourceNote = note("source_test", {
+    source: {
+      text: sourceText,
+      updatedAt: timestamp,
+    },
+  });
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse: {
+      summary: "Bracelet reveal",
+      units: [
+        unit("timeline_event", {
+          subjectId: "bracelet_reveal",
+          sectionKey: "event",
+          text: "Lisa and Damo revealed matching bracelets.",
+        }),
+      ],
+    },
+    totalCandidates: 1,
+    sourceText,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    mode: "roleplay",
+    sourceHash,
+  });
+
+  assert.equal(compiled.outcome.droppedUnits, 0);
+  const create = compiled.compiledResponse.mutations.find(
+    (mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> =>
+      mutation.kind === "create_note" && mutation.note.id === "char_lisa_imai",
+  );
+  assert.ok(create);
+  assert.match(create.note.sections.items?.text ?? "", /friendship bracelet/);
+  assert.doesNotMatch(create.note.sections.items?.text ?? "", /caused_by|n\/a|n_a/i);
+  assert.ok(
+    create.note.links.some(
+      (link) => link.target === "timeline_bracelet_reveal" && link.relation === "evidenced_by",
+    ),
+  );
+});
+
+test("structured timeline id fields do not become bogus fallback event ids", () => {
+  const sourceText = [
+    "### timeline_event",
+    "- `[MAJOR] id: bracelet_reveal | event: Lisa and Damo revealed matching bracelets.`",
+    "### character_fact",
+    "- `[MAJOR] lisa_imai | facts: Wears childhood friendship bracelet for Damo on left wrist; never removed it. | caused_by: n/a`",
+  ].join("\n");
+  const sourceNote = note("source_test", {
+    source: {
+      text: sourceText,
+      updatedAt: timestamp,
+    },
+  });
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse: {
+      summary: "Bracelet reveal",
+      units: [
+        unit("timeline_event", {
+          subjectId: "bracelet_reveal",
+          sectionKey: "event",
+          text: "Lisa and Damo revealed matching bracelets.",
+        }),
+      ],
+    },
+    totalCandidates: 1,
+    sourceText,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    mode: "roleplay",
+    sourceHash,
+  });
+
+  assert.equal(compiled.outcome.droppedUnits, 0);
+  const create = compiled.compiledResponse.mutations.find(
+    (mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> =>
+      mutation.kind === "create_note" && mutation.note.id === "char_lisa_imai",
+  );
+  assert.ok(create);
+  assert.ok(
+    create.note.links.some(
+      (link) => link.target === "timeline_bracelet_reveal" && link.relation === "evidenced_by",
+    ),
+  );
+  assert.equal(create.note.links.some((link) => link.target === "timeline_event"), false);
+});
+
+test("structured roleplay character backfill omits n/a timeline links when multiple events are ambiguous", () => {
+  const sourceText = [
+    "### timeline_event",
+    "- `[MAJOR] damo_korvak | first_day_lecture: Damo impressed Prof. Endo.`",
+    "- `[MAJOR] lisa_imai | bracelet_reveal: Lisa and Damo revealed matching bracelets.`",
+    "### character_fact",
+    "- `[MAJOR] lisa_imai | facts: Wears childhood friendship bracelet for Damo on left wrist; never removed it. | caused_by: n/a`",
+  ].join("\n");
+  const sourceNote = note("source_test", {
+    source: {
+      text: sourceText,
+      updatedAt: timestamp,
+    },
+  });
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse: {
+      summary: "Ambiguous bracelet source",
+      units: [
+        unit("timeline_event", {
+          subjectId: "first_day_lecture",
+          sectionKey: "event",
+          text: "Damo impressed Prof. Endo.",
+        }),
+        unit("timeline_event", {
+          subjectId: "bracelet_reveal",
+          sectionKey: "event",
+          text: "Lisa and Damo revealed matching bracelets.",
+        }),
+      ],
+    },
+    totalCandidates: 2,
+    sourceText,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    mode: "roleplay",
+    sourceHash,
+  });
+
+  assert.equal(compiled.outcome.droppedUnits, 0);
+  const create = compiled.compiledResponse.mutations.find(
+    (mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> =>
+      mutation.kind === "create_note" && mutation.note.id === "char_lisa_imai",
+  );
+  assert.ok(create);
+  assert.equal(create.note.links.some((link) => link.relation === "caused_by" || link.relation === "evidenced_by"), false);
+});
+
+test("structured roleplay durable anecdotes route away from unsafe facts", () => {
+  const sourceText = [
+    "### character_fact",
+    "- `[MODERATE] lisa_imai | facts: Almost quit Roselia after Yukina told her she wasn't progressing fast enough. Sat in her car for 40 minutes shaking. Didn't quit. | caused_by: n/a`",
+    "- `[MINOR] lisa_imai | facts: Once physically confiscated Sayo's guitar picks until she agreed to eat dinner. | caused_by: n/a`",
+  ].join("\n");
+  const sourceNote = note("source_test", {
+    source: {
+      text: sourceText,
+      updatedAt: timestamp,
+    },
+  });
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse: { summary: "Durable Lisa anecdotes", units: [] },
+    totalCandidates: 0,
+    sourceText,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    mode: "roleplay",
+    sourceHash,
+  });
+
+  assert.equal(compiled.outcome.droppedUnits, 0);
+  const create = compiled.compiledResponse.mutations.find(
+    (mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> =>
+      mutation.kind === "create_note" && mutation.note.id === "char_lisa_imai",
+  );
+  assert.ok(create);
+  assert.match(create.note.sections.developments?.text ?? "", /Almost quit Roselia/);
+  assert.match(create.note.sections.developments?.text ?? "", /confiscated Sayo's guitar picks/);
+  assert.doesNotMatch(create.note.sections.developments?.text ?? "", /caused_by|n\/a|n_a/i);
+});
+
+test("structured relationship links can target existing timeline notes by bare id", () => {
+  const sourceText = [
+    "### relationship_state",
+    "relationship_id: mara_jules",
+    "dimension_changes: trust +20",
+    "caused_by: archive_confrontation",
+  ].join("\n");
+  const sourceNote = note("source_test", {
+    source: {
+      text: sourceText,
+      updatedAt: timestamp,
+    },
+  });
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse: {
+      summary: "Relationship change",
+      units: [
+        unit("relationship_state", {
+          subjectId: "mara_jules",
+          sectionKey: "state",
+          text: "Mara and Jules trust each other more.",
+          dimensionChanges: { trust: 20 },
+        }),
+      ],
+    },
+    totalCandidates: 1,
+    sourceText,
+    sourceNote,
+    existingNotes: [
+      note("timeline_archive_confrontation", {
+        event: {
+          text: "Mara and Jules survived the archive confrontation.",
+          updatedAt: timestamp,
+        },
+      }),
+    ],
+    scope: {},
+    modes: ["roleplay"],
+    mode: "roleplay",
+    sourceHash,
+  });
+
+  assert.deepEqual(compiled.outcome.droppedCandidates, []);
+  const create = compiled.compiledResponse.mutations.find(
+    (mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> =>
+      mutation.kind === "create_note" && mutation.note.id === "rel_mara_jules",
+  );
+  assert.ok(create);
+  assert.ok(
+    create.note.links.some(
+      (link) => link.target === "timeline_archive_confrontation" && link.relation === "caused_by",
+    ),
+  );
+});
+
 test("source extraction creates a scoped variant for out-of-scope target collisions", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-out-of-scope-target-"));
   try {
@@ -1087,6 +1328,87 @@ test("source extraction canonicalizes character section suffix before scoped var
     const diagnostic = result.diagnostics.find((entry) => entry.code === "target_note_scoped_variant");
     assert.equal(diagnostic?.details?.originalNoteId, "char_damo_korvak");
     assert.equal(diagnostic?.details?.resolvedNoteId, create.note.id);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source extraction does not reintroduce unscoped structured targets after scoped remap", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-scoped-structured-once-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    const sourceText = [
+      "### character_fact",
+      "- `[MAJOR] damo_korvak | facts: Wears the childhood friendship bracelet Lisa made him. | caused_by: n/a`",
+    ].join("\n");
+    await storage.createNote(
+      {
+        id: "scene_source_scoped_structured",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_a" },
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: sourceText,
+            updatedAt: timestamp,
+            evidence: ["chat:chat_a"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "char_damo_korvak",
+        type: "character",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_b" },
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: {
+            text: "Damo Korvak exists in another story.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const provider = {
+      maxTokensOverrideValue: undefined,
+      chatComplete: async () => ({
+        content: JSON.stringify({
+          summary: "Model omitted structured character backfill",
+          units: [],
+        }),
+      }),
+    } as any;
+
+    const result = await extractLongTermMemoryFromSourceNote({
+      noteId: "scene_source_scoped_structured",
+      provider,
+      model: "test-model",
+      root,
+      operationId: randomUUID(),
+      embeddingSource: {
+        label: "test",
+        embed: async (texts) => texts.map(() => []),
+      },
+    });
+
+    assert(result.draft);
+    const createIds = result.draft.mutations.flatMap((mutation) =>
+      mutation.kind === "create_note" ? [mutation.note.id] : [],
+    );
+    assert.equal(createIds.includes("char_damo_korvak"), false);
+    assert.equal(createIds.filter((id) => /^char_damo_korvak_[a-f0-9]{10}$/.test(id)).length, 1);
+    const diagnostic = result.diagnostics.find((entry) => entry.code === "target_note_scoped_variant");
+    assert.equal(diagnostic?.details?.originalNoteId, "char_damo_korvak");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

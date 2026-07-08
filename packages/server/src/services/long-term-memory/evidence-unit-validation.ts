@@ -139,6 +139,7 @@ export function validateLtmEvidenceUnits({
         mutationId: unit.id,
         noteId,
         message: dropped.message,
+        ...(input.code ? { details: { validatorCode: input.code } } : {}),
       });
     };
 
@@ -304,6 +305,7 @@ export function validateLtmEvidenceUnits({
       mutationId: unit.id,
       noteId,
       message: dropped.message,
+      details: { validatorCode: "relationship_state_missing_caused_by" },
     });
   }
 

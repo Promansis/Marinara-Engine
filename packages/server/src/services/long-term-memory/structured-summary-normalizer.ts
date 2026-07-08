@@ -22,6 +22,8 @@ type RelationshipHints = {
   links: LtmEvidenceUnit["links"];
 };
 
+type EvidenceUnitLink = LtmEvidenceUnit["links"][number];
+
 type StructuredSummaryHints = {
   eventIds: string[];
   relationships: Map<string, RelationshipHints>;
@@ -58,11 +60,45 @@ const ANCHOR_SUBJECT_SECTION_SUFFIXES = new Set(["motif", "anchor", "callback", 
 const RELATIONSHIP_DIMENSION_KEYS = new Set<string>(RELATIONSHIP_DIMENSIONS);
 const TIMELINE_LINK_RELATIONS = new Set<LtmEvidenceUnit["links"][number]["relation"]>([
   "caused_by",
+  "evidenced_by",
   "planted_in",
   "paid_off_in",
   "resolved_in",
   "occurred_in",
   "triggered_by",
+]);
+const STRUCTURED_CHARACTER_LINK_KEYS = new Set<EvidenceUnitLink["relation"]>([
+  "caused_by",
+  "evidenced_by",
+  "occurred_in",
+  "triggered_by",
+  "resolved_in",
+  "planted_in",
+  "paid_off_in",
+]);
+const TIMELINE_EVENT_ID_FIELD_KEYS = new Set(["event_id", "timeline_event_id", "timeline_id", "id", "subject"]);
+const TIMELINE_EVENT_NON_ID_FIELD_KEYS = new Set([
+  "event",
+  "text",
+  "summary",
+  "description",
+  "changed",
+  "change",
+  "caused_by",
+  "evidenced_by",
+  "triggered_by",
+  "occurred_in",
+  "resolved_in",
+  "planted_in",
+  "paid_off_in",
+  "importance",
+  "confidence",
+  "salience",
+  "status",
+  "evidence",
+  "links",
+  "link",
+  "source",
 ]);
 const CHARACTER_STRUCTURED_SECTION_KEYS = new Set([
   ...CHARACTER_SUBJECT_SECTION_SUFFIXES,
@@ -93,6 +129,9 @@ const STRUCTURED_CHARACTER_METADATA_KEYS = new Set([
   "link",
   "source",
 ]);
+const EMPTY_LINK_VALUE_PATTERN = /^(?:n[_/]?a|none|null|unknown|unspecified|not_applicable)$/i;
+const CHARACTER_DEVELOPMENT_PATTERN =
+  /\b(?:almost\s+quit|once\b|learned|developed|started|began|became|stopped|quit|lost|gained|committed|decided|chose|promised|confronted|realized|recognised|recognized)\b/i;
 
 export function normalizeStructuredSummaryEvidenceUnits({
   units,
@@ -102,6 +141,7 @@ export function normalizeStructuredSummaryEvidenceUnits({
   allowedBuckets,
   mode,
   modes,
+  addStructuredUnits = true,
 }: {
   units: LtmEvidenceUnit[];
   sourceText: string;
@@ -110,6 +150,7 @@ export function normalizeStructuredSummaryEvidenceUnits({
   allowedBuckets?: readonly LtmEvidenceUnit["bucket"][];
   mode?: LtmMode;
   modes?: readonly LtmMode[];
+  addStructuredUnits?: boolean;
 }): StructuredSummaryNormalizationResult {
   const sections = parseStructuredSections(sourceText);
   if (sections.length === 0) {
@@ -123,12 +164,21 @@ export function normalizeStructuredSummaryEvidenceUnits({
   const allowed = new Set(allowedBuckets ?? DEFAULT_LTM_ALLOWED_STREAMS_BY_MODE[mode ?? modes?.[0] ?? "roleplay"]);
   const hints = structuredSummaryHints(sections);
   const normalized = normalizeCanonicalTargetLinks(units, units.map((unit) => normalizeUnit(unit, hints)));
+  if (!addStructuredUnits) {
+    return {
+      units: normalized,
+      structured: true,
+      addedUnits: 0,
+    };
+  }
   const withStructuredCharacters = maybeAddStructuredCharacterUnits({
     units: normalized,
     sections,
     allowed,
     sourceNote,
     sourceHash,
+    hints,
+    deriveTimelineLinks: isRoleplayMode(mode, modes),
   });
   const withTone = maybeAddToneUnit({
     units: withStructuredCharacters,
@@ -277,8 +327,11 @@ function structuredSummaryHints(sections: StructuredSection[]): StructuredSummar
         const id = stripUnitSubjectPrefix("timeline_event", normalizeIdentifier(value, ""));
         if (id) eventIds.add(id);
       }
-      continue;
     }
+  }
+
+  for (const section of sections) {
+    if (section.bucket === "timeline_event") continue;
 
     if (section.bucket === "relationship_state") {
       const subject = relationshipSubject(section);
@@ -443,12 +496,16 @@ function maybeAddStructuredCharacterUnits({
   allowed,
   sourceNote,
   sourceHash,
+  hints,
+  deriveTimelineLinks,
 }: {
   units: LtmEvidenceUnit[];
   sections: StructuredSection[];
   allowed: Set<LtmEvidenceUnit["bucket"]>;
   sourceNote?: LtmNote;
   sourceHash: string;
+  hints: StructuredSummaryHints;
+  deriveTimelineLinks: boolean;
 }) {
   if (!allowed.has("character_fact") || !sourceNote) return units;
 
@@ -458,7 +515,10 @@ function maybeAddStructuredCharacterUnits({
   for (const section of sections) {
     if (section.bucket !== "character_fact") continue;
     for (const line of section.lines) {
-      const unit = parseStructuredCharacterLine(line, sourceNote, sourceHash);
+      const unit = parseStructuredCharacterLine(line, sourceNote, sourceHash, {
+        hints,
+        deriveTimelineLinks,
+      });
       if (!unit) continue;
       const identity = characterUnitIdentity(unit);
       if (seen.has(identity)) continue;
@@ -474,6 +534,7 @@ function parseStructuredCharacterLine(
   line: string,
   sourceNote: LtmNote,
   sourceHash: string,
+  options: { hints: StructuredSummaryHints; deriveTimelineLinks: boolean },
 ): LtmEvidenceUnit | null {
   const cleaned = stripInlineMarkup(cleanListLine(line));
   if (!cleaned || isMetadataOnlyLine(cleaned)) return null;
@@ -485,6 +546,8 @@ function parseStructuredCharacterLine(
   let confidence = 0.9;
   let salience = 0.7;
   const textParts: string[] = [];
+  const links: LtmEvidenceUnit["links"] = [];
+  const missingTimelineLinkRelations: EvidenceUnitLink["relation"][] = [];
   const segments = importanceResult.text
     .split("|")
     .map((segment) => stripInlineMarkup(segment))
@@ -534,6 +597,16 @@ function parseStructuredCharacterLine(
     if (["status", "evidence", "links", "link", "source"].includes(key)) {
       continue;
     }
+    if (STRUCTURED_CHARACTER_LINK_KEYS.has(key as EvidenceUnitLink["relation"])) {
+      const relation = key as EvidenceUnitLink["relation"];
+      const explicitLink = timelineLinkFromValue(value, relation);
+      if (explicitLink) {
+        links.push(explicitLink);
+      } else if (options.deriveTimelineLinks && isEmptyLinkValue(value)) {
+        missingTimelineLinkRelations.push(relation);
+      }
+      continue;
+    }
 
     const keyIdentifier = normalizeIdentifier(key, "");
     const keySection = normalizeSectionKey(key, "");
@@ -553,9 +626,23 @@ function parseStructuredCharacterLine(
   }
 
   const normalizedSubject = stripUnitSubjectPrefix("character_fact", normalizeIdentifier(subjectId, ""));
-  const normalizedSection = normalizeSectionKey(sectionKey, "facts");
+  const normalizedSection = structuredCharacterSectionKey(normalizeSectionKey(sectionKey, "facts"), textParts.join(" | "));
   const text = textParts.join(" | ").replace(/\s+/g, " ").trim();
   if (!normalizedSubject || !normalizedSection || !text) return null;
+  for (const relation of missingTimelineLinkRelations) {
+    const derived = deriveTimelineLinkForStructuredCharacter({
+      line: cleaned,
+      relation,
+      sectionKey: normalizedSection,
+      hints: options.hints,
+    });
+    if (derived) links.push(derived);
+  }
+  const normalizedLinks = links.map((link) =>
+    TIMELINE_LINK_RELATIONS.has(link.relation)
+      ? { ...link, relation: characterTimelineRelation(normalizedSection, link.relation) }
+      : link,
+  );
 
   return {
     id: deterministicUuid(`structured-character:${sourceNote.id}:${sourceHash}:${normalizedSubject}:${normalizedSection}:${text}`),
@@ -569,7 +656,7 @@ function parseStructuredCharacterLine(
     confidence,
     salience,
     status: "active",
-    links: [],
+    links: uniqueLinks(normalizedLinks),
     sourceHash,
   };
 }
@@ -676,7 +763,36 @@ function eventIdValues(section: StructuredSection) {
   if (explicit.length > 0) return explicit;
   const ids = fieldValues(section, ["id"]);
   if (ids.length > 0) return ids;
-  return fieldValues(section, ["subject"]).filter((value) => normalizeIdentifier(value, "").includes("_"));
+  const subjectFields = fieldValues(section, ["subject"]).filter((value) => normalizeIdentifier(value, "").includes("_"));
+  const lineIds = section.lines.flatMap(timelineEventIdsFromLine);
+  return uniqueStrings([...subjectFields, ...lineIds]);
+}
+
+function timelineEventIdsFromLine(line: string) {
+  const cleaned = stripInlineMarkup(cleanListLine(line));
+  if (!cleaned || isMetadataOnlyLine(cleaned)) return [];
+  const importanceResult = extractStructuredImportance(cleaned);
+  const segments = importanceResult.text
+    .split("|")
+    .map((segment) => stripInlineMarkup(segment))
+    .filter(Boolean);
+  const ids: string[] = [];
+  for (const segment of segments) {
+    const parsed = parseStructuredSegment(segment);
+    if (!parsed) {
+      continue;
+    }
+    const key = normalizeFieldKey(parsed.key);
+    if (TIMELINE_EVENT_ID_FIELD_KEYS.has(key)) {
+      const explicitId = stripUnitSubjectPrefix("timeline_event", normalizeIdentifier(parsed.value, ""));
+      if (explicitId) ids.push(explicitId);
+      continue;
+    }
+    if (key && !TIMELINE_EVENT_NON_ID_FIELD_KEYS.has(key) && key.includes("_")) {
+      ids.push(stripUnitSubjectPrefix("timeline_event", key));
+    }
+  }
+  return ids;
 }
 
 function relationshipSubject(section: StructuredSection) {
@@ -721,10 +837,14 @@ function normalizeThreadSubject(subjectId: string, hints: StructuredSummaryHints
 function characterSectionKey(unit: LtmEvidenceUnit, subjectId: string, hints: StructuredSummaryHints) {
   const sourceSection = hints.characterSections.get(subjectId);
   if (sourceSection) return sourceSection;
-  if (["facts", "core", "profile"].includes(unit.sectionKey) && CHARACTER_ITEM_PATTERN.test(unit.text)) {
-    return "items";
-  }
-  return unit.sectionKey;
+  return structuredCharacterSectionKey(unit.sectionKey, unit.text);
+}
+
+function structuredCharacterSectionKey(sectionKey: string, text: string) {
+  if (!["facts", "core", "profile"].includes(sectionKey)) return sectionKey;
+  if (CHARACTER_ITEM_PATTERN.test(text)) return "items";
+  if (CHARACTER_DEVELOPMENT_PATTERN.test(text)) return "developments";
+  return sectionKey;
 }
 
 function normalizeLinks(links: LtmEvidenceUnit["links"], hints: StructuredSummaryHints) {
@@ -738,14 +858,65 @@ function normalizeLinks(links: LtmEvidenceUnit["links"], hints: StructuredSummar
 
 function structuredLinks(section: StructuredSection, keys: string[]) {
   return keys.flatMap((key) =>
-    fieldValues(section, [key]).map((value) => ({
-      target: normalizeLinkTarget(value, key as LtmEvidenceUnit["links"][number]["relation"], {
-        eventIds: [],
-        threadIds: [],
-      }),
-      relation: key as LtmEvidenceUnit["links"][number]["relation"],
-    })),
+    fieldValues(section, [key]).flatMap((value) => {
+      const link = timelineLinkFromValue(value, key as EvidenceUnitLink["relation"]);
+      return link ? [link] : [];
+    }),
   );
+}
+
+function timelineLinkFromValue(value: string, relation: EvidenceUnitLink["relation"]): EvidenceUnitLink | null {
+  const target = timelineTargetFromValue(value);
+  return target ? { target, relation } : null;
+}
+
+function timelineTargetFromValue(value: string) {
+  if (isEmptyLinkValue(value)) return null;
+  const identifier = normalizeIdentifier(value, "");
+  if (!identifier) return null;
+  if (NOTE_ID_PREFIX_PATTERN.test(identifier)) return identifier;
+  const subject = stripUnitSubjectPrefix("timeline_event", identifier);
+  return `timeline_${subject}`;
+}
+
+function deriveTimelineLinkForStructuredCharacter({
+  line,
+  relation,
+  sectionKey,
+  hints,
+}: {
+  line: string;
+  relation: EvidenceUnitLink["relation"];
+  sectionKey: string;
+  hints: StructuredSummaryHints;
+}): EvidenceUnitLink | null {
+  const target = exactTimelineTargetFromLine(line, hints) ?? singleTimelineTarget(hints);
+  if (!target) return null;
+  return {
+    target,
+    relation: characterTimelineRelation(sectionKey, relation),
+  };
+}
+
+function exactTimelineTargetFromLine(line: string, hints: StructuredSummaryHints) {
+  const normalizedLine = normalizeFieldKey(line);
+  const matches = hints.eventIds.filter((eventId) => {
+    const noteId = `timeline_${eventId}`;
+    return normalizedLine === eventId || normalizedLine === noteId || normalizedLine.includes(eventId) || normalizedLine.includes(noteId);
+  });
+  return matches.length === 1 ? `timeline_${matches[0]}` : null;
+}
+
+function singleTimelineTarget(hints: StructuredSummaryHints) {
+  return hints.eventIds.length === 1 ? `timeline_${hints.eventIds[0]}` : null;
+}
+
+function characterTimelineRelation(
+  sectionKey: string,
+  requestedRelation: EvidenceUnitLink["relation"],
+): EvidenceUnitLink["relation"] {
+  if (requestedRelation !== "caused_by") return requestedRelation;
+  return ["developments", "progression"].includes(sectionKey) ? "caused_by" : "evidenced_by";
 }
 
 function normalizeLinkTarget(
@@ -792,6 +963,15 @@ function renderToneText(section: StructuredSection) {
       .filter((line) => !isMetadataOnlyLine(line)),
   );
   return lines.join("; ").slice(0, 2_000).trim() || undefined;
+}
+
+function isRoleplayMode(mode?: LtmMode, modes?: readonly LtmMode[]) {
+  return (mode ?? modes?.[0] ?? "roleplay") === "roleplay";
+}
+
+function isEmptyLinkValue(value: string) {
+  const normalized = normalizeFieldKey(value);
+  return !normalized || EMPTY_LINK_VALUE_PATTERN.test(normalized);
 }
 
 function isMetadataOnlyLine(line: string) {
