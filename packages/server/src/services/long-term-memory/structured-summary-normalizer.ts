@@ -8,6 +8,7 @@ import {
   type LtmNote,
 } from "@marinara-engine/shared";
 import { uniqueStrings } from "./ltm-utils.js";
+import { noteIdForEvidenceUnit } from "./evidence-unit-validation.js";
 
 type StructuredSection = {
   bucket: LtmEvidenceUnit["bucket"];
@@ -51,6 +52,9 @@ const THREAD_RESOLUTION_PATTERN =
   /\b(?:resolve|resolved|resolver|resolution|would resolve|will resolve|until|when|if|requires|needs|awaits|pending|unresolved|open question|pay off|payoff|future|follow-?up|goal|must|should|confess(?:ion|es|ed|ing)?|confront(?:s|ed|ing)?|explain(?:s|ed|ing|ation)?|updates?)\b/i;
 const CHARACTER_ITEM_PATTERN =
   /\b(?:bracelet|necklace|ring|pendant|keepsake|token|gift|item|weapon|book|letter|photo|photograph|charm|key|tool|artifact)\b/i;
+const CHARACTER_SUBJECT_SECTION_SUFFIXES = new Set(["facts", "core", "profile", "developments", "abilities", "items", "voice"]);
+const WORLD_SUBJECT_SECTION_SUFFIXES = new Set(["facts", "lore", "rules", "items", "places", "locations"]);
+const ANCHOR_SUBJECT_SECTION_SUFFIXES = new Set(["motif", "anchor", "callback", "callbacks"]);
 const RELATIONSHIP_DIMENSION_KEYS = new Set<string>(RELATIONSHIP_DIMENSIONS);
 const TIMELINE_LINK_RELATIONS = new Set<LtmEvidenceUnit["links"][number]["relation"]>([
   "caused_by",
@@ -79,11 +83,17 @@ export function normalizeStructuredSummaryEvidenceUnits({
   modes?: readonly LtmMode[];
 }): StructuredSummaryNormalizationResult {
   const sections = parseStructuredSections(sourceText);
-  if (sections.length === 0) return { units, structured: false, addedUnits: 0 };
+  if (sections.length === 0) {
+    return {
+      units: normalizeCanonicalTargetLinks(units, units.map(normalizeTargetShapeUnit)),
+      structured: false,
+      addedUnits: 0,
+    };
+  }
 
   const allowed = new Set(allowedBuckets ?? DEFAULT_LTM_ALLOWED_STREAMS_BY_MODE[mode ?? modes?.[0] ?? "roleplay"]);
   const hints = structuredSummaryHints(sections);
-  const normalized = units.map((unit) => normalizeUnit(unit, hints));
+  const normalized = normalizeCanonicalTargetLinks(units, units.map((unit) => normalizeUnit(unit, hints)));
   const withTone = maybeAddToneUnit({
     units: normalized,
     hints,
@@ -97,6 +107,72 @@ export function normalizeStructuredSummaryEvidenceUnits({
     structured: true,
     addedUnits: withTone.length - normalized.length,
   };
+}
+
+function normalizeTargetShapeUnit(unit: LtmEvidenceUnit): LtmEvidenceUnit {
+  if (unit.bucket === "character_fact") {
+    const normalized = normalizeSubjectSectionSuffix({
+      subjectId: stripUnitSubjectPrefix(unit.bucket, unit.subjectId),
+      sectionKey: unit.sectionKey,
+      suffixes: CHARACTER_SUBJECT_SECTION_SUFFIXES,
+    });
+    return {
+      ...unit,
+      subjectId: normalized.subjectId,
+      sectionKey: normalized.sectionKey,
+    };
+  }
+
+  if (unit.bucket === "world_fact") {
+    const normalized = normalizeSubjectSectionSuffix({
+      subjectId: stripUnitSubjectPrefix(unit.bucket, unit.subjectId),
+      sectionKey: unit.sectionKey,
+      suffixes: WORLD_SUBJECT_SECTION_SUFFIXES,
+    });
+    return {
+      ...unit,
+      subjectId: normalized.subjectId,
+      sectionKey: normalized.sectionKey,
+    };
+  }
+
+  if (unit.bucket === "anchor") {
+    const normalized = normalizeSubjectSectionSuffix({
+      subjectId: stripUnitSubjectPrefix(unit.bucket, unit.subjectId),
+      sectionKey: unit.sectionKey,
+      suffixes: ANCHOR_SUBJECT_SECTION_SUFFIXES,
+    });
+    return {
+      ...unit,
+      subjectId: normalized.subjectId,
+      sectionKey: normalized.sectionKey,
+    };
+  }
+
+  return unit;
+}
+
+function normalizeCanonicalTargetLinks(originalUnits: LtmEvidenceUnit[], normalizedUnits: LtmEvidenceUnit[]) {
+  const targetRemaps = new Map<string, string>();
+  for (const [index, originalUnit] of originalUnits.entries()) {
+    const normalizedUnit = normalizedUnits[index];
+    if (!normalizedUnit) continue;
+    const originalNoteId = noteIdForEvidenceUnit(originalUnit);
+    const normalizedNoteId = noteIdForEvidenceUnit(normalizedUnit);
+    if (originalNoteId !== normalizedNoteId) {
+      targetRemaps.set(originalNoteId, normalizedNoteId);
+    }
+  }
+  if (targetRemaps.size === 0) return normalizedUnits;
+  return normalizedUnits.map((unit) => {
+    const links = unit.links.map((link) => {
+      const target = targetRemaps.get(link.target);
+      return target ? { ...link, target } : link;
+    });
+    return links.some((link, index) => link.target !== unit.links[index]?.target)
+      ? { ...unit, links: uniqueLinks(links) }
+      : unit;
+  });
 }
 
 function parseStructuredSections(sourceText: string) {
@@ -249,11 +325,43 @@ function normalizeUnit(unit: LtmEvidenceUnit, hints: StructuredSummaryHints): Lt
   }
 
   if (unit.bucket === "character_fact") {
-    const subjectId = stripUnitSubjectPrefix(unit.bucket, unit.subjectId);
+    const normalized = normalizeSubjectSectionSuffix({
+      subjectId: stripUnitSubjectPrefix(unit.bucket, unit.subjectId),
+      sectionKey: unit.sectionKey,
+      suffixes: CHARACTER_SUBJECT_SECTION_SUFFIXES,
+    });
     return {
       ...unit,
-      subjectId,
-      sectionKey: characterSectionKey(unit, subjectId, hints),
+      subjectId: normalized.subjectId,
+      sectionKey: characterSectionKey({ ...unit, sectionKey: normalized.sectionKey }, normalized.subjectId, hints),
+      links,
+    };
+  }
+
+  if (unit.bucket === "world_fact") {
+    const normalized = normalizeSubjectSectionSuffix({
+      subjectId: stripUnitSubjectPrefix(unit.bucket, unit.subjectId),
+      sectionKey: unit.sectionKey,
+      suffixes: WORLD_SUBJECT_SECTION_SUFFIXES,
+    });
+    return {
+      ...unit,
+      subjectId: normalized.subjectId,
+      sectionKey: normalized.sectionKey,
+      links,
+    };
+  }
+
+  if (unit.bucket === "anchor") {
+    const normalized = normalizeSubjectSectionSuffix({
+      subjectId: stripUnitSubjectPrefix(unit.bucket, unit.subjectId),
+      sectionKey: unit.sectionKey,
+      suffixes: ANCHOR_SUBJECT_SECTION_SUFFIXES,
+    });
+    return {
+      ...unit,
+      subjectId: normalized.subjectId,
+      sectionKey: normalized.sectionKey,
       links,
     };
   }
@@ -263,6 +371,34 @@ function normalizeUnit(unit: LtmEvidenceUnit, hints: StructuredSummaryHints): Lt
     subjectId: stripUnitSubjectPrefix(unit.bucket, unit.subjectId),
     links,
   };
+}
+
+function normalizeSubjectSectionSuffix({
+  subjectId,
+  sectionKey,
+  suffixes,
+}: {
+  subjectId: string;
+  sectionKey: string;
+  suffixes: Set<string>;
+}) {
+  const currentSection = normalizeSectionKey(sectionKey, sectionKey);
+  const suffix = matchingSectionSuffix(subjectId, suffixes);
+  if (!suffix) return { subjectId, sectionKey: currentSection };
+
+  const nextSubject = subjectId.slice(0, -(suffix.length + 1)).replace(/_+$/g, "");
+  if (!nextSubject) return { subjectId, sectionKey: currentSection };
+  return {
+    subjectId: nextSubject,
+    sectionKey: currentSection === suffix || ["facts", "motif", "anchor"].includes(currentSection) ? suffix : currentSection,
+  };
+}
+
+function matchingSectionSuffix(subjectId: string, suffixes: Set<string>) {
+  for (const suffix of [...suffixes].sort((a, b) => b.length - a.length)) {
+    if (subjectId.endsWith(`_${suffix}`)) return suffix;
+  }
+  return null;
 }
 
 function maybeAddToneUnit({

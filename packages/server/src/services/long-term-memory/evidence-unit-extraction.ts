@@ -67,6 +67,17 @@ const LTM_EXTRACTION_LINK_RELATIONS = [
   "paid_off_in",
   "extracted_from",
 ] as const;
+const LTM_EXTRACTION_LINK_RELATION_SET = new Set<string>(LTM_EXTRACTION_LINK_RELATIONS);
+const LTM_EXTRACTION_NOTE_ID_PREFIX_PATTERN = /^(?:timeline|thread|world|tone|rel|char)_/;
+const LTM_EXTRACTION_TIMELINE_LINK_RELATIONS = new Set<string>([
+  "occurred_in",
+  "triggered_by",
+  "resolved_in",
+  "evidenced_by",
+  "caused_by",
+  "planted_in",
+  "paid_off_in",
+]);
 
 export interface RunLongTermMemoryEvidenceUnitExtractionOptions {
   sourceNote: LtmNote;
@@ -109,6 +120,18 @@ type ParsedEvidenceUnitPayload = {
 };
 
 type LtmEvidenceUnitChatOptions = ChatOptions & { reasoningEffort: NonNullable<ChatOptions["reasoningEffort"]> };
+type LtmEvidenceUnitLinkRelation = LtmEvidenceUnit["links"][number]["relation"];
+
+type RawEvidenceUnitTargetHints = {
+  targetNoteIds: Set<string>;
+  timelineSubjects: Map<string, string>;
+  threadSubjects: Map<string, string>;
+  characterSubjects: Map<string, string>;
+  relationshipSubjects: Map<string, string>;
+  worldSubjects: Map<string, string>;
+  toneSubjects: Map<string, string>;
+  subjectTargets: Map<string, Set<string>>;
+};
 
 function evidenceFromSourceNote(note: LtmNote) {
   const sectionEvidence = [...(note.sections.source?.evidence ?? []), ...(note.sections.summary?.evidence ?? [])];
@@ -388,25 +411,214 @@ async function chatCompleteWithReasoningFallback({
   }
 }
 
+function normalizedEvidenceUnitRecord(unit: unknown, expectedSourceHash: string): unknown {
+  if (!unit || typeof unit !== "object" || Array.isArray(unit)) return unit;
+  const record = unit as Record<string, unknown>;
+  const id = typeof record.id === "string" && record.id.trim().length > 0 ? record.id.trim() : randomUUID();
+  return {
+    ...record,
+    id: /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) ? id : randomUUID(),
+    sourceHash: expectedSourceHash,
+  };
+}
+
 function normalizeEvidenceUnitResponse(raw: unknown, expectedSourceHash: string): unknown {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
   const parsed = raw as Record<string, unknown>;
   const units = Array.isArray(parsed.units) ? parsed.units : [];
+  const normalizedUnits = units.map((unit) => normalizedEvidenceUnitRecord(unit, expectedSourceHash));
+  const targetHints = rawEvidenceUnitTargetHints(normalizedUnits);
   return {
     ...parsed,
-    units: units.map((unit) => {
-      if (!unit || typeof unit !== "object" || Array.isArray(unit)) return unit;
-      const record = unit as Record<string, unknown>;
-      const id = typeof record.id === "string" && record.id.trim().length > 0 ? record.id.trim() : randomUUID();
-      return {
-        ...record,
-        id: /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) ? id : randomUUID(),
-        sourceHash: expectedSourceHash,
-      };
-    }),
+    units: normalizedUnits.map((unit) => normalizedEvidenceUnitLinks(unit, targetHints)),
   };
 }
 
+function rawEvidenceUnitTargetHints(units: unknown[]): RawEvidenceUnitTargetHints {
+  const hints: RawEvidenceUnitTargetHints = {
+    targetNoteIds: new Set(),
+    timelineSubjects: new Map(),
+    threadSubjects: new Map(),
+    characterSubjects: new Map(),
+    relationshipSubjects: new Map(),
+    worldSubjects: new Map(),
+    toneSubjects: new Map(),
+    subjectTargets: new Map(),
+  };
+
+  for (const unit of units) {
+    if (!unit || typeof unit !== "object" || Array.isArray(unit)) continue;
+    const record = unit as Record<string, unknown>;
+    const bucket = typeof record.bucket === "string" ? record.bucket : "";
+    const subjectId = normalizeRawIdentifier(record.subjectId, "");
+    const sectionKey = normalizeRawIdentifier(record.sectionKey, "");
+    if (!subjectId) continue;
+
+    const noteId = noteIdForRawEvidenceUnit(bucket, subjectId, sectionKey);
+    if (!noteId) continue;
+    hints.targetNoteIds.add(noteId);
+    addSubjectTarget(hints.subjectTargets, subjectId, noteId);
+    addSubjectTarget(hints.subjectTargets, stripRawNotePrefix(subjectId), noteId);
+
+    if (bucket === "timeline_event") {
+      hints.timelineSubjects.set(stripRawNotePrefix(subjectId, "timeline"), noteId);
+    } else if (bucket === "thread") {
+      hints.threadSubjects.set(stripRawNotePrefix(subjectId, "thread"), noteId);
+    } else if (bucket === "character_fact") {
+      hints.characterSubjects.set(stripRawNotePrefix(subjectId, "char"), noteId);
+    } else if (bucket === "relationship_state") {
+      hints.relationshipSubjects.set(stripRawNotePrefix(subjectId, "rel"), noteId);
+    } else if (bucket === "world_fact") {
+      hints.worldSubjects.set(stripRawNotePrefix(subjectId, "world"), noteId);
+    } else if (bucket === "tone") {
+      hints.toneSubjects.set(stripRawNotePrefix(subjectId, "tone"), noteId);
+    } else if (bucket === "anchor") {
+      const subject = stripRawNotePrefix(subjectId, sectionKey.startsWith("tone") ? "tone" : "world");
+      if (sectionKey.startsWith("tone")) {
+        hints.toneSubjects.set(subject, noteId);
+      } else {
+        hints.worldSubjects.set(subject, noteId);
+      }
+    }
+  }
+
+  return hints;
+}
+
+function addSubjectTarget(targets: Map<string, Set<string>>, subjectId: string, noteId: string) {
+  if (!subjectId) return;
+  const current = targets.get(subjectId) ?? new Set<string>();
+  current.add(noteId);
+  targets.set(subjectId, current);
+}
+
+function noteIdForRawEvidenceUnit(bucket: string, subjectId: string, sectionKey: string) {
+  if (bucket === "timeline_event") return prefixedRawNoteId("timeline", subjectId);
+  if (bucket === "thread") return prefixedRawNoteId("thread", subjectId);
+  if (bucket === "world_fact") return prefixedRawNoteId("world", subjectId);
+  if (bucket === "tone") return prefixedRawNoteId("tone", subjectId);
+  if (bucket === "relationship_state") return prefixedRawNoteId("rel", subjectId);
+  if (bucket === "anchor") return prefixedRawNoteId(sectionKey.startsWith("tone") ? "tone" : "world", subjectId);
+  if (bucket === "character_fact") return prefixedRawNoteId("char", subjectId);
+  return null;
+}
+
+function prefixedRawNoteId(prefix: string, subjectId: string) {
+  return subjectId.startsWith(`${prefix}_`) ? subjectId : `${prefix}_${subjectId}`;
+}
+
+function normalizedEvidenceUnitLinks(unit: unknown, hints: RawEvidenceUnitTargetHints): unknown {
+  if (!unit || typeof unit !== "object" || Array.isArray(unit)) return unit;
+  const record = unit as Record<string, unknown>;
+  if (!("links" in record) || record.links === undefined) return record;
+  if (!Array.isArray(record.links)) {
+    return { ...record, links: [] };
+  }
+  return {
+    ...record,
+    links: record.links.flatMap((link) => normalizedEvidenceUnitLink(link, hints)).slice(0, 50),
+  };
+}
+
+function normalizedEvidenceUnitLink(link: unknown, hints: RawEvidenceUnitTargetHints): LtmEvidenceUnit["links"] {
+  if (!link || typeof link !== "object" || Array.isArray(link)) return [];
+  const record = link as Record<string, unknown>;
+  const relation = normalizeRawLinkRelation(record.relation);
+  if (!relation) return [];
+  const target = normalizeRawLinkTarget(record.target, relation, hints);
+  if (!target) return [];
+  const aspect = typeof record.aspect === "string" ? record.aspect.trim().slice(0, 50) : "";
+  return [
+    {
+      target,
+      relation,
+      ...(aspect ? { aspect } : {}),
+    },
+  ];
+}
+
+function normalizeRawLinkRelation(value: unknown): LtmEvidenceUnitLinkRelation | null {
+  const relation = normalizeRawIdentifier(value, "");
+  return LTM_EXTRACTION_LINK_RELATION_SET.has(relation) ? (relation as LtmEvidenceUnitLinkRelation) : null;
+}
+
+function normalizeRawLinkTarget(
+  value: unknown,
+  relation: LtmEvidenceUnitLinkRelation,
+  hints: RawEvidenceUnitTargetHints,
+) {
+  const sourceNoteMatch = typeof value === "string" ? value.trim().match(/^source_note:(.+)$/i) : null;
+  const rawText = typeof value === "string" ? value.trim() : "";
+  const identifier = normalizeRawIdentifier(sourceNoteMatch?.[1] ?? value, "");
+  if (!identifier) return null;
+  const rawWasIdentifier = rawText === identifier;
+  if (hints.targetNoteIds.has(identifier)) return identifier;
+
+  const unprefixed = stripRawNotePrefix(identifier);
+  const sameBatchTarget = targetForRelation(identifier, unprefixed, relation, hints);
+  if (sameBatchTarget) return sameBatchTarget;
+  if (LTM_EXTRACTION_NOTE_ID_PREFIX_PATTERN.test(identifier)) return identifier;
+
+  if (LTM_EXTRACTION_TIMELINE_LINK_RELATIONS.has(relation)) return prefixedRawNoteId("timeline", identifier);
+  if (relation === "blocks") return prefixedRawNoteId("thread", identifier);
+  if (!rawWasIdentifier) return null;
+  if (relation === "affects_character") return prefixedRawNoteId("char", identifier);
+  if (relation === "affects_relationship") return prefixedRawNoteId("rel", identifier);
+
+  const genericTargets = hints.subjectTargets.get(identifier);
+  if (genericTargets?.size === 1) return [...genericTargets][0]!;
+
+  return rawWasIdentifier ? identifier : null;
+}
+
+function targetForRelation(
+  identifier: string,
+  unprefixed: string,
+  relation: LtmEvidenceUnitLinkRelation,
+  hints: RawEvidenceUnitTargetHints,
+) {
+  if (LTM_EXTRACTION_TIMELINE_LINK_RELATIONS.has(relation)) {
+    return hints.timelineSubjects.get(unprefixed) ?? hints.timelineSubjects.get(identifier);
+  }
+  if (relation === "blocks") {
+    return hints.threadSubjects.get(unprefixed) ?? hints.threadSubjects.get(identifier);
+  }
+  if (relation === "affects_character") {
+    return hints.characterSubjects.get(unprefixed) ?? hints.characterSubjects.get(identifier);
+  }
+  if (relation === "affects_relationship") {
+    return hints.relationshipSubjects.get(unprefixed) ?? hints.relationshipSubjects.get(identifier);
+  }
+  return (
+    hints.timelineSubjects.get(unprefixed) ??
+    hints.threadSubjects.get(unprefixed) ??
+    hints.characterSubjects.get(unprefixed) ??
+    hints.relationshipSubjects.get(unprefixed) ??
+    hints.worldSubjects.get(unprefixed) ??
+    hints.toneSubjects.get(unprefixed) ??
+    null
+  );
+}
+
+function normalizeRawIdentifier(value: unknown, fallback: string) {
+  if (typeof value !== "string") return fallback;
+  const normalized = value
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/_+/g, "_")
+    .slice(0, 120)
+    .replace(/_+$/g, "");
+  return /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(normalized) ? normalized : fallback;
+}
+
+function stripRawNotePrefix(identifier: string, prefix?: string) {
+  if (prefix) return identifier.startsWith(`${prefix}_`) ? identifier.slice(prefix.length + 1) : identifier;
+  const match = identifier.match(/^(timeline|thread|world|tone|rel|char)_(.+)$/);
+  return match?.[2] ?? identifier;
+}
 
 
 function extractCandidateSnippet(candidate: unknown) {
