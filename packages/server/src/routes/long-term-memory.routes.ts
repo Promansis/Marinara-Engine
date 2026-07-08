@@ -224,16 +224,16 @@ const listDraftsQuerySchema = z
 
 const acceptDraftBodySchema = z
   .object({
-    mutationIds: z.array(z.string().uuid()).min(1).max(25).optional(),
+    mutationIds: z.array(z.string().uuid()).min(1).optional(),
     lowRiskOnly: z.boolean().optional(),
-    editedMutations: z.array(ltmDraftMutationSchema).max(25).optional(),
+    editedMutations: z.array(ltmDraftMutationSchema).optional(),
   })
   .strict()
   .default({});
 
 const skipDraftBodySchema = z
   .object({
-    mutationIds: z.array(z.string().uuid()).min(1).max(25),
+    mutationIds: z.array(z.string().uuid()).min(1),
   })
   .strict();
 

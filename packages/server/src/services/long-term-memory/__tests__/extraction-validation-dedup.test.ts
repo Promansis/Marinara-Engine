@@ -6,6 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LtmDraftMutation, LtmEvidenceUnit, LtmNote, SessionSummary } from "@marinara-engine/shared";
 import {
+  ltmExtractionDraftSchema,
+  ltmEvidenceUnitExtractionResponseSchema,
+} from "@marinara-engine/shared";
+import {
   BaseLLMProvider,
   type ChatCompletionResult,
   type ChatMessage,
@@ -13,6 +17,7 @@ import {
   type LLMUsage,
 } from "../../llm/base-provider.js";
 import { deduplicateUnits } from "../dedup.js";
+import { compileLtmEvidenceUnits } from "../evidence-unit-compiler.js";
 import { validateLtmEvidenceUnits } from "../evidence-unit-validation.js";
 import {
   evidenceUnitMessages,
@@ -22,7 +27,9 @@ import {
   sourceHashForEvidenceUnitExtraction,
 } from "../evidence-unit-extraction.js";
 import { mapGameJournalToEvidenceUnits, renderGameSourceText } from "../game-journal-mapper.js";
+import { applyLongTermMemoryDraft } from "../reconciliation.js";
 import { extractLongTermMemoryFromSourceNote } from "../source-extraction.js";
+import { LongTermMemoryDraftStore } from "../draft-store.js";
 import { LongTermMemoryStorage } from "../storage.js";
 
 const timestamp = "2024-01-01T00:00:00.000Z";
@@ -326,6 +333,114 @@ test("evidence unit response format constrains target shape and relationship dim
   assert.equal(unitSchema.properties.dimensions.additionalProperties, false);
   assert.ok(unitSchema.properties.dimensions.properties.trust);
   assert.ok(unitSchema.properties.dimensionChanges.properties.tension);
+  assert.equal("maxItems" in jsonSchema.schema.properties.units, false);
+});
+
+test("evidence unit payload accepts more than forty valid units", () => {
+  const units = Array.from({ length: 45 }, (_, index) =>
+    unit("timeline_event", {
+      subjectId: `event_${index + 1}`,
+      text: `Durable continuity event ${index + 1} changed the source timeline.`,
+    }),
+  );
+
+  const parsed = parseEvidenceUnitPayload({ summary: "Many events", units }, sourceHash);
+
+  assert.equal(parsed.response.units.length, 45);
+  assert.equal(parsed.totalCandidates, 45);
+  assert.equal(parsed.droppedCandidates.length, 0);
+  assert.equal(ltmEvidenceUnitExtractionResponseSchema.parse({ summary: "Many events", units }).units.length, 45);
+});
+
+test("evidence unit compiler returns every generated draft mutation", () => {
+  const units = Array.from({ length: 30 }, (_, index) =>
+    unit("timeline_event", {
+      subjectId: `event_${index + 1}`,
+      text: `Durable continuity event ${index + 1} changed the source timeline.`,
+    }),
+  );
+
+  const result = compileLtmEvidenceUnits({
+    units,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    mode: "roleplay",
+    summary: "Many events",
+  });
+
+  assert.equal(result.mutations.length, 30);
+  assert.equal(result.suggestions.generated, 30);
+  assert.equal(result.suggestions.returned, 30);
+});
+
+test("draft schemas and partial apply support more than twenty-five mutations", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-large-draft-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.initializeLtmStore();
+    const mutations: LtmDraftMutation[] = Array.from({ length: 30 }, (_, index) => ({
+      id: randomUUID(),
+      kind: "create_note",
+      risk: "low",
+      confidence: 0.9,
+      summary: `Create timeline memory ${index + 1}`,
+      evidence: ["source_note:source_test"],
+      note: {
+        id: `timeline_event_${index + 1}`,
+        type: "timeline_event",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory", "timeline_event"],
+        keywords: [],
+        links: [],
+        sections: {
+          event: {
+            text: `Durable continuity event ${index + 1} changed the source timeline.`,
+            updatedAt: timestamp,
+            evidence: ["source_note:source_test"],
+          },
+        },
+      },
+    }));
+
+    assert.equal(
+      ltmExtractionDraftSchema.parse({
+        id: randomUUID(),
+        status: "pending",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        source: { sourceNoteId: "source_test", sourceHash },
+        scope: {},
+        modes: ["roleplay"],
+        summary: "Large draft",
+        mutations,
+      }).mutations.length,
+      30,
+    );
+
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      source: { sourceNoteId: "source_test", sourceHash },
+      scope: {},
+      modes: ["roleplay"],
+      response: { summary: "Large draft", mutations },
+    });
+
+    const result = await applyLongTermMemoryDraft(draft.id, {
+      root,
+      mutationIds: [draft.mutations[0]!.id],
+      rebuildIndexes: false,
+      operationId: randomUUID(),
+    });
+
+    assert.equal(result.appliedMutationIds.length, 1);
+    assert.equal(result.skippedMutationIds.length, 29);
+    assert.equal(result.draft.status, "pending");
+    assert.equal(result.draft.mutations.length, 29);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("evidence extraction reduces completion budget instead of failing when prompt still fits context", async () => {

@@ -1160,14 +1160,13 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
         ...(importSource === "chats" ? { mode: importMode } : {}),
       });
       const importedCount = result.imported.length;
-      const suggestionCount = result.imported.reduce(
-        (sum, item) => sum + (item.outcome.suggestionCap?.returned ?? item.outcome.keptUnits),
-        0,
-      );
+      const suggestionCount = result.imported.reduce((sum, item) => {
+        const applySelectionCount = item.appliedMutationIds.length + item.skippedMutationIds.length;
+        return sum + (applySelectionCount > 0 ? applySelectionCount : (item.draft?.mutations.length ?? 0));
+      }, 0);
       const appliedCount = result.imported.reduce((sum, item) => sum + item.appliedMutationIds.length, 0);
       const skippedApplyCount = result.imported.reduce((sum, item) => sum + item.skippedMutationIds.length, 0);
       const droppedSourceCount = result.imported.filter((item) => item.outcome.droppedUnits > 0).length;
-      const cappedSourceCount = result.imported.filter((item) => (item.outcome.suggestionCap?.capped ?? 0) > 0).length;
       const emptySourceCount = result.imported.filter((item) => item.outcome.keptUnits === 0).length;
       const missingCount = result.missingSourceIds.length;
       const summary = [
@@ -1176,11 +1175,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
         `${droppedSourceCount} source${droppedSourceCount === 1 ? "" : "s"} with dropped candidates`,
         `${emptySourceCount} source${emptySourceCount === 1 ? "" : "s"} with no usable suggestions`,
       ];
-      if (cappedSourceCount > 0) {
-        summary.push(
-          `${cappedSourceCount} source${cappedSourceCount === 1 ? "" : "s"} hit the 25-suggestion review limit`,
-        );
-      }
       if (importApplyLowRisk) {
         summary.push(
           `${appliedCount} low-risk change${appliedCount === 1 ? "" : "s"} applied`,

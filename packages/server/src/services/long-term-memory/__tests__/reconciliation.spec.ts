@@ -2989,30 +2989,31 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
   assert.equal(userPayload.outputShape, undefined);
   assert.deepEqual(userPayload.responseContract, {
     summary: "string, short",
-    units: "array of 0..40 evidence unit objects",
+    units: "array of evidence unit objects, bounded by the completion token budget",
   });
   assert.equal(userPayload.unitFields.bucket, "one allowed stream value from allowedStreams");
   assert.equal(userPayload.unitFields.links, "real links only, otherwise []");
   assert.equal(userPayload.unitFields.sourceHash, sourceHash);
   assert.deepEqual(userPayload.streamScanOrder.slice(0, 4), [
     "timeline_event",
-    "timeline_event",
     "relationship_state",
-    "relationship_conflict",
+    "thread",
+    "character_fact",
   ]);
   assert.deepEqual(userPayload.allowedTimelineRelations, [
     "occurred_in",
     "triggered_by",
     "resolved_in",
     "evidenced_by",
+    "caused_by",
+    "affects_relationship",
+    "affects_character",
   ]);
   assert.deepEqual(userPayload.requiredEvidence, ["source_note:scene_source_test", "chat:chat_test"]);
   assert.deepEqual(userPayload.allowedStreams, [
     "timeline_event",
     "character_fact",
-    "timeline_event",
     "relationship_state",
-    "relationship_conflict",
     "world_fact",
     "thread",
     "tone",
@@ -3021,9 +3022,7 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
   assert.deepEqual(userPayload.streamDescriptions, {
     timeline_event: "source-summary scene/plot pivot, decision, action, discovery, fight outcome, promise, arrival, or departure; not the live current scene",
     character_fact: "durable character identity/trait/role/affiliation/backstory/belief/permanent status/development/ability/item/exact voice quote; not ordinary scene action or transient condition",
-    relationship_event: "evidence-backed interpersonal event or history item",
-    relationship_state: "current reduced relationship state backed by same-pass relationship_event or existing relationship note",
-    relationship_conflict: "unresolved contradiction or instability",
+    relationship_state: "relationship state or dimension change backed by a caused_by event link or existing relationship note",
     world_fact: "stable world/lore fact",
     thread: "unresolved situation, question, tension, or goal with a clear future resolver",
     tone: "durable world/session atmospheric register or recurring style only",
@@ -3036,7 +3035,6 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
   assert(!payloadJson.includes("relationship_arc"));
   assert(!payloadJson.includes("current_scene"));
   assert(!payloadJson.includes("current_state"));
-  assert(!payloadJson.includes("character_fact"));
   assert(!payloadJson.includes("boundary"));
   assert(!payloadJson.includes("preference"));
   assert(!payloadJson.includes("550e8400-e29b-41d4-a716-446655440000"));
@@ -3776,26 +3774,7 @@ test("source-summary thread validation still drops unresolved threads without a 
   assert.deepEqual(compiled.outcome.droppedCandidates.map((candidate) => candidate.reason), ["unsupported_bucket"]);
 });
 
-test("evidence unit compiler reports when suggested changes exceed the draft cap", () => {
-  const sourceNote: LtmNote = withKeywords({
-    id: "scene_source_test",
-    type: "scene",
-    status: "active",
-    modes: ["roleplay"],
-    scope: {},
-    tags: ["source_summary"],
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    links: [],
-    sections: {
-      source: {
-        text: Array.from({ length: 30 }, (_, index) => `Memory fact ${index + 1} is durable.`).join("\n"),
-        updatedAt: timestamp,
-        evidence: ["chat:chat_test"],
-      },
-    },
-    version: 1,
-  });
+test("evidence unit compiler returns all suggested changes without a draft cap", () => {
   const units = Array.from({ length: 30 }, (_, index) =>
     evidenceUnit("world_fact", {
       subjectId: `cap_test_${index + 1}`,
@@ -3806,32 +3785,18 @@ test("evidence unit compiler reports when suggested changes exceed the draft cap
     }),
   );
 
-  const compiled = compileEvidenceUnitExtraction({
-    unitResponse: {
-      summary: "Many durable facts",
-      units,
-    },
-    totalCandidates: units.length,
-    sourceText: sourceNote.sections.source!.text,
-    sourceNote,
+  const compiled = compileLtmEvidenceUnits({
+    units,
     existingNotes: [],
     scope: {},
     modes: ["roleplay"],
-    sourceHash,
+    mode: "roleplay",
+    summary: "Many durable facts",
   });
 
-  assert.equal(compiled.compiledResponse.mutations.length, 25);
-  assert.deepEqual(compiled.outcome.suggestionCap, {
-    limit: 25,
-    generated: 30,
-    returned: 25,
-    capped: 5,
-  });
-  assert(
-    compiled.diagnostics.some(
-      (diagnostic) => diagnostic.severity === "warning" && diagnostic.code === "suggestions_capped",
-    ),
-  );
+  assert.equal(compiled.mutations.length, 30);
+  assert.equal(compiled.suggestions.generated, 30);
+  assert.equal(compiled.suggestions.returned, 30);
 });
 
 test("source note extraction skips draft creation when every candidate is dropped", async () => {

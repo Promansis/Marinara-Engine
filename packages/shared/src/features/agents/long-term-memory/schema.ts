@@ -4,7 +4,6 @@ import {
   DEFAULT_LTM_RECALL_PREAMBLE,
   DEFAULT_LTM_RECALL_STYLE,
   DEFAULT_LTM_RECALL_STYLE_WEIGHTS,
-  LTM_DRAFT_MUTATION_LIMIT,
 } from "./constants.js";
 
 export const ltmNoteTypeSchema = z.enum([
@@ -869,10 +868,10 @@ export const ltmExtractionDraftSchema = z
     scope: ltmScopeSchema.default({}),
     modes: z.array(ltmModeSchema).min(1).max(8),
     summary: z.string().max(2_000).default(""),
-    mutations: z.array(ltmDraftMutationSchema).min(1).max(LTM_DRAFT_MUTATION_LIMIT),
+    mutations: z.array(ltmDraftMutationSchema).min(1),
     appliedAt: ltmIsoTimestampSchema.optional(),
-    appliedMutationIds: z.array(z.string().uuid()).max(25).optional(),
-    skippedMutationIds: z.array(z.string().uuid()).max(25).optional(),
+    appliedMutationIds: z.array(z.string().uuid()).optional(),
+    skippedMutationIds: z.array(z.string().uuid()).optional(),
   })
   .strip();
 
@@ -916,29 +915,20 @@ export const ltmExtractionOutcomeSchema = z
     keptUnits: z.number().int().min(0).max(999),
     droppedUnits: z.number().int().min(0).max(999),
     droppedCandidates: z.array(ltmExtractionDroppedCandidateSchema).max(80).default([]),
-    suggestionCap: z
-      .object({
-        limit: z.number().int().min(1).max(999),
-        generated: z.number().int().min(0).max(999),
-        returned: z.number().int().min(0).max(999),
-        capped: z.number().int().min(0).max(999),
-      })
-      .strict()
-      .optional(),
   })
   .strict();
 
 export const ltmExtractionResponseSchema = z
   .object({
     summary: z.string().max(2_000).default(""),
-    mutations: z.array(ltmDraftMutationSchema).max(LTM_DRAFT_MUTATION_LIMIT).default([]),
+    mutations: z.array(ltmDraftMutationSchema).default([]),
   })
   .strict();
 
 export const ltmEvidenceUnitExtractionResponseSchema = z
   .object({
     summary: z.string().max(2_000).default(""),
-    units: z.array(ltmEvidenceUnitSchema).max(40).default([]),
+    units: z.array(ltmEvidenceUnitSchema).default([]),
   })
   .strict();
 

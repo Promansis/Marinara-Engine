@@ -86,14 +86,17 @@ function clearDroppedCandidatesOutcome(outcome: LtmExtractionOutcome): LtmExtrac
   };
 }
 
-function outcomeSummary(outcome: LtmExtractionOutcome) {
-  const createdSuggestions = outcome.suggestionCap?.returned ?? outcome.keptUnits;
+function outcomeSummary(outcome: LtmExtractionOutcome, mutationCount?: number) {
   if (outcome.state === "success") {
+    const createdSuggestions = mutationCount ?? outcome.keptUnits;
     return createdSuggestions === 1
       ? "Created 1 suggestion from this source."
       : `Created ${createdSuggestions} suggestions from this source.`;
   }
   if (outcome.state === "partial_success") {
+    if (mutationCount !== undefined) {
+      return `Created ${mutationCount} suggestion${mutationCount === 1 ? "" : "s"}, kept ${outcome.keptUnits} candidate${outcome.keptUnits === 1 ? "" : "s"}, and dropped ${outcome.droppedUnits}.`;
+    }
     return `Kept ${outcome.keptUnits} candidate${outcome.keptUnits === 1 ? "" : "s"} and dropped ${outcome.droppedUnits}.`;
   }
   if (outcome.droppedUnits > 0) {
@@ -102,14 +105,17 @@ function outcomeSummary(outcome: LtmExtractionOutcome) {
   return "No usable suggestions were created from the latest extraction.";
 }
 
-function toastForOutcome(outcome: LtmExtractionOutcome) {
-  const createdSuggestions = outcome.suggestionCap?.returned ?? outcome.keptUnits;
+function toastForOutcome(outcome: LtmExtractionOutcome, mutationCount?: number) {
   if (outcome.state === "success") {
+    const createdSuggestions = mutationCount ?? outcome.keptUnits;
     return createdSuggestions === 1
       ? "Created 1 memory suggestion"
       : `Created ${createdSuggestions} memory suggestions`;
   }
   if (outcome.state === "partial_success") {
+    if (mutationCount !== undefined) {
+      return `Created ${mutationCount} memory suggestion${mutationCount === 1 ? "" : "s"} and dropped ${outcome.droppedUnits}`;
+    }
     return `Kept ${outcome.keptUnits} candidate${outcome.keptUnits === 1 ? "" : "s"} and dropped ${outcome.droppedUnits}`;
   }
   if (outcome.droppedUnits > 0) {
@@ -119,7 +125,7 @@ function toastForOutcome(outcome: LtmExtractionOutcome) {
 }
 
 function toastForExtractionResult(result: ExtractLongTermMemorySourceResponse, applyLowRisk: boolean) {
-  const base = toastForOutcome(result.outcome);
+  const base = toastForOutcome(result.outcome, result.response.mutations.length);
   if (!applyLowRisk) return base;
   const applied = result.appliedMutationIds.length;
   const skipped = result.skippedMutationIds.length;
@@ -223,6 +229,7 @@ export function LongTermMemorySuggestionsTab({
         onLatestExtractionResultChange({
           outcome: result.outcome,
           diagnostics: result.diagnostics,
+          mutationCount: result.response.mutations.length,
         });
         toast.success(toastForExtractionResult(result, autoApplyLowRisk));
       })
@@ -547,7 +554,7 @@ export function LongTermMemorySuggestionsTab({
         <ExtractionOutcomePanel
           note={note}
           outcome={latestExtractionResult.outcome}
-          diagnostics={latestExtractionResult.diagnostics}
+          mutationCount={latestExtractionResult.mutationCount}
           onClearDroppedCandidates={() =>
             onLatestExtractionResultChange({
               ...latestExtractionResult,
@@ -627,22 +634,17 @@ export function LongTermMemorySuggestionsTab({
 function ExtractionOutcomePanel({
   note,
   outcome,
-  diagnostics,
+  mutationCount,
   onClearDroppedCandidates,
   onRecoverDroppedCandidate,
 }: {
   note: LtmNote;
   outcome: LtmExtractionOutcome;
-  diagnostics?: ExtractLongTermMemorySourceResponse["diagnostics"];
+  mutationCount?: number;
   onClearDroppedCandidates: () => void;
   onRecoverDroppedCandidate: (candidate: LtmExtractionDroppedCandidate, note: LtmNote) => void;
 }) {
   const [showAllDropped, setShowAllDropped] = useState(false);
-  const suggestionCapWarning = outcome.suggestionCap?.capped
-    ? `Created ${outcome.suggestionCap.returned} of ${outcome.suggestionCap.generated} suggested changes.`
-    : diagnostics?.some((diagnostic) => diagnostic.code === "suggestions_capped")
-      ? "Some suggestions were capped at 25."
-      : null;
   const readableDropped = outcome.droppedCandidates.filter((candidate) => candidate.snippet);
   const visibleDropped = showAllDropped ? readableDropped : readableDropped.slice(0, 3);
   const hiddenCount = readableDropped.length - visibleDropped.length;
@@ -660,10 +662,9 @@ function ExtractionOutcomePanel({
               tone={outcome.droppedUnits > 0 ? "warn" : "neutral"}
             />
           </div>
-          <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">{outcomeSummary(outcome)}</p>
-          {suggestionCapWarning ? (
-            <p className="text-xs leading-relaxed text-amber-300">{suggestionCapWarning}</p>
-          ) : null}
+          <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">
+            {outcomeSummary(outcome, mutationCount)}
+          </p>
         </div>
         {outcome.droppedUnits > 0 ? (
           <div className="text-[0.6875rem] text-[var(--muted-foreground)]">

@@ -7,7 +7,6 @@ import {
   DEFAULT_LTM_ALLOWED_STREAMS_BY_MODE,
   DEFAULT_LTM_STREAM_DESCRIPTIONS_BY_MODE,
   DEFAULT_LTM_EXTRACTION_PROMPT_GAME_REFINE,
-  LTM_DRAFT_MUTATION_LIMIT,
   RELATIONSHIP_DIMENSIONS,
   ltmEvidenceUnitExtractionResponseSchema,
   ltmEvidenceUnitSchema,
@@ -30,7 +29,7 @@ import { recordLtmDebugEvent } from "./debug-log.js";
 import type { LtmExtractionDiagnostic } from "./diagnostics.js";
 import { deduplicateUnits } from "./dedup.js";
 import { compileLtmEvidenceUnits } from "./evidence-unit-compiler.js";
-import type { LtmSuggestionCapMetadata } from "./evidence-unit-compiler.js";
+import type { LtmSuggestionMetadata } from "./evidence-unit-compiler.js";
 import { validateLtmEvidenceUnits } from "./evidence-unit-validation.js";
 import { normalizeStructuredSummaryEvidenceUnits } from "./structured-summary-normalizer.js";
 
@@ -100,7 +99,7 @@ export interface CompileEvidenceUnitExtractionResult {
   compiledResponse: LtmExtractionResponse;
   diagnostics: LtmExtractionDiagnostic[];
   outcome: LtmExtractionOutcome;
-  suggestionCap: LtmSuggestionCapMetadata;
+  suggestions: LtmSuggestionMetadata;
 }
 
 type ParsedEvidenceUnitPayload = {
@@ -260,7 +259,6 @@ export function evidenceUnitResponseFormat(options: {
           summary: { type: "string", maxLength: 2_000 },
           units: {
             type: "array",
-            maxItems: 40,
             items: {
               type: "object",
               additionalProperties: false,
@@ -565,7 +563,7 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
       content: JSON.stringify({
         responseContract: {
           summary: "string, short",
-          units: "array of 0..40 evidence unit objects",
+          units: "array of evidence unit objects, bounded by the completion token budget",
         },
         unitFields: {
           id: "uuid",
@@ -880,17 +878,10 @@ export function compileEvidenceUnitExtraction(options: {
     : {
         summary: options.unitResponse.summary,
         mutations: [],
-        suggestionCap: { limit: LTM_DRAFT_MUTATION_LIMIT, generated: 0, returned: 0, capped: 0 },
+        suggestions: { generated: 0, returned: 0 },
       };
-  const { suggestionCap, ...compiledResponse } = compiled;
+  const { suggestions, ...compiledResponse } = compiled;
   const diagnostics = [...validated.diagnostics, ...dedupResult.diagnostics];
-  if (suggestionCap.capped > 0) {
-    diagnostics.push({
-      severity: "warning",
-      code: "suggestions_capped",
-      message: `Created ${suggestionCap.returned} of ${suggestionCap.generated} suggested changes. Extract again on a smaller source or split the source note to review more.`,
-    });
-  }
   const totalCandidates = Math.max(
     options.totalCandidates ?? 0,
     normalized.units.length + droppedCandidates.length,
@@ -899,15 +890,13 @@ export function compileEvidenceUnitExtraction(options: {
     totalCandidates,
     keptUnits: dedupResult.deduplicated.length,
     droppedCandidates,
-    mutations: compiledResponse.mutations.length,
-    suggestionCap,
   });
   return {
     unitResponse: { ...options.unitResponse, units: normalized.units },
     compiledResponse,
     diagnostics,
     outcome,
-    suggestionCap,
+    suggestions,
   };
 }
 
@@ -923,9 +912,8 @@ export function summarizeCompiledEvidenceUnitExtraction(result: CompileEvidenceU
       diagnostics: result.diagnostics.length,
       blockingDiagnostics: result.diagnostics.filter((diagnostic) => diagnostic.severity === "error").length,
       mutations: result.compiledResponse.mutations.length,
-      generatedMutations: result.suggestionCap.generated,
-      returnedMutations: result.suggestionCap.returned,
-      cappedMutations: result.suggestionCap.capped,
+      generatedMutations: result.suggestions.generated,
+      returnedMutations: result.suggestions.returned,
       targetNotes: new Set(targetNoteIds).size,
     },
     mutationKinds: countBy(result.compiledResponse.mutations.map((mutation) => mutation.kind)),
@@ -937,8 +925,6 @@ function summarizeExtractionOutcome(input: {
   totalCandidates: number;
   keptUnits: number;
   droppedCandidates: LtmExtractionDroppedCandidate[];
-  mutations: number;
-  suggestionCap?: LtmSuggestionCapMetadata;
 }): LtmExtractionOutcome {
   const droppedUnits = input.droppedCandidates.length;
   const state =
@@ -953,7 +939,6 @@ function summarizeExtractionOutcome(input: {
     keptUnits: input.keptUnits,
     droppedUnits,
     droppedCandidates: input.droppedCandidates,
-    ...(input.suggestionCap && input.suggestionCap.capped > 0 ? { suggestionCap: input.suggestionCap } : {}),
   };
 }
 

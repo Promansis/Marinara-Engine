@@ -1,7 +1,12 @@
 import { create } from "zustand";
 import type { ExtractLongTermMemorySourceResponse } from "../hooks/use-long-term-memory";
 
-export type LongTermMemoryLatestExtractionResult = Pick<ExtractLongTermMemorySourceResponse, "diagnostics" | "outcome">;
+export type LongTermMemoryLatestExtractionResult = Pick<
+  ExtractLongTermMemorySourceResponse,
+  "diagnostics" | "outcome"
+> & {
+  mutationCount?: number;
+};
 
 interface LtmExtractionResultsState {
   resultsBySourceNoteId: Record<string, LongTermMemoryLatestExtractionResult>;

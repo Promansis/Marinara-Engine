@@ -297,7 +297,6 @@ async function extractLongTermMemoryFromSourceNoteInner(
       mutationKinds: compiledSummary.mutationKinds,
       targetNoteIds: compiledSummary.targetNoteIds,
       summary: compiled.compiledResponse.summary,
-      suggestionCap: compiled.outcome.suggestionCap,
     },
   });
 
@@ -323,9 +322,8 @@ async function extractLongTermMemoryFromSourceNoteInner(
         mutations: compiled.compiledResponse.mutations.length,
         diagnostics: compiled.diagnostics.length,
         droppedUnits: compiled.outcome.droppedUnits,
-        generatedMutations: compiled.outcome.suggestionCap?.generated ?? compiled.compiledResponse.mutations.length,
-        returnedMutations: compiled.outcome.suggestionCap?.returned ?? compiled.compiledResponse.mutations.length,
-        cappedMutations: compiled.outcome.suggestionCap?.capped ?? 0,
+        generatedMutations: compiled.suggestions.generated,
+        returnedMutations: compiled.suggestions.returned,
       },
     diagnostics: compiled.diagnostics.map((diagnostic) => ({ ...diagnostic })),
     details: {

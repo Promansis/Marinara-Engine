@@ -11,7 +11,7 @@ import type {
   LtmSection,
   LtmStatus,
 } from "@marinara-engine/shared";
-import { isLtmSourceLikeNote, LTM_DRAFT_MUTATION_LIMIT, QUEST_THREAD_SECTION_KEYS, uniqueLinks } from "@marinara-engine/shared";
+import { isLtmSourceLikeNote, QUEST_THREAD_SECTION_KEYS, uniqueLinks } from "@marinara-engine/shared";
 import { mergeKeywords } from "./keyword-extract.js";
 import { noteIdForEvidenceUnit, riskForEvidenceUnit } from "./evidence-unit-validation.js";
 import { uniqueStrings } from "./ltm-utils.js";
@@ -26,15 +26,13 @@ export interface CompileLtmEvidenceUnitsOptions {
   summary?: string;
 }
 
-export type LtmSuggestionCapMetadata = {
-  limit: number;
+export type LtmSuggestionMetadata = {
   generated: number;
   returned: number;
-  capped: number;
 };
 
 export type CompiledLtmEvidenceUnits = LtmExtractionResponse & {
-  suggestionCap: LtmSuggestionCapMetadata;
+  suggestions: LtmSuggestionMetadata;
 };
 
 type UnitTarget = {
@@ -223,17 +221,14 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
     }
   }
 
-  const returnedMutations = mutations.slice(0, LTM_DRAFT_MUTATION_LIMIT);
   return {
     summary:
       options.summary ??
       `Compiled ${options.units.length} evidence unit(s) into ${mutations.length} draft mutation(s).`,
-    mutations: returnedMutations,
-    suggestionCap: {
-      limit: LTM_DRAFT_MUTATION_LIMIT,
+    mutations,
+    suggestions: {
       generated: mutations.length,
-      returned: returnedMutations.length,
-      capped: Math.max(0, mutations.length - returnedMutations.length),
+      returned: mutations.length,
     },
   };
 }
