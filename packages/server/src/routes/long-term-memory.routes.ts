@@ -62,7 +62,11 @@ import {
   type LtmInteropSource,
   type LtmRepairAction,
 } from "../services/long-term-memory/maintenance.js";
-import { rebuildLongTermMemoryIndexes, type LtmEmbeddingIndex } from "../services/long-term-memory/rebuild.js";
+import {
+  rebuildLongTermMemoryIndexes,
+  type LtmEmbeddingIndex,
+  type LtmRebuildScope,
+} from "../services/long-term-memory/rebuild.js";
 import { applyLongTermMemoryDraft } from "../services/long-term-memory/reconciliation.js";
 import { retrieveLongTermMemory } from "../services/long-term-memory/retrieval.js";
 import {
@@ -214,6 +218,11 @@ const interopImportBodySchema = z
 const draftIdParamSchema = z.object({ id: z.string().uuid() }).strict();
 const draftMutationParamSchema = z.object({ id: z.string().uuid(), mutationId: z.string().uuid() }).strict();
 const noteIdParamSchema = z.object({ id: ltmNoteIdSchema }).strict();
+const permanentDeleteNotesBodySchema = z
+  .object({
+    ids: z.array(ltmNoteIdSchema).min(1).max(100),
+  })
+  .strict();
 
 const listDraftsQuerySchema = z
   .object({
@@ -373,6 +382,11 @@ function summarizeNotes(notes: LtmNote[]) {
 
 function rebuildScopeForNote(note: LtmNote) {
   return isLtmSourceNote(note) ? "source" : "typed";
+}
+
+function rebuildScopeForNotes(notes: readonly LtmNote[]): LtmRebuildScope {
+  const scopes = new Set(notes.map((note) => rebuildScopeForNote(note)));
+  return scopes.size > 1 ? "all" : (scopes.values().next().value ?? "all");
 }
 
 class LtmExtractionRouteError extends Error {
@@ -798,6 +812,24 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     const rebuild = await rebuildLongTermMemoryIndexes();
     return { archived: true, note: archivedNotes[0], notes: archivedNotes, rebuild: publicRebuildResult(rebuild) };
   });
+
+  app.post<{ Body: unknown }>(
+    "/notes/permanent-delete",
+    { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES },
+    async (req, reply) => {
+      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory note deletion" })) return;
+      const body = permanentDeleteNotesBodySchema.parse(req.body ?? {});
+      const result = await storage.deleteNotesPermanently(body.ids, {
+        actor: "maintenance_api",
+        cause: "api.delete",
+        summary: "Deleted via long-term memory maintenance API",
+      });
+      if (result.deletedNotes.length > 0) {
+        await rebuildLongTermMemoryIndexes({ scope: rebuildScopeForNotes(result.deletedNotes) });
+      }
+      return { deletedIds: result.deletedIds, failedIds: result.failedIds };
+    },
+  );
 
   app.delete<{ Params: { id: string } }>("/notes/:id/permanent", async (req, reply) => {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory note deletion" })) return;

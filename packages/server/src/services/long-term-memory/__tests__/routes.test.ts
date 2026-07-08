@@ -1,11 +1,46 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import assert from "node:assert/strict";
+import type { LtmNote } from "@marinara-engine/shared";
 import { buildApp } from "../../../app.js";
+import { logger } from "../../../lib/logger.js";
 import { LongTermMemoryDraftStore } from "../draft-store.js";
+import { getLongTermMemoryDirectories } from "../paths.js";
+import { LongTermMemoryStorage } from "../storage.js";
+
+const bulkDeleteTimestamp = "2026-07-08T00:00:00.000Z";
+
+function bulkDeleteNote(input: Partial<LtmNote> & Pick<LtmNote, "id" | "type">): LtmNote {
+  return {
+    id: input.id,
+    type: input.type,
+    title: input.title,
+    status: input.status ?? "active",
+    modes: input.modes ?? ["roleplay"],
+    scope: input.scope ?? {},
+    tags: input.tags ?? [],
+    keywords: input.keywords ?? [],
+    createdAt: input.createdAt ?? bulkDeleteTimestamp,
+    updatedAt: input.updatedAt ?? bulkDeleteTimestamp,
+    links: input.links ?? [],
+    sections: input.sections ?? {},
+    conflicts: input.conflicts,
+    version: input.version ?? 1,
+    extracted: input.extracted,
+  };
+}
+
+async function withLtmStorage(run: (storage: LongTermMemoryStorage, root: string) => Promise<void>) {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-bulk-delete-"));
+  try {
+    await run(new LongTermMemoryStorage(root), root);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
 
 test("LTM routes — guarded endpoints return 403 from non-loopback without auth", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "marinara-ltm-routes-auth-"));
@@ -466,6 +501,172 @@ test("LTM routes — DELETE /notes/:id/scope removes the selected context links"
     if (app) await app.close();
     if (previousDataDir === undefined) delete process.env.DATA_DIR;
     else process.env.DATA_DIR = previousDataDir;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("LTM storage — batch permanent delete removes mixed note types and leaves remaining notes intact", async () => {
+  await withLtmStorage(async (storage) => {
+    await storage.createNote(bulkDeleteNote({ id: "source_bulk_delete", type: "source" }), { suppressEvent: true });
+    await storage.createNote(bulkDeleteNote({ id: "world_bulk_delete", type: "world" }), { suppressEvent: true });
+    await storage.createNote(bulkDeleteNote({ id: "char_bulk_keep", type: "character" }), { suppressEvent: true });
+
+    const result = await storage.deleteNotesPermanently(["source_bulk_delete", "world_bulk_delete"], {
+      actor: "test",
+      cause: "api.delete",
+      summary: "Deleted in batch test",
+    });
+
+    assert.deepEqual(result.deletedIds, ["source_bulk_delete", "world_bulk_delete"]);
+    assert.deepEqual(result.failedIds, []);
+    assert.deepEqual(result.deletedNotes.map((deleted) => deleted.id), ["source_bulk_delete", "world_bulk_delete"]);
+    assert.equal(await storage.getNote("source_bulk_delete"), null);
+    assert.equal(await storage.getNote("world_bulk_delete"), null);
+    assert.equal((await storage.getNote("char_bulk_keep"))?.id, "char_bulk_keep");
+
+    const events = await storage.readEvents();
+    assert.deepEqual(
+      events.map((event) => [event.type, event.target]),
+      [
+        ["source.deleted", "source_bulk_delete"],
+        ["world.deleted", "world_bulk_delete"],
+      ],
+    );
+  });
+});
+
+test("LTM storage — batch permanent delete reports missing ids once without throwing", async () => {
+  await withLtmStorage(async (storage) => {
+    await storage.createNote(bulkDeleteNote({ id: "source_stale_delete", type: "source" }), { suppressEvent: true });
+
+    const result = await storage.deleteNotesPermanently(
+      ["source_stale_delete", "source_stale_delete", "world_stale_missing"],
+      {
+        actor: "test",
+        cause: "api.delete",
+      },
+    );
+
+    assert.deepEqual(result.deletedIds, ["source_stale_delete"]);
+    assert.deepEqual(result.failedIds, ["world_stale_missing"]);
+    assert.equal(await storage.getNote("source_stale_delete"), null);
+  });
+});
+
+test("LTM storage — note lookup does not warn for expected ENOENT folder misses", async () => {
+  await withLtmStorage(async (storage, root) => {
+    const warnings: unknown[][] = [];
+    const mutableLogger = logger as typeof logger & { warn: (...args: unknown[]) => void };
+    const originalWarn = mutableLogger.warn;
+    mutableLogger.warn = (...args: unknown[]) => {
+      warnings.push(args);
+    };
+
+    try {
+      await storage.createNote(bulkDeleteNote({ id: "world_warn_lookup", type: "world" }), { suppressEvent: true });
+
+      assert.equal((await storage.getNote("world_warn_lookup"))?.id, "world_warn_lookup");
+      assert.equal(await storage.getNote("world_warn_missing"), null);
+      assert.deepEqual(warnings, []);
+
+      const dirs = getLongTermMemoryDirectories(root);
+      await writeFile(join(dirs.vault, "world", "world_warn_broken.json"), "{", "utf8");
+      await assert.rejects(() => storage.listNotes({ type: "world" }), SyntaxError);
+      assert.equal(warnings.length, 1);
+      assert.match(String(warnings[0]?.[1] ?? ""), /Failed to parse note file/);
+    } finally {
+      mutableLogger.warn = originalWarn;
+    }
+  });
+});
+
+test("LTM routes — POST /notes/permanent-delete returns deleted and failed ids", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "marinara-ltm-routes-bulk-delete-"));
+  const previousDataDir = process.env.DATA_DIR;
+  const previousBasicAuthUser = process.env.BASIC_AUTH_USER;
+  const previousBasicAuthPass = process.env.BASIC_AUTH_PASS;
+  const previousAdminSecret = process.env.ADMIN_SECRET;
+
+  delete process.env.BASIC_AUTH_USER;
+  delete process.env.BASIC_AUTH_PASS;
+  delete process.env.ADMIN_SECRET;
+  process.env.DATA_DIR = dataDir;
+
+  let app: Awaited<ReturnType<typeof buildApp>> | null = null;
+  try {
+    app = await buildApp();
+    const root = join(dataDir, "long-term-memory");
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(bulkDeleteNote({ id: "source_route_delete", type: "source" }), { suppressEvent: true });
+    await storage.createNote(bulkDeleteNote({ id: "world_route_delete", type: "world" }), { suppressEvent: true });
+    await storage.createNote(bulkDeleteNote({ id: "char_route_keep", type: "character" }), { suppressEvent: true });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/long-term-memory/notes/permanent-delete",
+      payload: { ids: ["source_route_delete", "world_route_delete", "char_route_missing"] },
+      remoteAddress: "127.0.0.1",
+    });
+
+    assert.equal(response.statusCode, 200, response.body);
+    const body = JSON.parse(response.body) as { deletedIds: string[]; failedIds: string[] };
+    assert.deepEqual(Object.keys(body).sort(), ["deletedIds", "failedIds"]);
+    assert.deepEqual(body.deletedIds, ["source_route_delete", "world_route_delete"]);
+    assert.deepEqual(body.failedIds, ["char_route_missing"]);
+    assert.equal(await storage.getNote("source_route_delete"), null);
+    assert.equal(await storage.getNote("world_route_delete"), null);
+    assert.equal((await storage.getNote("char_route_keep"))?.id, "char_route_keep");
+
+    const manifestPath = join(getLongTermMemoryDirectories(root).indexes, "manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { noteCount: number };
+    assert.equal(manifest.noteCount, 1);
+  } finally {
+    if (app) await app.close();
+    if (previousDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = previousDataDir;
+    if (previousBasicAuthUser === undefined) delete process.env.BASIC_AUTH_USER;
+    else process.env.BASIC_AUTH_USER = previousBasicAuthUser;
+    if (previousBasicAuthPass === undefined) delete process.env.BASIC_AUTH_PASS;
+    else process.env.BASIC_AUTH_PASS = previousBasicAuthPass;
+    if (previousAdminSecret === undefined) delete process.env.ADMIN_SECRET;
+    else process.env.ADMIN_SECRET = previousAdminSecret;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("LTM routes — POST /notes/permanent-delete rejects payloads over one server batch", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "marinara-ltm-routes-bulk-delete-limit-"));
+  const previousDataDir = process.env.DATA_DIR;
+  const previousBasicAuthUser = process.env.BASIC_AUTH_USER;
+  const previousBasicAuthPass = process.env.BASIC_AUTH_PASS;
+  const previousAdminSecret = process.env.ADMIN_SECRET;
+
+  delete process.env.BASIC_AUTH_USER;
+  delete process.env.BASIC_AUTH_PASS;
+  delete process.env.ADMIN_SECRET;
+  process.env.DATA_DIR = dataDir;
+
+  let app: Awaited<ReturnType<typeof buildApp>> | null = null;
+  try {
+    app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/long-term-memory/notes/permanent-delete",
+      payload: { ids: Array.from({ length: 101 }, (_, index) => `world_bulk_limit_${index}`) },
+      remoteAddress: "127.0.0.1",
+    });
+
+    assert.equal(response.statusCode, 400, response.body);
+  } finally {
+    if (app) await app.close();
+    if (previousDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = previousDataDir;
+    if (previousBasicAuthUser === undefined) delete process.env.BASIC_AUTH_USER;
+    else process.env.BASIC_AUTH_USER = previousBasicAuthUser;
+    if (previousBasicAuthPass === undefined) delete process.env.BASIC_AUTH_PASS;
+    else process.env.BASIC_AUTH_PASS = previousBasicAuthPass;
+    if (previousAdminSecret === undefined) delete process.env.ADMIN_SECRET;
+    else process.env.ADMIN_SECRET = previousAdminSecret;
     await rm(dataDir, { recursive: true, force: true });
   }
 });

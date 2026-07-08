@@ -330,6 +330,16 @@ export type DeleteLongTermMemoryNotesResponse = {
   failedIds: string[];
 };
 
+const PERMANENT_DELETE_NOTES_BATCH_SIZE = 100;
+
+function chunkLongTermMemoryNoteIds(ids: string[]) {
+  const batches: string[][] = [];
+  for (let index = 0; index < ids.length; index += PERMANENT_DELETE_NOTES_BATCH_SIZE) {
+    batches.push(ids.slice(index, index + PERMANENT_DELETE_NOTES_BATCH_SIZE));
+  }
+  return batches;
+}
+
 function pruneNotesFromListCaches(qc: QueryClient, ids: string[]) {
   if (ids.length === 0) return;
   const idSet = new Set(ids);
@@ -448,18 +458,23 @@ export function useDeleteLongTermMemoryNotes() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (ids: string[]) => {
-      const results = await Promise.allSettled(
-        ids.map((id) => api.delete<{ deleted: true; id: string }>(`/long-term-memory/notes/${id}/permanent`)),
-      );
+      if (ids.length === 0) return { deletedIds: [], failedIds: [] } satisfies DeleteLongTermMemoryNotesResponse;
       const deletedIds: string[] = [];
       const failedIds: string[] = [];
-      results.forEach((result, index) => {
-        if (result.status === "fulfilled") {
-          deletedIds.push(result.value.id);
-        } else {
-          failedIds.push(ids[index]);
+
+      for (const batchIds of chunkLongTermMemoryNoteIds(ids)) {
+        try {
+          const result = await api.post<DeleteLongTermMemoryNotesResponse>(
+            "/long-term-memory/notes/permanent-delete",
+            { ids: batchIds },
+          );
+          deletedIds.push(...result.deletedIds);
+          failedIds.push(...result.failedIds);
+        } catch {
+          failedIds.push(...batchIds);
         }
-      });
+      }
+
       return { deletedIds, failedIds } satisfies DeleteLongTermMemoryNotesResponse;
     },
     onSuccess: (result) => {

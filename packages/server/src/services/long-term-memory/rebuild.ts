@@ -81,7 +81,13 @@ async function hashSourceFiles(root: string) {
   const hashes: Record<string, string> = {};
   for (const file of files) {
     const relativePath = relative(root, file).split(/[\\/]+/).join("/");
-    hashes[relativePath] = stableJsonHash(await readFile(file, "utf8"));
+    try {
+      hashes[relativePath] = stableJsonHash(await readFile(file, "utf8"));
+    } catch (err) {
+      if (isEnoent(err)) continue;
+      logger.warn(err, "[ltm] Failed to hash source file %s", file);
+      throw err;
+    }
   }
   return hashes;
 }

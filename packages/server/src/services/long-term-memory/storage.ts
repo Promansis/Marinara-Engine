@@ -255,7 +255,13 @@ export class LongTermMemoryStorage {
       const entries = await readdir(folderPath, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-        const note = await this.readNoteFile(safeJoin(folderPath, entry.name), folder);
+        let note: LtmNote;
+        try {
+          note = await this.readNoteFile(safeJoin(folderPath, entry.name), folder);
+        } catch (err) {
+          if (isEnoent(err)) continue;
+          throw err;
+        }
         if (filter.status && note.status !== filter.status) continue;
         if (filter.tag && !note.tags.includes(filter.tag)) continue;
         if (filter.scope || filter.characterIds?.length || filter.includeGlobal === false) {
@@ -299,7 +305,13 @@ export class LongTermMemoryStorage {
         (entry) => entry.isFile() && entry.name.endsWith(".json") && wantedIds.has(entry.name.slice(0, -5)),
       );
       for (const entry of matchingEntries) {
-        const note = await this.readNoteFile(safeJoin(folderPath, entry.name), folder);
+        let note: LtmNote;
+        try {
+          note = await this.readNoteFile(safeJoin(folderPath, entry.name), folder);
+        } catch (err) {
+          if (isEnoent(err)) continue;
+          throw err;
+        }
         if (!notes.has(note.id)) notes.set(note.id, note);
       }
       if (notes.size === wantedIds.size) break;
@@ -383,6 +395,48 @@ export class LongTermMemoryStorage {
       await unlink(path);
       return current;
     });
+  }
+
+  async deleteNotesPermanently(ids: string[], eventContext: LtmEventContext = {}) {
+    await this.initializeLtmStore();
+    const wantedIds = [...new Set(ids.map((id) => ltmNoteIdSchema.parse(id)))];
+    const existingNotes = await this.getNotesByIds(wantedIds);
+    const deletedIds: string[] = [];
+    const failedIds: string[] = [];
+    const deletedNotes: LtmNote[] = [];
+
+    for (const id of wantedIds) {
+      const existing = existingNotes.get(id);
+      if (!existing) {
+        failedIds.push(id);
+        continue;
+      }
+
+      const path = notePathForId(existing.id, existing.type, this.root);
+      const deleted = await withNoteWriteLock(path, async () => {
+        const current = await this.readNoteByIdInFolder(existing.id, vaultFolderForNoteType(existing.type));
+        if (!current) return null;
+        if (!eventContext.suppressEvent) {
+          await this.appendEvent(eventFor(`${current.type}.deleted`, current.id, eventContext, { note: current }));
+        }
+        try {
+          await unlink(path);
+        } catch (err) {
+          if (isEnoent(err)) return null;
+          throw err;
+        }
+        return current;
+      });
+
+      if (deleted) {
+        deletedIds.push(deleted.id);
+        deletedNotes.push(deleted);
+      } else {
+        failedIds.push(id);
+      }
+    }
+
+    return { deletedIds, failedIds, deletedNotes };
   }
 
   async removeNoteFromScope(
@@ -491,17 +545,34 @@ export class LongTermMemoryStorage {
   }
 
   private async readNoteFile(path: string, folder: (typeof LTM_VAULT_FOLDERS)[number]) {
+    let content: string;
+    try {
+      content = await readFile(path, "utf8");
+    } catch (err) {
+      if (isEnoent(err)) throw err;
+      logger.warn(err, "[ltm] Failed to read note file %s", path);
+      throw err;
+    }
+
     let raw: Record<string, unknown>;
     try {
-      raw = JSON.parse(await readFile(path, "utf8"));
+      raw = JSON.parse(content);
     } catch (err) {
       logger.warn(err, "[ltm] Failed to parse note file %s", path);
       throw err;
     }
-    const note = parseStoredNote({
-      ...raw,
-      scope: normalizeStoredScope(raw.scope ?? {}),
-    });
+
+    let note: LtmNote;
+    try {
+      note = parseStoredNote({
+        ...raw,
+        scope: normalizeStoredScope(raw.scope ?? {}),
+      });
+    } catch (err) {
+      logger.warn(err, "[ltm] Failed to parse note file %s", path);
+      throw err;
+    }
+
     if (vaultFolderForNoteType(note.type) !== folder) {
       logger.warn("[ltm] Note %s has type %s but stored in folder %s", note.id, note.type, folder);
       throw new Error(`Long-term memory note ${note.id} has type ${note.type} but is stored in ${folder}.`);
