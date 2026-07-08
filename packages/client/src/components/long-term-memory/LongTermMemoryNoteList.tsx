@@ -250,7 +250,7 @@ export function TypeMemoryGroups({
                     <article
                       key={note.id}
                       className={cn(
-                        "group relative",
+                        "group relative pr-12",
                         listRowClassName,
                         (openNoteId === note.id || selected) && selectedListRowClassName,
                       )}
@@ -444,7 +444,7 @@ function _ArchivedSourceSummaryGroupRow({
 
   const sourceTitle = sourceNoteTitle(group.source, chatLookup);
   return (
-    <article className={cn("group relative", listRowClassName)}>
+    <article className={cn("group relative pr-12", listRowClassName)}>
       <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-2">
         <div className="grid min-h-12 w-8 shrink-0 justify-items-center">
           <label className="flex h-8 w-8 shrink-0 self-center items-center justify-center rounded-lg bg-[var(--background)]/55 ring-1 ring-[var(--border)]">
