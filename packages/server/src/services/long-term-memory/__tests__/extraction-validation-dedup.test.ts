@@ -1042,6 +1042,54 @@ test("structured roleplay character backfill omits n/a timeline links when multi
   assert.equal(create.note.links.some((link) => link.relation === "caused_by" || link.relation === "evidenced_by"), false);
 });
 
+test("structured roleplay character backfill preserves valid explicit timeline links", () => {
+  const sourceText = [
+    "### timeline_event",
+    "- `[MAJOR] lisa_imai | bracelet_reveal: Lisa and Damo revealed matching bracelets.`",
+    "### character_fact",
+    "- `[MAJOR] lisa_imai | facts: Wears childhood friendship bracelet for Damo on left wrist; never removed it. | caused_by: bracelet_reveal`",
+  ].join("\n");
+  const sourceNote = note("source_test", {
+    source: {
+      text: sourceText,
+      updatedAt: timestamp,
+    },
+  });
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse: {
+      summary: "Bracelet reveal",
+      units: [
+        unit("timeline_event", {
+          subjectId: "bracelet_reveal",
+          sectionKey: "event",
+          text: "Lisa and Damo revealed matching bracelets.",
+        }),
+      ],
+    },
+    totalCandidates: 1,
+    sourceText,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    mode: "roleplay",
+    sourceHash,
+  });
+
+  assert.equal(compiled.outcome.droppedUnits, 0);
+  const create = compiled.compiledResponse.mutations.find(
+    (mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> =>
+      mutation.kind === "create_note" && mutation.note.id === "char_lisa_imai",
+  );
+  assert.ok(create);
+  assert.ok(
+    create.note.links.some(
+      (link) => link.target === "timeline_bracelet_reveal" && link.relation === "evidenced_by",
+    ),
+  );
+});
+
 test("structured roleplay durable anecdotes route away from unsafe facts", () => {
   const sourceText = [
     "### character_fact",
@@ -1076,6 +1124,44 @@ test("structured roleplay durable anecdotes route away from unsafe facts", () =>
   assert.match(create.note.sections.developments?.text ?? "", /Almost quit Roselia/);
   assert.match(create.note.sections.developments?.text ?? "", /confiscated Sayo's guitar picks/);
   assert.doesNotMatch(create.note.sections.developments?.text ?? "", /caused_by|n\/a|n_a/i);
+});
+
+test("structured roleplay character backfill keeps developments when optional timeline link is missing", () => {
+  const sourceText = [
+    "### character_fact",
+    "- `[MODERATE] damo_korvak | developments: Started playing piano seriously after the move from Lisa's city. References \"brainworms\" as motivation (details unspecified). | caused_by: brainworms_mention`",
+  ].join("\n");
+  const sourceNote = note("source_test", {
+    source: {
+      text: sourceText,
+      updatedAt: timestamp,
+    },
+  });
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse: { summary: "Damo development", units: [] },
+    totalCandidates: 0,
+    sourceText,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    mode: "roleplay",
+    sourceHash,
+  });
+
+  assert.equal(compiled.outcome.droppedUnits, 0);
+  assert.equal(
+    compiled.diagnostics.some((diagnostic) => diagnostic.details?.validatorCode === "unknown_link_target"),
+    false,
+  );
+  const create = compiled.compiledResponse.mutations.find(
+    (mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> =>
+      mutation.kind === "create_note" && mutation.note.id === "char_damo_korvak",
+  );
+  assert.ok(create);
+  assert.match(create.note.sections.developments?.text ?? "", /Started playing piano seriously/);
+  assert.equal(create.note.links.some((link) => link.target === "timeline_brainworms_mention"), false);
 });
 
 test("structured relationship links can target existing timeline notes by bare id", () => {

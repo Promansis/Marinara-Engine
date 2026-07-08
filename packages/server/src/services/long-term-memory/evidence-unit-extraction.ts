@@ -30,7 +30,7 @@ import type { LtmExtractionDiagnostic } from "./diagnostics.js";
 import { deduplicateUnits } from "./dedup.js";
 import { compileLtmEvidenceUnits } from "./evidence-unit-compiler.js";
 import type { LtmSuggestionMetadata } from "./evidence-unit-compiler.js";
-import { validateLtmEvidenceUnits } from "./evidence-unit-validation.js";
+import { noteIdForEvidenceUnit, validateLtmEvidenceUnits } from "./evidence-unit-validation.js";
 import { normalizeStructuredSummaryEvidenceUnits } from "./structured-summary-normalizer.js";
 
 const LTM_EXTRACTION_BUCKET_SCAN_ORDER = [
@@ -68,6 +68,15 @@ const LTM_EXTRACTION_LINK_RELATIONS = [
   "extracted_from",
 ] as const;
 const LTM_EXTRACTION_LINK_RELATION_SET = new Set<string>(LTM_EXTRACTION_LINK_RELATIONS);
+const OPTIONAL_CHARACTER_TIMELINE_LINK_RELATIONS = new Set<LtmEvidenceUnit["links"][number]["relation"]>([
+  "caused_by",
+  "evidenced_by",
+  "occurred_in",
+  "triggered_by",
+  "resolved_in",
+  "planted_in",
+  "paid_off_in",
+]);
 const LTM_EXTRACTION_NOTE_ID_PREFIX_PATTERN = /^(?:timeline|thread|world|tone|rel|char)_/;
 const LTM_EXTRACTION_TIMELINE_LINK_RELATIONS = new Set<string>([
   "occurred_in",
@@ -1066,8 +1075,13 @@ export function compileEvidenceUnitExtraction(options: {
     modes: options.modes,
     addStructuredUnits: !options.skipStructuredBackfill,
   });
-  const validated = validateLtmEvidenceUnits({
+  const normalizedUnits = stripMissingOptionalCharacterTimelineLinks({
     units: normalized.units,
+    sourceNote: options.sourceNote,
+    existingNotes: options.existingNotes,
+  });
+  const validated = validateLtmEvidenceUnits({
+    units: normalizedUnits,
     sourceText: options.sourceText,
     sourceNote: options.sourceNote,
     existingNotes: options.existingNotes,
@@ -1098,7 +1112,7 @@ export function compileEvidenceUnitExtraction(options: {
   const diagnostics = [...validated.diagnostics, ...dedupResult.diagnostics];
   const totalCandidates = Math.max(
     options.totalCandidates ?? 0,
-    normalized.units.length + droppedCandidates.length,
+    normalizedUnits.length + droppedCandidates.length,
   );
   const outcome = summarizeExtractionOutcome({
     totalCandidates,
@@ -1106,12 +1120,38 @@ export function compileEvidenceUnitExtraction(options: {
     droppedCandidates,
   });
   return {
-    unitResponse: { ...options.unitResponse, units: normalized.units },
+    unitResponse: { ...options.unitResponse, units: normalizedUnits },
     compiledResponse,
     diagnostics,
     outcome,
     suggestions,
   };
+}
+
+function stripMissingOptionalCharacterTimelineLinks({
+  units,
+  sourceNote,
+  existingNotes,
+}: {
+  units: LtmEvidenceUnit[];
+  sourceNote: LtmNote;
+  existingNotes: LtmNote[];
+}) {
+  const validTargets = new Set<string>([
+    sourceNote.id,
+    ...existingNotes.map((note) => note.id),
+    ...units.map((unit) => noteIdForEvidenceUnit(unit)),
+  ]);
+
+  return units.map((unit) => {
+    if (unit.bucket !== "character_fact" || unit.links.length === 0) return unit;
+    const links = unit.links.filter(
+      (link) =>
+        validTargets.has(link.target) ||
+        !OPTIONAL_CHARACTER_TIMELINE_LINK_RELATIONS.has(link.relation),
+    );
+    return links.length === unit.links.length ? unit : { ...unit, links };
+  });
 }
 
 export function summarizeCompiledEvidenceUnitExtraction(result: CompileEvidenceUnitExtractionResult) {
