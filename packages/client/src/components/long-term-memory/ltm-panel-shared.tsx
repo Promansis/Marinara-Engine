@@ -115,7 +115,7 @@ export const MODE_BADGE_COLORS: Record<LtmMode, string> = {
 // ── CSS class constants ────────────────────────
 
 export const rowActionButtonClassName =
-  "mari-chrome-control mari-chrome-control--small mari-chrome-control--icon shrink-0 text-[var(--muted-foreground)] active:scale-90 disabled:cursor-not-allowed disabled:opacity-45";
+  "mari-chrome-control mari-chrome-control--small mari-chrome-control--icon shrink-0 text-[var(--muted-foreground)] active:scale-90 disabled:cursor-not-allowed disabled:opacity-45 [&>svg]:!size-[0.9375rem] [&>svg]:shrink-0 [&>svg]:!stroke-[2.15]";
 
 export const rowActionGroupClassName =
   "absolute right-2 top-1/2 flex shrink-0 -translate-y-1/2 items-center justify-end gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-[var(--border)] transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100";
