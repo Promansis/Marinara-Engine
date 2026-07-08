@@ -152,10 +152,7 @@ function extractPanelPrefs(settings: Record<string, unknown>) {
       typeof settings.importConcurrency === "number"
         ? Math.max(1, Math.min(10, Math.round(settings.importConcurrency)))
         : 3,
-    importLimit:
-      typeof settings.importLimit === "number"
-        ? Math.max(1, Math.min(100, Math.round(settings.importLimit)))
-        : 25,
+    importLimit: 100,
     importSource,
   };
 }
@@ -217,7 +214,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
 
       const relevantFields: Array<keyof ReturnType<typeof extractPanelPrefs>> = [
         "autoApplyLowRisk", "connectionId", "importConcurrency",
-        "importLimit", "importSource", "instruction", "model",
+        "importSource", "instruction", "model",
       ];
       const hasRelevantValue = relevantFields.some((f) => oldPrefs[f] !== undefined && oldPrefs[f] !== "" && oldPrefs[f] !== false);
       if (!hasRelevantValue) return;
@@ -1150,7 +1147,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
       const result = await importSourceNotes.mutateAsync({
         source: importSource,
         sourceIds,
-        limit: Math.max(importLimit, sourceIds.length),
+        limit: sourceIds.length,
         scope: importSource === "chats" ? navigatorScope : undefined,
         connectionId: optionalTrimmedText(importConnectionId),
         model: optionalTrimmedText(importModel),
@@ -1459,7 +1456,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
             />
           )}
 
-          <div className={cn("grid gap-2", importSource === "chats" ? "sm:grid-cols-[1fr_1fr_auto]" : "sm:grid-cols-[1fr_auto]") }>
+          <div className={cn("grid gap-2", importSource === "chats" ? "sm:grid-cols-[1fr_1fr]" : "sm:grid-cols-[1fr]") }>
             {importSource === "chats" && (
               <select
                 value={importMode}
@@ -1484,14 +1481,6 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
                 </option>
               ))}
             </select>
-            <input
-              type="number"
-              min={1}
-              max={100}
-              value={importLimit}
-              onChange={(event) => handlePrefsChange({ importLimit: Number(event.target.value) })}
-              className={cn(compactInputClassName, "w-24")}
-            />
           </div>
           <div className={cn(sectionCardClassName, "mt-2")}>
             <div className="flex flex-wrap gap-1.5">

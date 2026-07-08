@@ -195,7 +195,7 @@ const interopSourceSchema = z.enum(["characters", "lorebooks", "chats"]);
 const interopBodySchema = z
   .object({
     source: interopSourceSchema,
-    limit: z.number().int().min(1).max(100).default(25),
+    limit: z.number().int().min(1).max(100).default(100),
     scope: ltmScopeSchema.optional(),
   })
   .strict();
@@ -204,7 +204,7 @@ const interopImportBodySchema = z
   .object({
     source: interopSourceSchema,
     sourceIds: z.array(z.string().min(1).max(120)).min(1).max(100),
-    limit: z.number().int().min(1).max(100).default(25),
+    limit: z.number().int().min(1).max(100).default(100),
     scope: ltmScopeSchema.optional(),
     connectionId: z.string().min(1).max(120).optional(),
     model: z.string().min(1).max(240).optional(),
