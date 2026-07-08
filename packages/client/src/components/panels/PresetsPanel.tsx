@@ -846,13 +846,13 @@ export function PresetsPanel() {
                     selectPreset(preset.id);
                   }}
                   className={cn(
-                    "mari-chrome-control mari-chrome-control--small p-1.5",
+                    "mari-chrome-control mari-chrome-control--small mari-chrome-control--icon",
                     isSelected && "mari-chrome-control--selected",
                   )}
                   title={isSelected ? "Unassign from chat" : "Assign to chat"}
                   aria-label={isSelected ? "Unassign preset from chat" : "Assign preset to chat"}
                 >
-                  <Check size="0.75rem" />
+                  <Check />
                 </button>
               )}
               <button
@@ -878,11 +878,11 @@ export function PresetsPanel() {
                   event.stopPropagation();
                   duplicatePreset.mutate(preset.id);
                 }}
-                className="mari-chrome-control mari-chrome-control--small p-1.5"
+                className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon"
                 title="Duplicate"
                 aria-label="Duplicate preset"
               >
-                <Copy size="0.75rem" />
+                <Copy />
               </button>
               <button
                 type="button"
@@ -899,11 +899,11 @@ export function PresetsPanel() {
                     deletePreset.mutate(preset.id);
                   }
                 }}
-                className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger p-1.5"
+                className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon mari-chrome-control--danger"
                 title="Delete"
                 aria-label="Delete preset"
               >
-                <Trash2 size="0.75rem" className="text-[var(--destructive)]" />
+                <Trash2 className="text-[var(--destructive)]" />
               </button>
             </div>
           )}
@@ -1125,11 +1125,11 @@ export function PresetsPanel() {
                           if (expandedFolderId === folder.id) setExpandedFolderId(null);
                         });
                       }}
-                      className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger p-1"
+                      className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon mari-chrome-control--danger"
                       title="Delete folder"
                       aria-label="Delete folder"
                     >
-                      <Trash2 size="0.6875rem" className="text-[var(--destructive)]" />
+                      <Trash2 className="text-[var(--destructive)]" />
                     </button>
                   </div>
                 </div>
@@ -1333,29 +1333,29 @@ function RegexSection({
           <button
             type="button"
             onClick={handleCreateRegex}
-            className="mari-chrome-control mari-chrome-control--small p-1.5"
+            className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon"
             title="Create regex"
             aria-label="Create regex"
           >
-            <Plus size="0.8125rem" />
+            <Plus />
           </button>
           <label
-            className="mari-chrome-control mari-chrome-control--small cursor-pointer p-1.5"
+            className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon cursor-pointer"
             title="Import regexes from JSON"
             aria-label="Import regexes from JSON"
           >
             <input type="file" accept="application/json" className="hidden" onChange={handleImportRegex} />
-            <Download size="0.8125rem" />
+            <Download />
           </label>
           <button
             type="button"
             onClick={handleExportRegex}
             disabled={sortedRegexScripts.length === 0}
-            className="mari-chrome-control mari-chrome-control--small p-1.5"
+            className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon"
             title="Export regexes to JSON"
             aria-label="Export regexes to JSON"
           >
-            <Upload size="0.8125rem" />
+            <Upload />
           </button>
         </div>
       }
@@ -1471,16 +1471,16 @@ function RegexSection({
                   </div>
                   <button
                     type="button"
-                    className="mari-chrome-control mari-chrome-control--small shrink-0 p-1"
+                    className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon shrink-0"
                     title="Edit regex"
                     aria-label="Edit regex"
                     onClick={() => openRegexDetail(script.id)}
                   >
-                    <Pencil size="0.8125rem" />
+                    <Pencil />
                   </button>
                   <button
                     type="button"
-                    className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger shrink-0 p-1"
+                    className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon mari-chrome-control--danger shrink-0"
                     title="Delete regex"
                     aria-label="Delete regex"
                     onClick={async () => {
@@ -1576,14 +1576,14 @@ function FunctionsSection({
           <button
             type="button"
             onClick={handleCreateFunction}
-            className="mari-chrome-control mari-chrome-control--small p-1.5"
+            className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon"
             title="Create function"
             aria-label="Create function"
           >
-            <Plus size="0.8125rem" />
+            <Plus />
           </button>
           <label
-            className="mari-chrome-control mari-chrome-control--small cursor-pointer p-1.5"
+            className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon cursor-pointer"
             title="Import functions from ZIP or JSON"
             aria-label="Import functions from ZIP or JSON"
           >
@@ -1593,17 +1593,17 @@ function FunctionsSection({
               className="hidden"
               onChange={handleImportFunctions}
             />
-            <Download size="0.8125rem" />
+            <Download />
           </label>
           <button
             type="button"
             onClick={handleExportFunctions}
             disabled={customToolRows.length === 0}
-            className="mari-chrome-control mari-chrome-control--small p-1.5"
+            className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon"
             title="Export functions to ZIP"
             aria-label="Export functions to ZIP"
           >
-            <Upload size="0.8125rem" />
+            <Upload />
           </button>
         </div>
       }
@@ -1719,16 +1719,16 @@ function FunctionsSection({
                   </div>
                   <button
                     type="button"
-                    className="mari-chrome-control mari-chrome-control--small shrink-0 p-1"
+                    className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon shrink-0"
                     title="Edit function"
                     aria-label="Edit function"
                     onClick={() => openToolDetail(tool.id)}
                   >
-                    <Pencil size="0.8125rem" />
+                    <Pencil />
                   </button>
                   <button
                     type="button"
-                    className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger shrink-0 p-1"
+                    className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon mari-chrome-control--danger shrink-0"
                     title="Delete function"
                     aria-label="Delete function"
                     onClick={async () => {

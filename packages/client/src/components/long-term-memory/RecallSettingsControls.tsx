@@ -125,40 +125,37 @@ function DraftNumberInput({
 export function RecallStylePresets({
   values,
   onChange,
+  layout = "compact",
 }: {
   values: Partial<RecallSettingsValues>;
   onChange: (patch: Partial<RecallSettingsValues>) => void;
+  layout?: "compact" | "desktop-row";
 }) {
   const recallStyle = values.longTermMemoryRecallStyle ?? "balanced";
   return (
     <SettingGroup label="Recall style">
-      <div className="mari-chrome-segmented grid-cols-2">
+      <div
+        className={cn(
+          "mari-chrome-segmented mari-chrome-segmented--recall-style",
+          layout === "desktop-row" && "mari-chrome-segmented--desktop-row",
+        )}
+      >
         {LTM_RECALL_STYLES.map((style) => (
-          <div key={style.id} className="grid grid-cols-[1fr_auto]">
-            <button
-              type="button"
-              onClick={() => onChange({ longTermMemoryRecallStyle: style.id })}
-              aria-pressed={recallStyle === style.id}
-              className={cn(
-                "mari-chrome-segmented__button justify-start px-2 text-left text-xs",
-                recallStyle === style.id && "mari-chrome-segmented__button--selected",
-              )}
-            >
-              {style.label}
-            </button>
-            <button
-              type="button"
-              title={style.description}
-              aria-label={`${style.label} recall style: ${style.description}`}
-              onClick={(event) => event.preventDefault()}
-              className={cn(
-                "mari-chrome-segmented__button h-full min-h-10 w-8 p-0",
-                recallStyle === style.id && "mari-chrome-segmented__button--selected",
-              )}
-            >
-              <Info size="0.75rem" />
-            </button>
-          </div>
+          <button
+            key={style.id}
+            type="button"
+            title={style.description}
+            aria-label={`${style.label} recall style: ${style.description}`}
+            aria-pressed={recallStyle === style.id}
+            onClick={() => onChange({ longTermMemoryRecallStyle: style.id })}
+            className={cn(
+              "mari-chrome-segmented__button justify-between px-2.5 text-left text-xs",
+              recallStyle === style.id && "mari-chrome-segmented__button--selected",
+            )}
+          >
+            <span className="min-w-0 truncate">{style.label}</span>
+            <Info size="0.75rem" className="shrink-0 opacity-80" aria-hidden="true" />
+          </button>
         ))}
       </div>
     </SettingGroup>

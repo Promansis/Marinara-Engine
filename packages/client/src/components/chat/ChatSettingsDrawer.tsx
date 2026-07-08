@@ -473,6 +473,9 @@ const CHAT_SETTINGS_ORDER = {
 } as const;
 
 const CHAT_PRESET_UNAPPLIED_SELECT_VALUE = "__chat_preset_unapplied__";
+const CHAT_SETTINGS_ICON_ACTION_CLASS =
+  "mari-chrome-control mari-chrome-control--small mari-chrome-control--icon text-[var(--muted-foreground)] active:scale-90";
+const CHAT_SETTINGS_DANGER_ICON_ACTION_CLASS = `${CHAT_SETTINGS_ICON_ACTION_CLASS} mari-chrome-control--danger`;
 
 type AvailableAgent = {
   id: string;
@@ -3076,10 +3079,10 @@ export function ChatSettingsDrawer({
                     onClick={() => {
                       void toggleAgent(agent.id);
                     }}
-                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
+                    className={CHAT_SETTINGS_DANGER_ICON_ACTION_CLASS}
                     title="Remove from chat"
                   >
-                    <Trash2 size="0.6875rem" />
+                    <Trash2 />
                   </button>
                 </div>
                 <AgentPromptTemplateSelect
@@ -3603,10 +3606,10 @@ export function ChatSettingsDrawer({
                           </button>
                           <button
                             onClick={() => toggleCharacter(c.id)}
-                            className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
+                            className={CHAT_SETTINGS_DANGER_ICON_ACTION_CLASS}
                             title="Remove from party"
                           >
-                            <Trash2 size="0.6875rem" />
+                            <Trash2 />
                           </button>
                         </div>
                       );
@@ -3912,24 +3915,20 @@ export function ChatSettingsDrawer({
                             <button
                               onClick={() => toggleCharacterActivity(c.id)}
                               className={cn(
-                                "flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                                CHAT_SETTINGS_ICON_ACTION_CLASS,
                                 !inactiveCharacterIds.includes(c.id) && "text-[var(--primary)]",
                               )}
                               title={inactiveCharacterIds.includes(c.id) ? "Enable in chat" : "Disable in chat"}
                             >
-                              {inactiveCharacterIds.includes(c.id) ? (
-                                <EyeOff size="0.6875rem" />
-                              ) : (
-                                <Eye size="0.6875rem" />
-                              )}
+                              {inactiveCharacterIds.includes(c.id) ? <EyeOff /> : <Eye />}
                             </button>
                           )}
                           <button
                             onClick={() => toggleCharacter(c.id)}
-                            className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
+                            className={CHAT_SETTINGS_DANGER_ICON_ACTION_CLASS}
                             title="Remove from chat"
                           >
-                            <Trash2 size="0.6875rem" />
+                            <Trash2 />
                           </button>
                         </div>
                       </div>
@@ -5045,10 +5044,10 @@ export function ChatSettingsDrawer({
                       </div>
                       <button
                         onClick={() => disconnectChat.mutate(chat.id)}
-                        className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
+                        className={CHAT_SETTINGS_DANGER_ICON_ACTION_CLASS}
                         title="Disconnect"
                       >
-                        <Unlink size="0.6875rem" />
+                        <Unlink />
                       </button>
                     </div>
                   );
@@ -5125,10 +5124,10 @@ export function ChatSettingsDrawer({
                         </div>
                         <button
                           onClick={() => disconnectChat.mutate(chat.id)}
-                          className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
+                          className={CHAT_SETTINGS_DANGER_ICON_ACTION_CLASS}
                           title="Disconnect"
                         >
-                          <Unlink size="0.6875rem" />
+                          <Unlink />
                         </button>
                       </div>
                     );
@@ -5206,10 +5205,10 @@ export function ChatSettingsDrawer({
                     </div>
                     <button
                       onClick={() => disconnectChat.mutate(chat.id)}
-                      className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
+                      className={CHAT_SETTINGS_DANGER_ICON_ACTION_CLASS}
                       title="Disconnect"
                     >
-                      <Unlink size="0.6875rem" />
+                      <Unlink />
                     </button>
                   </div>
                 );
@@ -5694,6 +5693,7 @@ export function ChatSettingsDrawer({
                             "balanced",
                         }}
                         onChange={(patch) => debouncedUpdatePerChat(patch)}
+                        layout="desktop-row"
                       />
                       <RecallBudgetControls
                         values={{
@@ -7065,10 +7065,10 @@ export function ChatSettingsDrawer({
                                             onClick={() => {
                                               void toggleAgent(agent.id);
                                             }}
-                                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
+                                            className={CHAT_SETTINGS_DANGER_ICON_ACTION_CLASS}
                                             title="Remove from chat"
                                           >
-                                            <Trash2 size="0.6875rem" />
+                                            <Trash2 />
                                           </button>
                                         </div>
                                       </div>
@@ -7821,31 +7821,30 @@ function MemoryRecallMemoriesModal({
               type="button"
               onClick={() => void handleExport()}
               disabled={memories.length === 0 || exportMemories.isPending}
-              className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-40"
+              className={CHAT_SETTINGS_ICON_ACTION_CLASS}
               title="Export memories"
               aria-label="Export memories"
             >
-              <Upload size="0.8125rem" />
+              <Upload />
             </button>
             <button
               type="button"
               onClick={() => importInputRef.current?.click()}
               disabled={importMemories.isPending}
-              className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-40"
+              className={CHAT_SETTINGS_ICON_ACTION_CLASS}
               title="Import memories"
               aria-label="Import memories"
             >
-              <Download size="0.8125rem" />
+              <Download />
             </button>
             <button
               type="button"
               onClick={() => refreshMemories.mutate()}
               disabled={memoriesQuery.isFetching || refreshMemories.isPending || importMemories.isPending}
-              className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50"
+              className={CHAT_SETTINGS_ICON_ACTION_CLASS}
               title="Rebuild memories from current chat messages"
             >
               <RefreshCw
-                size="0.8125rem"
                 className={cn((memoriesQuery.isFetching || refreshMemories.isPending) && "animate-spin")}
               />
             </button>
@@ -7853,10 +7852,10 @@ function MemoryRecallMemoriesModal({
               type="button"
               onClick={handleClear}
               disabled={memories.length === 0 || clearMemories.isPending}
-              className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)] disabled:opacity-40"
+              className={CHAT_SETTINGS_DANGER_ICON_ACTION_CLASS}
               title="Clear all memories"
             >
-              <Trash2 size="0.8125rem" />
+              <Trash2 />
             </button>
           </div>
         </div>
@@ -7905,10 +7904,10 @@ function MemoryRecallMemoriesModal({
                     type="button"
                     onClick={() => void handleDelete(memory)}
                     disabled={deleteMemory.isPending}
-                    className="shrink-0 rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)] disabled:opacity-40"
+                    className={CHAT_SETTINGS_DANGER_ICON_ACTION_CLASS}
                     title="Forget this memory"
                   >
-                    <Trash2 size="0.75rem" />
+                    <Trash2 />
                   </button>
                 </div>
                 <pre className={MEMORY_CONTENT_CLASS}>{memory.content}</pre>
@@ -9225,10 +9224,10 @@ function ConversationNotesSection({ chatId }: { chatId: string }) {
                   type="button"
                   onClick={() => void handleDelete(note)}
                   disabled={deleteNote.isPending}
-                  className="shrink-0 rounded-md p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)] disabled:opacity-40"
+                  className={CHAT_SETTINGS_DANGER_ICON_ACTION_CLASS}
                   title="Delete this note"
                 >
-                  <Trash2 size="0.6875rem" />
+                  <Trash2 />
                 </button>
               </li>
             ))}

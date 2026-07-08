@@ -481,10 +481,10 @@ function DefaultAgentConnectionCard({ connectionsList }: { connectionsList: Conn
           <button
             type="button"
             onClick={() => openFreshConnectionDetail(defaultConnection.id)}
-            className="mari-chrome-control mari-chrome-control--small p-1.5"
+            className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon"
             title="Open default agent connection"
           >
-            <Settings2 size="0.8125rem" />
+            <Settings2 />
           </button>
         )}
       </div>
@@ -552,10 +552,10 @@ function DefaultIllustratorConnectionCard({ connectionsList }: { connectionsList
           <button
             type="button"
             onClick={() => openFreshConnectionDetail(defaultConnection.id)}
-            className="mari-chrome-control mari-chrome-control--small p-1.5"
+            className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon"
             title="Open default Illustrator connection"
           >
-            <Settings2 size="0.8125rem" />
+            <Settings2 />
           </button>
         )}
       </div>
@@ -694,10 +694,10 @@ function ConnectionRow({
               },
             });
           }}
-          className="mari-chrome-control mari-chrome-control--small p-1.5"
+          className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon"
           title="Duplicate"
         >
-          <Copy size="0.75rem" />
+          <Copy />
         </button>
         <button
           onClick={async (e) => {
@@ -714,10 +714,10 @@ function ConnectionRow({
             }
             deleteConnection.mutate(conn.id);
           }}
-          className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger p-1.5"
+          className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon mari-chrome-control--danger"
           title="Delete"
         >
-          <Trash2 size="0.75rem" className="text-[var(--destructive)]" />
+          <Trash2 className="text-[var(--destructive)]" />
         </button>
       </div>
     </div>
@@ -872,10 +872,10 @@ function ConnectionFolderRow({
             e.stopPropagation();
             onDelete(folder);
           }}
-          className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger shrink-0 p-1 opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100"
+          className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon mari-chrome-control--danger shrink-0 opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100"
           title="Delete folder"
         >
-          <Trash2 size="0.75rem" />
+          <Trash2 />
         </button>
       </div>
       {/* Folder contents */}

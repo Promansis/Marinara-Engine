@@ -3962,6 +3962,7 @@ export function AgentEditor() {
                         <ToolButton
                           onClick={() => setVaultOpen({ initialTab: "import" })}
                           tone="primary"
+                          size="default"
                         >
                           <Import size="0.875rem" />
                           Import
@@ -3997,6 +3998,7 @@ export function AgentEditor() {
                   <ToolButton
                     onClick={() => setVaultOpen({ initialTab: "notes" })}
                     tone="primary"
+                    size="default"
                   >
                     <DatabaseZap size="0.875rem" />
                     Manage Memories
@@ -4004,6 +4006,7 @@ export function AgentEditor() {
                   <ToolButton
                     onClick={() => setVaultOpen({ initialTab: "import" })}
                     tone="primary"
+                    size="default"
                   >
                     <Import size="0.875rem" />
                     Import

@@ -34,12 +34,14 @@ export function ToolButton({
   children,
   tone = "secondary",
   type = "button",
+  size = "small",
 }: {
   onClick?: () => void;
   disabled?: boolean;
   children: ReactNode;
   tone?: "primary" | "secondary" | "danger";
   type?: "button" | "submit";
+  size?: "default" | "small";
 }) {
   return (
     <button
@@ -47,7 +49,8 @@ export function ToolButton({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "mari-chrome-control mari-chrome-control--small max-w-full overflow-hidden whitespace-nowrap text-xs",
+        "mari-chrome-control max-w-full overflow-hidden whitespace-nowrap text-xs",
+        size === "small" ? "mari-chrome-control--small" : "px-3 py-2",
         tone === "primary" && "mari-chrome-control--primary",
         tone === "danger" && "mari-chrome-control--danger",
       )}

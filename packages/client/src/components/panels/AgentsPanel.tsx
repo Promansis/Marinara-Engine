@@ -1009,10 +1009,10 @@ export function AgentsPanel() {
                         if (expandedFolderId === folder.id) setExpandedFolderId(null);
                       });
                     }}
-                    className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger p-1"
+                    className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon mari-chrome-control--danger"
                     title="Delete folder"
                   >
-                    <Trash2 size="0.6875rem" className="text-[var(--destructive)]" />
+                    <Trash2 className="text-[var(--destructive)]" />
                   </button>
                 </div>
               </div>
@@ -1341,25 +1341,25 @@ function renderAgentCard({
       {!selectionMode && (
         <div className="absolute right-2 top-1/2 flex -translate-y-1/2 shrink-0 items-center gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-[var(--border)] transition-opacity group-hover:opacity-100 max-md:opacity-100">
           <button
-            className="mari-chrome-control mari-chrome-control--small p-1.5"
+            className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon"
             title="Copy agent"
             onClick={(event) => {
               event.stopPropagation();
               onDuplicate();
             }}
           >
-            <Copy size="0.75rem" />
+            <Copy />
           </button>
           {onDelete && (
             <button
-              className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger p-1.5"
+              className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon mari-chrome-control--danger"
               title="Delete agent"
               onClick={(event) => {
                 event.stopPropagation();
                 void onDelete();
               }}
             >
-              <Trash2 size="0.75rem" className="text-[var(--destructive)]" />
+              <Trash2 className="text-[var(--destructive)]" />
             </button>
           )}
         </div>
