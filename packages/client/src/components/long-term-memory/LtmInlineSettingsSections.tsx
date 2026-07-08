@@ -531,7 +531,7 @@ export default function LtmInlineSettingsSections({
             <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
               <SettingInfoLabel
                 label="Extraction context budget"
-                help="How many tokens relevant existing memories can use during extraction. Source memory text is always read in full."
+                help="How many tokens relevant existing memories can use during extraction. Source note text is always read in full."
               />
             </span>
             <LtmDraftNumberInput

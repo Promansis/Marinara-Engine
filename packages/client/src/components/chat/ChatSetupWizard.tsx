@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Plug,
   BookOpen,
+  BrainCircuit,
   Check,
   Plus,
   Search,
@@ -146,7 +147,7 @@ const CONVERSATION_STEPS: WizardStep[] = [
   {
     key: "memory",
     title: "Memory",
-    body: "Optionally let Long-Term Memory recall notes from this conversation's vault into the prompt.",
+    body: "Optionally let Long-Term Memory recall saved memories from this conversation into the prompt.",
   },
   {
     key: "automation",
@@ -1393,14 +1394,14 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
         )}
       >
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <BookOpen
+          <BrainCircuit
             size="0.875rem"
             className={enableLtm ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]"}
           />
           <div>
             <span className="text-xs font-medium">Long-Term Memory</span>
             <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-              Recall notes from this conversation's memory vault into character prompts.
+              Recall saved memories from this conversation into character prompts.
             </p>
           </div>
         </div>

@@ -106,8 +106,8 @@ function toastForOutcome(outcome: LtmExtractionOutcome) {
   const createdSuggestions = outcome.suggestionCap?.returned ?? outcome.keptUnits;
   if (outcome.state === "success") {
     return createdSuggestions === 1
-      ? "Created 1 memory stream suggestion"
-      : `Created ${createdSuggestions} memory stream suggestions`;
+      ? "Created 1 memory suggestion"
+      : `Created ${createdSuggestions} memory suggestions`;
   }
   if (outcome.state === "partial_success") {
     return `Kept ${outcome.keptUnits} candidate${outcome.keptUnits === 1 ? "" : "s"} and dropped ${outcome.droppedUnits}`;
@@ -115,7 +115,7 @@ function toastForOutcome(outcome: LtmExtractionOutcome) {
   if (outcome.droppedUnits > 0) {
     return `No suggestions created, but ${outcome.droppedUnits} dropped candidate${outcome.droppedUnits === 1 ? "" : "s"} can be reviewed`;
   }
-  return "No memory streams extracted";
+  return "No memories extracted";
 }
 
 function toastForExtractionResult(result: ExtractLongTermMemorySourceResponse, applyLowRisk: boolean) {
@@ -478,7 +478,7 @@ export function LongTermMemorySuggestionsTab({
   if (!sourceMemory) {
     return (
       <p className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-xs text-[var(--muted-foreground)]">
-        Suggestions are available on source memories after extraction.
+        Suggestions are available on source notes after extraction.
       </p>
     );
   }
@@ -489,7 +489,7 @@ export function LongTermMemorySuggestionsTab({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="space-y-2">
             <div className="flex flex-wrap gap-1.5">
-              <StatusPill label="Source memory" tone="good" />
+              <StatusPill label="Source note" tone="good" />
               <StatusPill label={`${rows.length} pending suggestion${rows.length === 1 ? "" : "s"}`} />
               {selectMode ? (
                 <StatusPill
@@ -499,7 +499,7 @@ export function LongTermMemorySuggestionsTab({
               ) : null}
             </div>
             <p className={helperTextClassName}>
-              Extract memory streams from this source note, then keep, skip, or manually recover anything useful.
+              Extract memory suggestions from this source note, then keep, skip, or manually recover anything useful.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
@@ -581,7 +581,7 @@ export function LongTermMemorySuggestionsTab({
         </div>
       ) : rows.length === 0 ? (
         <p className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-4 text-xs text-[var(--muted-foreground)]">
-          No memory stream suggestions need review for this source.
+          No memory suggestions need review for this source note.
         </p>
       ) : (
         <div className="space-y-3">

@@ -100,7 +100,7 @@ export function SourceNoteReference({
         type="button"
         onClick={() => onOpenSourceNote(sourceNoteId)}
         className="min-w-0 truncate rounded-md bg-[var(--muted)]/40 px-1.5 py-0.5 text-left text-[0.625rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-        title={`Open source memory ${sourceNoteId}`}
+        title={`Open source note ${sourceNoteId}`}
       >
         From: {label}
       </button>
@@ -239,7 +239,7 @@ function DerivedActiveMemories({
         </div>
       ) : groups.length === 0 ? (
         <p className={emptyStateClassName}>
-          No active memory streams link back to this source yet.
+          No active memories link back to this source note yet.
         </p>
       ) : (
         <div className="space-y-3">
@@ -570,7 +570,7 @@ function _MemorySuggestionsPanel({
   if (!isSourceSummaryNote(note)) {
     return (
       <p className={emptyStateClassName}>
-        Suggestions live on source memories. Open a source summary to review extracted memory drafts.
+        Suggestions live on source notes. Open a source note to review extracted memory drafts.
       </p>
     );
   }

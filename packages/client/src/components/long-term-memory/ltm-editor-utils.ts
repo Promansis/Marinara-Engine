@@ -390,7 +390,7 @@ export function resolveEvidenceDisplay(entry: string, context?: LtmDisplayLookup
     const note = context?.notes?.get(value);
     return {
       kind: "source_note",
-      label: note ? humanMemoryTitle(note, context?.chats) : "Source memory",
+      label: note ? humanMemoryTitle(note, context?.chats) : "Source note",
       rawValue: value,
       tooltip: value || undefined,
       sourceNoteId: value,

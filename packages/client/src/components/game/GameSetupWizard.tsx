@@ -17,7 +17,7 @@ import {
   Plug,
   Image,
   BookOpen,
-  Brain,
+  BrainCircuit,
   Music2,
   Volume2,
   VolumeX,
@@ -1534,14 +1534,14 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                   )}
                 >
                   <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                    <Brain
+                    <BrainCircuit
                       size={14}
                       className={enableLongTermMemory ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]"}
                     />
                     <div className="min-w-0">
                       <span className="block text-xs font-medium text-[var(--foreground)]">Long-Term Memory</span>
                       <span className="block text-[0.575rem] text-[var(--muted-foreground)]">
-                        Recall notes from this game's memory vault into the GM's context
+                        Recall saved memories from this game into the GM's context
                       </span>
                     </div>
                   </div>

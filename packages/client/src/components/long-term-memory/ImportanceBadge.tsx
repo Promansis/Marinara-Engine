@@ -24,7 +24,7 @@ export function ImportanceBadge({
         className,
       )}
     >
-      <span aria-hidden>{level.emoji}</span>
+      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
       <span>{level.label}</span>
     </span>
   );

@@ -198,7 +198,7 @@ export function TypeMemoryGroups({
   if (groups.length === 0) {
     return (
       <p className={emptyStateClassName}>
-        No memory streams match these filters.
+        No memories match these filters.
       </p>
     );
   }
@@ -463,7 +463,7 @@ function _ArchivedSourceSummaryGroupRow({
           </div>
           <div className="mt-1 flex flex-wrap gap-1.5">
             <StatusPill label={isChatSummarySourceNote(group.source) ? "Source summary" : "Source note"} />
-            <StatusPill label={`${group.derived.length} memory stream${group.derived.length === 1 ? "" : "s"}`} />
+            <StatusPill label={`${group.derived.length} memor${group.derived.length === 1 ? "y" : "ies"}`} />
           </div>
         </div>
       </div>
@@ -476,7 +476,7 @@ function _ArchivedSourceSummaryGroupRow({
             openNoteId === group.source.id && "bg-[var(--accent)] text-[var(--foreground)]",
           )}
           aria-label={`Open ${sourceTitle}`}
-          title="Open source memory"
+          title="Open source note"
         >
           <Eye size="0.75rem" />
         </button>
@@ -485,7 +485,7 @@ function _ArchivedSourceSummaryGroupRow({
           onClick={() => onRestore(group.source)}
           className={cn(rowActionButtonClassName, "hover:bg-emerald-500/10 hover:text-emerald-200")}
           aria-label={`Restore ${sourceTitle}`}
-          title="Restore source memory"
+          title="Restore source note"
         >
           <RotateCcw size="0.75rem" />
         </button>
@@ -494,7 +494,7 @@ function _ArchivedSourceSummaryGroupRow({
           onClick={() => onDelete(group.source)}
           className={cn(rowActionButtonClassName, "mari-chrome-control--danger")}
           aria-label={`Delete ${sourceTitle}`}
-          title="Delete source memory"
+          title="Delete source note"
         >
           <Trash2 size="0.75rem" />
         </button>

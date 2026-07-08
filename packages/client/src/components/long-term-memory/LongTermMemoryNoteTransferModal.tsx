@@ -262,7 +262,7 @@ export function LongTermMemoryNoteTransferModal({
             <div className="min-w-0">
               <div className="text-xs font-medium text-[var(--foreground)]">Include extracted memories</div>
               <div className={helperTextClassName}>
-                Linked extracted memories follow the selected source memories into the same transfer review.
+                Linked extracted memories follow the selected source notes into the same transfer review.
               </div>
             </div>
           </label>

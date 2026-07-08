@@ -426,7 +426,7 @@ export function LongTermMemoryNoteEditor({
                   {draft.type === "source" ? "Source" : friendlyNoteType(draft.type)}
                 </div>
                 <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                  Source memories keep their type so extraction history stays linked.
+                  Source notes keep their type so extraction history stays linked.
                 </p>
               </div>
             ) : (
@@ -775,7 +775,7 @@ export function LongTermMemoryNoteEditor({
               Related Memories
             </h4>
             <p className={cn("mt-1", helperTextClassName)}>
-              Link this note to source memories, timeline events, or other memory streams.
+              Link this note to source notes, timeline events, or other memories.
             </p>
           </div>
           {draft.links.map((link, index) => (

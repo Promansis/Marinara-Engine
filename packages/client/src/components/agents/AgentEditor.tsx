@@ -3928,7 +3928,7 @@ export function AgentEditor() {
               <FieldGroup
                 label="Memories"
                 icon={<DatabaseZap size="0.875rem" className="text-[var(--primary)]" />}
-                help="Browse, search, and manage long-term memories. Extraction and recall settings are configured per-chat or in global LTM settings."
+                help="Browse, search, and manage memories. Extraction and recall settings are configured per chat or in Long-Term Memory settings."
               >
                 {(() => {
                   const connArray = (connections ?? []) as Array<{ id: string }>;

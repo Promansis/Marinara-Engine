@@ -344,13 +344,13 @@ export function buildNoteLookup(notes: LtmNote[]) {
 
 export function noteReferenceLabel(noteId: string, noteLookup: Map<string, LtmNote>, chatLookup?: Map<string, Chat>) {
   const note = noteLookup.get(noteId);
-  if (!note) return "Unknown Memory";
+  if (!note) return "Unknown memory";
   return isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : displayNoteTitle(note);
 }
 
 export function sourceReferenceLabel(sourceNoteId: string, noteLookup: Map<string, LtmNote>, chatLookup?: Map<string, Chat>) {
   const note = noteLookup.get(sourceNoteId);
-  return note ? sourceNoteTitle(note, chatLookup) : "Unknown Source";
+  return note ? sourceNoteTitle(note, chatLookup) : "Unknown source note";
 }
 
 export function memoryRowTitle(note: LtmNote, chatLookup?: Map<string, Chat>) {
@@ -558,7 +558,7 @@ export function EvidencePills({
       {timelineLinks.length > 2 && <StatusPill label={`+${timelineLinks.length - 2} timeline links`} />}
       {conflictCount > 0 && <StatusPill label={`${conflictCount} needs review`} tone="warn" />}
       {archivedSourceCount > 0 && <StatusPill label="Archived evidence" tone="warn" />}
-      {missingSourceCount > 0 && <StatusPill label="Missing source" tone="warn" />}
+      {missingSourceCount > 0 && <StatusPill label="Missing source note" tone="warn" />}
     </div>
   );
 }
@@ -661,10 +661,10 @@ export function SourceInfoPopover({
         }}
         className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-[var(--secondary)]/70 px-2 py-0.5 text-[0.625rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
         aria-expanded={open}
-        aria-label={`Show ${uniqueSourceIds.length} memory source${uniqueSourceIds.length === 1 ? "" : "s"}`}
+        aria-label={`Show ${uniqueSourceIds.length} source note${uniqueSourceIds.length === 1 ? "" : "s"}`}
       >
         <Info size="0.6875rem" />
-        {uniqueSourceIds.length} source{uniqueSourceIds.length === 1 ? "" : "s"}
+        {uniqueSourceIds.length} source note{uniqueSourceIds.length === 1 ? "" : "s"}
       </button>
       {open &&
         createPortal(
@@ -676,7 +676,7 @@ export function SourceInfoPopover({
             style={{ top: pos.top, left: pos.left, visibility: pos.ready ? "visible" : "hidden" }}
           >
             <div className="mb-1.5 px-1 text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
-              Sources
+              Source notes
             </div>
             <div className="grid gap-1">
               {uniqueSourceIds.map((sourceId) => {

@@ -5660,7 +5660,7 @@ export function ChatSettingsDrawer({
                   >
                     <AgentSettingsToggle
                       label="Use memory in this chat"
-                      description="Adds the LTM agent to this chat and recalls vault notes into the prompt."
+                      description="Turns on Long-Term Memory for this chat and recalls saved memories into the prompt."
                       enabled={ltmRecallEnabled}
                       onToggle={toggleLtmEnabled}
                     />

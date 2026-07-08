@@ -1558,7 +1558,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
                       Imported source{importedImportRows.length === 1 ? "" : "s"} ({importedImportRows.length})
                     </div>
                     <div className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">
-                      Already present in the vault. These stay visible for reference, but cannot be imported again.
+                      Already saved in Memory. These stay visible for reference, but cannot be imported again.
                     </div>
                   </div>
                   {importedRowsOpen ? <Check size="0.875rem" /> : <Import size="0.875rem" />}

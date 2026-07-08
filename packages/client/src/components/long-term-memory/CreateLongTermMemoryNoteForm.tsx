@@ -225,11 +225,11 @@ export function CreateLongTermMemoryNoteForm({
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-semibold text-[var(--foreground)]">Add a manual memory</span>
           <span className="rounded-full border border-[var(--border)] bg-[var(--muted)]/55 px-2 py-1 text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
-            Saved to the current vault
+            Saved to Memory
           </span>
         </div>
         <p className={cn("mt-2", helperTextClassName)}>
-          Create a memory stream with the same scope, tags, and section structure used across the rest of Marinara.
+          Create a memory with the same scope, tags, and section structure used across the rest of Marinara.
         </p>
       </div>
 
