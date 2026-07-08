@@ -19,6 +19,13 @@ function slugify(value: string, fallback: string): string {
   return normalized || fallback;
 }
 
+function npcSubjectIdFromText(value: string, fallback: string) {
+  const colonName = value.match(/^\s*([A-Za-z][A-Za-z0-9' -]{1,80})\s*:/)?.[1];
+  const titleName = value.match(/\b([A-Z][A-Za-z0-9']+(?:\s+[A-Z][A-Za-z0-9']+){0,3})\b/)?.[1];
+  const candidate = (colonName ?? titleName ?? value).replace(/^(?:npc|character)\s+/i, "").trim();
+  return `npc_${slugify(candidate, fallback)}`;
+}
+
 function unitBase(
   bucket: LtmEvidenceUnit["bucket"],
   subjectId: string,
@@ -138,7 +145,7 @@ function mapNpcLog(
     const evidence = [`npc_log:${npc.npcName}`, `chat:${ctx.chatId}`];
     const text = `${npc.npcName}: ${npc.interactions.join("; ")}`;
     return [
-      unitBase("timeline_event", subjectId, "event", text, ctx, { evidence }),
+      unitBase("character_fact", subjectId, "developments", text, ctx, { evidence }),
     ];
   });
 }
@@ -231,9 +238,9 @@ function mapSessionSummary(summary: SessionSummary, ctx: GameJournalMappingConte
 
   for (const update of summary.npcUpdates) {
     if (!update.trim()) continue;
-    const slug = slugify(update, "npc_update");
+    const subjectId = npcSubjectIdFromText(update, "npc_update");
     units.push(
-      unitBase("timeline_event", `npc_${slug}`, "event", update, ctx, {
+      unitBase("character_fact", subjectId, "developments", update, ctx, {
         evidence: sessionEvidence,
       }),
     );

@@ -64,6 +64,35 @@ const TIMELINE_LINK_RELATIONS = new Set<LtmEvidenceUnit["links"][number]["relati
   "occurred_in",
   "triggered_by",
 ]);
+const CHARACTER_STRUCTURED_SECTION_KEYS = new Set([
+  ...CHARACTER_SUBJECT_SECTION_SUFFIXES,
+  "progression",
+  "details",
+  "state",
+]);
+const STRUCTURED_IMPORTANCE_VALUES = new Set<LtmEvidenceUnit["importance"]>([
+  "critical",
+  "major",
+  "moderate",
+  "minor",
+]);
+const STRUCTURED_CHARACTER_METADATA_KEYS = new Set([
+  "id",
+  "subject",
+  "character",
+  "character_id",
+  "section",
+  "section_key",
+  "stream",
+  "importance",
+  "confidence",
+  "salience",
+  "status",
+  "evidence",
+  "links",
+  "link",
+  "source",
+]);
 
 export function normalizeStructuredSummaryEvidenceUnits({
   units,
@@ -94,8 +123,15 @@ export function normalizeStructuredSummaryEvidenceUnits({
   const allowed = new Set(allowedBuckets ?? DEFAULT_LTM_ALLOWED_STREAMS_BY_MODE[mode ?? modes?.[0] ?? "roleplay"]);
   const hints = structuredSummaryHints(sections);
   const normalized = normalizeCanonicalTargetLinks(units, units.map((unit) => normalizeUnit(unit, hints)));
-  const withTone = maybeAddToneUnit({
+  const withStructuredCharacters = maybeAddStructuredCharacterUnits({
     units: normalized,
+    sections,
+    allowed,
+    sourceNote,
+    sourceHash,
+  });
+  const withTone = maybeAddToneUnit({
+    units: withStructuredCharacters,
     hints,
     allowed,
     sourceNote,
@@ -399,6 +435,194 @@ function matchingSectionSuffix(subjectId: string, suffixes: Set<string>) {
     if (subjectId.endsWith(`_${suffix}`)) return suffix;
   }
   return null;
+}
+
+function maybeAddStructuredCharacterUnits({
+  units,
+  sections,
+  allowed,
+  sourceNote,
+  sourceHash,
+}: {
+  units: LtmEvidenceUnit[];
+  sections: StructuredSection[];
+  allowed: Set<LtmEvidenceUnit["bucket"]>;
+  sourceNote?: LtmNote;
+  sourceHash: string;
+}) {
+  if (!allowed.has("character_fact") || !sourceNote) return units;
+
+  const next = [...units];
+  const seen = new Set(next.filter((unit) => unit.bucket === "character_fact").map(characterUnitIdentity));
+
+  for (const section of sections) {
+    if (section.bucket !== "character_fact") continue;
+    for (const line of section.lines) {
+      const unit = parseStructuredCharacterLine(line, sourceNote, sourceHash);
+      if (!unit) continue;
+      const identity = characterUnitIdentity(unit);
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+      next.push(unit);
+    }
+  }
+
+  return next;
+}
+
+function parseStructuredCharacterLine(
+  line: string,
+  sourceNote: LtmNote,
+  sourceHash: string,
+): LtmEvidenceUnit | null {
+  const cleaned = stripInlineMarkup(cleanListLine(line));
+  if (!cleaned || isMetadataOnlyLine(cleaned)) return null;
+
+  const importanceResult = extractStructuredImportance(cleaned);
+  let subjectId = "";
+  let sectionKey = "";
+  let importance = importanceResult.importance;
+  let confidence = 0.9;
+  let salience = 0.7;
+  const textParts: string[] = [];
+  const segments = importanceResult.text
+    .split("|")
+    .map((segment) => stripInlineMarkup(segment))
+    .filter(Boolean);
+
+  for (const [index, segment] of segments.entries()) {
+    const parsed = parseStructuredSegment(segment);
+    if (!parsed) {
+      const segmentIdentifier = normalizeIdentifier(segment, "");
+      const segmentSection = normalizeSectionKey(segment, "");
+      if (!subjectId && (index === 0 || NOTE_ID_PREFIX_PATTERN.test(segmentIdentifier))) {
+        subjectId = segmentIdentifier;
+        continue;
+      }
+      if (!sectionKey && CHARACTER_STRUCTURED_SECTION_KEYS.has(segmentSection)) {
+        sectionKey = segmentSection;
+        continue;
+      }
+      textParts.push(segment);
+      continue;
+    }
+
+    const key = normalizeFieldKey(parsed.key);
+    const value = stripInlineMarkup(parsed.value);
+    if (!value) continue;
+
+    if (["id", "subject", "character", "character_id"].includes(key)) {
+      subjectId = normalizeIdentifier(value, subjectId);
+      continue;
+    }
+    if (["section", "section_key", "stream"].includes(key)) {
+      sectionKey = normalizeSectionKey(value, sectionKey);
+      continue;
+    }
+    if (key === "importance") {
+      importance = parseStructuredImportanceValue(value, importance);
+      continue;
+    }
+    if (key === "confidence") {
+      confidence = parseStructuredScore(value, confidence);
+      continue;
+    }
+    if (key === "salience") {
+      salience = parseStructuredScore(value, salience);
+      continue;
+    }
+    if (["status", "evidence", "links", "link", "source"].includes(key)) {
+      continue;
+    }
+
+    const keyIdentifier = normalizeIdentifier(key, "");
+    const keySection = normalizeSectionKey(key, "");
+    if (index === 0 && !subjectId && keyIdentifier) {
+      subjectId = keyIdentifier;
+      textParts.push(value);
+      continue;
+    }
+    if (CHARACTER_STRUCTURED_SECTION_KEYS.has(keySection)) {
+      sectionKey = sectionKey || keySection;
+      textParts.push(value);
+      continue;
+    }
+    if (!STRUCTURED_CHARACTER_METADATA_KEYS.has(key)) {
+      textParts.push(segment);
+    }
+  }
+
+  const normalizedSubject = stripUnitSubjectPrefix("character_fact", normalizeIdentifier(subjectId, ""));
+  const normalizedSection = normalizeSectionKey(sectionKey, "facts");
+  const text = textParts.join(" | ").replace(/\s+/g, " ").trim();
+  if (!normalizedSubject || !normalizedSection || !text) return null;
+
+  return {
+    id: deterministicUuid(`structured-character:${sourceNote.id}:${sourceHash}:${normalizedSubject}:${normalizedSection}:${text}`),
+    bucket: "character_fact",
+    subjectId: normalizedSubject,
+    sectionKey: normalizedSection,
+    text: text.slice(0, 2_000),
+    importance,
+    keywords: [],
+    evidence: sourceEvidence(sourceNote),
+    confidence,
+    salience,
+    status: "active",
+    links: [],
+    sourceHash,
+  };
+}
+
+function characterUnitIdentity(unit: LtmEvidenceUnit) {
+  return [
+    stripUnitSubjectPrefix("character_fact", unit.subjectId),
+    normalizeSectionKey(unit.sectionKey, "facts"),
+    normalizeComparableText(unit.text),
+  ].join("|");
+}
+
+function normalizeComparableText(text: string) {
+  return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function parseStructuredSegment(segment: string) {
+  const match = segment.match(/^([^:]{1,120}):\s*(.+)$/);
+  if (!match?.[1] || !match[2]?.trim()) return null;
+  return {
+    key: match[1].trim(),
+    value: match[2].trim(),
+  };
+}
+
+function extractStructuredImportance(text: string) {
+  const match = text.match(/^\[([A-Za-z]+)\]\s*(.+)$/);
+  return {
+    importance: parseStructuredImportanceValue(match?.[1] ?? "", "moderate"),
+    text: match?.[2]?.trim() ?? text,
+  };
+}
+
+function parseStructuredImportanceValue(
+  value: string,
+  fallback: LtmEvidenceUnit["importance"],
+): LtmEvidenceUnit["importance"] {
+  const normalized = normalizeFieldKey(value);
+  return STRUCTURED_IMPORTANCE_VALUES.has(normalized as LtmEvidenceUnit["importance"])
+    ? (normalized as LtmEvidenceUnit["importance"])
+    : fallback;
+}
+
+function parseStructuredScore(value: string, fallback: number) {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  if (parsed >= 0 && parsed <= 1) return parsed;
+  if (parsed > 1 && parsed <= 100) return parsed / 100;
+  return fallback;
+}
+
+function stripInlineMarkup(value: string) {
+  return value.trim().replace(/^`+|`+$/g, "").trim();
 }
 
 function maybeAddToneUnit({

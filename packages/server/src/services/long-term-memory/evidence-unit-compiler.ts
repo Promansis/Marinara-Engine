@@ -272,13 +272,14 @@ function sectionsForUnits(units: LtmEvidenceUnit[], existing: LtmNote | undefine
     const sectionKey = sectionKeyForUnit(unit);
     const existingSection = existing?.sections[sectionKey];
     const lifecycle = LTM_BUCKET_LIFECYCLE[unit.bucket];
-    const text = lifecycle === "cumulative" ? cumulativeLine(unit) : unit.text.trim();
+    const mergeIncoming = shouldMergeIncomingSectionUnits(unit, units, sectionKey);
+    const text = lifecycle === "cumulative" || mergeIncoming ? cumulativeLine(unit) : unit.text.trim();
     if (lifecycle === "cumulative" && isDuplicateCumulativeLine(existingSection?.text, text)) {
       continue;
     }
     const baseText = sections[sectionKey]?.text;
     sections[sectionKey] = {
-      text: mergeSectionText(baseText, text, lifecycle === "cumulative"),
+      text: mergeSectionText(baseText, text, lifecycle === "cumulative" || mergeIncoming),
       updatedAt: timestamp,
       salience: Math.max(sections[sectionKey]?.salience ?? 0, unit.salience),
       confidence: Math.max(sections[sectionKey]?.confidence ?? 0, unit.confidence),
@@ -340,6 +341,21 @@ function sectionKeyForUnit(unit: LtmEvidenceUnit) {
   if (unit.bucket === "tone") return "observations";
   if ((unit.bucket === "thread") && unit.status === "resolved") return "summary";
   return unit.sectionKey;
+}
+
+function shouldMergeIncomingSectionUnits(
+  unit: LtmEvidenceUnit,
+  units: LtmEvidenceUnit[],
+  sectionKey: string,
+) {
+  if (unit.bucket !== "character_fact") return false;
+  const matchingUnits = units.filter(
+    (candidate) =>
+      candidate.bucket === unit.bucket &&
+      noteIdForEvidenceUnit(candidate) === noteIdForEvidenceUnit(unit) &&
+      sectionKeyForUnit(candidate) === sectionKey,
+  );
+  return matchingUnits.length > 1;
 }
 
 const IMPORTANCE_RANK: Record<NonNullable<LtmSection["importance"]>, number> = {

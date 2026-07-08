@@ -245,6 +245,77 @@ test("game journal relationship change without session recap is dropped by valid
   );
 });
 
+test("game journal NPC updates compile as character memories", () => {
+  const summary: SessionSummary = {
+    sessionNumber: 1,
+    summary: "",
+    resumePoint: "",
+    partyDynamics: "",
+    partyState: "",
+    keyDiscoveries: [],
+    characterMoments: [],
+    littleDetails: [],
+    npcUpdates: [
+      "Lira Vale: now shelters the party from harbor patrols.",
+      "Orren Tusk: refuses to release ferry manifests without proof of authority.",
+    ],
+    statsSnapshot: {},
+    timestamp,
+  };
+  const sourceText = renderGameSourceText(null, [summary]);
+  const sourceNote = note("source_test", {
+    source: {
+      text: sourceText,
+      updatedAt: timestamp,
+    },
+  });
+  const sourceEvidence = `source_note:${sourceNote.id}`;
+  const units = mapGameJournalToEvidenceUnits(null, [summary], {
+    chatId: "test-chat",
+    scope: {},
+    sourceHash,
+  }).map((mappedUnit) => ({
+    ...mappedUnit,
+    evidence: mappedUnit.evidence.includes(sourceEvidence)
+      ? mappedUnit.evidence
+      : [...mappedUnit.evidence, sourceEvidence],
+  }));
+
+  assert.ok(
+    units.some(
+      (mappedUnit) =>
+        mappedUnit.bucket === "character_fact" &&
+        mappedUnit.subjectId === "npc_lira_vale" &&
+        mappedUnit.sectionKey === "developments",
+    ),
+  );
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse: { summary: "Game NPC updates", units },
+    totalCandidates: units.length,
+    sourceText,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["game"],
+    mode: "game",
+    sourceHash,
+  });
+  const creates = compiled.compiledResponse.mutations.filter(
+    (mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> => mutation.kind === "create_note",
+  );
+
+  assert.equal(compiled.outcome.droppedUnits, 0);
+  assert.deepEqual(
+    creates.map((mutation) => mutation.note.id).sort(),
+    ["char_npc_lira_vale", "char_npc_orren_tusk"],
+  );
+  assert.match(
+    creates.find((mutation) => mutation.note.id === "char_npc_lira_vale")?.note.sections.developments?.text ?? "",
+    /shelters the party/,
+  );
+});
+
 test("prompt contract advertises caused_by in allowedTimelineRelations", () => {
   const sourceNote = note("source_test", {
     source: {
@@ -373,6 +444,108 @@ test("evidence unit compiler returns every generated draft mutation", () => {
   assert.equal(result.mutations.length, 30);
   assert.equal(result.suggestions.generated, 30);
   assert.equal(result.suggestions.returned, 30);
+});
+
+test("compiled extraction preserves multiple character facts for the same section", () => {
+  const sourceText = [
+    "### character_fact",
+    "- `[MAJOR] damo_korvak | facts: Damo is Lisa's childhood best friend.`",
+    "- `[MAJOR] damo_korvak | facts: Damo is a conservatory-trained pianist.`",
+    "- `[MODERATE] damo_korvak | facts: Damo carries a bronze archive key.`",
+  ].join("\n");
+  const sourceNote = note("source_test", {
+    source: {
+      text: sourceText,
+      updatedAt: timestamp,
+    },
+  });
+  const units = [
+    unit("character_fact", {
+      subjectId: "damo_korvak",
+      sectionKey: "facts",
+      text: "Damo is Lisa's childhood best friend.",
+    }),
+    unit("character_fact", {
+      subjectId: "damo_korvak",
+      sectionKey: "facts",
+      text: "Damo is a conservatory-trained pianist.",
+    }),
+    unit("character_fact", {
+      subjectId: "damo_korvak",
+      sectionKey: "facts",
+      text: "Damo carries a bronze archive key.",
+    }),
+  ];
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse: { summary: "Character facts", units },
+    totalCandidates: units.length,
+    sourceText,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    mode: "roleplay",
+    sourceHash,
+  });
+
+  assert.equal(compiled.outcome.droppedUnits, 0);
+  const create = compiled.compiledResponse.mutations.find(
+    (mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> =>
+      mutation.kind === "create_note" && mutation.note.id === "char_damo_korvak",
+  );
+  assert.ok(create);
+  assert.match(create.note.sections.facts?.text ?? "", /childhood best friend/);
+  assert.match(create.note.sections.facts?.text ?? "", /conservatory-trained pianist/);
+  assert.match(create.note.sections.items?.text ?? "", /bronze archive key/);
+});
+
+test("structured extraction backfills omitted character facts for multiple NPC subjects", () => {
+  const sourceText = [
+    "### character_fact",
+    "- `[MAJOR] npc_lira_vale | facts: Lira Vale is the harbor quarter's locksmith and informant.`",
+    "- `[MAJOR] npc_orren_tusk | facts: Orren Tusk is the dockside quartermaster who controls ferry manifests.`",
+    "- `[MODERATE] npc_sable | developments: Sable now suspects the party is hiding the bronze archive key.`",
+  ].join("\n");
+  const sourceNote = note("source_test", {
+    source: {
+      text: sourceText,
+      updatedAt: timestamp,
+    },
+  });
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse: { summary: "Model omitted character facts", units: [] },
+    totalCandidates: 0,
+    sourceText,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    mode: "roleplay",
+    sourceHash,
+  });
+
+  assert.equal(compiled.outcome.droppedUnits, 0);
+  const creates = compiled.compiledResponse.mutations.filter(
+    (mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> => mutation.kind === "create_note",
+  );
+  assert.deepEqual(
+    creates.map((mutation) => mutation.note.id).sort(),
+    ["char_npc_lira_vale", "char_npc_orren_tusk", "char_npc_sable"],
+  );
+  assert.match(
+    creates.find((mutation) => mutation.note.id === "char_npc_lira_vale")?.note.sections.facts?.text ?? "",
+    /locksmith and informant/,
+  );
+  assert.match(
+    creates.find((mutation) => mutation.note.id === "char_npc_orren_tusk")?.note.sections.facts?.text ?? "",
+    /quartermaster/,
+  );
+  assert.match(
+    creates.find((mutation) => mutation.note.id === "char_npc_sable")?.note.sections.developments?.text ?? "",
+    /suspects the party/,
+  );
 });
 
 test("draft schemas and partial apply support more than twenty-five mutations", async () => {
