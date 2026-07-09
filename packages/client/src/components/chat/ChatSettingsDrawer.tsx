@@ -5654,18 +5654,18 @@ export function ChatSettingsDrawer({
                 {(ltmActive || isGame) && (
                   <AgentSettingsCard
                     icon={<BrainCircuit size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
-                    title="Memory"
+                    title="Long-Term Memory"
                     description="Long-term memory recalls facts and events from past conversations."
                   >
                     <AgentSettingsToggle
-                      label="Use memory in this chat"
-                      description="Turns on Long-Term Memory for this chat and recalls saved memories into the prompt."
+                      label="Use Long-Term Memory in this chat"
+                      description="Turns on Long-Term Memory for this chat and injects saved memories from past conversations into the prompt."
                       enabled={ltmRecallEnabled}
                       onToggle={toggleLtmEnabled}
                     />
                     {!ltmRecallEnabled && (
                       <p className="text-xs text-[var(--muted-foreground)]">
-                        Memory is off for this chat — turn it on to recall facts into your messages.
+                        Long-Term Memory is off for this chat — turn it on to recall facts from past conversations into your messages.
                       </p>
                     )}
                     {ltmRecallEnabled &&
@@ -5708,7 +5708,7 @@ export function ChatSettingsDrawer({
                     </div>
                     <div className="mt-2">
                       <FieldGroup
-                        label="Advanced recall settings"
+                        label="Advanced Long-Term Memory settings"
                         collapsible
                         expanded={chatRecallAdvancedOpen}
                         onExpandedChange={setChatRecallAdvancedOpen}

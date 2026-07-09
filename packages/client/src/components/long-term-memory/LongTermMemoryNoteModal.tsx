@@ -679,7 +679,7 @@ export function MemoryNoteModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={note ? humanMemoryTitle(note, chatLookup) : "Memory"}
+      title={note ? humanMemoryTitle(note, chatLookup) : "Long-Term Memory"}
       width="max-w-4xl"
     >
       {note && (

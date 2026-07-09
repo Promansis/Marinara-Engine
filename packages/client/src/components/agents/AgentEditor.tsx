@@ -4031,7 +4031,7 @@ export function AgentEditor() {
                 onPromptDraftDirtyChange={handleLtmPromptDraftDirtyChange}
               />
               <FieldGroup
-                label="Recall defaults"
+                label="Long-Term Memory defaults"
                 icon={<BrainCircuit size="0.875rem" className="text-[var(--primary)]" />}
               >
                 {ltmRecallDraft ? (
@@ -4048,7 +4048,7 @@ export function AgentEditor() {
                       onChange={updateLtmRecallDraft}
                     />
                     <FieldGroup
-                      label="Advanced recall"
+                      label="Advanced Long-Term Memory"
                       collapsible
                       expanded={recallAdvancedOpen}
                       onExpandedChange={setRecallAdvancedOpen}

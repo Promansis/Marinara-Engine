@@ -146,7 +146,7 @@ const CONVERSATION_STEPS: WizardStep[] = [
   },
   {
     key: "memory",
-    title: "Memory",
+    title: "Long-Term Memory",
     body: "Optionally let Long-Term Memory recall saved memories from this conversation into the prompt.",
   },
   {
