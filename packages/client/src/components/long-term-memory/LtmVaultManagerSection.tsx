@@ -288,6 +288,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   );
   const groupLookup = useMemo(() => buildNavigatorGroupLookup(navigatorThreads), [navigatorThreads]);
   const activeChatId = useChatStore((s) => s.activeChatId);
+  const followsActive = Boolean(activeChatId && navigatorSelection.chatId === activeChatId);
   const cachedActiveChat = useChatStore((s) => s.activeChat);
   const activeChatQuery = useChat(activeChatId);
   const activeChat = activeChatQuery.data ?? cachedActiveChat;
@@ -335,6 +336,25 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const activeChatMessages = useChatMessages(activeChatId, activeRecallSettings.contextMessages, Boolean(openNoteId));
   const notes = useLongTermMemoryNotes(navigatorNoteFilter, { enabled: Boolean(selectedNavigatorThread) });
   const reviewNotes = useLongTermMemoryNotes({}, { enabled: tab === "review" });
+  const allNotesForScopes = useLongTermMemoryNotes({}, { enabled: tab === "notes" });
+
+  const scopedNavigatorThreads = useMemo(() => {
+    if (tab !== "notes" || !allNotesForScopes.data) return navigatorThreads;
+    const chatIdsWithNotes = new Set<string>();
+    const groupIdsWithNotes = new Set<string>();
+    for (const note of allNotesForScopes.data) {
+      if (note.scope.groupId) groupIdsWithNotes.add(note.scope.groupId);
+      if (note.scope.chatId) chatIdsWithNotes.add(note.scope.chatId);
+      if (note.scope.chatIds) for (const id of note.scope.chatIds) chatIdsWithNotes.add(id);
+    }
+    const filtered = navigatorThreads.filter((thread) =>
+      thread.groupId
+        ? groupIdsWithNotes.has(thread.groupId) || thread.chats.some((c) => chatIdsWithNotes.has(c.id))
+        : chatIdsWithNotes.has(thread.representative.id),
+    );
+    const selected = findNavigatorThread(navigatorThreads, navigatorSelection);
+    return selected && !filtered.includes(selected) ? [selected, ...filtered] : filtered;
+  }, [navigatorThreads, allNotesForScopes.data, tab, navigatorSelection]);
   const activeNotes = useLongTermMemoryNotes(
     { ...navigatorNoteFilter, status: "active" },
     { enabled: tab === "notes" || Boolean(openNoteId) },
@@ -1294,6 +1314,10 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
           <div className={panelIntroCardClassName}>
             <div className="flex flex-wrap gap-1.5">
               <StatusPill
+                label={followsActive ? "Following selected chat" : "Panel scope"}
+                tone={followsActive ? "good" : "warn"}
+              />
+              <StatusPill
                 label={`${(notes.data ?? []).length} memor${(notes.data ?? []).length === 1 ? "y" : "ies"} in this scope`}
                 title={`Memories linked to ${navigatorScopeLabel}, plus global memories.`}
               />
@@ -1304,11 +1328,12 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
           </div>
 
           <LtmNavigatorSelector
-            threads={navigatorThreads}
+            threads={scopedNavigatorThreads}
             selection={navigatorSelection}
             activeChatId={activeChatId}
             scopeLabel={navigatorScopeLabel}
             query={navigatorQuery}
+            hideContextPill
             onQueryChange={setNavigatorQuery}
             onSelect={setNavigatorSelection}
           />

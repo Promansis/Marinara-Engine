@@ -152,6 +152,7 @@ export function LtmNavigatorSelector({
   scopeLabel,
   query,
   contextLabel = "Panel scope",
+  hideContextPill = false,
   onQueryChange,
   onSelect,
 }: {
@@ -161,6 +162,7 @@ export function LtmNavigatorSelector({
   scopeLabel: string;
   query: string;
   contextLabel?: string;
+  hideContextPill?: boolean;
   onQueryChange: (query: string) => void;
   onSelect: (selection: LtmNavigatorSelection) => void;
 }) {
@@ -177,11 +179,19 @@ export function LtmNavigatorSelector({
   return (
     <div className={cn(sectionCardClassName, "space-y-2")}>
       <div className="flex flex-wrap items-center gap-1.5">
-        <StatusPill
-          label={followsActive ? "Following active chat" : contextLabel}
-          tone={followsActive ? "good" : "warn"}
-        />
+        {!hideContextPill && (
+          <StatusPill
+            label={followsActive ? "Following active chat" : contextLabel}
+            tone={followsActive ? "good" : "warn"}
+          />
+        )}
         <StatusPill label={scopeLabel} />
+      </div>
+      <div>
+        <h4 className="text-xs font-semibold text-[var(--foreground)]">Memory scope</h4>
+        <p className="mt-0.5 text-[0.6875rem] text-[var(--muted-foreground)]">
+          Choose which chat or branch to scope memories to. Global memories are always included.
+        </p>
       </div>
       <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)]">
         <div className="space-y-1.5">
