@@ -374,6 +374,8 @@ test("prompt contract advertises schema-critical relationship and target rules",
   assert.equal(parsed.unitFields.importance, "one of critical, major, moderate, minor");
   assert.ok(String(parsed.unitFields.dimensions).includes("allowedRelationshipDimensions"));
   assert.ok(parsed.allowedRelationshipDimensions.includes("trust"));
+  assert.ok(parsed.allowedRelationshipDimensions.includes("respect"));
+  assert.ok(parsed.allowedRelationshipDimensions.includes("loyalty"));
   assert.ok(parsed.allowedRelationshipDimensions.includes("protectiveness"));
   assert.ok(parsed.targetNoteRules.some((rule) => rule.includes("timeline_<subjectId>")));
   assert.ok(parsed.targetNoteRules.some((rule) => rule.includes("specific event or beat")));
@@ -404,7 +406,11 @@ test("evidence unit response format constrains target shape and relationship dim
   assert.deepEqual(unitSchema.properties.sourceHash.enum, [sourceHash]);
   assert.equal(unitSchema.properties.dimensions.additionalProperties, false);
   assert.ok(unitSchema.properties.dimensions.properties.trust);
+  assert.ok(unitSchema.properties.dimensions.properties.respect);
+  assert.ok(unitSchema.properties.dimensions.properties.loyalty);
   assert.ok(unitSchema.properties.dimensionChanges.properties.tension);
+  assert.ok(unitSchema.properties.dimensionChanges.properties.respect);
+  assert.ok(unitSchema.properties.dimensionChanges.properties.loyalty);
   assert.equal("maxItems" in jsonSchema.schema.properties.units, false);
 });
 
@@ -1731,6 +1737,106 @@ test("source extraction canonicalizes character section suffix before scoped var
     const diagnostic = result.diagnostics.find((entry) => entry.code === "target_note_scoped_variant");
     assert.equal(diagnostic?.details?.originalNoteId, "char_damo_korvak");
     assert.equal(diagnostic?.details?.resolvedNoteId, create.note.id);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source extraction preserves respect and loyalty relationship dimensions", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-respect-loyalty-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "scene_source_respect_loyalty",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_a" },
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Mara returned Jules's archive key and earned his respect and loyalty.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_a"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+
+    const sourceNote = await storage.getNote("scene_source_respect_loyalty");
+    assert.ok(sourceNote);
+    const sourceNoteHash = sourceHashForEvidenceUnitExtraction(sourceNote);
+    const provider = {
+      maxTokensOverrideValue: undefined,
+      chatComplete: async () => ({
+        content: JSON.stringify({
+          summary: "Respect and loyalty",
+          units: [
+            {
+              id: randomUUID(),
+              bucket: "timeline_event",
+              subjectId: "archive_key_return",
+              sectionKey: "event",
+              text: "Mara returned Jules's archive key.",
+              importance: "major",
+              evidence: ["source_note:scene_source_respect_loyalty"],
+              confidence: 0.9,
+              salience: 0.8,
+              status: "active",
+              links: [],
+              sourceHash: sourceNoteHash,
+            },
+            {
+              id: randomUUID(),
+              bucket: "relationship_state",
+              subjectId: "mara_jules",
+              sectionKey: "state",
+              text: "Jules respected Mara more and stayed loyal after the return.",
+              importance: "major",
+              evidence: ["source_note:scene_source_respect_loyalty"],
+              confidence: 0.9,
+              salience: 0.8,
+              status: "active",
+              links: [{ target: "timeline_archive_key_return", relation: "caused_by" }],
+              sourceHash: sourceNoteHash,
+              dimensions: { respect: 72, loyalty: 68 },
+              dimensionChanges: { respect: 18, loyalty: 22 },
+            },
+          ],
+        }),
+      }),
+    } as any;
+
+    const result = await extractLongTermMemoryFromSourceNote({
+      noteId: "scene_source_respect_loyalty",
+      provider,
+      model: "test-model",
+      root,
+      operationId: randomUUID(),
+      embeddingSource: {
+        label: "test",
+        embed: async (texts) => texts.map(() => []),
+      },
+    });
+
+    assert(result.draft);
+    const relationshipCreate = result.draft.mutations.find(
+      (mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> =>
+        mutation.kind === "create_note" && mutation.note.id === "rel_mara_jules",
+    );
+    assert.ok(relationshipCreate);
+    assert.deepEqual(relationshipCreate.note.sections.state?.dimensions, {
+      respect: 72,
+      loyalty: 68,
+    });
+    assert.deepEqual(relationshipCreate.note.sections.state?.dimensionChanges, {
+      respect: 18,
+      loyalty: 22,
+    });
+    assert.equal(result.outcome.droppedCandidates.length, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

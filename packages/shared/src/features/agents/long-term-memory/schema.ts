@@ -480,6 +480,8 @@ export const ltmImportanceSchema = z.enum(["critical", "major", "moderate", "min
 export const ltmRelationshipDimensionsSchema = z
   .object({
     trust: z.number().int().min(0).max(100).optional(),
+    respect: z.number().int().min(0).max(100).optional(),
+    loyalty: z.number().int().min(0).max(100).optional(),
     intimacy: z.number().int().min(0).max(100).optional(),
     tension: z.number().int().min(0).max(100).optional(),
     hostility: z.number().int().min(0).max(100).optional(),
