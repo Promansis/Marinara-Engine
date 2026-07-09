@@ -476,9 +476,6 @@ const CHAT_PRESET_UNAPPLIED_SELECT_VALUE = "__chat_preset_unapplied__";
 const CHAT_SETTINGS_ICON_ACTION_CLASS =
   "mari-chrome-control mari-chrome-control--small mari-chrome-control--icon text-[var(--muted-foreground)] active:scale-90";
 const CHAT_SETTINGS_DANGER_ICON_ACTION_CLASS = `${CHAT_SETTINGS_ICON_ACTION_CLASS} mari-chrome-control--danger`;
-const LTM_MODAL_ICON_ACTION_CLASS =
-  `${CHAT_SETTINGS_ICON_ACTION_CLASS} [&>svg]:!size-[0.9375rem] [&>svg]:shrink-0 [&>svg]:!stroke-[2.15]`;
-const LTM_MODAL_DANGER_ICON_ACTION_CLASS = `${LTM_MODAL_ICON_ACTION_CLASS} mari-chrome-control--danger`;
 
 type AvailableAgent = {
   id: string;
@@ -5696,7 +5693,6 @@ export function ChatSettingsDrawer({
                             "balanced",
                         }}
                         onChange={(patch) => debouncedUpdatePerChat(patch)}
-                        layout="desktop-row"
                       />
                       <RecallBudgetControls
                         values={{
@@ -7824,7 +7820,7 @@ function MemoryRecallMemoriesModal({
               type="button"
               onClick={() => void handleExport()}
               disabled={memories.length === 0 || exportMemories.isPending}
-              className={LTM_MODAL_ICON_ACTION_CLASS}
+              className={CHAT_SETTINGS_ICON_ACTION_CLASS}
               title="Export memories"
               aria-label="Export memories"
             >
@@ -7834,7 +7830,7 @@ function MemoryRecallMemoriesModal({
               type="button"
               onClick={() => importInputRef.current?.click()}
               disabled={importMemories.isPending}
-              className={LTM_MODAL_ICON_ACTION_CLASS}
+              className={CHAT_SETTINGS_ICON_ACTION_CLASS}
               title="Import memories"
               aria-label="Import memories"
             >
@@ -7844,7 +7840,7 @@ function MemoryRecallMemoriesModal({
               type="button"
               onClick={() => refreshMemories.mutate()}
               disabled={memoriesQuery.isFetching || refreshMemories.isPending || importMemories.isPending}
-              className={LTM_MODAL_ICON_ACTION_CLASS}
+              className={CHAT_SETTINGS_ICON_ACTION_CLASS}
               title="Rebuild memories from current chat messages"
             >
               <RefreshCw
@@ -7855,7 +7851,7 @@ function MemoryRecallMemoriesModal({
               type="button"
               onClick={handleClear}
               disabled={memories.length === 0 || clearMemories.isPending}
-              className={LTM_MODAL_DANGER_ICON_ACTION_CLASS}
+              className={CHAT_SETTINGS_DANGER_ICON_ACTION_CLASS}
               title="Clear all memories"
             >
               <Trash2 />
@@ -7907,7 +7903,7 @@ function MemoryRecallMemoriesModal({
                     type="button"
                     onClick={() => void handleDelete(memory)}
                     disabled={deleteMemory.isPending}
-                    className={LTM_MODAL_DANGER_ICON_ACTION_CLASS}
+                    className={CHAT_SETTINGS_DANGER_ICON_ACTION_CLASS}
                     title="Forget this memory"
                   >
                     <Trash2 />

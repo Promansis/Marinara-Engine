@@ -50,7 +50,7 @@ export function ToolButton({
       disabled={disabled}
       className={cn(
         "mari-chrome-control max-w-full overflow-hidden whitespace-nowrap text-xs",
-        size === "small" ? "mari-chrome-control--small" : "px-3 py-2",
+        size === "small" ? "mari-chrome-control--small" : tone !== "primary" && "px-3 py-2",
         tone === "primary" && "mari-chrome-control--primary",
         tone === "danger" && "mari-chrome-control--danger",
       )}

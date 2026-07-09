@@ -125,21 +125,14 @@ function DraftNumberInput({
 export function RecallStylePresets({
   values,
   onChange,
-  layout = "compact",
 }: {
   values: Partial<RecallSettingsValues>;
   onChange: (patch: Partial<RecallSettingsValues>) => void;
-  layout?: "compact" | "desktop-row";
 }) {
   const recallStyle = values.longTermMemoryRecallStyle ?? "balanced";
   return (
     <SettingGroup label="Recall style">
-      <div
-        className={cn(
-          "mari-chrome-segmented mari-chrome-segmented--recall-style",
-          layout === "desktop-row" && "mari-chrome-segmented--desktop-row",
-        )}
-      >
+      <div className="mari-chrome-segmented grid-cols-2">
         {LTM_RECALL_STYLES.map((style) => (
           <button
             key={style.id}
