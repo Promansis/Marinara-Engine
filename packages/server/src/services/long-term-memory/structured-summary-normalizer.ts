@@ -248,12 +248,11 @@ export function normalizeStructuredSummaryEvidenceUnits({
     sourceNote,
     sourceHash,
   });
-  const withCanonicalCharacters = canonicalizeCharacterSubjectsFromExistingNotes(withTone, existingNotes);
 
   return {
-    units: withCanonicalCharacters,
+    units: withTone,
     structured: true,
-    addedUnits: withCanonicalCharacters.length - normalized.length,
+    addedUnits: withTone.length - normalized.length,
   };
 }
 
@@ -990,53 +989,6 @@ function relationshipUnitIdentity(unit: LtmEvidenceUnit) {
     stripUnitSubjectPrefix("relationship_state", unit.subjectId),
     normalizeComparableText(unit.text),
   ].join("|");
-}
-
-function canonicalizeCharacterSubjectsFromExistingNotes(units: LtmEvidenceUnit[], existingNotes: LtmNote[]) {
-  const remaps = characterSubjectRemaps(units, existingNotes);
-  if (remaps.size === 0) return units;
-  return units.map((unit) => {
-    const subjectId =
-      unit.bucket === "character_fact"
-        ? remaps.get(stripUnitSubjectPrefix("character_fact", unit.subjectId)) ?? unit.subjectId
-        : unit.subjectId;
-    const links = unit.links.map((link) => {
-      if (link.relation !== "affects_character") return link;
-      const targetSubject = stripUnitSubjectPrefix("character_fact", link.target);
-      const canonicalSubject = remaps.get(targetSubject);
-      return canonicalSubject ? { ...link, target: `char_${canonicalSubject}` } : link;
-    });
-    return subjectId !== unit.subjectId || links.some((link, index) => link.target !== unit.links[index]?.target)
-      ? { ...unit, subjectId, links: uniqueLinks(links) }
-      : unit;
-  });
-}
-
-function characterSubjectRemaps(units: LtmEvidenceUnit[], existingNotes: LtmNote[]) {
-  const requestedSubjects = new Set<string>();
-  for (const unit of units) {
-    if (unit.bucket === "character_fact") {
-      requestedSubjects.add(stripUnitSubjectPrefix("character_fact", unit.subjectId));
-    }
-    for (const link of unit.links) {
-      if (link.relation === "affects_character") {
-        requestedSubjects.add(stripUnitSubjectPrefix("character_fact", link.target));
-      }
-    }
-  }
-
-  const existingSubjects = existingNotes
-    .filter((note) => note.type === "character" && note.id.startsWith("char_"))
-    .map((note) => note.id.slice("char_".length));
-  const remaps = new Map<string, string>();
-  for (const subject of requestedSubjects) {
-    if (!subject || existingSubjects.includes(subject)) continue;
-    const candidates = existingSubjects.filter((existingSubject) => existingSubject.startsWith(`${subject}_`));
-    if (candidates.length === 1) {
-      remaps.set(subject, candidates[0]!);
-    }
-  }
-  return remaps;
 }
 
 function maybeAddStructuredCharacterUnits({

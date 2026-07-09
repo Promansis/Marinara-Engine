@@ -1374,61 +1374,111 @@ test("structured roleplay character backfill keeps developments when optional ti
   assert.equal(create.note.links.some((link) => link.target === "timeline_brainworms_mention"), false);
 });
 
-test("structured roleplay character backfill canonicalizes shorthand subjects to unambiguous existing notes", () => {
-  const sourceText = [
-    "### character_fact",
-    "- `[MODERATE] damo | facts: Damo is meticulous about borrowed equipment placement.`",
-  ].join("\n");
-  const sourceNote = note("source_test", {
-    source: {
-      text: sourceText,
-      updatedAt: timestamp,
-    },
-  });
-  const existingDamo: LtmNote = {
-    id: "char_damo_korvak_baa242cfa4",
-    type: "character",
-    status: "active",
-    modes: ["roleplay"],
-    scope: {},
-    tags: ["typed_memory"],
-    keywords: [],
-    links: [],
-    sections: {
-      facts: {
-        text: "Damo Korvak is Lisa's reunited childhood friend.",
+test("source extraction does not canonicalize shorthand character subjects to longer existing notes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-shorthand-character-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    const sourceText = [
+      "### thread",
+      "- A placeholder thread section to keep the structured normalizer active without adding another note.",
+    ].join("\n");
+    await storage.createNote(
+      {
+        id: "scene_source_shorthand_character",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_a" },
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: sourceText,
+            updatedAt: timestamp,
+            evidence: ["chat:chat_a"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "char_damo_korvak_baa242cfa4",
+        type: "character",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_a" },
+        tags: ["typed_memory"],
+        keywords: [],
+        links: [],
+        sections: {
+          facts: {
+            text: "Damo Korvak is Lisa's reunited childhood friend.",
+            updatedAt: timestamp,
+          },
+        },
+        version: 1,
+        createdAt: timestamp,
         updatedAt: timestamp,
       },
-    },
-    version: 1,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  };
+      { suppressEvent: true },
+    );
 
-  const compiled = compileEvidenceUnitExtraction({
-    unitResponse: { summary: "Shorthand Damo", units: [] },
-    totalCandidates: 0,
-    sourceText,
-    sourceNote,
-    existingNotes: [existingDamo],
-    scope: {},
-    modes: ["roleplay"],
-    mode: "roleplay",
-    sourceHash,
-  });
+    const sourceNote = await storage.getNote("scene_source_shorthand_character");
+    assert.ok(sourceNote);
+    const sourceNoteHash = sourceHashForEvidenceUnitExtraction(sourceNote);
+    const provider = {
+      maxTokensOverrideValue: undefined,
+      chatComplete: async () => ({
+        content: JSON.stringify({
+          summary: "Shorthand Damo",
+          units: [
+            {
+              id: randomUUID(),
+              bucket: "character_fact",
+              subjectId: "damo",
+              sectionKey: "facts",
+              text: "Damo is meticulous about borrowed equipment placement.",
+              importance: "moderate",
+              evidence: ["source_note:scene_source_shorthand_character"],
+              confidence: 0.9,
+              salience: 0.8,
+              status: "active",
+              links: [],
+              sourceHash: sourceNoteHash,
+            },
+          ],
+        }),
+      }),
+    } as any;
 
-  assert.equal(compiled.outcome.droppedUnits, 0);
-  assert.ok(
-    compiled.compiledResponse.mutations.some(
-      (mutation) => mutation.kind === "update_section" && mutation.noteId === "char_damo_korvak_baa242cfa4",
-    ),
-  );
-  assert.equal(
-    compiled.compiledResponse.mutations.some(
-      (mutation) => mutation.kind === "create_note" && mutation.note.id === "char_damo",
-    ),
-    false,
-  );
+    const result = await extractLongTermMemoryFromSourceNote({
+      noteId: "scene_source_shorthand_character",
+      provider,
+      model: "test-model",
+      root,
+      operationId: randomUUID(),
+      embeddingSource: {
+        label: "test",
+        embed: async (texts) => texts.map(() => []),
+      },
+    });
+
+    assert(result.draft);
+    const create = result.draft.mutations.find(
+      (mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> =>
+        mutation.kind === "create_note" && mutation.note.id === "char_damo",
+    );
+    assert.ok(create);
+    assert.equal(
+      result.draft.mutations.some(
+        (mutation) => mutation.kind === "update_section" && mutation.noteId === "char_damo_korvak_baa242cfa4",
+      ),
+      false,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("structured relationship links can target existing timeline notes by bare id", () => {
