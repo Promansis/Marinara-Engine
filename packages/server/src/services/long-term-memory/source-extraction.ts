@@ -228,6 +228,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
     sourceText,
     sourceNote,
     sourceHash,
+    existingNotes,
     allowedBuckets,
     mode: resolvedMode,
     modes,

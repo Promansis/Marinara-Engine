@@ -21,6 +21,9 @@ const SCENE_ONLY_TONE_PATTERN = /\b(?:this scene|single scene|momentarily|for th
 const RELATIONSHIP_CHANGE_PATTERN =
   /\b(?:became|becomes|grew|grows|shifted|shifts|changed|changes|strained|softened|worsened|improved|lost trust|gained trust|trusted|distrusted|forgave|resented|confessed|betrayed|reconciled)\b/i;
 const RELATIONSHIP_DIMENSION_KEYS = new Set<string>(RELATIONSHIP_DIMENSIONS);
+const SUSPICIOUS_RELATIONSHIP_DELTA_THRESHOLD = 30;
+const MAJOR_RELATIONSHIP_CAUSE_PATTERN =
+  /\b(?:betray(?:al|ed|s|ing)?|breakdown|breakthrough|confess(?:ed|es|ion|ing)?|crisis|danger|life[- ]threatening|public commitment|reconcil(?:e|ed|es|iation|ing)|rescu(?:e|ed|es|ing)|saved|saves|saving)\b/i;
 
 function relationshipDescribesChange(unit: LtmEvidenceUnit): boolean {
   return Object.keys(unit.dimensionChanges ?? {}).length > 0 || RELATIONSHIP_CHANGE_PATTERN.test(unit.text);
@@ -236,6 +239,7 @@ export function validateLtmEvidenceUnits({
     unitDiagnostics.push(...relationshipDimensionDiagnostics(unit, candidateIndex, noteId));
     unitDiagnostics.push(...relationshipCausedByDiagnostics(unit, candidateIndex, noteId, validLinkTargets));
     unitDiagnostics.push(...linkTargetDiagnostics(unit, candidateIndex, noteId, validLinkTargets));
+    unitDiagnostics.push(...relationshipDeltaMagnitudeDiagnostics(unit, candidateIndex, noteId, units, existingNotes));
 
     for (const quote of DIALOGUE_BUCKETS.has(unit.bucket) ? quotedStrings(unit.text) : []) {
       if (!sourceText.includes(quote)) {
@@ -484,6 +488,51 @@ function linkTargetDiagnostics(
           },
         ],
   );
+}
+
+function relationshipDeltaMagnitudeDiagnostics(
+  unit: LtmEvidenceUnit,
+  candidateIndex: number,
+  noteId: string,
+  units: LtmEvidenceUnit[],
+  existingNotes: LtmNote[],
+): LtmExtractionDiagnostic[] {
+  if (unit.bucket !== "relationship_state") return [];
+  const largeChanges = Object.fromEntries(
+    Object.entries(unit.dimensionChanges ?? {}).filter(([, value]) => Math.abs(value) >= SUSPICIOUS_RELATIONSHIP_DELTA_THRESHOLD),
+  );
+  if (Object.keys(largeChanges).length === 0) return [];
+  const causeText = relationshipCauseSupportText(unit, units, existingNotes);
+  if (MAJOR_RELATIONSHIP_CAUSE_PATTERN.test(`${unit.text} ${causeText}`)) return [];
+  return [
+    {
+      severity: "warning",
+      code: "suspicious_relationship_delta",
+      candidateIndex,
+      mutationId: unit.id,
+      noteId,
+      message: "Relationship dimension changes look large for the available causal support.",
+      details: {
+        threshold: SUSPICIOUS_RELATIONSHIP_DELTA_THRESHOLD,
+        dimensionChanges: largeChanges,
+        causedByTargets: unit.links.filter((link) => link.relation === "caused_by").map((link) => link.target),
+      },
+    },
+  ];
+}
+
+function relationshipCauseSupportText(unit: LtmEvidenceUnit, units: LtmEvidenceUnit[], existingNotes: LtmNote[]) {
+  const causedByTargets = new Set(unit.links.filter((link) => link.relation === "caused_by").map((link) => link.target));
+  if (causedByTargets.size === 0) return "";
+  const currentTexts = units.flatMap((candidate) => {
+    if (!causedByTargets.has(noteIdForEvidenceUnit(candidate))) return [];
+    return [candidate.text];
+  });
+  const existingTexts = existingNotes.flatMap((note) => {
+    if (!causedByTargets.has(note.id)) return [];
+    return Object.values(note.sections).map((section) => section.text);
+  });
+  return [...currentTexts, ...existingTexts].join(" ");
 }
 
 export function noteIdForEvidenceUnit(unit: Pick<LtmEvidenceUnit, "bucket" | "subjectId" | "sectionKey">) {

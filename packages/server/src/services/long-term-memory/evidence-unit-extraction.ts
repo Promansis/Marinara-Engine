@@ -1068,6 +1068,7 @@ export function compileEvidenceUnitExtraction(options: {
     sourceText: options.sourceText,
     sourceNote: options.sourceNote,
     sourceHash: options.sourceHash,
+    existingNotes: options.existingNotes,
     allowedBuckets:
       options.allowedBuckets ??
       DEFAULT_LTM_ALLOWED_STREAMS_BY_MODE[options.mode ?? options.modes[0] ?? "roleplay"],

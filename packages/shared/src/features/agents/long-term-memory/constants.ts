@@ -40,6 +40,7 @@ export const CORE_LTM_EXTRACTION_RULES = [
   "Timeline events are canonical story history. Relationship and character facts should link to the event with caused_by, affects_relationship, or affects_character instead of duplicating event prose.",
   "Every unit must include importance: critical, major, moderate, or minor.",
   "Relationship_state units may include dimensions on a 0-100 scale and dimensionChanges from -100 to 100. Omit dimensions that stay at the neutral baseline.",
+  "Use conservative relationship deltas. Small kindness, jokes, routine comfort, or brief warmth should not produce large trust/intimacy/protectiveness changes unless the source frames them as emotionally major.",
   "Relationship_state units describing a change must include a caused_by link to a timeline_event from the same extraction or an existing note.",
   "Do not emit the same fact twice. Near-duplicate units in the same extraction are rejected.",
 ].join("\n");

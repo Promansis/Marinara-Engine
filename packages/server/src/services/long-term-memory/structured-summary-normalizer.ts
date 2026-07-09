@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   DEFAULT_LTM_ALLOWED_STREAMS_BY_MODE,
   RELATIONSHIP_DIMENSIONS,
+  tokenize,
   uniqueLinks,
   type LtmEvidenceUnit,
   type LtmMode,
@@ -23,6 +24,17 @@ type RelationshipHints = {
 };
 
 type EvidenceUnitLink = LtmEvidenceUnit["links"][number];
+type RelationshipStructuredLine = {
+  unit: LtmEvidenceUnit;
+  causedBy?: string;
+  sourceLine: string;
+};
+
+type TimelineTargetCandidate = {
+  target: string;
+  subjectId: string;
+  text: string;
+};
 
 type StructuredSummaryHints = {
   eventIds: string[];
@@ -132,12 +144,50 @@ const STRUCTURED_CHARACTER_METADATA_KEYS = new Set([
 const EMPTY_LINK_VALUE_PATTERN = /^(?:n[_/]?a|none|null|unknown|unspecified|not_applicable)$/i;
 const CHARACTER_DEVELOPMENT_PATTERN =
   /\b(?:almost\s+quit|once\b|learned|developed|started|began|became|stopped|quit|lost|gained|committed|decided|chose|promised|confronted|realized|recognised|recognized)\b/i;
+const STRUCTURED_RELATIONSHIP_METADATA_KEYS = new Set([
+  "id",
+  "subject",
+  "relationship",
+  "relationship_id",
+  "section",
+  "section_key",
+  "stream",
+  "importance",
+  "confidence",
+  "salience",
+  "status",
+  "evidence",
+  "links",
+  "link",
+  "source",
+]);
+const CAUSAL_EVENT_STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "after",
+  "at",
+  "because",
+  "by",
+  "during",
+  "for",
+  "from",
+  "in",
+  "into",
+  "of",
+  "on",
+  "the",
+  "their",
+  "to",
+  "with",
+]);
 
 export function normalizeStructuredSummaryEvidenceUnits({
   units,
   sourceText,
   sourceNote,
   sourceHash,
+  existingNotes = [],
   allowedBuckets,
   mode,
   modes,
@@ -147,6 +197,7 @@ export function normalizeStructuredSummaryEvidenceUnits({
   sourceText: string;
   sourceNote?: LtmNote;
   sourceHash: string;
+  existingNotes?: LtmNote[];
   allowedBuckets?: readonly LtmEvidenceUnit["bucket"][];
   mode?: LtmMode;
   modes?: readonly LtmMode[];
@@ -171,8 +222,18 @@ export function normalizeStructuredSummaryEvidenceUnits({
       addedUnits: 0,
     };
   }
-  const withStructuredCharacters = maybeAddStructuredCharacterUnits({
+  const withStructuredRelationships = maybeAddStructuredRelationshipUnits({
     units: normalized,
+    sections,
+    allowed,
+    sourceNote,
+    sourceHash,
+    existingNotes,
+    mode,
+    modes,
+  });
+  const withStructuredCharacters = maybeAddStructuredCharacterUnits({
+    units: withStructuredRelationships,
     sections,
     allowed,
     sourceNote,
@@ -187,11 +248,12 @@ export function normalizeStructuredSummaryEvidenceUnits({
     sourceNote,
     sourceHash,
   });
+  const withCanonicalCharacters = canonicalizeCharacterSubjectsFromExistingNotes(withTone, existingNotes);
 
   return {
-    units: withTone,
+    units: withCanonicalCharacters,
     structured: true,
-    addedUnits: withTone.length - normalized.length,
+    addedUnits: withCanonicalCharacters.length - normalized.length,
   };
 }
 
@@ -488,6 +550,493 @@ function matchingSectionSuffix(subjectId: string, suffixes: Set<string>) {
     if (subjectId.endsWith(`_${suffix}`)) return suffix;
   }
   return null;
+}
+
+function maybeAddStructuredRelationshipUnits({
+  units,
+  sections,
+  allowed,
+  sourceNote,
+  sourceHash,
+  existingNotes,
+  mode,
+  modes,
+}: {
+  units: LtmEvidenceUnit[];
+  sections: StructuredSection[];
+  allowed: Set<LtmEvidenceUnit["bucket"]>;
+  sourceNote?: LtmNote;
+  sourceHash: string;
+  existingNotes: LtmNote[];
+  mode?: LtmMode;
+  modes?: readonly LtmMode[];
+}) {
+  if (!sourceNote || !isRoleplayMode(mode, modes) || !allowed.has("relationship_state")) return units;
+
+  const structuredRelationships = sections.flatMap((section) =>
+    section.bucket === "relationship_state"
+      ? section.lines.flatMap((line) => {
+          const parsed = parseStructuredRelationshipLine(line, sourceNote, sourceHash);
+          return parsed ? [parsed] : [];
+        })
+      : [],
+  );
+  if (structuredRelationships.length === 0) return units;
+
+  let next = [...units];
+  const canCreateTimeline = allowed.has("timeline_event");
+  const generatedTimelineTargets = new Map<string, string>();
+  const relationshipMatches = new Set<number>();
+  const existingRelationshipCounts = countRelationshipSubjects(next);
+  const structuredRelationshipCounts = countStructuredRelationshipSubjects(structuredRelationships);
+
+  for (const structured of structuredRelationships) {
+    const links = [...structured.unit.links];
+    const causeTarget = structured.causedBy
+      ? resolveStructuredCauseTarget({
+          value: structured.causedBy,
+          relationshipSubjectId: structured.unit.subjectId,
+          units: next,
+          existingNotes,
+          generatedTimelineTargets,
+          canCreateTimeline,
+          sourceNote,
+          sourceHash,
+          importance: structured.unit.importance,
+          sourceLine: structured.sourceLine,
+        })
+      : null;
+    if (causeTarget) {
+      if (causeTarget.unit) next = [...next, causeTarget.unit];
+      links.push({ target: causeTarget.target, relation: "caused_by" });
+    }
+
+    const unit = { ...structured.unit, links: uniqueLinks(links) };
+    const existingIndex = matchingRelationshipUnitIndex({
+      units: next,
+      structured: unit,
+      usedIndexes: relationshipMatches,
+      existingRelationshipCounts,
+      structuredRelationshipCounts,
+    });
+    if (existingIndex >= 0) {
+      relationshipMatches.add(existingIndex);
+      next = next.map((candidate, index) =>
+        index === existingIndex ? mergeStructuredRelationshipUnit(candidate, unit) : candidate,
+      );
+      continue;
+    }
+
+    const identity = relationshipUnitIdentity(unit);
+    if (next.some((candidate) => candidate.bucket === "relationship_state" && relationshipUnitIdentity(candidate) === identity)) {
+      continue;
+    }
+    next.push(unit);
+  }
+
+  return next;
+}
+
+function parseStructuredRelationshipLine(
+  line: string,
+  sourceNote: LtmNote,
+  sourceHash: string,
+): RelationshipStructuredLine | null {
+  const cleaned = stripInlineMarkup(cleanListLine(line));
+  if (!cleaned || isMetadataOnlyLine(cleaned)) return null;
+
+  const importanceResult = extractStructuredImportance(cleaned);
+  let subjectId = "";
+  let importance = importanceResult.importance;
+  let confidence = 0.9;
+  let salience = 0.75;
+  let dimensions: NonNullable<LtmEvidenceUnit["dimensions"]> | undefined;
+  let dimensionChanges: NonNullable<LtmEvidenceUnit["dimensionChanges"]> | undefined;
+  let causedBy: string | undefined;
+  const textParts: string[] = [];
+  const links: LtmEvidenceUnit["links"] = [];
+  const segments = importanceResult.text
+    .split("|")
+    .map((segment) => stripInlineMarkup(segment))
+    .filter(Boolean);
+
+  for (const [index, segment] of segments.entries()) {
+    const parsed = parseStructuredSegment(segment);
+    if (!parsed) {
+      const segmentIdentifier = normalizeIdentifier(segment, "");
+      if (!subjectId && (index === 0 || NOTE_ID_PREFIX_PATTERN.test(segmentIdentifier))) {
+        subjectId = stripUnitSubjectPrefix("relationship_state", segmentIdentifier);
+        continue;
+      }
+      textParts.push(segment);
+      continue;
+    }
+
+    const key = normalizeFieldKey(parsed.key);
+    const value = stripInlineMarkup(parsed.value);
+    if (!value) continue;
+
+    if (["id", "subject", "relationship", "relationship_id"].includes(key)) {
+      subjectId = stripUnitSubjectPrefix("relationship_state", normalizeIdentifier(value, subjectId));
+      continue;
+    }
+    if (["section", "section_key", "stream"].includes(key)) {
+      continue;
+    }
+    if (key === "importance") {
+      importance = parseStructuredImportanceValue(value, importance);
+      continue;
+    }
+    if (key === "confidence") {
+      confidence = parseStructuredScore(value, confidence);
+      continue;
+    }
+    if (key === "salience") {
+      salience = parseStructuredScore(value, salience);
+      continue;
+    }
+    if (["dimensions", "dimension"].includes(key)) {
+      dimensions = {
+        ...(dimensions ?? {}),
+        ...(parseDimensionMap([value], { min: 0, max: 100 }) ?? {}),
+      };
+      continue;
+    }
+    if (["dimension_changes", "dimensionchanges", "changes", "change", "deltas", "delta"].includes(key)) {
+      dimensionChanges = {
+        ...(dimensionChanges ?? {}),
+        ...(parseDimensionMap([value], { min: -100, max: 100 }) ?? {}),
+      };
+      continue;
+    }
+    if (key === "caused_by") {
+      causedBy = value;
+      continue;
+    }
+    if (["status", "evidence", "links", "link", "source"].includes(key)) {
+      continue;
+    }
+    if (key === "state" || key === "text" || key === "summary") {
+      textParts.push(value);
+      continue;
+    }
+    if (!STRUCTURED_RELATIONSHIP_METADATA_KEYS.has(key)) {
+      textParts.push(segment);
+    }
+  }
+
+  const normalizedSubject = stripUnitSubjectPrefix("relationship_state", normalizeIdentifier(subjectId, ""));
+  const text = textParts.join(" | ").replace(/\s+/g, " ").trim();
+  if (!normalizedSubject || !text) return null;
+
+  const unit: LtmEvidenceUnit = {
+    id: deterministicUuid(`structured-relationship:${sourceNote.id}:${sourceHash}:${normalizedSubject}:${text}`),
+    bucket: "relationship_state",
+    subjectId: normalizedSubject,
+    sectionKey: "state",
+    text: text.slice(0, 2_000),
+    importance,
+    keywords: [],
+    evidence: sourceEvidence(sourceNote),
+    confidence,
+    salience,
+    status: "active",
+    links: uniqueLinks(links),
+    sourceHash,
+    ...(dimensions && Object.keys(dimensions).length > 0 ? { dimensions } : {}),
+    ...(dimensionChanges && Object.keys(dimensionChanges).length > 0 ? { dimensionChanges } : {}),
+  };
+
+  return {
+    unit,
+    ...(causedBy ? { causedBy } : {}),
+    sourceLine: cleaned,
+  };
+}
+
+function resolveStructuredCauseTarget({
+  value,
+  relationshipSubjectId,
+  units,
+  existingNotes,
+  generatedTimelineTargets,
+  canCreateTimeline,
+  sourceNote,
+  sourceHash,
+  importance,
+  sourceLine,
+}: {
+  value: string;
+  relationshipSubjectId: string;
+  units: LtmEvidenceUnit[];
+  existingNotes: LtmNote[];
+  generatedTimelineTargets: Map<string, string>;
+  canCreateTimeline: boolean;
+  sourceNote: LtmNote;
+  sourceHash: string;
+  importance: LtmEvidenceUnit["importance"];
+  sourceLine: string;
+}): { target: string; unit?: LtmEvidenceUnit } | null {
+  if (isEmptyLinkValue(value)) return null;
+  const candidates = timelineTargetCandidates(units, existingNotes);
+  const explicitTarget = exactTargetFromCauseValue(value, candidates);
+  if (explicitTarget) return { target: explicitTarget };
+
+  const matchedTarget = fuzzyTimelineTargetFromCause(value, candidates);
+  if (matchedTarget) return { target: matchedTarget };
+  if (!canCreateTimeline) return null;
+
+  const generationKey = normalizeComparableText(`${relationshipSubjectId}:${value}`);
+  const existingGeneratedTarget = generatedTimelineTargets.get(generationKey);
+  if (existingGeneratedTarget) return { target: existingGeneratedTarget };
+
+  const unit = structuredCauseTimelineUnit({
+    cause: value,
+    relationshipSubjectId,
+    sourceNote,
+    sourceHash,
+    importance,
+    sourceLine,
+  });
+  const target = noteIdForEvidenceUnit(unit);
+  generatedTimelineTargets.set(generationKey, target);
+  return { target, unit };
+}
+
+function timelineTargetCandidates(units: LtmEvidenceUnit[], existingNotes: LtmNote[]): TimelineTargetCandidate[] {
+  const current = units
+    .filter((unit) => unit.bucket === "timeline_event")
+    .map((unit) => ({
+      target: noteIdForEvidenceUnit(unit),
+      subjectId: stripUnitSubjectPrefix("timeline_event", unit.subjectId),
+      text: unit.text,
+    }));
+  const existing = existingNotes
+    .filter((note) => note.type === "timeline_event")
+    .map((note) => ({
+      target: note.id,
+      subjectId: stripUnitSubjectPrefix("timeline_event", note.id),
+      text: Object.values(note.sections)
+        .map((section) => section.text)
+        .join(" "),
+    }));
+  return [...current, ...existing];
+}
+
+function exactTargetFromCauseValue(value: string, candidates: TimelineTargetCandidate[]) {
+  const identifier = normalizeIdentifier(value, "");
+  if (!identifier) return null;
+  const timelineId = NOTE_ID_PREFIX_PATTERN.test(identifier)
+    ? identifier
+    : `timeline_${stripUnitSubjectPrefix("timeline_event", identifier)}`;
+  return candidates.find((candidate) => candidate.target === identifier || candidate.target === timelineId)?.target ?? null;
+}
+
+function fuzzyTimelineTargetFromCause(value: string, candidates: TimelineTargetCandidate[]) {
+  const causeIdentifier = normalizeFieldKey(value);
+  const causeTokens = tokenize(value);
+  if (!causeIdentifier || causeTokens.size === 0) return null;
+
+  const scored = candidates.flatMap((candidate) => {
+    const candidateIdentifier = normalizeFieldKey(`${candidate.subjectId} ${candidate.target}`);
+    if (
+      candidateIdentifier === causeIdentifier ||
+      candidateIdentifier.includes(causeIdentifier) ||
+      causeIdentifier.includes(candidate.subjectId)
+    ) {
+      return [{ target: candidate.target, score: 1 }];
+    }
+    const candidateTokens = tokenize(`${candidate.subjectId} ${candidate.text}`);
+    if (candidateTokens.size === 0) return [];
+    let shared = 0;
+    for (const token of causeTokens) {
+      if (candidateTokens.has(token)) shared++;
+    }
+    const score = shared / causeTokens.size;
+    return score >= 0.55 ? [{ target: candidate.target, score }] : [];
+  });
+
+  scored.sort((a, b) => b.score - a.score || a.target.localeCompare(b.target));
+  if (!scored[0]) return null;
+  if (scored[1] && scored[1].score === scored[0].score && scored[1].target !== scored[0].target) return null;
+  return scored[0].target;
+}
+
+function structuredCauseTimelineUnit({
+  cause,
+  relationshipSubjectId,
+  sourceNote,
+  sourceHash,
+  importance,
+  sourceLine,
+}: {
+  cause: string;
+  relationshipSubjectId: string;
+  sourceNote: LtmNote;
+  sourceHash: string;
+  importance: LtmEvidenceUnit["importance"];
+  sourceLine: string;
+}): LtmEvidenceUnit {
+  const causeSubject = compactCauseIdentifier(cause, "relationship_change");
+  const subjectId = normalizeIdentifier(`${relationshipSubjectId}_${causeSubject}`, relationshipSubjectId);
+  const relationshipText = relationshipSubjectId.split("_").join(" and ");
+  const causeText = cause.trim().replace(/[.?!]\s*$/u, "");
+  const text = `${relationshipText} relationship changed after ${causeText}.`;
+  return {
+    id: deterministicUuid(`structured-relationship-cause:${sourceNote.id}:${sourceHash}:${relationshipSubjectId}:${causeText}:${sourceLine}`),
+    bucket: "timeline_event",
+    subjectId,
+    sectionKey: "event",
+    text: text.slice(0, 2_000),
+    importance,
+    keywords: [],
+    evidence: sourceEvidence(sourceNote),
+    confidence: 0.86,
+    salience: 0.75,
+    status: "active",
+    links: [],
+    sourceHash,
+  };
+}
+
+function compactCauseIdentifier(value: string, fallback: string) {
+  const tokens = normalizeFieldKey(value)
+    .split("_")
+    .filter((token) => token.length > 0 && !CAUSAL_EVENT_STOPWORDS.has(token));
+  return normalizeIdentifier(tokens.slice(0, 10).join("_"), fallback);
+}
+
+function countRelationshipSubjects(units: LtmEvidenceUnit[]) {
+  const counts = new Map<string, number>();
+  for (const unit of units) {
+    if (unit.bucket !== "relationship_state") continue;
+    counts.set(unit.subjectId, (counts.get(unit.subjectId) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function countStructuredRelationshipSubjects(units: RelationshipStructuredLine[]) {
+  const counts = new Map<string, number>();
+  for (const structured of units) {
+    counts.set(structured.unit.subjectId, (counts.get(structured.unit.subjectId) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function matchingRelationshipUnitIndex({
+  units,
+  structured,
+  usedIndexes,
+  existingRelationshipCounts,
+  structuredRelationshipCounts,
+}: {
+  units: LtmEvidenceUnit[];
+  structured: LtmEvidenceUnit;
+  usedIndexes: Set<number>;
+  existingRelationshipCounts: Map<string, number>;
+  structuredRelationshipCounts: Map<string, number>;
+}) {
+  const candidates = units
+    .map((unit, index) => ({ unit, index }))
+    .filter(
+      ({ unit, index }) =>
+        unit.bucket === "relationship_state" &&
+        unit.subjectId === structured.subjectId &&
+        !usedIndexes.has(index),
+    );
+  if (candidates.length === 0) return -1;
+  const exact = candidates.find(({ unit }) => normalizeComparableText(unit.text) === normalizeComparableText(structured.text));
+  if (exact) return exact.index;
+  const overlapping = candidates
+    .map(({ unit, index }) => ({
+      index,
+      overlap: relationshipTextOverlap(unit.text, structured.text),
+    }))
+    .filter((candidate) => candidate.overlap >= 0.35)
+    .sort((a, b) => b.overlap - a.overlap);
+  if (overlapping[0]) return overlapping[0].index;
+  if (
+    (existingRelationshipCounts.get(structured.subjectId) ?? 0) === 1 &&
+    (structuredRelationshipCounts.get(structured.subjectId) ?? 0) === 1
+  ) {
+    return candidates[0]!.index;
+  }
+  return -1;
+}
+
+function relationshipTextOverlap(left: string, right: string) {
+  const leftTokens = tokenize(left);
+  const rightTokens = tokenize(right);
+  if (leftTokens.size === 0 || rightTokens.size === 0) return 0;
+  let shared = 0;
+  for (const token of rightTokens) {
+    if (leftTokens.has(token)) shared++;
+  }
+  return shared / rightTokens.size;
+}
+
+function mergeStructuredRelationshipUnit(unit: LtmEvidenceUnit, structured: LtmEvidenceUnit): LtmEvidenceUnit {
+  return {
+    ...unit,
+    sectionKey: "state",
+    links: uniqueLinks([...unit.links, ...structured.links]),
+    dimensions: structured.dimensions ?? unit.dimensions,
+    dimensionChanges: structured.dimensionChanges ?? unit.dimensionChanges,
+  };
+}
+
+function relationshipUnitIdentity(unit: LtmEvidenceUnit) {
+  return [
+    stripUnitSubjectPrefix("relationship_state", unit.subjectId),
+    normalizeComparableText(unit.text),
+  ].join("|");
+}
+
+function canonicalizeCharacterSubjectsFromExistingNotes(units: LtmEvidenceUnit[], existingNotes: LtmNote[]) {
+  const remaps = characterSubjectRemaps(units, existingNotes);
+  if (remaps.size === 0) return units;
+  return units.map((unit) => {
+    const subjectId =
+      unit.bucket === "character_fact"
+        ? remaps.get(stripUnitSubjectPrefix("character_fact", unit.subjectId)) ?? unit.subjectId
+        : unit.subjectId;
+    const links = unit.links.map((link) => {
+      if (link.relation !== "affects_character") return link;
+      const targetSubject = stripUnitSubjectPrefix("character_fact", link.target);
+      const canonicalSubject = remaps.get(targetSubject);
+      return canonicalSubject ? { ...link, target: `char_${canonicalSubject}` } : link;
+    });
+    return subjectId !== unit.subjectId || links.some((link, index) => link.target !== unit.links[index]?.target)
+      ? { ...unit, subjectId, links: uniqueLinks(links) }
+      : unit;
+  });
+}
+
+function characterSubjectRemaps(units: LtmEvidenceUnit[], existingNotes: LtmNote[]) {
+  const requestedSubjects = new Set<string>();
+  for (const unit of units) {
+    if (unit.bucket === "character_fact") {
+      requestedSubjects.add(stripUnitSubjectPrefix("character_fact", unit.subjectId));
+    }
+    for (const link of unit.links) {
+      if (link.relation === "affects_character") {
+        requestedSubjects.add(stripUnitSubjectPrefix("character_fact", link.target));
+      }
+    }
+  }
+
+  const existingSubjects = existingNotes
+    .filter((note) => note.type === "character" && note.id.startsWith("char_"))
+    .map((note) => note.id.slice("char_".length));
+  const remaps = new Map<string, string>();
+  for (const subject of requestedSubjects) {
+    if (!subject || existingSubjects.includes(subject)) continue;
+    const candidates = existingSubjects.filter((existingSubject) => existingSubject.startsWith(`${subject}_`));
+    if (candidates.length === 1) {
+      remaps.set(subject, candidates[0]!);
+    }
+  }
+  return remaps;
 }
 
 function maybeAddStructuredCharacterUnits({

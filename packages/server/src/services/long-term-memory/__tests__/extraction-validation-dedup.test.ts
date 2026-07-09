@@ -831,6 +831,216 @@ test("compiled extraction keeps display-case caused_by links to existing timelin
   );
 });
 
+test("structured relationship prose caused_by backfills a causal timeline event", () => {
+  const sourceText = [
+    "### relationship_state",
+    "- `[MAJOR] damo_ako | state: Ako immediately adopted Damo with affectionate physical comfort after an emotional response to the Pluto song and a hug. | dimensions: affection 85, trust 75 | changes: affection +20, trust +15 | caused_by: emotional response to Pluto song and physical hug`",
+  ].join("\n");
+  const sourceNote = note("source_test", {
+    source: {
+      text: sourceText,
+      updatedAt: timestamp,
+    },
+  });
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse: { summary: "Relationship omitted by model", units: [] },
+    totalCandidates: 0,
+    sourceText,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    mode: "roleplay",
+    sourceHash,
+  });
+
+  assert.equal(compiled.outcome.droppedUnits, 0);
+  const creates = compiled.compiledResponse.mutations.filter(
+    (mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> => mutation.kind === "create_note",
+  );
+  const timelineCreate = creates.find(
+    (mutation) =>
+      mutation.note.type === "timeline_event" &&
+      /pluto song/i.test(mutation.note.sections.event?.text ?? ""),
+  );
+  const relationshipCreate = creates.find((mutation) => mutation.note.id === "rel_damo_ako");
+  assert.ok(timelineCreate);
+  assert.ok(relationshipCreate);
+  assert.ok(
+    relationshipCreate.note.links.some(
+      (link) => link.relation === "caused_by" && link.target === timelineCreate.note.id,
+    ),
+  );
+  assert.deepEqual(relationshipCreate.note.sections.state?.dimensionChanges, {
+    affection: 20,
+    trust: 15,
+  });
+});
+
+test("structured relationship prose caused_by reuses same-batch timeline events", () => {
+  const sourceText = [
+    "### timeline_event",
+    "- `[MAJOR] damo_ako | pluto_song_hug: Ako hugged Damo after the Pluto song moved her.`",
+    "### relationship_state",
+    "- `[MAJOR] damo_ako | state: Ako immediately adopted Damo with affectionate physical comfort. | dimensions: affection 85, trust 75 | changes: affection +20, trust +15 | caused_by: Pluto song hug`",
+  ].join("\n");
+  const sourceNote = note("source_test", {
+    source: {
+      text: sourceText,
+      updatedAt: timestamp,
+    },
+  });
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse: {
+      summary: "Timeline emitted, relationship omitted",
+      units: [
+        unit("timeline_event", {
+          subjectId: "pluto_song_hug",
+          sectionKey: "event",
+          text: "Ako hugged Damo after the Pluto song moved her.",
+        }),
+      ],
+    },
+    totalCandidates: 1,
+    sourceText,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    mode: "roleplay",
+    sourceHash,
+  });
+
+  assert.equal(compiled.outcome.droppedUnits, 0);
+  const creates = compiled.compiledResponse.mutations.filter(
+    (mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> => mutation.kind === "create_note",
+  );
+  assert.equal(creates.filter((mutation) => mutation.note.type === "timeline_event").length, 1);
+  const relationshipCreate = creates.find((mutation) => mutation.note.id === "rel_damo_ako");
+  assert.ok(relationshipCreate);
+  assert.ok(
+    relationshipCreate.note.links.some(
+      (link) => link.relation === "caused_by" && link.target === "timeline_pluto_song_hug",
+    ),
+  );
+});
+
+test("structured relationship caused_by n/a still drops relationship changes", () => {
+  const sourceText = [
+    "### relationship_state",
+    "- `[MAJOR] mara_jules | state: Mara and Jules trust each other more after a vague shift. | dimensions: trust 70 | changes: trust +20 | caused_by: n/a`",
+  ].join("\n");
+  const sourceNote = note("source_test", {
+    source: {
+      text: sourceText,
+      updatedAt: timestamp,
+    },
+  });
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse: { summary: "Missing relationship cause", units: [] },
+    totalCandidates: 0,
+    sourceText,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    mode: "roleplay",
+    sourceHash,
+  });
+
+  assert.equal(compiled.outcome.droppedUnits, 1);
+  assert.ok(
+    compiled.diagnostics.some(
+      (diagnostic) => diagnostic.details?.validatorCode === "relationship_state_missing_caused_by",
+    ),
+  );
+});
+
+test("large relationship deltas from low-intensity causes emit a warning", () => {
+  const sourceText = "Mara held the door for Jules after rehearsal, and Jules trusted Mara more afterward.";
+  const sourceNote = note("source_test", {
+    source: {
+      text: sourceText,
+      updatedAt: timestamp,
+    },
+  });
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse: {
+      summary: "Large trust shift",
+      units: [
+        unit("timeline_event", {
+          subjectId: "door_kindness",
+          sectionKey: "event",
+          text: "Mara held the door for Jules after rehearsal.",
+        }),
+        unit("relationship_state", {
+          subjectId: "mara_jules",
+          text: "Jules trusted Mara much more after the brief kindness.",
+          dimensions: { trust: 85 },
+          dimensionChanges: { trust: 45 },
+          links: [{ target: "timeline_door_kindness", relation: "caused_by" }],
+        }),
+      ],
+    },
+    totalCandidates: 2,
+    sourceText,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    mode: "roleplay",
+    sourceHash,
+  });
+
+  assert.equal(compiled.outcome.droppedUnits, 0);
+  assert.ok(compiled.diagnostics.some((diagnostic) => diagnostic.code === "suspicious_relationship_delta"));
+});
+
+test("large relationship deltas from major causes do not emit calibration warnings", () => {
+  const sourceText = "Mara confessed she stole the archive key to protect Jules, and Jules trusted Mara more afterward.";
+  const sourceNote = note("source_test", {
+    source: {
+      text: sourceText,
+      updatedAt: timestamp,
+    },
+  });
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse: {
+      summary: "Large trust shift from confession",
+      units: [
+        unit("timeline_event", {
+          subjectId: "archive_key_confession",
+          sectionKey: "event",
+          text: "Mara confessed she stole the archive key to protect Jules.",
+        }),
+        unit("relationship_state", {
+          subjectId: "mara_jules",
+          text: "Jules trusted Mara much more after the confession.",
+          dimensions: { trust: 85 },
+          dimensionChanges: { trust: 45 },
+          links: [{ target: "timeline_archive_key_confession", relation: "caused_by" }],
+        }),
+      ],
+    },
+    totalCandidates: 2,
+    sourceText,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    mode: "roleplay",
+    sourceHash,
+  });
+
+  assert.equal(compiled.outcome.droppedUnits, 0);
+  assert.equal(compiled.diagnostics.some((diagnostic) => diagnostic.code === "suspicious_relationship_delta"), false);
+});
+
 test("structured normalizer folds character, world, and anchor section suffixes into target sections", () => {
   const sourceText = [
     "### character_fact",
@@ -1162,6 +1372,63 @@ test("structured roleplay character backfill keeps developments when optional ti
   assert.ok(create);
   assert.match(create.note.sections.developments?.text ?? "", /Started playing piano seriously/);
   assert.equal(create.note.links.some((link) => link.target === "timeline_brainworms_mention"), false);
+});
+
+test("structured roleplay character backfill canonicalizes shorthand subjects to unambiguous existing notes", () => {
+  const sourceText = [
+    "### character_fact",
+    "- `[MODERATE] damo | facts: Damo is meticulous about borrowed equipment placement.`",
+  ].join("\n");
+  const sourceNote = note("source_test", {
+    source: {
+      text: sourceText,
+      updatedAt: timestamp,
+    },
+  });
+  const existingDamo: LtmNote = {
+    id: "char_damo_korvak_baa242cfa4",
+    type: "character",
+    status: "active",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["typed_memory"],
+    keywords: [],
+    links: [],
+    sections: {
+      facts: {
+        text: "Damo Korvak is Lisa's reunited childhood friend.",
+        updatedAt: timestamp,
+      },
+    },
+    version: 1,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+
+  const compiled = compileEvidenceUnitExtraction({
+    unitResponse: { summary: "Shorthand Damo", units: [] },
+    totalCandidates: 0,
+    sourceText,
+    sourceNote,
+    existingNotes: [existingDamo],
+    scope: {},
+    modes: ["roleplay"],
+    mode: "roleplay",
+    sourceHash,
+  });
+
+  assert.equal(compiled.outcome.droppedUnits, 0);
+  assert.ok(
+    compiled.compiledResponse.mutations.some(
+      (mutation) => mutation.kind === "update_section" && mutation.noteId === "char_damo_korvak_baa242cfa4",
+    ),
+  );
+  assert.equal(
+    compiled.compiledResponse.mutations.some(
+      (mutation) => mutation.kind === "create_note" && mutation.note.id === "char_damo",
+    ),
+    false,
+  );
 });
 
 test("structured relationship links can target existing timeline notes by bare id", () => {
