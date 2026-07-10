@@ -25,6 +25,7 @@ export type {
   LtmPolicy,
   LtmRetrievalConfig,
   LtmScope,
+  LtmSourceProvenance,
   LtmSection,
   LtmStatus,
   LtmDraftMutation,

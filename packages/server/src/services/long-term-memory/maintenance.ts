@@ -8,8 +8,6 @@ import {
   normalizeChatSummaryEntries,
   ltmExtractionResponseSchema,
   ltmEventSchema,
-  ltmNoteSchema,
-  ltmScopeSchema,
   getLtmScopeChatIds,
   withMergedLtmScopeLinks,
   type ChatSummaryEntry,
@@ -20,6 +18,7 @@ import {
   type LtmNote,
   type LtmNoteType,
   type LtmScope,
+  type LtmSourceProvenance,
 } from "@marinara-engine/shared";
 import type { DB } from "../../db/connection.js";
 import { createCharactersStorage } from "../storage/characters.storage.js";
@@ -38,6 +37,8 @@ import {
 import { rebuildLongTermMemoryIndexes } from "./rebuild.js";
 import { CURRENT_LTM_CHUNK_FORMAT_VERSION, stableJsonHash } from "./chunking.js";
 import { LongTermMemoryStorage } from "./storage.js";
+import { sourceNoteIdForProvenance } from "./source-identity.js";
+import { parseStoredLtmNote } from "./stored-note.js";
 
 type IntegritySeverity = "info" | "warning" | "error";
 type IntegrityIssue = {
@@ -59,6 +60,7 @@ type ImportSourceCandidate = {
   legacySourceNoteIds?: string[];
   sourceTag: string;
   evidence: string[];
+  provenance: LtmSourceProvenance;
   scope?: LtmScope;
   modes: LtmMode[];
   response: {
@@ -87,13 +89,6 @@ function chatSummaryImportSourceId(chatId: string, entryId: string) {
 
 function evidenceSafeValue(value: string) {
   return value.trim().replace(/\s+/g, " ").slice(0, 200);
-}
-
-function normalizeLegacyNoteScope(scope: unknown) {
-  const parsed = ltmScopeSchema.parse(
-    scope && typeof scope === "object" && !Array.isArray(scope) ? scope : {},
-  );
-  return withMergedLtmScopeLinks(parsed, {});
 }
 
 function titleCaseFromIdentifier(value: string) {
@@ -431,10 +426,7 @@ export async function checkLongTermMemoryIntegrity(root = getLongTermMemoryRoot(
     fileContents.push({ path: file.path, rawContent });
     try {
       const raw = JSON.parse(rawContent);
-      const note = ltmNoteSchema.parse({
-        ...raw,
-        scope: normalizeLegacyNoteScope(raw.scope),
-      });
+      const note = parseStoredLtmNote(raw);
       notesById.set(note.id, note);
       if (vaultFolderForNoteType(note.type) !== file.folder) {
         issues.push({
@@ -555,10 +547,7 @@ export async function repairLongTermMemory(
         for (const file of await listVaultFiles(root)) {
           try {
             const raw = JSON.parse(await readFile(file.path, "utf8"));
-            ltmNoteSchema.parse({
-              ...raw,
-              scope: normalizeLegacyNoteScope(raw.scope),
-            });
+            parseStoredLtmNote(raw);
           } catch {
             await mkdir(join(quarantineDir, file.folder), { recursive: true });
             await rename(file.path, join(quarantineDir, file.folder, basename(file.path)));
@@ -612,7 +601,8 @@ async function characterImportCandidates(
     ]);
     if (!body) return [];
     const noteId = `char_${normalizeIdentifier(name, "character")}_${hashShort(row.id)}`;
-    const sourceNoteId = `source_import_character_${normalizeIdentifier(name, "character")}_${hashShort(row.id)}`;
+    const provenance = { kind: "character", sourceId: row.id } satisfies LtmSourceProvenance;
+    const sourceNoteId = sourceNoteIdForProvenance(provenance);
     const evidence = [`character:${row.id}`];
     const mutation: LtmDraftMutation = {
       ...mutationBase(`Import character card for ${name}`, evidence),
@@ -637,9 +627,13 @@ async function characterImportCandidates(
         sourceId: row.id,
         sourceText: body,
         sourceNoteId,
-        legacySourceNoteIds: [`scene_import_character_${normalizeIdentifier(name, "character")}_${hashShort(row.id)}`],
+        legacySourceNoteIds: [
+          `source_import_character_${normalizeIdentifier(name, "character")}_${hashShort(row.id)}`,
+          `scene_import_character_${normalizeIdentifier(name, "character")}_${hashShort(row.id)}`,
+        ],
         sourceTag: "imported_character",
         evidence,
+        provenance,
         modes: mutation.note.modes,
         scope: mutation.note.scope,
         response: makeDraftResponse([mutation], `Import ${name}`),
@@ -680,7 +674,8 @@ async function lorebookImportCandidates(
     const type: LtmNoteType = category === "character" || category === "npc" ? "character" : "world";
     const prefix = type === "character" ? "char" : "world";
     const noteId = `${prefix}_${normalizeIdentifier(name, "lorebook")}_${hashShort(id)}`;
-    const sourceNoteId = `source_import_lorebook_${normalizeIdentifier(name, "lorebook")}_${hashShort(id)}`;
+    const provenance = { kind: "lorebook", sourceId: id } satisfies LtmSourceProvenance;
+    const sourceNoteId = sourceNoteIdForProvenance(provenance);
     const evidence = [`lorebook:${id}`];
     const modes: LtmMode[] = ["roleplay", "conversation", "game"];
     const mutation: LtmDraftMutation = {
@@ -713,9 +708,13 @@ async function lorebookImportCandidates(
       sourceId: id,
       sourceText: text,
       sourceNoteId,
-      legacySourceNoteIds: [`scene_import_lorebook_${normalizeIdentifier(name, "lorebook")}_${hashShort(id)}`],
+      legacySourceNoteIds: [
+        `source_import_lorebook_${normalizeIdentifier(name, "lorebook")}_${hashShort(id)}`,
+        `scene_import_lorebook_${normalizeIdentifier(name, "lorebook")}_${hashShort(id)}`,
+      ],
       sourceTag: "imported_lorebook",
       evidence,
+      provenance,
       modes,
       scope: mutation.note.scope,
       response: makeDraftResponse([mutation], `Import ${name}`),
@@ -731,7 +730,8 @@ function buildGameImportCandidate(
 ): ImportSourceCandidate {
   const chatName = evidenceSafeValue(chat.name) || "Game";
   const sourceText = renderGameSourceText(gameJournal as any, sessionSummaries as any);
-  const sourceNoteId = `source_import_chat_${normalizeIdentifier(chat.name, "chat")}_${hashShort(chat.id + "_game_journal")}`;
+  const provenance = { kind: "game_journal", sourceId: chat.id } satisfies LtmSourceProvenance;
+  const sourceNoteId = sourceNoteIdForProvenance(provenance);
   const evidence = [`chat:${chat.id}`, "game_journal"];
   const scope = withMergedLtmScopeLinks(
     {
@@ -747,8 +747,12 @@ function buildGameImportCandidate(
     sourceId: `${chat.id}:game_journal`,
     sourceText,
     sourceNoteId,
+    legacySourceNoteIds: [
+      `source_import_chat_${normalizeIdentifier(chat.name, "chat")}_${hashShort(chat.id + "_game_journal")}`,
+    ],
     sourceTag: "imported_game_journal",
     evidence,
+    provenance,
     modes: ["game"],
     scope,
     response: makeDraftResponse([], `Direct-ingest game journal for ${chatName}`),
@@ -798,7 +802,12 @@ async function chatImportCandidates(
       const range = chatSummaryMessageRange(entry);
       const noteSeed = `${chat.id}:${entry.id}`;
       const noteId = `scene_${normalizeIdentifier(chat.name, "chat")}_${hashShort(noteSeed)}`;
-      const sourceNoteId = `source_import_chat_${normalizeIdentifier(chat.name, "chat")}_${hashShort(noteSeed)}`;
+      const provenance = {
+        kind: "chat_summary",
+        sourceId: chat.id,
+        entryId: entry.id,
+      } satisfies LtmSourceProvenance;
+      const sourceNoteId = sourceNoteIdForProvenance(provenance);
       const evidence = [
         `chat:${chat.id}`,
         `chat_name:${chatName}`,
@@ -830,10 +839,14 @@ async function chatImportCandidates(
         sourceNoteId,
         legacySourceNoteIds:
           entry.origin === "legacy"
-            ? [`scene_import_chat_${normalizeIdentifier(chat.name, "chat")}_${hashShort(chat.id)}`]
-            : undefined,
+            ? [
+                `source_import_chat_${normalizeIdentifier(chat.name, "chat")}_${hashShort(noteSeed)}`,
+                `scene_import_chat_${normalizeIdentifier(chat.name, "chat")}_${hashShort(chat.id)}`,
+              ]
+            : [`source_import_chat_${normalizeIdentifier(chat.name, "chat")}_${hashShort(noteSeed)}`],
         sourceTag: "imported_chat",
         evidence,
+        provenance,
         modes: mutation.note.modes,
         scope: mutation.note.scope,
         response: makeDraftResponse([mutation], `Import ${title}`),
@@ -967,6 +980,7 @@ export async function createLongTermMemoryInteropSourceNotes(
           tags: ["source_summary", candidate.sourceTag],
           keywords: [],
           links: [],
+          provenance: candidate.provenance,
           sections: {
             source: {
               ...textSection(candidate.sourceText, candidate.evidence),
@@ -977,16 +991,24 @@ export async function createLongTermMemoryInteropSourceNotes(
         const noteIds = [...(candidate.legacySourceNoteIds ?? []), candidate.sourceNoteId];
         const existing = noteIds.map((noteId) => existingNotes.get(noteId)).find((note): note is LtmNote => Boolean(note));
         if (existing) {
-          const titlePatch = existing.title?.trim() ? {} : { title: candidate.title };
+          const canonicalExisting = existing.id === candidate.sourceNoteId
+            ? existing
+            : await storage.renameNoteId(existing.id, candidate.sourceNoteId, {
+                actor: "maintenance_api",
+                cause: "interop.source_identity_migration",
+                summary: `Migrated imported source identity for ${candidate.title}`,
+              });
+          const titlePatch = canonicalExisting.title?.trim() ? {} : { title: candidate.title };
           const note = await storage.updateNote(
-            existing.id,
+            canonicalExisting.id,
             {
               status: "active",
               ...titlePatch,
               modes: noteInput.modes,
               scope: noteInput.scope,
-              tags: Array.from(new Set([...existing.tags, ...noteInput.tags])),
-              sections: { ...existing.sections, ...noteInput.sections },
+              tags: Array.from(new Set([...canonicalExisting.tags, ...noteInput.tags])),
+              provenance: noteInput.provenance,
+              sections: { ...canonicalExisting.sections, ...noteInput.sections },
             },
             {
               actor: "maintenance_api",

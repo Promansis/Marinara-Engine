@@ -315,7 +315,7 @@ export const LTM_NOTE_TYPE_TO_VAULT_FOLDER = {
 } as const satisfies Record<z.infer<typeof ltmNoteTypeSchema>, z.infer<typeof ltmVaultFolderSchema>>;
 
 export const LTM_NOTE_ID_PREFIXES_BY_TYPE = {
-  source: ["source_", "scene_summary_"],
+  source: ["source_"],
   timeline_event: ["timeline_"],
   character: ["char_"],
   relationship: ["rel_"],
@@ -324,6 +324,17 @@ export const LTM_NOTE_ID_PREFIXES_BY_TYPE = {
   world: ["world_", "faction_", "location_", "rule_", "rules"],
   tone: ["tone_"],
 } as const satisfies Record<z.infer<typeof ltmNoteTypeSchema>, readonly string[]>;
+
+const LTM_LEGACY_NOTE_ID_PREFIXES_BY_TYPE = {
+  source: ["scene_summary_"],
+} as const;
+
+function allowedStoredNoteIdPrefixes(type: z.infer<typeof ltmNoteTypeSchema>) {
+  return [
+    ...LTM_NOTE_ID_PREFIXES_BY_TYPE[type],
+    ...(type === "source" ? LTM_LEGACY_NOTE_ID_PREFIXES_BY_TYPE.source : []),
+  ];
+}
 
 const LTM_SOURCE_SUMMARY_SCENE_TAGS = ["source_summary", "chat_summary"] as const;
 
@@ -359,6 +370,14 @@ const ltmIdentifierSchema = z
   .regex(/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/, "Identifier must be lowercase snake_case.");
 
 export const ltmNoteIdSchema = ltmIdentifierSchema;
+
+export const ltmSourceProvenanceSchema = z
+  .object({
+    kind: z.enum(["character", "lorebook", "chat_summary", "game_journal"]),
+    sourceId: z.string().min(1).max(120),
+    entryId: z.string().min(1).max(120).optional(),
+  })
+  .strict();
 
 export const ltmSectionKeySchema = z
   .string()
@@ -557,12 +576,13 @@ export const ltmNoteSchema = z
     links: z.array(ltmLinkSchema).max(250).default([]),
     sections: z.record(ltmSectionKeySchema, ltmSectionSchema),
     conflicts: z.array(ltmConflictSchema).max(250).optional(),
+    provenance: ltmSourceProvenanceSchema.optional(),
     version: z.number().int().min(1),
     extracted: z.boolean().optional(),
   })
   .strict()
   .superRefine((note, ctx) => {
-    const allowedPrefixes = LTM_NOTE_ID_PREFIXES_BY_TYPE[note.type];
+    const allowedPrefixes = allowedStoredNoteIdPrefixes(note.type);
     if (!allowedPrefixes.some((prefix) => note.id === prefix || note.id.startsWith(prefix))) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -576,6 +596,14 @@ export const ltmNoteSchema = z
         code: z.ZodIssueCode.custom,
         path: ["updatedAt"],
         message: "updatedAt cannot be earlier than createdAt.",
+      });
+    }
+
+    if (note.provenance && note.type !== "source") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["provenance"],
+        message: "Only source notes can store import provenance.",
       });
     }
   });
@@ -788,6 +816,7 @@ export const ltmDraftNoteInputSchema = z
     links: z.array(ltmLinkSchema).max(250).default([]),
     sections: z.record(ltmSectionKeySchema, ltmSectionSchema),
     conflicts: z.array(ltmConflictSchema).max(250).optional(),
+    provenance: ltmSourceProvenanceSchema.optional(),
     version: z.number().int().min(1).optional(),
   })
   .strip()
@@ -798,6 +827,14 @@ export const ltmDraftNoteInputSchema = z
         code: z.ZodIssueCode.custom,
         path: ["id"],
         message: `ID for ${note.type} notes must start with ${allowedPrefixes.join(" or ")}.`,
+      });
+    }
+
+    if (note.provenance && note.type !== "source") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["provenance"],
+        message: "Only source notes can store import provenance.",
       });
     }
   });
@@ -980,6 +1017,7 @@ export type LtmLink = z.infer<typeof ltmLinkSchema>;
 export type LtmSection = z.infer<typeof ltmSectionSchema>;
 export type LtmConflict = z.infer<typeof ltmConflictSchema>;
 export type LtmNote = z.infer<typeof ltmNoteSchema>;
+export type LtmSourceProvenance = z.infer<typeof ltmSourceProvenanceSchema>;
 export type LtmEvent = z.infer<typeof ltmEventSchema>;
 export type LtmDebugStatus = z.infer<typeof ltmDebugStatusSchema>;
 export type LtmDebugPhase = z.infer<typeof ltmDebugPhaseSchema>;

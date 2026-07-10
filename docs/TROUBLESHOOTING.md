@@ -183,7 +183,7 @@ Then restart Marinara and click **Reapply Cleanup** in the sprite generation rev
 
 ## Long-Term Memory Migration Rollback
 
-The LTM migration command creates a JSON backup unless you pass `--no-backup`.
+The LTM migration command copies the complete `long-term-memory` directory before it writes unless you pass `--no-backup`. The backup includes notes, drafts, configuration, events, and indexes, and its destination must be outside the live LTM directory.
 
 To preview a migration without writing:
 
@@ -197,7 +197,7 @@ To run with an explicit backup folder:
 pnpm ltm:migrate -- --backup=/path/to/ltm-backups
 ```
 
-If you need to roll back, stop Marinara, open the backup JSON, and restore the listed notes into the LTM vault folder for your data directory. After restoring, start Marinara and rebuild memory search from the LTM vault manager so the retrieval indexes match the restored notes.
+Run the migration while Marinara is stopped so the backup and migrated files cannot race with live writes. If you need to roll back, keep Marinara stopped, move the failed `long-term-memory` directory aside, and copy the backed-up directory into its place. The backup already contains the matching indexes, but rebuilding memory search from the LTM vault manager after restart is a useful integrity check.
 
 ---
 

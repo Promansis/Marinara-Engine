@@ -167,6 +167,31 @@ test("repairLongTermMemory — no malformed notes yields no_malformed_notes", as
   }
 });
 
+test("legacy source notes remain readable and are not quarantined", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-repair-legacy-source-"));
+  try {
+    await writeNote(root, validNote({
+      id: "scene_summary_legacy_source",
+      type: "source",
+      tags: ["source_summary"],
+      previousHash: "legacy-transient-hash",
+    }));
+
+    const before = await checkLongTermMemoryIntegrity(root);
+    assert.equal(before.issues.some((issue) => issue.code === "malformed_note"), false);
+
+    const result = await repairLongTermMemory(["quarantine_malformed_notes"], root);
+    assert.equal(result.actions[0]?.result, "no_malformed_notes");
+    const stored = await readFile(
+      join(getLongTermMemoryDirectories(root).vault, "sources", "scene_summary_legacy_source.json"),
+      "utf8",
+    );
+    assert.match(stored, /scene_summary_legacy_source/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("readLtmDebugLog — filter by operationId", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-debug-filter-"));
   try {

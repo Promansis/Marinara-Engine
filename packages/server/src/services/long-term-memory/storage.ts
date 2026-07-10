@@ -26,6 +26,7 @@ import {
 } from "@marinara-engine/shared";
 import { appendJsonLineAtomic, createJsonFileExclusive, readJsonFile, writeJsonAtomic } from "./atomic-json.js";
 import { DEFAULT_LTM_POLICIES, DEFAULT_LTM_RETRIEVAL_CONFIG } from "./default-config.js";
+import { parseStoredLtmNote } from "./stored-note.js";
 import {
   getLongTermMemoryDirectories,
   getLongTermMemoryRoot,
@@ -97,14 +98,6 @@ function normalizeRetrievalConfig(raw: unknown) {
     graphWeight: input.graphWeight,
     keywordWeight: input.keywordWeight,
   };
-}
-
-function parseStoredNote(raw: unknown) {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return ltmNoteSchema.parse(raw);
-  }
-  const { previousHash: _previousHash, ...note } = raw as Record<string, unknown>;
-  return ltmNoteSchema.parse(note);
 }
 
 function firstIdPrefixForType(type: LtmNoteType) {
@@ -188,6 +181,10 @@ async function withNoteWriteLock<T>(path: string, operation: () => Promise<T>): 
       noteWriteLocks.delete(path);
     }
   }
+}
+
+function noteIdWriteLockKey(root: string, id: string) {
+  return `${root}\0note:${id}`;
 }
 
 export class LongTermMemoryStorage {
@@ -331,7 +328,7 @@ export class LongTermMemoryStorage {
       version: input.version ?? 1,
     });
     const path = notePathForId(note.id, note.type, this.root);
-    return withNoteWriteLock(path, async () => {
+    return withNoteWriteLock(noteIdWriteLockKey(this.root, note.id), async () => {
       const existing = await this.getNote(note.id);
       if (existing) {
         throw new Error(`Long-term memory note already exists: ${note.id}`);
@@ -353,6 +350,54 @@ export class LongTermMemoryStorage {
       return this.changeNoteType(existing, type, restPatch, eventContext);
     }
     return this.writeNotePatch(existing, patch, `${existing.type}.updated`, eventContext);
+  }
+
+  async renameNoteId(id: string, nextId: string, eventContext: LtmEventContext = {}) {
+    await this.initializeLtmStore();
+    const currentId = ltmNoteIdSchema.parse(id);
+    const parsedNextId = ltmNoteIdSchema.parse(nextId);
+    if (currentId === parsedNextId) return this.getRequiredNote(currentId);
+
+    const [firstId, secondId] = currentId < parsedNextId
+      ? [currentId, parsedNextId]
+      : [parsedNextId, currentId];
+    return withNoteWriteLock(noteIdWriteLockKey(this.root, firstId), () =>
+      withNoteWriteLock(noteIdWriteLockKey(this.root, secondId), async () => {
+        const current = await this.getRequiredNote(currentId);
+        if (await this.getNote(parsedNextId)) {
+          throw new Error(`Long-term memory note already exists: ${parsedNextId}`);
+        }
+
+        const timestamp = nowIso();
+        const next = ltmNoteSchema.parse({
+          ...current,
+          id: parsedNextId,
+          links: rewriteLinks(current.links, currentId, parsedNextId),
+          updatedAt: timestamp,
+          version: current.version + 1,
+        });
+        const oldPath = notePathForId(currentId, current.type, this.root);
+        const newPath = notePathForId(parsedNextId, current.type, this.root);
+        const draftRewrites = await this.prepareDraftReferenceRewrites(currentId, parsedNextId);
+
+        await createJsonFileExclusive(newPath, next);
+        try {
+          await unlink(oldPath);
+        } catch (err) {
+          await unlink(newPath).catch(() => {});
+          throw err;
+        }
+        await this.writePreparedDraftRewrites(draftRewrites);
+        await this.rewriteNoteReferences(currentId, parsedNextId, eventContext);
+        if (!eventContext.suppressEvent) {
+          await this.appendEvent(eventFor(`${current.type}.renamed`, parsedNextId, eventContext, {
+            previousNoteId: currentId,
+            note: next,
+          }));
+        }
+        return next;
+      }),
+    );
   }
 
   async archiveNote(id: string, eventContext: LtmEventContext = {}) {
@@ -564,10 +609,7 @@ export class LongTermMemoryStorage {
 
     let note: LtmNote;
     try {
-      note = parseStoredNote({
-        ...raw,
-        scope: normalizeStoredScope(raw.scope ?? {}),
-      });
+      note = parseStoredLtmNote(raw);
     } catch (err) {
       logger.warn(err, "[ltm] Failed to parse note file %s", path);
       throw err;

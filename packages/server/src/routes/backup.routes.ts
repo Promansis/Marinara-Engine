@@ -31,7 +31,7 @@ import { assertInsideDir } from "../utils/security.js";
 import { logger } from "../lib/logger.js";
 
 /** Directories inside DATA_DIR that should be included in every backup. */
-const BACKUP_DIRS = [
+export const FULL_BACKUP_DATA_DIRS = [
   "storage",
   "avatars",
   "sprites",
@@ -45,9 +45,12 @@ const BACKUP_DIRS = [
   "lorebooks/images",
   "agents/images",
   "connections/images",
-];
+  "long-term-memory",
+] as const;
 const ENCRYPTION_KEY_FILENAME = ".encryption-key";
-const PROFILE_ASSET_DIRS = BACKUP_DIRS.filter((dirName) => dirName !== "storage");
+export const PROFILE_EXPORT_ASSET_DIRS: readonly string[] = FULL_BACKUP_DATA_DIRS.filter(
+  (dirName) => dirName !== "storage" && dirName !== "long-term-memory",
+);
 const PROFILE_IMPORT_BODY_LIMIT_BYTES = 256 * 1024 * 1024;
 const PROFILE_IMPORT_ARCHIVE_LIMIT_BYTES = 1024 * 1024 * 1024;
 const PROFILE_ARCHIVE_ENTRY_LIMIT_BYTES = 256 * 1024 * 1024;
@@ -445,7 +448,7 @@ function normalizeProfileAssetPath(pathValue: unknown) {
   if (parts.length < 2) return null;
   if (parts.some((part) => part === "." || part === ".." || part.includes(":"))) return null;
   const normalized = parts.join("/");
-  const isAllowedAssetPath = PROFILE_ASSET_DIRS.some(
+  const isAllowedAssetPath = PROFILE_EXPORT_ASSET_DIRS.some(
     (dirName) => normalized === dirName || normalized.startsWith(`${dirName}/`),
   );
   if (!isAllowedAssetPath) return null;
@@ -514,7 +517,7 @@ async function collectProfileAssetFiles(
   const files: ProfileFileAsset[] = [];
   const inlineFileData = options.inlineFileData ?? true;
 
-  for (const dirName of PROFILE_ASSET_DIRS) {
+  for (const dirName of PROFILE_EXPORT_ASSET_DIRS) {
     const src = join(dataDir, dirName);
     if (!existsSync(src)) continue;
     const stack = [src];
@@ -1699,7 +1702,7 @@ export async function backupRoutes(app: FastifyInstance) {
       await copyPersistedEncryptionKey(dataDir, backupDir);
 
       // 2. Copy data directories
-      for (const dirName of BACKUP_DIRS) {
+      for (const dirName of FULL_BACKUP_DATA_DIRS) {
         const src = resolveBackupDir(dataDir, dirName);
         if (existsSync(src)) {
           await cp(src, join(backupDir, dirName), { recursive: true });
@@ -1748,7 +1751,7 @@ export async function backupRoutes(app: FastifyInstance) {
       }
 
       // 2. Recursively add each data directory under backupName/<dir>/...
-      for (const dirName of BACKUP_DIRS) {
+      for (const dirName of FULL_BACKUP_DATA_DIRS) {
         const src = resolveBackupDir(dataDir, dirName);
         if (!existsSync(src)) continue;
         const stack: string[] = [src];
