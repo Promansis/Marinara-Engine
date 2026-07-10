@@ -43,10 +43,7 @@ type UnitTarget = {
   tags: string[];
 };
 
-type LtmCompilerLifecycle =
-  | "cumulative"
-  | "superseding"
-  | "rolling_until_resolved";
+type LtmCompilerLifecycle = "cumulative" | "superseding" | "rolling_until_resolved";
 
 const LTM_BUCKET_LIFECYCLE: Record<LtmEvidenceUnit["bucket"], LtmCompilerLifecycle> = {
   timeline_event: "cumulative",
@@ -79,7 +76,10 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
     const evidence = uniqueStrings(units.flatMap((unit) => unit.evidence)).slice(0, 20);
     const confidence = Math.min(...units.map((unit) => unit.confidence));
     const unitKeywords = mergeKeywords(
-      units.flatMap((unit) => unit.keywords).map((keyword) => keyword.trim()).filter(Boolean),
+      units
+        .flatMap((unit) => unit.keywords)
+        .map((keyword) => keyword.trim())
+        .filter(Boolean),
       [],
       30,
     );
@@ -235,9 +235,10 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
 
 function targetForUnit(unit: LtmEvidenceUnit, mode?: LtmMode): UnitTarget {
   const noteId = noteIdForEvidenceUnit(unit);
-  const isQuest = mode === "game"
-    && unit.bucket === "thread"
-    && (QUEST_THREAD_SECTION_KEYS as readonly string[]).includes(unit.sectionKey);
+  const isQuest =
+    mode === "game" &&
+    unit.bucket === "thread" &&
+    (QUEST_THREAD_SECTION_KEYS as readonly string[]).includes(unit.sectionKey);
   const base = {
     noteId,
     sectionKey: unit.sectionKey,
@@ -249,7 +250,8 @@ function targetForUnit(unit: LtmEvidenceUnit, mode?: LtmMode): UnitTarget {
   if (unit.bucket === "timeline_event") {
     return { ...base, noteType: "timeline_event", tags: ["typed_memory", "timeline_event"] };
   }
-  if (unit.bucket === "thread") return { ...base, noteType: "thread", tags: isQuest ? ["typed_memory", "quest"] : ["typed_memory"] };
+  if (unit.bucket === "thread")
+    return { ...base, noteType: "thread", tags: isQuest ? ["typed_memory", "quest"] : ["typed_memory"] };
   if (unit.bucket === "world_fact") return { ...base, noteType: "world", tags: ["typed_memory"] };
   if (unit.bucket === "tone") return { ...base, noteType: "tone", tags: ["typed_memory"] };
   if (unit.bucket === "anchor") {
@@ -339,15 +341,11 @@ function sectionKeyForUnit(unit: LtmEvidenceUnit) {
   if (unit.bucket === "relationship_state") return "state";
   if (unit.bucket === "character_fact") return unit.sectionKey || "facts";
   if (unit.bucket === "tone") return "observations";
-  if ((unit.bucket === "thread") && unit.status === "resolved") return "summary";
+  if (unit.bucket === "thread" && unit.status === "resolved") return "summary";
   return unit.sectionKey;
 }
 
-function shouldMergeIncomingSectionUnits(
-  unit: LtmEvidenceUnit,
-  units: LtmEvidenceUnit[],
-  sectionKey: string,
-) {
+function shouldMergeIncomingSectionUnits(unit: LtmEvidenceUnit, units: LtmEvidenceUnit[], sectionKey: string) {
   if (unit.bucket !== "character_fact") return false;
   const matchingUnits = units.filter(
     (candidate) =>
@@ -393,7 +391,10 @@ function isDuplicateCumulativeLine(existing: string | undefined, incoming: strin
 
 function cumulativeLines(text: string | undefined) {
   if (!text?.trim()) return [];
-  return text.split(/\r?\n+/).map((line) => line.trim()).filter(Boolean);
+  return text
+    .split(/\r?\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
 }
 
 function normalizeCumulativeLine(text: string) {
@@ -414,7 +415,11 @@ function examplesFromSection(text: string | undefined) {
 }
 
 function normalizeForComparison(text: string) {
-  return text.toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim();
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function deriveToneProfile(observations: string[]) {
@@ -447,8 +452,6 @@ function shouldAppend(lifecycle: LtmCompilerLifecycle, sectionKey: string, exist
 function statusForUnits(units: LtmEvidenceUnit[]) {
   if (units.some((unit) => unit.status === "archived")) return "archived";
   if (units.some(isResolvedLoopUnit)) return "archived";
-  if (units.some((unit) => unit.status === "resolved")) return "resolved";
-  if (units.some((unit) => unit.status === "active" || unit.status === "developing")) return "active";
   return "active";
 }
 

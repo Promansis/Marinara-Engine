@@ -117,15 +117,13 @@ function mergeScopes(existing: LtmNote["scope"], incoming: LtmNote["scope"]) {
   };
 }
 
-function withEvidence(
-  section: LtmNote["sections"][string],
-  evidence: string[],
-): LtmNote["sections"][string] {
+function withEvidence(section: LtmNote["sections"][string], evidence: string[]): LtmNote["sections"][string] {
   return {
     ...section,
-    evidence: Array.from(
-      new Set([...(section as { evidence?: string[] }).evidence ?? [], ...evidence]),
-    ).slice(0, 100),
+    evidence: Array.from(new Set([...((section as { evidence?: string[] }).evidence ?? []), ...evidence])).slice(
+      0,
+      100,
+    ),
   };
 }
 
@@ -165,11 +163,7 @@ function mergeSection(
   );
 }
 
-async function applyMutation(
-  storage: LongTermMemoryStorage,
-  mutation: LtmDraftMutation,
-  sourceNoteId: string,
-) {
+async function applyMutation(storage: LongTermMemoryStorage, mutation: LtmDraftMutation, sourceNoteId: string) {
   const eventContext = {
     actor: "direct_ingest",
     cause: `source:${sourceNoteId}`,
@@ -261,11 +255,7 @@ async function applyMutation(
     };
   } else if (mutation.kind === "add_link") {
     patch = {
-      links: uniqueLinks([
-        ...existing.links,
-        mutation.link,
-        { target: sourceNoteId, relation: "extracted_from" },
-      ]),
+      links: uniqueLinks([...existing.links, mutation.link, { target: sourceNoteId, relation: "extracted_from" }]),
     };
   } else if (mutation.kind === "set_keywords") {
     patch = { keywords: mutation.keywords };
@@ -383,12 +373,26 @@ export interface DirectIngestGameJournalResult {
   skippedMutationIds: string[];
 }
 
+function directIngestAbortError() {
+  const error = new Error("Long-term memory import was cancelled.");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfDirectIngestAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw directIngestAbortError();
+}
+
+function isDirectIngestAbortError(error: unknown) {
+  return error instanceof Error && error.name === "AbortError";
+}
+
 export async function directIngestGameJournal(
   db: DB,
   sourceNote: LtmNote,
   root?: string,
   operationId?: string,
-  options: { refinePass?: boolean; applyLowRisk?: boolean } = {},
+  options: { refinePass?: boolean; applyLowRisk?: boolean; signal?: AbortSignal } = {},
 ): Promise<DirectIngestGameJournalResult> {
   return withLtmDebugOperation(
     {
@@ -400,6 +404,7 @@ export async function directIngestGameJournal(
       message: "Direct ingest game journal into LTM vault",
     },
     async (opId) => {
+      throwIfDirectIngestAborted(options.signal);
       const chatId = sourceNote.scope?.chatId ?? getLtmScopeChatIds(sourceNote.scope)[0];
       if (!chatId) {
         throw new Error("Cannot direct-ingest game journal: source note has no chatId in scope");
@@ -454,10 +459,7 @@ export async function directIngestGameJournal(
         };
       }
 
-      const sourceHash = computeGameSourceHash(
-        gameJournal as Journal | null,
-        sessionSummaries as SessionSummary[],
-      );
+      const sourceHash = computeGameSourceHash(gameJournal as Journal | null, sessionSummaries as SessionSummary[]);
       const scope = sourceNote.scope;
       const ctx = { chatId, scope, sourceHash };
 
@@ -488,9 +490,7 @@ export async function directIngestGameJournal(
 
       const sourceEvidence = `source_note:${sourceNote.id}`;
       const structuralUnits = units.map((unit) =>
-        unit.evidence.includes(sourceEvidence)
-          ? unit
-          : { ...unit, evidence: [...unit.evidence, sourceEvidence] },
+        unit.evidence.includes(sourceEvidence) ? unit : { ...unit, evidence: [...unit.evidence, sourceEvidence] },
       );
       const extractionConfig = await getLtmExtractionConfig(rootDir, "game");
       const refinePass = options.refinePass ?? (metadata.refinePass === true || extractionConfig.refinePass === true);
@@ -525,6 +525,7 @@ export async function directIngestGameJournal(
 
       if (refinePass) {
         try {
+          throwIfDirectIngestAborted(options.signal);
           const { provider, model } = await resolveGameJournalExtractionProvider(db, chat.connectionId);
           const refined = await runLongTermMemoryEvidenceUnitExtraction({
             sourceNote,
@@ -547,6 +548,7 @@ export async function directIngestGameJournal(
             mode: "game",
             aiKeywordExtraction: extractionConfig.aiKeywordExtraction,
             refinePass: true,
+            signal: options.signal,
           });
           const refinedTargetResolution = await resolveScopedEvidenceUnitTargets({
             storage,
@@ -575,7 +577,12 @@ export async function directIngestGameJournal(
             outcome = refinedCompiled.outcome;
           }
         } catch (err) {
-          logger.warn(err, "[ltm] Game journal refine pass failed, falling back to structural ingestion for %s", chatId);
+          if (options.signal?.aborted || isDirectIngestAbortError(err)) throw err;
+          logger.warn(
+            err,
+            "[ltm] Game journal refine pass failed, falling back to structural ingestion for %s",
+            chatId,
+          );
         }
       }
 
@@ -592,6 +599,7 @@ export async function directIngestGameJournal(
         };
       }
 
+      throwIfDirectIngestAborted(options.signal);
       const draft = await draftStore.createDraft({
         scope,
         modes: ["game"],
@@ -609,6 +617,7 @@ export async function directIngestGameJournal(
       let skippedMutationIds: string[] = [];
 
       if (options.applyLowRisk) {
+        throwIfDirectIngestAborted(options.signal);
         const autoApplyResult = await autoApplyGameJournalDraft({ draftId: draft.id, root: rootDir });
         updatedDraft = autoApplyResult.draft;
         appliedMutationIds = autoApplyResult.appliedMutationIds;

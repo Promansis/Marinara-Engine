@@ -17,9 +17,10 @@ const EVENT_SHAPED_CHARACTER_FACT_PATTERN =
   /\b(?:arrived|departed|entered|left|went|came|returned|walked|ran|fled|attacked|fought|killed|died|met|spoke|told|asked|answered|promised|decided|agreed|refused|accepted|rejected|gave|took|found|discovered|revealed|learned|opened|closed|escaped|rescued|betrayed|confronted|warned|saved|stopped)\b/i;
 const THREAD_RESOLUTION_PATTERN =
   /\b(?:resolve|resolved|resolver|resolution|would resolve|will resolve|until|when|if|requires|needs|awaits|pending|unresolved|open question|pay off|payoff|future|follow-?up|goal|must|should|cool(?:s|ed|ing)?|confess(?:ion|es|ed|ing)?|confront(?:s|ed|ing)?|dy(?:e|ing) down|explain(?:s|ed|ing|ation)?|updates?)\b/i;
-const SCENE_ONLY_TONE_PATTERN = /\b(?:this scene|single scene|momentarily|for the scene|scene tone|currently|right now)\b/i;
+const SCENE_ONLY_TONE_PATTERN =
+  /\b(?:this scene|single scene|momentarily|for the scene|scene tone|currently|right now)\b/i;
 const RELATIONSHIP_CHANGE_PATTERN =
-  /\b(?:became|becomes|grew|grows|shifted|shifts|changed|changes|strained|softened|worsened|improved|lost trust|gained trust|trusted|distrusted|forgave|resented|confessed|betrayed|reconciled)\b/i;
+  /\b(?:became|becomes|grew|grows|shifted|shifts|changed|changes|strained|softened|worsened|improved|rebuild(?:s|ing|built)?|repair(?:s|ed|ing)?|recover(?:s|ed|ing)?|warm(?:s|ed|ing)?|cool(?:s|ed|ing)?|lost trust|gained trust|trusted|distrusted|forgave|resented|confessed|betrayed|reconciled)\b/i;
 const RELATIONSHIP_DIMENSION_KEYS = new Set<string>(RELATIONSHIP_DIMENSIONS);
 const SUSPICIOUS_RELATIONSHIP_DELTA_THRESHOLD = 30;
 const MAJOR_RELATIONSHIP_CAUSE_PATTERN =
@@ -48,14 +49,15 @@ function hasRelationshipSupport(unit: LtmEvidenceUnit, units: LtmEvidenceUnit[],
   if (unit.bucket !== "relationship_state") return true;
   if (!relationshipDescribesChange(unit)) return true;
   const currentTimelineNoteIds = new Set(
-    units.filter((candidate) => candidate.bucket === "timeline_event").map((candidate) => noteIdForEvidenceUnit(candidate)),
+    units
+      .filter((candidate) => candidate.bucket === "timeline_event")
+      .map((candidate) => noteIdForEvidenceUnit(candidate)),
   );
   const existingNoteIds = new Set(existingNotes.map((note) => note.id));
   if (
     unit.links.some(
       (link) =>
-        link.relation === "caused_by" &&
-        (currentTimelineNoteIds.has(link.target) || existingNoteIds.has(link.target)),
+        link.relation === "caused_by" && (currentTimelineNoteIds.has(link.target) || existingNoteIds.has(link.target)),
     )
   ) {
     return true;
@@ -97,18 +99,21 @@ export function validateLtmEvidenceUnits({
   sourceNote,
   existingNotes,
   expectedSourceHash,
+  allowedBuckets,
 }: {
   units: LtmEvidenceUnit[];
   sourceText: string;
   sourceNote?: LtmNote;
   existingNotes: LtmNote[];
   expectedSourceHash?: string;
+  allowedBuckets?: readonly LtmEvidenceUnit["bucket"][];
 }): LtmEvidenceUnitValidationResult {
   const diagnostics: LtmExtractionDiagnostic[] = [];
   const droppedCandidates: LtmExtractionDroppedCandidate[] = [];
   const keptUnits: LtmEvidenceUnit[] = [];
   const keptCandidateIndexes = new Map<LtmEvidenceUnit, number>();
   const sourceEvidence = sourceNote ? `source_note:${sourceNote.id}` : null;
+  const allowedBucketSet = allowedBuckets ? new Set(allowedBuckets) : null;
   const validLinkTargets = new Set<string>([
     ...(sourceNote ? [sourceNote.id] : []),
     ...existingNotes.map((note) => note.id),
@@ -147,6 +152,39 @@ export function validateLtmEvidenceUnits({
     };
 
     unitDiagnostics.push(...placeholderDiagnostics(unit, noteId, candidateIndex));
+
+    if (allowedBucketSet && !allowedBucketSet.has(unit.bucket)) {
+      unitDiagnostics.push({
+        severity: "error",
+        code: "unsupported_mode_bucket",
+        candidateIndex,
+        mutationId: unit.id,
+        noteId,
+        message: `Memory stream '${unit.bucket}' is not enabled for this extraction mode.`,
+      });
+    }
+
+    if (unit.bucket === "character_fact" && unit.sectionKey === "current_state") {
+      unitDiagnostics.push({
+        severity: "error",
+        code: "transient_character_state",
+        candidateIndex,
+        mutationId: unit.id,
+        noteId,
+        message: "Character facts cannot store the removed transient current_state section.",
+      });
+    }
+
+    if (unit.bucket === "timeline_event" && unit.sectionKey !== "event") {
+      unitDiagnostics.push({
+        severity: "error",
+        code: "invalid_timeline_section",
+        candidateIndex,
+        mutationId: unit.id,
+        noteId,
+        message: "Timeline events must use the event section.",
+      });
+    }
 
     if (unit.evidence.length === 0) {
       unitDiagnostics.push({
@@ -286,15 +324,9 @@ export function validateLtmEvidenceUnits({
     keptCandidateIndexes.set(unit, candidateIndex);
   }
 
-  const finalKeptUnits: LtmEvidenceUnit[] = [];
-  for (const unit of keptUnits) {
-    if (hasRelationshipSupport(unit, keptUnits, existingNotes)) {
-      finalKeptUnits.push(unit);
-      continue;
-    }
+  const dropKeptUnit = (unit: LtmEvidenceUnit, code: string, message: string) => {
     const candidateIndex = keptCandidateIndexes.get(unit) ?? 0;
     const noteId = noteIdForEvidenceUnit(unit);
-    const message = userFacingDropMessageForCode("relationship_state_missing_caused_by", "unsupported_bucket");
     const dropped = droppedCandidate({
       candidateIndex,
       reason: "unsupported_bucket",
@@ -309,7 +341,39 @@ export function validateLtmEvidenceUnits({
       mutationId: unit.id,
       noteId,
       message: dropped.message,
-      details: { validatorCode: "relationship_state_missing_caused_by" },
+      details: { validatorCode: code },
+    });
+  };
+
+  let finalKeptUnits = [...keptUnits];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const relationshipSupported = finalKeptUnits.filter((unit) => {
+      if (hasRelationshipSupport(unit, finalKeptUnits, existingNotes)) return true;
+      dropKeptUnit(
+        unit,
+        "relationship_state_missing_caused_by",
+        userFacingDropMessageForCode("relationship_state_missing_caused_by", "unsupported_bucket"),
+      );
+      changed = true;
+      return false;
+    });
+    const closedTargets = new Set<string>([
+      ...(sourceNote ? [sourceNote.id] : []),
+      ...existingNotes.map((note) => note.id),
+      ...relationshipSupported.map((unit) => noteIdForEvidenceUnit(unit)),
+    ]);
+    finalKeptUnits = relationshipSupported.filter((unit) => {
+      const missingLink = unit.links.find((link) => !closedTargets.has(link.target));
+      if (!missingLink) return true;
+      dropKeptUnit(
+        unit,
+        "unknown_link_target",
+        `Dropped a candidate whose link target '${missingLink.target}' was removed during validation.`,
+      );
+      changed = true;
+      return false;
     });
   }
 
@@ -322,10 +386,7 @@ export function validateLtmEvidenceUnits({
       }
     }
     const hasFanOut = finalKeptUnits.some(
-      (other) =>
-        other !== unit &&
-        other.bucket === "timeline_event" &&
-        threadSubjects.has(other.subjectId),
+      (other) => other !== unit && other.bucket === "timeline_event" && threadSubjects.has(other.subjectId),
     );
     if (!hasFanOut) {
       diagnostics.push({
@@ -341,7 +402,11 @@ export function validateLtmEvidenceUnits({
   return { keptUnits: finalKeptUnits, diagnostics, droppedCandidates };
 }
 
-function placeholderDiagnostics(unit: LtmEvidenceUnit, noteId: string, candidateIndex: number): LtmExtractionDiagnostic[] {
+function placeholderDiagnostics(
+  unit: LtmEvidenceUnit,
+  noteId: string,
+  candidateIndex: number,
+): LtmExtractionDiagnostic[] {
   const diagnostics: LtmExtractionDiagnostic[] = [];
   const hasPlaceholderIdentifier = (value: string) => value.toLowerCase().includes("lowercase_snake_case");
 
@@ -499,7 +564,9 @@ function relationshipDeltaMagnitudeDiagnostics(
 ): LtmExtractionDiagnostic[] {
   if (unit.bucket !== "relationship_state") return [];
   const largeChanges = Object.fromEntries(
-    Object.entries(unit.dimensionChanges ?? {}).filter(([, value]) => Math.abs(value) >= SUSPICIOUS_RELATIONSHIP_DELTA_THRESHOLD),
+    Object.entries(unit.dimensionChanges ?? {}).filter(
+      ([, value]) => Math.abs(value) >= SUSPICIOUS_RELATIONSHIP_DELTA_THRESHOLD,
+    ),
   );
   if (Object.keys(largeChanges).length === 0) return [];
   const causeText = relationshipCauseSupportText(unit, units, existingNotes);
@@ -522,7 +589,9 @@ function relationshipDeltaMagnitudeDiagnostics(
 }
 
 function relationshipCauseSupportText(unit: LtmEvidenceUnit, units: LtmEvidenceUnit[], existingNotes: LtmNote[]) {
-  const causedByTargets = new Set(unit.links.filter((link) => link.relation === "caused_by").map((link) => link.target));
+  const causedByTargets = new Set(
+    unit.links.filter((link) => link.relation === "caused_by").map((link) => link.target),
+  );
   if (causedByTargets.size === 0) return "";
   const currentTexts = units.flatMap((candidate) => {
     if (!causedByTargets.has(noteIdForEvidenceUnit(candidate))) return [];
@@ -558,19 +627,21 @@ function isSourceSummaryPayload(text: string) {
   return /\b(?:source note|chat summary|transcript|events?:|timeline:|scene summary:)\b/i.test(text);
 }
 
-function droppedCandidate(input: Required<Pick<DroppedCandidateInput, "candidateIndex" | "reason" | "message" | "unit">> & {
-  snippet?: string;
-}): LtmExtractionDroppedCandidate {
+function droppedCandidate(
+  input: Required<Pick<DroppedCandidateInput, "candidateIndex" | "reason" | "message" | "unit">> & {
+    snippet?: string;
+  },
+): LtmExtractionDroppedCandidate {
   return {
     index: input.candidateIndex,
     reason: input.reason,
     message: input.message,
-    ...(safeSnippet(input.snippet ?? input.unit.text) ? { snippet: safeSnippet(input.snippet ?? input.unit.text)! } : {}),
+    ...(safeSnippet(input.snippet ?? input.unit.text)
+      ? { snippet: safeSnippet(input.snippet ?? input.unit.text)! }
+      : {}),
     ...(recoveryHintForUnit(input.unit) ? { recovery: recoveryHintForUnit(input.unit)! } : {}),
   };
 }
-
-
 
 function recoveryHintForUnit(unit: LtmEvidenceUnit): LtmExtractionRecoveryHint {
   return {
@@ -603,7 +674,6 @@ function noteIdSectionKeyForUnit(unit: LtmEvidenceUnit) {
 function targetStatusForUnit(unit: LtmEvidenceUnit): LtmNote["status"] {
   if (unit.status === "archived") return "archived";
   if (unit.bucket === "thread" && unit.status === "resolved") return "archived";
-  if (unit.status === "resolved") return "resolved";
   return "active";
 }
 
@@ -621,6 +691,9 @@ function diagnosticToDropReason(code: string): LtmExtractionDropReason | null {
   if (code === "source_summary_payload") return "source_summary_payload";
   if (
     code === "unsupported_source_extraction_bucket" ||
+    code === "unsupported_mode_bucket" ||
+    code === "transient_character_state" ||
+    code === "invalid_timeline_section" ||
     code === "relationship_state_without_history" ||
     code === "relationship_state_missing_caused_by" ||
     code === "invalid_relationship_dimension" ||

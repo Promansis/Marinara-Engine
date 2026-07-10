@@ -52,7 +52,7 @@ type IntegrityIssue = {
 export type LtmRepairAction = "rebuild_indexes" | "quarantine_malformed_notes" | "backfill_imported_source_titles";
 export type LtmInteropSource = "characters" | "lorebooks" | "chats";
 
-type ImportSourceCandidate = {
+export type ImportSourceCandidate = {
   title: string;
   sourceId: string;
   sourceText: string;
@@ -111,8 +111,14 @@ function importedSourceTitleFromNote(note: Pick<LtmNote, "id" | "tags" | "title"
   if (title) return title;
 
   const evidence = note.sections.source?.evidence ?? [];
-  const chatName = evidence.find((entry) => entry.startsWith("chat_name:"))?.slice("chat_name:".length).trim();
-  const messageRange = evidence.find((entry) => entry.startsWith("message_range:"))?.slice("message_range:".length).trim();
+  const chatName = evidence
+    .find((entry) => entry.startsWith("chat_name:"))
+    ?.slice("chat_name:".length)
+    .trim();
+  const messageRange = evidence
+    .find((entry) => entry.startsWith("message_range:"))
+    ?.slice("message_range:".length)
+    .trim();
 
   if (note.tags.includes("imported_chat") && chatName) {
     return messageRange ? `${chatName}, msgs ${messageRange}` : chatName;
@@ -179,7 +185,30 @@ export interface LtmInteropSourceNoteImport {
   created: boolean;
 }
 
+export interface LtmInteropSourceNoteWriteFailure {
+  sourceId: string;
+  title: string;
+  sourceWriteStatus: "failed";
+  extractionStatus: "not_started";
+  retryable: true;
+  error: { code: "source_write_failed"; message: string };
+}
 
+export type LtmInteropImportOptions = {
+  sourceIds: string[];
+  limit?: number;
+  scope?: LtmScope;
+  mode?: LtmMode;
+  operationId?: string;
+};
+
+export interface LtmInteropSourceNotePlan {
+  source: LtmInteropSource;
+  requestedSourceIds: string[];
+  missingSourceIds: string[];
+  requiresExtraction: boolean;
+  candidates: ImportSourceCandidate[];
+}
 
 function normalizeIdentifier(value: string, fallback: string) {
   const normalized = value
@@ -347,10 +376,7 @@ async function checkIndexCoherence(
   if (manifest.chunkFormatVersion !== CURRENT_LTM_CHUNK_FORMAT_VERSION) {
     issues.push({
       severity: "warning",
-      code:
-        manifest.chunkFormatVersion === undefined
-          ? "manifest_chunk_format_missing"
-          : "manifest_chunk_format_stale",
+      code: manifest.chunkFormatVersion === undefined ? "manifest_chunk_format_missing" : "manifest_chunk_format_stale",
       path: relative(root, manifestPath),
       message:
         manifest.chunkFormatVersion === undefined
@@ -361,7 +387,9 @@ async function checkIndexCoherence(
 
   const computedHashes: Record<string, string> = {};
   for (const file of fileContents) {
-    const relativePath = relative(root, file.path).split(/[\\/]+/).join("/");
+    const relativePath = relative(root, file.path)
+      .split(/[\\/]+/)
+      .join("/");
     computedHashes[relativePath] = stableJsonHash(file.rawContent);
   }
   const actualSourceHash = stableJsonHash(computedHashes);
@@ -520,11 +548,15 @@ export async function repairLongTermMemory(
           for (const note of sourceNotes) {
             if (!isBackfillableImportedSourceNote(note)) continue;
             if (note.title?.trim()) continue;
-            await storage.updateNote(note.id, { title: importedSourceTitleFromNote(note) }, {
-              actor: "maintenance_api",
-              cause: "repair.backfill_imported_source_titles",
-              summary: "Backfilled imported source note title",
-            });
+            await storage.updateNote(
+              note.id,
+              { title: importedSourceTitleFromNote(note) },
+              {
+                actor: "maintenance_api",
+                cause: "repair.backfill_imported_source_titles",
+                summary: "Backfilled imported source note title",
+              },
+            );
             patched += 1;
           }
           results.push({ action, result: patched > 0 ? "backfilled" : "no_titles_to_backfill", count: patched });
@@ -663,7 +695,6 @@ async function lorebookImportCandidates(
       description ? `Description: ${description}` : "",
       ...entries
         .filter((entry) => typeof entry.content === "string" && entry.content.trim())
-        .slice(0, 8)
         .map((entry) => `${entry.name || "Entry"}: ${entry.content}`),
     ]
       .filter(Boolean)
@@ -767,13 +798,19 @@ async function chatImportCandidates(
 ): Promise<ImportSourceCandidate[]> {
   const chats = await createChatsStorage(db).list();
   const scopeChatIds = new Set(getLtmScopeChatIds(scope));
-  const scopedChats = scopeChatIds.size || scope?.groupId
-    ? chats.filter((chat) => {
-        if (scopeChatIds.size) return scopeChatIds.has(chat.id);
-        return Boolean(scope?.groupId && chat.groupId === scope.groupId);
-      })
-    : chats;
-  const rows = sourceIds ? scopedChats : scopedChats.slice(0, limit);
+  const scopedChats =
+    scopeChatIds.size || scope?.groupId
+      ? chats.filter((chat) => {
+          if (scopeChatIds.size) return scopeChatIds.has(chat.id);
+          return Boolean(scope?.groupId && chat.groupId === scope.groupId);
+        })
+      : chats;
+  const selectedChatIds = sourceIds
+    ? new Set(Array.from(sourceIds, (sourceId) => sourceId.split(":", 1)[0]).filter(Boolean))
+    : null;
+  const rows = selectedChatIds
+    ? scopedChats.filter((chat) => selectedChatIds.has(chat.id))
+    : scopedChats.slice(0, limit);
   const candidates = rows.flatMap((chat) => {
     const metadata = readJsonObject(chat.metadata);
     const mode = chat.mode as LtmMode;
@@ -794,7 +831,7 @@ async function chatImportCandidates(
     const entries = normalizeChatSummaryEntries(metadata.summaryEntries, {
       legacySummary: summary,
       legacyFallback: Array.isArray(metadata.summaryEntries) ? false : true,
-    }).filter((entry) => entry.enabled,);
+    }).filter((entry) => entry.enabled);
     if (entries.length === 0) return [];
     return entries.map((entry) => {
       const chatName = evidenceSafeValue(chat.name) || "Chat";
@@ -853,14 +890,7 @@ async function chatImportCandidates(
       };
     });
   });
-  const seenHashes = new Set<string>();
-  const deduped = candidates.filter((candidate) => {
-    const hash = createHash("sha256").update(candidate.sourceText).digest("hex");
-    if (seenHashes.has(hash)) return false;
-    seenHashes.add(hash);
-    return true;
-  });
-  return sourceIds ? deduped.filter((candidate) => sourceIds.has(candidate.sourceId)) : deduped.slice(0, limit);
+  return sourceIds ? candidates.filter((candidate) => sourceIds.has(candidate.sourceId)) : candidates.slice(0, limit);
 }
 
 async function interopImportCandidates(
@@ -884,7 +914,13 @@ export async function previewLongTermMemoryInterop(
   root?: string,
   scope?: LtmScope,
 ): Promise<LtmInteropPreview> {
-  const candidates = await interopImportCandidates(db, source, limit, undefined, source === "chats" ? scope : undefined);
+  const candidates = await interopImportCandidates(
+    db,
+    source,
+    limit,
+    undefined,
+    source === "chats" ? scope : undefined,
+  );
   const storage = new LongTermMemoryStorage(root ?? getLongTermMemoryRoot());
   const existingNotes = await storage.getNotesByIds(
     candidates.flatMap((candidate) => [candidate.sourceNoteId, ...(candidate.legacySourceNoteIds ?? [])]),
@@ -917,9 +953,13 @@ export async function previewLongTermMemoryInterop(
 export async function createLongTermMemoryInteropSourceNotes(
   db: DB,
   source: LtmInteropSource,
-  options: { sourceIds: string[]; limit?: number; scope?: LtmScope; mode?: LtmMode; operationId?: string } = { sourceIds: [] },
+  options: LtmInteropImportOptions & { plan?: LtmInteropSourceNotePlan } = { sourceIds: [] },
   root = getLongTermMemoryRoot(),
-): Promise<{ source: LtmInteropSource; imported: LtmInteropSourceNoteImport[] }> {
+): Promise<{
+  source: LtmInteropSource;
+  imported: LtmInteropSourceNoteImport[];
+  writeFailures: LtmInteropSourceNoteWriteFailure[];
+}> {
   return withLtmDebugOperation(
     {
       operationId: options.operationId,
@@ -931,23 +971,11 @@ export async function createLongTermMemoryInteropSourceNotes(
       details: { sourceIds: options.sourceIds, scope: options.scope },
     },
     async (operationId) => {
-      const selected = new Set(options.sourceIds);
-      const limit = Math.max(options.limit ?? options.sourceIds.length, options.sourceIds.length, 1);
+      const plan = options.plan ?? (await planLongTermMemoryInteropSourceNotes(db, source, options));
       const storage = new LongTermMemoryStorage(root);
-      const candidates = (await interopImportCandidates(db, source, limit, selected, source === "chats" ? options.scope : undefined)).filter((candidate) =>
-        selected.has(candidate.sourceId),
-      );
-      const existingNotes = await storage.getNotesByIds(
-        candidates.flatMap((candidate) => [...(candidate.legacySourceNoteIds ?? []), candidate.sourceNoteId]),
-      );
+      const candidates = plan.candidates;
       const imported: LtmInteropSourceNoteImport[] = [];
-      if (options.mode) {
-        for (const candidate of candidates) {
-          if (candidate.sourceTag !== "imported_game_journal") {
-            candidate.modes = [options.mode];
-          }
-        }
-      }
+      const writeFailures: LtmInteropSourceNoteWriteFailure[] = [];
       await recordLtmDebugEvent({
         root,
         operationId,
@@ -969,90 +997,154 @@ export async function createLongTermMemoryInteropSourceNotes(
       });
 
       for (const candidate of candidates) {
-        const now = nowIso();
-        const noteInput = {
-          id: candidate.sourceNoteId,
-          title: candidate.title,
-          type: "source" as const,
-          status: "active" as const,
-          modes: candidate.modes,
-          scope: { ...(candidate.scope ?? {}), ...(options.scope ?? {}) },
-          tags: ["source_summary", candidate.sourceTag],
-          keywords: [],
-          links: [],
-          provenance: candidate.provenance,
-          sections: {
-            source: {
-              ...textSection(candidate.sourceText, candidate.evidence),
-              updatedAt: now,
+        try {
+          const now = nowIso();
+          const noteInput = {
+            id: candidate.sourceNoteId,
+            title: candidate.title,
+            type: "source" as const,
+            status: "active" as const,
+            modes: candidate.modes,
+            scope: { ...(candidate.scope ?? {}), ...(options.scope ?? {}) },
+            tags: ["source_summary", candidate.sourceTag],
+            keywords: [],
+            links: [],
+            provenance: candidate.provenance,
+            sections: {
+              source: {
+                ...textSection(candidate.sourceText, candidate.evidence),
+                updatedAt: now,
+              },
             },
-          },
-        };
-        const noteIds = [...(candidate.legacySourceNoteIds ?? []), candidate.sourceNoteId];
-        const existing = noteIds.map((noteId) => existingNotes.get(noteId)).find((note): note is LtmNote => Boolean(note));
-        if (existing) {
-          const canonicalExisting = existing.id === candidate.sourceNoteId
-            ? existing
-            : await storage.renameNoteId(existing.id, candidate.sourceNoteId, {
+          };
+          const noteIds = [...(candidate.legacySourceNoteIds ?? []), candidate.sourceNoteId];
+          const existingNotes = await storage.getNotesByIds(noteIds);
+          const existing = noteIds
+            .map((noteId) => existingNotes.get(noteId))
+            .find((note): note is LtmNote => Boolean(note));
+          if (existing) {
+            const canonicalExisting =
+              existing.id === candidate.sourceNoteId
+                ? existing
+                : await storage.renameNoteId(existing.id, candidate.sourceNoteId, {
+                    actor: "maintenance_api",
+                    cause: "interop.source_identity_migration",
+                    summary: `Migrated imported source identity for ${candidate.title}`,
+                  });
+            const titlePatch = canonicalExisting.title?.trim() ? {} : { title: candidate.title };
+            const note = await storage.updateNote(
+              canonicalExisting.id,
+              {
+                status: "active",
+                ...titlePatch,
+                modes: noteInput.modes,
+                scope: noteInput.scope,
+                tags: Array.from(new Set([...canonicalExisting.tags, ...noteInput.tags])),
+                provenance: noteInput.provenance,
+                sections: { ...canonicalExisting.sections, ...noteInput.sections },
+              },
+              {
                 actor: "maintenance_api",
-                cause: "interop.source_identity_migration",
-                summary: `Migrated imported source identity for ${candidate.title}`,
-              });
-          const titlePatch = canonicalExisting.title?.trim() ? {} : { title: candidate.title };
-          const note = await storage.updateNote(
-            canonicalExisting.id,
-            {
-              status: "active",
-              ...titlePatch,
-              modes: noteInput.modes,
-              scope: noteInput.scope,
-              tags: Array.from(new Set([...canonicalExisting.tags, ...noteInput.tags])),
-              provenance: noteInput.provenance,
-              sections: { ...canonicalExisting.sections, ...noteInput.sections },
-            },
-            {
-              actor: "maintenance_api",
-              cause: "interop.source_import",
-              summary: `Refreshed ${source} import source ${candidate.title}`,
-            },
-          );
-          imported.push({ sourceId: candidate.sourceId, title: candidate.title, note, created: false });
+                cause: "interop.source_import",
+                summary: `Refreshed ${source} import source ${candidate.title}`,
+              },
+            );
+            imported.push({ sourceId: candidate.sourceId, title: candidate.title, note, created: false });
+            await recordLtmDebugEvent({
+              root,
+              operationId,
+              phase: "source_note",
+              action: "source_note_refreshed",
+              status: "ok",
+              source,
+              sourceId: candidate.sourceId,
+              sourceNoteId: note.id,
+              counts: { sourceChars: candidate.sourceText.length },
+              message: `Refreshed ${candidate.title}`,
+            }).catch((debugError) => {
+              logger.warn(debugError, "[ltm] Failed to record refreshed import source %s", candidate.sourceId);
+            });
+            continue;
+          }
+
+          const note = await storage.createNote(noteInput, {
+            actor: "maintenance_api",
+            cause: "interop.source_import",
+            summary: `Imported ${source} source ${candidate.title}`,
+          });
+          imported.push({ sourceId: candidate.sourceId, title: candidate.title, note, created: true });
           await recordLtmDebugEvent({
             root,
             operationId,
             phase: "source_note",
-            action: "source_note_refreshed",
+            action: "source_note_created",
             status: "ok",
             source,
             sourceId: candidate.sourceId,
             sourceNoteId: note.id,
             counts: { sourceChars: candidate.sourceText.length },
-            message: `Refreshed ${candidate.title}`,
+            message: `Created ${candidate.title}`,
+          }).catch((debugError) => {
+            logger.warn(debugError, "[ltm] Failed to record created import source %s", candidate.sourceId);
           });
-          continue;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to write imported source note";
+          writeFailures.push({
+            sourceId: candidate.sourceId,
+            title: candidate.title,
+            sourceWriteStatus: "failed",
+            extractionStatus: "not_started",
+            retryable: true,
+            error: { code: "source_write_failed", message },
+          });
+          await recordLtmDebugEvent({
+            root,
+            operationId,
+            phase: "source_note",
+            action: "source_note_write_failed",
+            status: "error",
+            source,
+            sourceId: candidate.sourceId,
+            sourceNoteId: candidate.sourceNoteId,
+            error,
+          }).catch((debugError) => {
+            logger.warn(debugError, "[ltm] Failed to record import write failure for %s", candidate.sourceId);
+          });
         }
-
-        const note = await storage.createNote(noteInput, {
-          actor: "maintenance_api",
-          cause: "interop.source_import",
-          summary: `Imported ${source} source ${candidate.title}`,
-        });
-        imported.push({ sourceId: candidate.sourceId, title: candidate.title, note, created: true });
-        await recordLtmDebugEvent({
-          root,
-          operationId,
-          phase: "source_note",
-          action: "source_note_created",
-          status: "ok",
-          source,
-          sourceId: candidate.sourceId,
-          sourceNoteId: note.id,
-          counts: { sourceChars: candidate.sourceText.length },
-          message: `Created ${candidate.title}`,
-        });
       }
 
-      return { source, imported };
+      return { source, imported, writeFailures };
     },
   );
+}
+
+export async function planLongTermMemoryInteropSourceNotes(
+  db: DB,
+  source: LtmInteropSource,
+  options: LtmInteropImportOptions,
+): Promise<LtmInteropSourceNotePlan> {
+  const selected = new Set(options.sourceIds);
+  const limit = Math.max(options.limit ?? options.sourceIds.length, options.sourceIds.length, 1);
+  const resolved = await interopImportCandidates(
+    db,
+    source,
+    limit,
+    selected,
+    source === "chats" ? options.scope : undefined,
+  );
+  const candidates = resolved
+    .filter((candidate) => selected.has(candidate.sourceId))
+    .map((candidate) =>
+      options.mode && candidate.sourceTag !== "imported_game_journal"
+        ? { ...candidate, modes: [options.mode!] }
+        : candidate,
+    );
+  const resolvedIds = new Set(candidates.map((candidate) => candidate.sourceId));
+  return {
+    source,
+    requestedSourceIds: [...options.sourceIds],
+    missingSourceIds: options.sourceIds.filter((sourceId) => !resolvedIds.has(sourceId)),
+    requiresExtraction: candidates.some((candidate) => candidate.sourceTag !== "imported_game_journal"),
+    candidates,
+  };
 }

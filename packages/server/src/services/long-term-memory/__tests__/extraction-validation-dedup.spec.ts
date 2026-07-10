@@ -28,6 +28,7 @@ import {
   sourceHashForEvidenceUnitExtraction,
 } from "../evidence-unit-extraction.js";
 import { mapGameJournalToEvidenceUnits, renderGameSourceText } from "../game-journal-mapper.js";
+import { directIngestGameJournal } from "../direct-ingest.js";
 import { applyLongTermMemoryDraft } from "../reconciliation.js";
 import { extractLongTermMemoryFromSourceNote } from "../source-extraction.js";
 import { LongTermMemoryDraftStore } from "../draft-store.js";
@@ -163,6 +164,166 @@ test("deduplicateUnits drops exact duplicates against existing sections", () => 
 
   assert.equal(result.deduplicated.length, 0);
   assert.equal(result.diagnostics[0]?.code, "deduplicated_evidence_unit");
+});
+
+test("deduplicateUnits keeps identical text for a different target note", () => {
+  const existing = note("timeline_first_confession", {
+    event: {
+      text: "Alice told Bob the truth about the stolen map.",
+      updatedAt: timestamp,
+    },
+  });
+
+  const result = deduplicateUnits({
+    units: [unit("timeline_event", { subjectId: "second_confession" })],
+    existingNotes: [existing],
+  });
+
+  assert.equal(result.deduplicated.length, 1);
+  assert.equal(result.diagnostics.length, 0);
+});
+
+test("compileEvidenceUnitExtraction enforces mode-allowed buckets", () => {
+  const sourceNote = note("source_test", {
+    source: {
+      text: "Alice confessed the stolen map to Bob.",
+      updatedAt: timestamp,
+    },
+  });
+
+  const result = compileEvidenceUnitExtraction({
+    unitResponse: {
+      summary: "Disallowed timeline",
+      units: [unit("timeline_event", { subjectId: "map_confession" })],
+    },
+    sourceText: sourceNote.sections.source!.text,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["conversation"],
+    mode: "conversation",
+    sourceHash,
+    allowedBuckets: ["character_fact", "world_fact", "thread", "tone", "anchor"],
+  });
+
+  assert.equal(result.compiledResponse.mutations.length, 0);
+  assert.equal(result.outcome.droppedCandidates[0]?.reason, "unsupported_bucket");
+  assert.equal(
+    result.diagnostics.find((diagnostic) => diagnostic.code === "candidate_dropped_unsupported_bucket")?.details
+      ?.validatorCode,
+    "unsupported_mode_bucket",
+  );
+});
+
+test("validation closes links after their target candidate is dropped", () => {
+  const sourceNote = note("source_test", {
+    source: {
+      text: "Alice confessed the stolen map. The archive records every confession.",
+      updatedAt: timestamp,
+    },
+  });
+  const droppedTimeline = unit("timeline_event", {
+    subjectId: "map_confession",
+    text: "Alice confessed the stolen map.",
+    evidence: ["source_note:wrong_source"],
+  });
+  const dependentWorldFact = unit("world_fact", {
+    subjectId: "archive_records",
+    sectionKey: "facts",
+    text: "The archive records every confession.",
+    links: [{ target: "timeline_map_confession", relation: "triggered_by" }],
+  });
+
+  const result = compileEvidenceUnitExtraction({
+    unitResponse: { summary: "Dependent candidate", units: [droppedTimeline, dependentWorldFact] },
+    sourceText: sourceNote.sections.source!.text,
+    sourceNote,
+    existingNotes: [],
+    scope: {},
+    modes: ["roleplay"],
+    sourceHash,
+  });
+
+  assert.equal(result.compiledResponse.mutations.length, 0);
+  assert.deepEqual(result.outcome.droppedCandidates.map((candidate) => candidate.reason), [
+    "missing_source_evidence",
+    "unsupported_bucket",
+  ]);
+});
+
+test("source hashes ignore refresh timestamps but change with source text", () => {
+  const first = note("source_test", {
+    source: {
+      text: "Alice confessed the stolen map.",
+      updatedAt: "2024-01-01T00:00:00.000Z",
+      evidence: ["chat:chat-1"],
+    },
+  });
+  const refreshed = {
+    ...first,
+    updatedAt: "2024-02-01T00:00:00.000Z",
+    sections: {
+      source: {
+        ...first.sections.source!,
+        updatedAt: "2024-02-01T00:00:00.000Z",
+      },
+    },
+  } satisfies LtmNote;
+  const changed = {
+    ...refreshed,
+    sections: {
+      source: {
+        ...refreshed.sections.source,
+        text: "Alice denied stealing the map.",
+      },
+    },
+  } satisfies LtmNote;
+
+  assert.equal(sourceHashForEvidenceUnitExtraction(first), sourceHashForEvidenceUnitExtraction(refreshed));
+  assert.notEqual(sourceHashForEvidenceUnitExtraction(refreshed), sourceHashForEvidenceUnitExtraction(changed));
+});
+
+test("candidate identity is stable when a provider changes its model-owned UUID", () => {
+  const candidate = {
+    bucket: "timeline_event",
+    subjectId: "map_confession",
+    sectionKey: "event",
+    text: "Alice confessed the stolen map to Bob.",
+    importance: "major",
+    evidence: ["source_note:source_test"],
+    confidence: 0.95,
+    salience: 0.8,
+    status: "active",
+    links: [],
+    sourceHash,
+  };
+  const first = parseEvidenceUnitPayload(
+    { summary: "First try", units: [{ ...candidate, id: "11111111-1111-4111-8111-111111111111" }] },
+    sourceHash,
+  );
+  const retry = parseEvidenceUnitPayload(
+    { summary: "Retry", units: [{ ...candidate, id: "22222222-2222-4222-8222-222222222222" }] },
+    sourceHash,
+  );
+
+  assert.equal(first.response.units[0]?.id, retry.response.units[0]?.id);
+});
+
+test("direct game import honours a pre-aborted cancellation signal before writes", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    directIngestGameJournal(
+      {} as never,
+      note("source_game", {
+        source: { text: "Game journal source.", updatedAt: timestamp },
+      }),
+      undefined,
+      undefined,
+      { signal: controller.signal },
+    ),
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
 });
 
 test("static relationship_state without caused_by is kept (no change described)", () => {

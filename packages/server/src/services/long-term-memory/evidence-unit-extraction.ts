@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import {
   DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
   DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
@@ -20,7 +19,12 @@ import {
   type LtmNote,
   type LtmScope,
 } from "@marinara-engine/shared";
-import { fitMessagesToContext, type BaseLLMProvider, type ChatMessage, type ChatOptions } from "../llm/base-provider.js";
+import {
+  fitMessagesToContext,
+  type BaseLLMProvider,
+  type ChatMessage,
+  type ChatOptions,
+} from "../llm/base-provider.js";
 import { logger } from "../../lib/logger.js";
 import { countBy, safeSnippet } from "./ltm-utils.js";
 import { DEFAULT_LTM_EXTRACTION_PROMPT } from "@marinara-engine/shared";
@@ -266,10 +270,7 @@ function relationshipDimensionSchema(minimum: number, maximum: number) {
     type: "object",
     additionalProperties: false,
     properties: Object.fromEntries(
-      RELATIONSHIP_DIMENSIONS.map((dimension) => [
-        dimension,
-        { type: "integer", minimum, maximum },
-      ]),
+      RELATIONSHIP_DIMENSIONS.map((dimension) => [dimension, { type: "integer", minimum, maximum }]),
     ),
   };
 }
@@ -420,13 +421,21 @@ async function chatCompleteWithReasoningFallback({
   }
 }
 
+function deterministicEvidenceUnitId(record: Record<string, unknown>, expectedSourceHash: string) {
+  const identity = { ...record };
+  delete identity.id;
+  delete identity.sourceHash;
+  const hex = stableJsonHash({ sourceHash: expectedSourceHash, candidate: identity });
+  const variant = ((Number.parseInt(hex[16] ?? "8", 16) & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
 function normalizedEvidenceUnitRecord(unit: unknown, expectedSourceHash: string): unknown {
   if (!unit || typeof unit !== "object" || Array.isArray(unit)) return unit;
   const record = unit as Record<string, unknown>;
-  const id = typeof record.id === "string" && record.id.trim().length > 0 ? record.id.trim() : randomUUID();
   return {
     ...record,
-    id: /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) ? id : randomUUID(),
+    id: deterministicEvidenceUnitId(record, expectedSourceHash),
     sourceHash: expectedSourceHash,
   };
 }
@@ -629,7 +638,6 @@ function stripRawNotePrefix(identifier: string, prefix?: string) {
   return match?.[2] ?? identifier;
 }
 
-
 function extractCandidateSnippet(candidate: unknown) {
   if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return undefined;
   const text = (candidate as Record<string, unknown>).text;
@@ -643,9 +651,10 @@ function formatZodIssue(issue: { path: Array<string | number>; message: string }
 
 export function parseEvidenceUnitPayload(raw: unknown, expectedSourceHash: string): ParsedEvidenceUnitPayload {
   const normalized = normalizeEvidenceUnitResponse(raw, expectedSourceHash);
-  const record = normalized && typeof normalized === "object" && !Array.isArray(normalized)
-    ? (normalized as Record<string, unknown>)
-    : {};
+  const record =
+    normalized && typeof normalized === "object" && !Array.isArray(normalized)
+      ? (normalized as Record<string, unknown>)
+      : {};
   const summary = typeof record.summary === "string" ? record.summary : "";
   const rawUnits = Array.isArray(record.units) ? record.units : [];
   const units: LtmEvidenceUnit[] = [];
@@ -654,7 +663,10 @@ export function parseEvidenceUnitPayload(raw: unknown, expectedSourceHash: strin
   for (const [index, candidate] of rawUnits.entries()) {
     const parsed = ltmEvidenceUnitSchema.safeParse(candidate);
     if (parsed.success) {
-      units.push(parsed.data);
+      units.push({
+        ...parsed.data,
+        id: deterministicEvidenceUnitId(parsed.data as unknown as Record<string, unknown>, expectedSourceHash),
+      });
       continue;
     }
     droppedCandidates.push({
@@ -750,13 +762,17 @@ async function preflightExtractionPromptContext({
 export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtractionOptions): ChatMessage[] {
   const allowedBuckets = options.allowedBuckets ?? DEFAULT_LTM_EVIDENCE_UNIT_ALLOWED_BUCKETS;
   const filteredScanOrder = LTM_EXTRACTION_BUCKET_SCAN_ORDER.filter((bucket) => allowedBuckets.includes(bucket));
-  const modeDescs = options.mode
-    ? DEFAULT_LTM_STREAM_DESCRIPTIONS_BY_MODE[options.mode]
-    : undefined;
+  const modeDescs = options.mode ? DEFAULT_LTM_STREAM_DESCRIPTIONS_BY_MODE[options.mode] : undefined;
   const allBucketDescriptions: Record<string, string> = {
-    timeline_event: modeDescs?.timeline_event ?? "source-summary scene/plot pivot, decision, action, discovery, fight outcome, promise, arrival, or departure; not the live current scene",
-    character_fact: modeDescs?.character_fact ?? "durable character identity/trait/role/affiliation/backstory/belief/permanent status/development/ability/item/exact voice quote; not ordinary scene action or transient condition",
-    relationship_state: modeDescs?.relationship_state ?? "relationship state or dimension change backed by a caused_by event link or existing relationship note",
+    timeline_event:
+      modeDescs?.timeline_event ??
+      "source-summary scene/plot pivot, decision, action, discovery, fight outcome, promise, arrival, or departure; not the live current scene",
+    character_fact:
+      modeDescs?.character_fact ??
+      "durable character identity/trait/role/affiliation/backstory/belief/permanent status/development/ability/item/exact voice quote; not ordinary scene action or transient condition",
+    relationship_state:
+      modeDescs?.relationship_state ??
+      "relationship state or dimension change backed by a caused_by event link or existing relationship note",
     world_fact: modeDescs?.world_fact ?? "stable world/lore fact",
     thread: modeDescs?.thread ?? "unresolved situation, question, tension, or goal with a clear future resolver",
     tone: modeDescs?.tone ?? "durable world/session atmospheric register or recurring style only",
@@ -799,8 +815,10 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
           salience: "0..1",
           status: "one allowedStatuses value",
           links: "real links only, otherwise []",
-          dimensions: "relationship_state only: optional object with allowedRelationshipDimensions keys and 0..100 integer values",
-          dimensionChanges: "relationship_state only: optional object with allowedRelationshipDimensions keys and -100..100 integer deltas",
+          dimensions:
+            "relationship_state only: optional object with allowedRelationshipDimensions keys and 0..100 integer values",
+          dimensionChanges:
+            "relationship_state only: optional object with allowedRelationshipDimensions keys and -100..100 integer deltas",
           sourceHash: options.sourceHash,
         },
         allowedStreams: allowedBuckets,
@@ -811,7 +829,15 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
           allowedBuckets.map((bucket) => [bucket, bucket === "thread" ? ["active", "resolved"] : ["active"]]),
         ),
         streamScanOrder: filteredScanOrder,
-        allowedTimelineRelations: ["occurred_in", "triggered_by", "resolved_in", "evidenced_by", "caused_by", "affects_relationship", "affects_character"],
+        allowedTimelineRelations: [
+          "occurred_in",
+          "triggered_by",
+          "resolved_in",
+          "evidenced_by",
+          "caused_by",
+          "affects_relationship",
+          "affects_character",
+        ],
         streamDescriptions: filteredBucketDescriptions,
         sourceNote: {
           id: options.sourceNote.id,
@@ -831,9 +857,7 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
           "relationship_state dimension keys must come only from allowedRelationshipDimensions. Put professional curiosity, reputation, gossip, or attention as text/thread/world/timeline facts, not dimensions.",
         ],
         userInstruction: options.instruction?.trim() || undefined,
-        ...(options.candidateUnits?.length
-          ? { candidateUnits: options.candidateUnits }
-          : {}),
+        ...(options.candidateUnits?.length ? { candidateUnits: options.candidateUnits } : {}),
         ...(options.aiKeywordExtraction
           ? {
               keywordInstruction:
@@ -991,10 +1015,7 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
         return [];
       });
       if (rawUnits.length > 0) {
-        const syntheticResponse = normalizeEvidenceUnitResponse(
-          { summary: "", units: rawUnits },
-          options.sourceHash,
-        );
+        const syntheticResponse = normalizeEvidenceUnitResponse({ summary: "", units: rawUnits }, options.sourceHash);
         try {
           const parsed = parseEvidenceUnitPayload(syntheticResponse, options.sourceHash);
           await recordLtmDebugEvent({
@@ -1070,8 +1091,7 @@ export function compileEvidenceUnitExtraction(options: {
     sourceHash: options.sourceHash,
     existingNotes: options.existingNotes,
     allowedBuckets:
-      options.allowedBuckets ??
-      DEFAULT_LTM_ALLOWED_STREAMS_BY_MODE[options.mode ?? options.modes[0] ?? "roleplay"],
+      options.allowedBuckets ?? DEFAULT_LTM_ALLOWED_STREAMS_BY_MODE[options.mode ?? options.modes[0] ?? "roleplay"],
     mode: options.mode,
     modes: options.modes,
     addStructuredUnits: !options.skipStructuredBackfill,
@@ -1087,6 +1107,8 @@ export function compileEvidenceUnitExtraction(options: {
     sourceNote: options.sourceNote,
     existingNotes: options.existingNotes,
     expectedSourceHash: options.sourceHash,
+    allowedBuckets:
+      options.allowedBuckets ?? DEFAULT_LTM_ALLOWED_STREAMS_BY_MODE[options.mode ?? options.modes[0] ?? "roleplay"],
   });
   const keptUnits = validated.keptUnits;
   const dedupResult = deduplicateUnits({
@@ -1111,10 +1133,7 @@ export function compileEvidenceUnitExtraction(options: {
       };
   const { suggestions, ...compiledResponse } = compiled;
   const diagnostics = [...validated.diagnostics, ...dedupResult.diagnostics];
-  const totalCandidates = Math.max(
-    options.totalCandidates ?? 0,
-    normalizedUnits.length + droppedCandidates.length,
-  );
+  const totalCandidates = Math.max(options.totalCandidates ?? 0, normalizedUnits.length + droppedCandidates.length);
   const outcome = summarizeExtractionOutcome({
     totalCandidates,
     keptUnits: dedupResult.deduplicated.length,
@@ -1147,9 +1166,7 @@ function stripMissingOptionalCharacterTimelineLinks({
   return units.map((unit) => {
     if (unit.bucket !== "character_fact" || unit.links.length === 0) return unit;
     const links = unit.links.filter(
-      (link) =>
-        validTargets.has(link.target) ||
-        !OPTIONAL_CHARACTER_TIMELINE_LINK_RELATIONS.has(link.relation),
+      (link) => validTargets.has(link.target) || !OPTIONAL_CHARACTER_TIMELINE_LINK_RELATIONS.has(link.relation),
     );
     return links.length === unit.links.length ? unit : { ...unit, links };
   });
@@ -1182,12 +1199,7 @@ function summarizeExtractionOutcome(input: {
   droppedCandidates: LtmExtractionDroppedCandidate[];
 }): LtmExtractionOutcome {
   const droppedUnits = input.droppedCandidates.length;
-  const state =
-    input.keptUnits > 0
-      ? droppedUnits > 0
-        ? "partial_success"
-        : "success"
-      : "no_suggestions_created";
+  const state = input.keptUnits > 0 ? (droppedUnits > 0 ? "partial_success" : "success") : "no_suggestions_created";
   return {
     state,
     totalCandidates: input.totalCandidates,
@@ -1198,12 +1210,11 @@ function summarizeExtractionOutcome(input: {
 }
 
 export function sourceHashForEvidenceUnitExtraction(note: LtmNote) {
+  const section = note.sections.source ?? note.sections.summary;
   return stableJsonHash({
     noteId: note.id,
-    sections: {
-      source: note.sections.source ?? null,
-      summary: note.sections.summary ?? null,
-    },
+    sourceText: section?.text.trim() ?? "",
+    evidence: Array.from(new Set(section?.evidence ?? [])).sort(),
   });
 }
 

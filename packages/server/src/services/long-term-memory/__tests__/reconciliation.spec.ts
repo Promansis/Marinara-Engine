@@ -1810,10 +1810,10 @@ test("non-thread resolved unit coerces to active and self-heals stuck resolved n
 
     const response = compileLtmEvidenceUnits({
       units: [
-        evidenceUnit("timeline_event", {
+        evidenceUnit("relationship_state", {
           subjectId: "rel_mara_jules",
-          sectionKey: "history",
-          text: "Mara and Jules reconciled after the ordeal.",
+          sectionKey: "state",
+          text: "Mara and Jules remain steady allies after the ordeal.",
           status: "active",
         }),
       ],
@@ -3139,8 +3139,8 @@ test("evidence unit extraction accepts and compiles multiple typed buckets", asy
           {
             id: randomUUID(),
             bucket: "timeline_event",
-            subjectId: "mara_jules",
-            sectionKey: "history",
+            subjectId: "tower_key_trust",
+            sectionKey: "event",
             text: "Mara trusts Jules with the tower key.",
             evidence: ["source_note:scene_source_test"],
             confidence: 0.92,
@@ -3215,7 +3215,7 @@ test("evidence unit extraction accepts and compiles multiple typed buckets", asy
   const createdTypes = compiled.compiledResponse.mutations.flatMap((mutation) =>
     mutation.kind === "create_note" ? [mutation.note.type] : [],
   );
-  assert.deepEqual(new Set(createdTypes), new Set(["relationship", "thread", "world"]));
+  assert.deepEqual(new Set(createdTypes), new Set(["timeline_event", "thread", "world"]));
 });
 
 test("evidence unit extraction recovers a truncated json response", async () => {
@@ -3315,7 +3315,11 @@ test("evidence unit extraction recovers valid units from malformed partial json"
   assert.deepEqual(result.droppedCandidates, []);
   assert.equal(result.response.summary, "");
   assert.equal(result.response.units.length, 1);
-  assert.equal(result.response.units[0]?.id, recoveredUnitId);
+  assert.notEqual(result.response.units[0]?.id, recoveredUnitId);
+  assert.match(
+    result.response.units[0]?.id ?? "",
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+  );
   assert.equal(result.response.units[0]?.bucket, "thread");
   assert.equal(result.response.units[0]?.text, "The lantern hum should pay off later.");
 });
@@ -3577,8 +3581,8 @@ test("relationship state candidates require relationship history support", () =>
       summary: "Supported state",
       units: [
         evidenceUnit("timeline_event", {
-          subjectId: "mara_jules",
-          sectionKey: "history",
+          subjectId: "archive_key_returned",
+          sectionKey: "event",
           text: "Mara trusted Jules after he returned the archive key.",
           evidence: ["source_note:scene_source_test"],
         }),
@@ -3587,6 +3591,7 @@ test("relationship state candidates require relationship history support", () =>
           sectionKey: "state",
           text: "Mara and Jules are rebuilding trust.",
           evidence: ["source_note:scene_source_test"],
+          links: [{ target: "timeline_archive_key_returned", relation: "caused_by" }],
         }),
       ],
     },
@@ -3631,8 +3636,8 @@ test("relationship state support ignores same-pass events dropped during validat
       summary: "Invalid support",
       units: [
         evidenceUnit("timeline_event", {
-          subjectId: "mara_jules",
-          sectionKey: "history",
+          subjectId: "archive_key_returned",
+          sectionKey: "event",
           text: "Mara trusted Jules after he returned the archive key.",
           evidence: ["source_note:wrong_source"],
         }),
@@ -3641,6 +3646,7 @@ test("relationship state support ignores same-pass events dropped during validat
           sectionKey: "state",
           text: "Mara and Jules are rebuilding trust.",
           evidence: ["source_note:scene_source_test"],
+          links: [{ target: "timeline_archive_key_returned", relation: "caused_by" }],
         }),
       ],
     },
@@ -4941,8 +4947,6 @@ test("evidence unit compiler maps buckets to typed memory draft mutations", () =
   const cases: Array<[LtmEvidenceUnit["bucket"], string, string]> = [
     ["timeline_event", "timeline_mara_jules_archive", "timeline_event"],
     ["character_fact", "char_mara", "character"],
-    ["character_fact", "char_mara", "character"],
-    ["timeline_event", "rel_mara_jules", "relationship"],
     ["relationship_state", "rel_mara_jules", "relationship"],
     ["world_fact", "world_veil", "world"],
     ["thread", "thread_missing_key", "thread"],
@@ -4953,7 +4957,18 @@ test("evidence unit compiler maps buckets to typed memory draft mutations", () =
   for (const [bucket, expectedNoteId, expectedType] of cases) {
     const unit = evidenceUnit(bucket, {
       subjectId: expectedNoteId.replace(/^(char|rel|world|thread|timeline|scene|tone)_/, ""),
-      sectionKey: bucket === "anchor" ? "world_anchor" : "facts",
+      sectionKey:
+        bucket === "timeline_event"
+          ? "event"
+          : bucket === "relationship_state"
+            ? "state"
+            : bucket === "thread"
+              ? "summary"
+              : bucket === "tone"
+                ? "observations"
+                : bucket === "anchor"
+                  ? "world_anchor"
+                  : "facts",
     });
     const response = compileLtmEvidenceUnits({
       units: [unit],
@@ -5039,7 +5054,7 @@ test("evidence unit compiler gates low-risk typed-memory suggestions by confiden
   assert.equal(sourceBackedUpdate.mutations[0]?.risk, "low");
 });
 
-test("timeline event units create historical notes and typed memories link to them", async () => {
+test("timeline events create historical notes and relationship state links to them", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-timeline-layer-"));
   try {
     const storage = new LongTermMemoryStorage(root);
@@ -5069,11 +5084,11 @@ test("timeline event units create historical notes and typed memories link to th
         sectionKey: "event",
         text: "Mara confronts Jules in the archive.",
       }),
-      evidenceUnit("timeline_event", {
+      evidenceUnit("relationship_state", {
         subjectId: "mara_jules",
-        sectionKey: "history",
-        text: "Mara trusts Jules with the hidden key during the archive confrontation.",
-        links: [{ target: "timeline_archive_confrontation", relation: "occurred_in" }],
+        sectionKey: "state",
+        text: "Mara and Jules now share guarded trust after the archive confrontation.",
+        links: [{ target: "timeline_archive_confrontation", relation: "caused_by" }],
       }),
     ];
     const response = compileLtmEvidenceUnits({
@@ -5100,7 +5115,7 @@ test("timeline event units create historical notes and typed memories link to th
           mutation.kind === "create_note" &&
           mutation.note.id === "rel_mara_jules" &&
           mutation.note.links.some(
-            (link) => link.target === "timeline_archive_confrontation" && link.relation === "occurred_in",
+            (link) => link.target === "timeline_archive_confrontation" && link.relation === "caused_by",
           ),
       ),
     );
@@ -5127,7 +5142,7 @@ test("timeline event units create historical notes and typed memories link to th
     );
     assert(
       relationship?.links.some(
-        (link) => link.target === "timeline_archive_confrontation" && link.relation === "occurred_in",
+        (link) => link.target === "timeline_archive_confrontation" && link.relation === "caused_by",
       ),
     );
   } finally {
@@ -5166,8 +5181,8 @@ test("evidence unit compiler applies explicit bucket lifecycle rules", () => {
     updatedAt: timestamp,
     links: [],
     sections: {
-      current_state: {
-        text: "Mara is cautious around Jules.",
+      facts: {
+        text: "Mara cannot navigate a sealed archive without a map.",
         updatedAt: timestamp,
         evidence: ["source_note:scene_old"],
       },
@@ -5185,7 +5200,7 @@ test("evidence unit compiler applies explicit bucket lifecycle rules", () => {
     updatedAt: timestamp,
     links: [],
     sections: {
-      setup: {
+      summary: {
         text: "The lantern hum should pay off later.",
         updatedAt: timestamp,
         evidence: ["source_note:scene_old"],
@@ -5197,14 +5212,14 @@ test("evidence unit compiler applies explicit bucket lifecycle rules", () => {
   const response = compileLtmEvidenceUnits({
     units: [
       evidenceUnit("timeline_event", {
-        subjectId: "mara_jules",
-        sectionKey: "history",
+        subjectId: "tower_archive_key_returned",
+        sectionKey: "event",
         text: "Mara trusts Jules again when he returns the tower archive key.",
       }),
       evidenceUnit("character_fact", {
         subjectId: "mara",
-        sectionKey: "current_state",
-        text: "Mara is openly relieved around Jules.",
+        sectionKey: "facts",
+        text: "Mara can navigate sealed archives by touch.",
       }),
       evidenceUnit("thread", {
         subjectId: "lantern",
@@ -5222,7 +5237,9 @@ test("evidence unit compiler applies explicit bucket lifecycle rules", () => {
   assert(
     response.mutations.some(
       (mutation) =>
-        mutation.kind === "append_section" && mutation.noteId === "rel_mara_jules" && mutation.sectionKey === "history",
+        mutation.kind === "create_note" &&
+        mutation.note.id === "timeline_tower_archive_key_returned" &&
+        mutation.note.type === "timeline_event",
     ),
   );
   assert(
@@ -5230,8 +5247,8 @@ test("evidence unit compiler applies explicit bucket lifecycle rules", () => {
       (mutation) =>
         mutation.kind === "update_section" &&
         mutation.noteId === "char_mara" &&
-        mutation.sectionKey === "current_state" &&
-        mutation.section.text === "Mara is openly relieved around Jules.",
+        mutation.sectionKey === "facts" &&
+        mutation.section.text === "Mara can navigate sealed archives by touch.",
     ),
   );
   assert(
@@ -5282,8 +5299,8 @@ test("evidence unit compiler keeps relationship state unchanged when only new ev
   const response = compileLtmEvidenceUnits({
     units: [
       evidenceUnit("timeline_event", {
-        subjectId: "mara_jules",
-        sectionKey: "history",
+        subjectId: "tower_archive_key_returned",
+        sectionKey: "event",
         text: "Mara trusts Jules again when he protects her and returns the tower archive key.",
         salience: 1,
       }),
@@ -5294,34 +5311,34 @@ test("evidence unit compiler keeps relationship state unchanged when only new ev
     createdAt: timestamp,
   });
 
-  const history = response.mutations.find(
-    (mutation) =>
-      mutation.kind === "append_section" && mutation.noteId === "rel_mara_jules" && mutation.sectionKey === "history",
+  assert(
+    response.mutations.some(
+      (mutation) =>
+        mutation.kind === "create_note" && mutation.note.id === "timeline_tower_archive_key_returned",
+    ),
   );
-  assert(history?.kind === "append_section");
-  assert.match(history.text, /Mara trusts Jules again when he protects her and returns the tower archive key/);
   assert.equal(
     response.mutations.some(
       (mutation) =>
-        mutation.kind === "update_section" && mutation.noteId === "rel_mara_jules" && mutation.sectionKey === "state",
+        mutation.kind !== "create_note" && mutation.noteId === "rel_mara_jules",
     ),
     false,
   );
 });
 
-test("evidence unit compiler skips duplicate cumulative lines from overlapping summaries", () => {
-  const existingRelationship: LtmNote = withKeywords({
-    id: "rel_mara_jules",
-    type: "relationship",
+test("evidence unit compiler skips duplicate timeline events from overlapping summaries", () => {
+  const existingTimeline: LtmNote = withKeywords({
+    id: "timeline_archive_key_returned",
+    type: "timeline_event",
     status: "active",
     modes: ["roleplay"],
     scope: {},
-    tags: ["typed_memory", "relationship_memory"],
+    tags: ["typed_memory", "timeline_event"],
     createdAt: timestamp,
     updatedAt: timestamp,
     links: [],
     sections: {
-      history: {
+      event: {
         text: "- Mara trusted Jules after he returned the archive key.",
         updatedAt: timestamp,
         evidence: ["source_note:scene_source_1"],
@@ -5333,13 +5350,13 @@ test("evidence unit compiler skips duplicate cumulative lines from overlapping s
   const response = compileLtmEvidenceUnits({
     units: [
       evidenceUnit("timeline_event", {
-        subjectId: "mara_jules",
-        sectionKey: "history",
+        subjectId: "archive_key_returned",
+        sectionKey: "event",
         text: "mara trusted jules after he returned the archive key",
         evidence: ["source_note:scene_source_2", "message_range:50-100"],
       }),
     ],
-    existingNotes: [existingRelationship],
+    existingNotes: [existingTimeline],
     scope: {},
     modes: ["roleplay"],
     createdAt: timestamp,
@@ -5624,7 +5641,7 @@ test("source extraction updates existing typed note from another source instead 
         type: "scene",
         status: "active",
         modes: ["roleplay"],
-        scope: { chatId: "chat_b" },
+        scope: { chatId: "chat_a" },
         tags: ["source_summary"],
         links: [],
         sections: {
@@ -5667,9 +5684,9 @@ test("source extraction updates existing typed note from another source instead 
       unitResponse: {
         summary: "Second relationship event",
         units: [
-          evidenceUnit("timeline_event", {
+          evidenceUnit("relationship_state", {
             subjectId: "mara_jules",
-            sectionKey: "history",
+            sectionKey: "state",
             text: secondSourceText,
             evidence: ["source_note:scene_source_second"],
             sourceHash: sourceHashForEvidenceUnitExtraction(sourceNote),
@@ -5679,17 +5696,17 @@ test("source extraction updates existing typed note from another source instead 
       sourceText: secondSourceText,
       sourceNote,
       existingNotes: [(await storage.getNote("rel_mara_jules"))!],
-      scope: {},
+      scope: { chatId: "chat_a" },
       modes: ["roleplay"],
       sourceHash: sourceHashForEvidenceUnitExtraction(sourceNote),
     });
     assert.deepEqual(
       compiled.compiledResponse.mutations.map((mutation) => mutation.kind),
-      ["append_section"],
+      ["update_section"],
     );
 
     const draft = await new LongTermMemoryDraftStore(root).createDraft({
-      scope: {},
+      scope: { chatId: "chat_a" },
       modes: ["roleplay"],
       source: {
         sourceNoteId: sourceNote.id,
@@ -5706,10 +5723,7 @@ test("source extraction updates existing typed note from another source instead 
 
     const updated = await storage.getNote("rel_mara_jules");
     assert.match(updated?.sections.history?.text ?? "", /Mara first trusted Jules with the hidden key/);
-    assert.match(
-      updated?.sections.history?.text ?? "",
-      /Mara trusts Jules again when he returns the tower archive key/,
-    );
+    assert.equal(updated?.sections.state?.text, secondSourceText);
     assert(updated?.links.some((link) => link.target === "scene_source_first" && link.relation === "extracted_from"));
     assert(updated?.links.some((link) => link.target === "scene_source_second" && link.relation === "extracted_from"));
   } finally {

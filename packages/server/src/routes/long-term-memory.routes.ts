@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   LOCAL_SIDECAR_CONNECTION_ID,
   ltmConflictSchema,
@@ -57,6 +57,7 @@ import { LongTermMemoryDraftStore } from "../services/long-term-memory/draft-sto
 import {
   checkLongTermMemoryIntegrity,
   createLongTermMemoryInteropSourceNotes,
+  planLongTermMemoryInteropSourceNotes,
   previewLongTermMemoryInterop,
   repairLongTermMemory,
   type LtmInteropSource,
@@ -132,10 +133,9 @@ const removeNoteScopeBodySchema = z
     characterIds: z.array(z.string().min(1).max(120)).max(100).optional(),
   })
   .strict()
-  .refine(
-    (body) => (body.chatIds?.length ?? 0) > 0 || Boolean(body.groupId) || (body.characterIds?.length ?? 0) > 0,
-    { message: "At least one scope link is required." },
-  );
+  .refine((body) => (body.chatIds?.length ?? 0) > 0 || Boolean(body.groupId) || (body.characterIds?.length ?? 0) > 0, {
+    message: "At least one scope link is required.",
+  });
 
 const createNoteBodySchema = z
   .object({
@@ -316,8 +316,6 @@ const debugLogQuerySchema = z
   })
   .strict();
 
-
-
 async function readOptionalJson<T>(index: string, path: string, parse: (value: unknown) => T) {
   try {
     return { value: parse(JSON.parse(await readFile(path, "utf8"))), error: null };
@@ -398,6 +396,38 @@ class LtmExtractionRouteError extends Error {
   }
 }
 
+function requireLtmExtractionModel(model: string | null | undefined) {
+  const resolved = model?.trim();
+  if (!resolved) throw new LtmExtractionRouteError("No model configured for LTM source extraction", 400);
+  return resolved;
+}
+
+function importAbortError() {
+  const error = new Error("Long-term memory import was cancelled.");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfImportAborted(signal: AbortSignal) {
+  if (signal.aborted) throw importAbortError();
+}
+
+function isImportAbortError(error: unknown) {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+async function withImportAbortSignal<T>(request: FastifyRequest, operation: (signal: AbortSignal) => Promise<T>) {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  request.raw.once("aborted", abort);
+  if (request.raw.aborted) abort();
+  try {
+    return await operation(controller.signal);
+  } finally {
+    request.raw.off("aborted", abort);
+  }
+}
+
 export async function longTermMemoryRoutes(app: FastifyInstance) {
   const storage = new LongTermMemoryStorage();
   const draftStore = new LongTermMemoryDraftStore();
@@ -419,7 +449,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     if (connId === LOCAL_SIDECAR_CONNECTION_ID) {
       return {
         provider: getLocalSidecarProvider(),
-        model: body.model ?? LOCAL_SIDECAR_MODEL,
+        model: requireLtmExtractionModel(body.model ?? LOCAL_SIDECAR_MODEL),
       };
     }
 
@@ -447,7 +477,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
         conn.maxTokensOverride,
         conn.claudeFastMode === "true",
       ),
-      model: body.model ?? conn.model,
+      model: requireLtmExtractionModel(body.model ?? conn.model),
     };
   }
 
@@ -939,21 +969,17 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
       if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory source import" })) return;
       const body = interopImportBodySchema.parse(req.body);
       const operationId = randomUUID();
-      const imported = await createLongTermMemoryInteropSourceNotes(app.db, body.source as LtmInteropSource, {
+      const importOptions = {
         sourceIds: body.sourceIds,
         limit: body.limit,
         scope: body.scope,
         mode: body.mode,
         operationId,
-      });
-      const importedSourceNoteCount = imported.imported.length;
-      const results = [];
-      const hasNonGameImports = imported.imported.some(
-        (item) => !item.note.tags.includes("imported_game_journal"),
-      );
+      };
+      const plan = await planLongTermMemoryInteropSourceNotes(app.db, body.source as LtmInteropSource, importOptions);
       let provider: BaseLLMProvider | null = null;
       let model = "";
-      if (hasNonGameImports) {
+      if (plan.requiresExtraction) {
         const resolved = await resolveExtractionProvider(body);
         provider = resolved.provider;
         model = resolved.model;
@@ -962,143 +988,210 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
           phase: "extraction",
           action: "provider_resolved",
           status: "ok",
-          source: imported.source,
+          source: plan.source,
           provider: provider.constructor.name,
           model,
         });
       }
+      return withImportAbortSignal(req, async (signal) => {
+        throwIfImportAborted(signal);
+        const imported = await createLongTermMemoryInteropSourceNotes(app.db, body.source as LtmInteropSource, {
+          ...importOptions,
+          plan,
+        });
+        const importedSourceNoteCount = imported.imported.length;
+        const results = [];
 
-      const importConcurrency = Math.max(body.importConcurrency ?? 3, 1);
+        const importConcurrency = Math.max(body.importConcurrency ?? 3, 1);
 
-      const tasks = imported.imported.map((item) => async () => {
-        try {
-          const isGameJournal = item.note.tags.includes("imported_game_journal");
+        const tasks = imported.imported.map((item) => async () => {
+          try {
+            throwIfImportAborted(signal);
+            const isGameJournal = item.note.tags.includes("imported_game_journal");
 
-          if (isGameJournal) {
-            const directResult = await directIngestGameJournal(app.db, item.note, undefined, operationId, {
-              applyLowRisk: body.applyLowRisk,
+            if (isGameJournal) {
+              const directResult = await directIngestGameJournal(app.db, item.note, undefined, operationId, {
+                applyLowRisk: body.applyLowRisk,
+                signal,
+              });
+              return {
+                sourceId: item.sourceId,
+                title: item.title,
+                note: item.note,
+                created: item.created,
+                sourceWriteStatus: item.created ? ("created" as const) : ("refreshed" as const),
+                extractionStatus: "succeeded" as const,
+                extractionMethod: "direct_ingest" as const,
+                retryable: false,
+                draft: directResult.draft,
+                diagnostics: directResult.diagnostics,
+                outcome: directResult.outcome,
+                appliedMutationIds: directResult.appliedMutationIds,
+                skippedMutationIds: directResult.skippedMutationIds,
+              };
+            }
+
+            if (!provider) {
+              throw new Error("No LLM provider available for non-game source note extraction");
+            }
+            const result = await extractLongTermMemoryFromSourceNote({
+              noteId: item.note.id,
+              provider,
+              model,
+              scope: item.note.scope,
+              modes: item.note.modes,
+              mode: body.mode,
+              instruction: body.instruction,
+              operationId,
+              signal,
+            });
+            throwIfImportAborted(signal);
+            const applyResult =
+              body.applyLowRisk && result.draft
+                ? await applyLongTermMemoryDraft(result.draft.id, {
+                    actor: "maintenance_api",
+                    autoApplyLowRiskOnly: true,
+                    rebuildIndexes: false,
+                    operationId,
+                  })
+                : null;
+
+            return {
+              sourceId: item.sourceId,
+              title: item.title,
+              note: item.note,
+              created: item.created,
+              sourceWriteStatus: item.created ? ("created" as const) : ("refreshed" as const),
+              extractionStatus: "succeeded" as const,
+              extractionMethod: "llm" as const,
+              retryable: false,
+              draft: applyResult?.draft ?? result.draft,
+              diagnostics: result.diagnostics,
+              outcome: result.outcome,
+              appliedMutationIds: applyResult?.appliedMutationIds ?? [],
+              skippedMutationIds: applyResult?.skippedMutationIds ?? [],
+            };
+          } catch (err) {
+            const cancelled = signal.aborted || isImportAbortError(err);
+            const message = err instanceof Error ? err.message : "Failed to extract imported source";
+            await recordLtmDebugEvent({
+              operationId,
+              phase: "extraction",
+              action: "imported_source_extract",
+              status: cancelled ? "warning" : "error",
+              source: imported.source,
+              sourceId: item.sourceId,
+              sourceNoteId: item.note.id,
+              error: err,
             });
             return {
               sourceId: item.sourceId,
               title: item.title,
               note: item.note,
               created: item.created,
-              draft: directResult.draft,
-              diagnostics: directResult.diagnostics,
-              outcome: directResult.outcome,
-              appliedMutationIds: directResult.appliedMutationIds,
-              skippedMutationIds: directResult.skippedMutationIds,
+              sourceWriteStatus: item.created ? ("created" as const) : ("refreshed" as const),
+              extractionStatus: cancelled ? ("cancelled" as const) : ("failed" as const),
+              extractionMethod: item.note.tags.includes("imported_game_journal")
+                ? ("direct_ingest" as const)
+                : ("llm" as const),
+              retryable: true,
+              error: {
+                code: cancelled ? "cancelled" : "extract_failed",
+                message,
+              },
+              draft: null,
+              diagnostics: [
+                {
+                  severity: cancelled ? ("warning" as const) : ("error" as const),
+                  code: cancelled ? "cancelled" : "extract_failed",
+                  message,
+                },
+              ],
+              outcome: {
+                state: "no_suggestions_created",
+                totalCandidates: 0,
+                keptUnits: 0,
+                droppedUnits: 0,
+                droppedCandidates: [],
+              },
+              appliedMutationIds: [],
+              skippedMutationIds: [],
             };
           }
+        });
 
-          if (!provider) {
-            throw new Error("No LLM provider available for non-game source note extraction");
-          }
-          const result = await extractLongTermMemoryFromSourceNote({
-            noteId: item.note.id,
-            provider,
-            model,
-            scope: item.note.scope,
-            modes: item.note.modes,
-            mode: body.mode,
-            instruction: body.instruction,
-            operationId,
-          });
-          const applyResult =
-            body.applyLowRisk && result.draft
-              ? await applyLongTermMemoryDraft(result.draft.id, {
-                  actor: "maintenance_api",
-                  autoApplyLowRiskOnly: true,
-                  rebuildIndexes: false,
-                  operationId,
-                })
-              : null;
-
-          return {
-            sourceId: item.sourceId,
-            title: item.title,
-            note: item.note,
-            created: item.created,
-            draft: applyResult?.draft ?? result.draft,
-            diagnostics: result.diagnostics,
-            outcome: result.outcome,
-            appliedMutationIds: applyResult?.appliedMutationIds ?? [],
-            skippedMutationIds: applyResult?.skippedMutationIds ?? [],
-          };
-        } catch (err) {
-          const message = err instanceof Error ? err.message : "Failed to extract imported source";
-          await recordLtmDebugEvent({
-            operationId,
-            phase: "extraction",
-            action: "imported_source_extract",
-            status: "error",
-            source: imported.source,
-            sourceId: item.sourceId,
-            sourceNoteId: item.note.id,
-            error: err,
-          });
-          return {
-            sourceId: item.sourceId,
-            title: item.title,
-            note: item.note,
-            created: item.created,
-            draft: null,
-            diagnostics: [{ severity: "error", code: "extract_failed", message }],
-            outcome: {
-              state: "no_suggestions_created",
-              totalCandidates: 0,
-              keptUnits: 0,
-              droppedUnits: 0,
-              droppedCandidates: [],
-            },
-            appliedMutationIds: [],
-            skippedMutationIds: [],
-          };
+        for (const result of await withConcurrency(tasks, importConcurrency)) {
+          results.push(result);
         }
-      });
 
-      for (const result of await withConcurrency(tasks, importConcurrency)) {
-        results.push(result);
-      }
+        if (importedSourceNoteCount > 0) {
+          const sourceRebuildResult = await rebuildLongTermMemoryIndexes({ scope: "source" });
+          await recordLtmDebugEvent({
+            root: undefined,
+            operationId,
+            phase: "rebuild",
+            action: "import_batch_source_rebuild",
+            status: "ok",
+            counts: {
+              sourceNotes: importedSourceNoteCount,
+              notes: sourceRebuildResult.noteCount,
+              sourceChunks: sourceRebuildResult.sourceChunkCount,
+            },
+            details: { scope: "source" },
+          });
+        }
 
-      if (importedSourceNoteCount > 0) {
-        const sourceRebuildResult = await rebuildLongTermMemoryIndexes({ scope: "source" });
-        await recordLtmDebugEvent({
-          root: undefined,
+        const totalApplied = results.reduce((sum, result) => sum + result.appliedMutationIds.length, 0);
+        if (totalApplied > 0) {
+          const rebuildResult = await rebuildLongTermMemoryIndexes({ scope: "typed" });
+          await recordLtmDebugEvent({
+            root: undefined,
+            operationId,
+            phase: "rebuild",
+            action: "import_batch_rebuild",
+            status: "ok",
+            counts: {
+              appliedMutations: totalApplied,
+              notes: rebuildResult.noteCount,
+              chunks: rebuildResult.chunkCount,
+            },
+            details: { scope: "typed" },
+          });
+        }
+
+        const succeeded = results.filter((result) => result.extractionStatus === "succeeded").length;
+        const failed = results.filter((result) => result.extractionStatus === "failed").length;
+        const cancelled = results.filter((result) => result.extractionStatus === "cancelled").length;
+        const incomplete = failed + cancelled + plan.missingSourceIds.length + imported.writeFailures.length;
+        const batchStatus =
+          incomplete === 0
+            ? "success"
+            : succeeded > 0
+              ? "partial_success"
+              : cancelled > 0 &&
+                  failed === 0 &&
+                  plan.missingSourceIds.length === 0 &&
+                  imported.writeFailures.length === 0
+                ? "cancelled"
+                : "failed";
+        return {
           operationId,
-          phase: "rebuild",
-          action: "import_batch_source_rebuild",
-          status: "ok",
+          batchStatus,
+          source: imported.source,
+          imported: results,
+          writeFailures: imported.writeFailures,
+          missingSourceIds: plan.missingSourceIds,
           counts: {
-            sourceNotes: importedSourceNoteCount,
-            notes: sourceRebuildResult.noteCount,
-            sourceChunks: sourceRebuildResult.sourceChunkCount,
+            requested: body.sourceIds.length,
+            sourceNotesWritten: importedSourceNoteCount,
+            succeeded,
+            failed,
+            cancelled,
+            missing: plan.missingSourceIds.length,
+            sourceWriteFailed: imported.writeFailures.length,
           },
-          details: { scope: "source" },
-        });
-      }
-
-      const totalApplied = results.reduce((sum, result) => sum + result.appliedMutationIds.length, 0);
-      if (totalApplied > 0) {
-        const rebuildResult = await rebuildLongTermMemoryIndexes({ scope: "typed" });
-        await recordLtmDebugEvent({
-          root: undefined,
-          operationId,
-          phase: "rebuild",
-          action: "import_batch_rebuild",
-          status: "ok",
-          counts: { appliedMutations: totalApplied, notes: rebuildResult.noteCount, chunks: rebuildResult.chunkCount },
-          details: { scope: "typed" },
-        });
-      }
-
-      return {
-        source: imported.source,
-        imported: results,
-        missingSourceIds: body.sourceIds.filter(
-          (sourceId) => !imported.imported.some((item) => item.sourceId === sourceId),
-        ),
-      };
+        };
+      });
     },
   );
 

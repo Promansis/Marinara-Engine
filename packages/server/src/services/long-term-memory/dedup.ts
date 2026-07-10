@@ -42,6 +42,7 @@ export function deduplicateUnits(input: DeduplicateUnitsInput): DeduplicateUnits
     const unitTokens = tokenize(unit.text);
     const candidates = withinExtraction ? [...seenInBatch, ...existingCandidates] : existingCandidates;
     const duplicate = candidates.find((candidate) => {
+      if (candidate.noteId !== noteId || candidate.sectionKey !== unit.sectionKey) return false;
       if (candidate.tokens.size === 0 || unitTokens.size === 0) return false;
       if (exactTextMatch && normalizeText(candidate.text) === unitText) return true;
       if (!hasTokenIntersection(unitTokens, candidate.tokens)) return false;
