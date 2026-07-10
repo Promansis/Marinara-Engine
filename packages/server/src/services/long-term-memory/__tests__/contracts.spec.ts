@@ -9,6 +9,10 @@ import {
   ltmImportSourceNotesRequestSchema,
   ltmInteropPreviewRequestSchema,
   ltmInteropPreviewResponseSchema,
+  ltmIdentityRepairApplyRequestSchema,
+  ltmIdentityRepairApplyResponseSchema,
+  ltmIdentityRepairPreviewRequestSchema,
+  ltmIdentityRepairPreviewResponseSchema,
   ltmRepairRequestSchema,
   ltmRepairResponseSchema,
   ltmGlobalSettingsSchema,
@@ -225,6 +229,139 @@ test("LTM transport contracts - repair preserves action results and remaining in
   );
   assert.equal(
     ltmRepairRequestSchema.safeParse({ actions: ["rebuild_indexes", "rebuild_indexes"] }).success,
+    false,
+  );
+});
+
+test("LTM transport contracts - identity repair preserves preview evidence and selected conflict decisions", () => {
+  const candidateId = "a".repeat(64);
+  const previewRequest = { scope: { chatIds: ["chat_a"] } };
+  const previewResponse = {
+    generatedAt: checkedAt,
+    scope: previewRequest.scope,
+    counts: {
+      analyzedNotes: 2,
+      candidateCount: 1,
+      bindableNotes: 2,
+      duplicateNotes: 1,
+      unresolvedNotes: 0,
+    },
+    candidates: [
+      {
+        id: candidateId,
+        noteType: "relationship",
+        subjects: [
+          { key: "character:lisa", ref: { kind: "character", id: "lisa" } },
+          { key: "persona:damo", ref: { kind: "persona", id: "damo" } },
+        ],
+        subjectNames: ["Lisa", "Damo"],
+        canonicalNoteId: "rel_damo_lisa",
+        duplicateNoteIds: ["rel_lisa_damo"],
+        notes: [
+          {
+            noteId: "rel_damo_lisa",
+            title: "Damo and Lisa",
+            createdAt: checkedAt,
+            basis: "unordered_pair",
+            alreadyBound: false,
+            exactFullName: true,
+          },
+          {
+            noteId: "rel_lisa_damo",
+            title: "Lisa and Damo",
+            createdAt: checkedAt,
+            basis: "unordered_pair",
+            alreadyBound: false,
+            exactFullName: false,
+          },
+        ],
+        matchBasis: ["unordered_pair"],
+        additiveContent: [
+          {
+            sectionKey: "history",
+            addedLines: ["- Lisa defended Damo."],
+            sourceNoteIds: ["rel_lisa_damo"],
+          },
+        ],
+        supersedingConflicts: [
+          {
+            sectionKey: "state",
+            options: [
+              { noteIds: ["rel_damo_lisa"], text: "They trust each other." },
+              { noteIds: ["rel_lisa_damo"], text: "Lisa remains cautious." },
+            ],
+          },
+        ],
+        blockingReasons: [],
+      },
+    ],
+    unresolved: [],
+  };
+
+  assert.deepEqual(ltmIdentityRepairPreviewRequestSchema.parse(previewRequest), previewRequest);
+  assert.deepEqual(ltmIdentityRepairPreviewResponseSchema.parse(previewResponse), previewResponse);
+
+  const applyRequest = {
+    scope: previewRequest.scope,
+    repairs: [
+      {
+        candidateId,
+        canonicalNoteId: "rel_damo_lisa",
+        excludedNoteIds: [],
+        sectionChoices: [{ sectionKey: "state", noteId: "rel_lisa_damo" }],
+      },
+    ],
+  };
+  assert.deepEqual(ltmIdentityRepairApplyRequestSchema.parse(applyRequest), applyRequest);
+  assert.equal(
+    ltmIdentityRepairApplyRequestSchema.safeParse({
+      ...applyRequest,
+      repairs: [{ ...applyRequest.repairs[0], excludedNoteIds: ["rel_damo_lisa"] }],
+    }).success,
+    false,
+  );
+
+  const applyResponse = {
+    repairedAt: checkedAt,
+    backup: { id: "c39ff76d-2893-4fbd-906c-b4d859f463b2", createdAt: checkedAt },
+    repairs: [
+      {
+        candidateId,
+        canonicalNoteId: "rel_damo_lisa",
+        archivedNoteIds: ["rel_lisa_damo"],
+        excludedNoteIds: [],
+        rewrittenNoteCount: 2,
+        rewrittenDraftCount: 1,
+      },
+    ],
+    rebuild: {
+      generatedAt: checkedAt,
+      noteCount: 2,
+      chunkCount: 2,
+      sourceChunkCount: 0,
+      embeddedChunkCount: 0,
+      embeddingsAvailable: false,
+    },
+    integrity: {
+      ok: true,
+      health: "healthy",
+      checkedAt,
+      noteCount: 2,
+      eventCount: 4,
+      issues: [],
+    },
+  };
+  assert.deepEqual(ltmIdentityRepairApplyResponseSchema.parse(applyResponse), applyResponse);
+  assert.equal(
+    ltmIdentityRepairPreviewResponseSchema.safeParse({
+      ...previewResponse,
+      candidates: [
+        {
+          ...previewResponse.candidates[0]!,
+          subjects: [...previewResponse.candidates[0]!.subjects].reverse(),
+        },
+      ],
+    }).success,
     false,
   );
 });

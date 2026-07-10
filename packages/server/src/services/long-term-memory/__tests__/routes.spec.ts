@@ -79,6 +79,8 @@ test("LTM routes — guarded endpoints return 403 from non-loopback without auth
     await expect403("/api/long-term-memory/debug-log", "DELETE");
     await expect403("/api/long-term-memory/rebuild", "POST");
     await expect403("/api/long-term-memory/repair", "POST");
+    await expect403("/api/long-term-memory/identity-repair/preview", "POST");
+    await expect403("/api/long-term-memory/identity-repair/apply", "POST");
   } finally {
     if (app) await app.close();
     if (previousDataDir === undefined) delete process.env.DATA_DIR;
@@ -131,6 +133,15 @@ test("LTM routes — guarded endpoints work from loopback without auth", async (
     });
     assert.equal(drafts.statusCode, 200);
     assert.ok(Array.isArray(JSON.parse(drafts.body)));
+
+    const identityPreview = await app.inject({
+      method: "POST",
+      url: "/api/long-term-memory/identity-repair/preview",
+      remoteAddress: "127.0.0.1",
+      payload: { scope: {} },
+    });
+    assert.equal(identityPreview.statusCode, 200, identityPreview.body);
+    assert.deepEqual(JSON.parse(identityPreview.body).candidates, []);
   } finally {
     if (app) await app.close();
     if (previousDataDir === undefined) delete process.env.DATA_DIR;

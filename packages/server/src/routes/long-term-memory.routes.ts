@@ -20,6 +20,10 @@ import {
   ltmInjectionUiSummarySchema,
   ltmImportSourceNotesRequestSchema,
   ltmImportSourceNotesResponseSchema,
+  ltmIdentityRepairApplyRequestSchema,
+  ltmIdentityRepairApplyResponseSchema,
+  ltmIdentityRepairPreviewRequestSchema,
+  ltmIdentityRepairPreviewResponseSchema,
   ltmIntegrityResponseSchema,
   ltmInteropPreviewRequestSchema,
   ltmInteropPreviewResponseSchema,
@@ -96,12 +100,18 @@ import {
 } from "../services/long-term-memory/note-transfer.js";
 import { withConcurrency } from "../lib/concurrency.js";
 import { loadTrustedLtmSubjectCatalog } from "../services/long-term-memory/subject-identity.js";
+import {
+  applyLtmIdentityRepairs,
+  LtmIdentityRepairError,
+  previewLtmIdentityRepairs,
+} from "../services/long-term-memory/identity-repair.js";
 
 const NOTE_BODY_LIMIT_BYTES = 512 * 1024;
 const DRAFT_BODY_LIMIT_BYTES = 512 * 1024;
 const SEARCH_BODY_LIMIT_BYTES = 128 * 1024;
 const REBUILD_BODY_LIMIT_BYTES = 8 * 1024;
 const MAINTENANCE_BODY_LIMIT_BYTES = 32 * 1024;
+const IDENTITY_REPAIR_BODY_LIMIT_BYTES = 512 * 1024;
 
 const ltmIdentifierSchema = z
   .string()
@@ -958,6 +968,38 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     const body = ltmRepairRequestSchema.parse(req.body);
     return ltmRepairResponseSchema.parse(await repairLongTermMemory(body.actions));
   });
+
+  app.post<{ Body: unknown }>(
+    "/identity-repair/preview",
+    { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES },
+    async (req, reply) => {
+      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory identity repair preview" })) return;
+      const body = ltmIdentityRepairPreviewRequestSchema.parse(req.body ?? {});
+      const catalog = await loadTrustedLtmSubjectCatalog(app.db, body.scope, getLongTermMemoryRoot());
+      return ltmIdentityRepairPreviewResponseSchema.parse(previewLtmIdentityRepairs(catalog, body.scope));
+    },
+  );
+
+  app.post<{ Body: unknown }>(
+    "/identity-repair/apply",
+    { bodyLimit: IDENTITY_REPAIR_BODY_LIMIT_BYTES },
+    async (req, reply) => {
+      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory identity repair" })) return;
+      const body = ltmIdentityRepairApplyRequestSchema.parse(req.body ?? {});
+      try {
+        return ltmIdentityRepairApplyResponseSchema.parse(
+          await applyLtmIdentityRepairs(body, {
+            loadCatalog: () => loadTrustedLtmSubjectCatalog(app.db, body.scope, getLongTermMemoryRoot()),
+          }),
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to repair long-term memory identities";
+        const status = error instanceof LtmIdentityRepairError ? error.statusCode : 500;
+        const code = error instanceof LtmIdentityRepairError ? error.code : "identity_repair_failed";
+        return reply.status(status).send({ error: message, code });
+      }
+    },
+  );
 
   app.post<{ Body: unknown }>("/import/preview", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req) => {
     const body = ltmInteropPreviewRequestSchema.parse(req.body);

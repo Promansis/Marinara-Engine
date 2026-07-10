@@ -63,6 +63,7 @@ import {
   useLtmExtractionResultsStore,
 } from "../../stores/ltm-extraction-results.store";
 import { LongTermMemoryNoteTransferModal } from "../long-term-memory/LongTermMemoryNoteTransferModal";
+import { LongTermMemoryIdentityRepairSection } from "../long-term-memory/LongTermMemoryIdentityRepairSection";
 import {
   readLtmManagedExtractionPrefs,
   type LtmManagedExtractionPrefs,
@@ -1804,7 +1805,26 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
       )}
 
       {tab === "review" && (
-        <Section title="Review" id="ltm-panel-review" labelledBy="ltm-tab-review">
+        <Section title="Review and Repair" id="ltm-panel-review" labelledBy="ltm-tab-review">
+          <LtmNavigatorSelector
+            threads={navigatorThreads}
+            selection={navigatorSelection}
+            activeChatId={activeChatId}
+            scopeLabel={navigatorScopeLabel}
+            query={navigatorQuery}
+            onQueryChange={setNavigatorQuery}
+            onSelect={setNavigatorSelection}
+          />
+
+          <LongTermMemoryIdentityRepairSection
+            scope={navigatorScope}
+            scopeLabel={navigatorScopeLabel}
+            enabled={Boolean(selectedNavigatorThread)}
+          />
+
+          <div className="border-t border-[var(--border)]/70 pt-3">
+            <h3 className="text-sm font-semibold text-[var(--foreground)]">Draft suggestions</h3>
+          </div>
           {reviewError && (
             <QueryFailure
               label="Suggestions"

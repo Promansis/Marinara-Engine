@@ -4,6 +4,10 @@ import {
   ltmExtractSourceNoteResponseSchema,
   ltmImportSourceNotesRequestSchema,
   ltmImportSourceNotesResponseSchema,
+  ltmIdentityRepairApplyRequestSchema,
+  ltmIdentityRepairApplyResponseSchema,
+  ltmIdentityRepairPreviewRequestSchema,
+  ltmIdentityRepairPreviewResponseSchema,
   ltmIntegrityResponseSchema,
   ltmInteropPreviewRequestSchema,
   ltmInteropPreviewResponseSchema,
@@ -17,6 +21,9 @@ import {
   type LtmImportSourceNotesResponse as SharedLtmImportSourceNotesResponse,
   type LtmIntegrityIssue as SharedLtmIntegrityIssue,
   type LtmIntegrityResponse as SharedLtmIntegrityResponse,
+  type LtmIdentityRepairApplyRequest as SharedLtmIdentityRepairApplyRequest,
+  type LtmIdentityRepairApplyResponse as SharedLtmIdentityRepairApplyResponse,
+  type LtmIdentityRepairPreviewResponse as SharedLtmIdentityRepairPreviewResponse,
   type LtmInteropPreviewResponse as SharedLtmInteropPreviewResponse,
   type LtmInteropSource as SharedLtmInteropSource,
   type LtmRepairAction as SharedLtmRepairAction,
@@ -48,6 +55,9 @@ import { api } from "../lib/api-client";
 export type LtmStatusResponse = SharedLtmStatusResponse;
 export type LtmIntegrityIssue = SharedLtmIntegrityIssue;
 export type LtmIntegrityResponse = SharedLtmIntegrityResponse;
+export type LtmIdentityRepairApplyInput = SharedLtmIdentityRepairApplyRequest;
+export type LtmIdentityRepairApplyResponse = SharedLtmIdentityRepairApplyResponse;
+export type LtmIdentityRepairPreview = SharedLtmIdentityRepairPreviewResponse;
 
 export type LtmExtractionSettings = SharedLtmExtractionSettings;
 export type LtmResolvedExtractionSettings = SharedLtmResolvedExtractionSettings;
@@ -196,6 +206,8 @@ export const longTermMemoryKeys = {
   all: ["long-term-memory"] as const,
   status: () => [...longTermMemoryKeys.all, "status"] as const,
   integrity: () => [...longTermMemoryKeys.all, "integrity"] as const,
+  identityRepairPreview: (scope: LtmScope) =>
+    [...longTermMemoryKeys.all, "identity-repair-preview", scope] as const,
   notes: (filter?: LtmNoteFilter) => [...longTermMemoryKeys.all, "notes", filter ?? {}] as const,
   note: (id: string) => [...longTermMemoryKeys.all, "notes", id] as const,
   drafts: (filter?: LtmDraftFilter) => [...longTermMemoryKeys.all, "drafts", filter ?? {}] as const,
@@ -318,6 +330,23 @@ export function useLongTermMemoryIntegrity(options: { enabled?: boolean } = {}) 
   return useQuery({
     queryKey: longTermMemoryKeys.integrity(),
     queryFn: async () => ltmIntegrityResponseSchema.parse(await api.get<unknown>("/long-term-memory/integrity")),
+    enabled: options.enabled ?? true,
+    staleTime: 30_000,
+  });
+}
+
+export function useLongTermMemoryIdentityRepairPreview(
+  scope: LtmScope,
+  options: { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: longTermMemoryKeys.identityRepairPreview(scope),
+    queryFn: async () => {
+      const body = ltmIdentityRepairPreviewRequestSchema.parse({ scope });
+      return ltmIdentityRepairPreviewResponseSchema.parse(
+        await api.post<unknown>("/long-term-memory/identity-repair/preview", body),
+      );
+    },
     enabled: options.enabled ?? true,
     staleTime: 30_000,
   });
@@ -606,6 +635,19 @@ export function useRepairLongTermMemory() {
     mutationFn: async (actions: SharedLtmRepairAction[]) => {
       const body = ltmRepairRequestSchema.parse({ actions });
       return ltmRepairResponseSchema.parse(await api.post<unknown>("/long-term-memory/repair", body));
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
+  });
+}
+
+export function useApplyLongTermMemoryIdentityRepairs() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: LtmIdentityRepairApplyInput) => {
+      const body = ltmIdentityRepairApplyRequestSchema.parse(input);
+      return ltmIdentityRepairApplyResponseSchema.parse(
+        await api.post<unknown>("/long-term-memory/identity-repair/apply", body),
+      );
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
   });

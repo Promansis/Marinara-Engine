@@ -18,6 +18,7 @@ import {
   ltmDraftNoteInputSchema,
   getLtmScopeChatIds,
   matchesLtmScope,
+  uniqueLinks,
   withMergedLtmScopeLinks,
   type LtmScope,
   type LtmEvent,
@@ -121,7 +122,7 @@ function idForChangedType(id: string, type: LtmNoteType) {
 }
 
 function rewriteLinks(links: LtmNote["links"], fromId: string, toId: string) {
-  return links.map((link) => (link.target === fromId ? { ...link, target: toId } : link));
+  return uniqueLinks(links.map((link) => (link.target === fromId ? { ...link, target: toId } : link)));
 }
 
 function rewriteDraftMutationNoteIds(mutation: unknown, fromId: string, toId: string) {
@@ -407,6 +408,21 @@ export class LongTermMemoryStorage {
         return next;
       }),
     );
+  }
+
+  async redirectReferences(fromId: string, toId: string, eventContext: LtmEventContext = {}) {
+    await this.initializeLtmStore();
+    const parsedFromId = ltmNoteIdSchema.parse(fromId);
+    const parsedToId = ltmNoteIdSchema.parse(toId);
+    if (parsedFromId === parsedToId) return { rewrittenNoteCount: 0, rewrittenDraftCount: 0 };
+    if (!(await this.getNote(parsedToId))) {
+      throw new Error(`Long-term memory replacement note does not exist: ${parsedToId}`);
+    }
+
+    const draftRewrites = await this.prepareDraftReferenceRewrites(parsedFromId, parsedToId);
+    const rewrittenNoteCount = await this.rewriteNoteReferences(parsedFromId, parsedToId, eventContext);
+    await this.writePreparedDraftRewrites(draftRewrites);
+    return { rewrittenNoteCount, rewrittenDraftCount: draftRewrites.length };
   }
 
   async archiveNote(id: string, eventContext: LtmEventContext = {}) {

@@ -4,6 +4,7 @@ import {
   isGlobalLtmScope,
   type LtmEvidenceUnit,
   type LtmExtractionDroppedCandidate,
+  type LtmIdentityMatchBasis,
   type LtmNote,
   type LtmScope,
   type LtmSubject,
@@ -43,6 +44,21 @@ export type LtmSubjectIdentityResolution = {
   diagnostics: LtmExtractionDiagnostic[];
   droppedCandidates: LtmExtractionDroppedCandidate[];
   legacyBindings: Map<string, LtmSubject[]>;
+};
+
+export type TrustedLtmNoteSubjectMatch = {
+  note: LtmNote;
+  subjects: LtmSubject[];
+  entries: TrustedLtmSubjectCatalogEntry[];
+  basis: LtmIdentityMatchBasis;
+  exactFullName: boolean;
+};
+
+export type TrustedLtmNoteSubjectIssue = {
+  note: LtmNote;
+  reason: "ambiguous" | "untrusted" | "invalid_cardinality";
+  basis: string;
+  candidateSubjectKeys: string[];
 };
 
 type CatalogIndex = {
@@ -194,6 +210,103 @@ export function trustedLtmSubjectPromptCatalog(catalog: TrustedLtmSubjectCatalog
     }),
     ...(entry.subject.ref ? { ref: entry.subject.ref } : {}),
   }));
+}
+
+export function analyzeTrustedLtmNoteSubjects(catalog: TrustedLtmSubjectCatalog): {
+  matches: TrustedLtmNoteSubjectMatch[];
+  unresolved: TrustedLtmNoteSubjectIssue[];
+} {
+  const index = buildCatalogIndex(catalog);
+  const matches: TrustedLtmNoteSubjectMatch[] = [];
+  const unresolved: TrustedLtmNoteSubjectIssue[] = [];
+
+  for (const note of catalog.notes.filter((candidate) => candidate.status !== "archived")) {
+    const expectedSubjects = note.type === "character" ? 1 : 2;
+    if (note.subjects) {
+      const entries = note.subjects.map((subject) => index.byKey.get(subject.key));
+      if (
+        note.subjects.length !== expectedSubjects ||
+        new Set(note.subjects.map((subject) => subject.key)).size !== expectedSubjects ||
+        entries.some((entry) => !entry)
+      ) {
+        unresolved.push({
+          note,
+          reason: "invalid_cardinality",
+          basis: "bound_subjects",
+          candidateSubjectKeys: note.subjects.map((subject) => subject.key),
+        });
+        continue;
+      }
+      const resolvedEntries = entries as TrustedLtmSubjectCatalogEntry[];
+      matches.push({
+        note,
+        subjects: sortSubjects(resolvedEntries.map((entry) => entry.subject)),
+        entries: resolvedEntries,
+        basis: "bound_subjects",
+        exactFullName: isExactRepairIdentityNote(
+          note,
+          resolvedEntries,
+          canonicalNoteIdForEntries(resolvedEntries, note.type === "character" ? "character_fact" : "relationship_state"),
+        ),
+      });
+      continue;
+    }
+
+    const identifiers = uniqueStrings([
+      note.title ? normalizeSubjectIdentifier(note.title, "") : "",
+      stripNotePrefix(note.id),
+    ]);
+    const attempts = identifiers.map((identifier) =>
+      note.type === "character" ? matchLegacyCharacter(index, identifier) : matchRelationship(index, identifier),
+    );
+    const matchedBySubjects = new Map<string, Extract<SubjectMatch, { status: "matched" }>>();
+    for (const attempt of attempts) {
+      if (attempt.status !== "matched") continue;
+      const identityKey = attempt.entries.map(subjectEntryKey).sort().join("\u0000");
+      const current = matchedBySubjects.get(identityKey);
+      if (!current || identityBasisPriority(attempt.basis) < identityBasisPriority(current.basis)) {
+        matchedBySubjects.set(identityKey, attempt);
+      }
+    }
+
+    if (matchedBySubjects.size === 1) {
+      const match = [...matchedBySubjects.values()][0]!;
+      const bucket = note.type === "character" ? "character_fact" : "relationship_state";
+      matches.push({
+        note,
+        subjects: sortSubjects(match.entries.map((entry) => entry.subject)),
+        entries: match.entries,
+        basis: publicIdentityMatchBasis(match.basis),
+        exactFullName: isExactRepairIdentityNote(note, match.entries, canonicalNoteIdForEntries(match.entries, bucket)),
+      });
+      continue;
+    }
+
+    const ambiguous = attempts.filter((attempt): attempt is Extract<SubjectMatch, { status: "ambiguous" }> =>
+      attempt.status === "ambiguous",
+    );
+    const cardinality = attempts.filter((attempt): attempt is Extract<SubjectMatch, { status: "cardinality" }> =>
+      attempt.status === "cardinality",
+    );
+    unresolved.push({
+      note,
+      reason: matchedBySubjects.size > 1 || ambiguous.length > 0
+        ? "ambiguous"
+        : cardinality.length > 0
+          ? "invalid_cardinality"
+          : "untrusted",
+      basis:
+        matchedBySubjects.size > 1
+          ? "conflicting_identifiers"
+          : ambiguous[0]?.basis ?? cardinality[0]?.basis ?? attempts[0]?.basis ?? "name",
+      candidateSubjectKeys: uniqueStrings([
+        ...ambiguous.flatMap((attempt) => attempt.keys.flatMap((key) => key.split("\u0000"))),
+        ...[...matchedBySubjects.values()].flatMap((attempt) => attempt.entries.map(subjectEntryKey)),
+      ]),
+    });
+  }
+
+  return { matches, unresolved };
 }
 
 export function resolveLtmSubjectIdentities({
@@ -457,6 +570,20 @@ function matchLegacyCharacter(index: CatalogIndex, identifier: string) {
   return direct.status === "untrusted" ? matchTraitPrefix(index, identifier) : direct;
 }
 
+function publicIdentityMatchBasis(basis: string): LtmIdentityMatchBasis {
+  if (basis === "exact_name") return "exact_name";
+  if (basis === "unique_alias") return "unique_alias";
+  if (basis === "trait_or_qualified_alias") return "trait_or_qualified_alias";
+  return "unordered_pair";
+}
+
+function identityBasisPriority(basis: string) {
+  if (basis === "exact_name") return 0;
+  if (basis === "unique_alias") return 1;
+  if (basis === "trait_or_qualified_alias") return 2;
+  return 3;
+}
+
 function chooseIdentityTarget(
   notes: LtmNote[],
   legacyBindings: Map<string, LtmSubject[]>,
@@ -481,6 +608,17 @@ function isExactIdentityNote(note: LtmNote, entries: TrustedLtmSubjectCatalogEnt
   if (note.id === canonicalId) return true;
   if (entries.length !== 1 || !note.title) return false;
   return normalizeSubjectIdentifier(note.title, "") === normalizeSubjectIdentifier(entries[0]!.name, "");
+}
+
+function isExactRepairIdentityNote(note: LtmNote, entries: TrustedLtmSubjectCatalogEntry[], canonicalId: string) {
+  if (note.type === "character") {
+    return Boolean(
+      entries.length === 1 &&
+      note.title &&
+      normalizeSubjectIdentifier(note.title, "") === normalizeSubjectIdentifier(entries[0]!.name, ""),
+    );
+  }
+  return note.id === canonicalId;
 }
 
 function resolveIdentityLinkTarget(
