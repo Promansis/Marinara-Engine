@@ -1,37 +1,49 @@
+import { randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
-import type { LtmIndexMetadata } from "@marinara-engine/shared";
+import type {
+  LtmEmbeddingIndex,
+  LtmEmbeddingIndexEntry,
+  LtmIndexGenerationManifest,
+  LtmIndexMetadata,
+} from "@marinara-engine/shared";
 import { logger } from "../../lib/logger.js";
 import { isEnoent } from "./ltm-utils.js";
 import { embedMemoryRecallTexts, type MemoryRecallEmbeddingOptions } from "../memory-recall.js";
 import { writeJsonAtomic } from "./atomic-json.js";
-import { buildLtmBm25Index, type LtmBm25Index } from "./bm25.js";
+import { buildLtmBm25Index } from "./bm25.js";
 import {
   CURRENT_LTM_CHUNK_FORMAT_VERSION,
   chunkNotes,
   stableJsonHash,
   type LtmMemoryChunk,
 } from "./chunking.js";
-import { buildLtmGraphIndex, type LtmGraphIndex } from "./graph.js";
-import { buildLtmKeywordIndex, type LtmKeywordIndex } from "./keyword-index.js";
-import { buildLtmMetadataIndex, type LtmMetadataIndex } from "./metadata-index.js";
+import { buildLtmGraphIndex } from "./graph.js";
+import {
+  loadLtmIndexFamily,
+  pruneLtmIndexGenerations,
+  publishLtmIndexGeneration,
+  removeLtmIndexGeneration,
+  writeLtmIndexFamilyGeneration,
+  writeLtmIndexGenerationManifest,
+  writeLtmLegacyIndexFamily,
+  type LtmIndexFamilyBundle,
+} from "./index-generation.js";
+import { buildLtmKeywordIndex } from "./keyword-index.js";
+import {
+  beginLtmIndexRebuild,
+  completeLtmIndexRebuild,
+  failLtmIndexRebuild,
+  markLtmIndexesDirty,
+  readLtmIndexState,
+  withLtmIndexRebuildLock,
+} from "./index-state.js";
+import { buildLtmMetadataIndex } from "./metadata-index.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
 import { invalidateLongTermMemoryRetrievalCache } from "./retrieval.js";
 import { LongTermMemoryStorage } from "./storage.js";
 
-export interface LtmEmbeddingIndexEntry {
-  chunkId: string;
-  sourceHash: string;
-  vector?: number[];
-}
-
-export interface LtmEmbeddingIndex {
-  version: 1;
-  model: string;
-  dimension: number | null;
-  embeddedChunkCount: number;
-  chunks: LtmEmbeddingIndexEntry[];
-}
+export type { LtmEmbeddingIndex, LtmEmbeddingIndexEntry } from "@marinara-engine/shared";
 
 export interface LtmRebuildResult {
   root: string;
@@ -42,6 +54,7 @@ export interface LtmRebuildResult {
   embeddedChunkCount: number;
   embeddingsAvailable: boolean;
   manifest: LtmIndexMetadata;
+  generation: LtmIndexGenerationManifest;
 }
 
 export interface LtmRebuildOptions extends MemoryRecallEmbeddingOptions {
@@ -51,6 +64,10 @@ export interface LtmRebuildOptions extends MemoryRecallEmbeddingOptions {
 }
 
 export type LtmRebuildScope = "all" | "typed" | "source";
+
+const MAX_REBUILD_ATTEMPTS = 3;
+
+class LtmIndexSnapshotChangedError extends Error {}
 
 async function listFiles(root: string): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true }).catch((err) => {
@@ -72,11 +89,9 @@ async function listFiles(root: string): Promise<string[]> {
   return files.sort((a, b) => a.localeCompare(b));
 }
 
-async function hashSourceFiles(root: string) {
+export async function hashLongTermMemoryVaultFiles(root: string) {
   const dirs = getLongTermMemoryDirectories(root);
-  const files = [...(await listFiles(dirs.vault)), ...(await listFiles(dirs.config))].sort((a, b) =>
-    a.localeCompare(b),
-  );
+  const files = (await listFiles(dirs.vault)).sort((a, b) => a.localeCompare(b));
 
   const hashes: Record<string, string> = {};
   for (const file of files) {
@@ -133,26 +148,20 @@ function includesSourceIndexes(scope: LtmRebuildScope) {
   return scope === "all" || scope === "source";
 }
 
-async function writeTypedIndexes(root: string, notes: Awaited<ReturnType<LongTermMemoryStorage["listNotes"]>>, options: MemoryRecallEmbeddingOptions) {
+async function buildTypedIndexes(
+  notes: Awaited<ReturnType<LongTermMemoryStorage["listNotes"]>>,
+  options: MemoryRecallEmbeddingOptions,
+) {
   const chunks = chunkNotes(notes);
   const embeddings = await buildEmbeddingIndex(chunks, options);
   const bm25 = buildLtmBm25Index(chunks);
   const graph = buildLtmGraphIndex(notes, chunks);
   const metadata = buildLtmMetadataIndex(chunks);
   const keywords = buildLtmKeywordIndex(chunks);
-  const dirs = getLongTermMemoryDirectories(root);
-
-  await writeJsonAtomic(safeJoin(dirs.indexes, "embeddings.json"), embeddings);
-  await writeJsonAtomic(safeJoin(dirs.indexes, "bm25.json"), bm25 satisfies LtmBm25Index);
-  await writeJsonAtomic(safeJoin(dirs.indexes, "graph.json"), graph satisfies LtmGraphIndex);
-  await writeJsonAtomic(safeJoin(dirs.indexes, "metadata.json"), metadata satisfies LtmMetadataIndex);
-  await writeJsonAtomic(safeJoin(dirs.indexes, "keywords.json"), keywords satisfies LtmKeywordIndex);
-
-  return { chunks, embeddings };
+  return { chunks, bundle: { metadata, bm25, graph, keywords, embeddings } satisfies LtmIndexFamilyBundle };
 }
 
-async function writeSourceIndexes(
-  root: string,
+async function buildSourceIndexes(
   notes: Awaited<ReturnType<LongTermMemoryStorage["listNotes"]>>,
   options: MemoryRecallEmbeddingOptions,
 ) {
@@ -162,32 +171,58 @@ async function writeSourceIndexes(
   const graph = buildLtmGraphIndex(notes, chunks);
   const metadata = buildLtmMetadataIndex(chunks);
   const keywords = buildLtmKeywordIndex(chunks);
-  const dirs = getLongTermMemoryDirectories(root);
-
-  await writeJsonAtomic(safeJoin(dirs.indexes, "source-embeddings.json"), embeddings);
-  await writeJsonAtomic(safeJoin(dirs.indexes, "source-bm25.json"), bm25 satisfies LtmBm25Index);
-  await writeJsonAtomic(safeJoin(dirs.indexes, "source-graph.json"), graph satisfies LtmGraphIndex);
-  await writeJsonAtomic(safeJoin(dirs.indexes, "source-metadata.json"), metadata satisfies LtmMetadataIndex);
-  await writeJsonAtomic(safeJoin(dirs.indexes, "source-keywords.json"), keywords satisfies LtmKeywordIndex);
-
-  return { chunks, embeddings };
+  return { chunks, bundle: { metadata, bm25, graph, keywords, embeddings } satisfies LtmIndexFamilyBundle };
 }
 
 export async function rebuildLongTermMemoryIndexes(options: LtmRebuildOptions = {}): Promise<LtmRebuildResult> {
   const root = options.root ?? getLongTermMemoryRoot();
+  return withLtmIndexRebuildLock(root, async () => {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.initializeLtmStore();
+    let lastSnapshotError: unknown = null;
+    for (let attempt = 0; attempt < MAX_REBUILD_ATTEMPTS; attempt += 1) {
+      const state = await beginLtmIndexRebuild(root);
+      try {
+        return await rebuildLongTermMemoryIndexesAttempt(options, root, storage, state.revision);
+      } catch (err) {
+        if (err instanceof LtmIndexSnapshotChangedError) {
+          lastSnapshotError = err;
+          continue;
+        }
+        await failLtmIndexRebuild(root, err);
+        throw err;
+      }
+    }
+    const error = lastSnapshotError ?? new Error("Long-term memory vault kept changing during index rebuild.");
+    await failLtmIndexRebuild(root, error);
+    throw error;
+  });
+}
+
+async function rebuildLongTermMemoryIndexesAttempt(
+  options: LtmRebuildOptions,
+  root: string,
+  storage: LongTermMemoryStorage,
+  expectedRevision: number,
+): Promise<LtmRebuildResult> {
   const generatedAt = options.generatedAt ?? new Date().toISOString();
   const scope = options.scope ?? "all";
-  const storage = new LongTermMemoryStorage(root);
-  await storage.initializeLtmStore();
-
+  const beforeSnapshotFiles = await hashLongTermMemoryVaultFiles(root);
   const notes = await storage.listNotes();
+  const sourceFiles = await hashLongTermMemoryVaultFiles(root);
+  if (stableJsonHash(beforeSnapshotFiles) !== stableJsonHash(sourceFiles)) {
+    throw new LtmIndexSnapshotChangedError("Long-term memory vault changed while taking the rebuild snapshot.");
+  }
+
   const typedChunks = chunkNotes(notes);
   const sourceChunks = chunkNotes(notes, { sourceNotesOnly: true });
-  const typedResult = includesTypedIndexes(scope) ? await writeTypedIndexes(root, notes, options) : null;
-  if (includesSourceIndexes(scope)) {
-    await writeSourceIndexes(root, notes, options);
-  }
-  const sourceFiles = await hashSourceFiles(root);
+  const typedResult = includesTypedIndexes(scope) ? await buildTypedIndexes(notes, options) : null;
+  const sourceResult = includesSourceIndexes(scope) ? await buildSourceIndexes(notes, options) : null;
+  const previousTyped = typedResult ? null : await loadLtmIndexFamily(root, "typed");
+  const previousSource = sourceResult ? null : await loadLtmIndexFamily(root, "source");
+  const typedBundle = typedResult?.bundle ?? previousTyped?.bundle ?? null;
+  const sourceBundle = sourceResult?.bundle ?? previousSource?.bundle ?? null;
+  const generationId = randomUUID();
   const sourceHash = stableJsonHash(sourceFiles);
   const manifest: LtmIndexMetadata = {
     version: 1,
@@ -198,23 +233,89 @@ export async function rebuildLongTermMemoryIndexes(options: LtmRebuildOptions = 
     chunkCount: typedChunks.length,
     files: sourceFiles,
   };
-
   const dirs = getLongTermMemoryDirectories(root);
-  await writeJsonAtomic(safeJoin(dirs.indexes, "manifest.json"), manifest);
-  if (scope === "all") {
-    invalidateLongTermMemoryRetrievalCache(root);
-  } else {
-    invalidateLongTermMemoryRetrievalCache(root, scope === "source");
-  }
+  const generationFamilies: LtmIndexGenerationManifest["families"] = {};
+  let published = false;
 
-  return {
-    root,
-    generatedAt,
-    noteCount: notes.length,
-    chunkCount: typedChunks.length,
-    sourceChunkCount: sourceChunks.length,
-    embeddedChunkCount: typedResult?.embeddings.embeddedChunkCount ?? 0,
-    embeddingsAvailable: Boolean(typedResult?.embeddings.embeddedChunkCount),
-    manifest,
-  };
+  try {
+    await assertLtmSnapshotCurrent(root, sourceHash, expectedRevision);
+    if (typedBundle) {
+      generationFamilies.typed = {
+        chunkCount: Object.keys(typedBundle.metadata.chunks).length,
+        embeddedChunkCount: typedBundle.embeddings.embeddedChunkCount,
+        files: await writeLtmIndexFamilyGeneration(root, generationId, "typed", typedBundle),
+      };
+    }
+    if (sourceBundle) {
+      generationFamilies.source = {
+        chunkCount: Object.keys(sourceBundle.metadata.chunks).length,
+        embeddedChunkCount: sourceBundle.embeddings.embeddedChunkCount,
+        files: await writeLtmIndexFamilyGeneration(root, generationId, "source", sourceBundle),
+      };
+    }
+
+    const generation = await writeLtmIndexGenerationManifest(root, {
+      version: 2,
+      generationId,
+      generatedAt,
+      chunkFormatVersion: CURRENT_LTM_CHUNK_FORMAT_VERSION,
+      sourceHash,
+      noteCount: notes.length,
+      chunkCount: typedChunks.length,
+      sourceChunkCount: sourceChunks.length,
+      sourceFiles,
+      families: generationFamilies,
+    });
+
+    if (typedBundle) await writeLtmLegacyIndexFamily(root, "typed", typedBundle);
+    if (sourceBundle) await writeLtmLegacyIndexFamily(root, "source", sourceBundle);
+    await writeJsonAtomic(safeJoin(dirs.indexes, "manifest.json"), manifest);
+    await assertLtmSnapshotCurrent(root, sourceHash, expectedRevision);
+    await publishLtmIndexGeneration(root, {
+      version: 1,
+      generationId,
+      publishedAt: new Date().toISOString(),
+    });
+    published = true;
+    const currentSourceHash = stableJsonHash(await hashLongTermMemoryVaultFiles(root));
+    if (currentSourceHash !== sourceHash) {
+      await markLtmIndexesDirty(root);
+      throw new LtmIndexSnapshotChangedError("Long-term memory vault changed during index publication.");
+    }
+    const completedState = await completeLtmIndexRebuild(root, expectedRevision, generationId);
+    if (completedState.dirty) {
+      throw new LtmIndexSnapshotChangedError("Long-term memory vault changed during index publication.");
+    }
+
+    if (scope === "all") {
+      invalidateLongTermMemoryRetrievalCache(root);
+    } else {
+      invalidateLongTermMemoryRetrievalCache(root, scope === "source");
+    }
+    await pruneLtmIndexGenerations(root).catch((err) => {
+      logger.warn(err, "[ltm] Failed to prune old index generations");
+    });
+
+    return {
+      root,
+      generatedAt,
+      noteCount: notes.length,
+      chunkCount: typedChunks.length,
+      sourceChunkCount: sourceChunks.length,
+      embeddedChunkCount: typedResult?.bundle.embeddings.embeddedChunkCount ?? 0,
+      embeddingsAvailable: Boolean(typedResult?.bundle.embeddings.embeddedChunkCount),
+      manifest,
+      generation,
+    };
+  } catch (err) {
+    if (!published) await removeLtmIndexGeneration(root, generationId).catch(() => {});
+    throw err;
+  }
+}
+
+async function assertLtmSnapshotCurrent(root: string, sourceHash: string, expectedRevision: number) {
+  const [currentFiles, state] = await Promise.all([hashLongTermMemoryVaultFiles(root), readLtmIndexState(root)]);
+  if (state.revision !== expectedRevision || stableJsonHash(currentFiles) !== sourceHash) {
+    throw new LtmIndexSnapshotChangedError("Long-term memory vault changed during index rebuild.");
+  }
 }

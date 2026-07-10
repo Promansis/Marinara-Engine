@@ -9,6 +9,7 @@ import { buildApp } from "../../../app.js";
 import { logger } from "../../../lib/logger.js";
 import { LongTermMemoryDraftStore } from "../draft-store.js";
 import { getLongTermMemoryDirectories } from "../paths.js";
+import { rebuildLongTermMemoryIndexes } from "../rebuild.js";
 import { LongTermMemoryStorage } from "../storage.js";
 
 const bulkDeleteTimestamp = "2026-07-08T00:00:00.000Z";
@@ -130,6 +131,55 @@ test("LTM routes — guarded endpoints work from loopback without auth", async (
     });
     assert.equal(drafts.statusCode, 200);
     assert.ok(Array.isArray(JSON.parse(drafts.body)));
+  } finally {
+    if (app) await app.close();
+    if (previousDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = previousDataDir;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("LTM routes — status reports validated generation health and rebuild state", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "marinara-ltm-routes-status-generation-"));
+  const previousDataDir = process.env.DATA_DIR;
+
+  delete process.env.BASIC_AUTH_USER;
+  delete process.env.BASIC_AUTH_PASS;
+  delete process.env.ADMIN_SECRET;
+  process.env.DATA_DIR = dataDir;
+
+  let app: Awaited<ReturnType<typeof buildApp>> | null = null;
+  try {
+    const storage = new LongTermMemoryStorage();
+    await storage.createNote(
+      bulkDeleteNote({
+        id: "world_status_generation",
+        type: "world",
+        sections: { facts: { text: "A validated status memory.", updatedAt: bulkDeleteTimestamp } },
+      }),
+      { suppressEvent: true },
+    );
+    const rebuild = await rebuildLongTermMemoryIndexes({
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+    app = await buildApp();
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/long-term-memory/status",
+      remoteAddress: "127.0.0.1",
+    });
+
+    assert.equal(response.statusCode, 200, response.body);
+    const indexes = JSON.parse(response.body).indexes;
+    assert.equal(indexes.health, "healthy");
+    assert.equal(indexes.generationId, rebuild.generation.generationId);
+    assert.equal(indexes.recovered, false);
+    assert.equal(indexes.dirty, false);
+    assert.equal(indexes.rebuildState, "idle");
+    assert.equal(indexes.chunkFormatVersion, 3);
+    assert.equal(indexes.manifestAvailable, true);
+    assert.deepEqual(indexes.errors, []);
   } finally {
     if (app) await app.close();
     if (previousDataDir === undefined) delete process.env.DATA_DIR;

@@ -198,6 +198,7 @@ export function buildGenerationLongTermMemoryPlan(
     queryText,
     lastUserMessageText,
     retrievalInput: {
+      mode: ltmModeForChatMode(input.chatMode),
       queryText,
       recentUserMessage: lastUserMessageText || undefined,
       recentMessages: input.inputMessages

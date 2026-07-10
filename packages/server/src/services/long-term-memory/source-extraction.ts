@@ -65,6 +65,7 @@ async function getExistingTypedNotes(options: {
   sourceNoteId: string;
   sourceText: string;
   scope: LtmScope;
+  mode?: LtmMode;
   maxChunks: number;
   maxTokens: number;
   embeddingSource?: RetrieveLongTermMemoryInput["embeddingSource"];
@@ -73,6 +74,7 @@ async function getExistingTypedNotes(options: {
     root: options.root,
     queryText: options.sourceText,
     scope: options.scope,
+    mode: options.mode,
     characterIds: options.scope.characterIds,
     includeSourceNotes: false,
     maxChunks: options.maxChunks,
@@ -169,6 +171,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
     sourceNoteId: sourceNote.id,
     sourceText,
     scope,
+    mode: resolvedMode,
     maxChunks: LTM_EXTRACTION_EXISTING_NOTE_CANDIDATE_CHUNKS,
     maxTokens: extractionConfig.existingNoteMaxTokens,
     embeddingSource: options.embeddingSource,

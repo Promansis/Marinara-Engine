@@ -26,6 +26,7 @@ import {
 } from "@marinara-engine/shared";
 import { appendJsonLineAtomic, createJsonFileExclusive, readJsonFile, writeJsonAtomic } from "./atomic-json.js";
 import { DEFAULT_LTM_POLICIES, DEFAULT_LTM_RETRIEVAL_CONFIG } from "./default-config.js";
+import { markLtmIndexesDirty } from "./index-state.js";
 import { parseStoredLtmNote } from "./stored-note.js";
 import {
   getLongTermMemoryDirectories,
@@ -198,6 +199,12 @@ export class LongTermMemoryStorage {
     return getLongTermMemoryDirectories(this.root);
   }
 
+  private async markIndexesDirty() {
+    await markLtmIndexesDirty(this.root).catch((err) => {
+      logger.warn(err, "[ltm] Failed to mark indexes dirty after a vault write");
+    });
+  }
+
   async initializeLtmStore() {
     const existingLock = initLocks.get(this.root);
     if (existingLock) {
@@ -338,6 +345,7 @@ export class LongTermMemoryStorage {
         await this.appendEvent(eventFor(`${note.type}.created`, note.id, eventContext, { note }));
       }
       await createJsonFileExclusive(path, note);
+      await this.markIndexesDirty();
       return note;
     });
   }
@@ -395,6 +403,7 @@ export class LongTermMemoryStorage {
             note: next,
           }));
         }
+        await this.markIndexesDirty();
         return next;
       }),
     );
@@ -438,6 +447,7 @@ export class LongTermMemoryStorage {
         await this.appendEvent(eventFor(`${current.type}.deleted`, current.id, eventContext, { note: current }));
       }
       await unlink(path);
+      await this.markIndexesDirty();
       return current;
     });
   }
@@ -480,6 +490,8 @@ export class LongTermMemoryStorage {
         failedIds.push(id);
       }
     }
+
+    if (deletedIds.length > 0) await this.markIndexesDirty();
 
     return { deletedIds, failedIds, deletedNotes };
   }
@@ -660,6 +672,7 @@ export class LongTermMemoryStorage {
         await this.appendEvent(eventFor(eventType, existing.id, eventContext, { patch: normalizedPatch, note: next }));
       }
       await writeJsonAtomic(path, next);
+      await this.markIndexesDirty();
       return next;
     });
   }
@@ -730,6 +743,7 @@ export class LongTermMemoryStorage {
         await unlink(oldPath);
         await this.writePreparedDraftRewrites(draftRewrites);
         await this.rewriteNoteReferences(current.id, next.id, eventContext);
+        await this.markIndexesDirty();
         return next;
       }),
     );

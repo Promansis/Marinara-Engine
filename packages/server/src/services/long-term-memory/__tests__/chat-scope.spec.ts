@@ -27,6 +27,7 @@ test("ltmModeForChatMode — valid modes map correctly", () => {
   assert.equal(ltmModeForChatMode("roleplay"), "roleplay");
   assert.equal(ltmModeForChatMode("conversation"), "conversation");
   assert.equal(ltmModeForChatMode("game"), "game");
+  assert.equal(ltmModeForChatMode("visual_novel"), "roleplay");
 });
 
 test("ltmModeForChatMode — invalid falls back to roleplay", () => {

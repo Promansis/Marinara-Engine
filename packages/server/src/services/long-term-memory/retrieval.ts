@@ -8,20 +8,22 @@ import {
   matchesLtmScope,
   jaccardSimilarity,
   tokenize,
+  type LtmBm25Index,
+  type LtmEmbeddingIndex,
+  type LtmGraphIndex,
+  type LtmKeywordIndex,
+  type LtmMetadataIndex,
   type LtmRetrievalConfig,
+  type LtmMode,
   type LtmScope,
 } from "@marinara-engine/shared";
 import { embedMemoryRecallTexts, type MemoryRecallEmbeddingOptions } from "../memory-recall.js";
 import { DEFAULT_LTM_RETRIEVAL_CONFIG } from "./default-config.js";
-import type { LtmBm25Index } from "./bm25.js";
 import { searchLtmBm25 } from "./bm25.js";
 import type { LtmMemoryChunk } from "./chunking.js";
-import type { LtmGraphIndex } from "./graph.js";
 import { expandLtmGraph } from "./graph.js";
-import type { LtmKeywordIndex } from "./keyword-index.js";
+import { loadLtmIndexFamily } from "./index-generation.js";
 import { searchLtmKeywordIndex } from "./keyword-index.js";
-import type { LtmEmbeddingIndex } from "./rebuild.js";
-import type { LtmMetadataIndex } from "./metadata-index.js";
 import { getLtmMetadataMatches } from "./metadata-index.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
 import { applyLtmBudget, type LtmBudgetedChunk, type LtmBudgetRejectedCandidate } from "./budget.js";
@@ -44,6 +46,7 @@ import { readLongTermMemoryUsage } from "./usage.js";
 
 export interface RetrieveLongTermMemoryInput extends MemoryRecallEmbeddingOptions {
   root?: string;
+  mode?: LtmMode;
   queryText?: string;
   recentUserMessage?: string;
   recentMessages?: string[];
@@ -137,20 +140,6 @@ function cosineSimilarity(a: number[], b: number[]) {
   return denominator === 0 ? 0 : dot / denominator;
 }
 
-async function readIndexFile<T>(path: string, warnings: string[]): Promise<T | null> {
-  try {
-    return JSON.parse(await readFile(path, "utf8")) as T;
-  } catch (err) {
-    if (isEnoent(err)) {
-      warnings.push(`Missing index ${path}`);
-      return null;
-    }
-    logger.warn(err, "[ltm] Failed to read index %s", path);
-    warnings.push(`Failed to read index ${path}`);
-    return null;
-  }
-}
-
 async function readConfig<T>(path: string, fallback: T, parse: (value: unknown) => T, warnings: string[]) {
   try {
     return parse(JSON.parse(await readFile(path, "utf8")));
@@ -201,13 +190,8 @@ async function loadRetrievalBundle(root: string, includeSourceNotes: boolean): P
   const load = (async () => {
     const dirs = getLongTermMemoryDirectories(root);
     const warnings: string[] = [];
-    const indexPrefix = includeSourceNotes ? "source-" : "";
-    const [metadata, bm25, graph, keywords, embeddings, config] = await Promise.all([
-      readIndexFile<LtmMetadataIndex>(safeJoin(dirs.indexes, `${indexPrefix}metadata.json`), warnings),
-      readIndexFile<LtmBm25Index>(safeJoin(dirs.indexes, `${indexPrefix}bm25.json`), warnings),
-      readIndexFile<LtmGraphIndex>(safeJoin(dirs.indexes, `${indexPrefix}graph.json`), warnings),
-      readIndexFile<LtmKeywordIndex>(safeJoin(dirs.indexes, `${indexPrefix}keywords.json`), warnings),
-      readIndexFile<LtmEmbeddingIndex>(safeJoin(dirs.indexes, `${indexPrefix}embeddings.json`), warnings),
+    const [generation, config] = await Promise.all([
+      loadLtmIndexFamily(root, includeSourceNotes ? "source" : "typed"),
       readConfig(
         safeJoin(dirs.config, "retrieval.json"),
         DEFAULT_LTM_RETRIEVAL_CONFIG,
@@ -215,6 +199,12 @@ async function loadRetrievalBundle(root: string, includeSourceNotes: boolean): P
         warnings,
       ),
     ]);
+    warnings.push(...generation.warnings);
+    const metadata = generation.bundle?.metadata ?? null;
+    const bm25 = generation.bundle?.bm25 ?? null;
+    const graph = generation.bundle?.graph ?? null;
+    const keywords = generation.bundle?.keywords ?? null;
+    const embeddings = generation.bundle?.embeddings ?? null;
     return { metadata, bm25, graph, keywords, embeddings, config, warnings };
   })();
 
@@ -291,6 +281,7 @@ function summarizeCandidateFilters(
     sourceSummariesSkipped: 0,
     resolvedFiltered: 0,
     scopeFiltered: 0,
+    modeFiltered: 0,
   };
 
   for (const chunk of chunks) {
@@ -300,6 +291,10 @@ function summarizeCandidateFilters(
     }
     if (shouldFilterResolvedChunk(chunk, input)) {
       counts.resolvedFiltered++;
+      continue;
+    }
+    if (input.mode && !chunk.modes?.includes(input.mode)) {
+      counts.modeFiltered++;
       continue;
     }
     if (!scopeMatches(chunk, input.scope, characterIds)) {
@@ -318,6 +313,7 @@ function candidateAllowed(
 ) {
   if (!input.includeSourceNotes && isSourceSummaryChunk(chunk)) return false;
   if (shouldFilterResolvedChunk(chunk, input)) return false;
+  if (input.mode && !chunk.modes?.includes(input.mode)) return false;
   return scopeMatches(chunk, input.scope, characterIds);
 }
 
@@ -523,6 +519,7 @@ export async function retrieveLongTermMemory(
               funnel: {
                 totalChunks: 0,
                 sourceSummariesSkipped: 0,
+                modeFiltered: 0,
                 scopeFiltered: 0,
                 statusFiltered: 0,
                 metadataCandidates: 0,
@@ -582,6 +579,7 @@ export async function retrieveLongTermMemory(
               funnel: {
                 totalChunks: allChunks.length,
                 sourceSummariesSkipped: filterCounts?.sourceSummariesSkipped ?? 0,
+                modeFiltered: filterCounts?.modeFiltered ?? 0,
                 scopeFiltered: filterCounts?.scopeFiltered ?? 0,
                 statusFiltered: filterCounts?.resolvedFiltered ?? 0,
                 metadataCandidates: 0,
@@ -750,6 +748,7 @@ export async function retrieveLongTermMemory(
         funnel: {
           totalChunks: allChunks.length,
           sourceSummariesSkipped: filterCounts?.sourceSummariesSkipped ?? 0,
+          modeFiltered: filterCounts?.modeFiltered ?? 0,
           scopeFiltered: filterCounts?.scopeFiltered ?? 0,
           statusFiltered:
             filterCounts?.resolvedFiltered ?? 0,

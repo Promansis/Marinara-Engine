@@ -6,12 +6,13 @@ import {
   type LtmScope,
   type LtmStatus,
   type LtmImportance,
+  type LtmMode,
   type LtmRelationshipDimensionChanges,
   type LtmRelationshipDimensions,
 } from "@marinara-engine/shared";
 import { extractNoteKeywords } from "./keyword-extract.js";
 
-export const CURRENT_LTM_CHUNK_FORMAT_VERSION = 2;
+export const CURRENT_LTM_CHUNK_FORMAT_VERSION = 3;
 
 export interface LtmMemoryChunk {
   id: string;
@@ -20,6 +21,7 @@ export interface LtmMemoryChunk {
   text: string;
   noteType: LtmNoteType;
   status: LtmStatus;
+  modes?: LtmMode[];
   scope: LtmScope;
   tags: string[];
   keywords: string[];
@@ -85,6 +87,7 @@ export function chunkNoteSections(note: LtmNote): LtmMemoryChunk[] {
         text: combined,
         noteType: note.type,
         status: note.status,
+        modes: [...note.modes].sort((a, b) => a.localeCompare(b)),
         scope: note.scope,
         tags: [...note.tags].sort((a, b) => a.localeCompare(b)),
         keywords,
@@ -104,6 +107,7 @@ export function chunkNoteSections(note: LtmNote): LtmMemoryChunk[] {
           noteId: note.id,
           noteType: note.type,
           status: note.status,
+          modes: note.modes,
           scope: note.scope,
           tags: note.tags,
           keywords,
@@ -125,6 +129,7 @@ export function chunkNoteSections(note: LtmNote): LtmMemoryChunk[] {
         text,
         noteType: note.type,
         status: note.status,
+        modes: [...note.modes].sort((a, b) => a.localeCompare(b)),
         scope: note.scope,
         tags: [...note.tags].sort((a, b) => a.localeCompare(b)),
         keywords,
@@ -138,6 +143,7 @@ export function chunkNoteSections(note: LtmNote): LtmMemoryChunk[] {
           noteId: note.id,
           noteType: note.type,
           status: note.status,
+          modes: note.modes,
           scope: note.scope,
           tags: note.tags,
           keywords,

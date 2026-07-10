@@ -945,7 +945,7 @@ class FileTableStore {
   private dirtyTables = new Set<string>();
   private backupRecoveredPaths = new Set<string>();
   private dirty = false;
-  private saving = false;
+  private activeFlush: Promise<void> | null = null;
   private debounceTimer: NodeJS.Timeout | null = null;
   private safetyTimer: NodeJS.Timeout | null = null;
   private beforeExitHandler: (() => void) | null = null;
@@ -1139,12 +1139,14 @@ class FileTableStore {
   }
 
   async flush(force = false) {
-    if (this.saving) {
-      this.dirty = true;
+    if (this.activeFlush) {
+      await this.activeFlush;
+      if (force || this.dirty || this.dirtyTables.size > 0) {
+        await this.flush(force);
+      }
       return;
     }
     if (!force && !this.dirty && this.dirtyTables.size === 0) return;
-    this.saving = true;
     this.dirty = false;
     // Snapshot the dirty set and reset it BEFORE the async write. saveFileSnapshots
     // now yields the event loop, so a markDirty() that interleaves during the I/O
@@ -1152,16 +1154,22 @@ class FileTableStore {
     // clear() — the synchronous version had a zero-width window here.
     const dirtyTables = this.dirtyTables;
     this.dirtyTables = new Set();
+    const flush = (async () => {
+      try {
+        await this.saveFileSnapshots(dirtyTables);
+      } catch (err) {
+        this.dirty = true;
+        // Re-mark the tables we failed to persist so they retry on the next flush
+        // (without clobbering any tables marked dirty during the failed write).
+        for (const table of dirtyTables) this.dirtyTables.add(table);
+        logger.error(err, "[file-storage] Failed to persist file-native storage");
+      }
+    })();
+    this.activeFlush = flush;
     try {
-      await this.saveFileSnapshots(dirtyTables);
-    } catch (err) {
-      this.dirty = true;
-      // Re-mark the tables we failed to persist so they retry on the next flush
-      // (without clobbering any tables marked dirty during the failed write).
-      for (const table of dirtyTables) this.dirtyTables.add(table);
-      logger.error(err, "[file-storage] Failed to persist file-native storage");
+      await flush;
     } finally {
-      this.saving = false;
+      if (this.activeFlush === flush) this.activeFlush = null;
     }
   }
 

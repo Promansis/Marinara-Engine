@@ -4,7 +4,6 @@ import { basename, join, relative } from "node:path";
 import { logger } from "../../lib/logger.js";
 import { isEnoent, nowIso } from "./ltm-utils.js";
 import {
-  ltmIndexMetadataSchema,
   normalizeChatSummaryEntries,
   ltmExtractionResponseSchema,
   ltmEventSchema,
@@ -13,7 +12,7 @@ import {
   type ChatSummaryEntry,
   type LtmDraftMutation,
   type LtmExtractionDraft,
-  type LtmIndexMetadata,
+  type LtmIndexHealth,
   type LtmMode,
   type LtmNote,
   type LtmNoteType,
@@ -36,6 +35,8 @@ import {
 } from "./paths.js";
 import { rebuildLongTermMemoryIndexes } from "./rebuild.js";
 import { CURRENT_LTM_CHUNK_FORMAT_VERSION, stableJsonHash } from "./chunking.js";
+import { loadLtmIndexGeneration, ltmIndexPointerPath } from "./index-generation.js";
+import { readLtmIndexState } from "./index-state.js";
 import { LongTermMemoryStorage } from "./storage.js";
 import { sourceNoteIdForProvenance } from "./source-identity.js";
 import { parseStoredLtmNote } from "./stored-note.js";
@@ -149,6 +150,7 @@ function isBackfillableImportedSourceNote(note: LtmNote) {
 
 export interface LtmIntegrityResult {
   ok: boolean;
+  health: LtmIndexHealth;
   checkedAt: string;
   noteCount: number;
   eventCount: number;
@@ -344,44 +346,77 @@ async function checkIndexCoherence(
   vaultNoteCount: number,
   issues: IntegrityIssue[],
   fileContents: Array<{ path: string; rawContent: string }>,
-) {
-  const dirs = getLongTermMemoryDirectories(root);
-  const manifestPath = safeJoin(dirs.indexes, "manifest.json");
-  let manifest: LtmIndexMetadata | null = null;
+): Promise<LtmIndexHealth> {
+  const pointerPath = ltmIndexPointerPath(root);
+  const publicPointerPath = relative(root, pointerPath)
+    .split(/[\\/]+/)
+    .join("/");
+  let loaded: Awaited<ReturnType<typeof loadLtmIndexGeneration>>;
   try {
-    const raw = JSON.parse(await readFile(manifestPath, "utf8"));
-    manifest = ltmIndexMetadataSchema.parse(raw);
+    loaded = await loadLtmIndexGeneration(root);
   } catch (err) {
-    if (!isEnoent(err)) {
-      logger.warn(err, "[ltm] Manifest unreadable at %s", relative(root, manifestPath));
-      issues.push({
-        severity: "error",
-        code: "manifest_unreadable",
-        path: relative(root, manifestPath),
-        message: "Manifest cannot be read or parsed.",
-      });
-    }
-    return;
+    logger.warn(err, "[ltm] Index generations could not be inspected");
+    issues.push({
+      severity: "error",
+      code: "index_generation_unreadable",
+      path: publicPointerPath,
+      message: "Index generations cannot be read or validated.",
+    });
+    return "corrupt";
   }
 
-  if (manifest.noteCount !== vaultNoteCount) {
+  if (loaded.pointerStatus === "missing") {
+    if (vaultNoteCount > 0) {
+      issues.push({
+        severity: "warning",
+        code: "indexes_not_built",
+        path: publicPointerPath,
+        message: "Long-term memory indexes have not been built for the current vault.",
+      });
+    }
+    return "not_built";
+  }
+
+  const manifest = loaded.manifest;
+  if (!manifest) {
+    issues.push({
+      severity: "error",
+      code: "index_generation_unavailable",
+      path: publicPointerPath,
+      message: "No valid long-term memory index generation is available.",
+    });
+    return "corrupt";
+  }
+
+  let health: LtmIndexHealth = loaded.recovered ? "degraded" : "healthy";
+  if (loaded.recovered) {
     issues.push({
       severity: "warning",
-      code: "manifest_note_mismatch",
-      path: relative(root, manifestPath),
-      message: `Manifest reports ${manifest.noteCount} notes but vault has ${vaultNoteCount}.`,
+      code: "index_generation_recovered",
+      path: publicPointerPath,
+      message: `Recovered indexes from generation ${manifest.generationId} because the current generation is invalid.`,
     });
   }
 
-  if (manifest.chunkFormatVersion !== CURRENT_LTM_CHUNK_FORMAT_VERSION) {
+  const freshnessManifest = loaded.currentManifest ?? manifest;
+
+  if (freshnessManifest.noteCount !== vaultNoteCount) {
+    health = "stale";
     issues.push({
       severity: "warning",
-      code: manifest.chunkFormatVersion === undefined ? "manifest_chunk_format_missing" : "manifest_chunk_format_stale",
-      path: relative(root, manifestPath),
-      message:
-        manifest.chunkFormatVersion === undefined
-          ? `Manifest is missing chunk format version ${CURRENT_LTM_CHUNK_FORMAT_VERSION}; rebuild indexes before relying on relationship score injection.`
-          : `Manifest chunk format version ${manifest.chunkFormatVersion} is stale; rebuild indexes for version ${CURRENT_LTM_CHUNK_FORMAT_VERSION}.`,
+      code: "index_note_mismatch",
+      path: publicPointerPath,
+      message: `Manifest reports ${freshnessManifest.noteCount} notes but vault has ${vaultNoteCount}.`,
+    });
+  }
+
+  if (freshnessManifest.chunkFormatVersion !== CURRENT_LTM_CHUNK_FORMAT_VERSION) {
+    health = "stale";
+    issues.push({
+      severity: "warning",
+      code: "index_chunk_format_stale",
+      path: publicPointerPath,
+      message: `Index chunk format version ${freshnessManifest.chunkFormatVersion} is stale; rebuild indexes for version ${CURRENT_LTM_CHUNK_FORMAT_VERSION}.`,
     });
   }
 
@@ -393,39 +428,66 @@ async function checkIndexCoherence(
     computedHashes[relativePath] = stableJsonHash(file.rawContent);
   }
   const actualSourceHash = stableJsonHash(computedHashes);
-  if (manifest.sourceHash !== actualSourceHash) {
+  if (freshnessManifest.sourceHash !== actualSourceHash) {
+    health = "stale";
     issues.push({
       severity: "warning",
-      code: "manifest_hash_mismatch",
-      path: relative(root, manifestPath),
-      message: "Manifest source hash does not match current vault content.",
+      code: "index_source_hash_mismatch",
+      path: publicPointerPath,
+      message: "Index source hash does not match current vault content.",
     });
   }
 
-  const embeddingsPath = safeJoin(dirs.indexes, "embeddings.json");
+  let state: Awaited<ReturnType<typeof readLtmIndexState>>;
   try {
-    const embeddingsRaw = JSON.parse(await readFile(embeddingsPath, "utf8"));
-    const embeddings = embeddingsRaw as { embeddedChunkCount?: number; chunks?: unknown[] };
-    const embeddingCount = embeddings.embeddedChunkCount ?? embeddings.chunks?.length ?? -1;
-    if (embeddingCount !== manifest.chunkCount) {
-      issues.push({
-        severity: "info",
-        code: "embedding_chunk_mismatch",
-        path: relative(root, embeddingsPath),
-        message: `Embeddings report ${embeddingCount} chunks but manifest reports ${manifest.chunkCount}.`,
-      });
-    }
+    state = await readLtmIndexState(root);
   } catch (err) {
-    if (!isEnoent(err)) {
-      logger.warn(err, "[ltm] Embeddings index unreadable at %s", relative(root, embeddingsPath));
-      issues.push({
-        severity: "warning",
-        code: "embeddings_unreadable",
-        path: relative(root, embeddingsPath),
-        message: "Embeddings index cannot be read.",
-      });
-    }
+    logger.warn(err, "[ltm] Index state could not be read");
+    issues.push({
+      severity: "error",
+      code: "index_state_unreadable",
+      path: publicPointerPath,
+      message: "Index rebuild state cannot be read or validated.",
+    });
+    return "corrupt";
   }
+
+  if (state.dirty) {
+    health = "stale";
+    issues.push({
+      severity: "warning",
+      code: "indexes_dirty",
+      path: publicPointerPath,
+      message: "The vault changed after the active index generation was built.",
+    });
+  } else if (!loaded.recovered && state.lastPublishedGenerationId !== manifest.generationId) {
+    health = "stale";
+    issues.push({
+      severity: "warning",
+      code: "index_state_generation_mismatch",
+      path: publicPointerPath,
+      message: "Index state does not match the active generation.",
+    });
+  }
+
+  if (state.rebuildState === "failed") {
+    health = "stale";
+    issues.push({
+      severity: "warning",
+      code: "index_rebuild_failed",
+      path: publicPointerPath,
+      message: state.error ?? "The latest index rebuild failed.",
+    });
+  } else if (state.rebuildState === "building" && health === "healthy") {
+    health = "degraded";
+    issues.push({
+      severity: "info",
+      code: "index_rebuild_in_progress",
+      path: publicPointerPath,
+      message: "A new index generation is being built.",
+    });
+  }
+  return health;
 }
 
 export async function checkLongTermMemoryIntegrity(root = getLongTermMemoryRoot()): Promise<LtmIntegrityResult> {
@@ -500,9 +562,12 @@ export async function checkLongTermMemoryIntegrity(root = getLongTermMemoryRoot(
   }
 
   const eventCount = await checkEventLogIntegrity(root, issues);
-  await checkIndexCoherence(root, notesById.size, issues, fileContents);
+  const health = await checkIndexCoherence(root, notesById.size, issues, fileContents);
   return {
-    ok: !issues.some((issue) => issue.severity === "error"),
+    ok:
+      !issues.some((issue) => issue.severity === "error") &&
+      (health === "healthy" || (health === "not_built" && notesById.size === 0)),
+    health,
     checkedAt: nowIso(),
     noteCount: notesById.size,
     eventCount,

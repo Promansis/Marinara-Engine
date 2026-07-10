@@ -1,19 +1,12 @@
-import { getLtmScopeChatIds, type LtmScope } from "@marinara-engine/shared";
+import {
+  getLtmScopeChatIds,
+  ltmMetadataIndexSchema,
+  type LtmMetadataIndex,
+  type LtmScope,
+} from "@marinara-engine/shared";
 import type { LtmMemoryChunk } from "./chunking.js";
 
-export interface LtmMetadataIndex {
-  version: 1;
-  chunks: Record<string, LtmMemoryChunk>;
-  byNoteId: Record<string, string[]>;
-  byType: Record<string, string[]>;
-  byStatus: Record<string, string[]>;
-  byTag: Record<string, string[]>;
-  byScope: {
-    chatId: Record<string, string[]>;
-    groupId: Record<string, string[]>;
-    characterId: Record<string, string[]>;
-  };
-}
+export type { LtmMetadataIndex } from "@marinara-engine/shared";
 
 function addToBucket(index: Record<string, string[]>, key: string | undefined, chunkId: string) {
   if (!key) return;
@@ -31,7 +24,7 @@ function sortRecordBuckets(record: Record<string, string[]>) {
 }
 
 export function buildLtmMetadataIndex(chunks: LtmMemoryChunk[]): LtmMetadataIndex {
-  const index: LtmMetadataIndex = {
+  const index: Omit<LtmMetadataIndex, "chunks"> & { chunks: Record<string, LtmMemoryChunk> } = {
     version: 1,
     chunks: {},
     byNoteId: {},
@@ -60,7 +53,7 @@ export function buildLtmMetadataIndex(chunks: LtmMemoryChunk[]): LtmMetadataInde
     }
   }
 
-  return {
+  return ltmMetadataIndexSchema.parse({
     ...index,
     chunks: Object.fromEntries(Object.entries(index.chunks).sort(([a], [b]) => a.localeCompare(b))),
     byNoteId: sortRecordBuckets(index.byNoteId),
@@ -72,7 +65,7 @@ export function buildLtmMetadataIndex(chunks: LtmMemoryChunk[]): LtmMetadataInde
       groupId: sortRecordBuckets(index.byScope.groupId),
       characterId: sortRecordBuckets(index.byScope.characterId),
     },
-  };
+  });
 }
 
 export function getLtmMetadataMatches(

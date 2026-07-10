@@ -2,7 +2,7 @@
 // Routes: Long-Term Memory Maintenance
 // ──────────────────────────────────────────────
 import { randomUUID } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   LOCAL_SIDECAR_CONNECTION_ID,
@@ -15,7 +15,6 @@ import {
   ltmGlobalSettingsSchema,
   ltmExtractionDraftSchema,
   ltmExtractionResponseSchema,
-  ltmIndexMetadataSchema,
   ltmInjectionUiSummarySchema,
   ltmIsoTimestampSchema,
   ltmLinkSchema,
@@ -30,7 +29,6 @@ import {
   ltmSectionKeySchema,
   ltmSectionSchema,
   ltmStatusSchema,
-  type LtmIndexMetadata,
   type LtmNote,
 } from "@marinara-engine/shared";
 import { z } from "zod";
@@ -45,7 +43,6 @@ import {
   getLongTermMemoryDirectories,
   getLongTermMemoryRoot,
   LTM_DIR_NAME,
-  safeJoin,
 } from "../services/long-term-memory/paths.js";
 import {
   clearLtmDebugLog,
@@ -65,9 +62,10 @@ import {
 } from "../services/long-term-memory/maintenance.js";
 import {
   rebuildLongTermMemoryIndexes,
-  type LtmEmbeddingIndex,
   type LtmRebuildScope,
 } from "../services/long-term-memory/rebuild.js";
+import { loadLtmIndexGeneration } from "../services/long-term-memory/index-generation.js";
+import { readLtmIndexState } from "../services/long-term-memory/index-state.js";
 import { applyLongTermMemoryDraft } from "../services/long-term-memory/reconciliation.js";
 import { retrieveLongTermMemory } from "../services/long-term-memory/retrieval.js";
 import {
@@ -276,6 +274,7 @@ const searchBodySchema = z
     mentionedCharacterNames: z.array(z.string().min(1).max(120)).max(100).optional(),
     noteIds: z.array(ltmNoteIdSchema).max(100).optional(),
     tags: z.array(ltmIdentifierSchema).max(100).optional(),
+    mode: ltmModeSchema.optional(),
     scope: ltmScopeSchema.optional(),
     characterIds: z.array(z.string().min(1).max(120)).max(100).optional(),
     includeResolved: z.boolean().optional(),
@@ -315,15 +314,6 @@ const debugLogQuerySchema = z
     phase: ltmDebugPhaseSchema.optional(),
   })
   .strict();
-
-async function readOptionalJson<T>(index: string, path: string, parse: (value: unknown) => T) {
-  try {
-    return { value: parse(JSON.parse(await readFile(path, "utf8"))), error: null };
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { value: null, error: null };
-    return { value: null, error: { index, code: "index_unavailable" } };
-  }
-}
 
 async function getEventLogStatus(path: string) {
   try {
@@ -487,18 +477,24 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     const notes = await storage.listNotes();
     const dirs = getLongTermMemoryDirectories(storage.root);
     const events = await getEventLogStatus(dirs.eventLog);
-    const manifestStatus = await readOptionalJson<LtmIndexMetadata>(
-      "manifest",
-      safeJoin(dirs.indexes, "manifest.json"),
-      (value) => ltmIndexMetadataSchema.parse(value),
+    const [integrity, generationResult, stateResult] = await Promise.all([
+      checkLongTermMemoryIntegrity(storage.root),
+      loadLtmIndexGeneration(storage.root).then(
+        (value) => ({ value, error: null }),
+        () => ({ value: null, error: { index: "generation", code: "index_unavailable" } }),
+      ),
+      readLtmIndexState(storage.root).then(
+        (value) => ({ value, error: null }),
+        () => ({ value: null, error: { index: "state", code: "index_unavailable" } }),
+      ),
+    ]);
+    const generation = generationResult.value;
+    const state = stateResult.value;
+    const manifest = generation?.manifest ?? null;
+    const embeddings = generation?.bundles.typed?.embeddings ?? null;
+    const errors = [generationResult.error, stateResult.error].filter(
+      (error): error is NonNullable<typeof error> => Boolean(error),
     );
-    const embeddingsStatus = await readOptionalJson<LtmEmbeddingIndex>(
-      "embeddings",
-      safeJoin(dirs.indexes, "embeddings.json"),
-      (value) => value as LtmEmbeddingIndex,
-    );
-    const manifest = manifestStatus.value;
-    const embeddings = embeddingsStatus.value;
 
     return {
       initialized: true,
@@ -506,10 +502,15 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
       notes: summarizeNotes(notes),
       events,
       indexes: {
+        health: integrity.health,
         manifestAvailable: Boolean(manifest),
-        errors: [manifestStatus.error, embeddingsStatus.error].filter((error): error is NonNullable<typeof error> =>
-          Boolean(error),
-        ),
+        generationId: manifest?.generationId ?? null,
+        currentGenerationId: generation?.pointer?.generationId ?? null,
+        recovered: generation?.recovered ?? false,
+        dirty: state?.dirty ?? true,
+        rebuildState: state?.rebuildState ?? "idle",
+        errors,
+        warnings: generation?.warnings ?? [],
         generatedAt: manifest?.generatedAt ?? null,
         sourceHash: manifest?.sourceHash ?? null,
         noteCount: manifest?.noteCount ?? null,

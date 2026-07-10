@@ -758,6 +758,234 @@ export const ltmIndexMetadataSchema = z
   })
   .strict();
 
+export const ltmIndexHealthSchema = z.enum(["not_built", "healthy", "degraded", "stale", "corrupt"]);
+
+export const ltmMemoryChunkSchema = z
+  .object({
+    id: z.string().min(1).max(240),
+    noteId: ltmNoteIdSchema,
+    sectionKey: ltmSectionKeySchema,
+    text: z.string().min(1).max(20_000),
+    noteType: ltmNoteTypeSchema,
+    status: ltmStatusSchema,
+    modes: z.array(ltmModeSchema).min(1).max(8),
+    scope: ltmScopeSchema,
+    tags: z.array(ltmIdentifierSchema).max(100),
+    keywords: z.array(z.string().trim().min(1).max(80)).max(30),
+    salience: z.number().finite().min(0).max(1).optional(),
+    confidence: z.number().finite().min(0).max(1).optional(),
+    importance: ltmImportanceSchema.optional(),
+    dimensions: ltmRelationshipDimensionsSchema.optional(),
+    dimensionChanges: ltmRelationshipDimensionChangesSchema.optional(),
+    updatedAt: ltmIsoTimestampSchema,
+    sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+
+export const ltmEmbeddingIndexEntrySchema = z
+  .object({
+    chunkId: z.string().min(1).max(240),
+    sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
+    vector: z.array(z.number().finite()).min(1).optional(),
+  })
+  .strict();
+
+export const ltmEmbeddingIndexSchema = z
+  .object({
+    version: z.literal(1),
+    model: z.string().min(1).max(240),
+    dimension: z.number().int().min(1).nullable(),
+    embeddedChunkCount: z.number().int().min(0),
+    chunks: z.array(ltmEmbeddingIndexEntrySchema),
+  })
+  .strict()
+  .superRefine((index, ctx) => {
+    const chunkIds = new Set<string>();
+    let vectorCount = 0;
+    for (const [entryIndex, entry] of index.chunks.entries()) {
+      if (chunkIds.has(entry.chunkId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["chunks", entryIndex, "chunkId"],
+          message: `Duplicate embedding chunk id: ${entry.chunkId}`,
+        });
+      }
+      chunkIds.add(entry.chunkId);
+      if (!entry.vector) continue;
+      vectorCount += 1;
+      if (index.dimension !== entry.vector.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["chunks", entryIndex, "vector"],
+          message: `Embedding vector dimension ${entry.vector.length} does not match ${index.dimension ?? "null"}.`,
+        });
+      }
+    }
+    if (vectorCount !== index.embeddedChunkCount) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["embeddedChunkCount"],
+        message: `Embedded chunk count ${index.embeddedChunkCount} does not match ${vectorCount} vectors.`,
+      });
+    }
+    if (vectorCount === 0 && index.dimension !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["dimension"],
+        message: "Embedding dimension must be null when no vectors are stored.",
+      });
+    }
+  });
+
+export const ltmBm25PostingSchema = z
+  .object({
+    chunkId: z.string().min(1).max(240),
+    count: z.number().int().min(1),
+  })
+  .strict();
+
+export const ltmBm25IndexSchema = z
+  .object({
+    version: z.literal(1),
+    chunkCount: z.number().int().min(0),
+    avgDocLength: z.number().finite().min(0),
+    documents: z.record(z.string().min(1).max(240), z.object({ length: z.number().int().min(0) }).strict()),
+    terms: z.record(
+      z.string().min(1),
+      z
+        .object({
+          documentFrequency: z.number().int().min(0),
+          postings: z.array(ltmBm25PostingSchema),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
+export const ltmGraphEdgeSchema = z
+  .object({
+    source: ltmNoteIdSchema,
+    target: ltmNoteIdSchema,
+    relation: z.string().min(1).max(80),
+  })
+  .strict();
+
+export const ltmGraphIndexSchema = z
+  .object({
+    version: z.literal(1),
+    nodes: z.record(
+      ltmNoteIdSchema,
+      z
+        .object({
+          chunkIds: z.array(z.string().min(1).max(240)),
+          outgoing: z.array(ltmGraphEdgeSchema),
+          incoming: z.array(ltmGraphEdgeSchema),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
+const ltmIndexStringBucketsSchema = z.record(
+  z.string().min(1).max(240),
+  z.array(z.string().min(1).max(240)),
+);
+
+export const ltmKeywordIndexSchema = z
+  .object({
+    version: z.literal(1),
+    byKeyword: ltmIndexStringBucketsSchema,
+    byChunkId: ltmIndexStringBucketsSchema,
+  })
+  .strict();
+
+export const ltmMetadataIndexSchema = z
+  .object({
+    version: z.literal(1),
+    chunks: z.record(z.string().min(1).max(240), ltmMemoryChunkSchema),
+    byNoteId: ltmIndexStringBucketsSchema,
+    byType: ltmIndexStringBucketsSchema,
+    byStatus: ltmIndexStringBucketsSchema,
+    byTag: ltmIndexStringBucketsSchema,
+    byScope: z
+      .object({
+        chatId: ltmIndexStringBucketsSchema,
+        groupId: ltmIndexStringBucketsSchema,
+        characterId: ltmIndexStringBucketsSchema,
+      })
+      .strict(),
+  })
+  .strict();
+
+export const ltmIndexFamilySchema = z.enum(["typed", "source"]);
+
+export const ltmIndexFamilySummarySchema = z
+  .object({
+    chunkCount: z.number().int().min(0),
+    embeddedChunkCount: z.number().int().min(0),
+    files: z.record(ltmSafeRelativePathSchema, z.string().regex(/^[a-f0-9]{64}$/)),
+  })
+  .strict();
+
+export const ltmIndexGenerationManifestSchema = z
+  .object({
+    version: z.literal(2),
+    generationId: z.string().uuid(),
+    generatedAt: ltmIsoTimestampSchema,
+    chunkFormatVersion: z.number().int().min(1),
+    sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
+    noteCount: z.number().int().min(0),
+    chunkCount: z.number().int().min(0),
+    sourceChunkCount: z.number().int().min(0),
+    sourceFiles: z.record(ltmSafeRelativePathSchema, z.string().regex(/^[a-f0-9]{64}$/)),
+    families: z
+      .object({
+        typed: ltmIndexFamilySummarySchema.optional(),
+        source: ltmIndexFamilySummarySchema.optional(),
+      })
+      .strict()
+      .refine((families) => Boolean(families.typed || families.source), "At least one index family is required."),
+  })
+  .strict();
+
+export const ltmIndexPointerSchema = z
+  .object({
+    version: z.literal(1),
+    generationId: z.string().uuid(),
+    publishedAt: ltmIsoTimestampSchema,
+    fallbackGenerationIds: z.array(z.string().uuid()).max(2).optional(),
+  })
+  .strict()
+  .superRefine((pointer, ctx) => {
+    const seen = new Set<string>();
+    for (const [index, generationId] of (pointer.fallbackGenerationIds ?? []).entries()) {
+      if (generationId === pointer.generationId || seen.has(generationId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["fallbackGenerationIds", index],
+          message: "Fallback generations must be unique and different from the current generation.",
+        });
+      }
+      seen.add(generationId);
+    }
+  });
+
+export const ltmIndexRebuildStateSchema = z.enum(["idle", "building", "failed"]);
+
+export const ltmIndexStateSchema = z
+  .object({
+    version: z.literal(1),
+    revision: z.number().int().min(0).default(0),
+    dirty: z.boolean().default(true),
+    dirtyAt: ltmIsoTimestampSchema.optional(),
+    rebuildState: ltmIndexRebuildStateSchema.default("idle"),
+    rebuildStartedAt: ltmIsoTimestampSchema.optional(),
+    rebuildCompletedAt: ltmIsoTimestampSchema.optional(),
+    lastPublishedGenerationId: z.string().uuid().optional(),
+    error: z.string().min(1).max(2_000).optional(),
+  })
+  .strict();
+
 export const ltmTransferRebuildSummarySchema = z
   .object({
     generatedAt: ltmIsoTimestampSchema,
@@ -1035,6 +1263,22 @@ export type LtmPolicy = z.infer<typeof ltmPolicySchema>;
 export type LtmPoliciesConfig = z.infer<typeof ltmPoliciesConfigSchema>;
 export type LtmRetrievalConfig = z.infer<typeof ltmRetrievalConfigSchema>;
 export type LtmIndexMetadata = z.infer<typeof ltmIndexMetadataSchema>;
+export type LtmIndexHealth = z.infer<typeof ltmIndexHealthSchema>;
+export type LtmMemoryChunk = z.infer<typeof ltmMemoryChunkSchema>;
+export type LtmEmbeddingIndexEntry = z.infer<typeof ltmEmbeddingIndexEntrySchema>;
+export type LtmEmbeddingIndex = z.infer<typeof ltmEmbeddingIndexSchema>;
+export type LtmBm25Posting = z.infer<typeof ltmBm25PostingSchema>;
+export type LtmBm25Index = z.infer<typeof ltmBm25IndexSchema>;
+export type LtmGraphEdge = z.infer<typeof ltmGraphEdgeSchema>;
+export type LtmGraphIndex = z.infer<typeof ltmGraphIndexSchema>;
+export type LtmKeywordIndex = z.infer<typeof ltmKeywordIndexSchema>;
+export type LtmMetadataIndex = z.infer<typeof ltmMetadataIndexSchema>;
+export type LtmIndexFamily = z.infer<typeof ltmIndexFamilySchema>;
+export type LtmIndexFamilySummary = z.infer<typeof ltmIndexFamilySummarySchema>;
+export type LtmIndexGenerationManifest = z.infer<typeof ltmIndexGenerationManifestSchema>;
+export type LtmIndexPointer = z.infer<typeof ltmIndexPointerSchema>;
+export type LtmIndexRebuildState = z.infer<typeof ltmIndexRebuildStateSchema>;
+export type LtmIndexState = z.infer<typeof ltmIndexStateSchema>;
 export type LtmTransferRebuildSummary = z.infer<typeof ltmTransferRebuildSummarySchema>;
 export type LtmNoteTransferApplyResponse = z.infer<typeof ltmNoteTransferApplyResponseSchema>;
 export type LtmDraftStatus = z.infer<typeof ltmDraftStatusSchema>;

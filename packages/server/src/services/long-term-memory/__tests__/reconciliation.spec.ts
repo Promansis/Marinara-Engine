@@ -567,6 +567,7 @@ test("generation long-term memory uses global retrieval settings and injects aft
   assert.equal(retrievalInput.metadataMode, "filter_only");
   assert.equal(retrievalInput.dedupeExactText, true);
   assert.equal(retrievalInput.applyUsageCooldown, true);
+  assert.equal(retrievalInput.mode, "roleplay");
   assert.equal(retrievalInput.scope?.chatId, "chat_test");
   assert.deepEqual(retrievalInput.scope?.chatIds, ["chat_test"]);
   assert.equal(retrievalInput.scope?.groupId, "group_test");
@@ -586,6 +587,20 @@ test("generation long-term memory uses global retrieval settings and injects aft
     finalMessages[2]?.content,
     `${DEFAULT_LTM_RECALL_PREAMBLE}\n\n[WORLD]\nMara hid the archive key behind the clock in the tower foyer.`,
   );
+});
+
+test("visual novel generation retrieves from the roleplay LTM lane", () => {
+  const plan = buildGenerationLongTermMemoryPlan({
+    chatId: "chat_visual_novel",
+    chatMode: "visual_novel",
+    promptCharacterIds: [],
+    activeCharacterNames: [],
+    inputMessages: [{ role: "user", content: "Remember this scene." }],
+    chatMeta: { enableLongTermMemory: true },
+    lorebookGenerationTriggers: [],
+  });
+
+  assert.equal(plan.retrievalInput.mode, "roleplay");
 });
 
 test("assembler injects long-term memory before chat summary fallback", async () => {
@@ -7488,6 +7503,54 @@ test("retrieval score threshold excludes weak vector-only candidates", async () 
     assert.equal(result.debug?.funnel.vectorCandidates, 4);
     assert.equal(result.debug?.funnel.scoreThresholdSkippedCandidates, 3);
     assert(result.debug?.rejected.every((candidate) => (candidate.finalNormalizedScore ?? 1) < 0.2));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("retrieval isolates globally scoped chunks by LTM mode", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-retrieval-mode-isolation-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    for (const [id, mode, detail] of [
+      ["world_mode_roleplay", "roleplay", "The obsidian signal opens the roleplay archive."],
+      ["world_mode_conversation", "conversation", "The obsidian signal opens the conversation archive."],
+      ["world_mode_game", "game", "The obsidian signal opens the game archive."],
+    ] as const) {
+      await storage.createNote(
+        {
+          id,
+          type: "world",
+          status: "active",
+          modes: [mode],
+          scope: {},
+          tags: ["typed_memory"],
+          links: [],
+          sections: {
+            facts: { text: detail, updatedAt: timestamp },
+          },
+        },
+        { suppressEvent: true },
+      );
+    }
+    await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
+
+    for (const mode of ["roleplay", "conversation", "game"] as const) {
+      const result = await retrieveLongTermMemory({
+        root,
+        mode,
+        queryText: "obsidian signal archive",
+        semanticWeight: 0,
+        lexicalWeight: 1,
+        graphWeight: 0,
+        keywordWeight: 0,
+        debug: true,
+        localEmbedder: async (texts) => texts.map(() => []),
+      });
+
+      assert.deepEqual(result.chunks.map((chunk) => chunk.chunk.noteId), [`world_mode_${mode}`]);
+      assert.equal(result.debug?.funnel.modeFiltered, 2);
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }
