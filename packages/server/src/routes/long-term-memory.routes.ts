@@ -38,6 +38,7 @@ import {
   ltmSectionKeySchema,
   ltmSectionSchema,
   ltmStatusSchema,
+  ltmSubjectsSchema,
   ltmStatusResponseSchema,
   type LtmExtractSourceNoteRequest,
   type LtmNote,
@@ -94,6 +95,7 @@ import {
   previewLtmNoteTransfer,
 } from "../services/long-term-memory/note-transfer.js";
 import { withConcurrency } from "../lib/concurrency.js";
+import { loadTrustedLtmSubjectCatalog } from "../services/long-term-memory/subject-identity.js";
 
 const NOTE_BODY_LIMIT_BYTES = 512 * 1024;
 const DRAFT_BODY_LIMIT_BYTES = 512 * 1024;
@@ -159,9 +161,27 @@ const createNoteBodySchema = z
     links: z.array(ltmLinkSchema).max(250).default([]),
     sections: z.record(ltmSectionKeySchema, ltmSectionSchema),
     conflicts: z.array(ltmConflictSchema).max(250).optional(),
+    subjects: ltmSubjectsSchema.optional(),
     version: z.number().int().min(1).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((note, ctx) => {
+    const expected = note.type === "character" ? 1 : note.type === "relationship" ? 2 : 0;
+    if (expected > 0 && note.subjects?.length !== expected) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["subjects"],
+        message: `${note.type === "character" ? "Character" : "Relationship"} notes require exactly ${expected} subject${expected === 1 ? "" : "s"}.`,
+      });
+    }
+    if (expected === 0 && note.subjects) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["subjects"],
+        message: "Only character and relationship notes can store subjects.",
+      });
+    }
+  });
 
 const updateNoteBodySchema = z.preprocess(
   (value) => {
@@ -182,6 +202,7 @@ const updateNoteBodySchema = z.preprocess(
       links: z.array(ltmLinkSchema).max(250).optional(),
       sections: z.record(ltmSectionKeySchema, ltmSectionSchema).optional(),
       conflicts: z.array(ltmConflictSchema).max(250).optional(),
+      subjects: ltmSubjectsSchema.optional(),
     })
     .strict()
     .refine((value) => Object.keys(value).length > 0, "Patch body must include at least one updatable field."),
@@ -685,6 +706,8 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
 
       try {
         const { provider, model } = await resolveExtractionProvider(body, chat?.connectionId ?? null);
+        const extractionScope = chat ? resolveChatLtmScope(chat) : sourceNote.scope;
+        const trustedSubjectCatalog = await loadTrustedLtmSubjectCatalog(app.db, extractionScope);
         await recordLtmDebugEvent({
           operationId,
           phase: "extraction",
@@ -698,11 +721,12 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
           noteId: id,
           provider,
           model,
-          scope: chat ? resolveChatLtmScope(chat) : sourceNote.scope,
+          scope: extractionScope,
           modes: chat ? [ltmModeForChatMode(chat.mode)] : sourceNote.modes,
           mode: body.mode,
           instruction: body.instruction,
           operationId,
+          trustedSubjectCatalog,
         });
         const applyResult =
           body.applyLowRisk && result.draft
@@ -1023,6 +1047,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
             if (!provider) {
               throw new Error("No LLM provider available for non-game source note extraction");
             }
+            const trustedSubjectCatalog = await loadTrustedLtmSubjectCatalog(app.db, item.note.scope);
             const result = await extractLongTermMemoryFromSourceNote({
               noteId: item.note.id,
               provider,
@@ -1033,6 +1058,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
               instruction: body.instruction,
               operationId,
               signal,
+              trustedSubjectCatalog,
             });
             throwIfImportAborted(signal);
             const applyResult =

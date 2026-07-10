@@ -36,6 +36,10 @@ import { compileLtmEvidenceUnits } from "./evidence-unit-compiler.js";
 import type { LtmSuggestionMetadata } from "./evidence-unit-compiler.js";
 import { noteIdForEvidenceUnit, validateLtmEvidenceUnits } from "./evidence-unit-validation.js";
 import { normalizeStructuredSummaryEvidenceUnits } from "./structured-summary-normalizer.js";
+import {
+  trustedLtmSubjectPromptCatalog,
+  type TrustedLtmSubjectCatalog,
+} from "./subject-identity.js";
 
 const LTM_EXTRACTION_BUCKET_SCAN_ORDER = [
   "timeline_event",
@@ -116,6 +120,7 @@ export interface RunLongTermMemoryEvidenceUnitExtractionOptions {
   mode?: LtmMode;
   aiKeywordExtraction?: boolean;
   refinePass?: boolean;
+  trustedSubjectCatalog?: TrustedLtmSubjectCatalog;
 }
 
 export interface CompileEvidenceUnitExtractionResult {
@@ -278,7 +283,11 @@ function relationshipDimensionSchema(minimum: number, maximum: number) {
 export function evidenceUnitResponseFormat(options: {
   allowedBuckets: readonly LtmEvidenceUnit["bucket"][];
   sourceHash: string;
+  trustedSubjectKeys?: readonly string[];
 }): NonNullable<ChatOptions["responseFormat"]> {
+  const trustedSubjectKeys = options.trustedSubjectKeys?.length
+    ? [...options.trustedSubjectKeys]
+    : ["__no_trusted_subjects__"];
   return {
     type: "json_schema",
     json_schema: {
@@ -308,6 +317,7 @@ export function evidenceUnitResponseFormat(options: {
                 "status",
                 "links",
                 "sourceHash",
+                "subjectKeys",
               ],
               properties: {
                 id: { type: "string", format: "uuid" },
@@ -345,9 +355,34 @@ export function evidenceUnitResponseFormat(options: {
                   },
                 },
                 sourceHash: { type: "string", enum: [options.sourceHash] },
+                subjectKeys: {
+                  type: "array",
+                  uniqueItems: true,
+                  maxItems: 3,
+                  items: { type: "string", enum: trustedSubjectKeys },
+                },
                 dimensions: relationshipDimensionSchema(0, 100),
                 dimensionChanges: relationshipDimensionSchema(-100, 100),
               },
+              allOf: [
+                {
+                  if: { properties: { bucket: { const: "character_fact" } }, required: ["bucket"] },
+                  then: { properties: { subjectKeys: { minItems: 1, maxItems: 1 } } },
+                },
+                {
+                  if: { properties: { bucket: { const: "relationship_state" } }, required: ["bucket"] },
+                  then: { properties: { subjectKeys: { minItems: 2, maxItems: 2 } } },
+                },
+                {
+                  if: {
+                    properties: {
+                      bucket: { not: { enum: ["character_fact", "relationship_state"] } },
+                    },
+                    required: ["bucket"],
+                  },
+                  then: { properties: { subjectKeys: { maxItems: 0 } } },
+                },
+              ],
             },
           },
         },
@@ -701,6 +736,7 @@ function formatExistingNotes(notes: LtmNote[], maxTokens = DEFAULT_LTM_EXTRACTIO
       `type: ${note.type}`,
       `status: ${note.status}`,
       `tags: ${note.tags.join(", ") || "(none)"}`,
+      `subjects: ${note.subjects?.map((subject) => subject.key).join(", ") || "(unbound)"}`,
       `sections:\n${sections}`,
     ].join("\n");
     const blockTokens = estimateLtmPromptTokens(block);
@@ -806,6 +842,8 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
           id: "uuid",
           bucket: "one allowed stream value from allowedStreams",
           subjectId: "real lowercase_snake_case subject",
+          subjectKeys:
+            "character_fact: exactly one trustedSubjects key; relationship_state: exactly two distinct trustedSubjects keys; all other streams: []",
           sectionKey: "real lowercase_snake_case section",
           text: "compact memory text, not transcript summary",
           importance: "one of critical, major, moderate, minor",
@@ -855,7 +893,11 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
           "For timeline_event, subjectId must name the specific event or beat, not just a person, character, place, or broad entity. Use damo_arrival or lisa_minimizing_damo instead of damo_korvak.",
           "Do not intentionally target an existing note id unless that exact note appears in existingTypedNotes. If a broad note is not listed, use a source-specific subjectId for a new in-scope note.",
           "relationship_state dimension keys must come only from allowedRelationshipDimensions. Put professional curiosity, reputation, gossip, or attention as text/thread/world/timeline facts, not dimensions.",
+          "Character and relationship identities must use only trustedSubjects keys. Never invent a subject key. Relationship subjectKeys are an unordered pair; emit them sorted by key.",
         ],
+        trustedSubjects: trustedLtmSubjectPromptCatalog(
+          options.trustedSubjectCatalog ?? { entries: [], notes: [] },
+        ),
         userInstruction: options.instruction?.trim() || undefined,
         ...(options.candidateUnits?.length ? { candidateUnits: options.candidateUnits } : {}),
         ...(options.aiKeywordExtraction
@@ -894,6 +936,7 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
     responseFormat: evidenceUnitResponseFormat({
       allowedBuckets: options.allowedBuckets ?? DEFAULT_LTM_EVIDENCE_UNIT_ALLOWED_BUCKETS,
       sourceHash: options.sourceHash,
+      trustedSubjectKeys: options.trustedSubjectCatalog?.entries.map((entry) => entry.subject.key),
     }),
   };
   await recordLtmDebugEvent({

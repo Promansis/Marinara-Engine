@@ -50,7 +50,14 @@ import { SelectionActionBar, type SelectionActionBarAction } from "../ui/Selecti
 type SuggestionGroup = "new" | "rewrite";
 type BatchAction = "keep" | "skip";
 
-const rewriteKinds = new Set<LtmDraftMutation["kind"]>(["append_section", "update_section", "add_link", "set_keywords", "set_status"]);
+const rewriteKinds = new Set<LtmDraftMutation["kind"]>([
+  "append_section",
+  "update_section",
+  "add_link",
+  "set_keywords",
+  "set_status",
+  "set_subjects",
+]);
 
 function isSourceMemory(note: LtmNote) {
   return isLtmSourceLikeNote(note);

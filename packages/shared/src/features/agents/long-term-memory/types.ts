@@ -41,6 +41,8 @@ export type {
   LtmSourceProvenance,
   LtmSection,
   LtmStatus,
+  LtmSubject,
+  LtmSubjectReference,
   LtmDraftMutation,
   LtmDraftNoteInput,
   LtmDraftRisk,

@@ -226,6 +226,8 @@ export function mutationKindLabel(kind: LtmDraftMutation["kind"]) {
       return "Keywords";
     case "set_status":
       return "Status change";
+    case "set_subjects":
+      return "Identity binding";
   }
 }
 
@@ -284,6 +286,7 @@ export function compactMutationText(mutation: LtmDraftMutation, noteLookup: Map<
   }
   if (mutation.kind === "set_keywords") return mutation.keywords.join(", ");
   if (mutation.kind === "set_status") return friendlyStatus(mutation.status);
+  if (mutation.kind === "set_subjects") return mutation.subjects.map((subject) => subject.key).join(" + ");
   return "Unknown mutation";
 }
 
@@ -427,6 +430,8 @@ export function mutationText(mutation: LtmDraftMutation) {
       return `Update keywords for ${friendlyIdentifier(mutation.noteId)}`;
     case "set_status":
       return `Mark ${friendlyIdentifier(mutation.noteId)} as ${friendlyStatus(mutation.status).toLowerCase()}`;
+    case "set_subjects":
+      return `Bind ${friendlyIdentifier(mutation.noteId)} to ${mutation.subjects.map((subject) => friendlyIdentifier(subject.key)).join(" + ")}`;
   }
 }
 

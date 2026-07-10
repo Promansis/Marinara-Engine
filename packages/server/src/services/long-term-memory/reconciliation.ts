@@ -17,6 +17,7 @@ import { LongTermMemoryDraftStore } from "./draft-store.js";
 import { rebuildLongTermMemoryIndexes } from "./rebuild.js";
 import { canUpdateLtmScopedTarget } from "./scoped-targets.js";
 import { LongTermMemoryStorage, type UpdateLtmNotePatch } from "./storage.js";
+import { subjectsEqual } from "./subject-identity.js";
 
 export interface ApplyLtmDraftOptions {
   root?: string;
@@ -367,6 +368,9 @@ async function applyMutation(
         `Long-term memory draft cannot merge scoped create ${mutation.note.id} into an existing note from another scope.`,
       );
     }
+    if (existing.subjects && mutation.note.subjects && !subjectsEqual(existing.subjects, mutation.note.subjects)) {
+      throw new Error(`Long-term memory draft cannot merge a different subject identity into ${existing.id}.`);
+    }
 
     const sections: LtmNote["sections"] = { ...existing.sections };
     for (const [sectionKey, section] of Object.entries(mutation.note.sections)) {
@@ -389,6 +393,7 @@ async function applyMutation(
         conflicts: mutation.note.conflicts?.length
           ? [...(existing.conflicts ?? []), ...mutation.note.conflicts]
           : existing.conflicts,
+        subjects: existing.subjects ?? mutation.note.subjects,
       },
       eventContext,
     );
@@ -426,6 +431,14 @@ async function applyMutation(
     patch = { keywords: mutation.keywords };
   } else if (mutation.kind === "set_status") {
     patch = { status: mutation.status };
+  } else if (mutation.kind === "set_subjects") {
+    if (existing.type !== "character" && existing.type !== "relationship") {
+      throw new Error(`Long-term memory subjects cannot be assigned to ${existing.type} note ${existing.id}.`);
+    }
+    if (existing.subjects && !subjectsEqual(existing.subjects, mutation.subjects)) {
+      throw new Error(`Long-term memory subject identity is already bound for ${existing.id}.`);
+    }
+    patch = { subjects: mutation.subjects };
   } else {
     const _exhaustive: never = mutation;
     throw new Error(`Unsupported mutation kind: ${(_exhaustive as LtmDraftMutation).kind}`);

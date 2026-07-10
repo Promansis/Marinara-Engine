@@ -723,6 +723,12 @@ function dropReasonDiagnosticCode(reason: LtmExtractionDropReason) {
       return "candidate_dropped_unsupported_bucket";
     case "target_note_outside_scope":
       return "candidate_dropped_target_note_outside_scope";
+    case "ambiguous_subject":
+      return "candidate_dropped_ambiguous_subject";
+    case "untrusted_subject":
+      return "candidate_dropped_untrusted_subject";
+    case "invalid_subject_cardinality":
+      return "candidate_dropped_invalid_subject_cardinality";
     case "too_long_to_keep_safely":
       return "candidate_dropped_too_long_to_keep_safely";
     case "invalid_format":
@@ -751,6 +757,12 @@ function userFacingDropMessage(reason: LtmExtractionDropReason) {
       return "Dropped a candidate that used the wrong memory stream for source-summary extraction.";
     case "target_note_outside_scope":
       return "Dropped a candidate that targeted a memory outside this source's scope.";
+    case "ambiguous_subject":
+      return "Dropped a candidate whose subject matched more than one trusted identity.";
+    case "untrusted_subject":
+      return "Dropped a candidate whose subject was not in the trusted roster.";
+    case "invalid_subject_cardinality":
+      return "Dropped a candidate with the wrong number of subjects for its memory type.";
     case "too_long_to_keep_safely":
       return "Dropped a candidate that was too long to keep safely.";
     case "invalid_format":

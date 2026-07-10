@@ -704,6 +704,20 @@ export class LongTermMemoryStorage {
         const timestamp = nowIso();
         const normalizedPatch = normalizePatch(patch);
         const titlePatch = "title" in patch ? { title: normalizedPatch.title } : {};
+        const nextSubjects =
+          nextType === "character"
+            ? normalizedPatch.subjects?.length === 1
+              ? normalizedPatch.subjects
+              : current.subjects?.length === 1
+                ? current.subjects
+                : undefined
+            : nextType === "relationship"
+              ? normalizedPatch.subjects?.length === 2
+                ? normalizedPatch.subjects
+                : current.subjects?.length === 2
+                  ? current.subjects
+                  : undefined
+              : undefined;
         const next = ltmNoteSchema.parse({
           ...current,
           ...normalizedPatch,
@@ -716,6 +730,7 @@ export class LongTermMemoryStorage {
             : rewriteLinks(current.links, current.id, nextId),
           sections: normalizedPatch.sections ?? current.sections,
           conflicts: normalizedPatch.conflicts ?? current.conflicts,
+          subjects: nextSubjects,
           updatedAt: timestamp,
           version: current.version + 1,
         });

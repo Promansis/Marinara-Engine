@@ -26,6 +26,10 @@ import { retrieveLongTermMemory, type RetrieveLongTermMemoryInput } from "./retr
 import { canUpdateLtmScopedTarget, resolveScopedEvidenceUnitTargets } from "./scoped-targets.js";
 import { LongTermMemoryStorage } from "./storage.js";
 import { normalizeStructuredSummaryEvidenceUnits } from "./structured-summary-normalizer.js";
+import {
+  resolveLtmSubjectIdentities,
+  type TrustedLtmSubjectCatalog,
+} from "./subject-identity.js";
 
 const LTM_EXTRACTION_EXISTING_NOTE_CANDIDATE_CHUNKS = 100;
 
@@ -41,6 +45,7 @@ export type ExtractLongTermMemoryFromSourceNoteOptions = {
   signal?: AbortSignal;
   embeddingSource?: RetrieveLongTermMemoryInput["embeddingSource"];
   operationId?: string;
+  trustedSubjectCatalog?: TrustedLtmSubjectCatalog;
 };
 
 export type ExtractLongTermMemoryFromSourceNoteResult = {
@@ -223,6 +228,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
     allowedBuckets,
     mode: resolvedMode,
     aiKeywordExtraction: extractionConfig.aiKeywordExtraction,
+    trustedSubjectCatalog: options.trustedSubjectCatalog,
   };
 
   const extractionPayload = await runLongTermMemoryEvidenceUnitExtraction(baseExtractionOptions);
@@ -244,10 +250,16 @@ async function extractLongTermMemoryFromSourceNoteInner(
     extractionPayload.totalCandidates + normalizedExtraction.addedUnits,
     unitResponse.units.length + extractionPayload.droppedCandidates.length,
   );
+  const identityResolution = resolveLtmSubjectIdentities({
+    units: unitResponse.units,
+    catalog: options.trustedSubjectCatalog ?? { entries: [], notes: [] },
+    existingNotes,
+    enforceTrustedSubjects: Boolean(options.trustedSubjectCatalog),
+  });
   const targetResolution = await resolveScopedEvidenceUnitTargets({
     storage,
-    existingNotes,
-    units: unitResponse.units,
+    existingNotes: identityResolution.existingNotes,
+    units: identityResolution.units,
     scope,
   });
   const compilerExistingNotes = targetResolution.existingNotes;
@@ -276,7 +288,10 @@ async function extractLongTermMemoryFromSourceNoteInner(
       units: targetResolution.units,
     },
     totalCandidates,
-    parserDroppedCandidates: extractionPayload.droppedCandidates,
+    parserDroppedCandidates: [
+      ...extractionPayload.droppedCandidates,
+      ...identityResolution.droppedCandidates,
+    ],
     sourceText,
     sourceNote,
     existingNotes: compilerExistingNotes,
@@ -287,7 +302,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
     allowedBuckets,
     skipStructuredBackfill: true,
   });
-  compiled.diagnostics.push(...targetResolution.diagnostics);
+  compiled.diagnostics.push(...identityResolution.diagnostics, ...targetResolution.diagnostics);
   const compiledSummary = summarizeCompiledEvidenceUnitExtraction(compiled);
   await recordLtmDebugEvent({
     operationId: options.operationId,

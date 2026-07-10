@@ -371,6 +371,37 @@ const ltmIdentifierSchema = z
 
 export const ltmNoteIdSchema = ltmIdentifierSchema;
 
+export const ltmSubjectReferenceSchema = z
+  .object({
+    kind: z.enum(["character", "persona"]),
+    id: z.string().trim().min(1).max(120),
+  })
+  .strict();
+
+export const ltmSubjectSchema = z
+  .object({
+    key: z
+      .string()
+      .trim()
+      .min(1)
+      .max(240)
+      .refine((value) => !/[\u0000-\u001f\u007f]/.test(value), "Subject keys cannot contain control characters."),
+    ref: ltmSubjectReferenceSchema.optional(),
+  })
+  .strict();
+
+export const ltmSubjectsSchema = z
+  .array(ltmSubjectSchema)
+  .min(1)
+  .max(2)
+  .refine((subjects) => new Set(subjects.map((subject) => subject.key)).size === subjects.length, {
+    message: "Subjects must be distinct.",
+  })
+  .refine(
+    (subjects) => subjects.every((subject, index) => index === 0 || subjects[index - 1]!.key < subject.key),
+    { message: "Subjects must be sorted by stable key." },
+  );
+
 export const ltmSourceProvenanceSchema = z
   .object({
     kind: z.enum(["character", "lorebook", "chat_summary", "game_journal"]),
@@ -528,6 +559,8 @@ export const ltmEvidenceUnitSchema = z
     status: ltmEvidenceUnitStatusSchema,
     links: z.array(ltmLinkSchema).max(50).default([]),
     sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
+    subjectKeys: z.array(z.string().trim().min(1).max(240)).max(3).optional(),
+    subjects: ltmSubjectsSchema.optional(),
     dimensions: ltmRelationshipDimensionsSchema.optional(),
     dimensionChanges: ltmRelationshipDimensionChangesSchema.optional(),
   })
@@ -577,6 +610,7 @@ export const ltmNoteSchema = z
     sections: z.record(ltmSectionKeySchema, ltmSectionSchema),
     conflicts: z.array(ltmConflictSchema).max(250).optional(),
     provenance: ltmSourceProvenanceSchema.optional(),
+    subjects: ltmSubjectsSchema.optional(),
     version: z.number().int().min(1),
     extracted: z.boolean().optional(),
   })
@@ -605,6 +639,28 @@ export const ltmNoteSchema = z
         path: ["provenance"],
         message: "Only source notes can store import provenance.",
       });
+    }
+
+    if (note.subjects) {
+      if (note.type === "character" && note.subjects.length !== 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["subjects"],
+          message: "Character notes must have exactly one subject.",
+        });
+      } else if (note.type === "relationship" && note.subjects.length !== 2) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["subjects"],
+          message: "Relationship notes must have exactly two subjects.",
+        });
+      } else if (note.type !== "character" && note.type !== "relationship") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["subjects"],
+          message: "Only character and relationship notes can store subjects.",
+        });
+      }
     }
   });
 
@@ -1151,6 +1207,7 @@ export const ltmDraftNoteInputSchema = z
     sections: z.record(ltmSectionKeySchema, ltmSectionSchema),
     conflicts: z.array(ltmConflictSchema).max(250).optional(),
     provenance: ltmSourceProvenanceSchema.optional(),
+    subjects: ltmSubjectsSchema.optional(),
     version: z.number().int().min(1).optional(),
   })
   .strip()
@@ -1229,6 +1286,13 @@ export const ltmDraftMutationSchema = z.discriminatedUnion("kind", [
       status: ltmStatusSchema,
     })
     .strip(),
+  ltmDraftMutationBaseSchema
+    .extend({
+      kind: z.literal("set_subjects"),
+      noteId: ltmNoteIdSchema,
+      subjects: ltmSubjectsSchema,
+    })
+    .strip(),
 ]);
 
 export const ltmExtractionDraftSchema = z
@@ -1260,6 +1324,9 @@ export const ltmExtractionDropReasonSchema = z.enum([
   "source_summary_payload",
   "unsupported_bucket",
   "target_note_outside_scope",
+  "ambiguous_subject",
+  "untrusted_subject",
+  "invalid_subject_cardinality",
   "too_long_to_keep_safely",
 ]);
 
@@ -1612,6 +1679,8 @@ export type LtmExtractionSettings = z.infer<typeof ltmExtractionSettingsSchema>;
 export type LtmResolvedExtractionSettings = z.infer<typeof ltmResolvedExtractionSettingsSchema>;
 export type LtmMode = z.infer<typeof ltmModeSchema>;
 export type LtmScope = z.infer<typeof ltmScopeSchema>;
+export type LtmSubjectReference = z.infer<typeof ltmSubjectReferenceSchema>;
+export type LtmSubject = z.infer<typeof ltmSubjectSchema>;
 export type LtmNoteTransferMode = z.infer<typeof ltmNoteTransferModeSchema>;
 export type LtmNoteTransferConflict = z.infer<typeof ltmNoteTransferConflictSchema>;
 export type LtmNoteTransferPreviewItem = z.infer<typeof ltmNoteTransferPreviewItemSchema>;

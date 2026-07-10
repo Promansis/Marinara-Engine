@@ -33,6 +33,7 @@ import { applyLongTermMemoryDraft } from "../reconciliation.js";
 import { extractLongTermMemoryFromSourceNote } from "../source-extraction.js";
 import { LongTermMemoryDraftStore } from "../draft-store.js";
 import { LongTermMemoryStorage } from "../storage.js";
+import { buildTrustedLtmSubjectCatalog } from "../subject-identity.js";
 
 const timestamp = "2024-01-01T00:00:00.000Z";
 const sourceHash = "a".repeat(64);
@@ -1550,7 +1551,7 @@ test("structured roleplay character backfill keeps developments when optional ti
   assert.equal(create.note.links.some((link) => link.target === "timeline_brainworms_mention"), false);
 });
 
-test("source extraction does not canonicalize shorthand character subjects to longer existing notes", async () => {
+test("source extraction canonicalizes shorthand character subjects to trusted existing notes", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-shorthand-character-"));
   try {
     const storage = new LongTermMemoryStorage(root);
@@ -1580,6 +1581,7 @@ test("source extraction does not canonicalize shorthand character subjects to lo
     await storage.createNote(
       {
         id: "char_damo_korvak_baa242cfa4",
+        title: "Damo Korvak",
         type: "character",
         status: "active",
         modes: ["roleplay"],
@@ -1593,6 +1595,7 @@ test("source extraction does not canonicalize shorthand character subjects to lo
             updatedAt: timestamp,
           },
         },
+        subjects: [{ key: "character:damo-id", ref: { kind: "character", id: "damo-id" } }],
         version: 1,
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -1613,6 +1616,7 @@ test("source extraction does not canonicalize shorthand character subjects to lo
               id: randomUUID(),
               bucket: "character_fact",
               subjectId: "damo",
+              subjectKeys: ["character:damo-id"],
               sectionKey: "facts",
               text: "Damo is meticulous about borrowed equipment placement.",
               importance: "moderate",
@@ -1638,20 +1642,20 @@ test("source extraction does not canonicalize shorthand character subjects to lo
         label: "test",
         embed: async (texts) => texts.map(() => []),
       },
+      trustedSubjectCatalog: buildTrustedLtmSubjectCatalog({
+        roster: [{ kind: "character", id: "damo-id", name: "Damo Korvak", aliases: ["Damo"] }],
+        notes: [(await storage.getNote("char_damo_korvak_baa242cfa4"))!],
+      }),
     });
 
     assert(result.draft);
-    const create = result.draft.mutations.find(
-      (mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> =>
-        mutation.kind === "create_note" && mutation.note.id === "char_damo",
-    );
-    assert.ok(create);
     assert.equal(
       result.draft.mutations.some(
         (mutation) => mutation.kind === "update_section" && mutation.noteId === "char_damo_korvak_baa242cfa4",
       ),
-      false,
+      true,
     );
+    assert.equal(result.draft.mutations.some((mutation) => mutation.kind === "create_note"), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

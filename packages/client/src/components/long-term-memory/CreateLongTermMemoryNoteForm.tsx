@@ -64,6 +64,7 @@ export type CreateLongTermMemoryNoteDraft = {
   };
   sectionKey: string;
   sectionText: string;
+  subjectLabels?: string[];
   tags?: string[];
   keywords?: string[];
   links?: LtmLink[];
@@ -110,6 +111,7 @@ function createDefaultDraft({
     },
     sectionKey: defaultSectionKeyForType("scene"),
     sectionText: "",
+    subjectLabels: [],
   };
 }
 
@@ -172,6 +174,7 @@ export function CreateLongTermMemoryNoteForm({
       type: nextType,
       id: allowedIdPrefixesByType[nextType][0],
       sectionKey: defaultSectionKeyForType(nextType),
+      subjectLabels: nextType === "character" ? [""] : nextType === "relationship" ? ["", ""] : [],
     }));
   };
 
@@ -193,6 +196,19 @@ export function CreateLongTermMemoryNoteForm({
       toast.error("Add section text before creating the note");
       return;
     }
+    const subjectLabels = (draft.subjectLabels ?? []).map((label) => label.trim()).filter(Boolean);
+    const expectedSubjectCount = type === "character" ? 1 : type === "relationship" ? 2 : 0;
+    if (expectedSubjectCount > 0 && subjectLabels.length !== expectedSubjectCount) {
+      toast.error(
+        `${type === "character" ? "Character" : "Relationship"} memories require ${expectedSubjectCount === 1 ? "a subject" : "two participants"}`,
+      );
+      return;
+    }
+    const subjectKeys = subjectLabels.map((label) => `manual:${normalizeIdentifier(label, "subject")}`);
+    if (new Set(subjectKeys).size !== subjectKeys.length) {
+      toast.error("Relationship participants must be distinct");
+      return;
+    }
     try {
       const note = await createNote.mutateAsync(
         createNoteInput({
@@ -210,6 +226,9 @@ export function CreateLongTermMemoryNoteForm({
           evidence: draft.evidence,
           salience: draft.salience,
           confidence: draft.confidence,
+          subjects: subjectKeys.length
+            ? subjectKeys.map((key) => ({ key })).sort((left, right) => left.key.localeCompare(right.key))
+            : undefined,
         }),
       );
       toast.success("Memory created");
@@ -284,6 +303,41 @@ export function CreateLongTermMemoryNoteForm({
             className={compactInputClassName}
           />
         </SettingField>
+
+        {type === "character" ? (
+          <SettingField label="Character subject">
+            <input
+              value={draft.subjectLabels?.[0] ?? ""}
+              onChange={(event) => setDraft((current) => ({ ...current, subjectLabels: [event.target.value] }))}
+              placeholder="Damo Korvak"
+              className={compactInputClassName}
+            />
+          </SettingField>
+        ) : type === "relationship" ? (
+          <fieldset className={sectionCardClassName}>
+            <legend className="px-1 text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+              Participants
+            </legend>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {[0, 1].map((index) => (
+                <input
+                  key={index}
+                  value={draft.subjectLabels?.[index] ?? ""}
+                  onChange={(event) =>
+                    setDraft((current) => {
+                      const next = [...(current.subjectLabels ?? [])];
+                      next[index] = event.target.value;
+                      return { ...current, subjectLabels: next };
+                    })
+                  }
+                  aria-label={`Participant ${index + 1}`}
+                  placeholder={index === 0 ? "Damo Korvak" : "Lisa Imai"}
+                  className={compactInputClassName}
+                />
+              ))}
+            </div>
+          </fieldset>
+        ) : null}
 
         <SettingField label="Internal ID">
           <div className="space-y-1">

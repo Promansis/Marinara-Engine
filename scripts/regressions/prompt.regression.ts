@@ -52,6 +52,11 @@ import {
   type LtmMemoryChunk,
 } from "../../packages/server/src/services/long-term-memory/chunking.js";
 import { formatLongTermMemoryBlock } from "../../packages/server/src/services/long-term-memory/prompt.js";
+import {
+  buildTrustedLtmSubjectCatalog,
+  resolveLtmSubjectIdentities,
+} from "../../packages/server/src/services/long-term-memory/subject-identity.js";
+import { normalizeStructuredSummaryEvidenceUnits } from "../../packages/server/src/services/long-term-memory/structured-summary-normalizer.js";
 import type { LtmRankedCandidate } from "../../packages/server/src/services/long-term-memory/ranking.js";
 
 type RegressionCase = {
@@ -1290,8 +1295,30 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
         },
       ];
 
+      const subjectCatalog = buildTrustedLtmSubjectCatalog({
+        roster: [
+          { kind: "persona", id: "damo-id", name: "Damo Korvak", aliases: ["Damo"] },
+          { kind: "character", id: "lisa-id", name: "Lisa Imai", aliases: ["Lisa"] },
+        ],
+        notes: [],
+      });
+      const normalized = normalizeStructuredSummaryEvidenceUnits({
+        units,
+        sourceText,
+        sourceNote,
+        sourceHash,
+        existingNotes: [],
+        allowedBuckets: ["timeline_event", "relationship_state", "character_fact", "thread", "tone"],
+        mode: "roleplay",
+        modes: ["roleplay"],
+      });
+      const identity = resolveLtmSubjectIdentities({
+        units: normalized.units,
+        catalog: subjectCatalog,
+        existingNotes: [],
+      });
       const result = compileEvidenceUnitExtraction({
-        unitResponse: { summary: "structured source", units },
+        unitResponse: { summary: "structured source", units: identity.units },
         sourceText,
         sourceNote,
         existingNotes: [],
@@ -1299,6 +1326,7 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
         modes: ["roleplay"],
         mode: "roleplay",
         sourceHash,
+        skipStructuredBackfill: true,
       });
 
       assert.deepEqual(result.outcome.droppedCandidates, []);
@@ -1308,14 +1336,16 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       const byId = new Map(createdNotes.map((note) => [note.id, note]));
 
       assert.ok(byId.has("timeline_reunion_foundry"));
-      assert.equal(byId.get("rel_lisa_damo")?.sections.state?.dimensions?.protectiveness, 60);
-      assert.equal(byId.get("rel_lisa_damo")?.sections.state?.dimensions?.trust, 80);
-      assert.equal(byId.get("rel_lisa_damo")?.sections.state?.dimensions?.hostility, undefined);
-      assert.equal(byId.get("rel_lisa_damo")?.sections.state?.dimensions?.lust, undefined);
-      assert.equal(byId.get("rel_lisa_damo")?.sections.state?.dimensionChanges?.trust, 5);
-      assert.equal(byId.get("rel_lisa_damo")?.sections.state?.dimensionChanges?.tension, undefined);
-      assert.equal(byId.get("rel_lisa_damo")?.links.some((link) => link.target === "timeline_reunion_foundry"), true);
-      const relationshipChunk = chunkNoteSections(byId.get("rel_lisa_damo")!).find(
+      const relationship = byId.get("rel_damo_korvak_lisa_imai");
+      assert.deepEqual(relationship?.subjects?.map((subject) => subject.key), ["character:lisa-id", "persona:damo-id"]);
+      assert.equal(relationship?.sections.state?.dimensions?.protectiveness, 60);
+      assert.equal(relationship?.sections.state?.dimensions?.trust, 80);
+      assert.equal(relationship?.sections.state?.dimensions?.hostility, undefined);
+      assert.equal(relationship?.sections.state?.dimensions?.lust, undefined);
+      assert.equal(relationship?.sections.state?.dimensionChanges?.trust, 5);
+      assert.equal(relationship?.sections.state?.dimensionChanges?.tension, undefined);
+      assert.equal(relationship?.links.some((link) => link.target === "timeline_reunion_foundry"), true);
+      const relationshipChunk = chunkNoteSections(relationship!).find(
         (chunk) => chunk.sectionKey === "state",
       );
       assert.equal(relationshipChunk?.dimensions?.trust, 80);

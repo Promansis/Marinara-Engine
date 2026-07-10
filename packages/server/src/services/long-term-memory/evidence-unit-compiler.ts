@@ -10,11 +10,13 @@ import type {
   LtmScope,
   LtmSection,
   LtmStatus,
+  LtmSubject,
 } from "@marinara-engine/shared";
 import { isLtmSourceLikeNote, QUEST_THREAD_SECTION_KEYS, uniqueLinks } from "@marinara-engine/shared";
 import { mergeKeywords } from "./keyword-extract.js";
 import { noteIdForEvidenceUnit, riskForEvidenceUnit } from "./evidence-unit-validation.js";
 import { uniqueStrings } from "./ltm-utils.js";
+import { subjectsEqual } from "./subject-identity.js";
 
 export interface CompileLtmEvidenceUnitsOptions {
   units: LtmEvidenceUnit[];
@@ -83,6 +85,8 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
       [],
       30,
     );
+    const resolvedSubjects = units.find((unit) => unit.subjects)?.subjects;
+    const subjects = resolvedSubjects ?? subjectsForNewNote(target.noteType, noteId);
 
     if (!existing) {
       const note = {
@@ -95,6 +99,7 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
         keywords: unitKeywords,
         links,
         sections,
+        ...(subjects ? { subjects } : {}),
       };
       mutations.push({
         id: randomUUID(),
@@ -110,6 +115,21 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
         note,
       });
       continue;
+    }
+
+    if (resolvedSubjects && !existing.subjects) {
+      mutations.push({
+        id: randomUUID(),
+        kind: "set_subjects",
+        risk: "low",
+        confidence,
+        summary: `Bind ${noteId} to canonical subjects`,
+        evidence,
+        noteId,
+        subjects: resolvedSubjects,
+      });
+    } else if (resolvedSubjects && existing.subjects && !subjectsEqual(existing.subjects, resolvedSubjects)) {
+      throw new Error(`Long-term memory subject identity mismatch for ${noteId}.`);
     }
 
     for (const [sectionKey, section] of Object.entries(sections)) {
@@ -231,6 +251,12 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
       returned: mutations.length,
     },
   };
+}
+
+function subjectsForNewNote(noteType: LtmNoteType, noteId: string): LtmSubject[] | undefined {
+  if (noteType !== "character" && noteType !== "relationship") return undefined;
+  if (noteType === "character") return [{ key: `legacy:${noteId}` }];
+  return [{ key: `legacy:${noteId}:1` }, { key: `legacy:${noteId}:2` }];
 }
 
 function targetForUnit(unit: LtmEvidenceUnit, mode?: LtmMode): UnitTarget {

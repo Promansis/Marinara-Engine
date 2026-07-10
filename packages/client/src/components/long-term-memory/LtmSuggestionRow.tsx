@@ -29,6 +29,8 @@ export function mutationKindLabel(kind: LtmDraftMutation["kind"]) {
       return "Keywords";
     case "set_status":
       return "Status";
+    case "set_subjects":
+      return "Identity";
   }
 }
 

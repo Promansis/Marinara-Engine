@@ -10,6 +10,7 @@ import {
   type LtmScope,
   type LtmSection,
   type LtmStatus,
+  type LtmSubject,
 } from "@marinara-engine/shared";
 import type { CreateLongTermMemoryNoteInput, UpdateLongTermMemoryNoteInput } from "../../hooks/use-long-term-memory";
 
@@ -288,6 +289,7 @@ export function createNoteInput(data: {
   evidence?: string[];
   salience?: number;
   confidence?: number;
+  subjects?: LtmSubject[];
 }): CreateLongTermMemoryNoteInput {
   const sectionKey = normalizeIdentifier(data.sectionKey, "section") || defaultSectionKeyForType(data.type);
   return {
@@ -300,6 +302,7 @@ export function createNoteInput(data: {
     tags: data.tags,
     keywords: data.keywords ?? [],
     links: data.links ?? [],
+    ...(data.subjects ? { subjects: data.subjects } : {}),
     sections: {
       [sectionKey]: {
         ...emptySection(data.sectionText.trim()),

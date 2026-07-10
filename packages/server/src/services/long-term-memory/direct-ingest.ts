@@ -261,6 +261,8 @@ async function applyMutation(storage: LongTermMemoryStorage, mutation: LtmDraftM
     patch = { keywords: mutation.keywords };
   } else if (mutation.kind === "set_status") {
     patch = { status: mutation.status };
+  } else if (mutation.kind === "set_subjects") {
+    patch = { subjects: mutation.subjects };
   } else {
     const _exhaustive: never = mutation;
     throw new Error(`Unsupported mutation kind: ${(_exhaustive as LtmDraftMutation).kind}`);

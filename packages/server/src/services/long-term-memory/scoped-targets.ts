@@ -12,6 +12,7 @@ import {
 import type { LtmExtractionDiagnostic } from "./diagnostics.js";
 import { noteIdForEvidenceUnit } from "./evidence-unit-validation.js";
 import { uniqueStrings } from "./ltm-utils.js";
+import { subjectsEqual } from "./subject-identity.js";
 
 type ScopedTargetStorage = {
   getNotesByIds(ids: string[]): Promise<Map<string, LtmNote>>;
@@ -58,9 +59,13 @@ export async function resolveScopedEvidenceUnitTargets({
   }
 
   const targetIndexes = new Map<string, number>();
+  const targetUnits = new Map<string, LtmEvidenceUnit>();
   for (const [index, unit] of units.entries()) {
     const noteId = noteIdForEvidenceUnit(unit);
-    if (!targetIndexes.has(noteId)) targetIndexes.set(noteId, index);
+    if (!targetIndexes.has(noteId)) {
+      targetIndexes.set(noteId, index);
+      targetUnits.set(noteId, unit);
+    }
   }
 
   const targetNoteIds = Array.from(targetIndexes.keys());
@@ -69,9 +74,10 @@ export async function resolveScopedEvidenceUnitTargets({
   const diagnostics: LtmExtractionDiagnostic[] = [];
 
   for (const noteId of targetNoteIds) {
+    const unit = targetUnits.get(noteId)!;
     const existing = safeExistingById.get(noteId) ?? targetNotesById.get(noteId);
     if (!existing || isSourceOrScene(existing)) continue;
-    if (canUpdateLtmScopedTarget(existing.scope, scope)) {
+    if (canUseEvidenceTarget(existing, unit, scope)) {
       safeExistingById.set(existing.id, existing);
       continue;
     }
@@ -81,20 +87,26 @@ export async function resolveScopedEvidenceUnitTargets({
       scope,
       storage,
       safeExistingById,
+      unit,
     });
     remaps.set(noteId, resolvedNoteId);
 
     const resolvedExisting = safeExistingById.get(resolvedNoteId) ?? await getNoteById(storage, resolvedNoteId);
-    if (resolvedExisting && !isSourceOrScene(resolvedExisting) && canUpdateLtmScopedTarget(resolvedExisting.scope, scope)) {
+    if (resolvedExisting && !isSourceOrScene(resolvedExisting) && canUseEvidenceTarget(resolvedExisting, unit, scope)) {
       safeExistingById.set(resolvedExisting.id, resolvedExisting);
     }
 
+    const identityConflict = Boolean(
+      unit.subjects && existing.subjects && !subjectsEqual(existing.subjects, unit.subjects),
+    );
     diagnostics.push({
       severity: "warning",
-      code: "target_note_scoped_variant",
+      code: identityConflict ? "target_note_identity_variant" : "target_note_scoped_variant",
       candidateIndex: targetIndexes.get(noteId),
       noteId,
-      message: `Evidence target ${noteId} belongs to another scope, so this source will use scoped memory ${resolvedNoteId}.`,
+      message: identityConflict
+        ? `Evidence target ${noteId} is bound to another subject identity, so this source will use ${resolvedNoteId}.`
+        : `Evidence target ${noteId} belongs to another scope, so this source will use scoped memory ${resolvedNoteId}.`,
       details: {
         originalNoteId: noteId,
         resolvedNoteId,
@@ -117,18 +129,26 @@ async function resolveScopedVariantNoteId({
   scope,
   storage,
   safeExistingById,
+  unit,
 }: {
   baseId: string;
   scope: LtmScope;
   storage: ScopedTargetStorage;
   safeExistingById: Map<string, LtmNote>;
+  unit: LtmEvidenceUnit;
 }) {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const candidate = scopedVariantNoteId(baseId, scope, attempt);
     const existing = safeExistingById.get(candidate) ?? await getNoteById(storage, candidate);
-    if (!existing || canUpdateLtmScopedTarget(existing.scope, scope)) return candidate;
+    if (!existing || canUseEvidenceTarget(existing, unit, scope)) return candidate;
   }
   throw new Error(`Unable to resolve scoped long-term memory note id for ${baseId}`);
+}
+
+function canUseEvidenceTarget(existing: LtmNote, unit: LtmEvidenceUnit, scope: LtmScope) {
+  if (!canUpdateLtmScopedTarget(existing.scope, scope)) return false;
+  if (!unit.subjects || !existing.subjects) return true;
+  return subjectsEqual(existing.subjects, unit.subjects);
 }
 
 async function getNoteById(storage: ScopedTargetStorage, id: string) {

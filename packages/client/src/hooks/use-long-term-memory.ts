@@ -242,6 +242,7 @@ export type UpdateLongTermMemoryNoteInput = {
   links?: LtmNote["links"];
   sections?: LtmNote["sections"];
   conflicts?: LtmNote["conflicts"];
+  subjects?: LtmNote["subjects"];
 };
 
 export type DeleteLongTermMemoryNotesResponse = {
