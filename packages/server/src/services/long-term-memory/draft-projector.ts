@@ -29,6 +29,14 @@ export type LtmMutationProjection = {
   mutationId: string;
   noteId: string;
   disposition: LtmMutationDisposition;
+  changes: LtmProjectedChange[];
+};
+
+export type LtmProjectedChange = {
+  kind: "section" | "link" | "keywords" | "status" | "subjects";
+  key: string;
+  before?: string;
+  after: string;
 };
 
 export type LtmProjectedNoteMutationGroup = {
@@ -87,12 +95,15 @@ export function projectLtmDraftMutationGroup(options: {
   let working = options.existing ? cloneNote(options.existing) : null;
   const projections: LtmMutationProjection[] = [];
   for (const mutation of options.mutations) {
+    const before = working;
+    const disposition = dispositionForMutation(before, mutation);
+    working = projectMutation(before, mutation, options.context, options.timestamp);
     projections.push({
       mutationId: mutation.id,
       noteId,
-      disposition: dispositionForMutation(working, mutation),
+      disposition,
+      changes: changesForMutation(before, working, mutation),
     });
-    working = projectMutation(working, mutation, options.context, options.timestamp);
   }
   if (!working) {
     throw new LtmDraftProjectionError(`Long-term memory mutation target not found: ${noteId}`, "missing_target");
@@ -376,6 +387,114 @@ function dispositionForMutation(current: LtmNote | null, mutation: LtmDraftMutat
   }
   if (mutation.kind === "add_link" || mutation.kind === "set_keywords") return "merge";
   return "rewrite";
+}
+
+function changesForMutation(before: LtmNote | null, after: LtmNote, mutation: LtmDraftMutation): LtmProjectedChange[] {
+  if (mutation.kind === "create_note") {
+    const changes: LtmProjectedChange[] = Object.keys(mutation.note.sections).flatMap((sectionKey) => {
+      const beforeText = before?.sections[sectionKey]?.text;
+      const afterText = after.sections[sectionKey]!.text;
+      if (beforeText === afterText) return [];
+      return [
+        {
+          kind: "section" as const,
+          key: sectionKey,
+          ...(beforeText ? { before: beforeText } : {}),
+          after: afterText,
+        },
+      ];
+    });
+    const beforeKeywords = before?.keywords.join(", ");
+    const afterKeywords = after.keywords.join(", ");
+    if (mutation.note.keywords.length > 0 && beforeKeywords !== afterKeywords) {
+      changes.push({
+        kind: "keywords",
+        key: "keywords",
+        ...(beforeKeywords ? { before: beforeKeywords } : {}),
+        after: afterKeywords,
+      });
+    }
+    for (const link of mutation.note.links) {
+      if (before?.links.some((existing) => linksEqual(existing, link))) continue;
+      changes.push({
+        kind: "link",
+        key: `${link.relation}:${link.target}`,
+        after: projectedLinkText(link),
+      });
+    }
+    if (before && before.status !== after.status) {
+      changes.push({ kind: "status", key: "status", before: before.status, after: after.status });
+    }
+    if (mutation.note.subjects && !before?.subjects) {
+      changes.push({
+        kind: "subjects",
+        key: "subjects",
+        after: projectedSubjectsText(after.subjects ?? mutation.note.subjects),
+      });
+    }
+    return changes;
+  }
+  if (mutation.kind === "append_section" || mutation.kind === "update_section") {
+    const beforeText = before?.sections[mutation.sectionKey]?.text;
+    const afterText = after.sections[mutation.sectionKey]!.text;
+    if (beforeText === afterText) return [];
+    return [
+      {
+        kind: "section",
+        key: mutation.sectionKey,
+        ...(beforeText ? { before: beforeText } : {}),
+        after: afterText,
+      },
+    ];
+  }
+  if (mutation.kind === "add_link") {
+    if (before?.links.some((existing) => linksEqual(existing, mutation.link))) return [];
+    return [
+      {
+        kind: "link",
+        key: `${mutation.link.relation}:${mutation.link.target}`,
+        after: projectedLinkText(mutation.link),
+      },
+    ];
+  }
+  if (mutation.kind === "set_keywords") {
+    const beforeText = before?.keywords.join(", ");
+    const afterText = after.keywords.join(", ");
+    if (beforeText === afterText) return [];
+    return [
+      {
+        kind: "keywords",
+        key: "keywords",
+        ...(beforeText ? { before: beforeText } : {}),
+        after: afterText,
+      },
+    ];
+  }
+  if (mutation.kind === "set_status") {
+    if (before?.status === after.status) return [];
+    return [{ kind: "status", key: "status", ...(before ? { before: before.status } : {}), after: after.status }];
+  }
+  if (before?.subjects && subjectsEqual(before.subjects, after.subjects ?? mutation.subjects)) return [];
+  return [
+    {
+      kind: "subjects",
+      key: "subjects",
+      ...(before?.subjects ? { before: projectedSubjectsText(before.subjects) } : {}),
+      after: projectedSubjectsText(after.subjects ?? mutation.subjects),
+    },
+  ];
+}
+
+function linksEqual(left: LtmLink, right: LtmLink) {
+  return left.target === right.target && left.relation === right.relation && left.aspect === right.aspect;
+}
+
+function projectedLinkText(link: LtmLink) {
+  return `${link.relation} ${link.target}${link.aspect ? ` (${link.aspect})` : ""}`;
+}
+
+function projectedSubjectsText(subjects: NonNullable<LtmNote["subjects"]>) {
+  return subjects.map((subject) => subject.key).join(", ");
 }
 
 function withSourceLink(noteId: string, links: LtmLink[], sourceNoteId: string | undefined) {

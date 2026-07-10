@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tansta
 import {
   ltmExtractSourceNoteRequestSchema,
   ltmExtractSourceNoteResponseSchema,
+  ltmDraftReviewResponseSchema,
   ltmImportSourceNotesRequestSchema,
   ltmImportSourceNotesResponseSchema,
   ltmIdentityRepairApplyRequestSchema,
@@ -17,6 +18,7 @@ import {
   type LtmExtractSourceNoteRequest as SharedLtmExtractSourceNoteRequest,
   type LtmExtractSourceNoteResponse as SharedLtmExtractSourceNoteResponse,
   type LtmExtractionDiagnostic as SharedLtmExtractionDiagnostic,
+  type LtmDraftReviewResponse as SharedLtmDraftReviewResponse,
   type LtmImportSourceNotesRequest as SharedLtmImportSourceNotesRequest,
   type LtmImportSourceNotesResponse as SharedLtmImportSourceNotesResponse,
   type LtmIntegrityIssue as SharedLtmIntegrityIssue,
@@ -150,6 +152,7 @@ export type LtmDebugLogResponse = {
 };
 
 export type LtmExtractionDiagnostic = SharedLtmExtractionDiagnostic;
+export type LtmDraftReviewResponse = SharedLtmDraftReviewResponse;
 
 export type ExtractLongTermMemorySourceInput = SharedLtmExtractSourceNoteRequest & {
   noteId: string;
@@ -206,11 +209,12 @@ export const longTermMemoryKeys = {
   all: ["long-term-memory"] as const,
   status: () => [...longTermMemoryKeys.all, "status"] as const,
   integrity: () => [...longTermMemoryKeys.all, "integrity"] as const,
-  identityRepairPreview: (scope: LtmScope) =>
-    [...longTermMemoryKeys.all, "identity-repair-preview", scope] as const,
+  identityRepairPreview: (scope: LtmScope) => [...longTermMemoryKeys.all, "identity-repair-preview", scope] as const,
   notes: (filter?: LtmNoteFilter) => [...longTermMemoryKeys.all, "notes", filter ?? {}] as const,
   note: (id: string) => [...longTermMemoryKeys.all, "notes", id] as const,
   drafts: (filter?: LtmDraftFilter) => [...longTermMemoryKeys.all, "drafts", filter ?? {}] as const,
+  draftReview: (filter?: LtmDraftReviewFilter) =>
+    [...longTermMemoryKeys.all, "drafts", "review", filter ?? {}] as const,
   importPreview: (source: LtmInteropSource, limit: number, scope?: LtmScope) =>
     [...longTermMemoryKeys.all, "import-preview", source, limit, scope ?? {}] as const,
   extractionSettings: () => [...longTermMemoryKeys.all, "extraction-settings"] as const,
@@ -237,10 +241,17 @@ export type LtmDraftFilter = {
   chatId?: string;
 };
 
+export type LtmDraftReviewFilter = LtmDraftFilter & {
+  sourceNoteId?: string;
+};
+
 export type CreateLongTermMemoryNoteInput = Omit<LtmNote, "createdAt" | "updatedAt" | "version"> &
   Partial<Pick<LtmNote, "createdAt" | "updatedAt" | "version">>;
 
-export type CreateLongTermMemoryNoteDraft = Pick<LtmNote, "id" | "type" | "modes" | "scope" | "sections" | "links" | "tags"> &
+export type CreateLongTermMemoryNoteDraft = Pick<
+  LtmNote,
+  "id" | "type" | "modes" | "scope" | "sections" | "links" | "tags"
+> &
   Omit<LtmNote, "id" | "title" | "createdAt" | "updatedAt" | "version"> & { title?: string | null };
 
 export type UpdateLongTermMemoryNoteInput = {
@@ -335,10 +346,7 @@ export function useLongTermMemoryIntegrity(options: { enabled?: boolean } = {}) 
   });
 }
 
-export function useLongTermMemoryIdentityRepairPreview(
-  scope: LtmScope,
-  options: { enabled?: boolean } = {},
-) {
+export function useLongTermMemoryIdentityRepairPreview(scope: LtmScope, options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: longTermMemoryKeys.identityRepairPreview(scope),
     queryFn: async () => {
@@ -416,10 +424,9 @@ export function useDeleteLongTermMemoryNotes() {
 
       for (const batchIds of chunkLongTermMemoryNoteIds(ids)) {
         try {
-          const result = await api.post<DeleteLongTermMemoryNotesResponse>(
-            "/long-term-memory/notes/permanent-delete",
-            { ids: batchIds },
-          );
+          const result = await api.post<DeleteLongTermMemoryNotesResponse>("/long-term-memory/notes/permanent-delete", {
+            ids: batchIds,
+          });
           deletedIds.push(...result.deletedIds);
           failedIds.push(...result.failedIds);
         } catch {
@@ -490,7 +497,13 @@ export function useRemoveLongTermMemoryNotesFromScope() {
           failedIds.push(id);
         }
       });
-      return { removedIds, deletedIds, unchangedIds, failedIds, notes } satisfies RemoveLongTermMemoryNotesFromScopeResponse;
+      return {
+        removedIds,
+        deletedIds,
+        unchangedIds,
+        failedIds,
+        notes,
+      } satisfies RemoveLongTermMemoryNotesFromScopeResponse;
     },
     onSuccess: (result) => {
       for (const id of result.deletedIds) {
@@ -528,6 +541,17 @@ export function useLongTermMemoryDrafts(filter: LtmDraftFilter = {}, options: { 
     enabled: options.enabled ?? true,
     placeholderData: (previousData) => previousData,
     staleTime: 30_000,
+  });
+}
+
+export function useLongTermMemoryDraftReview(filter: LtmDraftReviewFilter = {}, options: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: longTermMemoryKeys.draftReview(filter),
+    queryFn: async () =>
+      ltmDraftReviewResponseSchema.parse(await api.get<unknown>(`/long-term-memory/drafts/review${qs(filter)}`)),
+    enabled: options.enabled ?? true,
+    placeholderData: (previousData) => previousData,
+    staleTime: 15_000,
   });
 }
 
@@ -675,7 +699,7 @@ export function useAcceptLongTermMemoryDraft() {
         lowRiskOnly,
         editedMutations,
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
+    onSettled: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
   });
 }
 
@@ -685,6 +709,14 @@ export function useSkipLongTermMemoryDraftMutations() {
     mutationFn: ({ id, mutationIds }: SkipLongTermMemoryDraftInput) =>
       api.post<SkipLongTermMemoryDraftResponse>(`/long-term-memory/drafts/${id}/skip`, { mutationIds }),
     onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
+  });
+}
+
+export function useDeleteLongTermMemoryDraft() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete<{ deleted: true; id: string }>(`/long-term-memory/drafts/${id}`),
+    onSettled: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
   });
 }
 

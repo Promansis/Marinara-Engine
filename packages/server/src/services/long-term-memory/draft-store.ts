@@ -7,6 +7,9 @@ import {
   ltmExtractionDraftSchema,
   ltmDraftStatusSchema,
   type LtmExtractionDraft,
+  type LtmExtractionAccounting,
+  type LtmExtractionDiagnostic,
+  type LtmExtractionOutcome,
   type LtmExtractionResponse,
   type LtmMode,
   type LtmScope,
@@ -26,6 +29,10 @@ export interface StoreLtmDraftOptions extends CreateLtmExtractionDraftInput {
   root?: string;
   summary?: string;
   response: LtmExtractionResponse;
+  operationId?: string;
+  diagnostics?: LtmExtractionDiagnostic[];
+  outcome?: LtmExtractionOutcome;
+  accounting?: LtmExtractionAccounting;
 }
 
 export type LtmDraftListFilter = {
@@ -103,16 +110,34 @@ export class LongTermMemoryDraftStore {
           : {}),
       };
       const timestamp = nowIso();
+      const candidateCount = options.response.mutations.length;
       const draft = ltmExtractionDraftSchema.parse({
         id: randomUUID(),
         status: "pending",
         createdAt: timestamp,
         updatedAt: timestamp,
+        operationId: options.operationId ?? randomUUID(),
         source,
         scope: options.scope ?? {},
         modes: options.modes,
         summary: options.summary ?? options.response.summary ?? "",
         mutations: options.response.mutations,
+        diagnostics: options.diagnostics ?? [],
+        extractionOutcome: options.outcome ?? {
+          state: candidateCount > 0 ? "success" : "no_suggestions_created",
+          totalCandidates: candidateCount,
+          keptUnits: candidateCount,
+          droppedUnits: 0,
+          droppedCandidates: [],
+        },
+        accounting: options.accounting ?? {
+          providerCandidates: candidateCount,
+          normalizedAdditions: 0,
+          parserRejections: 0,
+          validationRejections: 0,
+          deduplications: 0,
+          keptUnits: candidateCount,
+        },
       });
       await writeJsonAtomic(draftPathForId(draft.id, this.root), draft);
       try {

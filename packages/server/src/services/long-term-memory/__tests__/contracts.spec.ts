@@ -115,6 +115,14 @@ test("LTM transport contracts - import preserves partial failures and retryabili
           droppedUnits: 0,
           droppedCandidates: [],
         },
+        accounting: {
+          providerCandidates: 0,
+          normalizedAdditions: 0,
+          parserRejections: 0,
+          validationRejections: 0,
+          deduplications: 0,
+          keptUnits: 0,
+        },
         appliedMutationIds: [],
         skippedMutationIds: [],
       },
@@ -140,6 +148,14 @@ test("LTM transport contracts - import preserves partial failures and retryabili
           keptUnits: 0,
           droppedUnits: 0,
           droppedCandidates: [],
+        },
+        accounting: {
+          providerCandidates: 0,
+          normalizedAdditions: 0,
+          parserRejections: 0,
+          validationRejections: 0,
+          deduplications: 0,
+          keptUnits: 0,
         },
         appliedMutationIds: [],
         skippedMutationIds: [],
@@ -443,6 +459,7 @@ test("LTM transport contracts - extraction response rejects a missing response s
     mode: "conversation",
   };
   const response = {
+    operationId: "8da1df57-ad4e-41f2-afaf-e91676daf329",
     draft: null,
     diagnostics: [],
     outcome: {
@@ -451,6 +468,14 @@ test("LTM transport contracts - extraction response rejects a missing response s
       keptUnits: 0,
       droppedUnits: 0,
       droppedCandidates: [],
+    },
+    accounting: {
+      providerCandidates: 0,
+      normalizedAdditions: 0,
+      parserRejections: 0,
+      validationRejections: 0,
+      deduplications: 0,
+      keptUnits: 0,
     },
     response: { summary: "", mutations: [] },
     appliedMutationIds: [],

@@ -8,6 +8,7 @@ import {
   LOCAL_SIDECAR_CONNECTION_ID,
   ltmConflictSchema,
   ltmDraftMutationSchema,
+  ltmDraftReviewResponseSchema,
   ltmDraftStatusSchema,
   ltmDebugPhaseSchema,
   ltmDebugStatusSchema,
@@ -67,6 +68,7 @@ import {
   recordLtmDebugEvent,
 } from "../services/long-term-memory/debug-log.js";
 import { LongTermMemoryDraftStore } from "../services/long-term-memory/draft-store.js";
+import { projectLongTermMemoryDraftReview } from "../services/long-term-memory/draft-review.js";
 import {
   checkLongTermMemoryIntegrity,
   createLongTermMemoryInteropSourceNotes,
@@ -238,6 +240,14 @@ const listDraftsQuerySchema = z
   .object({
     status: ltmDraftStatusSchema.optional(),
     chatId: z.string().min(1).max(120).optional(),
+  })
+  .strict();
+
+const draftReviewQuerySchema = z
+  .object({
+    sourceNoteId: ltmNoteIdSchema.optional(),
+    chatId: z.string().min(1).max(120).optional(),
+    status: ltmDraftStatusSchema.optional(),
   })
   .strict();
 
@@ -698,9 +708,11 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
             scope: directResult.appliedMutationIds.length > 0 ? "all" : "source",
           });
           return ltmExtractSourceNoteResponseSchema.parse({
+            operationId: directResult.operationId,
             draft: directResult.draft,
             diagnostics: directResult.diagnostics,
             outcome: directResult.outcome,
+            accounting: directResult.accounting,
             response: directResult.response,
             appliedMutationIds: directResult.appliedMutationIds,
             skippedMutationIds: directResult.skippedMutationIds,
@@ -744,7 +756,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
           trustedSubjectCatalog,
         });
         const applyResult =
-          body.applyLowRisk && result.draft
+          body.applyLowRisk && result.draft && result.draft.mutations.length > 0
             ? await applyLongTermMemoryDraft(result.draft.id, {
                 actor: "maintenance_api",
                 autoApplyLowRiskOnly: true,
@@ -763,9 +775,11 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
         await rebuildLongTermMemoryIndexes({ scope: "source" });
 
         return ltmExtractSourceNoteResponseSchema.parse({
+          operationId: result.operationId,
           draft: applyResult?.draft ?? result.draft,
           diagnostics: result.diagnostics,
           outcome: result.outcome,
+          accounting: result.accounting,
           response: result.response,
           appliedMutationIds: applyResult?.appliedMutationIds ?? [],
           skippedMutationIds: applyResult?.skippedMutationIds ?? [],
@@ -1073,6 +1087,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
                 extractionMethod: "direct_ingest" as const,
                 diagnostics: directResult.diagnostics,
                 outcome: directResult.outcome,
+                accounting: directResult.accounting,
                 response: directResult.response,
               };
             }
@@ -1101,6 +1116,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
               extractionMethod: "llm" as const,
               diagnostics: result.diagnostics,
               outcome: result.outcome,
+              accounting: result.accounting,
               response: result.response,
             };
           } catch (err) {
@@ -1161,6 +1177,14 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
                 droppedUnits: 0,
                 droppedCandidates: [],
               },
+              accounting: {
+                providerCandidates: 0,
+                normalizedAdditions: 0,
+                parserRejections: 0,
+                validationRejections: 0,
+                deduplications: 0,
+                keptUnits: 0,
+              },
               appliedMutationIds: [],
               skippedMutationIds: [],
             });
@@ -1175,11 +1199,15 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
                 response: prepared.response,
                 scope: item.note.scope,
                 modes: item.note.modes,
+                operationId,
+                diagnostics: prepared.diagnostics,
+                outcome: prepared.outcome,
+                accounting: prepared.accounting,
               },
               { overlay },
             );
             const applyResult =
-              body.applyLowRisk && draft
+              body.applyLowRisk && draft.mutations.length > 0
                 ? await applyLongTermMemoryDraft(draft.id, {
                     actor: "maintenance_api",
                     autoApplyLowRiskOnly: true,
@@ -1208,6 +1236,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
               draft: applyResult?.draft ?? draft,
               diagnostics: prepared.diagnostics,
               outcome: prepared.outcome,
+              accounting: prepared.accounting,
               appliedMutationIds: applyResult?.appliedMutationIds ?? [],
               skippedMutationIds: applyResult?.skippedMutationIds ?? [],
             });
@@ -1244,6 +1273,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
                 },
               ],
               outcome: prepared.outcome,
+              accounting: prepared.accounting,
               appliedMutationIds: [],
               skippedMutationIds: [],
             });
@@ -1328,6 +1358,18 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     const query = listDraftsQuerySchema.parse(req.query);
     const drafts = await draftStore.listDrafts({ status: "pending", chatId: query.chatId });
     return { count: drafts.length };
+  });
+
+  app.get<{ Querystring: unknown }>("/drafts/review", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft review" })) return;
+    const query = draftReviewQuerySchema.parse(req.query);
+    return ltmDraftReviewResponseSchema.parse(
+      await projectLongTermMemoryDraftReview({
+        sourceNoteId: query.sourceNoteId,
+        chatId: query.chatId,
+        status: query.status,
+      }),
+    );
   });
 
   app.get<{ Params: { id: string } }>("/drafts/:id", async (req, reply) => {

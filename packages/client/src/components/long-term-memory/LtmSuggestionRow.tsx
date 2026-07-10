@@ -1,19 +1,38 @@
-import { useState } from "react";
-import { Check, Pencil, X } from "lucide-react";
-import type { LtmDraftMutation, LtmExtractionDraft, LtmNote } from "@marinara-engine/shared";
+import { useId, useState } from "react";
+import { AlertTriangle, Check, ChevronDown, ChevronRight, Pencil, X } from "lucide-react";
+import type {
+  LtmDraftMutation,
+  LtmDraftReviewChange,
+  LtmExtractionDiagnostic,
+  LtmExtractionDraft,
+  LtmMutationDisposition,
+  LtmNote,
+} from "@marinara-engine/shared";
 import { cn } from "../../lib/utils";
-import {
-  actionRowClassName,
-  insetSectionCardClassName,
-  selectedListRowClassName,
-} from "./LtmFields";
+import { actionRowClassName, insetSectionCardClassName, selectedListRowClassName } from "./LtmFields";
 import { StatusPill, ToolButton } from "./LtmPills";
 import { compactMutationText, mutationTargetTitle, suggestionRowKey } from "./ltm-panel-shared";
 
 export type SuggestionRowModel = {
   draft: LtmExtractionDraft;
   mutation: LtmDraftMutation;
+  disposition: LtmMutationDisposition;
+  diagnostics: LtmExtractionDiagnostic[];
+  changes: LtmDraftReviewChange[];
+  blocked: boolean;
 };
+
+function dispositionLabel(disposition: LtmMutationDisposition) {
+  if (disposition === "new") return "New";
+  if (disposition === "merge") return "Merge";
+  return "Rewrite";
+}
+
+function dispositionTone(disposition: LtmMutationDisposition) {
+  if (disposition === "new") return "good";
+  if (disposition === "rewrite") return "warn";
+  return "neutral";
+}
 
 export function mutationKindLabel(kind: LtmDraftMutation["kind"]) {
   switch (kind) {
@@ -86,6 +105,8 @@ export function SuggestionRow({
   const { draft, mutation } = row;
   const [editing, setEditing] = useState(false);
   const [draftEdit, setDraftEdit] = useState<LtmDraftMutation | null>(null);
+  const [changesOpen, setChangesOpen] = useState(false);
+  const changesId = useId();
   const hasEdits = Boolean(editedMutation) && !editing;
 
   const openEditor = () => {
@@ -122,6 +143,7 @@ export function SuggestionRow({
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-1.5">
+                <StatusPill label={dispositionLabel(row.disposition)} tone={dispositionTone(row.disposition)} />
                 <StatusPill label={mutationKindLabel(mutation.kind)} />
                 <StatusPill label={mutationRiskLabel(mutation.risk)} tone={mutationRiskTone(mutation.risk)} />
                 <StatusPill label="AI confident" title={`AI is ${Math.round(mutation.confidence * 100)}% confident`} />
@@ -135,11 +157,11 @@ export function SuggestionRow({
               </p>
             </div>
             <div className="flex flex-wrap gap-1.5">
-              <ToolButton onClick={editing ? closeEditor : openEditor} disabled={busy}>
+              <ToolButton onClick={editing ? closeEditor : openEditor} disabled={busy || row.blocked}>
                 {editing ? <X size="0.875rem" /> : <Pencil size="0.875rem" />}
                 {editing ? "Cancel edit" : hasEdits ? "Edit again" : "Edit"}
               </ToolButton>
-              <ToolButton onClick={onKeep} disabled={busy} tone="primary">
+              <ToolButton onClick={onKeep} disabled={busy || row.blocked} tone="primary">
                 <Check size="0.875rem" />
                 Keep
               </ToolButton>
@@ -149,6 +171,40 @@ export function SuggestionRow({
               </ToolButton>
             </div>
           </div>
+          {row.diagnostics.length > 0 ? (
+            <div className="mt-3 space-y-1.5" aria-label="Suggestion warnings">
+              {row.diagnostics.map((diagnostic, index) => (
+                <div
+                  key={`${diagnostic.code}-${diagnostic.candidateIndex ?? "mutation"}-${index}`}
+                  role={diagnostic.severity === "error" ? "alert" : "status"}
+                  className="flex gap-2 rounded-lg bg-[var(--destructive)]/5 px-2.5 py-2 text-xs ring-1 ring-[var(--destructive)]/20"
+                >
+                  <AlertTriangle size="0.875rem" className="mt-0.5 shrink-0 text-[var(--destructive)]" />
+                  <div className="min-w-0">
+                    <p className="break-words text-[var(--foreground)]">{diagnostic.message}</p>
+                    <code className="mt-0.5 block break-all text-[0.6875rem] text-[var(--muted-foreground)]">
+                      {diagnostic.code}
+                    </code>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {row.changes.length > 0 ? (
+            <div className="mt-3 border-t border-[var(--border)]/55 pt-2">
+              <button
+                type="button"
+                aria-expanded={changesOpen}
+                aria-controls={changesId}
+                onClick={() => setChangesOpen((current) => !current)}
+                className="inline-flex min-h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+              >
+                {changesOpen ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
+                {changesOpen ? "Hide changes" : `View changes (${row.changes.length})`}
+              </button>
+              {changesOpen ? <SuggestionChanges id={changesId} changes={row.changes} /> : null}
+            </div>
+          ) : null}
           {editing && draftEdit ? (
             <SuggestionMutationEditor
               mutation={draftEdit}
@@ -162,6 +218,36 @@ export function SuggestionRow({
         </div>
       </div>
     </article>
+  );
+}
+
+function SuggestionChanges({ id, changes }: { id: string; changes: LtmDraftReviewChange[] }) {
+  return (
+    <dl
+      id={id}
+      className="mt-2 divide-y divide-[var(--border)]/45 rounded-lg bg-[var(--background)]/45 px-3 ring-1 ring-[var(--border)]/60"
+    >
+      {changes.map((change, index) => (
+        <div key={`${change.kind}-${change.key}-${index}`} className="grid gap-2 py-2.5 sm:grid-cols-2">
+          <div className="min-w-0">
+            <dt className="text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">
+              {change.kind === "section" ? `Before: ${change.key}` : `Before ${change.kind}`}
+            </dt>
+            <dd className="mt-1 whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--foreground)]">
+              {change.before ?? "Nothing yet"}
+            </dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">
+              {change.kind === "section" ? `After: ${change.key}` : `After ${change.kind}`}
+            </dt>
+            <dd className="mt-1 whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--foreground)]">
+              {change.after}
+            </dd>
+          </div>
+        </div>
+      ))}
+    </dl>
   );
 }
 
@@ -195,6 +281,7 @@ function SuggestionMutationEditor({
   return (
     <div className={cn("mt-3 space-y-2", insetSectionCardClassName)}>
       <textarea
+        aria-label="Suggestion text"
         value={text}
         onChange={(event) => setText(event.target.value)}
         className="min-h-24 w-full resize-y rounded-lg bg-[var(--background)] px-3 py-2 text-xs leading-relaxed text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] focus:ring-[var(--primary)]"

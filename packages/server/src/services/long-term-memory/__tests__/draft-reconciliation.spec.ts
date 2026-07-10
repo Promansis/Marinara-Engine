@@ -9,12 +9,17 @@ import type {
   LtmExtractionResponse,
   LtmNote,
 } from "@marinara-engine/shared";
+import {
+  ltmDraftReviewResponseSchema,
+  ltmExtractionAccountingSchema,
+} from "@marinara-engine/shared";
 import { withConcurrency } from "../../../lib/concurrency.js";
 import {
   projectLtmDraftOntoNotes,
   type LtmMutationDisposition,
 } from "../draft-projector.js";
 import { LongTermMemoryDraftStore } from "../draft-store.js";
+import { projectLongTermMemoryDraftReview } from "../draft-review.js";
 import { readLtmIndexState } from "../index-state.js";
 import {
   applyLongTermMemoryDraft,
@@ -210,6 +215,193 @@ test("draft projector merges additive fields, rewrites current state, and report
     projection.mutations.map((mutation) => mutation.disposition),
     ["merge", "rewrite", "merge"] satisfies LtmMutationDisposition[],
   );
+});
+
+test("extraction accounting rejects unbalanced candidate dispositions", () => {
+  assert.equal(
+    ltmExtractionAccountingSchema.safeParse({
+      providerCandidates: 2,
+      normalizedAdditions: 1,
+      parserRejections: 0,
+      validationRejections: 1,
+      deduplications: 0,
+      keptUnits: 1,
+    }).success,
+    false,
+  );
+  assert.equal(
+    ltmExtractionAccountingSchema.safeParse({
+      providerCandidates: 2,
+      normalizedAdditions: 1,
+      parserRejections: 0,
+      validationRejections: 1,
+      deduplications: 1,
+      keptUnits: 1,
+    }).success,
+    true,
+  );
+});
+
+test("draft Review groups targets, projects dynamic dispositions, and preserves diagnostics", async () => {
+  await withRoot(async (root, storage) => {
+    const sourceA = await createSource(storage, "scene_review_source_a", "Damo keeps careful watch.");
+    const sourceB = await createSource(storage, "scene_review_source_b", "Damo values quiet kindness.");
+    const sourceC = await createSource(storage, "scene_review_source_c", "A malformed candidate was returned.");
+    const store = new LongTermMemoryDraftStore(root);
+    const mutationA = createCharacterMutation(sourceA.id, "Damo keeps careful watch.");
+    const mutationB = createCharacterMutation(sourceB.id, "Damo values quiet kindness.");
+
+    const draftA = await store.createDraft({
+      source: { sourceNoteId: sourceA.id },
+      scope: {},
+      modes: ["roleplay"],
+      response: responseFor(mutationA),
+      operationId: randomUUID(),
+      diagnostics: [
+        {
+          severity: "warning",
+          code: "mutation_needs_review",
+          mutationId: mutationA.id,
+          message: "Confirm this durable character fact.",
+        },
+      ],
+      outcome: {
+        state: "success",
+        totalCandidates: 1,
+        keptUnits: 1,
+        droppedUnits: 0,
+        droppedCandidates: [],
+      },
+      accounting: {
+        providerCandidates: 1,
+        normalizedAdditions: 0,
+        parserRejections: 0,
+        validationRejections: 0,
+        deduplications: 0,
+        keptUnits: 1,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    const draftB = await store.createDraft({
+      source: { sourceNoteId: sourceB.id },
+      scope: {},
+      modes: ["roleplay"],
+      response: responseFor(mutationB),
+      operationId: randomUUID(),
+      diagnostics: [
+        {
+          severity: "error",
+          code: "composite_character_subject",
+          candidateIndex: 1,
+          message: "A composite character subject could not be bound.",
+        },
+        {
+          severity: "warning",
+          code: "deduplicated_evidence_unit",
+          candidateIndex: 2,
+          message: "A repeated fact was deduplicated.",
+        },
+      ],
+      outcome: {
+        state: "partial_success",
+        totalCandidates: 3,
+        keptUnits: 1,
+        droppedUnits: 2,
+        droppedCandidates: [
+          {
+            index: 1,
+            reason: "invalid_subject_cardinality",
+            message: "A composite character subject could not be bound.",
+          },
+        ],
+      },
+      accounting: {
+        providerCandidates: 3,
+        normalizedAdditions: 0,
+        parserRejections: 0,
+        validationRejections: 1,
+        deduplications: 1,
+        keptUnits: 1,
+      },
+    });
+    const diagnosticDraft = await store.createDraft({
+      source: { sourceNoteId: sourceC.id },
+      scope: {},
+      modes: ["roleplay"],
+      response: { summary: "No mutation survived.", mutations: [] },
+      operationId: randomUUID(),
+      diagnostics: [
+        {
+          severity: "error",
+          code: "candidate_parse_failed",
+          candidateIndex: 0,
+          message: "The provider candidate was malformed.",
+        },
+      ],
+      outcome: {
+        state: "no_suggestions_created",
+        totalCandidates: 1,
+        keptUnits: 0,
+        droppedUnits: 1,
+        droppedCandidates: [
+          {
+            index: 0,
+            reason: "invalid_format",
+            message: "The provider candidate was malformed.",
+          },
+        ],
+      },
+      accounting: {
+        providerCandidates: 1,
+        normalizedAdditions: 0,
+        parserRejections: 1,
+        validationRejections: 0,
+        deduplications: 0,
+        keptUnits: 0,
+      },
+    });
+
+    await storage.updateNote(sourceB.id, {
+      sections: {
+        ...sourceB.sections,
+        source: { ...sourceB.sections.source!, text: "Damo changed after extraction." },
+      },
+    });
+
+    const review = ltmDraftReviewResponseSchema.parse(await projectLongTermMemoryDraftReview({ root }));
+    assert.equal(review.counts.sources, 3);
+    assert.equal(review.counts.drafts, 3);
+    assert.equal(review.counts.mutations, 2);
+    assert.equal(review.counts.blockedDrafts, 2);
+    assert.equal(review.counts.candidateRejections, 2);
+    assert.equal(review.counts.deduplications, 1);
+
+    const sourceReviewA = review.sources.find((source) => source.sourceNoteId === sourceA.id)!;
+    const sourceReviewB = review.sources.find((source) => source.sourceNoteId === sourceB.id)!;
+    const sourceReviewC = review.sources.find((source) => source.sourceNoteId === sourceC.id)!;
+    assert.equal(sourceReviewA.targets[0]?.noteId, "char_damo");
+    assert.equal(sourceReviewA.targets[0]?.rows[0]?.disposition, "new");
+    assert.equal(sourceReviewA.targets[0]?.rows[0]?.diagnostics[0]?.code, "mutation_needs_review");
+    assert.equal(sourceReviewB.targets[0]?.rows[0]?.disposition, "merge");
+    assert.deepEqual(sourceReviewB.targets[0]?.rows[0]?.changes.map((change) => change.key), ["facts"]);
+    assert.equal(sourceReviewB.drafts[0]?.freshness, "stale");
+    assert.deepEqual(sourceReviewB.drafts[0]?.blockReasons.map((reason) => reason.code), ["source_stale"]);
+    assert.equal(sourceReviewB.drafts[0]?.diagnostics[0]?.code, "composite_character_subject");
+    assert.equal(sourceReviewB.drafts[0]?.deduplications[0]?.code, "deduplicated_evidence_unit");
+    assert.equal(sourceReviewC.targets.length, 0);
+    assert.deepEqual(sourceReviewC.drafts[0]?.blockReasons.map((reason) => reason.code), ["no_mutations"]);
+    assert.equal(sourceReviewC.drafts[0]?.diagnostics[0]?.code, "candidate_parse_failed");
+    assert.deepEqual(
+      await store.getDraft(diagnosticDraft.id),
+      sourceReviewC.drafts[0]?.draft,
+    );
+    assert.equal(sourceReviewA.drafts[0]?.draft.id, draftA.id);
+    assert.equal(sourceReviewB.drafts[0]?.draft.id, draftB.id);
+
+    const filteredReview = await projectLongTermMemoryDraftReview({ root, sourceNoteId: sourceB.id });
+    assert.deepEqual(filteredReview.sources.map((source) => source.sourceNoteId), [sourceB.id]);
+    assert.equal(filteredReview.sources[0]?.targets[0]?.rows[0]?.disposition, "merge");
+  });
 });
 
 test("batch finalization uses source order despite provider completion inversion and skips failed siblings", async () => {

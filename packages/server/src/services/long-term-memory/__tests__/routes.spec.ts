@@ -71,6 +71,7 @@ test("LTM routes — guarded endpoints return 403 from non-loopback without auth
     await expect403("/api/long-term-memory/extraction-settings", "GET");
     await expect403("/api/long-term-memory/debug-log", "GET");
     await expect403("/api/long-term-memory/drafts", "GET");
+    await expect403("/api/long-term-memory/drafts/review", "GET");
     await expect403("/api/long-term-memory/drafts/pending-count", "GET");
     await expect403("/api/long-term-memory/drafts/nonexistent", "GET");
     await expect403("/api/long-term-memory/search", "POST");
@@ -133,6 +134,21 @@ test("LTM routes — guarded endpoints work from loopback without auth", async (
     });
     assert.equal(drafts.statusCode, 200);
     assert.ok(Array.isArray(JSON.parse(drafts.body)));
+
+    const draftReview = await app.inject({
+      method: "GET",
+      url: "/api/long-term-memory/drafts/review?status=pending",
+      remoteAddress: "127.0.0.1",
+    });
+    assert.equal(draftReview.statusCode, 200, draftReview.body);
+    assert.deepEqual(JSON.parse(draftReview.body).counts, {
+      sources: 0,
+      drafts: 0,
+      mutations: 0,
+      blockedDrafts: 0,
+      candidateRejections: 0,
+      deduplications: 0,
+    });
 
     const identityPreview = await app.inject({
       method: "POST",

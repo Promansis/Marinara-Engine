@@ -4597,7 +4597,7 @@ test("evidence unit compiler returns all suggested changes without a draft cap",
   assert.equal(compiled.suggestions.returned, 30);
 });
 
-test("source note extraction skips draft creation when every candidate is dropped", async () => {
+test("source note extraction persists a diagnostic-only draft when every candidate is dropped", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-dropped-candidates-only-"));
   try {
     const storage = new LongTermMemoryStorage(root);
@@ -4653,7 +4653,12 @@ test("source note extraction skips draft creation when every candidate is droppe
       operationId: randomUUID(),
     });
 
-    assert.equal(result.draft, null);
+    assert(result.draft);
+    assert.equal(result.draft.mutations.length, 0);
+    assert.equal(result.draft.operationId, result.operationId);
+    assert.deepEqual(result.draft.diagnostics, result.diagnostics);
+    assert.deepEqual(result.draft.extractionOutcome, result.outcome);
+    assert.deepEqual(result.draft.accounting, result.accounting);
     assert.equal(result.response.mutations.length, 0);
     assert.equal(result.outcome.state, "no_suggestions_created");
     assert.deepEqual(result.outcome.droppedCandidates.map((candidate) => candidate.reason), ["placeholder_output"]);
@@ -4662,6 +4667,8 @@ test("source note extraction skips draft creation when every candidate is droppe
         (diagnostic) => diagnostic.severity === "error" && diagnostic.code === "candidate_dropped_placeholder_output",
       ),
     );
+    const reloaded = await new LongTermMemoryDraftStore(root).getDraft(result.draft.id);
+    assert.deepEqual(reloaded, result.draft);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -3,6 +3,7 @@ import {
   DEFAULT_LTM_ALLOWED_STREAMS_BY_MODE,
   DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE,
   type LtmExtractionDraft,
+  type LtmExtractionAccounting,
   type LtmDraftMutation,
   type LtmExtractionOutcome,
   type LtmExtractionResponse,
@@ -61,11 +62,13 @@ export type ExtractLongTermMemoryFromSourceNoteOptions = {
 };
 
 export type ExtractLongTermMemoryFromSourceNoteResult = {
+  operationId: string;
   sourceNote: LtmNote;
   response: LtmExtractionResponse;
   draft: LtmExtractionDraft | null;
   diagnostics: LtmExtractionDiagnostic[];
   outcome: LtmExtractionOutcome;
+  accounting: LtmExtractionAccounting;
 };
 
 export function isLtmSourceNote(note: LtmNote) {
@@ -170,10 +173,13 @@ export async function finalizeLongTermMemoryExtractionDraft(
     response: LtmExtractionResponse;
     scope: LtmScope;
     modes: LtmMode[];
+    operationId?: string;
+    diagnostics?: LtmExtractionDiagnostic[];
+    outcome?: LtmExtractionOutcome;
+    accounting?: LtmExtractionAccounting;
   },
   options: { root?: string; overlay?: Map<string, LtmNote> } = {},
 ) {
-  if (input.response.mutations.length === 0) return null;
   const storage = new LongTermMemoryStorage(options.root);
   const currentSource = await storage.getNote(input.sourceNote.id);
   if (!currentSource || !isLtmSourceNote(currentSource)) {
@@ -183,32 +189,42 @@ export async function finalizeLongTermMemoryExtractionDraft(
     throw new Error(`Long-term memory source note changed before draft finalization: ${input.sourceNote.id}`);
   }
 
-  const response = await remapDraftCreatesForProjection({
-    response: input.response,
-    storage,
-    overlay: options.overlay,
-  });
-  const targetNoteIds = uniqueStrings(response.mutations.map(noteIdForLtmDraftMutation));
-  const committedNotes = await storage.getNotesByIds(targetNoteIds);
-  const baseNotes = new Map(committedNotes);
-  for (const noteId of targetNoteIds) {
-    const overlaid = options.overlay?.get(noteId);
-    if (overlaid) baseNotes.set(noteId, overlaid);
-  }
+  const response = input.response.mutations.length
+    ? await remapDraftCreatesForProjection({
+        response: input.response,
+        storage,
+        overlay: options.overlay,
+      })
+    : input.response;
   const source = sourceMetadataForEvidenceUnitDraft(input.sourceNote);
-  const projected = projectLtmDraftOntoNotes({
-    notes: baseNotes,
-    mutations: response.mutations,
-    context: { source, scope: input.scope, modes: input.modes },
-    timestamp: new Date().toISOString(),
-  });
+  const projected = response.mutations.length
+    ? await (async () => {
+        const targetNoteIds = uniqueStrings(response.mutations.map(noteIdForLtmDraftMutation));
+        const committedNotes = await storage.getNotesByIds(targetNoteIds);
+        const baseNotes = new Map(committedNotes);
+        for (const noteId of targetNoteIds) {
+          const overlaid = options.overlay?.get(noteId);
+          if (overlaid) baseNotes.set(noteId, overlaid);
+        }
+        return projectLtmDraftOntoNotes({
+          notes: baseNotes,
+          mutations: response.mutations,
+          context: { source, scope: input.scope, modes: input.modes },
+          timestamp: new Date().toISOString(),
+        });
+      })()
+    : null;
   const draft = await new LongTermMemoryDraftStore(options.root).createDraft({
     scope: input.scope,
     modes: input.modes,
     source,
     response,
+    operationId: input.operationId,
+    diagnostics: input.diagnostics,
+    outcome: input.outcome,
+    accounting: input.accounting,
   });
-  if (options.overlay) {
+  if (options.overlay && projected) {
     for (const projection of projected.projections) options.overlay.set(projection.noteId, projection.after);
   }
   return draft;
@@ -396,10 +412,6 @@ async function extractLongTermMemoryFromSourceNoteInner(
     ...extractionPayload.response,
     units: normalizedExtraction.units,
   };
-  const totalCandidates = Math.max(
-    extractionPayload.totalCandidates + normalizedExtraction.addedUnits,
-    unitResponse.units.length + extractionPayload.droppedCandidates.length,
-  );
   const identityResolution = resolveLtmSubjectIdentities({
     units: unitResponse.units,
     catalog: options.trustedSubjectCatalog ?? { entries: [], notes: [] },
@@ -437,11 +449,10 @@ async function extractLongTermMemoryFromSourceNoteInner(
       ...unitResponse,
       units: targetResolution.units,
     },
-    totalCandidates,
-    parserDroppedCandidates: [
-      ...extractionPayload.droppedCandidates,
-      ...identityResolution.droppedCandidates,
-    ],
+    providerCandidates: extractionPayload.totalCandidates,
+    normalizedAdditions: normalizedExtraction.addedUnits,
+    parserDroppedCandidates: extractionPayload.droppedCandidates,
+    preValidationDroppedCandidates: identityResolution.droppedCandidates,
     sourceText,
     sourceNote,
     existingNotes: compilerExistingNotes,
@@ -459,7 +470,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
     root: options.root,
     phase: "compiler",
     action: "evidence_units_compiled",
-    status: compiledSummary.counts.blockingDiagnostics > 0 ? "warning" : "ok",
+    status: compiledSummary.counts.candidateRejectionDiagnostics > 0 ? "warning" : "ok",
     sourceNoteId: sourceNote.id,
     counts: compiledSummary.counts,
     diagnostics: compiled.diagnostics.map((diagnostic) => ({ ...diagnostic })),
@@ -471,9 +482,18 @@ async function extractLongTermMemoryFromSourceNoteInner(
   });
 
   const draft =
-    compiled.compiledResponse.mutations.length > 0 && options.persistDraft !== false
+    options.persistDraft !== false
       ? await finalizeLongTermMemoryExtractionDraft(
-          { sourceNote, response: compiled.compiledResponse, scope, modes },
+          {
+            sourceNote,
+            response: compiled.compiledResponse,
+            scope,
+            modes,
+            operationId: options.operationId,
+            diagnostics: compiled.diagnostics,
+            outcome: compiled.outcome,
+            accounting: compiled.accounting,
+          },
           { root: options.root },
         )
       : null;
@@ -512,10 +532,12 @@ async function extractLongTermMemoryFromSourceNoteInner(
     },
   });
   return {
+    operationId: options.operationId,
     sourceNote,
     response: compiled.compiledResponse,
     draft,
     diagnostics: compiled.diagnostics,
     outcome: compiled.outcome,
+    accounting: compiled.accounting,
   };
 }

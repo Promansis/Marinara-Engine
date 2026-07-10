@@ -2,6 +2,7 @@ import {
   isLtmSourceLikeNote,
   type LtmEvidenceUnit,
   type LtmExtractionDraft,
+  type LtmExtractionAccounting,
   type LtmExtractionDroppedCandidate,
   type LtmExtractionOutcome,
   type LtmExtractionResponse,
@@ -121,13 +122,26 @@ export async function autoApplyGameJournalDraft(options: {
 }
 
 export interface DirectIngestGameJournalResult {
+  operationId: string;
   units: LtmEvidenceUnit[];
   draft: LtmExtractionDraft | null;
   diagnostics: LtmExtractionDiagnostic[];
   outcome: LtmExtractionOutcome;
+  accounting: LtmExtractionAccounting;
   response: LtmExtractionResponse;
   appliedMutationIds: string[];
   skippedMutationIds: string[];
+}
+
+function emptyExtractionAccounting(): LtmExtractionAccounting {
+  return {
+    providerCandidates: 0,
+    normalizedAdditions: 0,
+    parserRejections: 0,
+    validationRejections: 0,
+    deduplications: 0,
+    keptUnits: 0,
+  };
 }
 
 function directIngestAbortError() {
@@ -175,6 +189,7 @@ export async function directIngestGameJournal(
       if (!chat) {
         logger.warn("[ltm] directIngestGameJournal: chat %s not found, aborting", chatId);
         return {
+          operationId: opId,
           units: [],
           draft: null,
           diagnostics: [],
@@ -185,6 +200,7 @@ export async function directIngestGameJournal(
             droppedUnits: 0,
             droppedCandidates: [],
           },
+          accounting: emptyExtractionAccounting(),
           response: { summary: "", mutations: [] },
           appliedMutationIds: [],
           skippedMutationIds: [],
@@ -200,6 +216,7 @@ export async function directIngestGameJournal(
       if (!gameJournal && sessionSummaries.length === 0) {
         logger.warn("[ltm] directIngestGameJournal: no game data found for chat %s, aborting", chatId);
         return {
+          operationId: opId,
           units: [],
           draft: null,
           diagnostics: [],
@@ -210,6 +227,7 @@ export async function directIngestGameJournal(
             droppedUnits: 0,
             droppedCandidates: [],
           },
+          accounting: emptyExtractionAccounting(),
           response: { summary: "", mutations: [] },
           appliedMutationIds: [],
           skippedMutationIds: [],
@@ -229,6 +247,7 @@ export async function directIngestGameJournal(
       if (units.length === 0) {
         logger.info("[ltm] directIngestGameJournal: no evidence units from game data for chat %s", chatId);
         return {
+          operationId: opId,
           units: [],
           draft: null,
           diagnostics: [],
@@ -239,6 +258,7 @@ export async function directIngestGameJournal(
             droppedUnits: 0,
             droppedCandidates: [],
           },
+          accounting: emptyExtractionAccounting(),
           response: { summary: "", mutations: [] },
           appliedMutationIds: [],
           skippedMutationIds: [],
@@ -279,6 +299,7 @@ export async function directIngestGameJournal(
       let response = structuralCompiled.compiledResponse;
       let diagnostics = [...structuralCompiled.diagnostics, ...structuralTargetResolution.diagnostics];
       let outcome = structuralCompiled.outcome;
+      let accounting = structuralCompiled.accounting;
 
       if (refinePass) {
         try {
@@ -332,6 +353,7 @@ export async function directIngestGameJournal(
             response = refinedCompiled.compiledResponse;
             diagnostics = [...refinedCompiled.diagnostics, ...refinedTargetResolution.diagnostics];
             outcome = refinedCompiled.outcome;
+            accounting = refinedCompiled.accounting;
           }
         } catch (err) {
           if (options.signal?.aborted || isDirectIngestAbortError(err)) throw err;
@@ -345,15 +367,6 @@ export async function directIngestGameJournal(
 
       if (response.mutations.length === 0) {
         logger.info("[ltm] directIngestGameJournal: compiler produced no mutations for chat %s", chatId);
-        return {
-          units: structuralUnits,
-          draft: null,
-          diagnostics,
-          outcome,
-          response,
-          appliedMutationIds: [],
-          skippedMutationIds: [],
-        };
       }
 
       throwIfDirectIngestAborted(options.signal);
@@ -370,13 +383,17 @@ export async function directIngestGameJournal(
               },
               summary: response.summary,
               response,
+              operationId: opId,
+              diagnostics,
+              outcome,
+              accounting,
             });
 
       let updatedDraft: LtmExtractionDraft | null = draft;
       let appliedMutationIds: string[] = [];
       let skippedMutationIds: string[] = [];
 
-      if (options.applyLowRisk && draft) {
+      if (options.applyLowRisk && draft && draft.mutations.length > 0) {
         throwIfDirectIngestAborted(options.signal);
         const autoApplyResult = await autoApplyGameJournalDraft({ draftId: draft.id, root: rootDir });
         updatedDraft = autoApplyResult.draft;
@@ -417,10 +434,12 @@ export async function directIngestGameJournal(
       });
 
       return {
+        operationId: opId,
         units: structuralUnits,
         draft: updatedDraft,
         diagnostics,
         outcome,
+        accounting,
         response,
         appliedMutationIds,
         skippedMutationIds,

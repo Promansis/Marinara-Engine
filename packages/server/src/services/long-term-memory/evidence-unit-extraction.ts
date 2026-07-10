@@ -7,6 +7,7 @@ import {
   DEFAULT_LTM_STREAM_DESCRIPTIONS_BY_MODE,
   DEFAULT_LTM_EXTRACTION_PROMPT_GAME_REFINE,
   RELATIONSHIP_DIMENSIONS,
+  ltmExtractionAccountingSchema,
   ltmEvidenceUnitExtractionResponseSchema,
   ltmEvidenceUnitSchema,
   type LtmEvidenceUnit,
@@ -14,6 +15,7 @@ import {
   type LtmExtractionDroppedCandidate,
   type LtmExtractionOutcome,
   type LtmExtractionDraft,
+  type LtmExtractionAccounting,
   type LtmExtractionResponse,
   type LtmMode,
   type LtmNote,
@@ -129,6 +131,7 @@ export interface CompileEvidenceUnitExtractionResult {
   compiledResponse: LtmExtractionResponse;
   diagnostics: LtmExtractionDiagnostic[];
   outcome: LtmExtractionOutcome;
+  accounting: LtmExtractionAccounting;
   suggestions: LtmSuggestionMetadata;
 }
 
@@ -1117,7 +1120,10 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
 export function compileEvidenceUnitExtraction(options: {
   unitResponse: LtmEvidenceUnitExtractionResponse;
   totalCandidates?: number;
+  providerCandidates?: number;
+  normalizedAdditions?: number;
   parserDroppedCandidates?: LtmExtractionDroppedCandidate[];
+  preValidationDroppedCandidates?: LtmExtractionDroppedCandidate[];
   sourceText: string;
   sourceNote: LtmNote;
   existingNotes: LtmNote[];
@@ -1160,7 +1166,13 @@ export function compileEvidenceUnitExtraction(options: {
     existingNotes: options.existingNotes,
     options: { withinExtraction: true },
   });
-  const droppedCandidates = [...(options.parserDroppedCandidates ?? []), ...validated.droppedCandidates];
+  const parserDroppedCandidates = options.parserDroppedCandidates ?? [];
+  const preValidationDroppedCandidates = options.preValidationDroppedCandidates ?? [];
+  const droppedCandidates = [
+    ...parserDroppedCandidates,
+    ...preValidationDroppedCandidates,
+    ...validated.droppedCandidates,
+  ];
   const compiled = dedupResult.deduplicated.length
     ? compileLtmEvidenceUnits({
         units: dedupResult.deduplicated,
@@ -1177,17 +1189,30 @@ export function compileEvidenceUnitExtraction(options: {
       };
   const { suggestions, ...compiledResponse } = compiled;
   const diagnostics = [...validated.diagnostics, ...dedupResult.diagnostics];
-  const totalCandidates = Math.max(options.totalCandidates ?? 0, normalizedUnits.length + droppedCandidates.length);
+  const accounting = ltmExtractionAccountingSchema.parse({
+    providerCandidates:
+      options.providerCandidates ??
+      options.totalCandidates ??
+      options.unitResponse.units.length + parserDroppedCandidates.length + preValidationDroppedCandidates.length,
+    normalizedAdditions: (options.normalizedAdditions ?? 0) + normalized.addedUnits,
+    parserRejections: parserDroppedCandidates.length,
+    validationRejections: preValidationDroppedCandidates.length + validated.droppedCandidates.length,
+    deduplications: validated.keptUnits.length - dedupResult.deduplicated.length,
+    keptUnits: dedupResult.deduplicated.length,
+  });
+  const totalCandidates = accounting.providerCandidates + accounting.normalizedAdditions;
   const outcome = summarizeExtractionOutcome({
     totalCandidates,
     keptUnits: dedupResult.deduplicated.length,
     droppedCandidates,
+    deduplications: accounting.deduplications,
   });
   return {
     unitResponse: { ...options.unitResponse, units: normalizedUnits },
     compiledResponse,
     diagnostics,
     outcome,
+    accounting,
     suggestions,
   };
 }
@@ -1225,8 +1250,11 @@ export function summarizeCompiledEvidenceUnitExtraction(result: CompileEvidenceU
       units: result.outcome.keptUnits,
       totalCandidates: result.outcome.totalCandidates,
       droppedUnits: result.outcome.droppedUnits,
+      parserRejections: result.accounting.parserRejections,
+      validationRejections: result.accounting.validationRejections,
+      deduplications: result.accounting.deduplications,
       diagnostics: result.diagnostics.length,
-      blockingDiagnostics: result.diagnostics.filter((diagnostic) => diagnostic.severity === "error").length,
+      candidateRejectionDiagnostics: result.diagnostics.filter((diagnostic) => diagnostic.severity === "error").length,
       mutations: result.compiledResponse.mutations.length,
       generatedMutations: result.suggestions.generated,
       returnedMutations: result.suggestions.returned,
@@ -1241,9 +1269,15 @@ function summarizeExtractionOutcome(input: {
   totalCandidates: number;
   keptUnits: number;
   droppedCandidates: LtmExtractionDroppedCandidate[];
+  deduplications: number;
 }): LtmExtractionOutcome {
   const droppedUnits = input.droppedCandidates.length;
-  const state = input.keptUnits > 0 ? (droppedUnits > 0 ? "partial_success" : "success") : "no_suggestions_created";
+  const state =
+    input.keptUnits > 0
+      ? droppedUnits > 0 || input.deduplications > 0
+        ? "partial_success"
+        : "success"
+      : "no_suggestions_created";
   return {
     state,
     totalCandidates: input.totalCandidates,

@@ -297,6 +297,67 @@ test("manual source extraction persists successful retry state", async () => {
   });
 });
 
+test("direct game extraction persists a diagnostic-only draft when every candidate is rejected", async () => {
+  await withTestApp(async (app, dataDir) => {
+    const chats = createChatsStorage(app.db);
+    const chat = await chats.create({
+      name: "Diagnostic-only game import",
+      mode: "game",
+      characterIds: [],
+      groupId: null,
+      personaId: null,
+      promptPresetId: null,
+      connectionId: null,
+    });
+    assert(chat);
+    await chats.updateMetadata(chat.id, {
+      gamePreviousSessionSummaries: [
+        {
+          sessionNumber: 1,
+          summary: "",
+          resumePoint: "",
+          partyDynamics: "Tension between Alice and Bob softened after they solved the puzzle.",
+          partyState: "",
+          keyDiscoveries: [],
+          characterMoments: [],
+          littleDetails: [],
+          statsSnapshot: {},
+          npcUpdates: [],
+          timestamp: "2026-07-11T00:00:00.000Z",
+        },
+      ],
+    });
+    const root = join(dataDir, "long-term-memory");
+    const imported = await createLongTermMemoryInteropSourceNotes(
+      app.db,
+      "chats",
+      { sourceIds: [`${chat.id}:game_journal`], limit: 1 },
+      root,
+    );
+    const sourceNote = imported.imported[0]?.note;
+    assert(sourceNote);
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/long-term-memory/notes/${sourceNote.id}/extract`,
+      remoteAddress: "127.0.0.1",
+      payload: {},
+    });
+
+    assert.equal(response.statusCode, 200, response.body);
+    const body = JSON.parse(response.body);
+    assert(body.draft);
+    assert.deepEqual(body.draft.mutations, []);
+    assert.equal(body.accounting.keptUnits, 0);
+    assert.equal(body.accounting.validationRejections, 1);
+    assert(
+      body.diagnostics.some(
+        (diagnostic: { code?: string }) => diagnostic.code === "candidate_dropped_unsupported_bucket",
+      ),
+    );
+  });
+});
+
 test("post-preflight extraction failure is reported as retryable per source", async () => {
   await withTestApp(async (app) => {
     const character = await createCharactersStorage(app.db).create({

@@ -3,7 +3,7 @@ import type { ExtractLongTermMemorySourceResponse } from "../hooks/use-long-term
 
 export type LongTermMemoryLatestExtractionResult = Pick<
   ExtractLongTermMemorySourceResponse,
-  "diagnostics" | "outcome"
+  "accounting" | "diagnostics" | "operationId" | "outcome"
 > & {
   mutationCount?: number;
 };

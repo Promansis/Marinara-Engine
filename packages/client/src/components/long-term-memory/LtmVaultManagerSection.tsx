@@ -19,6 +19,7 @@ import {
 import type {
   Chat,
   LtmDraftMutation,
+  LtmDraftReviewSource,
   LtmExtractionDraft,
   LtmExtractionDroppedCandidate,
   LtmMode,
@@ -30,10 +31,11 @@ import type {
 import { getLtmScopeChatIds, ltmModeForChatMode } from "@marinara-engine/shared";
 import {
   useAcceptLongTermMemoryDraft,
-  useDeleteLongTermMemoryDraftMutation,
+  useDeleteLongTermMemoryDraft,
   useImportLongTermMemorySourceNotes,
   useDeleteLongTermMemoryNotes,
   useLongTermMemoryDrafts,
+  useLongTermMemoryDraftReview,
   useLongTermMemoryImportPreview,
   useLongTermMemoryNote,
   useLongTermMemoryNotes,
@@ -68,7 +70,12 @@ import {
   readLtmManagedExtractionPrefs,
   type LtmManagedExtractionPrefs,
 } from "../long-term-memory/ltm-managed-extraction-prefs";
-import { friendlyIdentifier, friendlyNoteType, friendlyStatus, type LtmDisplayLookupContext } from "../long-term-memory/ltm-editor-utils";
+import {
+  friendlyIdentifier,
+  friendlyNoteType,
+  friendlyStatus,
+  type LtmDisplayLookupContext,
+} from "../long-term-memory/ltm-editor-utils";
 import {
   compactInputClassName,
   emptyStateClassName,
@@ -99,21 +106,15 @@ import {
   buildNoteLookup,
   characterNameFromRow,
   clampImportConcurrency,
-  compactMutationText,
   derivedNoteIdsForSources,
   groupNotesByType,
   importRowKey,
   isSourceSummaryNote,
   memoryRowTitle,
-  mutationKindLabel,
-  mutationRiskLabel,
-  mutationRiskTone,
-  mutationTargetTitle,
   optionalTrimmedText,
   readLongTermMemoryRecallSearchSettings,
   scopeDraftFromLtmScope,
   sourceNoteTitle,
-  suggestionRowKey,
   uniqueNoteIds,
   ModeBadge,
   Section,
@@ -121,11 +122,7 @@ import {
   type MemoryModalTab,
   type TabId,
 } from "../long-term-memory/ltm-panel-shared";
-import {
-  useUpdateAgentByType,
-  type AgentConfigRow,
-} from "../../hooks/use-agents";
-
+import { useUpdateAgentByType, type AgentConfigRow } from "../../hooks/use-agents";
 
 type LtmImportSource = "characters" | "lorebooks" | "chats";
 const LTM_TAB_IDS: TabId[] = ["notes", "import", "review", "debug"];
@@ -229,7 +226,107 @@ function QueryFailure({
   );
 }
 
-export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSettings, initialTab, sourceNoteId }: LtmVaultManagerSectionProps) {
+function reviewDispositionLabel(disposition: "new" | "merge" | "rewrite") {
+  if (disposition === "new") return "New";
+  if (disposition === "merge") return "Merge";
+  return "Rewrite";
+}
+
+function ReviewSourceDiagnostics({ source }: { source: LtmDraftReviewSource }) {
+  const blockReasons = source.drafts.flatMap((draftReview) => draftReview.blockReasons);
+  const diagnostics = source.drafts.flatMap((draftReview) => draftReview.diagnostics);
+  const candidateRejections = source.drafts.flatMap((draftReview) => draftReview.candidateRejections);
+  const deduplications = source.drafts.flatMap((draftReview) => draftReview.deduplications);
+  const detailCount = diagnostics.length + candidateRejections.length + deduplications.length;
+
+  return (
+    <>
+      {blockReasons.map((reason, index) => (
+        <div
+          key={`${reason.code}-${index}`}
+          role="alert"
+          className="mt-2 flex gap-2 rounded-lg bg-[var(--destructive)]/5 px-2.5 py-2 text-xs ring-1 ring-[var(--destructive)]/20"
+        >
+          <AlertCircle size="0.875rem" className="mt-0.5 shrink-0 text-[var(--destructive)]" />
+          <div className="min-w-0">
+            <p className="break-words text-[var(--foreground)]">{reason.message}</p>
+            <code className="mt-0.5 block break-all text-[0.6875rem] text-[var(--muted-foreground)]">
+              {reason.code}
+            </code>
+          </div>
+        </div>
+      ))}
+      {detailCount > 0 ? (
+        <details className="mt-2 rounded-lg bg-[var(--background)]/35 px-2.5 py-2 ring-1 ring-[var(--border)]/60">
+          <summary className="cursor-pointer text-xs font-medium text-[var(--foreground)]">
+            Extraction details ({detailCount})
+          </summary>
+          <div className="mt-2 space-y-2">
+            {diagnostics.map((diagnostic, index) => (
+              <p key={`${diagnostic.code}-${index}`} className="break-words text-xs text-[var(--muted-foreground)]">
+                {diagnostic.message} <code className="break-all">{diagnostic.code}</code>
+              </p>
+            ))}
+            {candidateRejections.map((candidate) => (
+              <p
+                key={`${candidate.index}-${candidate.reason}`}
+                className="break-words text-xs text-[var(--muted-foreground)]"
+              >
+                {candidate.message} <code className="break-all">{candidate.reason}</code>
+              </p>
+            ))}
+            {deduplications.map((diagnostic, index) => (
+              <p
+                key={`${diagnostic.code}-dedup-${index}`}
+                className="break-words text-xs text-[var(--muted-foreground)]"
+              >
+                {diagnostic.message} <code className="break-all">{diagnostic.code}</code>
+              </p>
+            ))}
+          </div>
+        </details>
+      ) : null}
+    </>
+  );
+}
+
+function ReviewTargetSummary({ target }: { target: LtmDraftReviewSource["targets"][number] }) {
+  const dispositions = (["new", "merge", "rewrite"] as const)
+    .map((disposition) => ({
+      disposition,
+      count: target.rows.filter((row) => row.disposition === disposition).length,
+    }))
+    .filter((item) => item.count > 0);
+  const warningCount = target.rows.reduce((sum, row) => sum + row.diagnostics.length, 0);
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border)]/45 px-3 py-2.5">
+      <div className="min-w-0">
+        <p className="truncate text-xs font-medium text-[var(--foreground)]">
+          {target.title ?? friendlyIdentifier(target.noteId)}
+        </p>
+        <p className="mt-0.5 text-[0.6875rem] text-[var(--muted-foreground)]">
+          {friendlyNoteType(target.noteType)}: {target.rows.length} change{target.rows.length === 1 ? "" : "s"}
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {dispositions.map(({ disposition, count }) => (
+          <StatusPill key={disposition} label={`${count} ${reviewDispositionLabel(disposition)}`} />
+        ))}
+        {warningCount > 0 ? (
+          <StatusPill label={`${warningCount} warning${warningCount === 1 ? "" : "s"}`} tone="warn" />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+export function LtmVaultManagerSection({
+  agentConfig: _agentConfig,
+  agentSettings,
+  initialTab,
+  sourceNoteId,
+}: LtmVaultManagerSectionProps) {
   const panelPrefs = useMemo(() => extractPanelPrefs(agentSettings ?? {}), [agentSettings]);
   const importLimit = panelPrefs.importLimit;
   const importSource = panelPrefs.importSource;
@@ -248,10 +345,16 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
       if (!oldPrefs) return;
 
       const relevantFields: Array<keyof ReturnType<typeof extractPanelPrefs>> = [
-        "autoApplyLowRisk", "connectionId", "importConcurrency",
-        "importSource", "instruction", "model",
+        "autoApplyLowRisk",
+        "connectionId",
+        "importConcurrency",
+        "importSource",
+        "instruction",
+        "model",
       ];
-      const hasRelevantValue = relevantFields.some((f) => oldPrefs[f] !== undefined && oldPrefs[f] !== "" && oldPrefs[f] !== false);
+      const hasRelevantValue = relevantFields.some(
+        (f) => oldPrefs[f] !== undefined && oldPrefs[f] !== "" && oldPrefs[f] !== false,
+      );
       if (!hasRelevantValue) return;
 
       const merged = { ...agentSettings, ...oldPrefs };
@@ -402,12 +505,9 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
       enabled: Boolean(openNoteId),
     },
   );
-  const pendingDraftsForReview = useLongTermMemoryDrafts(
-    { status: "pending" },
-    { enabled: tab === "review" },
-  );
+  const draftReview = useLongTermMemoryDraftReview({ status: "pending" }, { enabled: tab === "review" });
   const acceptDraft = useAcceptLongTermMemoryDraft();
-  const deleteDraftMutation = useDeleteLongTermMemoryDraftMutation();
+  const deleteDraft = useDeleteLongTermMemoryDraft();
   const skipDraftMutations = useSkipLongTermMemoryDraftMutations();
   const exactViewingNote = useLongTermMemoryNote(openNoteId ?? undefined);
   const importPreview = useLongTermMemoryImportPreview(
@@ -470,8 +570,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     () => filteredNotes.filter((note) => selectedVisibleNoteIds.includes(note.id)),
     [filteredNotes, selectedVisibleNoteIds],
   );
-  const allVisibleNotesSelected =
-    visibleNoteIds.length > 0 && visibleNoteIds.every((id) => selectedNoteIds.has(id));
+  const allVisibleNotesSelected = visibleNoteIds.length > 0 && visibleNoteIds.every((id) => selectedNoteIds.has(id));
   const derivedCountBySource = useMemo(() => {
     const counts = new Map<string, number>();
     for (const note of filteredNotes) {
@@ -557,47 +656,51 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const pendingDraftsForOpenNote = useMemo(
     () =>
       openNote
-        ? combinedDrafts.filter(
-            (draft) => draft.status === "pending" && draft.source.sourceNoteId === openNote.id,
-          )
+        ? combinedDrafts.filter((draft) => draft.status === "pending" && draft.source.sourceNoteId === openNote.id)
         : [],
     [combinedDrafts, openNote],
   );
   const latestExtractionResultForOpenNote = useMemo(
-    () => (openNote ? resultsBySourceNoteId[openNote.id] ?? null : null),
+    () => (openNote ? (resultsBySourceNoteId[openNote.id] ?? null) : null),
     [resultsBySourceNoteId, openNote],
   );
 
   const reviewGroups = useMemo(() => {
-    const drafts = pendingDraftsForReview.data ?? [];
-    const groups = new Map<string, LtmExtractionDraft[]>();
-    for (const draft of drafts) {
-      const sourceNoteId = draft.source.sourceNoteId;
-      if (!sourceNoteId) continue;
-      const existing = groups.get(sourceNoteId);
-      if (existing) existing.push(draft);
-      else groups.set(sourceNoteId, [draft]);
-    }
-    return Array.from(groups.entries()).map(([sourceNoteId, sourceDrafts]) => {
+    return (draftReview.data?.sources ?? []).map((reviewSource) => {
+      const sourceNoteId = reviewSource.sourceNoteId;
       const sourceNote = noteLookup.get(sourceNoteId);
-      const totalMutations = sourceDrafts.reduce((sum, d) => sum + d.mutations.length, 0);
-      return { sourceNoteId, sourceNote, sourceDrafts, totalMutations, mode: sourceDrafts[0]?.modes[0] ?? null };
+      const totalMutations = reviewSource.targets.reduce((sum, target) => sum + target.rows.length, 0);
+      return {
+        sourceNoteId,
+        sourceNote,
+        totalMutations,
+        mode: reviewSource.modes[0] ?? null,
+        reviewSource,
+      };
     });
-  }, [pendingDraftsForReview.data, noteLookup]);
+  }, [draftReview.data?.sources, noteLookup]);
   const reviewMutations = useMemo(
     () =>
-      reviewGroups.flatMap(({ sourceDrafts }) =>
-        sourceDrafts.flatMap((draft) => draft.mutations.map((mutation) => ({ draft, mutation }))),
-      ),
+      reviewGroups.flatMap(({ reviewSource }) => {
+        const draftById = new Map(reviewSource.drafts.map((draftReview) => [draftReview.draft.id, draftReview]));
+        return reviewSource.targets.flatMap((target) =>
+          target.rows.flatMap((row) => {
+            const draftReview = draftById.get(row.draftId);
+            return draftReview
+              ? [{ draft: draftReview.draft, mutation: row.mutation, blocked: draftReview.blockReasons.length > 0 }]
+              : [];
+          }),
+        );
+      }),
     [reviewGroups],
   );
+  const reviewLowRiskEligibleCount = reviewMutations.filter(
+    (row) => !row.blocked && row.mutation.risk === "low",
+  ).length;
   const reviewBusy =
-    reviewBatchAction !== null ||
-    acceptDraft.isPending ||
-    deleteDraftMutation.isPending ||
-    skipDraftMutations.isPending;
-  const reviewLoading = pendingDraftsForReview.isLoading || reviewNotes.isLoading;
-  const reviewError = pendingDraftsForReview.error ?? reviewNotes.error;
+    reviewBatchAction !== null || acceptDraft.isPending || deleteDraft.isPending || skipDraftMutations.isPending;
+  const reviewLoading = draftReview.isLoading || reviewNotes.isLoading;
+  const reviewError = draftReview.error ?? reviewNotes.error;
 
   useEffect(() => {
     const availableIds = new Set((notes.data ?? []).map((note) => note.id));
@@ -651,41 +754,27 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
       tone: "destructive",
     });
 
-  const keepOrphanMutation = async (draft: LtmExtractionDraft, mutationId: string) => {
-    try {
-      await acceptDraft.mutateAsync({ id: draft.id, mutationIds: [mutationId] });
-      toast.success("Suggestion kept");
-    } catch (err) {
-      toast.error((err as Error).message);
-    }
-  };
-
-  const skipOrphanMutation = async (draft: LtmExtractionDraft, mutationId: string) => {
-    try {
-      await deleteDraftMutation.mutateAsync({ id: draft.id, mutationId });
-      toast.success("Suggestion skipped");
-    } catch (err) {
-      toast.error((err as Error).message);
-    }
-  };
-
-  const skipAllOrphans = async (drafts: LtmExtractionDraft[]) => {
-    const total = drafts.reduce((s, d) => s + d.mutations.length, 0);
+  const dismissBlockedReviewDrafts = async (reviewSource: LtmDraftReviewSource) => {
+    const total = reviewSource.drafts.length;
     const confirmed = await showConfirmDialog({
-      title: "Skip all orphaned suggestions?",
-      message: `This will skip ${total} suggestion${total === 1 ? "" : "s"} from a deleted source. This cannot be undone.`,
-      confirmLabel: "Skip all",
+      title: "Dismiss blocked review?",
+      message: `This removes ${total} blocked extraction report${total === 1 ? "" : "s"}. It does not change memory notes.`,
+      confirmLabel: "Dismiss",
       tone: "destructive",
     });
     if (!confirmed) return;
-    for (const draft of drafts) {
+    let deletedCount = 0;
+    for (const draftReview of reviewSource.drafts) {
       try {
-        await skipDraftMutations.mutateAsync({ id: draft.id, mutationIds: draft.mutations.map((m) => m.id) });
+        await deleteDraft.mutateAsync(draftReview.draft.id);
+        deletedCount += 1;
       } catch (err) {
         toast.error((err as Error).message);
       }
     }
-    toast.success("All orphaned suggestions skipped");
+    if (deletedCount > 0) {
+      toast.success(`${deletedCount} blocked extraction report${deletedCount === 1 ? "" : "s"} dismissed`);
+    }
   };
 
   const withReviewBatchLock = async <T,>(action: () => Promise<T>) => {
@@ -701,7 +790,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const keepAllLowRiskReviewMutations = async () => {
     const lowRiskByDraft = new Map<string, LtmDraftMutation[]>();
     for (const row of reviewMutations) {
-      if (row.mutation.risk !== "low") continue;
+      if (row.blocked || row.mutation.risk !== "low") continue;
       const existing = lowRiskByDraft.get(row.draft.id);
       if (existing) existing.push(row.mutation);
       else lowRiskByDraft.set(row.draft.id, [row.mutation]);
@@ -746,9 +835,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     const depNote = completed.autoIncludedCount
       ? ` Also created ${completed.autoIncludedCount} note${completed.autoIncludedCount === 1 ? "" : "s"} to support changes.`
       : "";
-    toast.success(
-      `Kept ${completed.keptCount} low-risk suggestion${completed.keptCount === 1 ? "" : "s"}.` + depNote,
-    );
+    toast.success(`Kept ${completed.keptCount} low-risk suggestion${completed.keptCount === 1 ? "" : "s"}.` + depNote);
   };
 
   const skipAllReviewMutations = async () => {
@@ -913,16 +1000,20 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     const existingEvidence = sourceNote.sections.source?.evidence ?? sourceNote.sections.summary?.evidence ?? [];
     const nextEvidence = Array.from(new Set([...sourceEvidence, ...existingEvidence])).slice(0, 20);
     const defaultType = recovery?.noteType ?? "scene";
-    const defaultId = recovery?.noteId ?? ({
-      timeline_event: "timeline_",
-      character: "char_",
-      relationship: "rel_",
-      scene: "scene_",
-      thread: "thread_",
-      world: "world_",
-      tone: "tone_",
-      source: "source_",
-    } satisfies Record<LtmNoteType, string>)[defaultType];
+    const defaultId =
+      recovery?.noteId ??
+      (
+        {
+          timeline_event: "timeline_",
+          character: "char_",
+          relationship: "rel_",
+          scene: "scene_",
+          thread: "thread_",
+          world: "world_",
+          tone: "tone_",
+          source: "source_",
+        } satisfies Record<LtmNoteType, string>
+      )[defaultType];
 
     if (!(await confirmDiscardEditor()) || !(await confirmDiscardCreate())) return;
     closeMemoryModal();
@@ -1107,7 +1198,9 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
         return note ? isSourceSummaryNote(note) : false;
       }),
     );
-    const unselectedDerivedIds = derivedNoteIdsForSources(combinedNotes, sourceIds).filter((id) => !selectedIds.has(id));
+    const unselectedDerivedIds = derivedNoteIdsForSources(combinedNotes, sourceIds).filter(
+      (id) => !selectedIds.has(id),
+    );
     if (unselectedDerivedIds.length === 0) return ids;
 
     const includeDerived = await showConfirmDialog({
@@ -1268,7 +1361,9 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
         const mutationCount =
           item.appliedMutationIds.length + item.skippedMutationIds.length || item.draft?.mutations.length;
         setExtractionResult(item.note.id, {
+          accounting: item.accounting,
           diagnostics: item.diagnostics,
+          operationId: result.operationId,
           outcome: item.outcome,
           mutationCount,
         });
@@ -1361,11 +1456,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     {
       id: "delete",
       label: "Delete",
-      icon: deleteNotes.isPending ? (
-        <Loader2 size="0.75rem" className="animate-spin" />
-      ) : (
-        <Trash2 size="0.75rem" />
-      ),
+      icon: deleteNotes.isPending ? <Loader2 size="0.75rem" className="animate-spin" /> : <Trash2 size="0.75rem" />,
       onClick: () => void deleteSelectedMemories(),
       disabled: selectedVisibleNoteIds.length === 0 || noteActionPending,
       tone: "danger",
@@ -1462,7 +1553,9 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
 
           {editingNoteHiddenByFilters && (
             <div className="mb-3 rounded-xl bg-amber-500/10 p-3 ring-1 ring-amber-500/30">
-              <div className="text-xs font-medium text-amber-700 dark:text-amber-100">Open note is hidden by filters</div>
+              <div className="text-xs font-medium text-amber-700 dark:text-amber-100">
+                Open note is hidden by filters
+              </div>
               <p className="mt-1 text-[0.6875rem] text-amber-700/80 dark:text-amber-100/80">
                 The editor stays open so unsaved edits are not lost.
               </p>
@@ -1589,10 +1682,12 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold text-[var(--foreground)]">
-                  {importPreview.data?.draftable ?? 0} pending source{importPreview.data?.draftable === 1 ? "" : "s"} ready
+                  {importPreview.data?.draftable ?? 0} pending source{importPreview.data?.draftable === 1 ? "" : "s"}{" "}
+                  ready
                 </div>
                 <div className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">
-                  {importPreview.data?.importedCount ?? 0} source{importPreview.data?.importedCount === 1 ? "" : "s"} already imported
+                  {importPreview.data?.importedCount ?? 0} source{importPreview.data?.importedCount === 1 ? "" : "s"}{" "}
+                  already imported
                 </div>
               </div>
               {importPreview.isLoading ? <Loader2 className="animate-spin" size="1rem" /> : <FileJson size="1rem" />}
@@ -1611,7 +1706,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
             />
           )}
 
-          <div className={cn("grid gap-2", importSource === "chats" ? "sm:grid-cols-[1fr_1fr]" : "sm:grid-cols-[1fr]") }>
+          <div className={cn("grid gap-2", importSource === "chats" ? "sm:grid-cols-[1fr_1fr]" : "sm:grid-cols-[1fr]")}>
             {importSource === "chats" && (
               <label className="space-y-1">
                 <span className="block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Chat mode</span>
@@ -1651,8 +1746,8 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
               {importApplyLowRisk ? <StatusPill label="Low-risk auto-apply" tone="warn" /> : null}
             </div>
             <p className={cn("mt-2", helperTextClassName)}>
-              Import uses the shared extraction defaults, including connection, model, instruction,
-              and low-risk auto-apply.
+              Import uses the shared extraction defaults, including connection, model, instruction, and low-risk
+              auto-apply.
             </p>
           </div>
           {lastImportResult && (
@@ -1743,11 +1838,12 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
               />
             )}
             {importPreview.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
-            {!importPreview.isLoading && !importPreview.isError && pendingImportRows.length === 0 && importedImportRows.length === 0 && (
-              <p className={emptyStateClassName}>
-                No sources are ready to bring in.
-              </p>
-            )}
+            {!importPreview.isLoading &&
+              !importPreview.isError &&
+              pendingImportRows.length === 0 &&
+              importedImportRows.length === 0 && (
+                <p className={emptyStateClassName}>No sources are ready to bring in.</p>
+              )}
             {pendingImportRows.map((sample) => (
               <ImportPreviewRowItem
                 key={sample.sourceId}
@@ -1829,16 +1925,14 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
             <QueryFailure
               label="Suggestions"
               error={reviewError}
-              stale={Boolean(pendingDraftsForReview.data || reviewNotes.data)}
+              stale={Boolean(draftReview.data || reviewNotes.data)}
               onRetry={() => {
-                void pendingDraftsForReview.refetch();
+                void draftReview.refetch();
                 void reviewNotes.refetch();
               }}
             />
           )}
-          {reviewLoading && (
-            <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />
-          )}
+          {reviewLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
           {!reviewLoading && !reviewError && reviewGroups.length === 0 && (
             <p className={emptyStateClassName}>No pending suggestions to review.</p>
           )}
@@ -1851,11 +1945,20 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
                     suggestion{reviewMutations.length === 1 ? "" : "s"} across{" "}
                     <span className="font-semibold text-[var(--foreground)]">{reviewGroups.length}</span> source
                     {reviewGroups.length === 1 ? "" : "s"}
+                    {(draftReview.data?.counts.blockedDrafts ?? 0) > 0 ? (
+                      <>
+                        {", "}
+                        <span className="font-semibold text-[var(--destructive)]">
+                          {draftReview.data?.counts.blockedDrafts}
+                        </span>{" "}
+                        blocked
+                      </>
+                    ) : null}
                   </p>
                   <div className="flex flex-wrap gap-1.5">
                     <ToolButton
                       onClick={() => void keepAllLowRiskReviewMutations()}
-                      disabled={reviewBusy || reviewMutations.length === 0}
+                      disabled={reviewBusy || reviewLowRiskEligibleCount === 0}
                       tone="primary"
                     >
                       {reviewBatchAction === "keep-low" ? (
@@ -1880,96 +1983,61 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
                   </div>
                 </div>
               </div>
-              {reviewGroups.map(({ sourceNoteId, sourceNote, sourceDrafts, totalMutations, mode }) => (
-                <div key={sourceNoteId}>
-                  {sourceNote ? (
-                    <div className="flex items-center justify-between gap-3 rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <p className="truncate text-xs font-semibold text-[var(--foreground)]">
-                            {memoryRowTitle(sourceNote, chatLookup)}
-                          </p>
-                          {mode ? <ModeBadge mode={mode} /> : null}
-                        </div>
-                        <p className="mt-0.5 text-[0.6875rem] text-[var(--muted-foreground)]">
-                          {totalMutations} pending suggestion{totalMutations === 1 ? "" : "s"}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => openMemory(sourceNoteId, { tab: "suggestions" })}
-                        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--primary)] px-2.5 py-1.5 text-xs font-semibold text-[var(--primary-foreground)] transition-colors hover:opacity-90"
-                      >
-                        <Eye size="0.75rem" />
-                        Review
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="space-y-2 rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
-                      <div className="flex items-center justify-between gap-3">
+              {reviewGroups.map(({ sourceNoteId, sourceNote, totalMutations, mode, reviewSource }) => {
+                const blocked = reviewSource.drafts.some((draftReview) => draftReview.blockReasons.length > 0);
+                const diagnosticOnly = totalMutations === 0;
+                return (
+                  <section
+                    key={sourceNoteId}
+                    className="overflow-hidden rounded-lg bg-[var(--secondary)]/35 ring-1 ring-[var(--border)]"
+                  >
+                    <div className="p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <AlertCircle size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
-                            <span className="truncate text-xs font-semibold text-[var(--foreground)]">
-                              {friendlyIdentifier(sourceNoteId)}
-                            </span>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {!sourceNote ? (
+                              <AlertCircle size="0.75rem" className="shrink-0 text-[var(--destructive)]" />
+                            ) : null}
+                            <p className="truncate text-xs font-semibold text-[var(--foreground)]">
+                              {sourceNote ? memoryRowTitle(sourceNote, chatLookup) : friendlyIdentifier(sourceNoteId)}
+                            </p>
                             {mode ? <ModeBadge mode={mode} /> : null}
-                            <StatusPill label="Source deleted" tone="warn" />
+                            {blocked ? <StatusPill label="Blocked" tone="bad" /> : null}
+                            {diagnosticOnly ? <StatusPill label="Diagnostics only" tone="warn" /> : null}
                           </div>
                           <p className="mt-0.5 text-[0.6875rem] text-[var(--muted-foreground)]">
-                            {totalMutations} pending suggestion{totalMutations === 1 ? "" : "s"}
+                            {totalMutations} pending suggestion{totalMutations === 1 ? "" : "s"} across{" "}
+                            {reviewSource.targets.length} target{reviewSource.targets.length === 1 ? "" : "s"}
                           </p>
                         </div>
-                        <ToolButton onClick={() => skipAllOrphans(sourceDrafts)} tone="danger">
-                          <X size="0.875rem" />
-                          Skip all
-                        </ToolButton>
-                      </div>
-                      <div className="space-y-2">
-                        {sourceDrafts.map((draft) =>
-                          draft.mutations.map((mutation) => (
-                              <div
-                                key={suggestionRowKey(draft.id, mutation.id)}
-                                className="rounded-lg bg-[var(--card)] p-3 ring-1 ring-[var(--border)]"
-                              >
-                                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                  <div className="min-w-0 flex-1">
-                                    <div className="flex flex-wrap items-center gap-1.5">
-                                      <StatusPill label={mutationKindLabel(mutation.kind)} />
-                                      <StatusPill
-                                        label={mutationRiskLabel(mutation.risk)}
-                                        tone={mutationRiskTone(mutation.risk)}
-                                      />
-                                    </div>
-                                    <h4 className="mt-2 text-xs font-medium text-[var(--foreground)]">
-                                      {mutationTargetTitle(mutation)}
-                                    </h4>
-                                    <p className="mt-1 whitespace-pre-wrap text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-                                      {compactMutationText(mutation, noteLookup)}
-                                    </p>
-                                  </div>
-                                  <div className="flex shrink-0 gap-1.5">
-                                    <ToolButton
-                                      onClick={() => keepOrphanMutation(draft, mutation.id)}
-                                      tone="primary"
-                                    >
-                                      <Check size="0.875rem" />
-                                      Keep
-                                    </ToolButton>
-                                    <ToolButton onClick={() => skipOrphanMutation(draft, mutation.id)}>
-                                      <X size="0.875rem" />
-                                      Skip
-                                    </ToolButton>
-                                  </div>
-                                </div>
-                              </div>
-                            )),
+                        {sourceNote ? (
+                          <button
+                            type="button"
+                            onClick={() => openMemory(sourceNoteId, { tab: "suggestions" })}
+                            className="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg bg-[var(--primary)] px-2.5 text-xs font-semibold text-[var(--primary-foreground)] transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                          >
+                            <Eye size="0.75rem" />
+                            Review
+                          </button>
+                        ) : (
+                          <ToolButton
+                            onClick={() => void dismissBlockedReviewDrafts(reviewSource)}
+                            disabled={reviewBusy}
+                            tone="danger"
+                          >
+                            <X size="0.875rem" />
+                            Dismiss
+                          </ToolButton>
                         )}
                       </div>
+                      <ReviewSourceDiagnostics source={reviewSource} />
                     </div>
-                  )}
-                </div>
-              ))}
+                    {reviewSource.targets.map((target) => (
+                      <ReviewTargetSummary key={target.noteId} target={target} />
+                    ))}
+                  </section>
+                );
+              })}
             </div>
           )}
         </Section>

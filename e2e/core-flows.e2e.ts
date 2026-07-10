@@ -58,44 +58,140 @@ function ltmNote(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 function ltmDraft(sourceNoteId: string) {
+  const mutation = {
+    id: "22222222-2222-4222-8222-222222222222",
+    kind: "create_note",
+    risk: "low",
+    confidence: 0.92,
+    summary: "Create a scene memory from the selected source.",
+    evidence: ["e2e:shared-ui"],
+    note: {
+      id: "scene_shared_ui_suggestion",
+      title: "Shared UI Suggestion",
+      type: "scene",
+      status: "active",
+      modes: ["conversation"],
+      scope: {},
+      tags: ["shared_ui"],
+      keywords: [],
+      links: [{ target: sourceNoteId, relation: "extracted_from" }],
+      sections: {
+        summary: {
+          text: "The suggestion row should use the shared selection action bar.",
+          updatedAt: ltmNow,
+          evidence: ["e2e:shared-ui"],
+        },
+      },
+      version: 1,
+    },
+  };
   return {
     id: "11111111-1111-4111-8111-111111111111",
     status: "pending",
     createdAt: ltmNow,
     updatedAt: ltmNow,
+    operationId: "33333333-3333-4333-8333-333333333333",
     source: { sourceNoteId },
     scope: {},
     modes: ["conversation"],
     summary: "One pending suggestion for shared UI selection.",
-    mutations: [
+    mutations: [mutation],
+    diagnostics: [
       {
-        id: "22222222-2222-4222-8222-222222222222",
-        kind: "create_note",
-        risk: "low",
-        confidence: 0.92,
-        summary: "Create a scene memory from the selected source.",
-        evidence: ["e2e:shared-ui"],
-        note: {
-          id: "scene_shared_ui_suggestion",
-          title: "Shared UI Suggestion",
-          type: "scene",
-          status: "active",
-          modes: ["conversation"],
-          scope: {},
-          tags: ["shared_ui"],
-          keywords: [],
-          links: [{ target: sourceNoteId, relation: "extracted_from" }],
-          sections: {
-            summary: {
-              text: "The suggestion row should use the shared selection action bar.",
-              updatedAt: ltmNow,
-              evidence: ["e2e:shared-ui"],
-            },
-          },
-          version: 1,
-        },
+        severity: "warning",
+        code: "mutation_needs_review",
+        mutationId: mutation.id,
+        message: "Confirm the shared UI suggestion before applying it.",
+      },
+      {
+        severity: "error",
+        code: "composite_character_subject",
+        candidateIndex: 1,
+        message: "Roselia and Damo were returned as one character subject.",
+      },
+      {
+        severity: "warning",
+        code: "deduplicated_evidence_unit",
+        candidateIndex: 2,
+        message: "A repeated candidate was deduplicated.",
       },
     ],
+    extractionOutcome: {
+      state: "partial_success",
+      totalCandidates: 3,
+      keptUnits: 1,
+      droppedUnits: 2,
+      droppedCandidates: [
+        {
+          index: 1,
+          reason: "invalid_subject_cardinality",
+          message: "Roselia and Damo were returned as one character subject.",
+          snippet: "Roselia and Damo protected the archive together.",
+        },
+      ],
+    },
+    accounting: {
+      providerCandidates: 3,
+      normalizedAdditions: 0,
+      parserRejections: 0,
+      validationRejections: 1,
+      deduplications: 1,
+      keptUnits: 1,
+    },
+  };
+}
+
+function ltmDraftReview(sourceNoteId: string, draft: ReturnType<typeof ltmDraft>) {
+  const mutation = draft.mutations[0]!;
+  return {
+    generatedAt: ltmNow,
+    sources: [
+      {
+        sourceNoteId,
+        modes: ["conversation"],
+        drafts: [
+          {
+            draft,
+            freshness: "hashless",
+            blockReasons: [],
+            diagnostics: [draft.diagnostics[1]],
+            candidateRejections: draft.extractionOutcome.droppedCandidates,
+            deduplications: [draft.diagnostics[2]],
+          },
+        ],
+        targets: [
+          {
+            noteId: mutation.note.id,
+            title: mutation.note.title,
+            noteType: mutation.note.type,
+            rows: [
+              {
+                draftId: draft.id,
+                mutation,
+                disposition: "merge",
+                diagnostics: [draft.diagnostics[0]],
+                changes: [
+                  {
+                    kind: "section",
+                    key: "summary",
+                    before: "An earlier shared UI memory.",
+                    after: mutation.note.sections.summary.text,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    counts: {
+      sources: 1,
+      drafts: 1,
+      mutations: 1,
+      blockedDrafts: 0,
+      candidateRejections: 1,
+      deduplications: 1,
+    },
   };
 }
 
@@ -407,6 +503,14 @@ test("LTM partial import keeps failed sources selected and exposes recovery deta
               droppedUnits: 0,
               droppedCandidates: [],
             },
+            accounting: {
+              providerCandidates: 1,
+              normalizedAdditions: 0,
+              parserRejections: 0,
+              validationRejections: 0,
+              deduplications: 0,
+              keptUnits: 1,
+            },
             appliedMutationIds: [],
             skippedMutationIds: [],
           },
@@ -428,6 +532,14 @@ test("LTM partial import keeps failed sources selected and exposes recovery deta
               keptUnits: 0,
               droppedUnits: 0,
               droppedCandidates: [],
+            },
+            accounting: {
+              providerCandidates: 0,
+              normalizedAdditions: 0,
+              parserRejections: 0,
+              validationRejections: 0,
+              deduplications: 0,
+              keptUnits: 0,
             },
             appliedMutationIds: [],
             skippedMutationIds: [],
@@ -538,7 +650,7 @@ test("LTM query failures render retry states instead of empty states", async ({ 
       body: JSON.stringify({ error: "Notes unavailable" }),
     });
   });
-  await page.route(/\/api\/long-term-memory\/drafts(?:\?.*)?$/, async (route) => {
+  await page.route(/\/api\/long-term-memory\/drafts(?:\/review)?(?:\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 500,
       contentType: "application/json",
@@ -666,6 +778,13 @@ test("LTM source suggestions select mode uses shared keep and skip bar", async (
   await page.route(/\/api\/long-term-memory\/drafts(?:\?.*)?$/, async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([draft]) });
   });
+  await page.route(/\/api\/long-term-memory\/drafts\/review(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(ltmDraftReview(sourceNote.id as string, draft)),
+    });
+  });
 
   await createActiveConversation(page, "LTM Suggestions Selection Shared UI");
   await page.goto("/");
@@ -673,18 +792,230 @@ test("LTM source suggestions select mode uses shared keep and skip bar", async (
 
   await vaultDialog.getByRole("tab", { name: "Review" }).click();
   await expect(vaultDialog.getByText("Shared UI Review Source")).toBeVisible();
+  await expect(vaultDialog.getByText("1 Merge")).toBeVisible();
   await vaultDialog.getByRole("button", { name: "Review" }).click();
   const memoryDialog = page.getByRole("dialog", { name: "Shared UI Review Source" });
   await expect(memoryDialog).toBeVisible();
   await memoryDialog.getByRole("button", { name: "Suggestions", exact: true }).click();
+  await expect(memoryDialog.getByText("composite_character_subject")).toBeVisible();
+  const targetDisclosure = memoryDialog.getByRole("button", { name: /Shared UI Suggestion/ });
+  await targetDisclosure.focus();
+  await expect(targetDisclosure).toHaveAttribute("aria-expanded", "false");
+  await targetDisclosure.press("Enter");
+  await expect(targetDisclosure).toHaveAttribute("aria-expanded", "true");
+  await expect(memoryDialog.getByText("Confirm the shared UI suggestion before applying it.")).toBeVisible();
+  await expect(memoryDialog.getByText("Merge", { exact: true })).toBeVisible();
+  await memoryDialog.getByRole("button", { name: "View changes (1)" }).click();
+  await expect(memoryDialog.getByText("Before: summary")).toBeVisible();
+  await expect(memoryDialog.getByText("An earlier shared UI memory.")).toBeVisible();
   await memoryDialog.getByRole("button", { name: "Select", exact: true }).click();
-  await memoryDialog.getByRole("button", { name: "New" }).click();
   await memoryDialog.getByLabel("Select Scene: Shared Ui Suggestion").check();
 
   await expect(memoryDialog.getByRole("button", { name: "Keep selected" })).toBeVisible();
   await expect(memoryDialog.getByRole("button", { name: "Skip selected" })).toBeVisible();
   await memoryDialog.getByRole("button", { name: "Clear" }).last().click();
   await expect(memoryDialog.getByRole("button", { name: "Keep selected" })).toHaveCount(0);
+
+  await page.reload();
+  const reopenedVault = await openLtmVaultFromAgentEditor(page);
+  await reopenedVault.getByRole("tab", { name: "Review" }).click();
+  await reopenedVault.getByRole("button", { name: "Review" }).click();
+  const reopenedMemory = page.getByRole("dialog", { name: "Shared UI Review Source" });
+  await reopenedMemory.getByRole("button", { name: "Suggestions", exact: true }).click();
+  await expect(reopenedMemory.getByText("composite_character_subject")).toBeVisible();
+});
+
+test("LTM failed acceptance refreshes Review into a stale blocked state", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "LTM stale Review actions are covered on desktop.");
+
+  const sourceNote = ltmNote({
+    id: "source_stale_review_action",
+    title: "Stale Review Source",
+    type: "source",
+    tags: ["imported_chat"],
+    sections: {
+      source: {
+        text: "The source changes while its suggestion is open.",
+        updatedAt: ltmNow,
+        evidence: ["e2e:stale-review"],
+      },
+    },
+  });
+  const draft = ltmDraft(sourceNote.id as string);
+  let stale = false;
+
+  await page.route(/\/api\/long-term-memory\/notes(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([sourceNote]) });
+  });
+  await page.route(/\/api\/long-term-memory\/drafts(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([draft]) });
+  });
+  await page.route(/\/api\/long-term-memory\/drafts\/review(?:\?.*)?$/, async (route) => {
+    const review = ltmDraftReview(sourceNote.id as string, draft);
+    if (stale) {
+      review.sources[0]!.drafts[0]!.freshness = "stale";
+      review.sources[0]!.drafts[0]!.blockReasons = [
+        { code: "source_stale", message: "The source changed after this extraction." },
+      ];
+      review.counts.blockedDrafts = 1;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(review) });
+  });
+  await page.route(`**/api/long-term-memory/drafts/${draft.id}/accept`, async (route) => {
+    stale = true;
+    await route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "The source changed after this extraction.", code: "ltm_draft_source_stale" }),
+    });
+  });
+
+  await createActiveConversation(page, "LTM Stale Review Action");
+  await page.goto("/");
+  const vaultDialog = await openLtmVaultFromAgentEditor(page);
+  await vaultDialog.getByRole("tab", { name: "Review" }).click();
+  await vaultDialog.getByRole("button", { name: "Review" }).click();
+  const memoryDialog = page.getByRole("dialog", { name: "Stale Review Source" });
+  await memoryDialog.getByRole("button", { name: "Suggestions", exact: true }).click();
+  await memoryDialog.getByRole("button", { name: /Shared UI Suggestion/ }).click();
+  await memoryDialog.getByRole("button", { name: "Keep", exact: true }).click();
+
+  await expect(memoryDialog.getByText("source_stale")).toBeVisible();
+  await expect(memoryDialog.getByRole("button", { name: "Keep", exact: true })).toBeDisabled();
+});
+
+test("LTM diagnostic-only drafts remain reviewable and can be dismissed", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "LTM diagnostic-only Review is covered on desktop.");
+
+  const sourceNote = ltmNote({
+    id: "source_diagnostic_only_review",
+    title: "Diagnostic Only Source",
+    type: "source",
+    tags: ["imported_chat"],
+    sections: {
+      source: {
+        text: "The provider returned one malformed candidate.",
+        updatedAt: ltmNow,
+        evidence: ["e2e:diagnostic-only"],
+      },
+    },
+  });
+  const draft = {
+    ...ltmDraft(sourceNote.id as string),
+    summary: "No mutation survived extraction.",
+    mutations: [],
+    diagnostics: [
+      {
+        severity: "error",
+        code: "candidate_parse_failed",
+        candidateIndex: 0,
+        message: "The provider candidate was malformed.",
+      },
+    ],
+    extractionOutcome: {
+      state: "no_suggestions_created",
+      totalCandidates: 1,
+      keptUnits: 0,
+      droppedUnits: 1,
+      droppedCandidates: [
+        {
+          index: 0,
+          reason: "invalid_format",
+          message: "The provider candidate was malformed.",
+        },
+      ],
+    },
+    accounting: {
+      providerCandidates: 1,
+      normalizedAdditions: 0,
+      parserRejections: 1,
+      validationRejections: 0,
+      deduplications: 0,
+      keptUnits: 0,
+    },
+  };
+  let dismissed = false;
+
+  await page.route(/\/api\/long-term-memory\/notes(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([sourceNote]) });
+  });
+  await page.route(/\/api\/long-term-memory\/drafts(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(dismissed ? [] : [draft]),
+    });
+  });
+  await page.route(/\/api\/long-term-memory\/drafts\/review(?:\?.*)?$/, async (route) => {
+    const response = dismissed
+      ? {
+          generatedAt: ltmNow,
+          sources: [],
+          counts: {
+            sources: 0,
+            drafts: 0,
+            mutations: 0,
+            blockedDrafts: 0,
+            candidateRejections: 0,
+            deduplications: 0,
+          },
+        }
+      : {
+          generatedAt: ltmNow,
+          sources: [
+            {
+              sourceNoteId: sourceNote.id,
+              modes: ["conversation"],
+              drafts: [
+                {
+                  draft,
+                  freshness: "hashless",
+                  blockReasons: [{ code: "no_mutations", message: "No mutation survived extraction." }],
+                  diagnostics: draft.diagnostics,
+                  candidateRejections: draft.extractionOutcome.droppedCandidates,
+                  deduplications: [],
+                },
+              ],
+              targets: [],
+            },
+          ],
+          counts: {
+            sources: 1,
+            drafts: 1,
+            mutations: 0,
+            blockedDrafts: 1,
+            candidateRejections: 1,
+            deduplications: 0,
+          },
+        };
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(response) });
+  });
+  await page.route(`**/api/long-term-memory/drafts/${draft.id}`, async (route) => {
+    dismissed = true;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ deleted: true, id: draft.id }),
+    });
+  });
+
+  await createActiveConversation(page, "LTM Diagnostic Only Review");
+  await page.goto("/");
+  const vaultDialog = await openLtmVaultFromAgentEditor(page);
+  await vaultDialog.getByRole("tab", { name: "Review" }).click();
+  await expect(vaultDialog.getByText("Diagnostics only")).toBeVisible();
+  await vaultDialog.getByRole("button", { name: "Review" }).click();
+  const memoryDialog = page.getByRole("dialog", { name: "Diagnostic Only Source" });
+  await memoryDialog.getByRole("button", { name: "Suggestions", exact: true }).click();
+  await expect(memoryDialog.getByText("candidate_parse_failed")).toBeVisible();
+  await memoryDialog.getByRole("button", { name: "Dismiss", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "Dismiss extraction report?" })
+    .getByRole("button", { name: "Dismiss" })
+    .click();
+
+  await expect(memoryDialog.getByText("candidate_parse_failed")).toHaveCount(0);
+  await expect(memoryDialog.getByText("No memory suggestions need review for this source note.")).toBeVisible();
 });
 
 test("manual memory recovery survives dismissing the create modal", async ({ page }, testInfo) => {
@@ -729,6 +1060,7 @@ test("manual memory recovery survives dismissing the create modal", async ({ pag
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
+        operationId: "66666666-6666-4666-8666-666666666666",
         draft: null,
         diagnostics: [],
         outcome: {
@@ -750,6 +1082,14 @@ test("manual memory recovery survives dismissing the create modal", async ({ pag
               },
             },
           ],
+        },
+        accounting: {
+          providerCandidates: 1,
+          normalizedAdditions: 0,
+          parserRejections: 0,
+          validationRejections: 1,
+          deduplications: 0,
+          keptUnits: 0,
         },
         response: { summary: "", mutations: [] },
         appliedMutationIds: [],

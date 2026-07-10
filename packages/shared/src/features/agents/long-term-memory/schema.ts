@@ -397,10 +397,9 @@ export const ltmSubjectsSchema = z
   .refine((subjects) => new Set(subjects.map((subject) => subject.key)).size === subjects.length, {
     message: "Subjects must be distinct.",
   })
-  .refine(
-    (subjects) => subjects.every((subject, index) => index === 0 || subjects[index - 1]!.key < subject.key),
-    { message: "Subjects must be sorted by stable key." },
-  );
+  .refine((subjects) => subjects.every((subject, index) => index === 0 || subjects[index - 1]!.key < subject.key), {
+    message: "Subjects must be sorted by stable key.",
+  });
 
 export const ltmSourceProvenanceSchema = z
   .object({
@@ -942,10 +941,7 @@ export const ltmGraphIndexSchema = z
   })
   .strict();
 
-const ltmIndexStringBucketsSchema = z.record(
-  z.string().min(1).max(240),
-  z.array(z.string().min(1).max(240)),
-);
+const ltmIndexStringBucketsSchema = z.record(z.string().min(1).max(240), z.array(z.string().min(1).max(240)));
 
 export const ltmKeywordIndexSchema = z
   .object({
@@ -1458,29 +1454,6 @@ export const ltmDraftMutationSchema = z.discriminatedUnion("kind", [
     .strip(),
 ]);
 
-export const ltmExtractionDraftSchema = z
-  .object({
-    id: z.string().uuid(),
-    status: ltmDraftStatusSchema.default("pending"),
-    applyState: ltmDraftApplyStateSchema.default("not_started"),
-    indexRebuildStatus: ltmDraftIndexRebuildStatusSchema.default("not_requested"),
-    indexRebuildAt: ltmIsoTimestampSchema.optional(),
-    indexRebuildError: z.string().min(1).max(2_000).optional(),
-    createdAt: ltmIsoTimestampSchema,
-    updatedAt: ltmIsoTimestampSchema,
-    source: ltmDraftSourceSchema.default({}),
-    scope: ltmScopeSchema.default({}),
-    modes: z.array(ltmModeSchema).min(1).max(8),
-    summary: z.string().max(2_000).default(""),
-    mutations: z.array(ltmDraftMutationSchema).min(1),
-    appliedAt: ltmIsoTimestampSchema.optional(),
-    appliedMutationIds: z.array(z.string().uuid()).optional(),
-    skippedMutationIds: z.array(z.string().uuid()).optional(),
-    supersededAt: ltmIsoTimestampSchema.optional(),
-    supersededByDraftId: z.string().uuid().optional(),
-  })
-  .strip();
-
 export const ltmExtractionDropReasonSchema = z.enum([
   "invalid_format",
   "placeholder_output",
@@ -1546,6 +1519,149 @@ export const ltmExtractionDiagnosticSchema = z
   })
   .strict();
 
+export const ltmExtractionAccountingSchema = z
+  .object({
+    providerCandidates: z.number().int().min(0).max(999),
+    normalizedAdditions: z.number().int().min(0).max(999),
+    parserRejections: z.number().int().min(0).max(999),
+    validationRejections: z.number().int().min(0).max(999),
+    deduplications: z.number().int().min(0).max(999),
+    keptUnits: z.number().int().min(0).max(999),
+  })
+  .strict()
+  .superRefine((accounting, ctx) => {
+    const candidates = accounting.providerCandidates + accounting.normalizedAdditions;
+    const dispositions =
+      accounting.parserRejections + accounting.validationRejections + accounting.deduplications + accounting.keptUnits;
+    if (candidates !== dispositions) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Extraction accounting is unbalanced: ${candidates} candidates but ${dispositions} dispositions.`,
+      });
+    }
+  });
+
+export const ltmExtractionDraftSchema = z
+  .object({
+    id: z.string().uuid(),
+    status: ltmDraftStatusSchema.default("pending"),
+    applyState: ltmDraftApplyStateSchema.default("not_started"),
+    indexRebuildStatus: ltmDraftIndexRebuildStatusSchema.default("not_requested"),
+    indexRebuildAt: ltmIsoTimestampSchema.optional(),
+    indexRebuildError: z.string().min(1).max(2_000).optional(),
+    createdAt: ltmIsoTimestampSchema,
+    updatedAt: ltmIsoTimestampSchema,
+    operationId: z.string().uuid().optional(),
+    source: ltmDraftSourceSchema.default({}),
+    scope: ltmScopeSchema.default({}),
+    modes: z.array(ltmModeSchema).min(1).max(8),
+    summary: z.string().max(2_000).default(""),
+    mutations: z.array(ltmDraftMutationSchema).default([]),
+    diagnostics: z.array(ltmExtractionDiagnosticSchema).max(500).optional(),
+    extractionOutcome: ltmExtractionOutcomeSchema.optional(),
+    accounting: ltmExtractionAccountingSchema.optional(),
+    appliedAt: ltmIsoTimestampSchema.optional(),
+    appliedMutationIds: z.array(z.string().uuid()).optional(),
+    skippedMutationIds: z.array(z.string().uuid()).optional(),
+    supersededAt: ltmIsoTimestampSchema.optional(),
+    supersededByDraftId: z.string().uuid().optional(),
+  })
+  .strip();
+
+export const ltmDraftFreshnessSchema = z.enum([
+  "fresh",
+  "hashless",
+  "stale",
+  "missing",
+  "invalid",
+  "superseded",
+  "not_pending",
+]);
+
+export const ltmDraftBlockReasonCodeSchema = z.enum([
+  "source_stale",
+  "source_missing",
+  "source_invalid",
+  "draft_superseded",
+  "draft_not_pending",
+  "projection_failed",
+  "no_mutations",
+]);
+
+export const ltmDraftBlockReasonSchema = z
+  .object({
+    code: ltmDraftBlockReasonCodeSchema,
+    message: z.string().min(1).max(2_000),
+  })
+  .strict();
+
+export const ltmMutationDispositionSchema = z.enum(["new", "merge", "rewrite"]);
+
+export const ltmDraftReviewChangeSchema = z
+  .object({
+    kind: z.enum(["section", "link", "keywords", "status", "subjects"]),
+    key: z.string().min(1).max(240),
+    before: z.string().max(20_000).optional(),
+    after: z.string().max(20_000),
+  })
+  .strict();
+
+export const ltmDraftReviewMutationSchema = z
+  .object({
+    draftId: z.string().uuid(),
+    mutation: ltmDraftMutationSchema,
+    disposition: ltmMutationDispositionSchema,
+    diagnostics: z.array(ltmExtractionDiagnosticSchema).max(100),
+    changes: z.array(ltmDraftReviewChangeSchema).max(100),
+  })
+  .strict();
+
+export const ltmDraftReviewTargetSchema = z
+  .object({
+    noteId: ltmNoteIdSchema,
+    title: ltmNoteTitleSchema.optional(),
+    noteType: ltmNoteTypeSchema,
+    rows: z.array(ltmDraftReviewMutationSchema).min(1).max(1_000),
+  })
+  .strict();
+
+export const ltmDraftReviewDraftSchema = z
+  .object({
+    draft: ltmExtractionDraftSchema,
+    freshness: ltmDraftFreshnessSchema,
+    blockReasons: z.array(ltmDraftBlockReasonSchema).max(20),
+    diagnostics: z.array(ltmExtractionDiagnosticSchema).max(500),
+    candidateRejections: z.array(ltmExtractionDroppedCandidateSchema).max(80),
+    deduplications: z.array(ltmExtractionDiagnosticSchema).max(500),
+  })
+  .strict();
+
+export const ltmDraftReviewSourceSchema = z
+  .object({
+    sourceNoteId: ltmNoteIdSchema,
+    modes: z.array(ltmModeSchema).min(1).max(8),
+    drafts: z.array(ltmDraftReviewDraftSchema).min(1).max(500),
+    targets: z.array(ltmDraftReviewTargetSchema).max(500),
+  })
+  .strict();
+
+export const ltmDraftReviewResponseSchema = z
+  .object({
+    generatedAt: ltmIsoTimestampSchema,
+    sources: z.array(ltmDraftReviewSourceSchema).max(500),
+    counts: z
+      .object({
+        sources: z.number().int().min(0),
+        drafts: z.number().int().min(0),
+        mutations: z.number().int().min(0),
+        blockedDrafts: z.number().int().min(0),
+        candidateRejections: z.number().int().min(0),
+        deduplications: z.number().int().min(0),
+      })
+      .strict(),
+  })
+  .strict();
+
 export const ltmExtractSourceNoteRequestSchema = z
   .object({
     chatId: z.string().min(1).max(120).optional(),
@@ -1567,9 +1683,11 @@ const ltmExtractionTransportPayloadSchema = z
 
 export const ltmExtractSourceNoteResponseSchema = z
   .object({
+    operationId: z.string().uuid(),
     draft: ltmExtractionDraftSchema.nullable(),
     diagnostics: z.array(ltmExtractionDiagnosticSchema).max(500),
     outcome: ltmExtractionOutcomeSchema,
+    accounting: ltmExtractionAccountingSchema,
     response: ltmExtractionTransportPayloadSchema,
     appliedMutationIds: z.array(z.string().uuid()).max(500),
     skippedMutationIds: z.array(z.string().uuid()).max(500),
@@ -1659,6 +1777,7 @@ const ltmImportedSourceResultBaseSchema = z.object({
   sourceWriteStatus: z.enum(["created", "refreshed"]),
   extractionMethod: z.enum(["llm", "direct_ingest"]),
   outcome: ltmExtractionOutcomeSchema,
+  accounting: ltmExtractionAccountingSchema,
   appliedMutationIds: z.array(z.string().uuid()).max(500),
   skippedMutationIds: z.array(z.string().uuid()).max(500),
 });
@@ -1918,6 +2037,16 @@ export type LtmExtractionOutcomeState = z.infer<typeof ltmExtractionOutcomeState
 export type LtmExtractionOutcome = z.infer<typeof ltmExtractionOutcomeSchema>;
 export type LtmExtractionResponse = z.infer<typeof ltmExtractionResponseSchema>;
 export type LtmExtractionDiagnostic = z.infer<typeof ltmExtractionDiagnosticSchema>;
+export type LtmExtractionAccounting = z.infer<typeof ltmExtractionAccountingSchema>;
+export type LtmDraftFreshness = z.infer<typeof ltmDraftFreshnessSchema>;
+export type LtmDraftBlockReason = z.infer<typeof ltmDraftBlockReasonSchema>;
+export type LtmMutationDisposition = z.infer<typeof ltmMutationDispositionSchema>;
+export type LtmDraftReviewChange = z.infer<typeof ltmDraftReviewChangeSchema>;
+export type LtmDraftReviewMutation = z.infer<typeof ltmDraftReviewMutationSchema>;
+export type LtmDraftReviewTarget = z.infer<typeof ltmDraftReviewTargetSchema>;
+export type LtmDraftReviewDraft = z.infer<typeof ltmDraftReviewDraftSchema>;
+export type LtmDraftReviewSource = z.infer<typeof ltmDraftReviewSourceSchema>;
+export type LtmDraftReviewResponse = z.infer<typeof ltmDraftReviewResponseSchema>;
 export type LtmExtractSourceNoteRequest = z.infer<typeof ltmExtractSourceNoteRequestSchema>;
 export type LtmExtractSourceNoteResponse = z.infer<typeof ltmExtractSourceNoteResponseSchema>;
 export type LtmInteropSource = z.infer<typeof ltmInteropSourceSchema>;

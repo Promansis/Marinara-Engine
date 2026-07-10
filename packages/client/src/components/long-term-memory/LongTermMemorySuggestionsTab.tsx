@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   AlertCircle,
@@ -9,11 +9,16 @@ import {
   ListChecks,
   Loader2,
   MoreHorizontal,
+  Trash2,
   Wrench,
   X,
 } from "lucide-react";
 import type {
   LtmDraftMutation,
+  LtmDraftReviewDraft,
+  LtmDraftReviewTarget,
+  LtmExtractionAccounting,
+  LtmExtractionDiagnostic,
   LtmExtractionDroppedCandidate,
   LtmExtractionOutcome,
   LtmNote,
@@ -21,9 +26,10 @@ import type {
 import { isLtmSourceLikeNote } from "@marinara-engine/shared";
 import {
   useAcceptLongTermMemoryDraft,
+  useDeleteLongTermMemoryDraft,
   useDeleteLongTermMemoryDraftMutation,
   useExtractLongTermMemorySourceNote,
-  useLongTermMemoryDrafts,
+  useLongTermMemoryDraftReview,
   useLongTermMemoryNotes,
   useSkipLongTermMemoryDraftMutations,
   type AcceptLongTermMemoryDraftResponse,
@@ -32,42 +38,18 @@ import {
 import type { LongTermMemoryLatestExtractionResult } from "../../stores/ltm-extraction-results.store";
 import { cn } from "../../lib/utils";
 import { showConfirmDialog } from "../../lib/app-dialogs";
-import {
-  helperTextClassName,
-  insetSectionCardClassName,
-  sectionCardClassName,
-} from "./LtmFields";
+import { helperTextClassName, insetSectionCardClassName, sectionCardClassName } from "./LtmFields";
 import { StatusPill, ToolButton } from "./LtmPills";
-import { isTypedSuggestionDraft } from "./ltm-editor-utils";
-import {
-  SuggestionRow,
-  type SuggestionRowModel,
-  suggestionRowKeyFor,
-} from "./LtmSuggestionRow";
+import { friendlyIdentifier, friendlyNoteType } from "./ltm-editor-utils";
+import { SuggestionRow, type SuggestionRowModel, suggestionRowKeyFor } from "./LtmSuggestionRow";
 import { type LtmManagedExtractionPrefs } from "./ltm-managed-extraction-prefs";
 import { SelectionActionBar, type SelectionActionBarAction } from "../ui/SelectionActionBar";
 
-type SuggestionGroup = "new" | "rewrite";
 type BatchAction = "keep" | "skip";
-
-const rewriteKinds = new Set<LtmDraftMutation["kind"]>([
-  "append_section",
-  "update_section",
-  "add_link",
-  "set_keywords",
-  "set_status",
-  "set_subjects",
-]);
 
 function isSourceMemory(note: LtmNote) {
   return isLtmSourceLikeNote(note);
 }
-
-function mutationGroup(mutation: LtmDraftMutation): SuggestionGroup {
-  return mutation.kind === "create_note" ? "new" : "rewrite";
-}
-
-
 
 function outcomeTone(outcome: LtmExtractionOutcome) {
   if (outcome.state === "success") return "good";
@@ -93,7 +75,7 @@ function clearDroppedCandidatesOutcome(outcome: LtmExtractionOutcome): LtmExtrac
   };
 }
 
-function outcomeSummary(outcome: LtmExtractionOutcome, mutationCount?: number) {
+function outcomeSummary(outcome: LtmExtractionOutcome, mutationCount?: number, accounting?: LtmExtractionAccounting) {
   if (outcome.state === "success") {
     const createdSuggestions = mutationCount ?? outcome.keptUnits;
     return createdSuggestions === 1
@@ -101,10 +83,21 @@ function outcomeSummary(outcome: LtmExtractionOutcome, mutationCount?: number) {
       : `Created ${createdSuggestions} suggestions from this source.`;
   }
   if (outcome.state === "partial_success") {
+    if (accounting) {
+      const created = mutationCount ?? accounting.keptUnits;
+      const rejected = accounting.parserRejections + accounting.validationRejections;
+      return `Created ${created} suggestion${created === 1 ? "" : "s"}; ${rejected} rejected and ${accounting.deduplications} deduplicated.`;
+    }
     if (mutationCount !== undefined) {
       return `Created ${mutationCount} suggestion${mutationCount === 1 ? "" : "s"}, kept ${outcome.keptUnits} candidate${outcome.keptUnits === 1 ? "" : "s"}, and dropped ${outcome.droppedUnits}.`;
     }
     return `Kept ${outcome.keptUnits} candidate${outcome.keptUnits === 1 ? "" : "s"} and dropped ${outcome.droppedUnits}.`;
+  }
+  if (accounting) {
+    const rejected = accounting.parserRejections + accounting.validationRejections;
+    if (rejected > 0) {
+      return `No suggestions were created; ${rejected} candidate${rejected === 1 ? " was" : "s were"} rejected and ${accounting.deduplications} deduplicated.`;
+    }
   }
   if (outcome.droppedUnits > 0) {
     return `No suggestions were created, but ${outcome.droppedUnits} dropped candidate${outcome.droppedUnits === 1 ? "" : "s"} can still be recovered manually.`;
@@ -112,7 +105,7 @@ function outcomeSummary(outcome: LtmExtractionOutcome, mutationCount?: number) {
   return "No usable suggestions were created from the latest extraction.";
 }
 
-function toastForOutcome(outcome: LtmExtractionOutcome, mutationCount?: number) {
+function toastForOutcome(outcome: LtmExtractionOutcome, mutationCount?: number, accounting?: LtmExtractionAccounting) {
   if (outcome.state === "success") {
     const createdSuggestions = mutationCount ?? outcome.keptUnits;
     return createdSuggestions === 1
@@ -120,10 +113,21 @@ function toastForOutcome(outcome: LtmExtractionOutcome, mutationCount?: number) 
       : `Created ${createdSuggestions} memory suggestions`;
   }
   if (outcome.state === "partial_success") {
+    if (accounting) {
+      const created = mutationCount ?? accounting.keptUnits;
+      const rejected = accounting.parserRejections + accounting.validationRejections;
+      return `Created ${created} memory suggestion${created === 1 ? "" : "s"}; ${rejected} rejected and ${accounting.deduplications} deduplicated`;
+    }
     if (mutationCount !== undefined) {
       return `Created ${mutationCount} memory suggestion${mutationCount === 1 ? "" : "s"} and dropped ${outcome.droppedUnits}`;
     }
     return `Kept ${outcome.keptUnits} candidate${outcome.keptUnits === 1 ? "" : "s"} and dropped ${outcome.droppedUnits}`;
+  }
+  if (accounting) {
+    const rejected = accounting.parserRejections + accounting.validationRejections;
+    if (rejected > 0) {
+      return `No suggestions created; ${rejected} candidate${rejected === 1 ? " was" : "s were"} rejected and ${accounting.deduplications} deduplicated`;
+    }
   }
   if (outcome.droppedUnits > 0) {
     return `No suggestions created, but ${outcome.droppedUnits} dropped candidate${outcome.droppedUnits === 1 ? "" : "s"} can be reviewed`;
@@ -132,7 +136,7 @@ function toastForOutcome(outcome: LtmExtractionOutcome, mutationCount?: number) 
 }
 
 function toastForExtractionResult(result: ExtractLongTermMemorySourceResponse, applyLowRisk: boolean) {
-  const base = toastForOutcome(result.outcome, result.response.mutations.length);
+  const base = toastForOutcome(result.outcome, result.response.mutations.length, result.accounting);
   if (!applyLowRisk) return base;
   const applied = result.appliedMutationIds.length;
   const skipped = result.skippedMutationIds.length;
@@ -176,10 +180,14 @@ export function LongTermMemorySuggestionsTab({
   onLatestExtractionResultChange: (result: LongTermMemoryLatestExtractionResult | null) => void;
   onRecoverDroppedCandidate: (candidate: LtmExtractionDroppedCandidate, note: LtmNote) => void;
 }) {
-  const drafts = useLongTermMemoryDrafts({}, { enabled: isSourceMemory(note) });
+  const review = useLongTermMemoryDraftReview(
+    { sourceNoteId: note.id, status: "pending" },
+    { enabled: isSourceMemory(note) },
+  );
   const notes = useLongTermMemoryNotes();
   const noteLookup = useMemo(() => new Map((notes.data ?? []).map((n) => [n.id, n])), [notes.data]);
   const acceptDraft = useAcceptLongTermMemoryDraft();
+  const deleteDraft = useDeleteLongTermMemoryDraft();
   const deleteDraftMutation = useDeleteLongTermMemoryDraftMutation();
   const extractSourceNote = useExtractLongTermMemorySourceNote();
   const skipDraftMutations = useSkipLongTermMemoryDraftMutations();
@@ -193,25 +201,50 @@ export function LongTermMemorySuggestionsTab({
   const [activeBatchAction, setActiveBatchAction] = useState<BatchAction | null>(null);
   const keepSkipLockRef = useRef(false);
   const sourceMemory = isSourceMemory(note);
+  const reviewSource = review.data?.sources.find((source) => source.sourceNoteId === note.id);
+  const reviewDrafts = useMemo(() => reviewSource?.drafts ?? [], [reviewSource?.drafts]);
+  const draftReviewById = useMemo(
+    () => new Map(reviewDrafts.map((draftReview) => [draftReview.draft.id, draftReview])),
+    [reviewDrafts],
+  );
   const rows = useMemo<SuggestionRowModel[]>(() => {
     if (!sourceMemory) return [];
-    return (drafts.data ?? [])
-      .filter((draft) => draft.status === "pending")
-      .filter((draft) => draft.source.sourceNoteId === note.id)
-      .filter(isTypedSuggestionDraft)
-      .flatMap((draft) => draft.mutations.map((mutation) => ({ draft, mutation })));
-  }, [drafts.data, note.id, sourceMemory]);
-  const newRows = rows.filter((row) => mutationGroup(row.mutation) === "new");
-  const rewriteRows = rows.filter((row) => rewriteKinds.has(row.mutation.kind));
+    return (reviewSource?.targets ?? []).flatMap((target) =>
+      target.rows.flatMap((reviewRow) => {
+        const draftReview = draftReviewById.get(reviewRow.draftId);
+        if (!draftReview) return [];
+        return [
+          {
+            draft: draftReview.draft,
+            mutation: reviewRow.mutation,
+            disposition: reviewRow.disposition,
+            diagnostics: reviewRow.diagnostics,
+            changes: reviewRow.changes,
+            blocked: draftReview.blockReasons.length > 0,
+          } satisfies SuggestionRowModel,
+        ];
+      }),
+    );
+  }, [draftReviewById, reviewSource?.targets, sourceMemory]);
+  const targetGroups = useMemo(
+    () =>
+      (reviewSource?.targets ?? []).map((target) => ({
+        target,
+        rows: rows.filter((row) => target.rows.some((targetRow) => targetRow.mutation.id === row.mutation.id)),
+      })),
+    [reviewSource?.targets, rows],
+  );
   const allRowKeys = useMemo(() => rows.map((row) => suggestionRowKeyFor(row)), [rows]);
   const selectedRows = useMemo(
     () => rows.filter((row) => selectedRowKeys.has(suggestionRowKeyFor(row))),
     [rows, selectedRowKeys],
   );
   const allRowsSelected = rows.length > 0 && selectedRows.length === rows.length;
+  const selectedRowsIncludeBlocker = selectedRows.some((row) => row.blocked);
   const rowActionsDisabled =
     activeBatchAction !== null ||
     acceptDraft.isPending ||
+    deleteDraft.isPending ||
     deleteDraftMutation.isPending ||
     extractSourceNote.isPending ||
     skipDraftMutations.isPending;
@@ -220,7 +253,7 @@ export function LongTermMemorySuggestionsTab({
     const confirmed = await showConfirmDialog({
       title: "Re-run extraction?",
       message:
-        "This will ask the AI to read the source again and create a new batch of suggestions. Your existing pending suggestions will stay. Continue?",
+        "This will ask the AI to read the source again and replace its current pending review with a new extraction. Continue?",
       confirmLabel: "Re-run",
     });
     if (!confirmed) return;
@@ -236,6 +269,8 @@ export function LongTermMemorySuggestionsTab({
         onLatestExtractionResultChange({
           outcome: result.outcome,
           diagnostics: result.diagnostics,
+          accounting: result.accounting,
+          operationId: result.operationId,
           mutationCount: result.response.mutations.length,
         });
         toast.success(toastForExtractionResult(result, autoApplyLowRisk));
@@ -350,6 +385,25 @@ export function LongTermMemorySuggestionsTab({
     [clearEditedMutations, deleteDraftMutation, withKeepSkipLock],
   );
 
+  const dismissDiagnosticDraft = useCallback(
+    async (draftReview: LtmDraftReviewDraft) => {
+      if (draftReview.draft.mutations.length > 0) return;
+      const confirmed = await showConfirmDialog({
+        title: "Dismiss extraction report?",
+        message: "This removes the persisted extraction diagnostics from Review. It does not change any memory notes.",
+        confirmLabel: "Dismiss",
+      });
+      if (!confirmed) return;
+      try {
+        await deleteDraft.mutateAsync(draftReview.draft.id);
+        toast.success("Extraction report dismissed");
+      } catch (err) {
+        toast.error((err as Error).message);
+      }
+    },
+    [deleteDraft],
+  );
+
   const runBulkKeep = useCallback(async () => {
     const snapshot = rows.filter((row) => selectedRowKeys.has(suggestionRowKeyFor(row)));
     if (snapshot.length === 0) return;
@@ -457,24 +511,15 @@ export function LongTermMemorySuggestionsTab({
         id: "keep",
         label: "Keep selected",
         icon:
-          activeBatchAction === "keep" ? (
-            <Loader2 size="0.75rem" className="animate-spin" />
-          ) : (
-            <Check size="0.75rem" />
-          ),
+          activeBatchAction === "keep" ? <Loader2 size="0.75rem" className="animate-spin" /> : <Check size="0.75rem" />,
         onClick: () => void runBulkKeep(),
-        disabled: selectedRows.length === 0 || rowActionsDisabled,
+        disabled: selectedRows.length === 0 || selectedRowsIncludeBlocker || rowActionsDisabled,
         tone: "primary",
       },
       {
         id: "skip",
         label: "Skip selected",
-        icon:
-          activeBatchAction === "skip" ? (
-            <Loader2 size="0.75rem" className="animate-spin" />
-          ) : (
-            <X size="0.75rem" />
-          ),
+        icon: activeBatchAction === "skip" ? <Loader2 size="0.75rem" className="animate-spin" /> : <X size="0.75rem" />,
         onClick: () => void runBulkSkip(),
         disabled: selectedRows.length === 0 || rowActionsDisabled,
       },
@@ -486,7 +531,15 @@ export function LongTermMemorySuggestionsTab({
         disabled: selectedRowKeys.size === 0 || rowActionsDisabled,
       },
     ],
-    [activeBatchAction, rowActionsDisabled, runBulkKeep, runBulkSkip, selectedRows.length, selectedRowKeys.size],
+    [
+      activeBatchAction,
+      rowActionsDisabled,
+      runBulkKeep,
+      runBulkSkip,
+      selectedRows.length,
+      selectedRowsIncludeBlocker,
+      selectedRowKeys.size,
+    ],
   );
 
   if (!sourceMemory) {
@@ -505,6 +558,12 @@ export function LongTermMemorySuggestionsTab({
             <div className="flex flex-wrap gap-1.5">
               <StatusPill label="Source note" tone="good" />
               <StatusPill label={`${rows.length} pending suggestion${rows.length === 1 ? "" : "s"}`} />
+              {reviewDrafts.some((draftReview) => draftReview.blockReasons.length > 0) ? (
+                <StatusPill
+                  label={`${reviewDrafts.filter((draftReview) => draftReview.blockReasons.length > 0).length} blocked`}
+                  tone="bad"
+                />
+              ) : null}
               {selectMode ? (
                 <StatusPill
                   label={`${selectedRows.length} selected`}
@@ -532,11 +591,7 @@ export function LongTermMemorySuggestionsTab({
               {selectMode ? "Cancel" : "Select"}
             </ToolButton>
             {rows.length === 0 ? (
-              <ToolButton
-                onClick={runExtraction}
-                disabled={rowActionsDisabled}
-                tone="primary"
-              >
+              <ToolButton onClick={runExtraction} disabled={rowActionsDisabled} tone="primary">
                 {extractSourceNote.isPending ? (
                   <Loader2 size="0.875rem" className="animate-spin" />
                 ) : (
@@ -545,10 +600,7 @@ export function LongTermMemorySuggestionsTab({
                 Re-run extraction
               </ToolButton>
             ) : (
-              <ToolButton
-                onClick={runExtraction}
-                disabled={rowActionsDisabled}
-              >
+              <ToolButton onClick={runExtraction} disabled={rowActionsDisabled}>
                 <MoreHorizontal size="0.875rem" />
                 Re-run extraction
               </ToolButton>
@@ -557,10 +609,41 @@ export function LongTermMemorySuggestionsTab({
         </div>
       </div>
 
-      {latestExtractionResult?.outcome ? (
+      {review.error ? (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-[var(--destructive)]/5 px-3 py-2 ring-1 ring-[var(--destructive)]/25"
+        >
+          <div className="flex min-w-0 items-start gap-2 text-xs text-[var(--foreground)]">
+            <AlertCircle size="0.875rem" className="mt-0.5 shrink-0 text-[var(--destructive)]" />
+            <span>
+              Review details could not refresh.{" "}
+              {review.error instanceof Error ? review.error.message : "The request failed."}
+            </span>
+          </div>
+          <ToolButton onClick={() => void review.refetch()}>
+            <Loader2 size="0.75rem" className={review.isFetching ? "animate-spin" : undefined} />
+            Retry
+          </ToolButton>
+        </div>
+      ) : null}
+
+      {reviewDrafts.map((draftReview) => (
+        <DraftReviewReport
+          key={draftReview.draft.id}
+          review={draftReview}
+          note={note}
+          busy={rowActionsDisabled}
+          onDismiss={() => void dismissDiagnosticDraft(draftReview)}
+          onRecoverDroppedCandidate={onRecoverDroppedCandidate}
+        />
+      ))}
+
+      {!review.isLoading && reviewDrafts.length === 0 && latestExtractionResult?.outcome ? (
         <ExtractionOutcomePanel
           note={note}
           outcome={latestExtractionResult.outcome}
+          accounting={latestExtractionResult.accounting}
           mutationCount={latestExtractionResult.mutationCount}
           onClearDroppedCandidates={() =>
             onLatestExtractionResultChange({
@@ -588,7 +671,7 @@ export function LongTermMemorySuggestionsTab({
         </div>
       ) : null}
 
-      {drafts.isLoading ? (
+      {review.isLoading ? (
         <div className="flex items-center justify-center rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/25 p-3 text-xs text-[var(--muted-foreground)]">
           <Loader2 className="mr-2 animate-spin" size="0.875rem" />
           Loading suggestions...
@@ -599,36 +682,24 @@ export function LongTermMemorySuggestionsTab({
         </p>
       ) : (
         <div className="space-y-3">
-          <SuggestionDrawer
-            title="New"
-            rows={newRows}
-            noteLookup={noteLookup}
-            selectMode={selectMode}
-            selectedRowKeys={selectedRowKeys}
-            editedMutations={editedMutations}
-            busy={rowActionsDisabled}
-            onSelectRows={setRowsSelected}
-            onMutationEdited={(rowKey, mutation) =>
-              setEditedMutations((current) => ({ ...current, [rowKey]: mutation }))
-            }
-            onKeep={keepOne}
-            onSkip={skipOne}
-          />
-          <SuggestionDrawer
-            title="Rewrite"
-            rows={rewriteRows}
-            noteLookup={noteLookup}
-            selectMode={selectMode}
-            selectedRowKeys={selectedRowKeys}
-            editedMutations={editedMutations}
-            busy={rowActionsDisabled}
-            onSelectRows={setRowsSelected}
-            onMutationEdited={(rowKey, mutation) =>
-              setEditedMutations((current) => ({ ...current, [rowKey]: mutation }))
-            }
-            onKeep={keepOne}
-            onSkip={skipOne}
-          />
+          {targetGroups.map(({ target, rows: targetRows }) => (
+            <SuggestionTargetDrawer
+              key={target.noteId}
+              target={target}
+              rows={targetRows}
+              noteLookup={noteLookup}
+              selectMode={selectMode}
+              selectedRowKeys={selectedRowKeys}
+              editedMutations={editedMutations}
+              busy={rowActionsDisabled}
+              onSelectRows={setRowsSelected}
+              onMutationEdited={(rowKey, mutation) =>
+                setEditedMutations((current) => ({ ...current, [rowKey]: mutation }))
+              }
+              onKeep={keepOne}
+              onSkip={skipOne}
+            />
+          ))}
         </div>
       )}
       {selectMode && selectedRows.length > 0 ? (
@@ -638,15 +709,186 @@ export function LongTermMemorySuggestionsTab({
   );
 }
 
+function freshnessLabel(freshness: LtmDraftReviewDraft["freshness"]) {
+  if (freshness === "fresh") return "Source current";
+  if (freshness === "hashless") return "Legacy source hash";
+  if (freshness === "stale") return "Source changed";
+  if (freshness === "missing") return "Source missing";
+  if (freshness === "invalid") return "Source invalid";
+  if (freshness === "superseded") return "Superseded";
+  return "No longer pending";
+}
+
+function freshnessTone(freshness: LtmDraftReviewDraft["freshness"]) {
+  if (freshness === "fresh") return "good" as const;
+  if (freshness === "hashless") return "warn" as const;
+  return "bad" as const;
+}
+
+function DraftReviewReport({
+  review,
+  note,
+  busy,
+  onDismiss,
+  onRecoverDroppedCandidate,
+}: {
+  review: LtmDraftReviewDraft;
+  note: LtmNote;
+  busy: boolean;
+  onDismiss: () => void;
+  onRecoverDroppedCandidate: (candidate: LtmExtractionDroppedCandidate, note: LtmNote) => void;
+}) {
+  const headingId = useId();
+  const diagnosticOnly = review.draft.mutations.length === 0;
+  const outcome = review.draft.extractionOutcome;
+
+  return (
+    <section className={sectionCardClassName} aria-labelledby={headingId}>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0 space-y-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <h3 id={headingId} className="text-xs font-semibold text-[var(--foreground)]">
+              Extraction report
+            </h3>
+            <StatusPill label={freshnessLabel(review.freshness)} tone={freshnessTone(review.freshness)} />
+            {outcome ? <StatusPill label={outcomeLabel(outcome)} tone={outcomeTone(outcome)} /> : null}
+            {diagnosticOnly ? <StatusPill label="Diagnostics only" tone="warn" /> : null}
+          </div>
+          {review.draft.summary ? (
+            <p className="break-words text-xs leading-relaxed text-[var(--muted-foreground)]">{review.draft.summary}</p>
+          ) : null}
+        </div>
+        {diagnosticOnly ? (
+          <ToolButton onClick={onDismiss} disabled={busy}>
+            <Trash2 size="0.875rem" />
+            Dismiss
+          </ToolButton>
+        ) : null}
+      </div>
+
+      {review.draft.accounting ? <ExtractionAccountingLine accounting={review.draft.accounting} /> : null}
+
+      {review.blockReasons.length > 0 ? (
+        <div className="mt-3 space-y-1.5" aria-label="Apply blockers">
+          {review.blockReasons.map((reason) => (
+            <div
+              key={reason.code}
+              role="alert"
+              className="flex gap-2 rounded-lg bg-[var(--destructive)]/5 px-2.5 py-2 text-xs ring-1 ring-[var(--destructive)]/20"
+            >
+              <AlertCircle size="0.875rem" className="mt-0.5 shrink-0 text-[var(--destructive)]" />
+              <div className="min-w-0">
+                <p className="break-words text-[var(--foreground)]">{reason.message}</p>
+                <code className="mt-0.5 block break-all text-[0.6875rem] text-[var(--muted-foreground)]">
+                  {reason.code}
+                </code>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {review.diagnostics.length > 0 ? (
+        <DraftDiagnosticList title="Extraction diagnostics" diagnostics={review.diagnostics} />
+      ) : null}
+
+      {review.candidateRejections.length > 0 ? (
+        <div className="mt-3 space-y-2">
+          <h4 className="text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">Candidate rejections</h4>
+          {review.candidateRejections.map((candidate) => (
+            <div
+              key={`${candidate.index}-${candidate.reason}`}
+              className="flex flex-col gap-2 rounded-lg bg-[var(--background)]/45 px-2.5 py-2 ring-1 ring-[var(--border)]/60 sm:flex-row sm:items-start sm:justify-between"
+            >
+              <div className="min-w-0">
+                {candidate.snippet ? (
+                  <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--foreground)]">
+                    {candidate.snippet}
+                  </p>
+                ) : null}
+                <p className="mt-1 break-words text-[0.6875rem] text-[var(--muted-foreground)]">{candidate.message}</p>
+                <code className="mt-0.5 block break-all text-[0.6875rem] text-[var(--muted-foreground)]">
+                  {candidate.reason}
+                </code>
+              </div>
+              {candidate.snippet ? (
+                <ToolButton onClick={() => onRecoverDroppedCandidate(candidate, note)}>
+                  <Wrench size="0.875rem" />
+                  Create manual memory
+                </ToolButton>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {review.deduplications.length > 0 ? (
+        <DraftDiagnosticList title="Deduplicated candidates" diagnostics={review.deduplications} />
+      ) : null}
+    </section>
+  );
+}
+
+function DraftDiagnosticList({ title, diagnostics }: { title: string; diagnostics: LtmExtractionDiagnostic[] }) {
+  return (
+    <div className="mt-3 space-y-1.5">
+      <h4 className="text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">{title}</h4>
+      {diagnostics.map((diagnostic, index) => (
+        <div
+          key={`${diagnostic.code}-${diagnostic.candidateIndex ?? "draft"}-${index}`}
+          role={diagnostic.severity === "error" ? "alert" : "status"}
+          className="flex gap-2 rounded-lg bg-[var(--background)]/45 px-2.5 py-2 text-xs ring-1 ring-[var(--border)]/60"
+        >
+          <AlertCircle
+            size="0.875rem"
+            className={cn(
+              "mt-0.5 shrink-0",
+              diagnostic.severity === "error" ? "text-[var(--destructive)]" : "text-[var(--muted-foreground)]",
+            )}
+          />
+          <div className="min-w-0">
+            <p className="break-words text-[var(--foreground)]">{diagnostic.message}</p>
+            <code className="mt-0.5 block break-all text-[0.6875rem] text-[var(--muted-foreground)]">
+              {diagnostic.code}
+            </code>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ExtractionAccountingLine({ accounting }: { accounting: LtmExtractionAccounting }) {
+  return (
+    <div className="mt-3 rounded-lg bg-[var(--background)]/45 px-2.5 py-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]/60">
+      <span className="font-semibold text-[var(--foreground)]">{accounting.providerCandidates}</span> provider candidate
+      {accounting.providerCandidates === 1 ? "" : "s"} +{" "}
+      <span className="font-semibold text-[var(--foreground)]">{accounting.normalizedAdditions}</span> normalized
+      addition
+      {accounting.normalizedAdditions === 1 ? "" : "s"} ={" "}
+      <span className="font-semibold text-[var(--foreground)]">{accounting.parserRejections}</span> parser rejection
+      {accounting.parserRejections === 1 ? "" : "s"} +{" "}
+      <span className="font-semibold text-[var(--foreground)]">{accounting.validationRejections}</span> validation
+      rejection
+      {accounting.validationRejections === 1 ? "" : "s"} +{" "}
+      <span className="font-semibold text-[var(--foreground)]">{accounting.deduplications}</span> deduplication
+      {accounting.deduplications === 1 ? "" : "s"} +{" "}
+      <span className="font-semibold text-[var(--foreground)]">{accounting.keptUnits}</span> kept
+    </div>
+  );
+}
+
 function ExtractionOutcomePanel({
   note,
   outcome,
+  accounting,
   mutationCount,
   onClearDroppedCandidates,
   onRecoverDroppedCandidate,
 }: {
   note: LtmNote;
   outcome: LtmExtractionOutcome;
+  accounting?: LtmExtractionAccounting;
   mutationCount?: number;
   onClearDroppedCandidates: () => void;
   onRecoverDroppedCandidate: (candidate: LtmExtractionDroppedCandidate, note: LtmNote) => void;
@@ -655,7 +897,10 @@ function ExtractionOutcomePanel({
   const readableDropped = outcome.droppedCandidates.filter((candidate) => candidate.snippet);
   const visibleDropped = showAllDropped ? readableDropped : readableDropped.slice(0, 3);
   const hiddenCount = readableDropped.length - visibleDropped.length;
-  const unreadableCount = outcome.droppedUnits - readableDropped.length;
+  const rejectedCount = accounting
+    ? accounting.parserRejections + accounting.validationRejections
+    : outcome.droppedUnits;
+  const unreadableCount = Math.max(0, rejectedCount - readableDropped.length);
 
   return (
     <section className={sectionCardClassName}>
@@ -663,29 +908,27 @@ function ExtractionOutcomePanel({
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-1.5">
             <StatusPill label={outcomeLabel(outcome)} tone={outcomeTone(outcome)} />
-            <StatusPill label={`${outcome.keptUnits} kept`} tone={outcome.keptUnits > 0 ? "good" : "neutral"} />
             <StatusPill
-              label={`${outcome.droppedUnits} dropped`}
-              tone={outcome.droppedUnits > 0 ? "warn" : "neutral"}
+              label={`${accounting?.keptUnits ?? outcome.keptUnits} kept`}
+              tone={(accounting?.keptUnits ?? outcome.keptUnits) > 0 ? "good" : "neutral"}
             />
+            <StatusPill label={`${rejectedCount} rejected`} tone={rejectedCount > 0 ? "warn" : "neutral"} />
+            {accounting ? <StatusPill label={`${accounting.deduplications} deduplicated`} /> : null}
           </div>
           <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">
-            {outcomeSummary(outcome, mutationCount)}
+            {outcomeSummary(outcome, mutationCount, accounting)}
           </p>
         </div>
-        {outcome.droppedUnits > 0 ? (
-          <div className="text-[0.6875rem] text-[var(--muted-foreground)]">
-            {outcome.totalCandidates} candidate{outcome.totalCandidates === 1 ? "" : "s"} scanned
-          </div>
-        ) : null}
       </div>
 
-      {outcome.droppedUnits > 0 ? (
+      {accounting ? <ExtractionAccountingLine accounting={accounting} /> : null}
+
+      {rejectedCount > 0 ? (
         <div className="mt-3 space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
               <AlertCircle size="0.75rem" />
-              Dropped candidates
+              Candidate rejections
             </div>
             <ToolButton onClick={onClearDroppedCandidates}>
               <X size="0.875rem" />
@@ -699,7 +942,9 @@ function ExtractionOutcomePanel({
             >
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0 flex-1">
-                  <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--foreground)]">{candidate.snippet}</p>
+                  <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--foreground)]">
+                    {candidate.snippet}
+                  </p>
                   <p className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">{candidate.message}</p>
                 </div>
                 <ToolButton onClick={() => onRecoverDroppedCandidate(candidate, note)}>
@@ -730,8 +975,8 @@ function ExtractionOutcomePanel({
   );
 }
 
-function SuggestionDrawer({
-  title,
+function SuggestionTargetDrawer({
+  target,
   rows,
   noteLookup,
   selectMode,
@@ -743,7 +988,7 @@ function SuggestionDrawer({
   onKeep,
   onSkip,
 }: {
-  title: "New" | "Rewrite";
+  target: LtmDraftReviewTarget;
   rows: SuggestionRowModel[];
   noteLookup: Map<string, LtmNote>;
   selectMode: boolean;
@@ -759,6 +1004,7 @@ function SuggestionDrawer({
   const rowKeys = rows.map((row) => suggestionRowKeyFor(row));
   const selectedCount = rowKeys.filter((key) => selectedRowKeys.has(key)).length;
   const allSelected = rows.length > 0 && selectedCount === rows.length;
+  const title = target.title ?? friendlyIdentifier(target.noteId);
 
   return (
     <section className="overflow-hidden rounded-xl bg-[var(--secondary)]/25 ring-1 ring-[var(--border)]">
@@ -766,11 +1012,13 @@ function SuggestionDrawer({
         <button
           type="button"
           onClick={() => setOpen((current) => !current)}
+          aria-expanded={open}
           className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left transition-colors hover:text-[var(--foreground)]"
         >
           <span className="flex min-w-0 flex-1 items-center gap-2 text-xs font-semibold text-[var(--foreground)]">
             {open ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
             <span className="truncate">{title}</span>
+            <StatusPill label={friendlyNoteType(target.noteType)} />
           </span>
         </button>
         {selectMode ? (
@@ -804,7 +1052,7 @@ function SuggestionDrawer({
         <div className="space-y-2 border-t border-[var(--border)]/45 p-3">
           {rows.length === 0 ? (
             <p className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--background)]/45 p-3 text-xs text-[var(--muted-foreground)]">
-              No {title.toLowerCase()} suggestions.
+              No suggestions target this memory.
             </p>
           ) : (
             rows.map((row) => {
