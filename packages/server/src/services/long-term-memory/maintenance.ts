@@ -47,6 +47,7 @@ import { readLtmIndexState } from "./index-state.js";
 import { LongTermMemoryStorage } from "./storage.js";
 import { sourceNoteIdForProvenance } from "./source-identity.js";
 import { parseStoredLtmNote } from "./stored-note.js";
+import { ltmModeForChatMode } from "./chat-scope.js";
 
 export type ImportSourceCandidate = {
   title: string;
@@ -352,7 +353,7 @@ async function checkIndexCoherence(
     });
   }
 
-  const freshnessManifest = loaded.currentManifest ?? manifest;
+  const freshnessManifest = manifest;
 
   if (freshnessManifest.noteCount !== vaultNoteCount) {
     health = "stale";
@@ -835,7 +836,7 @@ async function chatImportCandidates(
     : scopedChats.slice(0, limit);
   const candidates = rows.flatMap((chat) => {
     const metadata = readJsonObject(chat.metadata);
-    const mode = chat.mode as LtmMode;
+    const mode = ltmModeForChatMode(chat.mode);
 
     // Game-mode chats with journal data produce a single game import candidate
     // (direct ingestion, no LLM extraction needed)

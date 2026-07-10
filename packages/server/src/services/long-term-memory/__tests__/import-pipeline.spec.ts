@@ -199,6 +199,103 @@ test("identical chat summaries remain distinct import candidates", async () => {
   });
 });
 
+test("visual novel chat imports use the roleplay LTM lane", async () => {
+  await withTestApp(async (app, dataDir) => {
+    const chats = createChatsStorage(app.db);
+    const chat = await chats.create({
+      name: "Visual novel branch",
+      mode: "visual_novel",
+      characterIds: [],
+      groupId: null,
+      personaId: null,
+      promptPresetId: null,
+      connectionId: null,
+    });
+    assert(chat);
+    await chats.updateMetadata(chat.id, {
+      summaryEntries: [
+        {
+          id: "visual_novel_recap",
+          kind: "rolling",
+          origin: "manual",
+          title: "Visual novel recap",
+          content: "Mara returned the archive key before dawn.",
+          enabled: true,
+          sourceMode: "range",
+          rangeStartIndex: 1,
+          rangeEndIndex: 4,
+          createdAt: "2026-07-10T00:00:00.000Z",
+          updatedAt: "2026-07-10T00:00:00.000Z",
+        },
+      ],
+    });
+
+    const result = await createLongTermMemoryInteropSourceNotes(
+      app.db,
+      "chats",
+      { sourceIds: [`${chat.id}:visual_novel_recap`], limit: 1 },
+      join(dataDir, "long-term-memory"),
+    );
+
+    assert.deepEqual(result.imported[0]?.note.modes, ["roleplay"]);
+  });
+});
+
+test("manual source extraction persists successful retry state", async () => {
+  await withTestApp(async (app, dataDir) => {
+    const chats = createChatsStorage(app.db);
+    const chat = await chats.create({
+      name: "Retryable game import",
+      mode: "game",
+      characterIds: [],
+      groupId: null,
+      personaId: null,
+      promptPresetId: null,
+      connectionId: null,
+    });
+    assert(chat);
+    await chats.updateMetadata(chat.id, {
+      gamePreviousSessionSummaries: [
+        {
+          sessionNumber: 1,
+          summary: "The party recovered the archive key.",
+          resumePoint: "Outside the archive at dawn.",
+          partyDynamics: "The party worked together without conflict.",
+          partyState: "Everyone is ready to continue.",
+          keyDiscoveries: ["Archive key"],
+          characterMoments: [],
+          littleDetails: [],
+          statsSnapshot: {},
+          npcUpdates: [],
+          timestamp: "2026-07-10T00:00:00.000Z",
+        },
+      ],
+    });
+    const root = join(dataDir, "long-term-memory");
+    const imported = await createLongTermMemoryInteropSourceNotes(
+      app.db,
+      "chats",
+      { sourceIds: [`${chat.id}:game_journal`], limit: 1 },
+      root,
+    );
+    const sourceNote = imported.imported[0]?.note;
+    assert(sourceNote);
+    assert.equal(sourceNote.extracted, false);
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/long-term-memory/notes/${sourceNote.id}/extract`,
+      remoteAddress: "127.0.0.1",
+      payload: {},
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal((await new LongTermMemoryStorage(root).getNote(sourceNote.id))?.extracted, true);
+    const preview = await previewLongTermMemoryInterop(app.db, "chats", 100, root);
+    assert.equal(preview.samples.find((sample) => sample.sourceId === `${chat.id}:game_journal`)?.status, "imported");
+  });
+});
+
 test("post-preflight extraction failure is reported as retryable per source", async () => {
   await withTestApp(async (app) => {
     const character = await createCharactersStorage(app.db).create({

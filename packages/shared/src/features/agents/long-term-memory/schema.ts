@@ -940,11 +940,10 @@ export const ltmIndexGenerationManifestSchema = z
     sourceFiles: z.record(ltmSafeRelativePathSchema, z.string().regex(/^[a-f0-9]{64}$/)),
     families: z
       .object({
-        typed: ltmIndexFamilySummarySchema.optional(),
+        typed: ltmIndexFamilySummarySchema,
         source: ltmIndexFamilySummarySchema.optional(),
       })
-      .strict()
-      .refine((families) => Boolean(families.typed || families.source), "At least one index family is required."),
+      .strict(),
   })
   .strict();
 

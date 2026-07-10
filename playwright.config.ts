@@ -19,6 +19,8 @@ export default defineConfig({
     timeout: 10_000,
   },
   fullyParallel: false,
+  // Both projects share one server, data root, and per-IP API rate-limit bucket.
+  workers: 1,
   reporter: process.env.CI ? [["github"], ["list"]] : "list",
   globalSetup: "./e2e/global-setup.mjs",
   use: {
@@ -33,7 +35,7 @@ export default defineConfig({
       : {
           command: "pnpm dev",
           url: baseURL,
-          reuseExistingServer: !process.env.CI,
+          reuseExistingServer: false,
           timeout: 180_000,
           env: {
             AUTO_CREATE_DEFAULT_CONNECTION: "false",

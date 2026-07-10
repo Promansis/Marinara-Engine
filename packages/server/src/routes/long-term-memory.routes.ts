@@ -649,9 +649,18 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
           const directResult = await directIngestGameJournal(app.db, sourceNote, undefined, operationId, {
             applyLowRisk: body.applyLowRisk,
           });
-          if (directResult.appliedMutationIds.length > 0) {
-            await rebuildLongTermMemoryIndexes({ scope: "typed" });
-          }
+          await storage.updateNote(
+            sourceNote.id,
+            { extracted: true },
+            {
+              actor: "maintenance_api",
+              cause: "source_extraction.retry",
+              summary: `Completed extraction for ${sourceNote.title ?? sourceNote.id}`,
+            },
+          );
+          await rebuildLongTermMemoryIndexes({
+            scope: directResult.appliedMutationIds.length > 0 ? "all" : "source",
+          });
           return ltmExtractSourceNoteResponseSchema.parse({
             draft: directResult.draft,
             diagnostics: directResult.diagnostics,
@@ -703,6 +712,16 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
                 operationId,
               })
             : null;
+        await storage.updateNote(
+          sourceNote.id,
+          { extracted: true },
+          {
+            actor: "maintenance_api",
+            cause: "source_extraction.retry",
+            summary: `Completed extraction for ${sourceNote.title ?? sourceNote.id}`,
+          },
+        );
+        await rebuildLongTermMemoryIndexes({ scope: "source" });
 
         return ltmExtractSourceNoteResponseSchema.parse({
           draft: applyResult?.draft ?? result.draft,
@@ -1103,26 +1122,10 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
           results.push(result);
         }
 
-        if (importedSourceNoteCount > 0) {
-          const sourceRebuildResult = await rebuildLongTermMemoryIndexes({ scope: "source" });
-          await recordLtmDebugEvent({
-            root: undefined,
-            operationId,
-            phase: "rebuild",
-            action: "import_batch_source_rebuild",
-            status: "ok",
-            counts: {
-              sourceNotes: importedSourceNoteCount,
-              notes: sourceRebuildResult.noteCount,
-              sourceChunks: sourceRebuildResult.sourceChunkCount,
-            },
-            details: { scope: "source" },
-          });
-        }
-
         const totalApplied = results.reduce((sum, result) => sum + result.appliedMutationIds.length, 0);
-        if (totalApplied > 0) {
-          const rebuildResult = await rebuildLongTermMemoryIndexes({ scope: "typed" });
+        if (importedSourceNoteCount > 0) {
+          const rebuildScope = totalApplied > 0 ? "all" : "source";
+          const rebuildResult = await rebuildLongTermMemoryIndexes({ scope: rebuildScope });
           await recordLtmDebugEvent({
             root: undefined,
             operationId,
@@ -1130,11 +1133,13 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
             action: "import_batch_rebuild",
             status: "ok",
             counts: {
+              sourceNotes: importedSourceNoteCount,
               appliedMutations: totalApplied,
               notes: rebuildResult.noteCount,
               chunks: rebuildResult.chunkCount,
+              sourceChunks: rebuildResult.sourceChunkCount,
             },
-            details: { scope: "typed" },
+            details: { scope: rebuildScope },
           });
         }
 

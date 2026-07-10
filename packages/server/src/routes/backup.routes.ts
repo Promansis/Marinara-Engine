@@ -1632,7 +1632,11 @@ function buildBackupRestoreNotes() {
     "For one-click import inside Marinara:",
     "1. Open Settings -> Import.",
     "2. Use Import Profile and select the downloaded backup zip archive.",
-    "3. If this backup has been extracted, marinara-profile.json restores data without asset files.",
+    "3. This restores profile data and supported assets; it does not restore the raw long-term-memory directory.",
+    "4. If this backup has been extracted, marinara-profile.json restores profile data without asset files.",
+    "",
+    "To restore Long-Term Memory, stop Marinara and copy the backup's long-term-memory directory into DATA_DIR.",
+    "Move any existing DATA_DIR/long-term-memory directory aside first, then restart and run memory integrity or reindexing.",
     "",
     "The .marinara.json importer is for individual characters, personas, lorebooks, and presets.",
   ].join("\n");

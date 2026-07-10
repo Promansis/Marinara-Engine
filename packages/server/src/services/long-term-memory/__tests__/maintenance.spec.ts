@@ -154,6 +154,74 @@ test("checkLongTermMemoryIntegrity reports a published generation as healthy", a
   }
 });
 
+test("a first source-only rebuild publishes a complete generation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-first-source-rebuild-"));
+  try {
+    await writeNote(
+      root,
+      validNote({
+        id: "source_first_import",
+        type: "source",
+        tags: ["source_summary", "imported_chat"],
+        extracted: false,
+        sections: { source: { text: "A source awaiting review.", updatedAt: timestamp } },
+      }),
+    );
+
+    const rebuild = await rebuildLongTermMemoryIndexes({
+      root,
+      scope: "source",
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+
+    assert.ok(rebuild.generation.families.typed);
+    assert.ok(rebuild.generation.families.source);
+    const integrity = await checkLongTermMemoryIntegrity(root);
+    assert.equal(integrity.health, "healthy");
+    assert.equal(integrity.ok, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a partial rebuild refreshes a stale complementary family", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-partial-complement-"));
+  try {
+    await writeNote(root, validNote());
+    await writeNote(
+      root,
+      validNote({
+        id: "source_partial_complement",
+        type: "source",
+        tags: ["source_summary", "imported_chat"],
+        extracted: true,
+        sections: { source: { text: "A source audit record.", updatedAt: timestamp } },
+      }),
+    );
+    await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
+    const storage = new LongTermMemoryStorage(root);
+    await storage.updateNote(
+      "world_test_mem",
+      { sections: { facts: { text: "Updated before a source rebuild.", updatedAt: timestamp } } },
+      { suppressEvent: true },
+    );
+
+    const rebuild = await rebuildLongTermMemoryIndexes({
+      root,
+      scope: "source",
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+    const typed = await readLtmIndexFamilyGeneration(root, rebuild.generation.generationId, "typed");
+
+    assert.equal(typed?.bundle.metadata.chunks["world_test_mem::facts"]?.text, "Updated before a source rebuild.");
+    const integrity = await checkLongTermMemoryIntegrity(root);
+    assert.equal(integrity.health, "healthy");
+    assert.equal(integrity.ok, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("checkLongTermMemoryIntegrity reports indexes as stale after a vault mutation", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-integrity-stale-"));
   try {
@@ -227,7 +295,7 @@ test("retrieval does not adopt an unpublished generation when the current pointe
   }
 });
 
-test("retrieval recovers from a corrupt current generation", async () => {
+test("retrieval marks an older recovered generation stale", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-index-recovery-"));
   try {
     await writeNote(root, validNote());
@@ -257,9 +325,10 @@ test("retrieval recovers from a corrupt current generation", async () => {
     assert.equal(result.chunks[0]?.chunk.text, "A test memory.");
     assert.ok(result.warnings.some((warning) => /Recovered typed indexes/.test(warning)));
     const integrity = await checkLongTermMemoryIntegrity(root);
-    assert.equal(integrity.health, "degraded");
+    assert.equal(integrity.health, "stale");
     assert.equal(integrity.ok, false);
     assert.ok(integrity.issues.some((issue) => issue.code === "index_generation_recovered"));
+    assert.ok(integrity.issues.some((issue) => issue.code === "index_source_hash_mismatch"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

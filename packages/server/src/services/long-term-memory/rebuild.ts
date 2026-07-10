@@ -154,11 +154,7 @@ async function buildTypedIndexes(
 ) {
   const chunks = chunkNotes(notes);
   const embeddings = await buildEmbeddingIndex(chunks, options);
-  const bm25 = buildLtmBm25Index(chunks);
-  const graph = buildLtmGraphIndex(notes, chunks);
-  const metadata = buildLtmMetadataIndex(chunks);
-  const keywords = buildLtmKeywordIndex(chunks);
-  return { chunks, bundle: { metadata, bm25, graph, keywords, embeddings } satisfies LtmIndexFamilyBundle };
+  return { chunks, bundle: { ...buildDeterministicIndexes(notes, chunks), embeddings } satisfies LtmIndexFamilyBundle };
 }
 
 async function buildSourceIndexes(
@@ -167,11 +163,32 @@ async function buildSourceIndexes(
 ) {
   const chunks = chunkNotes(notes, { sourceNotesOnly: true });
   const embeddings = await buildEmbeddingIndex(chunks, options);
+  return { chunks, bundle: { ...buildDeterministicIndexes(notes, chunks), embeddings } satisfies LtmIndexFamilyBundle };
+}
+
+function buildDeterministicIndexes(
+  notes: Awaited<ReturnType<LongTermMemoryStorage["listNotes"]>>,
+  chunks: LtmMemoryChunk[],
+) {
   const bm25 = buildLtmBm25Index(chunks);
   const graph = buildLtmGraphIndex(notes, chunks);
   const metadata = buildLtmMetadataIndex(chunks);
   const keywords = buildLtmKeywordIndex(chunks);
-  return { chunks, bundle: { metadata, bm25, graph, keywords, embeddings } satisfies LtmIndexFamilyBundle };
+  return { metadata, bm25, graph, keywords };
+}
+
+function indexFamilyMatchesSnapshot(
+  bundle: LtmIndexFamilyBundle,
+  notes: Awaited<ReturnType<LongTermMemoryStorage["listNotes"]>>,
+  chunks: LtmMemoryChunk[],
+) {
+  const expected = buildDeterministicIndexes(notes, chunks);
+  return stableJsonHash(expected) === stableJsonHash({
+    metadata: bundle.metadata,
+    bm25: bundle.bm25,
+    graph: bundle.graph,
+    keywords: bundle.keywords,
+  });
 }
 
 export async function rebuildLongTermMemoryIndexes(options: LtmRebuildOptions = {}): Promise<LtmRebuildResult> {
@@ -216,12 +233,25 @@ async function rebuildLongTermMemoryIndexesAttempt(
 
   const typedChunks = chunkNotes(notes);
   const sourceChunks = chunkNotes(notes, { sourceNotesOnly: true });
-  const typedResult = includesTypedIndexes(scope) ? await buildTypedIndexes(notes, options) : null;
-  const sourceResult = includesSourceIndexes(scope) ? await buildSourceIndexes(notes, options) : null;
+  let typedResult = includesTypedIndexes(scope) ? await buildTypedIndexes(notes, options) : null;
+  let sourceResult = includesSourceIndexes(scope) ? await buildSourceIndexes(notes, options) : null;
   const previousTyped = typedResult ? null : await loadLtmIndexFamily(root, "typed");
   const previousSource = sourceResult ? null : await loadLtmIndexFamily(root, "source");
+  if (!typedResult && (!previousTyped?.bundle || !indexFamilyMatchesSnapshot(previousTyped.bundle, notes, typedChunks))) {
+    typedResult = await buildTypedIndexes(notes, options);
+  }
+  if (
+    !sourceResult &&
+    ((previousSource?.bundle && !indexFamilyMatchesSnapshot(previousSource.bundle, notes, sourceChunks)) ||
+      (!previousSource?.bundle && sourceChunks.length > 0))
+  ) {
+    sourceResult = await buildSourceIndexes(notes, options);
+  }
   const typedBundle = typedResult?.bundle ?? previousTyped?.bundle ?? null;
   const sourceBundle = sourceResult?.bundle ?? previousSource?.bundle ?? null;
+  if (!typedBundle) {
+    throw new Error("Long-term memory rebuild could not produce the required typed index family.");
+  }
   const generationId = randomUUID();
   const sourceHash = stableJsonHash(sourceFiles);
   const manifest: LtmIndexMetadata = {
@@ -234,18 +264,16 @@ async function rebuildLongTermMemoryIndexesAttempt(
     files: sourceFiles,
   };
   const dirs = getLongTermMemoryDirectories(root);
-  const generationFamilies: LtmIndexGenerationManifest["families"] = {};
+  const generationFamilies: Partial<LtmIndexGenerationManifest["families"]> = {};
   let published = false;
 
   try {
     await assertLtmSnapshotCurrent(root, sourceHash, expectedRevision);
-    if (typedBundle) {
-      generationFamilies.typed = {
-        chunkCount: Object.keys(typedBundle.metadata.chunks).length,
-        embeddedChunkCount: typedBundle.embeddings.embeddedChunkCount,
-        files: await writeLtmIndexFamilyGeneration(root, generationId, "typed", typedBundle),
-      };
-    }
+    generationFamilies.typed = {
+      chunkCount: Object.keys(typedBundle.metadata.chunks).length,
+      embeddedChunkCount: typedBundle.embeddings.embeddedChunkCount,
+      files: await writeLtmIndexFamilyGeneration(root, generationId, "typed", typedBundle),
+    };
     if (sourceBundle) {
       generationFamilies.source = {
         chunkCount: Object.keys(sourceBundle.metadata.chunks).length,
@@ -264,7 +292,10 @@ async function rebuildLongTermMemoryIndexesAttempt(
       chunkCount: typedChunks.length,
       sourceChunkCount: sourceChunks.length,
       sourceFiles,
-      families: generationFamilies,
+      families: {
+        typed: generationFamilies.typed,
+        ...(generationFamilies.source ? { source: generationFamilies.source } : {}),
+      },
     });
 
     if (typedBundle) await writeLtmLegacyIndexFamily(root, "typed", typedBundle);

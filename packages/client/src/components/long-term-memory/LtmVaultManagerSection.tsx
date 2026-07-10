@@ -27,7 +27,7 @@ import type {
   LtmNoteType,
   LtmStatus,
 } from "@marinara-engine/shared";
-import { getLtmScopeChatIds } from "@marinara-engine/shared";
+import { getLtmScopeChatIds, ltmModeForChatMode } from "@marinara-engine/shared";
 import {
   useAcceptLongTermMemoryDraft,
   useDeleteLongTermMemoryDraftMutation,
@@ -364,9 +364,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     const selectedChatId = scopeChatIds[0] ?? null;
     if (!selectedChatId || !chats) return null;
     const selectedChat = (chats as Chat[]).find((chat) => chat.id === selectedChatId);
-    return selectedChat?.mode === "roleplay" || selectedChat?.mode === "conversation" || selectedChat?.mode === "game"
-      ? selectedChat.mode
-      : null;
+    return selectedChat ? ltmModeForChatMode(selectedChat.mode) : null;
   }, [chats, importSource, navigatorScope.chatId, navigatorScope.chatIds]);
   const activeRecallSettings = useMemo(() => readLongTermMemoryRecallSearchSettings(ltmSettings), [ltmSettings]);
   const activeChatMessages = useChatMessages(activeChatId, activeRecallSettings.contextMessages, Boolean(openNoteId));
