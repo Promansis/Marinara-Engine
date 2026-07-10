@@ -74,6 +74,12 @@ export type CreateLtmNoteInput = z.input<typeof ltmDraftNoteInputSchema>;
 
 export type UpdateLtmNotePatch = Partial<Omit<LtmNote, "id" | "createdAt" | "updatedAt" | "version">>;
 
+export type ProjectLtmNoteResult = {
+  note: LtmNote | null;
+  created: boolean;
+  changed: boolean;
+};
+
 
 
 function normalizeStoredScope(scope: LtmScope) {
@@ -359,6 +365,47 @@ export class LongTermMemoryStorage {
       return this.changeNoteType(existing, type, restPatch, eventContext);
     }
     return this.writeNotePatch(existing, patch, `${existing.type}.updated`, eventContext);
+  }
+
+  async projectNote(
+    id: string,
+    projector: (current: LtmNote | null) => Promise<LtmNote | null> | LtmNote | null,
+    eventContext: LtmEventContext = {},
+  ): Promise<ProjectLtmNoteResult> {
+    await this.initializeLtmStore();
+    const noteId = ltmNoteIdSchema.parse(id);
+    return withNoteWriteLock(noteIdWriteLockKey(this.root, noteId), async () => {
+      const current = await this.getNote(noteId);
+      const projected = await projector(current);
+      if (!projected) return { note: current, created: false, changed: false };
+      if (projected.id !== noteId) {
+        throw new Error(`Projected long-term memory note id changed from ${noteId} to ${projected.id}.`);
+      }
+      if (current && projected.type !== current.type) {
+        throw new Error(`Projected long-term memory note ${noteId} cannot change type.`);
+      }
+      const next = ltmNoteSchema.parse({
+        ...projected,
+        id: noteId,
+        ...(current
+          ? {
+              type: current.type,
+              createdAt: current.createdAt,
+              version: current.version + 1,
+            }
+          : {}),
+      });
+      const path = notePathForId(next.id, next.type, this.root);
+      if (!eventContext.suppressEvent) {
+        await this.appendEvent(
+          eventFor(`${next.type}.${current ? "updated" : "created"}`, next.id, eventContext, { note: next }),
+        );
+      }
+      if (current) await writeJsonAtomic(path, next);
+      else await createJsonFileExclusive(path, next);
+      await this.markIndexesDirty();
+      return { note: next, created: !current, changed: true };
+    });
   }
 
   async renameNoteId(id: string, nextId: string, eventContext: LtmEventContext = {}) {

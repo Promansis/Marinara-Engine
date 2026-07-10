@@ -29,6 +29,7 @@ import { checkLongTermMemoryIntegrity } from "./maintenance.js";
 import { getLongTermMemoryRoot } from "./paths.js";
 import { rebuildLongTermMemoryIndexes } from "./rebuild.js";
 import { LongTermMemoryStorage, type UpdateLtmNotePatch } from "./storage.js";
+import { isAdditiveLtmSection } from "./draft-projector.js";
 import {
   analyzeTrustedLtmNoteSubjects,
   type TrustedLtmNoteSubjectMatch,
@@ -543,15 +544,6 @@ function capacityBlockers(matches: TrustedLtmNoteSubjectMatch[], canonicalNoteId
     }
   }
   return uniqueStrings(blockers);
-}
-
-export function isAdditiveLtmSection(note: Pick<LtmNote, "type" | "tags">, sectionKey: string) {
-  if (note.type === "timeline_event") return true;
-  if (note.type === "character" && ["facts", "developments", "abilities", "voice"].includes(sectionKey)) return true;
-  if (note.type === "relationship" && sectionKey === "history") return true;
-  if (note.type === "world" && sectionKey === "facts") return true;
-  if (note.type === "tone" && sectionKey === "observations") return true;
-  return note.tags.includes("anchor") || sectionKey === "anchors";
 }
 
 function mergeAdditiveSections(sections: LtmSection[]): LtmSection {

@@ -80,10 +80,15 @@ import {
 } from "../services/long-term-memory/rebuild.js";
 import { loadLtmIndexGeneration } from "../services/long-term-memory/index-generation.js";
 import { readLtmIndexState } from "../services/long-term-memory/index-state.js";
-import { applyLongTermMemoryDraft } from "../services/long-term-memory/reconciliation.js";
+import {
+  applyLongTermMemoryDraft,
+  LtmDraftApplyError,
+} from "../services/long-term-memory/reconciliation.js";
+import { LtmDraftProjectionError } from "../services/long-term-memory/draft-projector.js";
 import { retrieveLongTermMemory } from "../services/long-term-memory/retrieval.js";
 import {
   extractLongTermMemoryFromSourceNote,
+  finalizeLongTermMemoryExtractionDraft,
   isLtmSourceNote,
 } from "../services/long-term-memory/source-extraction.js";
 import { directIngestGameJournal } from "../services/long-term-memory/direct-ingest.js";
@@ -1057,32 +1062,18 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
 
             if (isGameJournal) {
               const directResult = await directIngestGameJournal(app.db, item.note, undefined, operationId, {
-                applyLowRisk: body.applyLowRisk,
+                applyLowRisk: false,
+                persistDraft: false,
                 signal,
               });
-              const extractedNote = await storage.updateNote(
-                item.note.id,
-                { extracted: true },
-                {
-                  actor: "maintenance_api",
-                  cause: "interop.source_extraction",
-                  summary: `Completed extraction for ${item.title}`,
-                },
-              );
+              throwIfImportAborted(signal);
               return {
-                sourceId: item.sourceId,
-                title: item.title,
-                note: extractedNote,
-                created: item.created,
-                sourceWriteStatus: item.created ? ("created" as const) : ("refreshed" as const),
-                extractionStatus: "succeeded" as const,
+                state: "prepared" as const,
+                item,
                 extractionMethod: "direct_ingest" as const,
-                retryable: false,
-                draft: directResult.draft,
                 diagnostics: directResult.diagnostics,
                 outcome: directResult.outcome,
-                appliedMutationIds: directResult.appliedMutationIds,
-                skippedMutationIds: directResult.skippedMutationIds,
+                response: directResult.response,
               };
             }
 
@@ -1101,41 +1092,16 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
               operationId,
               signal,
               trustedSubjectCatalog,
+              persistDraft: false,
             });
             throwIfImportAborted(signal);
-            const applyResult =
-              body.applyLowRisk && result.draft
-                ? await applyLongTermMemoryDraft(result.draft.id, {
-                    actor: "maintenance_api",
-                    autoApplyLowRiskOnly: true,
-                    rebuildIndexes: false,
-                    operationId,
-                  })
-                : null;
-            const extractedNote = await storage.updateNote(
-              item.note.id,
-              { extracted: true },
-              {
-                actor: "maintenance_api",
-                cause: "interop.source_extraction",
-                summary: `Completed extraction for ${item.title}`,
-              },
-            );
-
             return {
-              sourceId: item.sourceId,
-              title: item.title,
-              note: extractedNote,
-              created: item.created,
-              sourceWriteStatus: item.created ? ("created" as const) : ("refreshed" as const),
-              extractionStatus: "succeeded" as const,
+              state: "prepared" as const,
+              item,
               extractionMethod: "llm" as const,
-              retryable: false,
-              draft: applyResult?.draft ?? result.draft,
               diagnostics: result.diagnostics,
               outcome: result.outcome,
-              appliedMutationIds: applyResult?.appliedMutationIds ?? [],
-              skippedMutationIds: applyResult?.skippedMutationIds ?? [],
+              response: result.response,
             };
           } catch (err) {
             const cancelled = signal.aborted || isImportAbortError(err);
@@ -1151,30 +1117,45 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
               error: err,
             });
             return {
+              state: "failed" as const,
+              item,
+              extractionMethod: item.note.tags.includes("imported_game_journal")
+                ? ("direct_ingest" as const)
+                : ("llm" as const),
+              cancelled,
+              message,
+            };
+          }
+        });
+
+        const preparedResults = await withConcurrency(tasks, importConcurrency);
+        const overlay = new Map<string, LtmNote>();
+        for (const prepared of preparedResults) {
+          const { item } = prepared;
+          if (prepared.state === "failed") {
+            results.push({
               sourceId: item.sourceId,
               title: item.title,
               note: item.note,
               created: item.created,
               sourceWriteStatus: item.created ? ("created" as const) : ("refreshed" as const),
-              extractionStatus: cancelled ? ("cancelled" as const) : ("failed" as const),
-              extractionMethod: item.note.tags.includes("imported_game_journal")
-                ? ("direct_ingest" as const)
-                : ("llm" as const),
+              extractionStatus: prepared.cancelled ? ("cancelled" as const) : ("failed" as const),
+              extractionMethod: prepared.extractionMethod,
               retryable: true,
               error: {
-                code: cancelled ? "cancelled" : "extract_failed",
-                message,
+                code: prepared.cancelled ? "cancelled" : "extract_failed",
+                message: prepared.message,
               },
               draft: null,
               diagnostics: [
                 {
-                  severity: cancelled ? ("warning" as const) : ("error" as const),
-                  code: cancelled ? "cancelled" : "extract_failed",
-                  message,
+                  severity: prepared.cancelled ? ("warning" as const) : ("error" as const),
+                  code: prepared.cancelled ? "cancelled" : "extract_failed",
+                  message: prepared.message,
                 },
               ],
               outcome: {
-                state: "no_suggestions_created",
+                state: "no_suggestions_created" as const,
                 totalCandidates: 0,
                 keptUnits: 0,
                 droppedUnits: 0,
@@ -1182,12 +1163,91 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
               },
               appliedMutationIds: [],
               skippedMutationIds: [],
-            };
+            });
+            continue;
           }
-        });
 
-        for (const result of await withConcurrency(tasks, importConcurrency)) {
-          results.push(result);
+          try {
+            throwIfImportAborted(signal);
+            const draft = await finalizeLongTermMemoryExtractionDraft(
+              {
+                sourceNote: item.note,
+                response: prepared.response,
+                scope: item.note.scope,
+                modes: item.note.modes,
+              },
+              { overlay },
+            );
+            const applyResult =
+              body.applyLowRisk && draft
+                ? await applyLongTermMemoryDraft(draft.id, {
+                    actor: "maintenance_api",
+                    autoApplyLowRiskOnly: true,
+                    rebuildIndexes: false,
+                    operationId,
+                  })
+                : null;
+            const extractedNote = await storage.updateNote(
+              item.note.id,
+              { extracted: true },
+              {
+                actor: "maintenance_api",
+                cause: "interop.source_extraction",
+                summary: `Completed extraction for ${item.title}`,
+              },
+            );
+            results.push({
+              sourceId: item.sourceId,
+              title: item.title,
+              note: extractedNote,
+              created: item.created,
+              sourceWriteStatus: item.created ? ("created" as const) : ("refreshed" as const),
+              extractionStatus: "succeeded" as const,
+              extractionMethod: prepared.extractionMethod,
+              retryable: false,
+              draft: applyResult?.draft ?? draft,
+              diagnostics: prepared.diagnostics,
+              outcome: prepared.outcome,
+              appliedMutationIds: applyResult?.appliedMutationIds ?? [],
+              skippedMutationIds: applyResult?.skippedMutationIds ?? [],
+            });
+          } catch (err) {
+            const cancelled = signal.aborted || isImportAbortError(err);
+            const message = err instanceof Error ? err.message : "Failed to finalize imported source";
+            await recordLtmDebugEvent({
+              operationId,
+              phase: "draft",
+              action: "imported_source_finalize",
+              status: cancelled ? "warning" : "error",
+              source: imported.source,
+              sourceId: item.sourceId,
+              sourceNoteId: item.note.id,
+              error: err,
+            });
+            results.push({
+              sourceId: item.sourceId,
+              title: item.title,
+              note: item.note,
+              created: item.created,
+              sourceWriteStatus: item.created ? ("created" as const) : ("refreshed" as const),
+              extractionStatus: cancelled ? ("cancelled" as const) : ("failed" as const),
+              extractionMethod: prepared.extractionMethod,
+              retryable: true,
+              error: { code: cancelled ? "cancelled" : "finalize_failed", message },
+              draft: null,
+              diagnostics: [
+                ...prepared.diagnostics,
+                {
+                  severity: cancelled ? ("warning" as const) : ("error" as const),
+                  code: cancelled ? "cancelled" : "finalize_failed",
+                  message,
+                },
+              ],
+              outcome: prepared.outcome,
+              appliedMutationIds: [],
+              skippedMutationIds: [],
+            });
+          }
         }
 
         const totalApplied = results.reduce((sum, result) => sum + result.appliedMutationIds.length, 0);
@@ -1292,8 +1352,23 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to apply long-term memory draft";
-      const status = message.includes("not found") ? 404 : message.includes("not pending") ? 409 : 400;
-      return reply.status(status).send({ error: message });
+      const status =
+        err instanceof LtmDraftApplyError
+          ? err.statusCode
+          : err instanceof LtmDraftProjectionError
+            ? 409
+            : message.includes("not found")
+              ? 404
+              : message.includes("not pending")
+                ? 409
+                : 400;
+      const code =
+        err instanceof LtmDraftApplyError
+          ? err.code
+          : err instanceof LtmDraftProjectionError
+            ? err.code
+            : "ltm_draft_apply_failed";
+      return reply.status(status).send({ error: message, code });
     }
   });
 

@@ -3,6 +3,7 @@ import {
   DEFAULT_LTM_ALLOWED_STREAMS_BY_MODE,
   DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE,
   type LtmExtractionDraft,
+  type LtmDraftMutation,
   type LtmExtractionOutcome,
   type LtmExtractionResponse,
   type LtmMode,
@@ -22,14 +23,24 @@ import { getLtmExtractionConfig } from "./extraction-config.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import type { LtmExtractionDiagnostic } from "./diagnostics.js";
 import { LongTermMemoryDraftStore } from "./draft-store.js";
+import { uniqueStrings } from "./ltm-utils.js";
 import { retrieveLongTermMemory, type RetrieveLongTermMemoryInput } from "./retrieval.js";
-import { canUpdateLtmScopedTarget, resolveScopedEvidenceUnitTargets } from "./scoped-targets.js";
+import {
+  canUpdateLtmScopedTarget,
+  resolveScopedEvidenceUnitTargets,
+  scopedVariantNoteId,
+} from "./scoped-targets.js";
 import { LongTermMemoryStorage } from "./storage.js";
 import { normalizeStructuredSummaryEvidenceUnits } from "./structured-summary-normalizer.js";
 import {
   resolveLtmSubjectIdentities,
+  subjectsEqual,
   type TrustedLtmSubjectCatalog,
 } from "./subject-identity.js";
+import {
+  noteIdForLtmDraftMutation,
+  projectLtmDraftOntoNotes,
+} from "./draft-projector.js";
 
 const LTM_EXTRACTION_EXISTING_NOTE_CANDIDATE_CHUNKS = 100;
 
@@ -46,6 +57,7 @@ export type ExtractLongTermMemoryFromSourceNoteOptions = {
   embeddingSource?: RetrieveLongTermMemoryInput["embeddingSource"];
   operationId?: string;
   trustedSubjectCatalog?: TrustedLtmSubjectCatalog;
+  persistDraft?: boolean;
 };
 
 export type ExtractLongTermMemoryFromSourceNoteResult = {
@@ -62,6 +74,144 @@ export function isLtmSourceNote(note: LtmNote) {
 
 export function getLtmSourceNoteText(note: LtmNote) {
   return (note.sections.source?.text ?? note.sections.summary?.text ?? "").trim();
+}
+
+function compatibleProjectedCreate(
+  existing: LtmNote,
+  incoming: Extract<LtmDraftMutation, { kind: "create_note" }>["note"],
+) {
+  if (existing.type !== incoming.type) return false;
+  if (!canUpdateLtmScopedTarget(existing.scope, incoming.scope)) return false;
+  if (existing.subjects && incoming.subjects && !subjectsEqual(existing.subjects, incoming.subjects)) return false;
+  return true;
+}
+
+function remapDraftMutationTargets(mutations: LtmDraftMutation[], remaps: ReadonlyMap<string, string>) {
+  if (remaps.size === 0) return mutations;
+  return mutations.map((mutation): LtmDraftMutation => {
+    if (mutation.kind === "create_note") {
+      return {
+        ...mutation,
+        note: {
+          ...mutation.note,
+          id: remaps.get(mutation.note.id) ?? mutation.note.id,
+          links: mutation.note.links.map((link) => ({
+            ...link,
+            target: remaps.get(link.target) ?? link.target,
+          })),
+        },
+      };
+    }
+    const noteId = remaps.get(mutation.noteId) ?? mutation.noteId;
+    if (mutation.kind === "add_link") {
+      return {
+        ...mutation,
+        noteId,
+        link: {
+          ...mutation.link,
+          target: remaps.get(mutation.link.target) ?? mutation.link.target,
+        },
+      };
+    }
+    return { ...mutation, noteId };
+  });
+}
+
+async function remapDraftCreatesForProjection(options: {
+  response: LtmExtractionResponse;
+  storage: LongTermMemoryStorage;
+  overlay?: ReadonlyMap<string, LtmNote>;
+}) {
+  const createMutations = options.response.mutations.filter(
+    (mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> => mutation.kind === "create_note",
+  );
+  if (createMutations.length === 0) return options.response;
+
+  const baseIds = uniqueStrings(createMutations.map((mutation) => mutation.note.id));
+  const committed = await options.storage.getNotesByIds(baseIds);
+  const visible = new Map(committed);
+  for (const noteId of baseIds) {
+    const projected = options.overlay?.get(noteId);
+    if (projected) visible.set(noteId, projected);
+  }
+
+  const remaps = new Map<string, string>();
+  const reserved = new Set<string>();
+  for (const mutation of createMutations) {
+    const existing = visible.get(mutation.note.id);
+    if (!existing || compatibleProjectedCreate(existing, mutation.note)) continue;
+
+    let resolvedId: string | null = null;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const candidateId = scopedVariantNoteId(mutation.note.id, mutation.note.scope, attempt);
+      if (reserved.has(candidateId)) continue;
+      const candidate = options.overlay?.get(candidateId) ?? (await options.storage.getNote(candidateId));
+      if (!candidate || compatibleProjectedCreate(candidate, mutation.note)) {
+        resolvedId = candidateId;
+        if (candidate) visible.set(candidateId, candidate);
+        break;
+      }
+    }
+    if (!resolvedId) {
+      throw new Error(`Unable to resolve projected long-term memory note id for ${mutation.note.id}`);
+    }
+    remaps.set(mutation.note.id, resolvedId);
+    reserved.add(resolvedId);
+  }
+
+  return remaps.size > 0
+    ? { ...options.response, mutations: remapDraftMutationTargets(options.response.mutations, remaps) }
+    : options.response;
+}
+
+export async function finalizeLongTermMemoryExtractionDraft(
+  input: {
+    sourceNote: LtmNote;
+    response: LtmExtractionResponse;
+    scope: LtmScope;
+    modes: LtmMode[];
+  },
+  options: { root?: string; overlay?: Map<string, LtmNote> } = {},
+) {
+  if (input.response.mutations.length === 0) return null;
+  const storage = new LongTermMemoryStorage(options.root);
+  const currentSource = await storage.getNote(input.sourceNote.id);
+  if (!currentSource || !isLtmSourceNote(currentSource)) {
+    throw new Error(`Long-term memory source note disappeared before draft finalization: ${input.sourceNote.id}`);
+  }
+  if (sourceHashForEvidenceUnitExtraction(currentSource) !== sourceHashForEvidenceUnitExtraction(input.sourceNote)) {
+    throw new Error(`Long-term memory source note changed before draft finalization: ${input.sourceNote.id}`);
+  }
+
+  const response = await remapDraftCreatesForProjection({
+    response: input.response,
+    storage,
+    overlay: options.overlay,
+  });
+  const targetNoteIds = uniqueStrings(response.mutations.map(noteIdForLtmDraftMutation));
+  const committedNotes = await storage.getNotesByIds(targetNoteIds);
+  const baseNotes = new Map(committedNotes);
+  for (const noteId of targetNoteIds) {
+    const overlaid = options.overlay?.get(noteId);
+    if (overlaid) baseNotes.set(noteId, overlaid);
+  }
+  const source = sourceMetadataForEvidenceUnitDraft(input.sourceNote);
+  const projected = projectLtmDraftOntoNotes({
+    notes: baseNotes,
+    mutations: response.mutations,
+    context: { source, scope: input.scope, modes: input.modes },
+    timestamp: new Date().toISOString(),
+  });
+  const draft = await new LongTermMemoryDraftStore(options.root).createDraft({
+    scope: input.scope,
+    modes: input.modes,
+    source,
+    response,
+  });
+  if (options.overlay) {
+    for (const projection of projected.projections) options.overlay.set(projection.noteId, projection.after);
+  }
+  return draft;
 }
 
 async function getExistingTypedNotes(options: {
@@ -321,33 +471,43 @@ async function extractLongTermMemoryFromSourceNoteInner(
   });
 
   const draft =
-    compiled.compiledResponse.mutations.length > 0
-      ? await new LongTermMemoryDraftStore(options.root).createDraft({
-          scope,
-          modes,
-          source: sourceMetadataForEvidenceUnitDraft(sourceNote),
-          response: compiled.compiledResponse,
-        })
+    compiled.compiledResponse.mutations.length > 0 && options.persistDraft !== false
+      ? await finalizeLongTermMemoryExtractionDraft(
+          { sourceNote, response: compiled.compiledResponse, scope, modes },
+          { root: options.root },
+        )
       : null;
 
   await recordLtmDebugEvent({
     operationId: options.operationId,
     root: options.root,
     phase: "draft",
-    action: draft ? "draft_created" : "draft_skipped",
-    status: draft ? "ok" : compiled.outcome.droppedUnits > 0 ? "warning" : "skipped",
+    action: draft ? "draft_created" : options.persistDraft === false ? "draft_deferred" : "draft_skipped",
+    status: draft
+      ? "ok"
+      : options.persistDraft === false
+        ? "ok"
+        : compiled.outcome.droppedUnits > 0
+          ? "warning"
+          : "skipped",
     sourceNoteId: sourceNote.id,
     draftId: draft?.id,
-      counts: {
-        mutations: compiled.compiledResponse.mutations.length,
-        diagnostics: compiled.diagnostics.length,
-        droppedUnits: compiled.outcome.droppedUnits,
-        generatedMutations: compiled.suggestions.generated,
-        returnedMutations: compiled.suggestions.returned,
-      },
+    counts: {
+      mutations: compiled.compiledResponse.mutations.length,
+      diagnostics: compiled.diagnostics.length,
+      droppedUnits: compiled.outcome.droppedUnits,
+      generatedMutations: compiled.suggestions.generated,
+      returnedMutations: compiled.suggestions.returned,
+    },
     diagnostics: compiled.diagnostics.map((diagnostic) => ({ ...diagnostic })),
     details: {
-      reason: draft ? "created" : compiled.outcome.droppedUnits > 0 ? "dropped_candidates_only" : "no_mutations",
+      reason: draft
+        ? "created"
+        : options.persistDraft === false
+          ? "deferred_for_batch_overlay"
+          : compiled.outcome.droppedUnits > 0
+            ? "dropped_candidates_only"
+            : "no_mutations",
       extractionOutcome: compiled.outcome,
     },
   });

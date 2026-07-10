@@ -15,6 +15,7 @@ import { createChatsStorage } from "../../storage/chats.storage.js";
 import { createLorebooksStorage } from "../../storage/lorebooks.storage.js";
 import { createConnectionsStorage } from "../../storage/connections.storage.js";
 import { sourceNoteIdForProvenance } from "../source-identity.js";
+import { readLtmDebugLog } from "../debug-log.js";
 
 async function withTestApp(run: (app: Awaited<ReturnType<typeof buildApp>>, dataDir: string) => Promise<void>) {
   const dataDir = await mkdtemp(join(tmpdir(), "marinara-ltm-import-pipeline-"));
@@ -445,5 +446,66 @@ test("source write failures are isolated and returned with retry metadata", asyn
       retryable: true,
       code: "source_write_failed",
     }]);
+  });
+});
+
+test("multi-source direct import publishes one rebuild for the completed batch", async () => {
+  await withTestApp(async (app, dataDir) => {
+    const chats = createChatsStorage(app.db);
+    const sourceIds: string[] = [];
+    for (const [index, discovery] of ["Archive key", "Moonlit map"].entries()) {
+      const chat = await chats.create({
+        name: `Batch game ${index + 1}`,
+        mode: "game",
+        characterIds: [],
+        groupId: null,
+        personaId: null,
+        promptPresetId: null,
+        connectionId: null,
+      });
+      assert(chat);
+      await chats.updateMetadata(chat.id, {
+        gamePreviousSessionSummaries: [
+          {
+            sessionNumber: 1,
+            summary: `The party recovered the ${discovery.toLocaleLowerCase()}.`,
+            resumePoint: "Outside the archive at dawn.",
+            partyDynamics: "The party worked together without conflict.",
+            partyState: "Everyone is ready to continue.",
+            keyDiscoveries: [discovery],
+            characterMoments: [],
+            littleDetails: [],
+            statsSnapshot: {},
+            npcUpdates: [],
+            timestamp: `2026-07-1${index}T00:00:00.000Z`,
+          },
+        ],
+      });
+      sourceIds.push(`${chat.id}:game_journal`);
+    }
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/long-term-memory/import/source-notes",
+      remoteAddress: "127.0.0.1",
+      payload: {
+        source: "chats",
+        sourceIds,
+        limit: sourceIds.length,
+        importConcurrency: 2,
+        applyLowRisk: true,
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = ltmImportSourceNotesResponseSchema.parse(response.json());
+    assert.equal(body.batchStatus, "success");
+    assert.equal(body.counts.succeeded, 2);
+    const events = await readLtmDebugLog(
+      { operationId: body.operationId, limit: 1_000 },
+      join(dataDir, "long-term-memory"),
+    );
+    assert.equal(events.filter((event) => event.action === "import_batch_rebuild").length, 1);
+    assert.equal(events.filter((event) => event.action === "apply_rebuild_indexes").length, 0);
   });
 });

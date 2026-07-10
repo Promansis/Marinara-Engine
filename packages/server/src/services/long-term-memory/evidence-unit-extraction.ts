@@ -29,6 +29,7 @@ import { logger } from "../../lib/logger.js";
 import { countBy, safeSnippet } from "./ltm-utils.js";
 import { DEFAULT_LTM_EXTRACTION_PROMPT } from "@marinara-engine/shared";
 import { stableJsonHash } from "./chunking.js";
+import { sourceHashForLtmSourceNote } from "./source-hash.js";
 import { recordLtmDebugEvent } from "./debug-log.js";
 import type { LtmExtractionDiagnostic } from "./diagnostics.js";
 import { deduplicateUnits } from "./dedup.js";
@@ -1253,12 +1254,7 @@ function summarizeExtractionOutcome(input: {
 }
 
 export function sourceHashForEvidenceUnitExtraction(note: LtmNote) {
-  const section = note.sections.source ?? note.sections.summary;
-  return stableJsonHash({
-    noteId: note.id,
-    sourceText: section?.text.trim() ?? "",
-    evidence: Array.from(new Set(section?.evidence ?? [])).sort(),
-  });
+  return sourceHashForLtmSourceNote(note);
 }
 
 export function sourceMetadataForEvidenceUnitDraft(note: LtmNote): LtmExtractionDraft["source"] {

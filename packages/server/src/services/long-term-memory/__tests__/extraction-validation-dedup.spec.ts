@@ -772,7 +772,7 @@ test("draft schemas and partial apply support more than twenty-five mutations", 
     );
 
     const draft = await new LongTermMemoryDraftStore(root).createDraft({
-      source: { sourceNoteId: "source_test", sourceHash },
+      source: { sourceNoteId: "source_test" },
       scope: {},
       modes: ["roleplay"],
       response: { summary: "Large draft", mutations },

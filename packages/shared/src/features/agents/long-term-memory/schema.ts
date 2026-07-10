@@ -1330,7 +1330,7 @@ export const ltmNoteTransferApplyResponseSchema = z
   })
   .strict();
 
-export const ltmDraftStatusSchema = z.enum(["pending", "accepted", "auto_applied"]);
+export const ltmDraftStatusSchema = z.enum(["pending", "accepted", "auto_applied", "superseded"]);
 
 export const ltmDraftApplyStateSchema = z.enum(["not_started", "applying", "complete"]);
 
@@ -1476,6 +1476,8 @@ export const ltmExtractionDraftSchema = z
     appliedAt: ltmIsoTimestampSchema.optional(),
     appliedMutationIds: z.array(z.string().uuid()).optional(),
     skippedMutationIds: z.array(z.string().uuid()).optional(),
+    supersededAt: ltmIsoTimestampSchema.optional(),
+    supersededByDraftId: z.string().uuid().optional(),
   })
   .strip();
 

@@ -2026,7 +2026,7 @@ test("source extraction auto-applies all low-risk typed-memory mutation kinds", 
     assert.equal((await storage.getNote("timeline_archive_confrontation"))?.type, "timeline_event");
     assert.equal(
       (await storage.getNote("world_archive"))?.sections.facts?.text,
-      "The archive has a hidden clock door opened by Mara's key.",
+      "The archive has a hidden clock door.\n\nThe archive has a hidden clock door opened by Mara's key.",
     );
     assert.equal(
       (await storage.getNote("rel_mara_jules"))?.sections.history?.text.includes("promised Jules help"),
@@ -2281,7 +2281,7 @@ test("source extraction auto-apply allows low-risk creates with embedded links t
   }
 });
 
-test("source extraction accepts duplicate new note drafts by merging into the created note", async () => {
+test("source extraction accepts sibling new note drafts by merging into the created note", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-duplicate-new-note-"));
   try {
     const storage = new LongTermMemoryStorage(root);
@@ -2297,6 +2297,25 @@ test("source extraction accepts duplicate new note drafts by merging into the cr
         sections: {
           source: {
             text: "Mara has a silver scar and senses old magic as a hum.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "scene_source_test_2",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Mara senses old magic as a hum.",
             updatedAt: timestamp,
             evidence: ["chat:chat_test"],
           },
@@ -2336,13 +2355,13 @@ test("source extraction accepts duplicate new note drafts by merging into the cr
     const firstDraft = await store.createDraft({
       scope: {},
       modes: ["roleplay"],
-      source: { sourceNoteId: "scene_source_test", sourceHash },
+      source: { sourceNoteId: "scene_source_test" },
       response: firstResponse,
     });
     const secondDraft = await store.createDraft({
       scope: {},
       modes: ["roleplay"],
-      source: { sourceNoteId: "scene_source_test", sourceHash },
+      source: { sourceNoteId: "scene_source_test_2" },
       response: secondResponse,
     });
 
@@ -2362,7 +2381,7 @@ test("source extraction accepts duplicate new note drafts by merging into the cr
     assert.equal(firstResult.draft.status, "accepted");
     assert.equal(secondResult.appliedMutationIds.length, 1);
     assert.equal(secondResult.draft.status, "accepted");
-    assert.equal(note?.sections.facts?.text, "Mara senses old magic as a hum.");
+    assert.equal(note?.sections.facts?.text, "Mara has a silver scar.\n\nMara senses old magic as a hum.");
     assert.equal(note?.sections.facts?.evidence?.includes("source_note:scene_source_test"), true);
     assert(note?.links.some((link) => link.target === "scene_source_test" && link.relation === "extracted_from"));
   } finally {
@@ -2370,7 +2389,7 @@ test("source extraction accepts duplicate new note drafts by merging into the cr
   }
 });
 
-test("source extraction duplicate new state drafts refuse cross-scope create merges", async () => {
+test("source extraction sibling new state drafts refuse cross-scope create merges", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-duplicate-state-scope-"));
   try {
     const storage = new LongTermMemoryStorage(root);
@@ -2386,6 +2405,25 @@ test("source extraction duplicate new state drafts refuse cross-scope create mer
         sections: {
           source: {
             text: "Mara is wounded, then steadies herself.",
+            updatedAt: timestamp,
+            evidence: ["chat:chat_test"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "scene_source_test_2",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Mara steadies herself.",
             updatedAt: timestamp,
             evidence: ["chat:chat_test"],
           },
@@ -2423,13 +2461,13 @@ test("source extraction duplicate new state drafts refuse cross-scope create mer
     const firstDraft = await store.createDraft({
       scope: { chatId: "chat_a", characterIds: ["char_a"] },
       modes: ["roleplay"],
-      source: { sourceNoteId: "scene_source_test", sourceHash },
+      source: { sourceNoteId: "scene_source_test" },
       response: firstResponse,
     });
     const secondDraft = await store.createDraft({
       scope: { chatId: "chat_b", characterIds: ["char_b"] },
       modes: ["roleplay"],
-      source: { sourceNoteId: "scene_source_test", sourceHash },
+      source: { sourceNoteId: "scene_source_test_2" },
       response: secondResponse,
     });
 
@@ -5881,7 +5919,7 @@ test("timeline events create historical notes and relationship state links to th
     const draft = await new LongTermMemoryDraftStore(root).createDraft({
       scope: {},
       modes: ["roleplay"],
-      source: { sourceNoteId: "scene_source_test", sourceHash },
+      source: { sourceNoteId: "scene_source_test" },
       response,
     });
 
@@ -6273,7 +6311,7 @@ test("source extraction drafts reject scene note mutations from source summaries
     const draft = await new LongTermMemoryDraftStore(root).createDraft({
       scope: {},
       modes: ["roleplay"],
-      source: { sourceNoteId: "scene_source_test", sourceHash },
+      source: { sourceNoteId: "scene_source_test" },
       response: {
         summary: "Invalid scene update",
         mutations: [
@@ -6349,7 +6387,7 @@ test("source extraction drafts target existing notes regardless of status", asyn
     const draft = await new LongTermMemoryDraftStore(root).createDraft({
       scope: {},
       modes: ["roleplay"],
-      source: { sourceNoteId: "scene_source_test", sourceHash },
+      source: { sourceNoteId: "scene_source_test" },
       response,
     });
 

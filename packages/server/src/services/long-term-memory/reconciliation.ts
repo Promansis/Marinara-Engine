@@ -1,14 +1,10 @@
 import {
-  getLtmScopeChatIds,
   hasLtmSourceSummarySceneTag,
   isLtmSourceLikeNote,
   ltmDraftMutationSchema,
-  withMergedLtmScopeLinks,
   type LtmDraftMutation,
   type LtmExtractionDraft,
-  type LtmLink,
   type LtmNote,
-  type LtmSection,
 } from "@marinara-engine/shared";
 import { logger } from "../../lib/logger.js";
 import { nowIso, uniqueStrings } from "./ltm-utils.js";
@@ -16,8 +12,12 @@ import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import { LongTermMemoryDraftStore } from "./draft-store.js";
 import { rebuildLongTermMemoryIndexes } from "./rebuild.js";
 import { canUpdateLtmScopedTarget } from "./scoped-targets.js";
-import { LongTermMemoryStorage, type UpdateLtmNotePatch } from "./storage.js";
-import { subjectsEqual } from "./subject-identity.js";
+import { LongTermMemoryStorage } from "./storage.js";
+import { sourceHashForLtmSourceNote } from "./source-hash.js";
+import {
+  groupLtmDraftMutationsByNote,
+  projectLtmDraftMutationGroup,
+} from "./draft-projector.js";
 
 export interface ApplyLtmDraftOptions {
   root?: string;
@@ -40,119 +40,15 @@ export interface ApplyLtmDraftResult {
     | { status: "failed"; error: string };
 }
 
-
-
-function withEvidence(section: LtmSection, evidence: string[]) {
-  return {
-    ...section,
-    evidence: Array.from(new Set([...(section.evidence ?? []), ...evidence])).slice(0, 100),
-  } satisfies LtmSection;
-}
-
-function noteIdForMutation(mutation: LtmDraftMutation): string {
-  if (mutation.kind === "create_note") return mutation.note.id;
-  return mutation.noteId;
-}
-
-function groupMutationsByNote(mutations: LtmDraftMutation[]): LtmDraftMutation[][] {
-  const groups = new Map<string, LtmDraftMutation[]>();
-  for (const mutation of mutations) {
-    const id = noteIdForMutation(mutation);
-    const group = groups.get(id);
-    if (group) {
-      group.push(mutation);
-    } else {
-      groups.set(id, [mutation]);
-    }
+export class LtmDraftApplyError extends Error {
+  constructor(
+    message: string,
+    readonly statusCode: number,
+    readonly code: string,
+  ) {
+    super(message);
+    this.name = "LtmDraftApplyError";
   }
-  return Array.from(groups.values()).map((group) => [
-    ...group.filter((mutation) => mutation.kind === "create_note"),
-    ...group.filter((mutation) => mutation.kind !== "create_note"),
-  ]);
-}
-
-function appendSection(
-  existing: LtmSection | undefined,
-  mutation: Extract<LtmDraftMutation, { kind: "append_section" }>,
-) {
-  const timestamp = nowIso();
-  const nextText = appendText(existing?.text, mutation.text);
-  return withEvidence(
-    {
-      text: nextText,
-      updatedAt: timestamp,
-      salience: mutation.salience ?? existing?.salience,
-      confidence: Math.max(existing?.confidence ?? 0, mutation.confidence),
-      importance: mutation.importance ?? existing?.importance,
-      dimensions: mutation.dimensions ?? existing?.dimensions,
-      dimensionChanges: mutation.dimensionChanges ?? existing?.dimensionChanges,
-    },
-    mutation.evidence,
-  );
-}
-
-function appendText(existing: string | undefined, incoming: string) {
-  const trimmedIncoming = incoming.trim();
-  const trimmedExisting = existing?.trim();
-  if (!trimmedIncoming) return trimmedExisting ?? "";
-  if (!trimmedExisting) return trimmedIncoming;
-  if (trimmedExisting.includes(trimmedIncoming)) return trimmedExisting;
-  return `${trimmedExisting}\n\n${trimmedIncoming}`;
-}
-
-function shouldAppendCreateNoteSection(note: Pick<LtmNote, "type" | "tags">, sectionKey: string) {
-  if (note.type === "timeline_event") return true;
-  if (note.type === "relationship" && sectionKey === "history") return true;
-  if (note.type === "tone" && sectionKey === "observations") return true;
-  if (note.tags.includes("anchor")) return true;
-  return false;
-}
-
-function mergeSection(existing: LtmSection | undefined, incoming: LtmSection, append: boolean): LtmSection {
-  return withEvidence(
-    {
-      text: append ? appendText(existing?.text, incoming.text) : incoming.text.trim(),
-      updatedAt: nowIso(),
-      salience: Math.max(existing?.salience ?? 0, incoming.salience ?? 0) || undefined,
-      confidence: Math.max(existing?.confidence ?? 0, incoming.confidence ?? 0) || undefined,
-      importance: incoming.importance ?? existing?.importance,
-      dimensions: incoming.dimensions ?? existing?.dimensions,
-      dimensionChanges: incoming.dimensionChanges ?? existing?.dimensionChanges,
-    },
-    [...(existing?.evidence ?? []), ...(incoming.evidence ?? [])],
-  );
-}
-
-function uniqueLinks(links: LtmLink[]) {
-  const seen = new Set<string>();
-  return links.filter((link) => {
-    const key = `${link.target}\u0000${link.relation}\u0000${link.aspect ?? ""}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-function sourceLinkFromDraft(draft: LtmExtractionDraft): LtmLink | null {
-  return draft.source.sourceNoteId ? { target: draft.source.sourceNoteId, relation: "extracted_from" } : null;
-}
-
-function withSourceLink(noteId: string, links: LtmLink[], draft: LtmExtractionDraft) {
-  const sourceLink = sourceLinkFromDraft(draft);
-  if (!sourceLink || sourceLink.target === noteId) return uniqueLinks(links);
-  return uniqueLinks([...links, sourceLink]);
-}
-
-
-
-function mergeScopes(existing: LtmNote["scope"], incoming: LtmNote["scope"]) {
-  return {
-    ...withMergedLtmScopeLinks(existing, {
-      chatIds: getLtmScopeChatIds(incoming),
-      characterIds: incoming.characterIds ?? [],
-    }),
-    groupId: existing.groupId ?? incoming.groupId,
-  };
 }
 
 function isSourceSummaryNote(note: Pick<LtmNote, "type" | "tags">) {
@@ -271,6 +167,47 @@ async function preflightDraftMutations(
   }
 }
 
+async function assertDraftSourceFresh(
+  storage: LongTermMemoryStorage,
+  draft: LtmExtractionDraft,
+  autoApplyLowRiskOnly: boolean,
+) {
+  const sourceNoteId = draft.source.sourceNoteId;
+  const sourceNote = sourceNoteId ? await storage.getNote(sourceNoteId) : null;
+  if (!sourceNote) {
+    throw new LtmDraftApplyError(
+      `Long-term memory draft source note not found: ${sourceNoteId ?? "unknown"}`,
+      409,
+      "ltm_draft_source_missing",
+    );
+  }
+  if (!isSourceSummaryNote(sourceNote)) {
+    throw new LtmDraftApplyError(
+      `Long-term memory draft source is not a source note: ${sourceNote.id}`,
+      409,
+      "ltm_draft_source_invalid",
+    );
+  }
+  if (!draft.source.sourceHash) {
+    if (autoApplyLowRiskOnly) {
+      throw new LtmDraftApplyError(
+        "Legacy hashless long-term memory drafts require manual confirmation.",
+        409,
+        "ltm_draft_source_hash_confirmation_required",
+      );
+    }
+    return sourceNote;
+  }
+  if (sourceHashForLtmSourceNote(sourceNote) !== draft.source.sourceHash) {
+    throw new LtmDraftApplyError(
+      "The long-term memory draft source changed after extraction. Extract it again before applying this draft.",
+      409,
+      "ltm_draft_source_stale",
+    );
+  }
+  return sourceNote;
+}
+
 function mutationTouchesSceneId(mutation: LtmDraftMutation) {
   if (mutation.kind === "create_note") return mutation.note.id.startsWith("scene_");
   return (
@@ -333,130 +270,6 @@ async function filterAutoApplyMutationsWithDependencies(storage: LongTermMemoryS
   }
 }
 
-async function applyMutation(
-  storage: LongTermMemoryStorage,
-  draft: LtmExtractionDraft,
-  mutation: LtmDraftMutation,
-  actor: string,
-) {
-  const eventContext = {
-    actor,
-    cause: `draft.${draft.id}`,
-    summary: mutation.summary,
-    payload: {
-      draftId: draft.id,
-      mutationId: mutation.id,
-      mutationKind: mutation.kind,
-      evidence: mutation.evidence,
-    },
-  };
-
-  if (mutation.kind === "create_note") {
-    const existing = await storage.getNote(mutation.note.id);
-    if (!existing) {
-      await storage.createNote(
-        {
-          ...mutation.note,
-          links: withSourceLink(mutation.note.id, mutation.note.links, draft),
-        },
-        eventContext,
-      );
-      return;
-    }
-    if (!canUpdateLtmScopedTarget(existing.scope, mutation.note.scope)) {
-      throw new Error(
-        `Long-term memory draft cannot merge scoped create ${mutation.note.id} into an existing note from another scope.`,
-      );
-    }
-    if (existing.subjects && mutation.note.subjects && !subjectsEqual(existing.subjects, mutation.note.subjects)) {
-      throw new Error(`Long-term memory draft cannot merge a different subject identity into ${existing.id}.`);
-    }
-
-    const sections: LtmNote["sections"] = { ...existing.sections };
-    for (const [sectionKey, section] of Object.entries(mutation.note.sections)) {
-      sections[sectionKey] = mergeSection(
-        existing.sections[sectionKey],
-        section,
-        shouldAppendCreateNoteSection(mutation.note, sectionKey),
-      );
-    }
-
-    await storage.updateNote(
-      existing.id,
-      {
-        status: existing.status === "archived" ? existing.status : mutation.note.status,
-        modes: uniqueStrings([...existing.modes, ...mutation.note.modes]) as LtmNote["modes"],
-        scope: mergeScopes(existing.scope, mutation.note.scope),
-        tags: uniqueStrings([...existing.tags, ...mutation.note.tags]),
-        links: withSourceLink(existing.id, uniqueLinks([...existing.links, ...mutation.note.links]), draft),
-        sections,
-        conflicts: mutation.note.conflicts?.length
-          ? [...(existing.conflicts ?? []), ...mutation.note.conflicts]
-          : existing.conflicts,
-        subjects: existing.subjects ?? mutation.note.subjects,
-      },
-      eventContext,
-    );
-    return;
-  }
-
-  const existing = await storage.getNote(mutation.noteId);
-  if (!existing) {
-    throw new Error(`Long-term memory note not found for draft mutation: ${mutation.noteId}`);
-  }
-  if (!canUpdateLtmScopedTarget(existing.scope, draft.scope)) {
-    throw new Error(
-      `Long-term memory draft cannot mutate ${mutation.noteId} because it belongs to another scope.`,
-    );
-  }
-
-  let patch: UpdateLtmNotePatch;
-  if (mutation.kind === "append_section") {
-    patch = {
-      sections: {
-        ...existing.sections,
-        [mutation.sectionKey]: appendSection(existing.sections[mutation.sectionKey], mutation),
-      },
-    };
-  } else if (mutation.kind === "update_section") {
-    patch = {
-      sections: {
-        ...existing.sections,
-        [mutation.sectionKey]: withEvidence(mutation.section, mutation.evidence),
-      },
-    };
-  } else if (mutation.kind === "add_link") {
-    patch = { links: uniqueLinks([...existing.links, mutation.link]) };
-  } else if (mutation.kind === "set_keywords") {
-    patch = { keywords: mutation.keywords };
-  } else if (mutation.kind === "set_status") {
-    patch = { status: mutation.status };
-  } else if (mutation.kind === "set_subjects") {
-    if (existing.type !== "character" && existing.type !== "relationship") {
-      throw new Error(`Long-term memory subjects cannot be assigned to ${existing.type} note ${existing.id}.`);
-    }
-    if (existing.subjects && !subjectsEqual(existing.subjects, mutation.subjects)) {
-      throw new Error(`Long-term memory subject identity is already bound for ${existing.id}.`);
-    }
-    patch = { subjects: mutation.subjects };
-  } else {
-    const _exhaustive: never = mutation;
-    throw new Error(`Unsupported mutation kind: ${(_exhaustive as LtmDraftMutation).kind}`);
-  }
-
-  patch = {
-    ...patch,
-    links: withSourceLink(existing.id, patch.links ?? existing.links, draft),
-  };
-
-  try {
-    await storage.updateNote(existing.id, patch, eventContext);
-  } catch (err) {
-    logger.error(err, "[ltm] Failed to apply draft mutation %s to note %s", mutation.id, mutation.noteId);
-    throw err;
-  }
-}
-
 export async function applyLongTermMemoryDraft(
   draftId: string,
   options: ApplyLtmDraftOptions = {},
@@ -489,7 +302,11 @@ async function applyLongTermMemoryDraftInner(
       throw new Error(`Long-term memory draft not found: ${draftId}`);
     }
     if (draft.status !== "pending") {
-      throw new Error(`Long-term memory draft is not pending: ${draftId}`);
+      throw new LtmDraftApplyError(
+        `Long-term memory draft is not pending: ${draftId}`,
+        409,
+        draft.status === "superseded" ? "ltm_draft_superseded" : "ltm_draft_not_pending",
+      );
     }
     if (!draft.source.sourceNoteId) {
       throw new Error(`Long-term memory draft is not tied to a source note: ${draftId}`);
@@ -503,6 +320,7 @@ async function applyLongTermMemoryDraftInner(
     }
 
     const storage = new LongTermMemoryStorage(options.root);
+    await assertDraftSourceFresh(storage, draft, options.autoApplyLowRiskOnly === true);
     const actor = options.actor ?? (options.autoApplyLowRiskOnly ? "auto_low_risk" : "maintenance_api");
     const appliedMutationIds: string[] = [];
     const selectedMutationIds = options.mutationIds ? new Set(options.mutationIds) : null;
@@ -610,7 +428,7 @@ async function applyLongTermMemoryDraftInner(
 
     await preflightDraftMutations(storage, draft, selectedMutations);
 
-    const groups = groupMutationsByNote(mutationsToApply);
+    const groups = groupLtmDraftMutationsByNote(mutationsToApply);
     let progressDraft = draft;
     if (mutationsToApply.length > 0) {
       const applyingDraft = await store.updateDraft(draft.id, {
@@ -622,22 +440,43 @@ async function applyLongTermMemoryDraftInner(
       }
       progressDraft = applyingDraft;
     }
-    for (const group of groups) {
-      for (const mutation of group) {
-        await applyMutation(storage, draft, mutation, actor);
-        appliedMutationIds.push(mutation.id);
-        const checkpoint = await store.updateDraft(draft.id, {
-          applyState: "applying",
-          appliedAt: progressDraft.appliedAt ?? nowIso(),
-          appliedMutationIds: Array.from(
-            new Set([...(progressDraft.appliedMutationIds ?? []), mutation.id]),
-          ),
-        });
-        if (!checkpoint) {
-          throw new Error(`Long-term memory draft disappeared during apply: ${draftId}`);
-        }
-        progressDraft = checkpoint;
+    for (const { noteId, mutations: group } of groups) {
+      await storage.projectNote(
+        noteId,
+        (current) => {
+          const projection = projectLtmDraftMutationGroup({
+            existing: current,
+            mutations: group,
+            context: { source: draft.source, scope: draft.scope, modes: draft.modes },
+            timestamp: nowIso(),
+          });
+          return projection.changed ? projection.after : null;
+        },
+        {
+          actor,
+          cause: `draft.${draft.id}`,
+          summary: group.map((mutation) => mutation.summary).join("; ").slice(0, 1_000),
+          payload: {
+            draftId: draft.id,
+            mutationIds: group.map((mutation) => mutation.id),
+            mutationKinds: group.map((mutation) => mutation.kind),
+            evidence: uniqueStrings(group.flatMap((mutation) => mutation.evidence)),
+          },
+        },
+      );
+      const groupMutationIds = group.map((mutation) => mutation.id);
+      appliedMutationIds.push(...groupMutationIds);
+      const checkpoint = await store.updateDraft(draft.id, {
+        applyState: "applying",
+        appliedAt: progressDraft.appliedAt ?? nowIso(),
+        appliedMutationIds: Array.from(
+          new Set([...(progressDraft.appliedMutationIds ?? []), ...groupMutationIds]),
+        ),
+      });
+      if (!checkpoint) {
+        throw new Error(`Long-term memory draft disappeared during apply: ${draftId}`);
       }
+      progressDraft = checkpoint;
     }
 
     const partialApply = skippedMutationIds.length > 0;

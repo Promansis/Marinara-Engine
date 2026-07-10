@@ -275,6 +275,97 @@ test("LTM routes — GET /drafts/pending-count can be scoped to a chat", async (
   }
 });
 
+test("LTM routes — stale draft sources return a typed 409 before target writes", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "marinara-ltm-routes-stale-draft-"));
+  const previousDataDir = process.env.DATA_DIR;
+  process.env.DATA_DIR = dataDir;
+  let app: Awaited<ReturnType<typeof buildApp>> | null = null;
+  try {
+    const root = join(dataDir, "long-term-memory");
+    const storage = new LongTermMemoryStorage(root);
+    const source = await storage.createNote(
+      {
+        id: "scene_route_stale_source",
+        type: "scene",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: {
+            text: "Damo keeps careful watch.",
+            updatedAt: bulkDeleteTimestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      source: { sourceNoteId: source.id },
+      scope: {},
+      modes: ["roleplay"],
+      response: {
+        summary: "Remember Damo's careful watch",
+        mutations: [
+          {
+            id: randomUUID(),
+            kind: "create_note",
+            risk: "low",
+            confidence: 0.9,
+            summary: "Create Damo memory",
+            evidence: [`source_note:${source.id}`],
+            note: {
+              id: "char_damo",
+              title: "Damo",
+              type: "character",
+              status: "active",
+              modes: ["roleplay"],
+              scope: {},
+              tags: ["typed_memory"],
+              keywords: [],
+              links: [],
+              subjects: [{ key: "damo" }],
+              sections: {
+                facts: {
+                  text: "Damo keeps careful watch.",
+                  updatedAt: bulkDeleteTimestamp,
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
+    await storage.updateNote(source.id, {
+      sections: {
+        ...source.sections,
+        source: {
+          ...source.sections.source!,
+          text: "Damo left the watch after extraction.",
+        },
+      },
+    });
+    app = await buildApp();
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/long-term-memory/drafts/${draft.id}/accept`,
+      remoteAddress: "127.0.0.1",
+      payload: {},
+    });
+
+    assert.equal(response.statusCode, 409, response.body);
+    assert.equal(response.json().code, "ltm_draft_source_stale");
+    assert.equal(await storage.getNote("char_damo"), null);
+  } finally {
+    if (app) await app.close();
+    if (previousDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = previousDataDir;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("LTM routes — POST /notes returns 400 on invalid body", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "marinara-ltm-routes-validation-"));
   const previousDataDir = process.env.DATA_DIR;

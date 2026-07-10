@@ -3,6 +3,7 @@ import { readdir, readFile, unlink } from "node:fs/promises";
 import { logger } from "../../lib/logger.js";
 import { isEnoent, nowIso } from "./ltm-utils.js";
 import {
+  isLtmSourceLikeNote,
   ltmExtractionDraftSchema,
   ltmDraftStatusSchema,
   type LtmExtractionDraft,
@@ -13,6 +14,7 @@ import {
 import { readJsonFile, writeJsonAtomic } from "./atomic-json.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
 import { LongTermMemoryStorage } from "./storage.js";
+import { sourceHashForLtmSourceNote } from "./source-hash.js";
 
 export interface CreateLtmExtractionDraftInput {
   scope?: LtmScope;
@@ -35,6 +37,10 @@ export type LtmDraftListFilter = {
 
 function draftPathForId(id: string, root = getLongTermMemoryRoot()) {
   return safeJoin(getLongTermMemoryDirectories(root).drafts, `${id}.json`);
+}
+
+function sourceDraftLockKey(root: string, sourceNoteId: string) {
+  return `${root}\0source:${sourceNoteId}`;
 }
 
 const draftWriteLocks = new Map<string, Promise<void>>();
@@ -87,20 +93,65 @@ export class LongTermMemoryDraftStore {
     if (!options.source?.sourceNoteId) {
       throw new Error("Long-term memory drafts must be tied to a source note.");
     }
-    const timestamp = nowIso();
-    const draft = ltmExtractionDraftSchema.parse({
-      id: randomUUID(),
-      status: "pending",
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      source: options.source,
-      scope: options.scope ?? {},
-      modes: options.modes,
-      summary: options.summary ?? options.response.summary ?? "",
-      mutations: options.response.mutations,
+    const sourceNoteId = options.source.sourceNoteId;
+    return withDraftWriteLock(sourceDraftLockKey(this.root, sourceNoteId), async () => {
+      const sourceNote = await this.storage.getNote(sourceNoteId);
+      const source = {
+        ...options.source,
+        ...(!options.source.sourceHash && sourceNote && isLtmSourceLikeNote(sourceNote)
+          ? { sourceHash: sourceHashForLtmSourceNote(sourceNote) }
+          : {}),
+      };
+      const timestamp = nowIso();
+      const draft = ltmExtractionDraftSchema.parse({
+        id: randomUUID(),
+        status: "pending",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        source,
+        scope: options.scope ?? {},
+        modes: options.modes,
+        summary: options.summary ?? options.response.summary ?? "",
+        mutations: options.response.mutations,
+      });
+      await writeJsonAtomic(draftPathForId(draft.id, this.root), draft);
+      try {
+        await this.supersedeOlderPendingDrafts(draft);
+      } catch (error) {
+        await unlink(draftPathForId(draft.id, this.root)).catch(() => {});
+        throw error;
+      }
+      return draft;
     });
-    await writeJsonAtomic(draftPathForId(draft.id, this.root), draft);
-    return draft;
+  }
+
+  private async supersedeOlderPendingDrafts(replacement: LtmExtractionDraft) {
+    const pending = (await this.listDrafts({ status: "pending" })).filter(
+      (draft) => draft.id !== replacement.id && draft.source.sourceNoteId === replacement.source.sourceNoteId,
+    );
+    const updated: LtmExtractionDraft[] = [];
+    try {
+      for (const older of pending) {
+        await this.withDraftLock(older.id, async () => {
+          const current = await this.getDraft(older.id);
+          if (!current || current.status !== "pending") return;
+          const next = ltmExtractionDraftSchema.parse({
+            ...current,
+            status: "superseded",
+            updatedAt: nowIso(),
+            supersededAt: nowIso(),
+            supersededByDraftId: replacement.id,
+          });
+          await writeJsonAtomic(draftPathForId(current.id, this.root), next);
+          updated.push(current);
+        });
+      }
+    } catch (error) {
+      for (const previous of updated.reverse()) {
+        await writeJsonAtomic(draftPathForId(previous.id, this.root), previous).catch(() => {});
+      }
+      throw error;
+    }
   }
 
   async listDrafts(filter: LtmDraftListFilter = {}) {

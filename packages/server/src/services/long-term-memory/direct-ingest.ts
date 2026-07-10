@@ -1,7 +1,5 @@
 import {
   isLtmSourceLikeNote,
-  withMergedLtmScopeLinks,
-  type LtmDraftMutation,
   type LtmEvidenceUnit,
   type LtmExtractionDraft,
   type LtmExtractionDroppedCandidate,
@@ -24,12 +22,12 @@ import { mapGameJournalToEvidenceUnits, computeGameSourceHash, renderGameSourceT
 import { compileEvidenceUnitExtraction, runLongTermMemoryEvidenceUnitExtraction } from "./evidence-unit-extraction.js";
 import { LongTermMemoryDraftStore } from "./draft-store.js";
 import { getLtmExtractionConfig } from "./extraction-config.js";
-import { nowIso, uniqueStrings } from "./ltm-utils.js";
 import { getLongTermMemoryRoot } from "./paths.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
-import { isLowRiskSourceExtractionMutation } from "./reconciliation.js";
-import { canUpdateLtmScopedTarget, resolveScopedEvidenceUnitTargets } from "./scoped-targets.js";
-import { LongTermMemoryStorage, type UpdateLtmNotePatch } from "./storage.js";
+import { applyLongTermMemoryDraft } from "./reconciliation.js";
+import { resolveScopedEvidenceUnitTargets } from "./scoped-targets.js";
+import { sourceHashForLtmSourceNote } from "./source-hash.js";
+import { LongTermMemoryStorage } from "./storage.js";
 import type { LtmExtractionDiagnostic } from "./diagnostics.js";
 
 function readJsonObject(raw: unknown): Record<string, unknown> {
@@ -41,16 +39,6 @@ function readJsonObject(raw: unknown): Record<string, unknown> {
   } catch {
     return {};
   }
-}
-
-function uniqueLinks(links: LtmNote["links"]) {
-  const seen = new Set<string>();
-  return links.filter((link) => {
-    const key = `${link.target}\u0000${link.relation}\u0000${link.aspect ?? ""}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
 }
 
 function resolveBaseUrl(connection: { baseUrl: string | null; provider: string }): string {
@@ -107,183 +95,6 @@ async function resolveGameJournalExtractionProvider(db: DB, chatConnectionId: st
   };
 }
 
-function mergeScopes(existing: LtmNote["scope"], incoming: LtmNote["scope"]) {
-  return {
-    ...withMergedLtmScopeLinks(existing, {
-      chatIds: getLtmScopeChatIds(incoming),
-      characterIds: incoming.characterIds ?? [],
-    }),
-    groupId: existing.groupId ?? incoming.groupId,
-  };
-}
-
-function withEvidence(section: LtmNote["sections"][string], evidence: string[]): LtmNote["sections"][string] {
-  return {
-    ...section,
-    evidence: Array.from(new Set([...((section as { evidence?: string[] }).evidence ?? []), ...evidence])).slice(
-      0,
-      100,
-    ),
-  };
-}
-
-function appendText(existing: string | undefined, incoming: string) {
-  const trimmedIncoming = incoming.trim();
-  const trimmedExisting = existing?.trim();
-  if (!trimmedIncoming) return trimmedExisting ?? "";
-  if (!trimmedExisting) return trimmedIncoming;
-  if (trimmedExisting.includes(trimmedIncoming)) return trimmedExisting;
-  return `${trimmedExisting}\n\n${trimmedIncoming}`;
-}
-
-function shouldAppendCreateNoteSection(note: Pick<LtmNote, "type" | "tags">, sectionKey: string) {
-  if (note.type === "timeline_event") return true;
-  if (note.type === "relationship" && sectionKey === "history") return true;
-  if (note.type === "tone" && sectionKey === "observations") return true;
-  if (note.tags.includes("anchor")) return true;
-  return false;
-}
-
-function mergeSection(
-  existing: LtmNote["sections"][string] | undefined,
-  incoming: LtmNote["sections"][string],
-  append: boolean,
-): LtmNote["sections"][string] {
-  return withEvidence(
-    {
-      text: append ? appendText(existing?.text, incoming.text) : incoming.text.trim(),
-      updatedAt: nowIso(),
-      salience: Math.max(existing?.salience ?? 0, incoming.salience ?? 0) || undefined,
-      confidence: Math.max(existing?.confidence ?? 0, incoming.confidence ?? 0) || undefined,
-      importance: incoming.importance ?? existing?.importance,
-      dimensions: incoming.dimensions ?? existing?.dimensions,
-      dimensionChanges: incoming.dimensionChanges ?? existing?.dimensionChanges,
-    },
-    [...(existing?.evidence ?? []), ...(incoming.evidence ?? [])],
-  );
-}
-
-async function applyMutation(storage: LongTermMemoryStorage, mutation: LtmDraftMutation, sourceNoteId: string) {
-  const eventContext = {
-    actor: "direct_ingest",
-    cause: `source:${sourceNoteId}`,
-    summary: mutation.summary,
-    payload: {
-      mutationId: mutation.id,
-      mutationKind: mutation.kind,
-      evidence: mutation.evidence,
-    },
-  };
-
-  if (mutation.kind === "create_note") {
-    const existing = await storage.getNote(mutation.note.id);
-    if (!existing) {
-      await storage.createNote(mutation.note, eventContext);
-      return;
-    }
-    if (!canUpdateLtmScopedTarget(existing.scope, mutation.note.scope)) {
-      throw new Error(
-        `Direct LTM ingest cannot merge scoped create ${mutation.note.id} into an existing note from another scope.`,
-      );
-    }
-
-    const sections: LtmNote["sections"] = { ...existing.sections };
-    for (const [sectionKey, section] of Object.entries(mutation.note.sections)) {
-      sections[sectionKey] = mergeSection(
-        existing.sections[sectionKey],
-        section,
-        shouldAppendCreateNoteSection(mutation.note, sectionKey),
-      );
-    }
-
-    await storage.updateNote(
-      existing.id,
-      {
-        status: existing.status === "archived" ? existing.status : mutation.note.status,
-        modes: uniqueStrings([...existing.modes, ...mutation.note.modes]) as LtmNote["modes"],
-        scope: mergeScopes(existing.scope, mutation.note.scope),
-        tags: uniqueStrings([...existing.tags, ...mutation.note.tags]),
-        links: uniqueLinks([
-          ...existing.links,
-          ...mutation.note.links,
-          { target: sourceNoteId, relation: "extracted_from" },
-        ]),
-        sections,
-        conflicts: mutation.note.conflicts?.length
-          ? [...(existing.conflicts ?? []), ...mutation.note.conflicts]
-          : existing.conflicts,
-      },
-      eventContext,
-    );
-    return;
-  }
-
-  const existing = await storage.getNote(mutation.noteId);
-  if (!existing) {
-    throw new Error(`Direct-ingest target note not found: ${mutation.noteId}`);
-  }
-
-  let patch: UpdateLtmNotePatch;
-  if (mutation.kind === "append_section") {
-    const existingSection = existing.sections[mutation.sectionKey];
-    const nextText = existingSection?.text
-      ? `${existingSection.text.trim()}\n\n${mutation.text.trim()}`.trim()
-      : mutation.text.trim();
-    patch = {
-      sections: {
-        ...existing.sections,
-        [mutation.sectionKey]: withEvidence(
-          {
-            text: nextText,
-            updatedAt: nowIso(),
-            salience: mutation.salience ?? existingSection?.salience,
-            confidence: Math.max(existingSection?.confidence ?? 0, mutation.confidence),
-            importance: mutation.importance ?? existingSection?.importance,
-            dimensions: mutation.dimensions ?? existingSection?.dimensions,
-            dimensionChanges: mutation.dimensionChanges ?? existingSection?.dimensionChanges,
-          },
-          mutation.evidence,
-        ),
-      },
-    };
-  } else if (mutation.kind === "update_section") {
-    patch = {
-      sections: {
-        ...existing.sections,
-        [mutation.sectionKey]: withEvidence(mutation.section, mutation.evidence),
-      },
-    };
-  } else if (mutation.kind === "add_link") {
-    patch = {
-      links: uniqueLinks([...existing.links, mutation.link, { target: sourceNoteId, relation: "extracted_from" }]),
-    };
-  } else if (mutation.kind === "set_keywords") {
-    patch = { keywords: mutation.keywords };
-  } else if (mutation.kind === "set_status") {
-    patch = { status: mutation.status };
-  } else if (mutation.kind === "set_subjects") {
-    patch = { subjects: mutation.subjects };
-  } else {
-    const _exhaustive: never = mutation;
-    throw new Error(`Unsupported mutation kind: ${(_exhaustive as LtmDraftMutation).kind}`);
-  }
-
-  try {
-    await storage.updateNote(existing.id, patch, eventContext);
-  } catch (err) {
-    logger.error(err, "[ltm] Failed to apply direct-ingest mutation %s to note %s", mutation.id, mutation.noteId);
-    throw err;
-  }
-}
-
-function noteIdForMutation(mutation: LtmDraftMutation) {
-  return mutation.kind === "create_note" ? mutation.note.id : mutation.noteId;
-}
-
-function isLowRiskGameJournalAutoApplyMutation(mutation: LtmDraftMutation) {
-  return isLowRiskSourceExtractionMutation(mutation);
-}
-
 export type AutoApplyGameJournalDraftResult = {
   draft: LtmExtractionDraft;
   appliedMutationIds: string[];
@@ -295,74 +106,18 @@ export async function autoApplyGameJournalDraft(options: {
   draftId: string;
   root?: string;
 }): Promise<AutoApplyGameJournalDraftResult> {
-  const root = options.root ?? getLongTermMemoryRoot();
-  const store = new LongTermMemoryDraftStore(root);
-  return store.withDraftLock(options.draftId, async () => {
-    const draft = await store.getDraft(options.draftId);
-    if (!draft) {
-      throw new Error(`Long-term memory draft not found: ${options.draftId}`);
-    }
-    if (draft.status !== "pending") {
-      throw new Error(`Long-term memory draft is not pending: ${options.draftId}`);
-    }
-    if (!draft.source.sourceNoteId) {
-      throw new Error(`Long-term memory draft is not tied to a source note: ${options.draftId}`);
-    }
-
-    const storage = new LongTermMemoryStorage(root);
-    const selectedMutations = draft.mutations.filter(isLowRiskGameJournalAutoApplyMutation);
-    const selectedMutationIds = new Set(selectedMutations.map((mutation) => mutation.id));
-    const appliedMutationIds: string[] = [];
-    const skippedMutationIds = draft.mutations
-      .filter((mutation) => !selectedMutationIds.has(mutation.id))
-      .map((mutation) => mutation.id);
-    const diagnostics: LtmExtractionDiagnostic[] = [];
-
-    for (const mutation of selectedMutations) {
-      try {
-        await applyMutation(storage, mutation, draft.source.sourceNoteId);
-        appliedMutationIds.push(mutation.id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to auto-apply game journal mutation";
-        logger.error(
-          err,
-          "[ltm] directIngestGameJournal: failed to auto-apply mutation %s for draft %s",
-          mutation.id,
-          draft.id,
-        );
-        skippedMutationIds.push(mutation.id);
-        diagnostics.push({
-          severity: "error",
-          code: "game_journal_auto_apply_failed",
-          mutationId: mutation.id,
-          noteId: noteIdForMutation(mutation),
-          message,
-        });
-      }
-    }
-
-    const uniqueSkippedMutationIds = Array.from(new Set(skippedMutationIds));
-    const partialApply = uniqueSkippedMutationIds.length > 0;
-    const remainingMutations = partialApply
-      ? draft.mutations.filter((mutation) => uniqueSkippedMutationIds.includes(mutation.id))
-      : draft.mutations;
-    const updated = await store.updateDraftStatus(draft.id, partialApply ? "pending" : "auto_applied", {
-      appliedAt: appliedMutationIds.length > 0 ? nowIso() : draft.appliedAt,
-      mutations: remainingMutations,
-      appliedMutationIds: Array.from(new Set([...(draft.appliedMutationIds ?? []), ...appliedMutationIds])),
-      skippedMutationIds: uniqueSkippedMutationIds,
-    });
-    if (!updated) {
-      throw new Error(`Long-term memory draft disappeared during direct game journal auto-apply: ${draft.id}`);
-    }
-
-    return {
-      draft: updated,
-      appliedMutationIds,
-      skippedMutationIds: uniqueSkippedMutationIds,
-      diagnostics,
-    };
+  const result = await applyLongTermMemoryDraft(options.draftId, {
+    root: options.root,
+    actor: "direct_ingest",
+    autoApplyLowRiskOnly: true,
+    rebuildIndexes: false,
   });
+  return {
+    draft: result.draft,
+    appliedMutationIds: result.appliedMutationIds,
+    skippedMutationIds: result.skippedMutationIds,
+    diagnostics: [],
+  };
 }
 
 export interface DirectIngestGameJournalResult {
@@ -394,7 +149,7 @@ export async function directIngestGameJournal(
   sourceNote: LtmNote,
   root?: string,
   operationId?: string,
-  options: { refinePass?: boolean; applyLowRisk?: boolean; signal?: AbortSignal } = {},
+  options: { refinePass?: boolean; applyLowRisk?: boolean; persistDraft?: boolean; signal?: AbortSignal } = {},
 ): Promise<DirectIngestGameJournalResult> {
   return withLtmDebugOperation(
     {
@@ -602,23 +357,26 @@ export async function directIngestGameJournal(
       }
 
       throwIfDirectIngestAborted(options.signal);
-      const draft = await draftStore.createDraft({
-        scope,
-        modes: ["game"],
-        source: {
-          chatId,
-          sourceNoteId: sourceNote.id,
-          sourceHash,
-        },
-        summary: response.summary,
-        response,
-      });
+      const draft =
+        options.persistDraft === false
+          ? null
+          : await draftStore.createDraft({
+              scope,
+              modes: ["game"],
+              source: {
+                chatId,
+                sourceNoteId: sourceNote.id,
+                sourceHash: sourceHashForLtmSourceNote(sourceNote),
+              },
+              summary: response.summary,
+              response,
+            });
 
       let updatedDraft: LtmExtractionDraft | null = draft;
       let appliedMutationIds: string[] = [];
       let skippedMutationIds: string[] = [];
 
-      if (options.applyLowRisk) {
+      if (options.applyLowRisk && draft) {
         throwIfDirectIngestAborted(options.signal);
         const autoApplyResult = await autoApplyGameJournalDraft({ draftId: draft.id, root: rootDir });
         updatedDraft = autoApplyResult.draft;
@@ -653,6 +411,7 @@ export async function directIngestGameJournal(
         diagnostics,
         details: {
           applyLowRisk: options.applyLowRisk === true,
+          draftPersistence: options.persistDraft === false ? "deferred" : "created",
           skippedMutationIds,
         },
       });
