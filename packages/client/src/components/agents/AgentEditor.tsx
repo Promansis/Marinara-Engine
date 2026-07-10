@@ -121,7 +121,9 @@ import {
   DEFAULT_LTM_EXTRACTION_VERBOSITY,
   DEFAULT_LTM_GLOBAL_SETTINGS,
   type LtmGlobalSettings,
+  type LtmIndexHealth,
   type LtmMode,
+  type LtmRepairResponse,
 } from "@marinara-engine/shared";
 import { Modal } from "../ui/Modal";
 import { LtmVaultManagerSection } from "../long-term-memory/LtmVaultManagerSection";
@@ -630,8 +632,8 @@ export function AgentEditor() {
   const memoriesModalOpen = vaultOpen !== null;
   const [ltmAdvancedOpen, setLtmAdvancedOpen] = useState(false);
 
-  const ltmStatus = useLongTermMemoryStatus();
-  const integrity = useLongTermMemoryIntegrity();
+  const ltmStatus = useLongTermMemoryStatus({ enabled: isLtmAgent });
+  const integrity = useLongTermMemoryIntegrity({ enabled: isLtmAgent });
   const { data: ltmExtractionSettings } = useLongTermMemoryExtractionSettings();
   const updateExtractionSettings = useUpdateLongTermMemoryExtractionSettings();
   const ltmGlobalSettingsResult = useLongTermMemorySettings();
@@ -641,13 +643,53 @@ export function AgentEditor() {
   const ltmRecallHasLocalEditsRef = useRef(false);
   const ltmRecallRevisionRef = useRef(0);
   const ltmHasMemories = (ltmStatus.data?.notes.total ?? 0) > 0;
-  const ltmSmartSearchReady = ltmStatus.data?.indexes.embeddingsAvailable === true;
-  const ltmSearchStatusLabel = ltmSmartSearchReady ? "Smart Search Ready" : "Basic Search Only";
+  const ltmIndexHealth = integrity.data?.health ?? ltmStatus.data?.indexes.health;
+  const ltmSmartSearchAvailable = ltmStatus.data?.indexes.embeddingsAvailable === true;
+  const ltmSmartSearchReady =
+    ltmSmartSearchAvailable && (ltmIndexHealth === "healthy" || ltmIndexHealth === "degraded");
+  const ltmSearchStatusLabel = ltmSmartSearchReady
+    ? "Smart Search Ready"
+    : ltmSmartSearchAvailable
+      ? "Smart Search Stale"
+      : "Basic Search Only";
   const ltmSearchStatusTitle = ltmSmartSearchReady
     ? "Memory search can match related memories by meaning."
-    : "Memory search is available, but smart matching has not been built yet.";
-  const ltmIndexStatusLabel = integrity.data?.ok ? "Memory Index Healthy" : "Memory Index Needs Repair";
-  const ltmIndexStatusTone = integrity.data?.ok ? "good" : "warn";
+    : ltmSmartSearchAvailable
+      ? "Smart matching exists, but the memory index needs maintenance before it is current."
+      : "Memory search is available, but smart matching has not been built yet.";
+  const ltmIndexStatus = ((health: LtmIndexHealth | undefined) => {
+    if (health === "healthy")
+      return { label: "Memory Index Healthy", tone: "good" as const, title: "The active memory index is current." };
+    if (health === "degraded")
+      return {
+        label: "Memory Index Degraded",
+        tone: "warn" as const,
+        title: "A recovered or rebuilding index is active. Check Maintenance for details.",
+      };
+    if (health === "stale")
+      return {
+        label: "Memory Index Stale",
+        tone: "warn" as const,
+        title: "Saved memories changed after the active index was built.",
+      };
+    if (health === "corrupt")
+      return {
+        label: "Memory Index Corrupt",
+        tone: "bad" as const,
+        title: "No valid current memory index is available. Open Maintenance to repair it.",
+      };
+    if (health === "not_built")
+      return {
+        label: "Memory Index Not Built",
+        tone: "neutral" as const,
+        title: "Build the memory index to enable indexed recall.",
+      };
+    return {
+      label: "Memory Index Unknown",
+      tone: "neutral" as const,
+      title: "Memory index status could not be determined.",
+    };
+  })(ltmIndexHealth);
   const indexedMemoryChunkCount = ltmStatus.data?.indexes.chunkCount;
   const indexedMemoryChunkLabel =
     typeof indexedMemoryChunkCount === "number"
@@ -693,6 +735,31 @@ export function AgentEditor() {
   const [maintenanceOpen, setMaintenanceOpen] = useState(false);
   const rebuildMemories = useRebuildLongTermMemory();
   const repairMemories = useRepairLongTermMemory();
+  const [lastRepairResult, setLastRepairResult] = useState<LtmRepairResponse | null>(null);
+
+  const runMemoryRepair = async () => {
+    const confirmed = await showConfirmDialog({
+      title: "Repair Memory Store?",
+      message:
+        "Malformed memory files will be moved into quarantine, missing imported-source titles will be restored, and the memory index will be rebuilt once.",
+      confirmLabel: "Repair",
+      tone: "destructive",
+    });
+    if (!confirmed) return;
+    try {
+      const result = await repairMemories.mutateAsync([
+        "quarantine_malformed_notes",
+        "backfill_imported_source_titles",
+        "rebuild_indexes",
+      ]);
+      setLastRepairResult(result);
+      const remaining = result.integrity.issues.filter((issue) => issue.severity !== "info").length;
+      if (result.integrity.ok) toast.success("Memory repair completed");
+      else toast.warning(`Memory repair completed with ${remaining} remaining issue${remaining === 1 ? "" : "s"}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Memory repair failed");
+    }
+  };
 
   const [ltmDraft, setLtmDraft] = useState<{
     connectionId: string;
@@ -3949,6 +4016,31 @@ export function AgentEditor() {
                       </div>
                     );
                   }
+                  if (ltmStatus.isLoading) {
+                    return (
+                      <div className="mb-3 flex items-center gap-2 rounded-lg bg-[var(--secondary)]/45 p-3 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                        <Loader2 size="0.875rem" className="animate-spin" />
+                        Loading memory status...
+                      </div>
+                    );
+                  }
+                  if (ltmStatus.isError && !ltmStatus.data) {
+                    return (
+                      <div
+                        role="alert"
+                        className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--destructive)]/25 bg-[var(--destructive)]/5 p-3 text-xs"
+                      >
+                        <span className="flex items-center gap-2">
+                          <AlertCircle size="0.875rem" className="text-[var(--destructive)]" />
+                          Memory status could not load.
+                        </span>
+                        <ToolButton onClick={() => void ltmStatus.refetch()}>
+                          <RotateCcw size="0.75rem" />
+                          Retry
+                        </ToolButton>
+                      </div>
+                    );
+                  }
                   if (!ltmHasMemories) {
                     return (
                       <div className="mb-3 rounded-xl border border-[var(--primary)]/20 bg-[var(--primary)]/8 p-4">
@@ -3977,19 +4069,15 @@ export function AgentEditor() {
                     {ltmStatus.data && (
                       <StatusPill
                         label={ltmSearchStatusLabel}
-                        tone={ltmSmartSearchReady ? "good" : "neutral"}
+                        tone={ltmSmartSearchReady ? "good" : ltmSmartSearchAvailable ? "warn" : "neutral"}
                         title={ltmSearchStatusTitle}
                       />
                     )}
-                    {integrity.data && (
+                    {ltmIndexHealth && (
                       <StatusPill
-                        label={ltmIndexStatusLabel}
-                        tone={ltmIndexStatusTone}
-                        title={
-                          integrity.data.ok
-                            ? "The memory search index is ready."
-                            : "Open Maintenance to repair the memory search index."
-                        }
+                        label={ltmIndexStatus.label}
+                        tone={ltmIndexStatus.tone}
+                        title={ltmIndexStatus.title}
                       />
                     )}
                   </div>
@@ -4118,13 +4206,44 @@ export function AgentEditor() {
                     label={indexedMemoryChunkLabel}
                     title="Technical maintenance count: memory search splits saved memories into chunks before indexing."
                   />
+                  {ltmIndexHealth && (
+                    <StatusPill label={ltmIndexStatus.label} tone={ltmIndexStatus.tone} title={ltmIndexStatus.title} />
+                  )}
+                  {(ltmStatus.isLoading || integrity.isLoading) && <StatusPill label="Checking memory store" />}
                 </div>
+                {(ltmStatus.isError || integrity.isError) && (
+                  <div
+                    role="alert"
+                    className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--destructive)]/25 bg-[var(--destructive)]/5 p-3 text-xs"
+                  >
+                    <div className="flex min-w-0 items-center gap-2">
+                      <AlertCircle size="0.875rem" className="shrink-0 text-[var(--destructive)]" />
+                      <span>
+                        {ltmStatus.data || integrity.data
+                          ? "Memory maintenance status could not refresh. Showing the last known result."
+                          : "Memory maintenance status could not load."}
+                      </span>
+                    </div>
+                    <ToolButton
+                      onClick={() => {
+                        void ltmStatus.refetch();
+                        void integrity.refetch();
+                      }}
+                    >
+                      <RotateCcw size="0.75rem" />
+                      Retry
+                    </ToolButton>
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-2">
                   <ToolButton
                     onClick={() =>
                       rebuildMemories
                         .mutateAsync()
-                        .then(() => toast.success("Memory search refreshed"))
+                        .then(() => {
+                          setLastRepairResult(null);
+                          toast.success("Memory search refreshed");
+                        })
                         .catch((err: Error) => toast.error(err.message))
                     }
                     disabled={rebuildMemories.isPending}
@@ -4133,24 +4252,52 @@ export function AgentEditor() {
                     <RefreshCw size="0.875rem" />
                     Reindex Memories
                   </ToolButton>
-                  <ToolButton
-                    onClick={() =>
-                      repairMemories
-                        .mutateAsync([
-                          "quarantine_malformed_notes",
-                          "backfill_imported_source_titles",
-                          "rebuild_indexes",
-                        ])
-                        .then(() => toast.success("Repair actions finished"))
-                        .catch((err: Error) => toast.error(err.message))
-                    }
-                    disabled={repairMemories.isPending}
-                    tone="danger"
-                  >
-                    <Hammer size="0.875rem" />
+                  <ToolButton onClick={() => void runMemoryRepair()} disabled={repairMemories.isPending} tone="danger">
+                    {repairMemories.isPending ? (
+                      <Loader2 size="0.875rem" className="animate-spin" />
+                    ) : (
+                      <Hammer size="0.875rem" />
+                    )}
                     Repair Memory Store
                   </ToolButton>
                 </div>
+                {lastRepairResult && (
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    className="mt-3 space-y-2 rounded-lg bg-[var(--secondary)]/45 p-3 text-xs ring-1 ring-[var(--border)]"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-semibold text-[var(--foreground)]">Latest repair</span>
+                      <StatusPill
+                        label={lastRepairResult.integrity.ok ? "Store healthy" : "Issues remain"}
+                        tone={lastRepairResult.integrity.ok ? "good" : "warn"}
+                      />
+                    </div>
+                    {lastRepairResult.actions.map((action) => (
+                      <div key={action.action} className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-[var(--muted-foreground)]">
+                          {action.action === "quarantine_malformed_notes"
+                            ? "Malformed files"
+                            : action.action === "backfill_imported_source_titles"
+                              ? "Imported-source titles"
+                              : "Memory index"}
+                        </span>
+                        <span className="font-medium text-[var(--foreground)]">
+                          {action.result.replaceAll("_", " ")}
+                          {typeof action.count === "number" ? ` (${action.count})` : ""}
+                        </span>
+                      </div>
+                    ))}
+                    <p className="text-[var(--muted-foreground)]">
+                      {lastRepairResult.integrity.issues.filter((issue) => issue.severity !== "info").length} remaining
+                      issue
+                      {lastRepairResult.integrity.issues.filter((issue) => issue.severity !== "info").length === 1
+                        ? ""
+                        : "s"}
+                    </p>
+                  </div>
+                )}
                 <div className="mt-3 space-y-2">
                   {(integrity.data?.issues ?? [])
                     .filter((issue: { severity: string }) => issue.severity !== "info")

@@ -322,7 +322,7 @@ test("LTM import selection shows shared action bar and keeps imported rows disab
   await createActiveConversation(page, "LTM Import Selection Shared UI");
   await page.goto("/");
   const vaultDialog = await openLtmVaultFromAgentEditor(page);
-  await vaultDialog.getByRole("button", { name: "Import" }).click();
+  await vaultDialog.getByRole("tab", { name: "Import" }).click();
 
   await vaultDialog.getByLabel("Select Pending shared UI source").check();
   await expect(vaultDialog.getByRole("button", { name: "Import selected" })).toBeVisible();
@@ -330,6 +330,316 @@ test("LTM import selection shows shared action bar and keeps imported rows disab
 
   await vaultDialog.getByRole("button", { name: /Imported source/ }).click();
   await expect(vaultDialog.getByLabel("Select Imported shared UI source")).toBeDisabled();
+});
+
+test("LTM partial import keeps failed sources selected and exposes recovery details", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "LTM partial import recovery is covered on desktop.");
+
+  const successfulSource = ltmNote({
+    id: "source_partial_success",
+    title: "Successful source",
+    type: "source",
+    tags: ["source_summary", "imported_chat"],
+    extracted: true,
+  });
+  const retrySource = ltmNote({
+    id: "source_partial_retry",
+    title: "Retry source",
+    type: "source",
+    tags: ["source_summary", "imported_chat"],
+    extracted: false,
+  });
+
+  await page.route("**/api/long-term-memory/import/preview", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        source: "chats",
+        scanned: 2,
+        draftable: 2,
+        importedCount: 0,
+        samples: [
+          {
+            sourceId: "chat_success:summary",
+            title: "Successful source",
+            mutationCount: 1,
+            summary: "Import successful source",
+            snippet: "A source that extracts successfully.",
+            status: "pending",
+          },
+          {
+            sourceId: "chat_retry:summary",
+            title: "Retry source",
+            mutationCount: 1,
+            summary: "Import retry source",
+            snippet: "A source whose extraction should be retried.",
+            status: "pending",
+          },
+        ],
+      }),
+    });
+  });
+  await page.route("**/api/long-term-memory/import/source-notes", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        operationId: "33333333-3333-4333-8333-333333333333",
+        batchStatus: "partial_success",
+        source: "chats",
+        imported: [
+          {
+            sourceId: "chat_success:summary",
+            title: "Successful source",
+            note: successfulSource,
+            created: true,
+            sourceWriteStatus: "created",
+            extractionStatus: "succeeded",
+            extractionMethod: "llm",
+            retryable: false,
+            draft: ltmDraft(successfulSource.id as string),
+            diagnostics: [],
+            outcome: {
+              state: "success",
+              totalCandidates: 1,
+              keptUnits: 1,
+              droppedUnits: 0,
+              droppedCandidates: [],
+            },
+            appliedMutationIds: [],
+            skippedMutationIds: [],
+          },
+          {
+            sourceId: "chat_retry:summary",
+            title: "Retry source",
+            note: retrySource,
+            created: true,
+            sourceWriteStatus: "created",
+            extractionStatus: "failed",
+            extractionMethod: "llm",
+            retryable: true,
+            error: { code: "extract_failed", message: "Provider timed out" },
+            draft: null,
+            diagnostics: [{ severity: "error", code: "extract_failed", message: "Provider timed out" }],
+            outcome: {
+              state: "no_suggestions_created",
+              totalCandidates: 0,
+              keptUnits: 0,
+              droppedUnits: 0,
+              droppedCandidates: [],
+            },
+            appliedMutationIds: [],
+            skippedMutationIds: [],
+          },
+        ],
+        writeFailures: [],
+        missingSourceIds: [],
+        counts: {
+          requested: 2,
+          sourceNotesWritten: 2,
+          succeeded: 1,
+          failed: 1,
+          cancelled: 0,
+          missing: 0,
+          sourceWriteFailed: 0,
+        },
+      }),
+    });
+  });
+  await page.route(/\/api\/long-term-memory\/notes(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+  });
+
+  await createActiveConversation(page, "LTM Partial Import Recovery");
+  await page.goto("/");
+  const vaultDialog = await openLtmVaultFromAgentEditor(page);
+  const importTab = vaultDialog.getByRole("tab", { name: "Import" });
+  await importTab.click();
+  await expect(importTab).toHaveAttribute("aria-selected", "true");
+  await importTab.press("ArrowRight");
+  await expect(vaultDialog.getByRole("tab", { name: "Review" })).toHaveAttribute("aria-selected", "true");
+  await vaultDialog.getByRole("tab", { name: "Review" }).press("ArrowLeft");
+
+  await vaultDialog.getByLabel("Select Successful source").check();
+  await vaultDialog.getByLabel("Select Retry source").check();
+  await vaultDialog.getByRole("button", { name: "Import selected" }).click();
+
+  await expect(vaultDialog.getByText("Import partly complete")).toBeVisible();
+  await expect(vaultDialog.getByText("Retry source:")).toBeVisible();
+  await expect(vaultDialog.getByText("Provider timed out")).toBeVisible();
+  await expect(vaultDialog.getByLabel("Select Successful source")).not.toBeChecked();
+  await expect(vaultDialog.getByLabel("Select Retry source")).toBeChecked();
+  await expect(vaultDialog.getByRole("button", { name: "Open Review" })).toBeVisible();
+});
+
+test("LTM in-flight import can be cancelled without clearing the retry selection", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "LTM import cancellation is covered on desktop.");
+
+  await page.route("**/api/long-term-memory/import/preview", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        source: "chats",
+        scanned: 1,
+        draftable: 1,
+        importedCount: 0,
+        samples: [
+          {
+            sourceId: "chat_cancel:summary",
+            title: "Cancel retry source",
+            mutationCount: 1,
+            summary: "Import cancellable source",
+            snippet: "A request that remains in flight until cancelled.",
+            status: "pending",
+          },
+        ],
+      }),
+    });
+  });
+
+  let releaseImport: (() => void) | null = null;
+  let markImportStarted: (() => void) | null = null;
+  const importStarted = new Promise<void>((resolve) => {
+    markImportStarted = resolve;
+  });
+  await page.route("**/api/long-term-memory/import/source-notes", async (route) => {
+    markImportStarted?.();
+    await new Promise<void>((resolve) => {
+      releaseImport = resolve;
+    });
+    await route.abort("aborted").catch(() => undefined);
+  });
+
+  await createActiveConversation(page, "LTM Import Cancellation");
+  await page.goto("/");
+  const vaultDialog = await openLtmVaultFromAgentEditor(page);
+  await vaultDialog.getByRole("tab", { name: "Import" }).click();
+  await vaultDialog.getByLabel("Select Cancel retry source").check();
+  await vaultDialog.getByRole("button", { name: "Import selected" }).click();
+  await importStarted;
+
+  await expect(vaultDialog.getByRole("button", { name: "Cancel import" })).toBeVisible();
+  await vaultDialog.getByRole("button", { name: "Cancel import" }).click();
+  releaseImport?.();
+
+  await expect(page.getByText("Import cancelled. Unfinished sources remain selected.")).toBeVisible();
+  await expect(vaultDialog.getByLabel("Select Cancel retry source")).toBeChecked();
+});
+
+test("LTM query failures render retry states instead of empty states", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "LTM query failure states are covered on desktop.");
+
+  await page.route(/\/api\/long-term-memory\/notes(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Notes unavailable" }),
+    });
+  });
+  await page.route(/\/api\/long-term-memory\/drafts(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Suggestions unavailable" }),
+    });
+  });
+  await page.route("**/api/long-term-memory/import/preview", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({}) });
+  });
+
+  await createActiveConversation(page, "LTM Query Failure States");
+  await page.goto("/");
+  const vaultDialog = await openLtmVaultFromAgentEditor(page);
+
+  await expect(vaultDialog.getByText("Memories could not load")).toBeVisible();
+  await expect(vaultDialog.getByText("No matching memories.")).toHaveCount(0);
+
+  await vaultDialog.getByRole("tab", { name: "Import" }).click();
+  await expect(vaultDialog.getByText("Import sources could not load")).toBeVisible();
+  await expect(vaultDialog.getByText("No sources are ready to bring in.")).toHaveCount(0);
+
+  await vaultDialog.getByRole("tab", { name: "Review" }).click();
+  await expect(vaultDialog.getByText("Suggestions could not load")).toBeVisible();
+  await expect(vaultDialog.getByText("No pending suggestions to review.")).toHaveCount(0);
+  await expect(vaultDialog.getByRole("button", { name: "Retry" })).toBeVisible();
+});
+
+test("LTM repair requires confirmation and reports each action", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "LTM repair recovery is covered on desktop.");
+
+  const status = {
+    initialized: true,
+    directory: "long-term-memory",
+    notes: { total: 1, byType: { world: 1 }, byStatus: { active: 1 } },
+    events: { logAvailable: false, bytes: 0 },
+    indexes: {
+      health: "stale",
+      manifestAvailable: true,
+      generationId: "44444444-4444-4444-8444-444444444444",
+      currentGenerationId: "44444444-4444-4444-8444-444444444444",
+      recovered: false,
+      dirty: true,
+      rebuildState: "idle",
+      errors: [],
+      warnings: [],
+      generatedAt: ltmNow,
+      sourceHash: "a".repeat(64),
+      noteCount: 1,
+      chunkCount: 2,
+      chunkFormatVersion: 3,
+      embeddingsAvailable: false,
+      embeddedChunkCount: 0,
+    },
+  };
+  const healthyIntegrity = {
+    ok: true,
+    health: "healthy",
+    checkedAt: ltmNow,
+    noteCount: 1,
+    eventCount: 0,
+    issues: [],
+  };
+  let repairCalls = 0;
+  await page.route("**/api/long-term-memory/status", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(status) });
+  });
+  await page.route("**/api/long-term-memory/integrity", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(healthyIntegrity) });
+  });
+  await page.route("**/api/long-term-memory/repair", async (route) => {
+    repairCalls += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        repairedAt: ltmNow,
+        actions: [
+          { action: "quarantine_malformed_notes", result: "quarantined", count: 1 },
+          { action: "backfill_imported_source_titles", result: "backfilled", count: 2 },
+          { action: "rebuild_indexes", result: "rebuilt", count: 4 },
+        ],
+        integrity: healthyIntegrity,
+      }),
+    });
+  });
+
+  await page.goto("/");
+  await page.locator('[data-tour="panel-agents"]').click();
+  await page.getByRole("button", { name: /Long-Term Memory/ }).click();
+  await page.getByRole("button", { name: "Maintenance" }).click();
+  await page.getByRole("button", { name: "Repair Memory Store" }).click();
+
+  await expect(page.getByRole("dialog", { name: "Repair Memory Store?" })).toBeVisible();
+  expect(repairCalls).toBe(0);
+  await page.getByRole("dialog", { name: "Repair Memory Store?" }).getByRole("button", { name: "Repair" }).click();
+
+  await expect(page.getByText("Latest repair")).toBeVisible();
+  await expect(page.getByText("Malformed files")).toBeVisible();
+  await expect(page.getByText("Imported-source titles")).toBeVisible();
+  await expect(page.getByText("Memory index", { exact: true })).toBeVisible();
+  expect(repairCalls).toBe(1);
 });
 
 test("LTM source suggestions select mode uses shared keep and skip bar", async ({ page }, testInfo) => {
@@ -361,9 +671,9 @@ test("LTM source suggestions select mode uses shared keep and skip bar", async (
   await page.goto("/");
   const vaultDialog = await openLtmVaultFromAgentEditor(page);
 
-  await vaultDialog.getByRole("button", { name: "Review" }).click();
+  await vaultDialog.getByRole("tab", { name: "Review" }).click();
   await expect(vaultDialog.getByText("Shared UI Review Source")).toBeVisible();
-  await vaultDialog.getByRole("button", { name: "Review" }).nth(1).click();
+  await vaultDialog.getByRole("button", { name: "Review" }).click();
   const memoryDialog = page.getByRole("dialog", { name: "Shared UI Review Source" });
   await expect(memoryDialog).toBeVisible();
   await memoryDialog.getByRole("button", { name: "Suggestions", exact: true }).click();
@@ -441,7 +751,7 @@ test("manual memory recovery survives dismissing the create modal", async ({ pag
             },
           ],
         },
-        response: {},
+        response: { summary: "", mutations: [] },
         appliedMutationIds: [],
         skippedMutationIds: [],
       }),
@@ -461,7 +771,7 @@ test("manual memory recovery survives dismissing the create modal", async ({ pag
   await page.goto("/");
 
   const vaultDialog = await openLtmVaultFromAgentEditor(page);
-  await vaultDialog.getByRole("button", { name: "Memories" }).click();
+  await vaultDialog.getByRole("tab", { name: "Memories" }).click();
   await vaultDialog.getByRole("button", { name: /^Source/ }).click();
   await vaultDialog.getByRole("button", { name: `Open ${sourceTitle}` }).click();
 
@@ -483,7 +793,7 @@ test("manual memory recovery survives dismissing the create modal", async ({ pag
   await expect(page.getByRole("button", { name: "Create manual memory" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Remove all" })).toHaveCount(0);
   await expect(page.getByText("No usable suggestions were created from the latest extraction.")).toBeVisible();
-  await expect(page.getByText("No memory stream suggestions need review for this source.")).toBeVisible();
+  await expect(page.getByText("No memory suggestions need review for this source note.")).toBeVisible();
 });
 
 test("mobile LTM overflow actions open modals and advertise pending review", async ({ page }, testInfo) => {
@@ -529,6 +839,8 @@ test("mobile LTM overflow actions open modals and advertise pending review", asy
 
   const vaultDialog = page.getByRole("dialog", { name: "Long-Term Memory" });
   await expect(vaultDialog).toBeVisible();
+  await expect(vaultDialog.getByRole("tab", { name: "Import" })).toHaveAttribute("aria-selected", "true");
+  await expect(vaultDialog.getByLabel("Source")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(vaultDialog).toBeHidden();
 

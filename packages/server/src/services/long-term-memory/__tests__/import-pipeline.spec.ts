@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { ltmImportSourceNotesResponseSchema } from "@marinara-engine/shared";
 import { buildApp } from "../../../app.js";
 import {
   createLongTermMemoryInteropSourceNotes,
@@ -268,11 +269,15 @@ test("post-preflight extraction failure is reported as retryable per source", as
 
     assert.equal(response.statusCode, 200);
     const body = response.json();
+    assert.equal(ltmImportSourceNotesResponseSchema.safeParse(body).success, true);
     assert.equal(body.batchStatus, "failed");
     assert.equal(body.imported[0]?.sourceWriteStatus, "created");
     assert.equal(body.imported[0]?.extractionStatus, "failed");
     assert.equal(body.imported[0]?.retryable, true);
     assert.equal(body.imported[0]?.error?.code, "extract_failed");
+
+    const failedPreview = await previewLongTermMemoryInterop(app.db, "characters", 100);
+    assert.equal(failedPreview.samples.find((sample) => sample.sourceId === character.id)?.status, "pending");
 
     const retry = await app.inject({
       method: "POST",

@@ -12,10 +12,17 @@ import {
   ltmDebugPhaseSchema,
   ltmDebugStatusSchema,
   ltmExtractionSettingsSchema,
+  ltmExtractSourceNoteRequestSchema,
+  ltmExtractSourceNoteResponseSchema,
   ltmGlobalSettingsSchema,
   ltmExtractionDraftSchema,
   ltmExtractionResponseSchema,
   ltmInjectionUiSummarySchema,
+  ltmImportSourceNotesRequestSchema,
+  ltmImportSourceNotesResponseSchema,
+  ltmIntegrityResponseSchema,
+  ltmInteropPreviewRequestSchema,
+  ltmInteropPreviewResponseSchema,
   ltmIsoTimestampSchema,
   ltmLinkSchema,
   ltmModeSchema,
@@ -25,10 +32,14 @@ import {
   ltmNoteTransferPreviewResponseSchema,
   ltmNoteTitleSchema,
   ltmNoteTypeSchema,
+  ltmRepairRequestSchema,
+  ltmRepairResponseSchema,
   ltmScopeSchema,
   ltmSectionKeySchema,
   ltmSectionSchema,
   ltmStatusSchema,
+  ltmStatusResponseSchema,
+  type LtmExtractSourceNoteRequest,
   type LtmNote,
 } from "@marinara-engine/shared";
 import { z } from "zod";
@@ -57,8 +68,6 @@ import {
   planLongTermMemoryInteropSourceNotes,
   previewLongTermMemoryInterop,
   repairLongTermMemory,
-  type LtmInteropSource,
-  type LtmRepairAction,
 } from "../services/long-term-memory/maintenance.js";
 import {
   rebuildLongTermMemoryIndexes,
@@ -180,39 +189,6 @@ const updateNoteBodySchema = z.preprocess(
 
 const rebuildBodySchema = z.object({}).strict().default({});
 
-const repairActionSchema = z.enum(["rebuild_indexes", "quarantine_malformed_notes", "backfill_imported_source_titles"]);
-
-const repairBodySchema = z
-  .object({
-    actions: z.array(repairActionSchema).min(1).max(3),
-  })
-  .strict();
-
-const interopSourceSchema = z.enum(["characters", "lorebooks", "chats"]);
-
-const interopBodySchema = z
-  .object({
-    source: interopSourceSchema,
-    limit: z.number().int().min(1).max(100).default(100),
-    scope: ltmScopeSchema.optional(),
-  })
-  .strict();
-
-const interopImportBodySchema = z
-  .object({
-    source: interopSourceSchema,
-    sourceIds: z.array(z.string().min(1).max(120)).min(1).max(100),
-    limit: z.number().int().min(1).max(100).default(100),
-    scope: ltmScopeSchema.optional(),
-    connectionId: z.string().min(1).max(120).optional(),
-    model: z.string().min(1).max(240).optional(),
-    instruction: z.string().max(2_000).optional(),
-    applyLowRisk: z.boolean().optional(),
-    importConcurrency: z.number().int().min(1).max(10).optional(),
-    mode: ltmModeSchema.optional(),
-  })
-  .strict();
-
 const draftIdParamSchema = z.object({ id: z.string().uuid() }).strict();
 const draftMutationParamSchema = z.object({ id: z.string().uuid(), mutationId: z.string().uuid() }).strict();
 const noteIdParamSchema = z.object({ id: ltmNoteIdSchema }).strict();
@@ -243,18 +219,6 @@ const skipDraftBodySchema = z
     mutationIds: z.array(z.string().uuid()).min(1),
   })
   .strict();
-
-const extractSourceNoteBodySchema = z
-  .object({
-    chatId: z.string().min(1).max(120).optional(),
-    connectionId: z.string().min(1).max(120).optional(),
-    model: z.string().min(1).max(240).optional(),
-    instruction: z.string().max(2_000).optional(),
-    applyLowRisk: z.boolean().optional(),
-    mode: ltmModeSchema.optional(),
-  })
-  .strict()
-  .default({});
 
 const applyScopeToDerivedBodySchema = z
   .object({
@@ -425,7 +389,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
   const connections = createConnectionsStorage(app.db);
 
   async function resolveExtractionProvider(
-    body: z.infer<typeof extractSourceNoteBodySchema>,
+    body: LtmExtractSourceNoteRequest,
     chatConnectionId?: string | null,
   ) {
     const defaultAgentConn = body.connectionId ? null : await connections.getDefaultForAgents();
@@ -496,7 +460,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
       (error): error is NonNullable<typeof error> => Boolean(error),
     );
 
-    return {
+    return ltmStatusResponseSchema.parse({
       initialized: true,
       directory: LTM_DIR_NAME,
       notes: summarizeNotes(notes),
@@ -519,7 +483,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
         embeddingsAvailable: Boolean(embeddings?.embeddedChunkCount),
         embeddedChunkCount: embeddings?.embeddedChunkCount ?? 0,
       },
-    };
+    });
   });
 
   app.get<{ Querystring: unknown }>("/debug-log", async (req, reply) => {
@@ -667,7 +631,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     async (req, reply) => {
       if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory source extraction" })) return;
       const { id } = noteIdParamSchema.parse(req.params);
-      const body = extractSourceNoteBodySchema.parse(req.body ?? {});
+      const body = ltmExtractSourceNoteRequestSchema.parse(req.body ?? {});
       const sourceNote = await storage.getNote(id);
       if (!sourceNote) return reply.status(404).send({ error: "Long-term memory note not found" });
       if (!isLtmSourceNote(sourceNote)) {
@@ -688,14 +652,14 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
           if (directResult.appliedMutationIds.length > 0) {
             await rebuildLongTermMemoryIndexes({ scope: "typed" });
           }
-          return {
+          return ltmExtractSourceNoteResponseSchema.parse({
             draft: directResult.draft,
             diagnostics: directResult.diagnostics,
             outcome: directResult.outcome,
             response: directResult.response,
             appliedMutationIds: directResult.appliedMutationIds,
             skippedMutationIds: directResult.skippedMutationIds,
-          };
+          });
         } catch (err) {
           await recordLtmDebugEvent({
             operationId,
@@ -740,14 +704,14 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
               })
             : null;
 
-        return {
+        return ltmExtractSourceNoteResponseSchema.parse({
           draft: applyResult?.draft ?? result.draft,
           diagnostics: result.diagnostics,
           outcome: result.outcome,
           response: result.response,
           appliedMutationIds: applyResult?.appliedMutationIds ?? [],
           skippedMutationIds: applyResult?.skippedMutationIds ?? [],
-        };
+        });
       } catch (err) {
         await recordLtmDebugEvent({
           operationId,
@@ -944,22 +908,18 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     }
   });
 
-  app.get("/integrity", async () => checkLongTermMemoryIntegrity());
+  app.get("/integrity", async () => ltmIntegrityResponseSchema.parse(await checkLongTermMemoryIntegrity()));
 
   app.post<{ Body: unknown }>("/repair", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req, reply) => {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory repair" })) return;
-    const body = repairBodySchema.parse(req.body);
-    return repairLongTermMemory(body.actions as LtmRepairAction[]);
+    const body = ltmRepairRequestSchema.parse(req.body);
+    return ltmRepairResponseSchema.parse(await repairLongTermMemory(body.actions));
   });
 
   app.post<{ Body: unknown }>("/import/preview", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req) => {
-    const body = interopBodySchema.parse(req.body);
-    return previewLongTermMemoryInterop(
-      app.db,
-      body.source as LtmInteropSource,
-      body.limit,
-      getLongTermMemoryRoot(),
-      body.scope,
+    const body = ltmInteropPreviewRequestSchema.parse(req.body);
+    return ltmInteropPreviewResponseSchema.parse(
+      await previewLongTermMemoryInterop(app.db, body.source, body.limit, getLongTermMemoryRoot(), body.scope),
     );
   });
 
@@ -968,7 +928,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES },
     async (req, reply) => {
       if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory source import" })) return;
-      const body = interopImportBodySchema.parse(req.body);
+      const body = ltmImportSourceNotesRequestSchema.parse(req.body);
       const operationId = randomUUID();
       const importOptions = {
         sourceIds: body.sourceIds,
@@ -977,7 +937,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
         mode: body.mode,
         operationId,
       };
-      const plan = await planLongTermMemoryInteropSourceNotes(app.db, body.source as LtmInteropSource, importOptions);
+      const plan = await planLongTermMemoryInteropSourceNotes(app.db, body.source, importOptions);
       let provider: BaseLLMProvider | null = null;
       let model = "";
       if (plan.requiresExtraction) {
@@ -996,7 +956,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
       }
       return withImportAbortSignal(req, async (signal) => {
         throwIfImportAborted(signal);
-        const imported = await createLongTermMemoryInteropSourceNotes(app.db, body.source as LtmInteropSource, {
+        const imported = await createLongTermMemoryInteropSourceNotes(app.db, body.source, {
           ...importOptions,
           plan,
         });
@@ -1015,10 +975,19 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
                 applyLowRisk: body.applyLowRisk,
                 signal,
               });
+              const extractedNote = await storage.updateNote(
+                item.note.id,
+                { extracted: true },
+                {
+                  actor: "maintenance_api",
+                  cause: "interop.source_extraction",
+                  summary: `Completed extraction for ${item.title}`,
+                },
+              );
               return {
                 sourceId: item.sourceId,
                 title: item.title,
-                note: item.note,
+                note: extractedNote,
                 created: item.created,
                 sourceWriteStatus: item.created ? ("created" as const) : ("refreshed" as const),
                 extractionStatus: "succeeded" as const,
@@ -1056,11 +1025,20 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
                     operationId,
                   })
                 : null;
+            const extractedNote = await storage.updateNote(
+              item.note.id,
+              { extracted: true },
+              {
+                actor: "maintenance_api",
+                cause: "interop.source_extraction",
+                summary: `Completed extraction for ${item.title}`,
+              },
+            );
 
             return {
               sourceId: item.sourceId,
               title: item.title,
-              note: item.note,
+              note: extractedNote,
               created: item.created,
               sourceWriteStatus: item.created ? ("created" as const) : ("refreshed" as const),
               extractionStatus: "succeeded" as const,
@@ -1175,7 +1153,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
                   imported.writeFailures.length === 0
                 ? "cancelled"
                 : "failed";
-        return {
+        return ltmImportSourceNotesResponseSchema.parse({
           operationId,
           batchStatus,
           source: imported.source,
@@ -1191,7 +1169,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
             missing: plan.missingSourceIds.length,
             sourceWriteFailed: imported.writeFailures.length,
           },
-        };
+        });
       });
     },
   );

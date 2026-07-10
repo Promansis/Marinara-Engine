@@ -442,9 +442,25 @@ export function ModeBadge({ mode }: { mode: LtmMode }) {
   );
 }
 
-export function Section({ title, children }: { title: string; children: ReactNode }) {
+export function Section({
+  title,
+  children,
+  id,
+  labelledBy,
+}: {
+  title: string;
+  children: ReactNode;
+  id?: string;
+  labelledBy?: string;
+}) {
   return (
-    <section className="space-y-3">
+    <section
+      id={id}
+      role={labelledBy ? "tabpanel" : undefined}
+      aria-labelledby={labelledBy}
+      tabIndex={labelledBy ? 0 : undefined}
+      className="space-y-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
+    >
       <h3 className="px-1 text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
         {title}
       </h3>

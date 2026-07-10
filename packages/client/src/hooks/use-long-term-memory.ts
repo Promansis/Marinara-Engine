@@ -1,16 +1,35 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import type {
+import {
+  ltmExtractSourceNoteRequestSchema,
+  ltmExtractSourceNoteResponseSchema,
+  ltmImportSourceNotesRequestSchema,
+  ltmImportSourceNotesResponseSchema,
+  ltmIntegrityResponseSchema,
+  ltmInteropPreviewRequestSchema,
+  ltmInteropPreviewResponseSchema,
+  ltmRepairRequestSchema,
+  ltmRepairResponseSchema,
+  ltmStatusResponseSchema,
+  type LtmExtractSourceNoteRequest as SharedLtmExtractSourceNoteRequest,
+  type LtmExtractSourceNoteResponse as SharedLtmExtractSourceNoteResponse,
+  type LtmExtractionDiagnostic as SharedLtmExtractionDiagnostic,
+  type LtmImportSourceNotesRequest as SharedLtmImportSourceNotesRequest,
+  type LtmImportSourceNotesResponse as SharedLtmImportSourceNotesResponse,
+  type LtmIntegrityIssue as SharedLtmIntegrityIssue,
+  type LtmIntegrityResponse as SharedLtmIntegrityResponse,
+  type LtmInteropPreviewResponse as SharedLtmInteropPreviewResponse,
+  type LtmInteropSource as SharedLtmInteropSource,
+  type LtmRepairAction as SharedLtmRepairAction,
+  type LtmRepairResponse as SharedLtmRepairResponse,
+  type LtmStatusResponse as SharedLtmStatusResponse,
   LtmDraftMutation,
   LtmDraftStatus,
   LtmDebugEvent,
   LtmDebugPhase,
   LtmDebugStatus,
   LtmExtractionDraft,
-  LtmExtractionOutcome,
-  LtmExtractionResponse,
   LtmExtractionSettings as SharedLtmExtractionSettings,
   LtmGlobalSettings as SharedLtmGlobalSettings,
-  LtmMode,
   LtmNote,
   LtmNoteTransferApplyResponse,
   LtmNoteTransferMode,
@@ -26,75 +45,18 @@ import type {
 } from "@marinara-engine/shared";
 import { api } from "../lib/api-client";
 
-export type LtmStatusResponse = {
-  initialized: boolean;
-  directory: string;
-  notes: {
-    total: number;
-    byType: Record<string, number>;
-    byStatus: Record<string, number>;
-  };
-  events: {
-    logAvailable: boolean;
-    bytes: number | null;
-  };
-  indexes: {
-    manifestAvailable: boolean;
-    errors: Array<{ index: string; code: string }>;
-    generatedAt: string | null;
-    sourceHash: string | null;
-    noteCount: number | null;
-    chunkCount: number | null;
-    embeddingsAvailable: boolean;
-    embeddedChunkCount: number;
-  };
-};
-
-export type LtmIntegrityIssue = {
-  severity: "info" | "warning" | "error";
-  code: string;
-  path?: string;
-  noteId?: string;
-  message: string;
-};
-
-export type LtmIntegrityResponse = {
-  ok: boolean;
-  checkedAt: string;
-  noteCount: number;
-  eventCount: number;
-  issues: LtmIntegrityIssue[];
-};
+export type LtmStatusResponse = SharedLtmStatusResponse;
+export type LtmIntegrityIssue = SharedLtmIntegrityIssue;
+export type LtmIntegrityResponse = SharedLtmIntegrityResponse;
 
 export type LtmExtractionSettings = SharedLtmExtractionSettings;
 export type LtmResolvedExtractionSettings = SharedLtmResolvedExtractionSettings;
 export type LtmGlobalSettings = SharedLtmGlobalSettings;
 export type LtmResolvedGlobalSettings = SharedLtmResolvedGlobalSettings;
 
-export type LtmRepairResponse = {
-  repairedAt: string;
-  actions: Array<{ action: string; result: string; count?: number }>;
-  integrity: LtmIntegrityResponse;
-};
-
-export type LtmInteropSource = "characters" | "lorebooks" | "chats";
-
-export type LtmInteropPreview = {
-  source: LtmInteropSource;
-  scanned: number;
-  draftable: number;
-  importedCount: number;
-  samples: Array<{
-    sourceId: string;
-    title: string;
-    mutationCount: number;
-    summary: string;
-    snippet: string;
-    status: "pending" | "imported";
-    existingNoteId?: string;
-    existingNoteTitle?: string;
-  }>;
-};
+export type LtmRepairResponse = SharedLtmRepairResponse;
+export type LtmInteropSource = SharedLtmInteropSource;
+export type LtmInteropPreview = SharedLtmInteropPreviewResponse;
 
 export type LtmSearchInput = {
   queryText?: string;
@@ -177,46 +139,17 @@ export type LtmDebugLogResponse = {
   events: LtmDebugEvent[];
 };
 
-export type LtmExtractionDiagnostic = {
-  severity: "warning" | "error";
-  code: string;
-  candidateIndex?: number;
-  mutationId?: string;
-  noteId?: string;
-  message: string;
-};
+export type LtmExtractionDiagnostic = SharedLtmExtractionDiagnostic;
 
-export type ExtractLongTermMemorySourceInput = {
+export type ExtractLongTermMemorySourceInput = SharedLtmExtractSourceNoteRequest & {
   noteId: string;
-  chatId?: string;
-  connectionId?: string;
-  model?: string;
-  instruction?: string;
-  applyLowRisk?: boolean;
-  mode?: LtmMode;
 };
 
-export type ImportLongTermMemorySourceNotesInput = {
-  source: LtmInteropSource;
-  sourceIds: string[];
-  limit: number;
-  scope?: LtmScope;
-  connectionId?: string;
-  model?: string;
-  instruction?: string;
-  applyLowRisk?: boolean;
-  importConcurrency?: number;
-  mode?: LtmMode;
+export type ImportLongTermMemorySourceNotesInput = SharedLtmImportSourceNotesRequest & {
+  signal?: AbortSignal;
 };
 
-export type ExtractLongTermMemorySourceResponse = {
-  draft: LtmExtractionDraft | null;
-  diagnostics: LtmExtractionDiagnostic[];
-  outcome: LtmExtractionOutcome;
-  response: LtmExtractionResponse;
-  appliedMutationIds: string[];
-  skippedMutationIds: string[];
-};
+export type ExtractLongTermMemorySourceResponse = SharedLtmExtractSourceNoteResponse;
 
 export type ApplyLongTermMemoryScopeToDerivedInput = {
   noteId: string;
@@ -257,21 +190,7 @@ export type SkipLongTermMemoryDraftResponse = {
   draft: LtmExtractionDraft | null;
 };
 
-export type ImportLongTermMemorySourceNotesResponse = {
-  source: LtmInteropSource;
-  imported: Array<{
-    sourceId: string;
-    title: string;
-    note: LtmNote;
-    created: boolean;
-    draft: LtmExtractionDraft | null;
-    diagnostics: LtmExtractionDiagnostic[];
-    outcome: LtmExtractionOutcome;
-    appliedMutationIds: string[];
-    skippedMutationIds: string[];
-  }>;
-  missingSourceIds: string[];
-};
+export type ImportLongTermMemorySourceNotesResponse = SharedLtmImportSourceNotesResponse;
 
 export const longTermMemoryKeys = {
   all: ["long-term-memory"] as const,
@@ -385,18 +304,20 @@ function noteFilterQuery(filter: LtmNoteFilter) {
   });
 }
 
-export function useLongTermMemoryStatus() {
+export function useLongTermMemoryStatus(options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: longTermMemoryKeys.status(),
-    queryFn: () => api.get<LtmStatusResponse>("/long-term-memory/status"),
+    queryFn: async () => ltmStatusResponseSchema.parse(await api.get<unknown>("/long-term-memory/status")),
+    enabled: options.enabled ?? true,
     staleTime: 30_000,
   });
 }
 
-export function useLongTermMemoryIntegrity() {
+export function useLongTermMemoryIntegrity(options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: longTermMemoryKeys.integrity(),
-    queryFn: () => api.get<LtmIntegrityResponse>("/long-term-memory/integrity"),
+    queryFn: async () => ltmIntegrityResponseSchema.parse(await api.get<unknown>("/long-term-memory/integrity")),
+    enabled: options.enabled ?? true,
     staleTime: 30_000,
   });
 }
@@ -406,6 +327,7 @@ export function useLongTermMemoryNotes(filter: LtmNoteFilter = {}, options: { en
     queryKey: longTermMemoryKeys.notes(filter),
     queryFn: () => api.get<LtmNote[]>(`/long-term-memory/notes${noteFilterQuery(filter)}`),
     enabled: options.enabled ?? true,
+    placeholderData: (previousData) => previousData,
     staleTime: 30_000,
   });
 }
@@ -574,14 +496,27 @@ export function useLongTermMemoryDrafts(filter: LtmDraftFilter = {}, options: { 
     queryKey: longTermMemoryKeys.drafts(filter),
     queryFn: () => api.get<LtmExtractionDraft[]>(`/long-term-memory/drafts${qs(filter)}`),
     enabled: options.enabled ?? true,
+    placeholderData: (previousData) => previousData,
     staleTime: 30_000,
   });
 }
 
-export function useLongTermMemoryImportPreview(source: LtmInteropSource, limit: number, scope?: LtmScope) {
+export function useLongTermMemoryImportPreview(
+  source: LtmInteropSource,
+  limit: number,
+  scope?: LtmScope,
+  options: { enabled?: boolean } = {},
+) {
   return useQuery({
     queryKey: longTermMemoryKeys.importPreview(source, limit, scope),
-    queryFn: () => api.post<LtmInteropPreview>("/long-term-memory/import/preview", { source, limit, scope }),
+    queryFn: async ({ signal }) => {
+      const body = ltmInteropPreviewRequestSchema.parse({ source, limit, scope });
+      return ltmInteropPreviewResponseSchema.parse(
+        await api.post<unknown>("/long-term-memory/import/preview", body, { signal }),
+      );
+    },
+    enabled: options.enabled ?? true,
+    placeholderData: (previousData) => previousData,
     staleTime: 30_000,
   });
 }
@@ -667,8 +602,10 @@ export function useRebuildLongTermMemory() {
 export function useRepairLongTermMemory() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (actions: Array<"rebuild_indexes" | "quarantine_malformed_notes" | "backfill_imported_source_titles">) =>
-      api.post<LtmRepairResponse>("/long-term-memory/repair", { actions }),
+    mutationFn: async (actions: SharedLtmRepairAction[]) => {
+      const body = ltmRepairRequestSchema.parse({ actions });
+      return ltmRepairResponseSchema.parse(await api.post<unknown>("/long-term-memory/repair", body));
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
   });
 }
@@ -676,30 +613,12 @@ export function useRepairLongTermMemory() {
 export function useImportLongTermMemorySourceNotes() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({
-      source,
-      sourceIds,
-      limit,
-      scope,
-      connectionId,
-      model,
-      instruction,
-      applyLowRisk,
-      importConcurrency,
-      mode,
-    }: ImportLongTermMemorySourceNotesInput) =>
-      api.post<ImportLongTermMemorySourceNotesResponse>("/long-term-memory/import/source-notes", {
-        source,
-        sourceIds,
-        limit,
-        scope,
-        connectionId,
-        model,
-        instruction,
-        applyLowRisk,
-        importConcurrency,
-        mode,
-      }),
+    mutationFn: async ({ signal, ...input }: ImportLongTermMemorySourceNotesInput) => {
+      const body = ltmImportSourceNotesRequestSchema.parse(input);
+      return ltmImportSourceNotesResponseSchema.parse(
+        await api.post<unknown>("/long-term-memory/import/source-notes", body, { signal }),
+      );
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
   });
 }
@@ -729,11 +648,12 @@ export function useSkipLongTermMemoryDraftMutations() {
 export function useExtractLongTermMemorySourceNote() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ noteId, ...body }: ExtractLongTermMemorySourceInput) =>
-      api.post<ExtractLongTermMemorySourceResponse>(`/long-term-memory/notes/${noteId}/extract`, {
-        ...body,
-        mode: body.mode,
-      }),
+    mutationFn: async ({ noteId, ...input }: ExtractLongTermMemorySourceInput) => {
+      const body = ltmExtractSourceNoteRequestSchema.parse(input);
+      return ltmExtractSourceNoteResponseSchema.parse(
+        await api.post<unknown>(`/long-term-memory/notes/${noteId}/extract`, body),
+      );
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
   });
 }

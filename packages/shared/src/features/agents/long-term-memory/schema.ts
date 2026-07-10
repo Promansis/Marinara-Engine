@@ -52,7 +52,6 @@ const ltmGlobalSettingsShape = z
     longTermMemorySemanticWeight: z.number().finite().min(0).max(1).nullable().optional(),
     longTermMemoryLexicalWeight: z.number().finite().min(0).max(1).nullable().optional(),
     longTermMemoryGraphWeight: z.number().finite().min(0).max(1).nullable().optional(),
-    longTermMemoryMetadataWeight: z.number().finite().min(0).max(2).nullable().optional(),
     longTermMemoryKeywordWeight: z.number().finite().min(0).max(1).nullable().optional(),
     longTermMemoryIncludeResolved: z.boolean().optional(),
     longTermMemoryRecallPreamble: z.string().max(500).optional(),
@@ -67,6 +66,7 @@ export const ltmGlobalSettingsSchema = z.preprocess((value) => {
   const input = value as Record<string, unknown>;
   const normalized = { ...input };
   delete normalized.extractionMode;
+  delete normalized.longTermMemoryMetadataWeight;
   for (const key of Object.keys(normalized)) {
     if (LTM_GLOBAL_LEGACY_KEYS.test(key)) delete normalized[key];
   }
@@ -986,6 +986,109 @@ export const ltmIndexStateSchema = z
   })
   .strict();
 
+export const ltmStatusResponseSchema = z
+  .object({
+    initialized: z.boolean(),
+    directory: z.string().min(1).max(240),
+    notes: z
+      .object({
+        total: z.number().int().min(0),
+        byType: z.record(z.string().min(1), z.number().int().min(0)),
+        byStatus: z.record(z.string().min(1), z.number().int().min(0)),
+      })
+      .strict(),
+    events: z
+      .object({
+        logAvailable: z.boolean(),
+        bytes: z.number().int().min(0).nullable(),
+      })
+      .strict(),
+    indexes: z
+      .object({
+        health: ltmIndexHealthSchema,
+        manifestAvailable: z.boolean(),
+        generationId: z.string().uuid().nullable(),
+        currentGenerationId: z.string().uuid().nullable(),
+        recovered: z.boolean(),
+        dirty: z.boolean(),
+        rebuildState: ltmIndexRebuildStateSchema,
+        errors: z.array(
+          z
+            .object({
+              index: z.string().min(1).max(120),
+              code: z.string().min(1).max(120),
+            })
+            .strict(),
+        ),
+        warnings: z.array(z.string().min(1).max(2_000)),
+        generatedAt: ltmIsoTimestampSchema.nullable(),
+        sourceHash: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/)
+          .nullable(),
+        noteCount: z.number().int().min(0).nullable(),
+        chunkCount: z.number().int().min(0).nullable(),
+        chunkFormatVersion: z.number().int().min(1).nullable(),
+        embeddingsAvailable: z.boolean(),
+        embeddedChunkCount: z.number().int().min(0),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const ltmIntegrityIssueSchema = z
+  .object({
+    severity: z.enum(["info", "warning", "error"]),
+    code: z.string().min(1).max(120),
+    path: ltmSafeRelativePathSchema.optional(),
+    noteId: ltmNoteIdSchema.optional(),
+    message: z.string().min(1).max(2_000),
+  })
+  .strict();
+
+export const ltmIntegrityResponseSchema = z
+  .object({
+    ok: z.boolean(),
+    health: ltmIndexHealthSchema,
+    checkedAt: ltmIsoTimestampSchema,
+    noteCount: z.number().int().min(0),
+    eventCount: z.number().int().min(0),
+    issues: z.array(ltmIntegrityIssueSchema).max(10_000),
+  })
+  .strict();
+
+export const ltmRepairActionSchema = z.enum([
+  "rebuild_indexes",
+  "quarantine_malformed_notes",
+  "backfill_imported_source_titles",
+]);
+
+export const ltmRepairRequestSchema = z
+  .object({
+    actions: z
+      .array(ltmRepairActionSchema)
+      .min(1)
+      .max(3)
+      .refine((actions) => new Set(actions).size === actions.length, "Repair actions must be unique."),
+  })
+  .strict();
+
+export const ltmRepairActionResultSchema = z
+  .object({
+    action: ltmRepairActionSchema,
+    result: z.enum(["rebuilt", "backfilled", "no_titles_to_backfill", "quarantined", "no_malformed_notes"]),
+    count: z.number().int().min(0).optional(),
+  })
+  .strict();
+
+export const ltmRepairResponseSchema = z
+  .object({
+    repairedAt: ltmIsoTimestampSchema,
+    actions: z.array(ltmRepairActionResultSchema).min(1).max(3),
+    integrity: ltmIntegrityResponseSchema,
+  })
+  .strict();
+
 export const ltmTransferRebuildSummarySchema = z
   .object({
     generatedAt: ltmIsoTimestampSchema,
@@ -1200,6 +1303,272 @@ export const ltmExtractionResponseSchema = z
   })
   .strict();
 
+export const ltmExtractionDiagnosticSchema = z
+  .object({
+    severity: z.enum(["warning", "error"]),
+    code: z.string().min(1).max(120),
+    candidateIndex: z.number().int().min(0).max(999).optional(),
+    mutationId: z.string().uuid().optional(),
+    noteId: ltmNoteIdSchema.optional(),
+    message: z.string().min(1).max(2_000),
+    details: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+
+export const ltmExtractSourceNoteRequestSchema = z
+  .object({
+    chatId: z.string().min(1).max(120).optional(),
+    connectionId: z.string().min(1).max(120).optional(),
+    model: z.string().min(1).max(240).optional(),
+    instruction: z.string().max(2_000).optional(),
+    applyLowRisk: z.boolean().optional(),
+    mode: ltmModeSchema.optional(),
+  })
+  .strict()
+  .default({});
+
+const ltmExtractionTransportPayloadSchema = z
+  .object({
+    summary: z.string().max(2_000),
+    mutations: z.array(ltmDraftMutationSchema),
+  })
+  .strict();
+
+export const ltmExtractSourceNoteResponseSchema = z
+  .object({
+    draft: ltmExtractionDraftSchema.nullable(),
+    diagnostics: z.array(ltmExtractionDiagnosticSchema).max(500),
+    outcome: ltmExtractionOutcomeSchema,
+    response: ltmExtractionTransportPayloadSchema,
+    appliedMutationIds: z.array(z.string().uuid()).max(500),
+    skippedMutationIds: z.array(z.string().uuid()).max(500),
+  })
+  .strict();
+
+export const ltmInteropSourceSchema = z.enum(["characters", "lorebooks", "chats"]);
+
+export const ltmInteropPreviewRequestSchema = z
+  .object({
+    source: ltmInteropSourceSchema,
+    limit: z.number().int().min(1).max(100).default(100),
+    scope: ltmScopeSchema.optional(),
+  })
+  .strict();
+
+const ltmInteropPreviewSampleBaseSchema = z.object({
+  sourceId: z.string().min(1).max(120),
+  title: z.string().min(1).max(240),
+  mutationCount: z.number().int().min(0).max(10_000),
+  summary: z.string().max(2_000),
+  snippet: z.string().max(280),
+});
+
+export const ltmInteropPreviewSampleSchema = z.discriminatedUnion("status", [
+  ltmInteropPreviewSampleBaseSchema.extend({ status: z.literal("pending") }).strict(),
+  ltmInteropPreviewSampleBaseSchema
+    .extend({
+      status: z.literal("imported"),
+      existingNoteId: ltmNoteIdSchema,
+      existingNoteTitle: z.string().min(1).max(240),
+    })
+    .strict(),
+]);
+
+export const ltmInteropPreviewResponseSchema = z
+  .object({
+    source: ltmInteropSourceSchema,
+    scanned: z.number().int().min(0).max(100),
+    draftable: z.number().int().min(0).max(100),
+    importedCount: z.number().int().min(0).max(100),
+    samples: z.array(ltmInteropPreviewSampleSchema).max(100),
+  })
+  .strict()
+  .superRefine((response, ctx) => {
+    const pending = response.samples.filter((sample) => sample.status === "pending").length;
+    const imported = response.samples.length - pending;
+    for (const [key, actual, expected] of [
+      ["scanned", response.scanned, response.samples.length],
+      ["draftable", response.draftable, pending],
+      ["importedCount", response.importedCount, imported],
+    ] as const) {
+      if (actual !== expected) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [key],
+          message: `${key} does not match the returned preview rows.`,
+        });
+      }
+    }
+  });
+
+export const ltmImportSourceNotesRequestSchema = z
+  .object({
+    source: ltmInteropSourceSchema,
+    sourceIds: z
+      .array(z.string().min(1).max(120))
+      .min(1)
+      .max(100)
+      .refine((sourceIds) => new Set(sourceIds).size === sourceIds.length, "Source ids must be unique."),
+    limit: z.number().int().min(1).max(100).default(100),
+    scope: ltmScopeSchema.optional(),
+    connectionId: z.string().min(1).max(120).optional(),
+    model: z.string().min(1).max(240).optional(),
+    instruction: z.string().max(2_000).optional(),
+    applyLowRisk: z.boolean().optional(),
+    importConcurrency: z.number().int().min(1).max(10).optional(),
+    mode: ltmModeSchema.optional(),
+  })
+  .strict();
+
+const ltmImportedSourceResultBaseSchema = z.object({
+  sourceId: z.string().min(1).max(120),
+  title: z.string().min(1).max(240),
+  note: ltmNoteSchema,
+  created: z.boolean(),
+  sourceWriteStatus: z.enum(["created", "refreshed"]),
+  extractionMethod: z.enum(["llm", "direct_ingest"]),
+  outcome: ltmExtractionOutcomeSchema,
+  appliedMutationIds: z.array(z.string().uuid()).max(500),
+  skippedMutationIds: z.array(z.string().uuid()).max(500),
+});
+
+export const ltmImportedSourceResultSchema = z
+  .discriminatedUnion("extractionStatus", [
+    ltmImportedSourceResultBaseSchema
+      .extend({
+        extractionStatus: z.literal("succeeded"),
+        retryable: z.literal(false),
+        draft: ltmExtractionDraftSchema.nullable(),
+        diagnostics: z.array(ltmExtractionDiagnosticSchema).max(500),
+      })
+      .strict(),
+    ltmImportedSourceResultBaseSchema
+      .extend({
+        extractionStatus: z.literal("failed"),
+        retryable: z.literal(true),
+        error: z
+          .object({
+            code: z.string().min(1).max(120),
+            message: z.string().min(1).max(2_000),
+          })
+          .strict(),
+        draft: z.null(),
+        diagnostics: z.array(ltmExtractionDiagnosticSchema).max(500),
+      })
+      .strict(),
+    ltmImportedSourceResultBaseSchema
+      .extend({
+        extractionStatus: z.literal("cancelled"),
+        retryable: z.literal(true),
+        error: z
+          .object({
+            code: z.literal("cancelled"),
+            message: z.string().min(1).max(2_000),
+          })
+          .strict(),
+        draft: z.null(),
+        diagnostics: z.array(ltmExtractionDiagnosticSchema).max(500),
+      })
+      .strict(),
+  ])
+  .superRefine((result, ctx) => {
+    if (result.created !== (result.sourceWriteStatus === "created")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["sourceWriteStatus"],
+        message: "Source write status must agree with whether the note was created or refreshed.",
+      });
+    }
+    const expectedExtracted = result.extractionStatus === "succeeded";
+    if (result.note.extracted !== expectedExtracted) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["note", "extracted"],
+        message: `Persisted source extraction state must be ${expectedExtracted}.`,
+      });
+    }
+  });
+
+export const ltmImportSourceWriteFailureSchema = z
+  .object({
+    sourceId: z.string().min(1).max(120),
+    title: z.string().min(1).max(240),
+    sourceWriteStatus: z.literal("failed"),
+    extractionStatus: z.literal("not_started"),
+    retryable: z.literal(true),
+    error: z
+      .object({
+        code: z.literal("source_write_failed"),
+        message: z.string().min(1).max(2_000),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const ltmImportSourceNotesBatchStatusSchema = z.enum(["success", "partial_success", "failed", "cancelled"]);
+
+export const ltmImportSourceNotesResponseSchema = z
+  .object({
+    operationId: z.string().uuid(),
+    batchStatus: ltmImportSourceNotesBatchStatusSchema,
+    source: ltmInteropSourceSchema,
+    imported: z.array(ltmImportedSourceResultSchema).max(100),
+    writeFailures: z.array(ltmImportSourceWriteFailureSchema).max(100),
+    missingSourceIds: z.array(z.string().min(1).max(120)).max(100),
+    counts: z
+      .object({
+        requested: z.number().int().min(0).max(100),
+        sourceNotesWritten: z.number().int().min(0).max(100),
+        succeeded: z.number().int().min(0).max(100),
+        failed: z.number().int().min(0).max(100),
+        cancelled: z.number().int().min(0).max(100),
+        missing: z.number().int().min(0).max(100),
+        sourceWriteFailed: z.number().int().min(0).max(100),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((response, ctx) => {
+    const expected = {
+      requested: response.imported.length + response.writeFailures.length + response.missingSourceIds.length,
+      sourceNotesWritten: response.imported.length,
+      succeeded: response.imported.filter((item) => item.extractionStatus === "succeeded").length,
+      failed: response.imported.filter((item) => item.extractionStatus === "failed").length,
+      cancelled: response.imported.filter((item) => item.extractionStatus === "cancelled").length,
+      missing: response.missingSourceIds.length,
+      sourceWriteFailed: response.writeFailures.length,
+    };
+    for (const [key, value] of Object.entries(expected)) {
+      if (response.counts[key as keyof typeof expected] !== value) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["counts", key],
+          message: `${key} does not match the returned item outcomes.`,
+        });
+      }
+    }
+    const incomplete =
+      response.counts.failed + response.counts.cancelled + response.counts.missing + response.counts.sourceWriteFailed;
+    const expectedBatchStatus =
+      incomplete === 0
+        ? "success"
+        : response.counts.succeeded > 0
+          ? "partial_success"
+          : response.counts.cancelled > 0 &&
+              response.counts.failed === 0 &&
+              response.counts.missing === 0 &&
+              response.counts.sourceWriteFailed === 0
+            ? "cancelled"
+            : "failed";
+    if (response.batchStatus !== expectedBatchStatus) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["batchStatus"],
+        message: `Batch status must be ${expectedBatchStatus} for the returned item outcomes.`,
+      });
+    }
+  });
+
 export const ltmEvidenceUnitExtractionResponseSchema = z
   .object({
     summary: z.string().max(2_000).default(""),
@@ -1279,6 +1648,13 @@ export type LtmIndexGenerationManifest = z.infer<typeof ltmIndexGenerationManife
 export type LtmIndexPointer = z.infer<typeof ltmIndexPointerSchema>;
 export type LtmIndexRebuildState = z.infer<typeof ltmIndexRebuildStateSchema>;
 export type LtmIndexState = z.infer<typeof ltmIndexStateSchema>;
+export type LtmStatusResponse = z.infer<typeof ltmStatusResponseSchema>;
+export type LtmIntegrityIssue = z.infer<typeof ltmIntegrityIssueSchema>;
+export type LtmIntegrityResponse = z.infer<typeof ltmIntegrityResponseSchema>;
+export type LtmRepairAction = z.infer<typeof ltmRepairActionSchema>;
+export type LtmRepairRequest = z.infer<typeof ltmRepairRequestSchema>;
+export type LtmRepairActionResult = z.infer<typeof ltmRepairActionResultSchema>;
+export type LtmRepairResponse = z.infer<typeof ltmRepairResponseSchema>;
 export type LtmTransferRebuildSummary = z.infer<typeof ltmTransferRebuildSummarySchema>;
 export type LtmNoteTransferApplyResponse = z.infer<typeof ltmNoteTransferApplyResponseSchema>;
 export type LtmDraftStatus = z.infer<typeof ltmDraftStatusSchema>;
@@ -1295,6 +1671,18 @@ export type LtmExtractionDroppedCandidate = z.infer<typeof ltmExtractionDroppedC
 export type LtmExtractionOutcomeState = z.infer<typeof ltmExtractionOutcomeStateSchema>;
 export type LtmExtractionOutcome = z.infer<typeof ltmExtractionOutcomeSchema>;
 export type LtmExtractionResponse = z.infer<typeof ltmExtractionResponseSchema>;
+export type LtmExtractionDiagnostic = z.infer<typeof ltmExtractionDiagnosticSchema>;
+export type LtmExtractSourceNoteRequest = z.infer<typeof ltmExtractSourceNoteRequestSchema>;
+export type LtmExtractSourceNoteResponse = z.infer<typeof ltmExtractSourceNoteResponseSchema>;
+export type LtmInteropSource = z.infer<typeof ltmInteropSourceSchema>;
+export type LtmInteropPreviewRequest = z.infer<typeof ltmInteropPreviewRequestSchema>;
+export type LtmInteropPreviewSample = z.infer<typeof ltmInteropPreviewSampleSchema>;
+export type LtmInteropPreviewResponse = z.infer<typeof ltmInteropPreviewResponseSchema>;
+export type LtmImportSourceNotesRequest = z.infer<typeof ltmImportSourceNotesRequestSchema>;
+export type LtmImportedSourceResult = z.infer<typeof ltmImportedSourceResultSchema>;
+export type LtmImportSourceWriteFailure = z.infer<typeof ltmImportSourceWriteFailureSchema>;
+export type LtmImportSourceNotesBatchStatus = z.infer<typeof ltmImportSourceNotesBatchStatusSchema>;
+export type LtmImportSourceNotesResponse = z.infer<typeof ltmImportSourceNotesResponseSchema>;
 export type LtmEvidenceUnit = z.infer<typeof ltmEvidenceUnitSchema>;
 export type LtmEvidenceUnitExtractionResponse = z.infer<typeof ltmEvidenceUnitExtractionResponseSchema>;
 export type LtmLastInjectionMemory = z.infer<typeof ltmLastInjectionMemorySchema>;
@@ -1312,8 +1700,7 @@ const ltmAgentSettingsShape = z
     model: z.string().max(240).optional(),
     instruction: z.string().max(2_000).optional(),
     importConcurrency: z.number().int().min(1).max(10).optional(),
-    importLimit: z.number().int().min(1).max(5000).optional(),
-    importSource: z.string().max(50).optional(),
+    importSource: ltmInteropSourceSchema.optional(),
     autoApplyLowRisk: z.boolean().optional(),
     longTermMemoryBudgetTokens: z.number().int().min(128).max(16_384).optional(),
     longTermMemoryMaxChunks: z.number().int().min(1).max(100).optional(),
@@ -1334,6 +1721,7 @@ export const ltmAgentSettingsSchema = z.preprocess((value) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const input = { ...(value as Record<string, unknown>) };
   delete input.extractionMode;
+  delete input.importLimit;
   return input;
 }, ltmAgentSettingsShape);
 

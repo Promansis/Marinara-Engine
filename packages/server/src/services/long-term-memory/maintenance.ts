@@ -12,12 +12,19 @@ import {
   type ChatSummaryEntry,
   type LtmDraftMutation,
   type LtmExtractionDraft,
+  type LtmImportSourceWriteFailure,
   type LtmIndexHealth,
+  type LtmIntegrityIssue,
+  type LtmIntegrityResponse,
+  type LtmInteropPreviewResponse,
+  type LtmInteropSource,
   type LtmMode,
   type LtmNote,
   type LtmNoteType,
   type LtmScope,
   type LtmSourceProvenance,
+  type LtmRepairAction,
+  type LtmRepairResponse,
 } from "@marinara-engine/shared";
 import type { DB } from "../../db/connection.js";
 import { createCharactersStorage } from "../storage/characters.storage.js";
@@ -40,18 +47,6 @@ import { readLtmIndexState } from "./index-state.js";
 import { LongTermMemoryStorage } from "./storage.js";
 import { sourceNoteIdForProvenance } from "./source-identity.js";
 import { parseStoredLtmNote } from "./stored-note.js";
-
-type IntegritySeverity = "info" | "warning" | "error";
-type IntegrityIssue = {
-  severity: IntegritySeverity;
-  code: string;
-  path?: string;
-  noteId?: string;
-  message: string;
-};
-
-export type LtmRepairAction = "rebuild_indexes" | "quarantine_malformed_notes" | "backfill_imported_source_titles";
-export type LtmInteropSource = "characters" | "lorebooks" | "chats";
 
 export type ImportSourceCandidate = {
   title: string;
@@ -148,52 +143,11 @@ function isBackfillableImportedSourceNote(note: LtmNote) {
   return note.type === "source" && note.tags.some((tag) => tag.startsWith("imported_"));
 }
 
-export interface LtmIntegrityResult {
-  ok: boolean;
-  health: LtmIndexHealth;
-  checkedAt: string;
-  noteCount: number;
-  eventCount: number;
-  issues: IntegrityIssue[];
-}
-
-export interface LtmRepairResult {
-  repairedAt: string;
-  actions: Array<{ action: LtmRepairAction; result: string; count?: number }>;
-  integrity: LtmIntegrityResult;
-}
-
-export interface LtmInteropPreview {
-  source: LtmInteropSource;
-  scanned: number;
-  draftable: number;
-  importedCount: number;
-  samples: Array<{
-    sourceId: string;
-    title: string;
-    mutationCount: number;
-    summary: string;
-    snippet: string;
-    status: "pending" | "imported";
-    existingNoteId?: string;
-    existingNoteTitle?: string;
-  }>;
-}
-
 export interface LtmInteropSourceNoteImport {
   sourceId: string;
   title: string;
   note: LtmNote;
   created: boolean;
-}
-
-export interface LtmInteropSourceNoteWriteFailure {
-  sourceId: string;
-  title: string;
-  sourceWriteStatus: "failed";
-  extractionStatus: "not_started";
-  retryable: true;
-  error: { code: "source_write_failed"; message: string };
 }
 
 export type LtmInteropImportOptions = {
@@ -302,7 +256,7 @@ async function listVaultFiles(root: string) {
   return files;
 }
 
-async function checkEventLogIntegrity(root: string, issues: IntegrityIssue[]) {
+async function checkEventLogIntegrity(root: string, issues: LtmIntegrityIssue[]) {
   const dirs = getLongTermMemoryDirectories(root);
   const publicPath = relative(root, dirs.eventLog)
     .split(/[\\/]+/)
@@ -344,7 +298,7 @@ async function checkEventLogIntegrity(root: string, issues: IntegrityIssue[]) {
 async function checkIndexCoherence(
   root: string,
   vaultNoteCount: number,
-  issues: IntegrityIssue[],
+  issues: LtmIntegrityIssue[],
   fileContents: Array<{ path: string; rawContent: string }>,
 ): Promise<LtmIndexHealth> {
   const pointerPath = ltmIndexPointerPath(root);
@@ -490,10 +444,10 @@ async function checkIndexCoherence(
   return health;
 }
 
-export async function checkLongTermMemoryIntegrity(root = getLongTermMemoryRoot()): Promise<LtmIntegrityResult> {
+export async function checkLongTermMemoryIntegrity(root = getLongTermMemoryRoot()): Promise<LtmIntegrityResponse> {
   const storage = new LongTermMemoryStorage(root);
   await storage.initializeLtmStore();
-  const issues: IntegrityIssue[] = [];
+  const issues: LtmIntegrityIssue[] = [];
   const notesById = new Map<string, LtmNote>();
   const fileContents: Array<{ path: string; rawContent: string }> = [];
 
@@ -578,7 +532,7 @@ export async function checkLongTermMemoryIntegrity(root = getLongTermMemoryRoot(
 export async function repairLongTermMemory(
   actions: LtmRepairAction[],
   root = getLongTermMemoryRoot(),
-): Promise<LtmRepairResult> {
+): Promise<LtmRepairResponse> {
   return withLtmDebugOperation(
     {
       root,
@@ -588,21 +542,14 @@ export async function repairLongTermMemory(
       details: { actions },
     },
     async (operationId) => {
-      const results: LtmRepairResult["actions"] = [];
+      const results: LtmRepairResponse["actions"] = [];
       const dirs = getLongTermMemoryDirectories(root);
+      let rebuildNeeded = false;
 
       for (const action of actions) {
         if (action === "rebuild_indexes") {
-          const result = await rebuildLongTermMemoryIndexes({ root });
-          results.push({ action, result: "rebuilt", count: result.chunkCount });
-          await recordLtmDebugEvent({
-            root,
-            operationId,
-            phase: "rebuild",
-            action: "repair_rebuild_indexes",
-            status: "ok",
-            counts: { chunks: result.chunkCount, notes: result.noteCount },
-          });
+          rebuildNeeded = true;
+          results.push({ action, result: "rebuilt" });
           continue;
         }
 
@@ -625,9 +572,7 @@ export async function repairLongTermMemory(
             patched += 1;
           }
           results.push({ action, result: patched > 0 ? "backfilled" : "no_titles_to_backfill", count: patched });
-          if (patched > 0) {
-            await rebuildLongTermMemoryIndexes({ root });
-          }
+          rebuildNeeded ||= patched > 0;
           await recordLtmDebugEvent({
             root,
             operationId,
@@ -652,9 +597,21 @@ export async function repairLongTermMemory(
           }
         }
         results.push({ action, result: moved > 0 ? "quarantined" : "no_malformed_notes", count: moved });
-        if (moved > 0) {
-          await rebuildLongTermMemoryIndexes({ root });
-        }
+        rebuildNeeded ||= moved > 0;
+      }
+
+      if (rebuildNeeded) {
+        const rebuild = await rebuildLongTermMemoryIndexes({ root });
+        const explicitRebuild = results.find((result) => result.action === "rebuild_indexes");
+        if (explicitRebuild) explicitRebuild.count = rebuild.chunkCount;
+        await recordLtmDebugEvent({
+          root,
+          operationId,
+          phase: "rebuild",
+          action: "repair_rebuild_indexes",
+          status: "ok",
+          counts: { chunks: rebuild.chunkCount, notes: rebuild.noteCount },
+        });
       }
 
       const result = {
@@ -978,7 +935,7 @@ export async function previewLongTermMemoryInterop(
   limit = 25,
   root?: string,
   scope?: LtmScope,
-): Promise<LtmInteropPreview> {
+): Promise<LtmInteropPreviewResponse> {
   const candidates = await interopImportCandidates(
     db,
     source,
@@ -995,16 +952,21 @@ export async function previewLongTermMemoryInterop(
     const existing = ids.map((id) => existingNotes.get(id)).find((note): note is LtmNote => Boolean(note));
     const trimmed = candidate.sourceText.trim();
     const snippet = trimmed.length > 200 ? `${trimmed.slice(0, 200)}…` : trimmed;
-    return {
+    const preview = {
       sourceId: candidate.sourceId,
       title: candidate.title,
       mutationCount: candidate.response.mutations.length,
       summary: candidate.response.summary,
       snippet,
-      status: existing ? ("imported" as const) : ("pending" as const),
-      existingNoteId: existing?.id,
-      existingNoteTitle: existing?.title?.trim() || candidate.title,
     };
+    return existing && existing.extracted !== false
+      ? {
+          ...preview,
+          status: "imported" as const,
+          existingNoteId: existing.id,
+          existingNoteTitle: existing.title?.trim() || candidate.title,
+        }
+      : { ...preview, status: "pending" as const };
   });
   return {
     source,
@@ -1023,7 +985,7 @@ export async function createLongTermMemoryInteropSourceNotes(
 ): Promise<{
   source: LtmInteropSource;
   imported: LtmInteropSourceNoteImport[];
-  writeFailures: LtmInteropSourceNoteWriteFailure[];
+  writeFailures: LtmImportSourceWriteFailure[];
 }> {
   return withLtmDebugOperation(
     {
@@ -1040,7 +1002,7 @@ export async function createLongTermMemoryInteropSourceNotes(
       const storage = new LongTermMemoryStorage(root);
       const candidates = plan.candidates;
       const imported: LtmInteropSourceNoteImport[] = [];
-      const writeFailures: LtmInteropSourceNoteWriteFailure[] = [];
+      const writeFailures: LtmImportSourceWriteFailure[] = [];
       await recordLtmDebugEvent({
         root,
         operationId,
@@ -1075,6 +1037,7 @@ export async function createLongTermMemoryInteropSourceNotes(
             keywords: [],
             links: [],
             provenance: candidate.provenance,
+            extracted: false,
             sections: {
               source: {
                 ...textSection(candidate.sourceText, candidate.evidence),
@@ -1106,6 +1069,7 @@ export async function createLongTermMemoryInteropSourceNotes(
                 scope: noteInput.scope,
                 tags: Array.from(new Set([...canonicalExisting.tags, ...noteInput.tags])),
                 provenance: noteInput.provenance,
+                extracted: false,
                 sections: { ...canonicalExisting.sections, ...noteInput.sections },
               },
               {

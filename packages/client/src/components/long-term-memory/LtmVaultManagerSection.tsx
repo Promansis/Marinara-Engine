@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { toast } from "sonner";
 import {
   AlertCircle,
@@ -41,6 +41,7 @@ import {
   useRemoveLongTermMemoryNotesFromScope,
   useSkipLongTermMemoryDraftMutations,
   useSearchLongTermMemory,
+  type ImportLongTermMemorySourceNotesResponse,
   type LtmSearchResponse,
   type LtmInteropSource,
 } from "../../hooks/use-long-term-memory";
@@ -126,6 +127,7 @@ import {
 
 
 type LtmImportSource = "characters" | "lorebooks" | "chats";
+const LTM_TAB_IDS: TabId[] = ["notes", "import", "review", "debug"];
 
 type RemovableLtmScope = {
   chatIds?: string[];
@@ -194,6 +196,38 @@ function scopeHasLinks(scope: LtmScope) {
   return getLtmScopeChatIds(scope).length > 0 || Boolean(scope.groupId) || Boolean(scope.characterIds?.length);
 }
 
+function QueryFailure({
+  label,
+  error,
+  stale = false,
+  onRetry,
+}: {
+  label: string;
+  error: unknown;
+  stale?: boolean;
+  onRetry: () => void;
+}) {
+  const detail = error instanceof Error && error.message ? error.message : "The request failed.";
+  return (
+    <div
+      role="alert"
+      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--destructive)]/25 bg-[var(--destructive)]/5 px-3 py-2"
+    >
+      <div className="min-w-0">
+        <div className="flex items-center gap-2 text-xs font-semibold text-[var(--foreground)]">
+          <AlertCircle size="0.875rem" className="shrink-0 text-[var(--destructive)]" />
+          {stale ? `${label} could not refresh` : `${label} could not load`}
+        </div>
+        <p className="mt-1 break-words text-[0.6875rem] text-[var(--muted-foreground)]">{detail}</p>
+      </div>
+      <ToolButton onClick={onRetry}>
+        <RotateCcw size="0.75rem" />
+        Retry
+      </ToolButton>
+    </div>
+  );
+}
+
 export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSettings, initialTab, sourceNoteId }: LtmVaultManagerSectionProps) {
   const panelPrefs = useMemo(() => extractPanelPrefs(agentSettings ?? {}), [agentSettings]);
   const importLimit = panelPrefs.importLimit;
@@ -253,6 +287,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(() => new Set());
   const [selectedImportRows, setSelectedImportRows] = useState<Set<string>>(() => new Set());
   const [activeImportIds, setActiveImportIds] = useState<Set<string>>(() => new Set());
+  const [lastImportResult, setLastImportResult] = useState<ImportLongTermMemorySourceNotesResponse | null>(null);
   const [importedRowsOpen, setImportedRowsOpen] = useState(false);
   const [creatingNote, setCreatingNote] = useState(false);
   const [createNoteDraft, setCreateNoteDraft] = useState<CreateLongTermMemoryNoteDraft | null>(null);
@@ -271,6 +306,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const [importMode, setImportMode] = useState<LtmMode>("roleplay");
   const [reviewBatchAction, setReviewBatchAction] = useState<"keep-low" | "skip-all" | null>(null);
   const reviewBatchLockRef = useRef(false);
+  const importAbortControllerRef = useRef<AbortController | null>(null);
 
   const { data: chats } = useChats();
   const { data: characters } = useCharacters();
@@ -334,7 +370,9 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   }, [chats, importSource, navigatorScope.chatId, navigatorScope.chatIds]);
   const activeRecallSettings = useMemo(() => readLongTermMemoryRecallSearchSettings(ltmSettings), [ltmSettings]);
   const activeChatMessages = useChatMessages(activeChatId, activeRecallSettings.contextMessages, Boolean(openNoteId));
-  const notes = useLongTermMemoryNotes(navigatorNoteFilter, { enabled: Boolean(selectedNavigatorThread) });
+  const notes = useLongTermMemoryNotes(navigatorNoteFilter, {
+    enabled: Boolean(selectedNavigatorThread) && (tab === "notes" || Boolean(openNoteId)),
+  });
   const reviewNotes = useLongTermMemoryNotes({}, { enabled: tab === "review" });
   const allNotesForScopes = useLongTermMemoryNotes({}, { enabled: tab === "notes" });
 
@@ -377,6 +415,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     importSource,
     importLimit,
     importSource === "chats" ? navigatorScope : undefined,
+    { enabled: tab === "import" },
   );
   const deleteNotes = useDeleteLongTermMemoryNotes();
   const removeNotesFromScope = useRemoveLongTermMemoryNotesFromScope();
@@ -392,6 +431,12 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
       setImportMode(selectedImportChatMode);
     }
   }, [importSource, selectedImportChatMode]);
+
+  useEffect(() => {
+    setLastImportResult(null);
+  }, [importSource]);
+
+  useEffect(() => () => importAbortControllerRef.current?.abort(), []);
 
   useEffect(() => {
     if (!activeChatId) return;
@@ -448,6 +493,29 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   const importRows = useMemo(() => importPreview.data?.samples ?? [], [importPreview.data?.samples]);
   const pendingImportRows = useMemo(() => importRows.filter((sample) => sample.status === "pending"), [importRows]);
   const importedImportRows = useMemo(() => importRows.filter((sample) => sample.status === "imported"), [importRows]);
+  const lastImportFailures = useMemo(() => {
+    if (!lastImportResult) return [];
+    return [
+      ...lastImportResult.imported.flatMap((item) =>
+        item.extractionStatus === "succeeded"
+          ? []
+          : [{ sourceId: item.sourceId, title: item.title, message: item.error.message }],
+      ),
+      ...lastImportResult.writeFailures.map((failure) => ({
+        sourceId: failure.sourceId,
+        title: failure.title,
+        message: failure.error.message,
+      })),
+      ...lastImportResult.missingSourceIds.map((sourceId) => ({
+        sourceId,
+        title: sourceId,
+        message: "The selected source was not found.",
+      })),
+    ];
+  }, [lastImportResult]);
+  const lastImportHasReview = Boolean(
+    lastImportResult?.imported.some((item) => (item.draft?.mutations.length ?? 0) > 0),
+  );
   const selectedVisibleImportRows = useMemo(
     () => pendingImportRows.filter((sample) => selectedImportRows.has(importRowKey(importSource, sample.sourceId))),
     [importSource, pendingImportRows, selectedImportRows],
@@ -530,6 +598,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     deleteDraftMutation.isPending ||
     skipDraftMutations.isPending;
   const reviewLoading = pendingDraftsForReview.isLoading || reviewNotes.isLoading;
+  const reviewError = pendingDraftsForReview.error ?? reviewNotes.error;
 
   useEffect(() => {
     const availableIds = new Set((notes.data ?? []).map((note) => note.id));
@@ -730,12 +799,28 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   };
 
   const setTabWithGuards = async (nextTab: TabId) => {
-    if (nextTab === tab) return;
-    if (creatingNote && !(await confirmDiscardCreate())) return;
-    if (memoryModalMode === "edit" && !(await confirmDiscardEditor())) return;
+    if (nextTab === tab) return true;
+    if (creatingNote && !(await confirmDiscardCreate())) return false;
+    if (memoryModalMode === "edit" && !(await confirmDiscardEditor())) return false;
     if (creatingNote) closeCreateForm();
     if (openNoteId) closeMemoryModal();
     setTab(nextTab);
+    return true;
+  };
+
+  const handleTabKeyDown = async (event: KeyboardEvent<HTMLButtonElement>, currentTab: TabId) => {
+    const currentIndex = LTM_TAB_IDS.indexOf(currentTab);
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % LTM_TAB_IDS.length;
+    else if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + LTM_TAB_IDS.length) % LTM_TAB_IDS.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = LTM_TAB_IDS.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextTab = LTM_TAB_IDS[nextIndex]!;
+    if (await setTabWithGuards(nextTab)) {
+      window.requestAnimationFrame(() => document.getElementById(`ltm-tab-${nextTab}`)?.focus());
+    }
   };
 
   const openMemory = async (id: string, options: { mode?: MemoryModalMode; tab?: MemoryModalTab } = {}) => {
@@ -1157,7 +1242,9 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
   };
 
   const importRowsToVault = async (sourceIds: string[]) => {
-    if (sourceIds.length === 0) return;
+    if (sourceIds.length === 0 || importSourceNotes.isPending) return;
+    const controller = new AbortController();
+    importAbortControllerRef.current = controller;
     setActiveImportIds((current) => {
       const next = new Set(current);
       for (const sourceId of sourceIds) next.add(importRowKey(importSource, sourceId));
@@ -1175,42 +1262,60 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
         applyLowRisk: importApplyLowRisk || undefined,
         importConcurrency: clampImportConcurrency(importConcurrencySetting),
         ...(importSource === "chats" ? { mode: importMode } : {}),
+        signal: controller.signal,
       });
-      const importedCount = result.imported.length;
-      const suggestionCount = result.imported.reduce((sum, item) => {
+      setLastImportResult(result);
+      for (const item of result.imported) {
+        const mutationCount =
+          item.appliedMutationIds.length + item.skippedMutationIds.length || item.draft?.mutations.length;
+        setExtractionResult(item.note.id, {
+          diagnostics: item.diagnostics,
+          outcome: item.outcome,
+          mutationCount,
+        });
+      }
+
+      const succeededItems = result.imported.filter((item) => item.extractionStatus === "succeeded");
+      const suggestionCount = succeededItems.reduce((sum, item) => {
         const applySelectionCount = item.appliedMutationIds.length + item.skippedMutationIds.length;
         return sum + (applySelectionCount > 0 ? applySelectionCount : (item.draft?.mutations.length ?? 0));
       }, 0);
-      const appliedCount = result.imported.reduce((sum, item) => sum + item.appliedMutationIds.length, 0);
-      const skippedApplyCount = result.imported.reduce((sum, item) => sum + item.skippedMutationIds.length, 0);
-      const droppedSourceCount = result.imported.filter((item) => item.outcome.droppedUnits > 0).length;
-      const emptySourceCount = result.imported.filter((item) => item.outcome.keptUnits === 0).length;
-      const missingCount = result.missingSourceIds.length;
-      const summary = [
-        `${importedCount} source note${importedCount === 1 ? "" : "s"} imported`,
-        `${suggestionCount} suggestion${suggestionCount === 1 ? "" : "s"} created`,
-        `${droppedSourceCount} source${droppedSourceCount === 1 ? "" : "s"} with dropped candidates`,
-        `${emptySourceCount} source${emptySourceCount === 1 ? "" : "s"} with no usable suggestions`,
-      ];
-      if (importApplyLowRisk) {
-        summary.push(
-          `${appliedCount} low-risk change${appliedCount === 1 ? "" : "s"} applied`,
-          `${skippedApplyCount} change${skippedApplyCount === 1 ? "" : "s"} left for review`,
+      const incompleteCount =
+        result.counts.failed + result.counts.cancelled + result.counts.missing + result.counts.sourceWriteFailed;
+      const summary = `${result.counts.succeeded} of ${result.counts.requested} source${result.counts.requested === 1 ? "" : "s"} extracted, ${suggestionCount} suggestion${suggestionCount === 1 ? "" : "s"} created`;
+      if (result.batchStatus === "success") toast.success(summary);
+      else if (result.batchStatus === "partial_success") {
+        toast.warning(`${summary}. ${incompleteCount} source${incompleteCount === 1 ? " needs" : "s need"} attention.`);
+      } else if (result.batchStatus === "cancelled") {
+        toast.warning(`Import cancelled. ${result.counts.succeeded} completed; unfinished sources remain selected.`);
+      } else {
+        toast.error(
+          `Import failed for ${incompleteCount} source${incompleteCount === 1 ? "" : "s"}. Retryable sources remain selected.`,
         );
       }
-      if (missingCount > 0) {
-        toast.error(`${summary.join(", ")}. Missing: ${result.missingSourceIds.slice(0, 3).join(", ")}`);
-      } else {
-        toast.success(summary.join(", "));
-      }
+
+      const retryableSourceIds = new Set([
+        ...result.imported.filter((item) => item.retryable).map((item) => item.sourceId),
+        ...result.writeFailures.map((failure) => failure.sourceId),
+        ...result.missingSourceIds,
+      ]);
       setSelectedImportRows((current) => {
         const next = new Set(current);
-        for (const sourceId of sourceIds) next.delete(importRowKey(importSource, sourceId));
+        for (const sourceId of sourceIds) {
+          const key = importRowKey(importSource, sourceId);
+          if (retryableSourceIds.has(sourceId)) next.add(key);
+          else next.delete(key);
+        }
         return next;
       });
     } catch (err) {
-      toast.error((err as Error).message);
+      if (err instanceof Error && err.name === "AbortError") {
+        toast.warning("Import cancelled. Unfinished sources remain selected.");
+      } else {
+        toast.error(err instanceof Error ? err.message : "Import failed");
+      }
     } finally {
+      if (importAbortControllerRef.current === controller) importAbortControllerRef.current = null;
       setActiveImportIds((current) => {
         const next = new Set(current);
         for (const sourceId of sourceIds) next.delete(importRowKey(importSource, sourceId));
@@ -1218,6 +1323,8 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
       });
     }
   };
+
+  const cancelImport = () => importAbortControllerRef.current?.abort();
 
   const noteSelectionActions: SelectionActionBarAction[] = [
     {
@@ -1266,36 +1373,52 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
     },
   ];
 
-  const importSelectionActions: SelectionActionBarAction[] = [
-    {
-      id: "import",
-      label: "Import selected",
-      icon: importSourceNotes.isPending ? (
-        <Loader2 size="0.75rem" className="animate-spin" />
-      ) : (
-        <Import size="0.75rem" />
-      ),
-      onClick: () => void importRowsToVault(selectedVisibleImportRows.map((row) => row.sourceId)),
-      disabled: selectedVisibleImportRows.length === 0 || importSourceNotes.isPending,
-      tone: "primary",
-    },
-    {
-      id: "clear",
-      label: "Clear",
-      icon: <RotateCcw size="0.75rem" />,
-      onClick: () => setAllVisibleImportRowsSelected(false),
-      disabled: importSourceNotes.isPending,
-    },
-  ];
+  const importSelectionActions: SelectionActionBarAction[] = importSourceNotes.isPending
+    ? [
+        {
+          id: "cancel",
+          label: "Cancel import",
+          icon: <X size="0.75rem" />,
+          onClick: cancelImport,
+          tone: "danger",
+        },
+      ]
+    : [
+        {
+          id: "import",
+          label: "Import selected",
+          icon: <Import size="0.75rem" />,
+          onClick: () => void importRowsToVault(selectedVisibleImportRows.map((row) => row.sourceId)),
+          disabled: selectedVisibleImportRows.length === 0,
+          tone: "primary",
+        },
+        {
+          id: "clear",
+          label: "Clear",
+          icon: <RotateCcw size="0.75rem" />,
+          onClick: () => setAllVisibleImportRowsSelected(false),
+        },
+      ];
 
   return (
     <div className="flex min-h-full flex-col gap-3 p-3 text-[var(--foreground)]">
       <div className="sticky top-0 z-10 -mx-3 bg-[var(--background)]/95 px-3 py-2 backdrop-blur-sm">
-        <div className="grid grid-cols-4 gap-1 rounded-xl bg-[var(--secondary)]/35 p-1 ring-1 ring-[var(--border)]/80">
-          {(["notes", "import", "review", "debug"] as TabId[]).map((id) => (
+        <div
+          role="tablist"
+          aria-label="Long-term memory views"
+          className="grid grid-cols-4 gap-1 rounded-xl bg-[var(--secondary)]/35 p-1 ring-1 ring-[var(--border)]/80"
+        >
+          {LTM_TAB_IDS.map((id) => (
             <button
               key={id}
-              onClick={() => setTabWithGuards(id)}
+              id={`ltm-tab-${id}`}
+              role="tab"
+              type="button"
+              aria-controls={`ltm-panel-${id}`}
+              aria-selected={tab === id}
+              tabIndex={tab === id ? 0 : -1}
+              onClick={() => void setTabWithGuards(id)}
+              onKeyDown={(event) => void handleTabKeyDown(event, id)}
               className={cn(
                 "min-w-0 truncate rounded-lg px-2 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60",
                 tab === id
@@ -1310,7 +1433,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
       </div>
 
       {tab === "notes" && (
-        <Section title="Memories">
+        <Section title="Memories" id="ltm-panel-notes" labelledBy="ltm-tab-notes">
           <div className={panelIntroCardClassName}>
             <div className="flex flex-wrap gap-1.5">
               <StatusPill
@@ -1417,8 +1540,16 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
               </div>
             )}
             <div className="space-y-2">
+              {notes.isError && (
+                <QueryFailure
+                  label="Memories"
+                  error={notes.error}
+                  stale={Boolean(notes.data)}
+                  onRetry={() => void notes.refetch()}
+                />
+              )}
               {notes.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
-              {!notes.isLoading && filteredNotes.length === 0 && (
+              {!notes.isLoading && !notes.isError && filteredNotes.length === 0 && (
                 <p className={emptyStateClassName}>No matching memories.</p>
               )}
               {!notes.isLoading && filteredNotes.length > 0 && (
@@ -1454,7 +1585,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
       )}
 
       {tab === "import" && (
-        <Section title="Import">
+        <Section title="Import" id="ltm-panel-import" labelledBy="ltm-tab-import">
           <div className={panelIntroCardClassName}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -1483,29 +1614,37 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
 
           <div className={cn("grid gap-2", importSource === "chats" ? "sm:grid-cols-[1fr_1fr]" : "sm:grid-cols-[1fr]") }>
             {importSource === "chats" && (
+              <label className="space-y-1">
+                <span className="block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Chat mode</span>
+                <select
+                  value={importMode}
+                  disabled={importSourceNotes.isPending}
+                  onChange={(event) => setImportMode(event.target.value as LtmMode)}
+                  className={compactInputClassName}
+                >
+                  {(["roleplay", "conversation", "game"] as const).map((mode) => (
+                    <option key={mode} value={mode}>
+                      {MODE_LABELS[mode]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <label className="space-y-1">
+              <span className="block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Source</span>
               <select
-                value={importMode}
-                onChange={(event) => setImportMode(event.target.value as LtmMode)}
+                value={importSource}
+                disabled={importSourceNotes.isPending}
+                onChange={(event) => handlePrefsChange({ importSource: event.target.value as LtmInteropSource })}
                 className={compactInputClassName}
               >
-                {(["roleplay", "conversation", "game"] as const).map((mode) => (
-                  <option key={mode} value={mode}>
-                    {MODE_LABELS[mode]}
+                {IMPORT_SOURCES.map((source) => (
+                  <option key={source.id} value={source.id}>
+                    {source.id === "chats" ? "Chat summaries" : source.label}
                   </option>
                 ))}
               </select>
-            )}
-            <select
-              value={importSource}
-              onChange={(event) => handlePrefsChange({ importSource: event.target.value as LtmInteropSource })}
-              className={compactInputClassName}
-            >
-              {IMPORT_SOURCES.map((source) => (
-                <option key={source.id} value={source.id}>
-                  {source.id === "chats" ? "Chat summaries" : source.label}
-                </option>
-              ))}
-            </select>
+            </label>
           </div>
           <div className={cn(sectionCardClassName, "mt-2")}>
             <div className="flex flex-wrap gap-1.5">
@@ -1517,6 +1656,65 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
               and low-risk auto-apply.
             </p>
           </div>
+          {lastImportResult && (
+            <div
+              role={lastImportResult.batchStatus === "failed" ? "alert" : "status"}
+              aria-live="polite"
+              className={cn(
+                sectionCardClassName,
+                "mt-3 space-y-2",
+                lastImportResult.batchStatus === "success"
+                  ? "border-emerald-500/25 bg-emerald-500/5"
+                  : lastImportResult.batchStatus === "failed"
+                    ? "border-[var(--destructive)]/25 bg-[var(--destructive)]/5"
+                    : "border-amber-500/25 bg-amber-500/5",
+              )}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs font-semibold text-[var(--foreground)]">
+                  {lastImportResult.batchStatus === "success"
+                    ? "Import complete"
+                    : lastImportResult.batchStatus === "partial_success"
+                      ? "Import partly complete"
+                      : lastImportResult.batchStatus === "cancelled"
+                        ? "Import cancelled"
+                        : "Import failed"}
+                </div>
+                {lastImportHasReview && (
+                  <ToolButton onClick={() => void setTabWithGuards("review")}>
+                    <Eye size="0.75rem" />
+                    Open Review
+                  </ToolButton>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                <StatusPill
+                  label={`${lastImportResult.counts.succeeded} extracted`}
+                  tone={lastImportResult.counts.succeeded > 0 ? "good" : "neutral"}
+                />
+                {lastImportResult.counts.failed > 0 && (
+                  <StatusPill label={`${lastImportResult.counts.failed} failed`} tone="bad" />
+                )}
+                {lastImportResult.counts.cancelled > 0 && (
+                  <StatusPill label={`${lastImportResult.counts.cancelled} cancelled`} tone="warn" />
+                )}
+                {lastImportResult.counts.sourceWriteFailed > 0 && (
+                  <StatusPill label={`${lastImportResult.counts.sourceWriteFailed} not saved`} tone="bad" />
+                )}
+                {lastImportResult.counts.missing > 0 && (
+                  <StatusPill label={`${lastImportResult.counts.missing} missing`} tone="warn" />
+                )}
+              </div>
+              {lastImportFailures.slice(0, 5).map((failure) => (
+                <p
+                  key={`${failure.sourceId}-${failure.message}`}
+                  className="text-[0.6875rem] text-[var(--muted-foreground)]"
+                >
+                  <span className="font-medium text-[var(--foreground)]">{failure.title}:</span> {failure.message}
+                </p>
+              ))}
+            </div>
+          )}
           <div className={cn(sectionCardClassName, "mt-3")}>
             <div className="flex flex-wrap items-center gap-2">
               <label className="flex min-h-8 items-center gap-2 rounded-lg px-2 text-xs text-[var(--foreground)]">
@@ -1537,8 +1735,16 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
           </div>
 
           <div className="mt-3 space-y-2">
+            {importPreview.isError && (
+              <QueryFailure
+                label="Import sources"
+                error={importPreview.error}
+                stale={Boolean(importPreview.data)}
+                onRetry={() => void importPreview.refetch()}
+              />
+            )}
             {importPreview.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
-            {!importPreview.isLoading && pendingImportRows.length === 0 && importedImportRows.length === 0 && (
+            {!importPreview.isLoading && !importPreview.isError && pendingImportRows.length === 0 && importedImportRows.length === 0 && (
               <p className={emptyStateClassName}>
                 No sources are ready to bring in.
               </p>
@@ -1589,9 +1795,9 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
               </div>
             )}
           </div>
-          {selectedVisibleImportRows.length > 0 && (
+          {(selectedVisibleImportRows.length > 0 || importSourceNotes.isPending) && (
             <SelectionActionBar
-              selectedCount={selectedVisibleImportRows.length}
+              selectedCount={importSourceNotes.isPending ? activeImportIds.size : selectedVisibleImportRows.length}
               actions={importSelectionActions}
               placement="sticky"
             />
@@ -1600,11 +1806,22 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
       )}
 
       {tab === "review" && (
-        <Section title="Review">
+        <Section title="Review" id="ltm-panel-review" labelledBy="ltm-tab-review">
+          {reviewError && (
+            <QueryFailure
+              label="Suggestions"
+              error={reviewError}
+              stale={Boolean(pendingDraftsForReview.data || reviewNotes.data)}
+              onRetry={() => {
+                void pendingDraftsForReview.refetch();
+                void reviewNotes.refetch();
+              }}
+            />
+          )}
           {reviewLoading && (
             <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />
           )}
-          {!reviewLoading && reviewGroups.length === 0 && (
+          {!reviewLoading && !reviewError && reviewGroups.length === 0 && (
             <p className={emptyStateClassName}>No pending suggestions to review.</p>
           )}
           {!reviewLoading && reviewGroups.length > 0 && (
@@ -1741,7 +1958,7 @@ export function LtmVaultManagerSection({ agentConfig: _agentConfig, agentSetting
       )}
 
       {tab === "debug" && (
-        <Section title="Debug">
+        <Section title="Debug" id="ltm-panel-debug" labelledBy="ltm-tab-debug">
           <LongTermMemoryDebugLogPanel />
         </Section>
       )}

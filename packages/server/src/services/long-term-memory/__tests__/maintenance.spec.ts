@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -560,6 +560,37 @@ test("repairLongTermMemory — no malformed notes yields no_malformed_notes", as
     await writeNote(root, validNote());
     const result = await repairLongTermMemory(["quarantine_malformed_notes"], root);
     assert.equal(result.actions[0]!.result, "no_malformed_notes");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("repairLongTermMemory - combined repairs publish one final index generation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-repair-combined-"));
+  try {
+    await writeNote(root, validNote({
+      id: "source_imported_combined",
+      type: "source",
+      tags: ["imported_chat"],
+      sections: { source: { text: "Imported source text.", updatedAt: timestamp } },
+    }));
+    const dirs = getLongTermMemoryDirectories(root);
+    await mkdir(join(dirs.vault, "world"), { recursive: true });
+    await writeFile(join(dirs.vault, "world", "world_bad.json"), "{invalid}");
+
+    const result = await repairLongTermMemory([
+      "quarantine_malformed_notes",
+      "backfill_imported_source_titles",
+      "rebuild_indexes",
+    ], root);
+
+    assert.deepEqual(result.actions.map((action) => action.action), [
+      "quarantine_malformed_notes",
+      "backfill_imported_source_titles",
+      "rebuild_indexes",
+    ]);
+    assert.equal((await readdir(join(dirs.indexes, "generations"), { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory()).length, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
