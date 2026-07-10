@@ -79,7 +79,7 @@ test("checkLongTermMemoryIntegrity — malformed note is flagged", async () => {
 test("checkLongTermMemoryIntegrity — missing link target is flagged", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-integrity-link-"));
   try {
-    await writeNote(root, validNote({ links: [{ target: "char_nonexistent", relation: "knows" }] }));
+    await writeNote(root, validNote({ links: [{ target: "char_nonexistent", relation: "involves" }] }));
     const result = await checkLongTermMemoryIntegrity(root);
     assert.equal(result.ok, true);
     assert.ok(result.issues.some((i) => i.code === "missing_link_target"));

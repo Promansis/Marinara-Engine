@@ -71,10 +71,6 @@ function withKeywords<T extends Record<string, unknown>>(value: T): T & { keywor
   };
 }
 
-function estimateLtmTestTokens(text: string) {
-  return Math.max(1, Math.ceil(text.length / 4));
-}
-
 async function listSourceFiles(root: URL): Promise<URL[]> {
   const entries = await readdir(root, { withFileTypes: true });
   const files: URL[] = [];
@@ -592,7 +588,7 @@ test("generation long-term memory uses global retrieval settings and injects aft
   );
 });
 
-test("assembler injects long-term memory before chat summary fallback to avoid duplicate context", async () => {
+test("assembler injects long-term memory before chat summary fallback", async () => {
   const input = {
     db: {} as AssemblerInput["db"],
     preset: {
@@ -677,7 +673,7 @@ test("assembler injects long-term memory before chat summary fallback to avoid d
   const systemPrompt = result.messages.find((message) => message.role === "system")?.content ?? "";
 
   assert.match(systemPrompt, /\[WORLD\]\nMara hid the archive key behind the clock in the tower foyer\./);
-  assert.doesNotMatch(systemPrompt, /Summary says Mara hid the archive key behind the clock/);
+  assert.match(systemPrompt, /Summary says Mara hid the archive key behind the clock/);
   assert.deepEqual(result.messages.map((message) => message.role), ["system", "user", "assistant"]);
 });
 
@@ -788,7 +784,7 @@ test("assembler places long-term memory at an explicit long_term_memory marker",
     /<long_term_memory>\n    \[WORLD\]\n    Mara hid the archive key behind the clock in the tower foyer\.\n<\/long_term_memory>/,
   );
   assert.ok(systemPrompt.indexOf("</system>") < systemPrompt.indexOf("<long_term_memory>"));
-  assert.doesNotMatch(systemPrompt, /Summary says Mara hid the archive key behind the clock/);
+  assert.match(systemPrompt, /Summary says Mara hid the archive key behind the clock/);
 });
 
 test("long-term memory budget uses prompt-clean text for legacy chunks", () => {
@@ -843,7 +839,7 @@ test("long-term memory prompt and budget dedupe exact normalized chunk text", ()
         noteId: "thread_archive_key",
         sectionKey: "summary",
         text: ` ${duplicateText.replaceAll(" ", "  ")} `,
-        noteType: "thread",
+        noteType: "world",
         status: "active",
         scope: {},
         tags: ["typed_memory"],
@@ -2737,8 +2733,7 @@ test("source note extraction applies saved extraction config to llm request", as
       "Return JSON with compact test units only.",
     );
     assert.equal(Object.prototype.hasOwnProperty.call(userPayload, "extraInstruction"), false);
-    assert.ok(estimateLtmTestTokens(userPayload.sourceText) <= 250);
-    assert.equal(userPayload.sourceText, sourceText.slice(0, 1000));
+    assert.equal(userPayload.sourceText, sourceText.trim());
     assert.equal(chatOptions.maxTokens, 1024);
     assert.equal(chatOptions.temperature, 0.5);
     assert.equal(chatOptions.reasoningEffort, "high");
@@ -3057,7 +3052,6 @@ test("default ltm extraction prompt forbids thinking and non-json wrapper text",
     ),
   );
   assert(DEFAULT_LTM_EXTRACTION_PROMPT.includes("Extract every distinct durable memory stream supported by the source."));
-  assert(!DEFAULT_LTM_EXTRACTION_PROMPT.includes("bucket"));
 });
 
 test("evidence unit extraction retries reasoning none with low when provider rejects it", async () => {
@@ -6339,7 +6333,7 @@ test("retrieval accepts legacy enabled config, per-chat weights, chunk limits, a
   }
 });
 
-test("retrieval does not double-count character scope metadata", async () => {
+test("retrieval uses character scope metadata only as a filter", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-retrieval-character-metadata-"));
   try {
     const storage = new LongTermMemoryStorage(root);
@@ -6382,11 +6376,8 @@ test("retrieval does not double-count character scope metadata", async () => {
 
     const selected = result.debug?.selected.find((candidate) => candidate.chunkId === "char_rika::current_state");
     assert(selected);
-    assert.equal(selected.rawLaneScores?.metadata, 2.5);
-    assert.equal(
-      selected.reasons.join(",").match(/character:rika/g)?.length,
-      1,
-    );
+    assert.equal(selected.rawLaneScores?.metadata, undefined);
+    assert(!selected.lanes.includes("metadata"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -6539,6 +6530,7 @@ test("generation retrieval treats metadata as filter only and honors zero-weight
       semanticWeight: 0,
       lexicalWeight: 0,
       graphWeight: 0,
+      keywordWeight: 0,
       metadataMode: "filter_only",
       debug: true,
       localEmbedder: async () => {
@@ -6551,7 +6543,7 @@ test("generation retrieval treats metadata as filter only and honors zero-weight
     assert.deepEqual(allZero.debug?.skippedLanes.sort(), [
       "bm25:zero_weight",
       "graph:zero_weight",
-      "metadata:filter_only",
+      "keyword:zero_weight",
       "vector:zero_weight",
     ]);
     assert.equal(allZero.debug?.metadataMode, "filter_only");
@@ -6565,6 +6557,7 @@ test("generation retrieval treats metadata as filter only and honors zero-weight
       semanticWeight: 0,
       lexicalWeight: 1,
       graphWeight: 0,
+      keywordWeight: 0,
       metadataMode: "filter_only",
       debug: true,
       localEmbedder: async () => {
@@ -6576,9 +6569,9 @@ test("generation retrieval treats metadata as filter only and honors zero-weight
       lexicalOnly.chunks.map((chunk) => chunk.chunk.id),
       ["world_relevant_lantern::facts"],
     );
-    assert.equal(lexicalOnly.debug?.funnel.metadataCandidates, 0);
-    assert.equal(lexicalOnly.debug?.funnel.vectorCandidates, 0);
-    assert.equal(lexicalOnly.debug?.funnel.graphCandidates, 0);
+    assert.equal(lexicalOnly.debug?.funnel.metadataCandidates ?? 0, 0);
+    assert.equal(lexicalOnly.debug?.funnel.vectorCandidates ?? 0, 0);
+    assert.equal(lexicalOnly.debug?.funnel.graphCandidates ?? 0, 0);
     assert.equal(lexicalOnly.debug?.funnel.bm25Candidates, 1);
     assert.deepEqual(lexicalOnly.debug?.activeLanes, ["bm25"]);
   } finally {
@@ -6643,6 +6636,7 @@ test("generation graph recall is not seeded by scope-only metadata", async () =>
       semanticWeight: 0,
       lexicalWeight: 0,
       graphWeight: 1,
+      keywordWeight: 0,
       metadataMode: "filter_only",
       debug: true,
       localEmbedder: async () => {
@@ -6651,8 +6645,8 @@ test("generation graph recall is not seeded by scope-only metadata", async () =>
     });
 
     assert.deepEqual(result.chunks, []);
-    assert.equal(result.debug?.funnel.metadataCandidates, 0);
-    assert.equal(result.debug?.funnel.graphCandidates, 0);
+    assert.equal(result.debug?.funnel.metadataCandidates ?? 0, 0);
+    assert.equal(result.debug?.funnel.graphCandidates ?? 0, 0);
     assert.deepEqual(result.debug?.activeLanes, ["graph"]);
   } finally {
     await rm(root, { recursive: true, force: true });

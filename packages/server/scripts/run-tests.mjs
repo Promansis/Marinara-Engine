@@ -28,7 +28,7 @@ const TEST_GLOBS = [
   "src/services/image/__tests__/*.test.ts",
   "src/services/llm/providers/__tests__/*.test.ts",
   "src/services/llm/providers/claude-subscription/__tests__/*.test.ts",
-  "src/services/long-term-memory/__tests__/*.test.ts",
+  "src/services/long-term-memory/__tests__/*.spec.ts",
 ];
 
 // Going through tsx's CLI entry and the current Node binary (rather than a
