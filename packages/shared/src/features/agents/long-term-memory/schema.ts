@@ -783,6 +783,10 @@ export const ltmNoteTransferApplyResponseSchema = z
 
 export const ltmDraftStatusSchema = z.enum(["pending", "accepted", "auto_applied"]);
 
+export const ltmDraftApplyStateSchema = z.enum(["not_started", "applying", "complete"]);
+
+export const ltmDraftIndexRebuildStatusSchema = z.enum(["not_requested", "pending", "succeeded", "failed"]);
+
 export const ltmDraftRiskSchema = z.enum(["low", "medium", "high"]);
 
 export const ltmDraftSourceSchema = z
@@ -901,6 +905,10 @@ export const ltmExtractionDraftSchema = z
   .object({
     id: z.string().uuid(),
     status: ltmDraftStatusSchema.default("pending"),
+    applyState: ltmDraftApplyStateSchema.default("not_started"),
+    indexRebuildStatus: ltmDraftIndexRebuildStatusSchema.default("not_requested"),
+    indexRebuildAt: ltmIsoTimestampSchema.optional(),
+    indexRebuildError: z.string().min(1).max(2_000).optional(),
     createdAt: ltmIsoTimestampSchema,
     updatedAt: ltmIsoTimestampSchema,
     source: ltmDraftSourceSchema.default({}),
@@ -1030,6 +1038,8 @@ export type LtmIndexMetadata = z.infer<typeof ltmIndexMetadataSchema>;
 export type LtmTransferRebuildSummary = z.infer<typeof ltmTransferRebuildSummarySchema>;
 export type LtmNoteTransferApplyResponse = z.infer<typeof ltmNoteTransferApplyResponseSchema>;
 export type LtmDraftStatus = z.infer<typeof ltmDraftStatusSchema>;
+export type LtmDraftApplyState = z.infer<typeof ltmDraftApplyStateSchema>;
+export type LtmDraftIndexRebuildStatus = z.infer<typeof ltmDraftIndexRebuildStatusSchema>;
 export type LtmDraftRisk = z.infer<typeof ltmDraftRiskSchema>;
 export type LtmDraftSource = z.infer<typeof ltmDraftSourceSchema>;
 export type LtmDraftNoteInput = z.infer<typeof ltmDraftNoteInputSchema>;

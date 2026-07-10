@@ -25,7 +25,7 @@ import { applyLtmBudget } from "../budget.js";
 import { LongTermMemoryDraftStore } from "../draft-store.js";
 import { checkLongTermMemoryIntegrity } from "../maintenance.js";
 import { renameWithRetry } from "../atomic-json.js";
-import { getLongTermMemoryDirectories } from "../paths.js";
+import { getLongTermMemoryDirectories, notePathForId } from "../paths.js";
 import { formatLongTermMemoryBlock, injectLongTermMemoryPromptBlock } from "../prompt.js";
 import {
   applyGenerationLongTermMemoryInjection,
@@ -941,10 +941,750 @@ function threadCreateMutation(
   };
 }
 
+async function createDraftSourceNote(
+  storage: LongTermMemoryStorage,
+  id: string,
+  scope: LtmNote["scope"] = {},
+) {
+  await storage.createNote(
+    {
+      id,
+      type: "scene",
+      status: "active",
+      modes: ["roleplay"],
+      scope,
+      tags: ["source_summary"],
+      links: [],
+      sections: {
+        source: {
+          text: "Source text for draft application proof.",
+          updatedAt: timestamp,
+        },
+      },
+    },
+    { suppressEvent: true },
+  );
+}
+
+test("draft apply rejects missing create dependencies before writing any mutation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-apply-create-dependency-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await createDraftSourceNote(storage, "scene_apply_create_dependency");
+    const createMutation = threadCreateMutation();
+    const linkMutation: Extract<LtmDraftMutation, { kind: "add_link" }> = {
+      id: randomUUID(),
+      kind: "add_link",
+      risk: "low",
+      confidence: 0.95,
+      summary: "Link the new thread to a missing event",
+      evidence: ["source_note:scene_apply_create_dependency"],
+      noteId: createMutation.note.id,
+      link: { target: "timeline_missing_dependency", relation: "caused_by" },
+    };
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_apply_create_dependency" },
+      response: {
+        summary: "Create with a missing dependency",
+        mutations: [createMutation, linkMutation],
+      },
+    });
+
+    await assert.rejects(
+      applyLongTermMemoryDraft(draft.id, { root, actor: "test", rebuildIndexes: false }),
+      /link target not found.*timeline_missing_dependency/i,
+    );
+
+    assert.equal(await storage.getNote(createMutation.note.id), null);
+    assert.deepEqual((await new LongTermMemoryDraftStore(root).getDraft(draft.id))?.appliedMutationIds ?? [], []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("draft apply preflights all mutation targets before changing valid notes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-apply-target-preflight-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await createDraftSourceNote(storage, "scene_apply_target_preflight");
+    await storage.createNote(
+      {
+        id: "world_apply_target_preflight",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: {
+            text: "The archive door is closed.",
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    const appendMutation: Extract<LtmDraftMutation, { kind: "append_section" }> = {
+      id: randomUUID(),
+      kind: "append_section",
+      risk: "low",
+      confidence: 0.9,
+      summary: "Append a valid world fact",
+      evidence: ["source_note:scene_apply_target_preflight"],
+      noteId: "world_apply_target_preflight",
+      sectionKey: "facts",
+      text: "The archive key opens it.",
+    };
+    const missingMutation: Extract<LtmDraftMutation, { kind: "set_status" }> = {
+      id: randomUUID(),
+      kind: "set_status",
+      risk: "low",
+      confidence: 0.9,
+      summary: "Archive a missing thread",
+      evidence: ["source_note:scene_apply_target_preflight"],
+      noteId: "thread_apply_target_missing",
+      status: "archived",
+    };
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_apply_target_preflight" },
+      response: {
+        summary: "Mixed valid and missing targets",
+        mutations: [appendMutation, missingMutation],
+      },
+    });
+
+    await assert.rejects(
+      applyLongTermMemoryDraft(draft.id, { root, actor: "test", rebuildIndexes: false }),
+      /(?:mutation target|note) not found.*thread_apply_target_missing/i,
+    );
+
+    assert.equal(
+      (await storage.getNote("world_apply_target_preflight"))?.sections.facts?.text,
+      "The archive door is closed.",
+    );
+    assert.deepEqual((await new LongTermMemoryDraftStore(root).getDraft(draft.id))?.appliedMutationIds ?? [], []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("draft apply preflights scoped create collisions before changing valid notes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-apply-create-collision-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    const draftScope = { chatId: "chat_apply_collision_b", chatIds: ["chat_apply_collision_b"] };
+    await createDraftSourceNote(storage, "scene_apply_create_collision", draftScope);
+    await storage.createNote(
+      {
+        id: "world_apply_create_collision",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: draftScope,
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: { text: "The observatory is locked.", updatedAt: timestamp },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "char_apply_create_collision",
+        type: "character",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_apply_collision_a", chatIds: ["chat_apply_collision_a"] },
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: { text: "This identity belongs to chat A.", updatedAt: timestamp },
+        },
+      },
+      { suppressEvent: true },
+    );
+    const appendMutation: Extract<LtmDraftMutation, { kind: "append_section" }> = {
+      id: randomUUID(),
+      kind: "append_section",
+      risk: "low",
+      confidence: 0.9,
+      summary: "Append an in-scope world fact",
+      evidence: ["source_note:scene_apply_create_collision"],
+      noteId: "world_apply_create_collision",
+      sectionKey: "facts",
+      text: "The brass key opens it.",
+    };
+    const createMutation: Extract<LtmDraftMutation, { kind: "create_note" }> = {
+      id: randomUUID(),
+      kind: "create_note",
+      risk: "low",
+      confidence: 0.9,
+      summary: "Create a colliding scoped character",
+      evidence: ["source_note:scene_apply_create_collision"],
+      note: {
+        id: "char_apply_create_collision",
+        type: "character",
+        status: "active",
+        modes: ["roleplay"],
+        scope: draftScope,
+        tags: ["typed_memory"],
+        keywords: [],
+        links: [],
+        sections: {
+          facts: { text: "This identity belongs to chat B.", updatedAt: timestamp },
+        },
+      },
+    };
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      scope: draftScope,
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_apply_create_collision" },
+      response: {
+        summary: "Mixed valid mutation and scoped collision",
+        mutations: [appendMutation, createMutation],
+      },
+    });
+
+    await assert.rejects(
+      applyLongTermMemoryDraft(draft.id, { root, actor: "test", rebuildIndexes: false }),
+      /existing note from another scope/i,
+    );
+
+    assert.equal(
+      (await storage.getNote("world_apply_create_collision"))?.sections.facts?.text,
+      "The observatory is locked.",
+    );
+    assert.equal(
+      (await storage.getNote("char_apply_create_collision"))?.sections.facts?.text,
+      "This identity belongs to chat A.",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("draft apply requires its source note before changing a target", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-apply-source-preflight-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "world_apply_source_preflight",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: { text: "The north gate is sealed.", updatedAt: timestamp },
+        },
+      },
+      { suppressEvent: true },
+    );
+    const mutation: Extract<LtmDraftMutation, { kind: "append_section" }> = {
+      id: randomUUID(),
+      kind: "append_section",
+      risk: "low",
+      confidence: 0.9,
+      summary: "Append a fact without its source",
+      evidence: ["source_note:scene_apply_source_missing"],
+      noteId: "world_apply_source_preflight",
+      sectionKey: "facts",
+      text: "A silver seal controls it.",
+    };
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_apply_source_missing" },
+      response: { summary: "Missing source", mutations: [mutation] },
+    });
+
+    await assert.rejects(
+      applyLongTermMemoryDraft(draft.id, { root, actor: "test", rebuildIndexes: false }),
+      /source note not found.*scene_apply_source_missing/i,
+    );
+
+    assert.equal(
+      (await storage.getNote("world_apply_source_preflight"))?.sections.facts?.text,
+      "The north gate is sealed.",
+    );
+
+    await storage.createNote(
+      {
+        id: "world_apply_not_a_source",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: { text: "This is typed memory, not source material.", updatedAt: timestamp },
+        },
+      },
+      { suppressEvent: true },
+    );
+    const typedSourceDraft = await new LongTermMemoryDraftStore(root).createDraft({
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "world_apply_not_a_source" },
+      response: {
+        summary: "Typed note used as source",
+        mutations: [{ ...mutation, id: randomUUID(), evidence: ["source_note:world_apply_not_a_source"] }],
+      },
+    });
+
+    await assert.rejects(
+      applyLongTermMemoryDraft(typedSourceDraft.id, { root, actor: "test", rebuildIndexes: false }),
+      /source is not a source note.*world_apply_not_a_source/i,
+    );
+    assert.equal(
+      (await storage.getNote("world_apply_source_preflight"))?.sections.facts?.text,
+      "The north gate is sealed.",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("draft apply rejects duplicate mutation ids before changing a target", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-apply-duplicate-mutation-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await createDraftSourceNote(storage, "scene_apply_duplicate_mutation");
+    await storage.createNote(
+      {
+        id: "world_apply_duplicate_mutation",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        keywords: ["archive"],
+        links: [],
+        sections: {
+          facts: { text: "The archive is below the clock tower.", updatedAt: timestamp },
+        },
+      },
+      { suppressEvent: true },
+    );
+    const duplicateId = randomUUID();
+    const appendMutation: Extract<LtmDraftMutation, { kind: "append_section" }> = {
+      id: duplicateId,
+      kind: "append_section",
+      risk: "low",
+      confidence: 0.9,
+      summary: "Append an archive fact",
+      evidence: ["source_note:scene_apply_duplicate_mutation"],
+      noteId: "world_apply_duplicate_mutation",
+      sectionKey: "facts",
+      text: "A hidden stair reaches it.",
+    };
+    const keywordMutation: Extract<LtmDraftMutation, { kind: "set_keywords" }> = {
+      id: duplicateId,
+      kind: "set_keywords",
+      risk: "low",
+      confidence: 0.9,
+      summary: "Change archive keywords",
+      evidence: ["source_note:scene_apply_duplicate_mutation"],
+      noteId: "world_apply_duplicate_mutation",
+      keywords: ["archive", "stair"],
+    };
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_apply_duplicate_mutation" },
+      response: {
+        summary: "Duplicate mutation ids",
+        mutations: [appendMutation, keywordMutation],
+      },
+    });
+
+    await assert.rejects(
+      applyLongTermMemoryDraft(draft.id, { root, actor: "test", rebuildIndexes: false }),
+      /duplicate mutation id/i,
+    );
+
+    const target = await storage.getNote("world_apply_duplicate_mutation");
+    assert.equal(target?.sections.facts?.text, "The archive is below the clock tower.");
+    assert.deepEqual(target?.keywords, ["archive"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("draft apply validates edited mutations before changing any target", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-apply-edited-mutation-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await createDraftSourceNote(storage, "scene_apply_edited_mutation");
+    await storage.createNote(
+      {
+        id: "world_apply_edited_mutation",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        keywords: ["observatory"],
+        links: [],
+        sections: {
+          facts: { text: "The observatory lens is cracked.", updatedAt: timestamp },
+        },
+      },
+      { suppressEvent: true },
+    );
+    const appendMutation: Extract<LtmDraftMutation, { kind: "append_section" }> = {
+      id: randomUUID(),
+      kind: "append_section",
+      risk: "low",
+      confidence: 0.9,
+      summary: "Append an observatory fact",
+      evidence: ["source_note:scene_apply_edited_mutation"],
+      noteId: "world_apply_edited_mutation",
+      sectionKey: "facts",
+      text: "The replacement lens is hidden below the dome.",
+    };
+    const keywordMutation: Extract<LtmDraftMutation, { kind: "set_keywords" }> = {
+      id: randomUUID(),
+      kind: "set_keywords",
+      risk: "low",
+      confidence: 0.9,
+      summary: "Update observatory keywords",
+      evidence: ["source_note:scene_apply_edited_mutation"],
+      noteId: "world_apply_edited_mutation",
+      keywords: ["observatory", "lens"],
+    };
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_apply_edited_mutation" },
+      response: {
+        summary: "Edited mutation validation",
+        mutations: [appendMutation, keywordMutation],
+      },
+    });
+
+    await assert.rejects(
+      applyLongTermMemoryDraft(draft.id, {
+        root,
+        actor: "test",
+        rebuildIndexes: false,
+        editedMutations: [{ id: appendMutation.id, text: "" }],
+      }),
+      /edited mutation.*invalid|String must contain at least 1 character/i,
+    );
+
+    const target = await storage.getNote("world_apply_edited_mutation");
+    assert.equal(target?.sections.facts?.text, "The observatory lens is cracked.");
+    assert.deepEqual(target?.keywords, ["observatory"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("draft apply checkpoints committed mutations and resumes without duplicate appends", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-apply-resume-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await createDraftSourceNote(storage, "scene_apply_resume");
+    await storage.createNote(
+      {
+        id: "rel_apply_resume",
+        type: "relationship",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory", "relationship_memory"],
+        links: [],
+        sections: {
+          history: { text: "Mara and Jules guarded the gate.", updatedAt: timestamp },
+        },
+      },
+      { suppressEvent: true },
+    );
+    const appendMutation: Extract<LtmDraftMutation, { kind: "append_section" }> = {
+      id: randomUUID(),
+      kind: "append_section",
+      risk: "low",
+      confidence: 0.9,
+      summary: "Append relationship history",
+      evidence: ["source_note:scene_apply_resume"],
+      noteId: "rel_apply_resume",
+      sectionKey: "history",
+      text: "Mara entrusted Jules with the gate key.",
+    };
+    const editedAppendText = "Mara entrusted Jules with both gate keys.";
+    const createMutation = threadCreateMutation("The gate key must be returned before dawn.");
+    createMutation.note.id = "thread_apply_resume";
+    createMutation.evidence = ["source_note:scene_apply_resume"];
+    createMutation.note.sections.setup!.evidence = ["source_note:scene_apply_resume"];
+    const draftStore = new LongTermMemoryDraftStore(root);
+    const draft = await draftStore.createDraft({
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_apply_resume" },
+      response: {
+        summary: "Interrupted apply",
+        mutations: [appendMutation, createMutation],
+      },
+    });
+    const blockedCreatePath = notePathForId(createMutation.note.id, createMutation.note.type, root);
+    await mkdir(blockedCreatePath, { recursive: true });
+
+    await assert.rejects(
+      applyLongTermMemoryDraft(draft.id, {
+        root,
+        actor: "test",
+        rebuildIndexes: false,
+        editedMutations: [{ id: appendMutation.id, text: editedAppendText }],
+      }),
+    );
+    const interruptedDraft = await draftStore.getDraft(draft.id);
+    assert.deepEqual(interruptedDraft?.appliedMutationIds, [appendMutation.id]);
+    assert.equal(interruptedDraft?.applyState, "applying");
+    const storedAppendMutation = interruptedDraft?.mutations.find(
+      (mutation) => mutation.id === appendMutation.id,
+    );
+    assert.equal(
+      storedAppendMutation?.kind === "append_section" ? storedAppendMutation.text : null,
+      editedAppendText,
+    );
+    const textAfterFailure = (await storage.getNote("rel_apply_resume"))?.sections.history?.text ?? "";
+    assert.equal(textAfterFailure.split(editedAppendText).length - 1, 1);
+    assert.equal(textAfterFailure.includes(appendMutation.text), false);
+
+    await rm(blockedCreatePath, { recursive: true, force: true });
+    const result = await applyLongTermMemoryDraft(draft.id, { root, actor: "test", rebuildIndexes: false });
+
+    assert.deepEqual(result.appliedMutationIds, [createMutation.id]);
+    assert.equal(result.draft.status, "accepted");
+    assert.equal(result.draft.applyState, "complete");
+    assert.deepEqual(
+      new Set(result.draft.appliedMutationIds),
+      new Set([appendMutation.id, createMutation.id]),
+    );
+    const textAfterRetry = (await storage.getNote("rel_apply_resume"))?.sections.history?.text ?? "";
+    assert.equal(textAfterRetry.split(editedAppendText).length - 1, 1);
+    assert.equal(textAfterRetry.includes(appendMutation.text), false);
+    assert.equal((await storage.getNote(createMutation.note.id))?.sections.setup?.text, createMutation.note.sections.setup?.text);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("draft apply does not return checkpointed mutations to the pending queue", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-apply-resume-selection-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await createDraftSourceNote(storage, "scene_apply_resume_selection");
+    const checkpointedText = "The clock door opened at midnight.";
+    await storage.createNote(
+      {
+        id: "world_apply_resume_selection",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        keywords: ["clock"],
+        links: [],
+        sections: {
+          facts: {
+            text: `The clock door is hidden.\n\n${checkpointedText}`,
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    const checkpointedMutation: Extract<LtmDraftMutation, { kind: "append_section" }> = {
+      id: randomUUID(),
+      kind: "append_section",
+      risk: "low",
+      confidence: 0.9,
+      summary: "Append the midnight event",
+      evidence: ["source_note:scene_apply_resume_selection"],
+      noteId: "world_apply_resume_selection",
+      sectionKey: "facts",
+      text: checkpointedText,
+    };
+    const pendingMutation: Extract<LtmDraftMutation, { kind: "set_keywords" }> = {
+      id: randomUUID(),
+      kind: "set_keywords",
+      risk: "low",
+      confidence: 0.9,
+      summary: "Update clock-door keywords",
+      evidence: ["source_note:scene_apply_resume_selection"],
+      noteId: "world_apply_resume_selection",
+      keywords: ["clock", "door", "midnight"],
+    };
+    const draftStore = new LongTermMemoryDraftStore(root);
+    const draft = await draftStore.createDraft({
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_apply_resume_selection" },
+      response: {
+        summary: "Resume only pending selection",
+        mutations: [checkpointedMutation, pendingMutation],
+      },
+    });
+    await draftStore.updateDraft(draft.id, {
+      applyState: "applying",
+      appliedAt: timestamp,
+      appliedMutationIds: [checkpointedMutation.id],
+    });
+
+    const result = await applyLongTermMemoryDraft(draft.id, {
+      root,
+      actor: "test",
+      mutationIds: [pendingMutation.id],
+      rebuildIndexes: false,
+    });
+
+    assert.deepEqual(result.appliedMutationIds, [pendingMutation.id]);
+    assert.deepEqual(result.skippedMutationIds, []);
+    assert.equal(result.draft.status, "accepted");
+    assert.deepEqual(
+      new Set(result.draft.appliedMutationIds),
+      new Set([checkpointedMutation.id, pendingMutation.id]),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("draft apply replays an uncheckpointed append idempotently", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-apply-uncheckpointed-append-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await createDraftSourceNote(storage, "scene_apply_uncheckpointed_append");
+    const appendedText = "Mara entrusted Jules with the western gate key.";
+    await storage.createNote(
+      {
+        id: "rel_apply_uncheckpointed_append",
+        type: "relationship",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory", "relationship_memory"],
+        links: [],
+        sections: {
+          history: {
+            text: `Mara and Jules guarded the gate.\n\n${appendedText}`,
+            updatedAt: timestamp,
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    const mutation: Extract<LtmDraftMutation, { kind: "append_section" }> = {
+      id: randomUUID(),
+      kind: "append_section",
+      risk: "low",
+      confidence: 0.9,
+      summary: "Replay an append after a checkpoint crash",
+      evidence: ["source_note:scene_apply_uncheckpointed_append"],
+      noteId: "rel_apply_uncheckpointed_append",
+      sectionKey: "history",
+      text: appendedText,
+    };
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_apply_uncheckpointed_append" },
+      response: { summary: "Uncheckpointed append", mutations: [mutation] },
+    });
+
+    const result = await applyLongTermMemoryDraft(draft.id, {
+      root,
+      actor: "test",
+      rebuildIndexes: false,
+    });
+
+    assert.deepEqual(result.appliedMutationIds, [mutation.id]);
+    const text = (await storage.getNote("rel_apply_uncheckpointed_append"))?.sections.history?.text ?? "";
+    assert.equal(text.split(appendedText).length - 1, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("draft apply reports rebuild failure without hiding committed mutations", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-apply-rebuild-failure-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await createDraftSourceNote(storage, "scene_apply_rebuild_failure");
+    await storage.createNote(
+      {
+        id: "world_apply_rebuild_failure",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: {},
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          facts: { text: "The eastern bell is silent.", updatedAt: timestamp },
+        },
+      },
+      { suppressEvent: true },
+    );
+    const mutation: Extract<LtmDraftMutation, { kind: "append_section" }> = {
+      id: randomUUID(),
+      kind: "append_section",
+      risk: "low",
+      confidence: 0.9,
+      summary: "Append a bell fact",
+      evidence: ["source_note:scene_apply_rebuild_failure"],
+      noteId: "world_apply_rebuild_failure",
+      sectionKey: "facts",
+      text: "It rings only when the archive opens.",
+    };
+    const draftStore = new LongTermMemoryDraftStore(root);
+    const draft = await draftStore.createDraft({
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_apply_rebuild_failure" },
+      response: { summary: "Rebuild failure", mutations: [mutation] },
+    });
+    const dirs = getLongTermMemoryDirectories(root);
+    await mkdir(join(dirs.indexes, "embeddings.json"), { recursive: true });
+
+    const result = await applyLongTermMemoryDraft(draft.id, { root, actor: "test", rebuildIndexes: true });
+
+    assert.deepEqual(result.appliedMutationIds, [mutation.id]);
+    assert.equal(result.draft.status, "accepted");
+    assert.equal(result.indexRebuild.status, "failed");
+    assert.match(result.indexRebuild.status === "failed" ? result.indexRebuild.error : "", /EISDIR|ENOTEMPTY|directory/i);
+    assert.equal(
+      (await storage.getNote("world_apply_rebuild_failure"))?.sections.facts?.text,
+      "The eastern bell is silent.\n\nIt rings only when the archive opens.",
+    );
+    const storedDraft = await draftStore.getDraft(draft.id);
+    assert.equal(storedDraft?.status, "accepted");
+    assert.deepEqual(storedDraft?.appliedMutationIds, [mutation.id]);
+    assert.equal(storedDraft?.indexRebuildStatus, "failed");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("draft apply refuses to merge a create_note into an existing note from another scope", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-scoped-create-guard-"));
   try {
     const storage = new LongTermMemoryStorage(root);
+    await createDraftSourceNote(storage, "scene_source_second", {
+      chatId: "chat_b",
+      chatIds: ["chat_b"],
+    });
     await storage.createNote(
       {
         id: "char_damo",
@@ -1352,6 +2092,7 @@ test("source extraction auto-apply keeps medium-risk mutations pending in mixed 
     assert.deepEqual(result.appliedMutationIds, [lowMutation.id]);
     assert.deepEqual(result.skippedMutationIds, [mediumMutation.id]);
     assert.equal(result.draft.status, "pending");
+    assert.equal(result.draft.applyState, "not_started");
     assert.deepEqual(result.draft.mutations.map((mutation) => mutation.id), [mediumMutation.id]);
     assert.equal((await storage.getNote(lowMutation.note.id))?.type, "thread");
     assert.equal(await storage.getNote("rel_mara_jules"), null);
@@ -4936,6 +5677,8 @@ test("draft apply rebuilds typed indexes and keeps source audit indexes intact",
     });
 
     assert.deepEqual(result.appliedMutationIds.length, 1);
+    assert.equal(result.indexRebuild.status, "succeeded");
+    assert.equal(result.draft.indexRebuildStatus, "succeeded");
     assert.equal(sourceAfter, sourceBefore);
     assert(typedSearch.chunks.some((chunk) => chunk.chunk.noteId === "thread_typed_rebuild"));
   } finally {

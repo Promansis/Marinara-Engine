@@ -2,6 +2,7 @@ import {
   getLtmScopeChatIds,
   hasLtmSourceSummarySceneTag,
   isLtmSourceLikeNote,
+  ltmDraftMutationSchema,
   withMergedLtmScopeLinks,
   type LtmDraftMutation,
   type LtmExtractionDraft,
@@ -32,6 +33,10 @@ export interface ApplyLtmDraftResult {
   appliedMutationIds: string[];
   skippedMutationIds: string[];
   autoIncludedMutationIds: string[];
+  indexRebuild:
+    | { status: "not_requested" }
+    | { status: "succeeded" }
+    | { status: "failed"; error: string };
 }
 
 
@@ -59,7 +64,10 @@ function groupMutationsByNote(mutations: LtmDraftMutation[]): LtmDraftMutation[]
       groups.set(id, [mutation]);
     }
   }
-  return Array.from(groups.values());
+  return Array.from(groups.values()).map((group) => [
+    ...group.filter((mutation) => mutation.kind === "create_note"),
+    ...group.filter((mutation) => mutation.kind !== "create_note"),
+  ]);
 }
 
 function appendSection(
@@ -67,7 +75,7 @@ function appendSection(
   mutation: Extract<LtmDraftMutation, { kind: "append_section" }>,
 ) {
   const timestamp = nowIso();
-  const nextText = existing?.text ? `${existing.text.trim()}\n\n${mutation.text.trim()}`.trim() : mutation.text.trim();
+  const nextText = appendText(existing?.text, mutation.text);
   return withEvidence(
     {
       text: nextText,
@@ -150,15 +158,59 @@ function isSourceSummaryNote(note: Pick<LtmNote, "type" | "tags">) {
   return isLtmSourceLikeNote(note);
 }
 
+function applyEditedDraftMutations(
+  mutations: LtmDraftMutation[],
+  edits: NonNullable<ApplyLtmDraftOptions["editedMutations"]>,
+) {
+  const mutationsById = new Map(mutations.map((mutation) => [mutation.id, mutation]));
+  const editedById = new Map<string, LtmDraftMutation>();
+
+  for (const edit of edits) {
+    const original = mutationsById.get(edit.id);
+    if (!original) {
+      throw new Error(`Long-term memory edited mutation not found: ${edit.id}`);
+    }
+    if (editedById.has(edit.id)) {
+      throw new Error(`Long-term memory edited mutation appears more than once: ${edit.id}`);
+    }
+    if (edit.kind !== undefined && edit.kind !== original.kind) {
+      throw new Error(`Long-term memory edited mutation cannot change kind: ${edit.id}`);
+    }
+
+    const { id: _id, kind: _kind, ...patch } = edit;
+    const parsed = ltmDraftMutationSchema.safeParse({
+      ...original,
+      ...patch,
+      id: original.id,
+      kind: original.kind,
+    });
+    if (!parsed.success) {
+      const reason = parsed.error.issues[0]?.message ?? "schema validation failed";
+      throw new Error(`Long-term memory edited mutation is invalid (${edit.id}): ${reason}`);
+    }
+    editedById.set(edit.id, parsed.data);
+  }
+
+  return mutations.map((mutation) => editedById.get(mutation.id) ?? mutation);
+}
+
 async function preflightDraftMutations(
   storage: LongTermMemoryStorage,
   draft: LtmExtractionDraft,
   mutations: LtmDraftMutation[],
 ): Promise<void> {
+  const sourceNoteId = draft.source.sourceNoteId;
+  const sourceNote = sourceNoteId ? await storage.getNote(sourceNoteId) : null;
+  if (!sourceNote) {
+    throw new Error(`Long-term memory draft source note not found: ${sourceNoteId ?? "unknown"}`);
+  }
+  if (!isSourceSummaryNote(sourceNote)) {
+    throw new Error(`Long-term memory draft source is not a source note: ${sourceNote.id}`);
+  }
   const createIds = new Set<string>();
   const requiredNoteIds = new Set<string>();
+  const linkTargetIds = new Set<string>();
   const sourceExtractionDraft = Boolean(draft.source.sourceNoteId);
-  const sourceLikeMutationIds = new Set<string>();
 
   for (const mutation of mutations) {
     if (mutation.kind === "create_note") {
@@ -171,24 +223,51 @@ async function preflightDraftMutations(
         throw new Error(`Long-term memory draft creates the same note more than once: ${mutation.note.id}`);
       }
       createIds.add(mutation.note.id);
+      for (const link of mutation.note.links) linkTargetIds.add(link.target);
       continue;
     }
-    if (sourceExtractionDraft && (mutation.noteId.startsWith("source_") || mutation.noteId.startsWith("scene_"))) {
-      sourceLikeMutationIds.add(mutation.noteId);
-    }
     requiredNoteIds.add(mutation.noteId);
+    if (mutation.kind === "add_link") linkTargetIds.add(mutation.link.target);
   }
 
-  const sourceLikeNotes = await storage.getNotesByIds(Array.from(sourceLikeMutationIds));
-  for (const noteId of sourceLikeMutationIds) {
-    const existing = sourceLikeNotes.get(noteId);
-    if (!existing || isSourceSummaryNote(existing) || existing.type === "scene") {
+  const externalLinkTargetIds = Array.from(linkTargetIds).filter((noteId) => !createIds.has(noteId));
+  const externalRequiredNoteIds = Array.from(requiredNoteIds).filter((noteId) => !createIds.has(noteId));
+  const existingNotes = await storage.getNotesByIds(
+    Array.from(new Set([...externalLinkTargetIds, ...externalRequiredNoteIds, ...createIds])),
+  );
+  for (const noteId of externalLinkTargetIds) {
+    if (!existingNotes.has(noteId)) {
+      throw new Error(`Long-term memory draft link target not found: ${noteId}`);
+    }
+  }
+
+  for (const noteId of externalRequiredNoteIds) {
+    const existing = existingNotes.get(noteId);
+    if (!existing) {
+      throw new Error(`Long-term memory draft mutation target not found: ${noteId}`);
+    }
+    if (sourceExtractionDraft && (isSourceSummaryNote(existing) || existing.type === "scene")) {
       throw new Error(`Long-term memory source extraction draft cannot mutate scene/source notes: ${noteId}`);
     }
+    if (!canUpdateLtmScopedTarget(existing.scope, draft.scope)) {
+      throw new Error(`Long-term memory draft cannot mutate ${noteId} because it belongs to another scope.`);
+    }
   }
 
-  // Notes with status "archived" are returned by getNote/listNotes — nothing to check.
-  void requiredNoteIds;
+  for (const mutation of mutations) {
+    if (mutation.kind !== "create_note") continue;
+    if (!canUpdateLtmScopedTarget(mutation.note.scope, draft.scope)) {
+      throw new Error(
+        `Long-term memory draft cannot create ${mutation.note.id} because its scope does not match the draft.`,
+      );
+    }
+    const existing = existingNotes.get(mutation.note.id);
+    if (existing && !canUpdateLtmScopedTarget(existing.scope, mutation.note.scope)) {
+      throw new Error(
+        `Long-term memory draft cannot merge scoped create ${mutation.note.id} into an existing note from another scope.`,
+      );
+    }
+  }
 }
 
 function mutationTouchesSceneId(mutation: LtmDraftMutation) {
@@ -402,11 +481,19 @@ async function applyLongTermMemoryDraftInner(
     if (!draft.source.sourceNoteId) {
       throw new Error(`Long-term memory draft is not tied to a source note: ${draftId}`);
     }
+    const mutationIds = new Set<string>();
+    for (const mutation of draft.mutations) {
+      if (mutationIds.has(mutation.id)) {
+        throw new Error(`Long-term memory draft has duplicate mutation id: ${mutation.id}`);
+      }
+      mutationIds.add(mutation.id);
+    }
 
     const storage = new LongTermMemoryStorage(options.root);
     const actor = options.actor ?? (options.autoApplyLowRiskOnly ? "auto_low_risk" : "maintenance_api");
     const appliedMutationIds: string[] = [];
     const selectedMutationIds = options.mutationIds ? new Set(options.mutationIds) : null;
+    const previouslyAppliedMutationIds = new Set(draft.appliedMutationIds ?? []);
     const unknownMutationIds = options.mutationIds?.filter(
       (mutationId) => !draft.mutations.some((mutation) => mutation.id === mutationId),
     );
@@ -414,13 +501,15 @@ async function applyLongTermMemoryDraftInner(
       throw new Error(`Long-term memory draft mutation not found: ${unknownMutationIds.join(", ")}`);
     }
     if (options.editedMutations?.length) {
-      const editedById = new Map(options.editedMutations.map((edit) => [edit.id as string, edit]));
-      draft.mutations = draft.mutations.map((mutation) => {
-        const edit = editedById.get(mutation.id);
-        if (!edit) return mutation;
-        const { id, kind, ...patch } = edit;
-        return { ...mutation, ...patch } as typeof mutation;
-      });
+      for (const edit of options.editedMutations) {
+        if (selectedMutationIds && !selectedMutationIds.has(edit.id)) {
+          throw new Error(`Long-term memory edited mutation was not selected: ${edit.id}`);
+        }
+        if (previouslyAppliedMutationIds.has(edit.id)) {
+          throw new Error(`Long-term memory edited mutation was already applied: ${edit.id}`);
+        }
+      }
+      draft.mutations = applyEditedDraftMutations(draft.mutations, options.editedMutations);
     }
     const lowRiskMutations = draft.mutations.filter((mutation) => {
       if (selectedMutationIds && !selectedMutationIds.has(mutation.id)) return false;
@@ -460,8 +549,14 @@ async function applyLongTermMemoryDraftInner(
       }
     }
 
+    const selectedMutations = mutationsToApply;
+    mutationsToApply = selectedMutations.filter((mutation) => !previouslyAppliedMutationIds.has(mutation.id));
     const skippedMutationIds = draft.mutations
-      .filter((mutation) => !mutationsToApply.some((candidate) => candidate.id === mutation.id))
+      .filter(
+        (mutation) =>
+          !previouslyAppliedMutationIds.has(mutation.id) &&
+          !selectedMutations.some((candidate) => candidate.id === mutation.id),
+      )
       .map((mutation) => mutation.id);
     await recordLtmDebugEvent({
       root: options.root,
@@ -471,43 +566,65 @@ async function applyLongTermMemoryDraftInner(
       status: mutationsToApply.length > 0 ? "ok" : options.autoApplyLowRiskOnly ? "skipped" : "warning",
       draftId,
       sourceNoteId: draft.source.sourceNoteId,
-      mutationIds: mutationsToApply.map((mutation) => mutation.id),
+      mutationIds: selectedMutations.map((mutation) => mutation.id),
       counts: {
         totalMutations: draft.mutations.length,
-        selectedMutations: mutationsToApply.length,
+        selectedMutations: selectedMutations.length,
+        pendingMutations: mutationsToApply.length,
         skippedMutations: skippedMutationIds.length,
       },
       details: {
         skippedMutationIds,
-        selectedKinds: mutationsToApply.reduce<Record<string, number>>((counts, mutation) => {
+        selectedKinds: selectedMutations.reduce<Record<string, number>>((counts, mutation) => {
           counts[mutation.kind] = (counts[mutation.kind] ?? 0) + 1;
           return counts;
         }, {}),
       },
     });
 
-    if (mutationsToApply.length === 0) {
+    if (selectedMutations.length === 0) {
       if (options.autoApplyLowRiskOnly) {
-        return { draft, appliedMutationIds, skippedMutationIds, autoIncludedMutationIds };
+        return {
+          draft,
+          appliedMutationIds,
+          skippedMutationIds,
+          autoIncludedMutationIds,
+          indexRebuild: { status: "not_requested" },
+        };
       }
       throw new Error(`Long-term memory draft has no mutations selected for apply: ${draftId}`);
     }
 
-    await preflightDraftMutations(storage, draft, mutationsToApply);
+    await preflightDraftMutations(storage, draft, selectedMutations);
 
     const groups = groupMutationsByNote(mutationsToApply);
-    const groupResults = await Promise.all(
-      groups.map(async (group) => {
-        const ids: string[] = [];
-        for (const mutation of group) {
-          await applyMutation(storage, draft, mutation, actor);
-          ids.push(mutation.id);
+    let progressDraft = draft;
+    if (mutationsToApply.length > 0) {
+      const applyingDraft = await store.updateDraft(draft.id, {
+        applyState: "applying",
+        mutations: draft.mutations,
+      });
+      if (!applyingDraft) {
+        throw new Error(`Long-term memory draft disappeared during apply: ${draftId}`);
+      }
+      progressDraft = applyingDraft;
+    }
+    for (const group of groups) {
+      for (const mutation of group) {
+        await applyMutation(storage, draft, mutation, actor);
+        appliedMutationIds.push(mutation.id);
+        const checkpoint = await store.updateDraft(draft.id, {
+          applyState: "applying",
+          appliedAt: progressDraft.appliedAt ?? nowIso(),
+          appliedMutationIds: Array.from(
+            new Set([...(progressDraft.appliedMutationIds ?? []), mutation.id]),
+          ),
+        });
+        if (!checkpoint) {
+          throw new Error(`Long-term memory draft disappeared during apply: ${draftId}`);
         }
-        return ids;
-      }),
-    );
-    for (const ids of groupResults) {
-      appliedMutationIds.push(...ids);
+        progressDraft = checkpoint;
+      }
     }
 
     const partialApply = skippedMutationIds.length > 0;
@@ -515,30 +632,99 @@ async function applyLongTermMemoryDraftInner(
     const remainingMutations = partialApply
       ? draft.mutations.filter((mutation) => skippedMutationIds.includes(mutation.id))
       : draft.mutations;
+    const committedMutationIds = new Set(progressDraft.appliedMutationIds ?? []);
+    const committedSelectedMutationCount = selectedMutations.filter((mutation) =>
+      committedMutationIds.has(mutation.id),
+    ).length;
+    const shouldRebuild =
+      options.rebuildIndexes !== false &&
+      selectedMutations.some((mutation) => committedMutationIds.has(mutation.id));
     const updated = await store.updateDraftStatus(draft.id, status, {
-      appliedAt: appliedMutationIds.length > 0 ? nowIso() : undefined,
+      appliedAt: progressDraft.appliedAt,
+      applyState: partialApply ? "not_started" : "complete",
+      indexRebuildStatus: shouldRebuild ? "pending" : "not_requested",
+      indexRebuildAt: shouldRebuild ? nowIso() : undefined,
+      indexRebuildError: undefined,
       mutations: remainingMutations,
-      appliedMutationIds: Array.from(new Set([...(draft.appliedMutationIds ?? []), ...appliedMutationIds])),
+      appliedMutationIds: Array.from(
+        new Set([...(progressDraft.appliedMutationIds ?? []), ...appliedMutationIds]),
+      ),
       skippedMutationIds,
     });
     if (!updated) {
       throw new Error(`Long-term memory draft disappeared during apply: ${draftId}`);
     }
 
-    if (appliedMutationIds.length > 0 && options.rebuildIndexes !== false) {
-      await rebuildLongTermMemoryIndexes({ root: options.root, scope: "typed" });
-      await recordLtmDebugEvent({
-        root: options.root,
-        operationId: options.operationId,
-        phase: "rebuild",
-        action: "apply_rebuild_indexes",
-        status: "ok",
-        draftId,
-        counts: { appliedMutations: appliedMutationIds.length },
-        details: { scope: "typed" },
-      });
+    let finalDraft = updated;
+    let indexRebuild: ApplyLtmDraftResult["indexRebuild"] = { status: "not_requested" };
+    if (shouldRebuild) {
+      let rebuildFailure: { error: unknown } | null = null;
+      try {
+        await rebuildLongTermMemoryIndexes({ root: options.root, scope: "typed" });
+      } catch (error) {
+        rebuildFailure = { error };
+      }
+
+      if (!rebuildFailure) {
+        const rebuiltDraft = await store
+          .updateDraft(draft.id, {
+            indexRebuildStatus: "succeeded",
+            indexRebuildAt: nowIso(),
+            indexRebuildError: undefined,
+          })
+          .catch((persistError) => {
+            logger.error(persistError, "[ltm] Failed to persist rebuild success for draft %s", draft.id);
+            return null;
+          });
+        if (rebuiltDraft) finalDraft = rebuiltDraft;
+        indexRebuild = { status: "succeeded" };
+        await recordLtmDebugEvent({
+          root: options.root,
+          operationId: options.operationId,
+          phase: "rebuild",
+          action: "apply_rebuild_indexes",
+          status: "ok",
+          draftId,
+          counts: { appliedMutations: committedSelectedMutationCount },
+          details: { scope: "typed" },
+        });
+      } else {
+        const err = rebuildFailure.error;
+        const rawError = err instanceof Error ? err.message : String(err);
+        const error = (rawError.trim() || "Long-term memory index rebuild failed").slice(0, 2_000);
+        const failedDraft = await store
+          .updateDraft(draft.id, {
+            indexRebuildStatus: "failed",
+            indexRebuildAt: nowIso(),
+            indexRebuildError: error,
+          })
+          .catch((persistError) => {
+            logger.error(persistError, "[ltm] Failed to persist rebuild failure for draft %s", draft.id);
+            return null;
+          });
+        if (failedDraft) finalDraft = failedDraft;
+        indexRebuild = { status: "failed", error };
+        logger.error(err, "[ltm] Index rebuild failed after committing draft %s", draft.id);
+        await recordLtmDebugEvent({
+          root: options.root,
+          operationId: options.operationId,
+          phase: "rebuild",
+          action: "apply_rebuild_indexes",
+          status: "error",
+          draftId,
+          counts: { appliedMutations: committedSelectedMutationCount },
+          details: { scope: "typed", mutationsCommitted: true },
+          error: err,
+        });
+      }
     }
 
-    return { draft: updated, appliedMutationIds, skippedMutationIds, autoIncludedMutationIds };
+    return {
+      draft: finalDraft,
+      appliedMutationIds,
+      skippedMutationIds,
+      autoIncludedMutationIds,
+      indexRebuild,
+    };
   });
 }

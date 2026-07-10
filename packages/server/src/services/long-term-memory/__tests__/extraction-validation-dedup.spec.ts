@@ -720,6 +720,15 @@ test("draft schemas and partial apply support more than twenty-five mutations", 
   try {
     const storage = new LongTermMemoryStorage(root);
     await storage.initializeLtmStore();
+    await storage.createNote(
+      note("source_test", {
+        source: {
+          text: "Source material for the large draft.",
+          updatedAt: timestamp,
+        },
+      }),
+      { suppressEvent: true },
+    );
     const mutations: LtmDraftMutation[] = Array.from({ length: 30 }, (_, index) => ({
       id: randomUUID(),
       kind: "create_note",
