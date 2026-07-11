@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -22,7 +23,12 @@ import {
 } from "../debug-log.js";
 import { getLongTermMemoryDirectories } from "../paths.js";
 import { readLtmIndexState } from "../index-state.js";
-import { readLtmIndexFamilyGeneration, writeLtmIndexFamilyGeneration } from "../index-generation.js";
+import {
+  loadLtmIndexGeneration,
+  publishLtmIndexGeneration,
+  readLtmIndexFamilyGeneration,
+  writeLtmIndexFamilyGeneration,
+} from "../index-generation.js";
 import { rebuildLongTermMemoryIndexes } from "../rebuild.js";
 import { invalidateLongTermMemoryRetrievalCache, retrieveLongTermMemory } from "../retrieval.js";
 import { LongTermMemoryStorage } from "../storage.js";
@@ -59,6 +65,19 @@ async function writeNote(root: string, note: Record<string, unknown>) {
   const noteDir = join(dirs.vault, folder);
   await mkdir(noteDir, { recursive: true });
   await writeFile(join(noteDir, `${note.id}.json`), JSON.stringify(note));
+}
+
+async function listFilesRecursively(root: string): Promise<string[]> {
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  const files: string[] = [];
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      files.push(...(await listFilesRecursively(join(root, entry.name))).map((path) => join(entry.name, path)));
+    } else if (entry.isFile()) {
+      files.push(entry.name);
+    }
+  }
+  return files;
 }
 
 test("persisted LTM index schemas reject malformed family payloads", () => {
@@ -244,7 +263,7 @@ test("checkLongTermMemoryIntegrity reports indexes as stale after a vault mutati
   }
 });
 
-test("index publication keeps the previous generation current when staging fails", async () => {
+test("index publication keeps the previous generation current when validation fails", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-index-publication-"));
   try {
     await writeNote(root, validNote());
@@ -253,12 +272,12 @@ test("index publication keeps the previous generation current when staging fails
     const pointerPath = join(dirs.indexes, "current.json");
     const pointerBefore = await readFile(pointerPath, "utf8");
 
-    await writeNote(root, validNote({ sections: { facts: { text: "Changed after publication.", updatedAt: timestamp } } }));
-    await rm(join(dirs.indexes, "metadata.json"), { force: true });
-    await mkdir(join(dirs.indexes, "metadata.json"), { recursive: true });
-
     await assert.rejects(
-      rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) }),
+      publishLtmIndexGeneration(root, {
+        version: 1,
+        generationId: randomUUID(),
+        publishedAt: timestamp,
+      }),
     );
     assert.equal(await readFile(pointerPath, "utf8"), pointerBefore);
   } finally {
@@ -323,12 +342,184 @@ test("retrieval marks an older recovered generation stale", async () => {
     });
 
     assert.equal(result.chunks[0]?.chunk.text, "A test memory.");
-    assert.ok(result.warnings.some((warning) => /Recovered typed indexes/.test(warning)));
+    assert.ok(result.warnings.some((warning) => /Recovered indexes/.test(warning)));
     const integrity = await checkLongTermMemoryIntegrity(root);
     assert.equal(integrity.health, "stale");
     assert.equal(integrity.ok, false);
     assert.ok(integrity.issues.some((issue) => issue.code === "index_generation_recovered"));
     assert.ok(integrity.issues.some((issue) => issue.code === "index_source_hash_mismatch"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rebuild quarantines malformed index state without discarding valid notes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-index-state-rebuild-"));
+  try {
+    await writeNote(root, validNote());
+    await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
+    const dirs = getLongTermMemoryDirectories(root);
+    await writeFile(join(dirs.indexes, "state.json"), "{invalid json}");
+
+    const rebuilt = await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
+    const state = await readLtmIndexState(root);
+    const note = await new LongTermMemoryStorage(root).getNote("world_test_mem");
+    const quarantined = await listFilesRecursively(join(dirs.root, "quarantine", "indexes"));
+
+    assert.equal(note?.sections.facts?.text, "A test memory.");
+    assert.equal(state.dirty, false);
+    assert.equal(state.lastPublishedGenerationId, rebuilt.generation.generationId);
+    assert.ok(quarantined.some((path) => path.endsWith("state.json")));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("repair rebuilds from canonical notes after malformed index state", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-index-state-repair-"));
+  try {
+    await writeNote(root, validNote());
+    const dirs = getLongTermMemoryDirectories(root);
+    await mkdir(dirs.indexes, { recursive: true });
+    await writeFile(join(dirs.indexes, "state.json"), "{invalid json}");
+
+    const repaired = await repairLongTermMemory(["rebuild_indexes"], root);
+    const quarantined = await listFilesRecursively(join(dirs.root, "quarantine", "indexes"));
+
+    assert.equal(repaired.integrity.health, "healthy");
+    assert.equal(repaired.integrity.noteCount, 1);
+    assert.ok(quarantined.some((path) => path.endsWith("state.json")));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rebuild quarantines a malformed current pointer before publishing a coherent generation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-index-pointer-rebuild-"));
+  try {
+    await writeNote(root, validNote());
+    await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
+    const dirs = getLongTermMemoryDirectories(root);
+    await writeFile(join(dirs.indexes, "current.json"), "{invalid json}");
+
+    const rebuilt = await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
+    const loaded = await loadLtmIndexGeneration(root);
+    const quarantined = await listFilesRecursively(join(dirs.root, "quarantine", "indexes"));
+
+    assert.equal(loaded.recovered, false);
+    assert.equal(loaded.manifest?.generationId, rebuilt.generation.generationId);
+    assert.ok(quarantined.some((path) => path.endsWith("current.json")));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("recovery rejects damaged families as one generation and refreshes a warm cache", async () => {
+  const artifacts = [
+    { label: "typed", file: "metadata.json", corrupt: true },
+    { label: "vector", file: "embeddings.json", corrupt: true },
+    { label: "keyword", file: "keywords.json", corrupt: true },
+    { label: "source", file: "source-metadata.json", corrupt: false },
+  ] as const;
+
+  for (const artifact of artifacts) {
+    const root = await mkdtemp(join(tmpdir(), `marinara-ltm-index-${artifact.label}-`));
+    try {
+      await writeNote(root, validNote({ sections: { facts: { text: "First coherent memory.", updatedAt: timestamp } } }));
+      await writeNote(
+        root,
+        validNote({
+          id: "source_index_recovery",
+          type: "source",
+          tags: ["source_summary"],
+          sections: { source: { text: "Source family fixture.", updatedAt: timestamp } },
+        }),
+      );
+      const first = await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
+      await writeNote(root, validNote({ sections: { facts: { text: "Second damaged memory.", updatedAt: timestamp } } }));
+      const second = await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
+
+      const warm = await retrieveLongTermMemory({
+        root,
+        queryText: "memory",
+        semanticWeight: 0,
+        lexicalWeight: 1,
+        graphWeight: 0,
+        keywordWeight: 0,
+        localEmbedder: async (texts) => texts.map(() => []),
+      });
+      assert.equal(warm.chunks[0]?.chunk.text, "Second damaged memory.", artifact.label);
+
+      const artifactPath = join(
+        getLongTermMemoryDirectories(root).indexes,
+        "generations",
+        second.generation.generationId,
+        artifact.file,
+      );
+      if (artifact.corrupt) {
+        await writeFile(artifactPath, "{invalid json}");
+      } else {
+        await rm(artifactPath);
+      }
+
+      const recovered = await retrieveLongTermMemory({
+        root,
+        queryText: "memory",
+        semanticWeight: 0,
+        lexicalWeight: 1,
+        graphWeight: 0,
+        keywordWeight: 0,
+        localEmbedder: async (texts) => texts.map(() => []),
+      });
+      invalidateLongTermMemoryRetrievalCache(root);
+      const afterCacheReset = await retrieveLongTermMemory({
+        root,
+        queryText: "memory",
+        semanticWeight: 0,
+        lexicalWeight: 1,
+        graphWeight: 0,
+        keywordWeight: 0,
+        localEmbedder: async (texts) => texts.map(() => []),
+      });
+      const loaded = await loadLtmIndexGeneration(root);
+      const quarantined = await listFilesRecursively(
+        join(getLongTermMemoryDirectories(root).root, "quarantine", "indexes"),
+      );
+
+      assert.equal(recovered.chunks[0]?.chunk.text, "First coherent memory.", artifact.label);
+      assert.equal(afterCacheReset.chunks[0]?.chunk.text, "First coherent memory.", artifact.label);
+      assert.ok(recovered.warnings.some((warning) => /Recovered indexes/.test(warning)), artifact.label);
+      assert.equal(loaded.recovered, true, artifact.label);
+      assert.equal(loaded.manifest?.generationId, first.generation.generationId, artifact.label);
+      assert.ok(quarantined.some((path) => path.includes(second.generation.generationId)), artifact.label);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("index rebuild writes no unread flat-index artifacts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-index-no-legacy-"));
+  try {
+    await writeNote(root, validNote());
+    await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
+    const entries = await readdir(getLongTermMemoryDirectories(root).indexes);
+
+    for (const legacyFile of [
+      "manifest.json",
+      "metadata.json",
+      "bm25.json",
+      "graph.json",
+      "keywords.json",
+      "embeddings.json",
+      "source-metadata.json",
+      "source-bm25.json",
+      "source-graph.json",
+      "source-keywords.json",
+      "source-embeddings.json",
+    ]) {
+      assert.equal(entries.includes(legacyFile), false, legacyFile);
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }

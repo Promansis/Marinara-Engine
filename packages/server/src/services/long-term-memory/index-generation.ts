@@ -19,6 +19,7 @@ import {
 import { logger } from "../../lib/logger.js";
 import { writeJsonAtomic } from "./atomic-json.js";
 import { stableJsonHash } from "./chunking.js";
+import { quarantineLtmIndexArtifact } from "./index-quarantine.js";
 import { isEnoent } from "./ltm-utils.js";
 import { getLongTermMemoryDirectories, safeJoin } from "./paths.js";
 
@@ -236,18 +237,6 @@ export async function writeLtmIndexFamilyGeneration(
   return hashes;
 }
 
-export async function writeLtmLegacyIndexFamily(
-  root: string,
-  family: LtmIndexFamily,
-  bundle: LtmIndexFamilyBundle,
-) {
-  const dirs = getLongTermMemoryDirectories(root);
-  const names = FAMILY_FILE_NAMES[family];
-  for (const key of Object.keys(names) as Array<keyof typeof names>) {
-    await writeJsonAtomic(safeJoin(dirs.indexes, names[key]), bundle[key]);
-  }
-}
-
 export async function writeLtmIndexGenerationManifest(root: string, manifest: LtmIndexGenerationManifest) {
   const parsed = ltmIndexGenerationManifestSchema.parse(manifest);
   await writeJsonAtomic(ltmIndexGenerationManifestPath(root, parsed.generationId), parsed);
@@ -255,17 +244,23 @@ export async function writeLtmIndexGenerationManifest(root: string, manifest: Lt
 }
 
 export async function publishLtmIndexGeneration(root: string, pointer: LtmIndexPointer) {
-  const previous = await readLtmIndexPointer(root).catch(() => null);
+  const requested = ltmIndexPointerSchema.parse(pointer);
+  await readCompleteLtmIndexGeneration(root, requested.generationId);
+  const previous = await readLtmIndexPointer(root).catch(async (err) => {
+    logger.warn(err, "[ltm] Quarantining malformed current index pointer before publication");
+    await quarantineLtmIndexArtifact(root, ltmIndexPointerPath(root));
+    return null;
+  });
   const fallbackGenerationIds = Array.from(
     new Set([
       ...(previous ? [previous.generationId] : []),
       ...(previous?.fallbackGenerationIds ?? []),
-      ...(pointer.fallbackGenerationIds ?? []),
+      ...(requested.fallbackGenerationIds ?? []),
     ]),
   )
-    .filter((generationId) => generationId !== pointer.generationId)
+    .filter((generationId) => generationId !== requested.generationId)
     .slice(0, 2);
-  const parsed = ltmIndexPointerSchema.parse({ ...pointer, fallbackGenerationIds });
+  const parsed = ltmIndexPointerSchema.parse({ ...requested, fallbackGenerationIds });
   await writeJsonAtomic(ltmIndexPointerPath(root), parsed);
   return parsed;
 }
@@ -375,6 +370,13 @@ async function readCompleteLtmIndexGeneration(
   return { manifest, bundles };
 }
 
+async function quarantineInvalidIndexGeneration(root: string, generationId: string, err: unknown) {
+  const quarantined = await quarantineLtmIndexArtifact(root, generationDirectory(root, generationId));
+  if (quarantined) {
+    logger.warn(err, "[ltm] Quarantining invalid index generation %s", generationId);
+  }
+}
+
 export async function loadLtmIndexGeneration(root: string): Promise<LtmIndexGenerationLoadResult> {
   const warnings: string[] = [];
   let pointer: LtmIndexPointer | null = null;
@@ -386,16 +388,21 @@ export async function loadLtmIndexGeneration(root: string): Promise<LtmIndexGene
   } catch (err) {
     pointerStatus = "invalid";
     logger.warn(err, "[ltm] Current index pointer is invalid");
+    await quarantineLtmIndexArtifact(root, ltmIndexPointerPath(root)).catch((quarantineErr) => {
+      logger.warn(quarantineErr, "[ltm] Failed to quarantine invalid current index pointer");
+    });
     warnings.push("Current long-term memory index pointer is invalid.");
   }
 
   if (pointer) {
     try {
-      currentManifest = await readLtmIndexGenerationManifest(root, pointer.generationId);
-      const current = await readCompleteLtmIndexGeneration(root, pointer.generationId, currentManifest);
+      const current = await readCompleteLtmIndexGeneration(root, pointer.generationId);
+      currentManifest = current.manifest;
       return { ...current, pointer, pointerStatus, currentManifest, recovered: false, warnings };
     } catch (err) {
-      logger.warn(err, "[ltm] Current index generation is invalid");
+      await quarantineInvalidIndexGeneration(root, pointer.generationId, err).catch((quarantineErr) => {
+        logger.warn(quarantineErr, "[ltm] Failed to quarantine invalid current index generation");
+      });
       warnings.push("Current long-term memory index generation is invalid.");
     }
   } else if (pointerStatus === "missing") {
@@ -403,12 +410,19 @@ export async function loadLtmIndexGeneration(root: string): Promise<LtmIndexGene
     return { pointer, pointerStatus, currentManifest, manifest: null, bundles: {}, recovered: false, warnings };
   }
 
-  for (const generationId of pointer?.fallbackGenerationIds ?? []) {
+  if (!pointer) {
+    return { pointer, pointerStatus, currentManifest, manifest: null, bundles: {}, recovered: false, warnings };
+  }
+
+  for (const generationId of pointer.fallbackGenerationIds ?? []) {
     try {
       const candidate = await readCompleteLtmIndexGeneration(root, generationId);
       warnings.push(`Recovered indexes from generation ${generationId}.`);
       return { ...candidate, pointer, pointerStatus, currentManifest, recovered: true, warnings };
-    } catch {
+    } catch (err) {
+      await quarantineInvalidIndexGeneration(root, generationId, err).catch((quarantineErr) => {
+        logger.warn(quarantineErr, "[ltm] Failed to quarantine invalid fallback index generation");
+      });
       continue;
     }
   }
@@ -417,45 +431,19 @@ export async function loadLtmIndexGeneration(root: string): Promise<LtmIndexGene
 }
 
 export async function loadLtmIndexFamily(root: string, family: LtmIndexFamily) {
-  const warnings: string[] = [];
-  let pointer: LtmIndexPointer | null = null;
-  let pointerStatus: "missing" | "valid" | "invalid" = "missing";
-  try {
-    pointer = await readLtmIndexPointer(root);
-    pointerStatus = pointer ? "valid" : "missing";
-  } catch (err) {
-    pointerStatus = "invalid";
-    logger.warn(err, "[ltm] Current index pointer is invalid");
-    warnings.push("Current long-term memory index pointer is invalid.");
+  const generation = await loadLtmIndexGeneration(root);
+  const bundle = generation.bundles[family] ?? null;
+  const warnings = [...generation.warnings];
+  if (generation.manifest && !bundle) {
+    warnings.push(`Current long-term memory generation has no ${family} index family.`);
   }
-
-  if (pointerStatus === "missing") {
-    warnings.push("Long-term memory indexes are not built.");
-    return { manifest: null, bundle: null, pointer, recovered: false, warnings };
-  }
-
-  if (pointer) {
-    try {
-      const current = await readLtmIndexFamilyGeneration(root, pointer.generationId, family);
-      if (current) return { ...current, pointer, recovered: false, warnings };
-      warnings.push(`Current long-term memory generation has no ${family} index family.`);
-    } catch (err) {
-      logger.warn(err, "[ltm] Current %s index generation is invalid", family);
-      warnings.push(`Current long-term memory ${family} index generation is invalid.`);
-    }
-  }
-
-  for (const generationId of pointer?.fallbackGenerationIds ?? []) {
-    try {
-      const candidate = await readLtmIndexFamilyGeneration(root, generationId, family);
-      if (!candidate) continue;
-      warnings.push(`Recovered ${family} indexes from generation ${generationId}.`);
-      return { ...candidate, pointer, recovered: true, warnings };
-    } catch {
-      continue;
-    }
-  }
-  return { manifest: null, bundle: null, pointer, recovered: false, warnings };
+  return {
+    manifest: generation.manifest,
+    bundle,
+    pointer: generation.pointer,
+    recovered: generation.recovered,
+    warnings,
+  };
 }
 
 export async function removeLtmIndexGeneration(root: string, generationId: string) {

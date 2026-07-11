@@ -31,6 +31,7 @@ import {
   applyGenerationLongTermMemoryInjection,
   buildGenerationLongTermMemoryPlan,
 } from "../generation-injection.js";
+import { loadLtmIndexGeneration, readLtmIndexFamilyGeneration } from "../index-generation.js";
 import { rebuildLongTermMemoryIndexes } from "../rebuild.js";
 import {
   applyLongTermMemoryDraft,
@@ -1671,14 +1672,17 @@ test("draft apply reports rebuild failure without hiding committed mutations", a
       response: { summary: "Rebuild failure", mutations: [mutation] },
     });
     const dirs = getLongTermMemoryDirectories(root);
-    await mkdir(join(dirs.indexes, "embeddings.json"), { recursive: true });
+    await writeFile(join(dirs.indexes, "generations"), "block generation staging");
 
     const result = await applyLongTermMemoryDraft(draft.id, { root, actor: "test", rebuildIndexes: true });
 
     assert.deepEqual(result.appliedMutationIds, [mutation.id]);
     assert.equal(result.draft.status, "accepted");
     assert.equal(result.indexRebuild.status, "failed");
-    assert.match(result.indexRebuild.status === "failed" ? result.indexRebuild.error : "", /EISDIR|ENOTEMPTY|directory/i);
+    assert.match(
+      result.indexRebuild.status === "failed" ? result.indexRebuild.error : "",
+      /EISDIR|ENOTDIR|ENOTEMPTY|directory/i,
+    );
     assert.equal(
       (await storage.getNote("world_apply_rebuild_failure"))?.sections.facts?.text,
       "The eastern bell is silent.\n\nIt rings only when the archive opens.",
@@ -4776,7 +4780,7 @@ test("source notes are excluded from normal chunks and kept for source audit chu
   );
 });
 
-test("typed rebuild updates typed indexes without rewriting source audit indexes", async () => {
+test("typed rebuild updates typed indexes while preserving source audit contents", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-typed-rebuild-"));
   try {
     const storage = new LongTermMemoryStorage(root);
@@ -4818,9 +4822,8 @@ test("typed rebuild updates typed indexes without rewriting source audit indexes
       { suppressEvent: true },
     );
 
-    await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
-    const dirs = getLongTermMemoryDirectories(root);
-    const sourceBefore = await readJsonText(join(dirs.indexes, "source-metadata.json"));
+    const initial = await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
+    const sourceBefore = await readLtmIndexFamilyGeneration(root, initial.generation.generationId, "source");
 
     await storage.updateNote(
       "char_typed_rebuild",
@@ -4835,20 +4838,25 @@ test("typed rebuild updates typed indexes without rewriting source audit indexes
       { suppressEvent: true },
     );
 
-    await rebuildLongTermMemoryIndexes({ root, scope: "typed", localEmbedder: async (texts) => texts.map(() => []) });
-    const sourceAfter = await readJsonText(join(dirs.indexes, "source-metadata.json"));
-    const typedAfter = JSON.parse(await readJsonText(join(dirs.indexes, "metadata.json"))) as {
-      chunks: Record<string, { noteId: string }>;
-    };
+    const rebuilt = await rebuildLongTermMemoryIndexes({
+      root,
+      scope: "typed",
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+    const sourceAfter = await readLtmIndexFamilyGeneration(root, rebuilt.generation.generationId, "source");
+    const typedAfter = await readLtmIndexFamilyGeneration(root, rebuilt.generation.generationId, "typed");
 
-    assert.equal(sourceAfter, sourceBefore);
-    assert(Object.values(typedAfter.chunks).some((chunk) => chunk.noteId === "char_typed_rebuild"));
+    assert(sourceBefore);
+    assert(sourceAfter);
+    assert(typedAfter);
+    assert.deepEqual(sourceAfter?.bundle.metadata, sourceBefore?.bundle.metadata);
+    assert(Object.values(typedAfter?.bundle.metadata.chunks ?? {}).some((chunk) => chunk.noteId === "char_typed_rebuild"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("source rebuild refreshes source audit indexes without changing typed metadata", async () => {
+test("source rebuild refreshes source audit indexes while preserving typed metadata", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-source-rebuild-"));
   try {
     const storage = new LongTermMemoryStorage(root);
@@ -4890,9 +4898,8 @@ test("source rebuild refreshes source audit indexes without changing typed metad
       { suppressEvent: true },
     );
 
-    await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
-    const dirs = getLongTermMemoryDirectories(root);
-    const typedBefore = await readJsonText(join(dirs.indexes, "metadata.json"));
+    const initial = await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
+    const typedBefore = await readLtmIndexFamilyGeneration(root, initial.generation.generationId, "typed");
 
     await storage.updateNote(
       "scene_source_refresh",
@@ -4908,14 +4915,19 @@ test("source rebuild refreshes source audit indexes without changing typed metad
       { suppressEvent: true },
     );
 
-    await rebuildLongTermMemoryIndexes({ root, scope: "source", localEmbedder: async (texts) => texts.map(() => []) });
-    const typedAfter = await readJsonText(join(dirs.indexes, "metadata.json"));
-    const sourceAfter = JSON.parse(await readJsonText(join(dirs.indexes, "source-metadata.json"))) as {
-      chunks: Record<string, { noteId: string }>;
-    };
+    const rebuilt = await rebuildLongTermMemoryIndexes({
+      root,
+      scope: "source",
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+    const typedAfter = await readLtmIndexFamilyGeneration(root, rebuilt.generation.generationId, "typed");
+    const sourceAfter = await readLtmIndexFamilyGeneration(root, rebuilt.generation.generationId, "source");
 
-    assert.equal(typedAfter, typedBefore);
-    assert(Object.values(sourceAfter.chunks).some((chunk) => chunk.noteId === "scene_source_refresh"));
+    assert(typedBefore);
+    assert(typedAfter);
+    assert(sourceAfter);
+    assert.deepEqual(typedAfter?.bundle.metadata, typedBefore?.bundle.metadata);
+    assert(Object.values(sourceAfter?.bundle.metadata.chunks ?? {}).some((chunk) => chunk.noteId === "scene_source_refresh"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -4991,17 +5003,12 @@ test("archived notes stay in the vault and remain indexed", async () => {
     assert(archived);
     assert.equal(archived.status, "archived");
 
-    await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
-    const dirs = getLongTermMemoryDirectories(root);
-    const graph = JSON.parse(await readFile(join(dirs.indexes, "graph.json"), "utf8")) as {
-      nodes: Record<string, unknown>;
-    };
-    const metadata = JSON.parse(await readFile(join(dirs.indexes, "metadata.json"), "utf8")) as {
-      chunks: Record<string, { noteId: string }>;
-    };
+    const rebuilt = await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
+    const typed = await readLtmIndexFamilyGeneration(root, rebuilt.generation.generationId, "typed");
 
-    assert("world_archive_sealed" in graph.nodes);
-    assert(Object.values(metadata.chunks).some((chunk) => chunk.noteId === "world_archive_sealed"));
+    assert(typed);
+    assert("world_archive_sealed" in (typed?.bundle.graph.nodes ?? {}));
+    assert(Object.values(typed?.bundle.metadata.chunks ?? {}).some((chunk) => chunk.noteId === "world_archive_sealed"));
     assert(await storage.getNote("world_active_neighbor"));
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -5689,14 +5696,13 @@ test("draft apply rebuilds typed indexes and keeps source audit indexes intact",
       { suppressEvent: true },
     );
 
-    await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
+    const initial = await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
     await retrieveLongTermMemory({
       root,
       queryText: "Typed draft seed.",
       localEmbedder: async (texts) => texts.map(() => []),
     });
-    const dirs = getLongTermMemoryDirectories(root);
-    const sourceBefore = await readJsonText(join(dirs.indexes, "source-metadata.json"));
+    const sourceBefore = await readLtmIndexFamilyGeneration(root, initial.generation.generationId, "source");
 
     const draft = await new LongTermMemoryDraftStore(root).createDraft({
       scope: {},
@@ -5729,7 +5735,9 @@ test("draft apply rebuilds typed indexes and keeps source audit indexes intact",
       rebuildIndexes: true,
     });
 
-    const sourceAfter = await readJsonText(join(dirs.indexes, "source-metadata.json"));
+    const generation = await loadLtmIndexGeneration(root);
+    assert(generation.manifest);
+    const sourceAfter = await readLtmIndexFamilyGeneration(root, generation.manifest.generationId, "source");
     const typedSearch = await retrieveLongTermMemory({
       root,
       queryText: "Typed draft seed updated.",
@@ -5739,7 +5747,9 @@ test("draft apply rebuilds typed indexes and keeps source audit indexes intact",
     assert.deepEqual(result.appliedMutationIds.length, 1);
     assert.equal(result.indexRebuild.status, "succeeded");
     assert.equal(result.draft.indexRebuildStatus, "succeeded");
-    assert.equal(sourceAfter, sourceBefore);
+    assert(sourceBefore);
+    assert(sourceAfter);
+    assert.deepEqual(sourceAfter?.bundle.metadata, sourceBefore?.bundle.metadata);
     assert(typedSearch.chunks.some((chunk) => chunk.chunk.noteId === "thread_typed_rebuild"));
   } finally {
     await rm(root, { recursive: true, force: true });

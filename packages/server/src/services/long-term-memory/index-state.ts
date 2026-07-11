@@ -1,5 +1,7 @@
 import { ltmIndexStateSchema, type LtmIndexState } from "@marinara-engine/shared";
+import { logger } from "../../lib/logger.js";
 import { readJsonFile, writeJsonAtomic } from "./atomic-json.js";
+import { quarantineLtmIndexArtifact } from "./index-quarantine.js";
 import { nowIso } from "./ltm-utils.js";
 import { getLongTermMemoryDirectories, safeJoin } from "./paths.js";
 
@@ -30,13 +32,46 @@ export function ltmIndexStatePath(root: string) {
   return safeJoin(getLongTermMemoryDirectories(root).indexes, "state.json");
 }
 
-export async function readLtmIndexState(root: string) {
+async function readLtmIndexStateFromDisk(root: string) {
   return ltmIndexStateSchema.parse(await readJsonFile(ltmIndexStatePath(root), { version: 1 }));
+}
+
+async function recoverMalformedLtmIndexState(root: string, err: unknown) {
+  const path = ltmIndexStatePath(root);
+  logger.warn(err, "[ltm] Quarantining malformed index state");
+  await quarantineLtmIndexArtifact(root, path);
+  const recovered = ltmIndexStateSchema.parse({
+    version: 1,
+    revision: Date.now(),
+    dirty: true,
+    dirtyAt: nowIso(),
+    rebuildState: "failed",
+    rebuildCompletedAt: nowIso(),
+    error: "Malformed long-term memory index state was quarantined; rebuild indexes.",
+  });
+  await writeJsonAtomic(path, recovered);
+  return recovered;
+}
+
+async function readOrRecoverLtmIndexState(root: string) {
+  try {
+    return await readLtmIndexStateFromDisk(root);
+  } catch (err) {
+    return recoverMalformedLtmIndexState(root, err);
+  }
+}
+
+export async function readLtmIndexState(root: string) {
+  try {
+    return await readLtmIndexStateFromDisk(root);
+  } catch {
+    return withLock(stateLocks, root, () => readOrRecoverLtmIndexState(root));
+  }
 }
 
 async function updateLtmIndexState(root: string, update: (state: LtmIndexState) => LtmIndexState) {
   return withLock(stateLocks, root, async () => {
-    const next = ltmIndexStateSchema.parse(update(await readLtmIndexState(root)));
+    const next = ltmIndexStateSchema.parse(update(await readOrRecoverLtmIndexState(root)));
     await writeJsonAtomic(ltmIndexStatePath(root), next);
     return next;
   });

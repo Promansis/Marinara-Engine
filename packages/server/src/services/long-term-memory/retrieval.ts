@@ -22,7 +22,7 @@ import { DEFAULT_LTM_RETRIEVAL_CONFIG } from "./default-config.js";
 import { searchLtmBm25 } from "./bm25.js";
 import type { LtmMemoryChunk } from "./chunking.js";
 import { expandLtmGraph } from "./graph.js";
-import { loadLtmIndexFamily } from "./index-generation.js";
+import { loadLtmIndexGeneration } from "./index-generation.js";
 import { searchLtmKeywordIndex } from "./keyword-index.js";
 import { getLtmMetadataMatches } from "./metadata-index.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
@@ -168,8 +168,8 @@ type LtmRetrievalBundle = {
 
 const retrievalBundleCache = new Map<string, Promise<LtmRetrievalBundle>>();
 
-function retrievalBundleCacheKey(root: string, includeSourceNotes: boolean, revision: number) {
-  return `${root}\0${includeSourceNotes ? "source" : "typed"}\0${revision}`;
+function retrievalBundleCacheKey(root: string, includeSourceNotes: boolean, revision: number, generationId: string | null) {
+  return `${root}\0${includeSourceNotes ? "source" : "typed"}\0${revision}\0${generationId ?? "none"}`;
 }
 
 function retrievalBundleCachePrefix(root: string, includeSourceNotes: boolean) {
@@ -194,8 +194,11 @@ export function invalidateLongTermMemoryRetrievalCache(root?: string, includeSou
 }
 
 async function loadRetrievalBundle(root: string, includeSourceNotes: boolean): Promise<LtmRetrievalBundle> {
-  const state = await readLtmIndexState(root);
-  const key = retrievalBundleCacheKey(root, includeSourceNotes, state.revision);
+  // Validate the active generation before returning a cached bundle. This
+  // keeps a warm process from serving a now-corrupt generation indefinitely.
+  const [state, generation] = await Promise.all([readLtmIndexState(root), loadLtmIndexGeneration(root)]);
+  const generationId = generation.manifest?.generationId ?? null;
+  const key = retrievalBundleCacheKey(root, includeSourceNotes, state.revision, generationId);
   const cached = retrievalBundleCache.get(key);
   if (cached) return cached;
 
@@ -207,21 +210,22 @@ async function loadRetrievalBundle(root: string, includeSourceNotes: boolean): P
   const load = (async () => {
     const dirs = getLongTermMemoryDirectories(root);
     const warnings: string[] = [];
-    const [generation, config] = await Promise.all([
-      loadLtmIndexFamily(root, includeSourceNotes ? "source" : "typed"),
-      readConfig(
-        safeJoin(dirs.config, "retrieval.json"),
-        DEFAULT_LTM_RETRIEVAL_CONFIG,
-        (value) => ltmRetrievalConfigSchema.parse(value),
-        warnings,
-      ),
-    ]);
+    const config = await readConfig(
+      safeJoin(dirs.config, "retrieval.json"),
+      DEFAULT_LTM_RETRIEVAL_CONFIG,
+      (value) => ltmRetrievalConfigSchema.parse(value),
+      warnings,
+    );
     warnings.push(...generation.warnings);
-    const metadata = generation.bundle?.metadata ?? null;
-    const bm25 = generation.bundle?.bm25 ?? null;
-    const graph = generation.bundle?.graph ?? null;
-    const keywords = generation.bundle?.keywords ?? null;
-    const embeddings = generation.bundle?.embeddings ?? null;
+    const family = generation.bundles[includeSourceNotes ? "source" : "typed"] ?? null;
+    if (generation.manifest && !family) {
+      warnings.push(`Current long-term memory generation has no ${includeSourceNotes ? "source" : "typed"} index family.`);
+    }
+    const metadata = family?.metadata ?? null;
+    const bm25 = family?.bm25 ?? null;
+    const graph = family?.graph ?? null;
+    const keywords = family?.keywords ?? null;
+    const embeddings = family?.embeddings ?? null;
     return {
       metadata,
       bm25,

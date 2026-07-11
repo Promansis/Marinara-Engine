@@ -8,6 +8,7 @@ import type { LtmNote } from "@marinara-engine/shared";
 import { buildApp } from "../../../app.js";
 import { logger } from "../../../lib/logger.js";
 import { LongTermMemoryDraftStore } from "../draft-store.js";
+import { loadLtmIndexGeneration } from "../index-generation.js";
 import { getLongTermMemoryDirectories } from "../paths.js";
 import { rebuildLongTermMemoryIndexes } from "../rebuild.js";
 import { LongTermMemoryStorage } from "../storage.js";
@@ -846,9 +847,8 @@ test("LTM routes — POST /notes/permanent-delete returns deleted and failed ids
     assert.equal(await storage.getNote("world_route_delete"), null);
     assert.equal((await storage.getNote("char_route_keep"))?.id, "char_route_keep");
 
-    const manifestPath = join(getLongTermMemoryDirectories(root).indexes, "manifest.json");
-    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { noteCount: number };
-    assert.equal(manifest.noteCount, 1);
+    const generation = await loadLtmIndexGeneration(root);
+    assert.equal(generation.manifest?.noteCount, 1);
   } finally {
     if (app) await app.close();
     if (previousDataDir === undefined) delete process.env.DATA_DIR;

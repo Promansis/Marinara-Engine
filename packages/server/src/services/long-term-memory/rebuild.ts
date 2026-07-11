@@ -10,7 +10,6 @@ import type {
 import { logger } from "../../lib/logger.js";
 import { isEnoent } from "./ltm-utils.js";
 import { embedMemoryRecallTexts, type MemoryRecallEmbeddingOptions } from "../memory-recall.js";
-import { writeJsonAtomic } from "./atomic-json.js";
 import { buildLtmBm25Index } from "./bm25.js";
 import {
   CURRENT_LTM_CHUNK_FORMAT_VERSION,
@@ -20,13 +19,12 @@ import {
 } from "./chunking.js";
 import { buildLtmGraphIndex } from "./graph.js";
 import {
-  loadLtmIndexFamily,
+  loadLtmIndexGeneration,
   pruneLtmIndexGenerations,
   publishLtmIndexGeneration,
   removeLtmIndexGeneration,
   writeLtmIndexFamilyGeneration,
   writeLtmIndexGenerationManifest,
-  writeLtmLegacyIndexFamily,
   type LtmIndexFamilyBundle,
 } from "./index-generation.js";
 import { buildLtmKeywordIndex } from "./keyword-index.js";
@@ -39,7 +37,7 @@ import {
   withLtmIndexRebuildLock,
 } from "./index-state.js";
 import { buildLtmMetadataIndex } from "./metadata-index.js";
-import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
+import { getLongTermMemoryDirectories, getLongTermMemoryRoot } from "./paths.js";
 import { invalidateLongTermMemoryRetrievalCache } from "./retrieval.js";
 import { LongTermMemoryStorage } from "./storage.js";
 
@@ -235,20 +233,23 @@ async function rebuildLongTermMemoryIndexesAttempt(
   const sourceChunks = chunkNotes(notes, { sourceNotesOnly: true });
   let typedResult = includesTypedIndexes(scope) ? await buildTypedIndexes(notes, options) : null;
   let sourceResult = includesSourceIndexes(scope) ? await buildSourceIndexes(notes, options) : null;
-  const previousTyped = typedResult ? null : await loadLtmIndexFamily(root, "typed");
-  const previousSource = sourceResult ? null : await loadLtmIndexFamily(root, "source");
-  if (!typedResult && (!previousTyped?.bundle || !indexFamilyMatchesSnapshot(previousTyped.bundle, notes, typedChunks))) {
+  // A partial rebuild can reuse only a fully validated generation. Reusing
+  // individual families would let a damaged generation become a mixed one.
+  const previousGeneration = await loadLtmIndexGeneration(root);
+  const previousTyped = typedResult ? null : previousGeneration.bundles.typed ?? null;
+  const previousSource = sourceResult ? null : previousGeneration.bundles.source ?? null;
+  if (!typedResult && (!previousTyped || !indexFamilyMatchesSnapshot(previousTyped, notes, typedChunks))) {
     typedResult = await buildTypedIndexes(notes, options);
   }
   if (
     !sourceResult &&
-    ((previousSource?.bundle && !indexFamilyMatchesSnapshot(previousSource.bundle, notes, sourceChunks)) ||
-      (!previousSource?.bundle && sourceChunks.length > 0))
+    ((previousSource && !indexFamilyMatchesSnapshot(previousSource, notes, sourceChunks)) ||
+      (!previousSource && sourceChunks.length > 0))
   ) {
     sourceResult = await buildSourceIndexes(notes, options);
   }
-  const typedBundle = typedResult?.bundle ?? previousTyped?.bundle ?? null;
-  const sourceBundle = sourceResult?.bundle ?? previousSource?.bundle ?? null;
+  const typedBundle = typedResult?.bundle ?? previousTyped;
+  const sourceBundle = sourceResult?.bundle ?? previousSource;
   if (!typedBundle) {
     throw new Error("Long-term memory rebuild could not produce the required typed index family.");
   }
@@ -263,7 +264,6 @@ async function rebuildLongTermMemoryIndexesAttempt(
     chunkCount: typedChunks.length,
     files: sourceFiles,
   };
-  const dirs = getLongTermMemoryDirectories(root);
   const generationFamilies: Partial<LtmIndexGenerationManifest["families"]> = {};
   let published = false;
 
@@ -298,9 +298,6 @@ async function rebuildLongTermMemoryIndexesAttempt(
       },
     });
 
-    if (typedBundle) await writeLtmLegacyIndexFamily(root, "typed", typedBundle);
-    if (sourceBundle) await writeLtmLegacyIndexFamily(root, "source", sourceBundle);
-    await writeJsonAtomic(safeJoin(dirs.indexes, "manifest.json"), manifest);
     await assertLtmSnapshotCurrent(root, sourceHash, expectedRevision);
     await publishLtmIndexGeneration(root, {
       version: 1,
@@ -333,8 +330,8 @@ async function rebuildLongTermMemoryIndexesAttempt(
       noteCount: notes.length,
       chunkCount: typedChunks.length,
       sourceChunkCount: sourceChunks.length,
-      embeddedChunkCount: typedResult?.bundle.embeddings.embeddedChunkCount ?? 0,
-      embeddingsAvailable: Boolean(typedResult?.bundle.embeddings.embeddedChunkCount),
+      embeddedChunkCount: typedBundle.embeddings.embeddedChunkCount,
+      embeddingsAvailable: Boolean(typedBundle.embeddings.embeddedChunkCount),
       manifest,
       generation,
     };
