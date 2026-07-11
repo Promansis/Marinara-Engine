@@ -140,7 +140,15 @@ export function RecallStylePresets({
             title={style.description}
             aria-label={`${style.label} recall style: ${style.description}`}
             aria-pressed={recallStyle === style.id}
-            onClick={() => onChange({ longTermMemoryRecallStyle: style.id })}
+            onClick={() =>
+              onChange({
+                longTermMemoryRecallStyle: style.id,
+                longTermMemorySemanticWeight: null,
+                longTermMemoryLexicalWeight: null,
+                longTermMemoryGraphWeight: null,
+                longTermMemoryKeywordWeight: null,
+              })
+            }
             className={cn(
               "mari-chrome-segmented__button justify-between px-2.5 text-left text-xs",
               recallStyle === style.id && "mari-chrome-segmented__button--selected",

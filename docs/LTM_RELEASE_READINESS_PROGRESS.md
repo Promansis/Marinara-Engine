@@ -8,14 +8,14 @@ Resume Here section short and current; keep completed phase records durable.
 
 - Branch: `fix/ltm-staging-port-rebase`
 - Audit baseline: `c83d66e6edee6c0a9b3ab3021265461b4ff1a1b1`
-- Current phase: Phase 4 - Context-Bound Capture and Refresh
-- State: Phase 3 committed locally as `941b20d0`; Phase 4 implementation and
-  validation complete locally with its atomic commit pending
-- Next entrypoint: commit the completed Phase 4 scope, then begin Phase 5
-  recall-settings and eligibility work
-- Uncommitted scope: Phase 4 source freshness, import refresh, client status,
-  regression tests, and this progress update
-- Blockers: no Phase 4 implementation blocker. Phase 2's platform-specific
+- Current phase: Phase 5 - Recall Settings, Eligibility, and Relevance
+- State: Phase 4 committed locally as `d7592ca0`; Phase 5 implementation and
+  validation are complete locally with its atomic commit pending
+- Next entrypoint: commit the completed Phase 5 scope, then begin Phase 6
+  safe prompt-artifact and dispatch-receipt work
+- Uncommitted scope: Phase 5 settings resolution, retrieval eligibility and
+  ranking, focused regression coverage, and this progress update
+- Blockers: no Phase 5 implementation blocker. Phase 2's platform-specific
   interrupted-write proof gap remains recorded below.
 
 ## Non-Negotiable Decisions
@@ -59,8 +59,8 @@ proof that a later implementation phase passes.
 | 1 - Security and managed-agent lifecycle | Complete | Commit subject below | Focused route/lifecycle proof, server suite, static build, and prompt regression passed; one unrelated browser smoke failure recorded |
 | 2 - Transactional vault mutations | Complete | Commit subject below | Focused transaction/recovery proof, affected LTM suites, full server suite, prompt regression, and static validation passed |
 | 3 - Coherent index recovery | Committed locally (`941b20d0`) | Complete | Focused corruption/recovery proof, 334-test server suite, prompt regression, and static/build validation passed |
-| 4 - Context-bound capture and refresh | Implementation complete locally | Commit pending | Focused import/freshness/route proof, 339-test server suite, prompt regression, static/build validation, and targeted desktop/mobile browser flows passed |
-| 5 - Recall settings, eligibility, and relevance | Not started | Pending | Not run |
+| 4 - Context-bound capture and refresh | Committed locally (`d7592ca0`) | Complete | Focused import/freshness/route proof, 339-test server suite, prompt regression, static/build validation, and targeted desktop/mobile browser flows passed |
+| 5 - Recall settings, eligibility, and relevance | Implementation and validation complete locally | Commit pending | Focused 135-test LTM proof, 343-test server suite, prompt regression, static/build validation, and an isolated desktop LTM settings flow passed |
 | 6 - Safe prompt artifacts and truthful receipts | Not started | Pending | Not run |
 | 7 - Mode-neutral production recall | Not started | Pending | Not run |
 | 8 - Truthful client behavior and accessibility | Not started | Pending | Not run |
@@ -297,18 +297,18 @@ Residual risk: automated coverage proves deterministic file fixtures and a
 fresh-cache reload, but not a real power-loss/filesystem-crash sequence on each
 supported runtime. Phase 10 still owns derived-artifact retention and cleanup.
 
-Next entrypoint: commit the completed Phase 4 scope, then begin Phase 5 in the
-resolved recall-settings and eligibility paths.
+Next entrypoint: begin Phase 5 in the resolved recall-settings and eligibility
+paths.
 
 ### Phase 4 - Context-Bound Capture and Refresh
 
 Started: 2026-07-11
 
-Completed: 2026-07-11 locally; atomic commit pending
+Completed: 2026-07-11 locally; committed as `d7592ca0`
 
 Baseline: Phase 3 commit `941b20d0` (`fix(ltm): recover coherent index generations`)
 
-Commit: pending; record this hash at the Phase 5 checkpoint
+Commit: `d7592ca0` (`fix(ltm): make extraction refreshable and context-bound`)
 
 Scope:
 
@@ -369,6 +369,78 @@ and relevance behavior.
 
 Next entrypoint: begin Phase 5 in the resolved recall-settings, scope
 eligibility, threshold, direct-match, and mandatory-policy runtime paths.
+
+### Phase 5 - Recall Settings, Eligibility, and Relevance
+
+Started: 2026-07-11
+
+Completed: 2026-07-11 locally; atomic commit pending
+
+Baseline HEAD: `d7592ca0` (`fix(ltm): make extraction refreshable and context-bound`)
+
+Commit: pending; record this hash at the Phase 6 checkpoint
+
+Scope:
+
+- Added one generation settings resolver: `config/settings.json` supplies
+  resolved defaults, while valid chat metadata supplies only sparse overrides.
+  A chat-level recall-style choice applies that style's complete weight profile;
+  a numeric lane override is the only exception.
+- Made the shared recall-style control clear stale lane overrides whenever a
+  style is selected. The generation route now passes the raw global settings
+  and chat metadata separately and includes the current chat's group ID.
+- Made archived notes ineligible before ranking and made group-scoped notes
+  require the matching group even when a chat or character scope otherwise
+  overlaps.
+- Loaded `policies.json` in retrieval. `always_for_active_characters` now
+  contributes its configured mandatory sections at runtime, while `never` and
+  configured relevance sections constrain eligibility.
+- Promoted exact note-ID and tag matches to direct candidate lanes. Vector and
+  query-normalized keyword relevance now gate candidate eligibility before RRF
+  ordering, so a weak best vector match cannot pass a high threshold merely by
+  being ranked first.
+- Added focused coverage for global/chat merging, every recall style,
+  archived and group scope exclusion, direct ID/tag lookup, policy-mandated
+  character sections, and the weak-best-vector negative control.
+
+Compatibility and migration:
+
+- Existing global settings and valid sparse chat overrides retain their values.
+  Invalid persisted chat numbers now fall back to resolved global defaults;
+  `null` lane weights continue to clear the chat override.
+- Archived notes remain stored, listable, and indexed for vault maintenance,
+  but cannot enter recall. Existing group-scoped notes become stricter only at
+  retrieval time: they require a matching request group.
+- Existing policy files retain their schema compatibility. A missing policy
+  file uses the established defaults, and types without a policy retain normal
+  relevance behavior.
+
+Validation:
+
+| Command | Result |
+| --- | --- |
+| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/reconciliation.spec.ts src/services/long-term-memory/__tests__/ranking.spec.ts` | Passed: 135 tests, 0 failed; covers settings merge, policy runtime, direct lanes, scope/archive eligibility, and absolute threshold controls |
+| `pnpm --filter @marinara-engine/server lint` | Passed TypeScript validation |
+| `pnpm --filter @marinara-engine/server test` | Passed: 343 tests, 0 failed; all tracked server LTM specs discovered |
+| `pnpm regression:prompt` | Passed deterministic prompt, macro, lorebook, summary, and mode regressions |
+| `pnpm exec playwright test -c playwright.config.ts e2e/core-flows.e2e.ts --grep 'memory recall modal accepts clicks from chat settings'` | Passed: 1 desktop test, 0 failed; 1 mobile project skip is intentional in the test |
+| `pnpm check` | Passed Impeccable context check, workspace lint, TypeScript, and production builds |
+| `git diff --check` | Passed after the final documentation update |
+| `marinara-doc-check` | Not installed; no checked-in equivalent command is available |
+
+Manual proof: not completed. In a real configured chat, select each recall
+style after setting custom lane weights, reload the chat, and verify the saved
+style profile. Verify that archived notes and a same-character note from a
+different group do not appear in recall results, while an explicit note ID,
+tag, and active-character mandatory section do.
+
+Residual risk: automated coverage proves the resolver and retrieval service,
+plus the surrounding desktop chat-settings flow. Phase 7 still owns end-to-end
+provider-payload proof across every mode and preset state; Phase 8 owns full
+client persistence, accessibility, and mobile control proof.
+
+Next entrypoint: commit the completed Phase 5 scope, then begin Phase 6 in the
+structured prompt-artifact, final-fit, and post-dispatch receipt paths.
 
 ## Progress Update Template
 

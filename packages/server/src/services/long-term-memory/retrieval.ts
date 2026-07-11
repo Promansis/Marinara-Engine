@@ -3,6 +3,7 @@ import { logger } from "../../lib/logger.js";
 import { isEnoent } from "./ltm-utils.js";
 import {
   isLtmSourceLikeNote,
+  ltmPoliciesConfigSchema,
   ltmRetrievalConfigSchema,
   isGlobalLtmScope,
   matchesLtmScope,
@@ -15,15 +16,17 @@ import {
   type LtmMetadataIndex,
   type LtmRetrievalConfig,
   type LtmMode,
+  type LtmPoliciesConfig,
   type LtmScope,
 } from "@marinara-engine/shared";
 import { embedMemoryRecallTexts, type MemoryRecallEmbeddingOptions } from "../memory-recall.js";
-import { DEFAULT_LTM_RETRIEVAL_CONFIG } from "./default-config.js";
+import { DEFAULT_LTM_POLICIES, DEFAULT_LTM_RETRIEVAL_CONFIG } from "./default-config.js";
 import { searchLtmBm25 } from "./bm25.js";
 import type { LtmMemoryChunk } from "./chunking.js";
 import { expandLtmGraph } from "./graph.js";
 import { loadLtmIndexGeneration } from "./index-generation.js";
 import { searchLtmKeywordIndex } from "./keyword-index.js";
+import { normalizeKeywordTerms } from "./keyword-extract.js";
 import { getLtmMetadataMatches } from "./metadata-index.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
 import { applyLtmBudget, type LtmBudgetedChunk, type LtmBudgetRejectedCandidate } from "./budget.js";
@@ -68,7 +71,8 @@ export interface RetrieveLongTermMemoryInput extends MemoryRecallEmbeddingOption
   lexicalWeight?: number;
   graphWeight?: number;
   keywordWeight?: number;
-  metadataMode?: "filter_only";
+  /** "filter_only" remains accepted for stored clients; explicit IDs and tags now form direct candidate lanes. */
+  metadataMode?: "filter_only" | "direct_matches";
   dedupeExactText?: boolean;
   dedupeAgainstRecentContext?: boolean;
   applyUsageCooldown?: boolean;
@@ -113,7 +117,7 @@ export interface LtmRetrievalDebugInfo {
   };
   activeLanes: string[];
   skippedLanes: string[];
-  metadataMode: "filter_only";
+  metadataMode: "direct_matches";
   funnel: Record<string, number>;
   selected: LtmRetrievalDebugCandidate[];
   rejected: LtmRetrievalDebugCandidate[];
@@ -161,6 +165,7 @@ type LtmRetrievalBundle = {
   keywords: LtmKeywordIndex | null;
   embeddings: LtmEmbeddingIndex | null;
   config: LtmRetrievalConfig;
+  policies: LtmPoliciesConfig;
   revision: number;
   dirty: boolean;
   warnings: string[];
@@ -216,6 +221,12 @@ async function loadRetrievalBundle(root: string, includeSourceNotes: boolean): P
       (value) => ltmRetrievalConfigSchema.parse(value),
       warnings,
     );
+    const policies = await readConfig(
+      safeJoin(dirs.config, "policies.json"),
+      DEFAULT_LTM_POLICIES,
+      (value) => ltmPoliciesConfigSchema.parse(value),
+      warnings,
+    );
     warnings.push(...generation.warnings);
     const family = generation.bundles[includeSourceNotes ? "source" : "typed"] ?? null;
     if (generation.manifest && !family) {
@@ -233,6 +244,7 @@ async function loadRetrievalBundle(root: string, includeSourceNotes: boolean): P
       keywords,
       embeddings,
       config,
+      policies,
       revision: state.revision,
       dirty: state.dirty,
       warnings,
@@ -296,6 +308,10 @@ function extractQuerySignals(input: RetrieveLongTermMemoryInput) {
 }
 
 function scopeMatches(chunk: LtmMemoryChunk, scope: LtmScope | undefined, characterIds: string[]) {
+  // Group-scoped memories must never escape through a shared character or a
+  // prior chat link. Global and non-group-scoped memories still use the normal
+  // overlap matcher below.
+  if (chunk.scope.groupId && chunk.scope.groupId !== scope?.groupId) return false;
   const hasCallerScope = !isGlobalLtmScope(scope) || characterIds.length > 0;
   return matchesLtmScope(
     { id: chunk.noteId, type: chunk.noteType, scope: chunk.scope },
@@ -312,22 +328,57 @@ function shouldFilterResolvedChunk(chunk: LtmMemoryChunk, input: RetrieveLongTer
   return chunk.noteType === "thread";
 }
 
+type LtmPolicyDecision = {
+  allowed: boolean;
+  mandatory: boolean;
+};
+
+function includesPolicySection(sections: string[], sectionKey: string) {
+  return sections.includes("*") || sections.includes(sectionKey);
+}
+
+function resolveLtmPolicyDecision(
+  chunk: LtmMemoryChunk,
+  policies: LtmPoliciesConfig,
+  characterIds: string[],
+): LtmPolicyDecision {
+  const policy = policies.policies.find((candidate) => candidate.type === chunk.noteType);
+  if (!policy) return { allowed: true, mandatory: false };
+  if (policy.injection === "never") return { allowed: false, mandatory: false };
+
+  const isActiveCharacter =
+    characterIds.includes(chunk.noteId) ||
+    chunk.scope.characterIds?.some((characterId) => characterIds.includes(characterId)) === true;
+  const mandatory =
+    policy.injection === "always_for_active_characters" &&
+    isActiveCharacter &&
+    policy.sectionsAlways.includes(chunk.sectionKey);
+  const allowedOnRelevance = includesPolicySection(policy.sectionsOnRelevance, chunk.sectionKey);
+  return { allowed: mandatory || allowedOnRelevance, mandatory };
+}
+
 function summarizeCandidateFilters(
   chunks: LtmMemoryChunk[],
   input: RetrieveLongTermMemoryInput,
-  config: LtmRetrievalConfig,
   characterIds: string[],
+  policies: LtmPoliciesConfig,
 ) {
   const counts = {
     sourceSummariesSkipped: 0,
+    archivedFiltered: 0,
     resolvedFiltered: 0,
     scopeFiltered: 0,
     modeFiltered: 0,
+    policyFiltered: 0,
   };
 
   for (const chunk of chunks) {
     if (!input.includeSourceNotes && isSourceSummaryChunk(chunk)) {
       counts.sourceSummariesSkipped++;
+      continue;
+    }
+    if (chunk.status === "archived") {
+      counts.archivedFiltered++;
       continue;
     }
     if (shouldFilterResolvedChunk(chunk, input)) {
@@ -340,6 +391,10 @@ function summarizeCandidateFilters(
     }
     if (!scopeMatches(chunk, input.scope, characterIds)) {
       counts.scopeFiltered++;
+      continue;
+    }
+    if (!resolveLtmPolicyDecision(chunk, policies, characterIds).allowed) {
+      counts.policyFiltered++;
     }
   }
 
@@ -349,13 +404,63 @@ function summarizeCandidateFilters(
 function candidateAllowed(
   chunk: LtmMemoryChunk,
   input: RetrieveLongTermMemoryInput,
-  config: LtmRetrievalConfig,
   characterIds: string[],
+  policies: LtmPoliciesConfig,
 ) {
   if (!input.includeSourceNotes && isSourceSummaryChunk(chunk)) return false;
+  if (chunk.status === "archived") return false;
   if (shouldFilterResolvedChunk(chunk, input)) return false;
   if (input.mode && !chunk.modes?.includes(input.mode)) return false;
-  return scopeMatches(chunk, input.scope, characterIds);
+  if (!scopeMatches(chunk, input.scope, characterIds)) return false;
+  return resolveLtmPolicyDecision(chunk, policies, characterIds).allowed;
+}
+
+function mandatoryPolicyItems(
+  chunks: LtmMemoryChunk[],
+  allowedChunkIds: Set<string>,
+  policies: LtmPoliciesConfig,
+  characterIds: string[],
+) {
+  return chunks.flatMap((chunk) => {
+    if (!allowedChunkIds.has(chunk.id)) return [];
+    const decision = resolveLtmPolicyDecision(chunk, policies, characterIds);
+    return decision.mandatory
+      ? [{ chunkId: chunk.id, reason: `policy:${chunk.noteType}:always`, rawScore: 1 }]
+      : [];
+  });
+}
+
+function normalizeKeywordRelevance(score: number, queryText: string) {
+  // An exact keyword contributes 3 in the keyword index. Normalize against
+  // the full query term set so one generic match cannot satisfy a high
+  // relevance threshold by itself.
+  const queryTermCount = Math.max(1, normalizeKeywordTerms(queryText).length);
+  return Math.max(0, Math.min(1, score / (3 * queryTermCount)));
+}
+
+function filterLanesByAbsoluteRelevance(lanes: LtmRankLane[], minScore: number | undefined) {
+  const threshold = Math.max(0, Math.min(1, minScore ?? 0));
+  if (threshold === 0) return { lanes, skippedCandidateIds: new Set<string>() };
+
+  const candidateIds = new Set<string>();
+  const eligibleIds = new Set<string>();
+  for (const lane of lanes) {
+    for (const item of lane.items) {
+      candidateIds.add(item.chunkId);
+      if (lane.name === "direct" || lane.name === "mandatory") {
+        eligibleIds.add(item.chunkId);
+        continue;
+      }
+      if ((lane.name === "vector" || lane.name === "keyword") && (item.rawScore ?? 0) >= threshold) {
+        eligibleIds.add(item.chunkId);
+      }
+    }
+  }
+
+  return {
+    lanes: lanes.map((lane) => ({ ...lane, items: lane.items.filter((item) => eligibleIds.has(item.chunkId)) })),
+    skippedCandidateIds: new Set([...candidateIds].filter((chunkId) => !eligibleIds.has(chunkId))),
+  };
 }
 
 function compactScoreMap(scores: Record<string, number> | undefined) {
@@ -512,14 +617,14 @@ export async function retrieveLongTermMemory(
   const root = input.root ?? getLongTermMemoryRoot();
   logger.debug({ root, queryLength: input.queryText?.length }, "[ltm] Retrieval started");
   const includeDebug = input.debug === true || input.explain === true;
-  const metadataMode: "filter_only" = "filter_only";
+  const metadataMode: "direct_matches" = "direct_matches";
   const bundle = await loadRetrievalBundle(root, input.includeSourceNotes === true);
-  const { metadata, bm25, graph, keywords, embeddings, config } = bundle;
+  const { metadata, bm25, graph, keywords, embeddings, config, policies } = bundle;
   const warnings = [...bundle.warnings];
   const weights = resolveRetrievalWeights(config, input);
-  const activeLanes = activeRelevanceLanes(weights);
+  const configuredActiveLanes = activeRelevanceLanes(weights);
   const skippedLanes = skippedRelevanceLanes(weights);
-  const generationLanesDisabled = activeLanes.length === 0;
+  const generationLanesDisabled = configuredActiveLanes.length === 0;
 
   if (!metadata) {
     const maxTokens = input.maxTokens ?? config.maxTokens;
@@ -548,16 +653,20 @@ export async function retrieveLongTermMemory(
                 graph: weights.graph,
                 keyword: weights.keyword,
               },
-              activeLanes,
+              activeLanes: configuredActiveLanes,
               skippedLanes,
               metadataMode,
               funnel: {
                 totalChunks: 0,
                 sourceSummariesSkipped: 0,
+                archivedFiltered: 0,
                 modeFiltered: 0,
                 scopeFiltered: 0,
                 statusFiltered: 0,
+                policyFiltered: 0,
                 metadataCandidates: 0,
+                directCandidates: 0,
+                mandatoryCandidates: 0,
                 keywordCandidates: 0,
                 vectorCandidates: 0,
                 bm25Candidates: 0,
@@ -566,6 +675,7 @@ export async function retrieveLongTermMemory(
                 selectedCandidates: 0,
                 tokenBudgetSkippedCandidates: 0,
                 scoreThresholdSkippedCandidates: 0,
+                absoluteRelevanceSkippedCandidates: 0,
               },
               selected: [],
               rejected: [],
@@ -581,10 +691,25 @@ export async function retrieveLongTermMemory(
   const allChunks = bundle.dirty ? await excludeMissingVaultChunks(root, indexedChunks, warnings) : indexedChunks;
   const chunksById = new Map(allChunks.map((chunk) => [chunk.id, chunk]));
   const allowedChunkIds = new Set(
-    allChunks.filter((chunk) => candidateAllowed(chunk, input, config, characterIds)).map((chunk) => chunk.id),
+    allChunks.filter((chunk) => candidateAllowed(chunk, input, characterIds, policies)).map((chunk) => chunk.id),
   );
-  const filterCounts = includeDebug ? summarizeCandidateFilters(allChunks, input, config, characterIds) : null;
-  if (generationLanesDisabled) {
+  const filterCounts = includeDebug ? summarizeCandidateFilters(allChunks, input, characterIds, policies) : null;
+  const metadataMatches = getLtmMetadataMatches(metadata, {
+    noteIds: signals.noteIds,
+    tags: signals.tags,
+    scope: input.scope,
+    characterIds,
+  }).filter((candidate) => {
+    const chunk = chunksById.get(candidate.chunkId);
+    return chunk ? allowedChunkIds.has(chunk.id) : false;
+  });
+  const directItems = metadataMatches.flatMap((match) => {
+    const reasons = match.reasons.filter((reason) => reason.startsWith("note:") || reason.startsWith("tag:"));
+    return reasons.length > 0 ? [{ chunkId: match.chunkId, reason: reasons.join(","), rawScore: 1 }] : [];
+  });
+  const mandatoryItems = mandatoryPolicyItems(allChunks, allowedChunkIds, policies, characterIds);
+
+  if (generationLanesDisabled && directItems.length === 0 && mandatoryItems.length === 0) {
     warnings.push("No active long-term memory relevance lanes; retrieval returned no chunks.");
     return {
       chunks: [],
@@ -611,16 +736,20 @@ export async function retrieveLongTermMemory(
                 graph: weights.graph,
                 keyword: weights.keyword,
               },
-              activeLanes,
+              activeLanes: configuredActiveLanes,
               skippedLanes,
               metadataMode,
               funnel: {
                 totalChunks: allChunks.length,
                 sourceSummariesSkipped: filterCounts?.sourceSummariesSkipped ?? 0,
+                archivedFiltered: filterCounts?.archivedFiltered ?? 0,
                 modeFiltered: filterCounts?.modeFiltered ?? 0,
                 scopeFiltered: filterCounts?.scopeFiltered ?? 0,
-                statusFiltered: filterCounts?.resolvedFiltered ?? 0,
+                statusFiltered: (filterCounts?.archivedFiltered ?? 0) + (filterCounts?.resolvedFiltered ?? 0),
+                policyFiltered: filterCounts?.policyFiltered ?? 0,
                 metadataCandidates: 0,
+                directCandidates: 0,
+                mandatoryCandidates: 0,
                 keywordCandidates: 0,
                 vectorCandidates: 0,
                 bm25Candidates: 0,
@@ -629,6 +758,7 @@ export async function retrieveLongTermMemory(
                 selectedCandidates: 0,
                 tokenBudgetSkippedCandidates: 0,
                 scoreThresholdSkippedCandidates: 0,
+                absoluteRelevanceSkippedCandidates: 0,
                 duplicateTextSkippedCandidates: 0,
                 cooldownPenalizedCandidates: 0,
               },
@@ -649,16 +779,6 @@ export async function retrieveLongTermMemory(
   } else if (input.includeSourceNotes && input.debug) {
     warnings.push("Searching source audit indexes; normal memory stream indexes are not included.");
   }
-  const metadataMatches = getLtmMetadataMatches(metadata, {
-    noteIds: signals.noteIds,
-    tags: signals.tags,
-    scope: input.scope,
-    characterIds,
-  }).filter((candidate) => {
-    const chunk = chunksById.get(candidate.chunkId);
-    return chunk ? allowedChunkIds.has(chunk.id) : false;
-  });
-
   const vector =
     weights.semantic > 0
       ? await vectorLane(embeddings, signals.queryText, input, config, chunksById, characterIds, allowedChunkIds)
@@ -677,7 +797,13 @@ export async function retrieveLongTermMemory(
       ? searchLtmKeywordIndex(keywords, signals.queryText).flatMap((match) => {
           const chunk = chunksById.get(match.chunkId);
           return chunk && allowedChunkIds.has(chunk.id)
-            ? [{ chunkId: match.chunkId, reason: match.reasons.join(","), rawScore: match.score }]
+            ? [
+                {
+                  chunkId: match.chunkId,
+                  reason: match.reasons.join(","),
+                  rawScore: normalizeKeywordRelevance(match.score, signals.queryText),
+                },
+              ]
             : [];
         })
       : [];
@@ -692,6 +818,14 @@ export async function retrieveLongTermMemory(
     ...keywordItems.slice(0, 10).map((candidate) => chunksById.get(candidate.chunkId)?.noteId ?? ""),
   ]);
   const lanes: LtmRankLane[] = [];
+
+  if (directItems.length > 0) {
+    lanes.push({ name: "direct", weight: 1, items: directItems });
+  }
+
+  if (mandatoryItems.length > 0) {
+    lanes.push({ name: "mandatory", weight: 1, items: mandatoryItems });
+  }
 
   if (weights.semantic > 0 && vector.items.length > 0) {
     lanes.push({ name: "vector", weight: weights.semantic, items: vector.items });
@@ -755,16 +889,22 @@ export async function retrieveLongTermMemory(
         ];
       })
     : [];
-  const ranked = applyImportanceMultiplier(reciprocalRankFuse(lanes, { cooldowns }), chunksById);
+  const relevanceFiltered = filterLanesByAbsoluteRelevance(lanes, input.minScore);
+  const eligibleLanes = relevanceFiltered.lanes.filter((lane) => lane.items.length > 0);
+  const activeLanes = [
+    ...(directItems.length > 0 ? ["direct"] : []),
+    ...(mandatoryItems.length > 0 ? ["mandatory"] : []),
+    ...configuredActiveLanes,
+  ];
+  const ranked = applyImportanceMultiplier(reciprocalRankFuse(eligibleLanes, { cooldowns }), chunksById);
   const activeContextDedup = filterRecentContextDuplicates(ranked, chunksById, input);
   logger.debug(
-    { laneCount: lanes.length, rankedCount: activeContextDedup.ranked.length },
+    { laneCount: eligibleLanes.length, rankedCount: activeContextDedup.ranked.length },
     "[ltm] Retrieval lanes fused",
   );
   const budgeted = applyLtmBudget(activeContextDedup.ranked, chunksById, {
     maxChunks: input.maxChunks ?? config.maxChunks,
     maxTokens: input.maxTokens ?? config.maxTokens,
-    normalizedScoreThreshold: input.minScore,
     explain: includeDebug,
     rejectedLimit: 20,
     dedupeExactText: input.dedupeExactText === true,
@@ -794,9 +934,14 @@ export async function retrieveLongTermMemory(
         funnel: {
           totalChunks: allChunks.length,
           sourceSummariesSkipped: filterCounts?.sourceSummariesSkipped ?? 0,
+          archivedFiltered: filterCounts?.archivedFiltered ?? 0,
           modeFiltered: filterCounts?.modeFiltered ?? 0,
           scopeFiltered: filterCounts?.scopeFiltered ?? 0,
-          statusFiltered: filterCounts?.resolvedFiltered ?? 0,
+          statusFiltered: (filterCounts?.archivedFiltered ?? 0) + (filterCounts?.resolvedFiltered ?? 0),
+          policyFiltered: filterCounts?.policyFiltered ?? 0,
+          metadataCandidates: laneCount("direct"),
+          directCandidates: laneCount("direct"),
+          mandatoryCandidates: laneCount("mandatory"),
           keywordCandidates: laneCount("keyword"),
           vectorCandidates: laneCount("vector"),
           bm25Candidates: laneCount("bm25"),
@@ -805,9 +950,8 @@ export async function retrieveLongTermMemory(
           selectedCandidates: budgeted.chunks.length,
           tokenBudgetSkippedCandidates: budgeted.rejected.filter((candidate) => candidate.rejectionReason === "budget")
             .length,
-          scoreThresholdSkippedCandidates: budgeted.rejected.filter(
-            (candidate) => candidate.rejectionReason === "score_threshold",
-          ).length,
+          scoreThresholdSkippedCandidates: relevanceFiltered.skippedCandidateIds.size,
+          absoluteRelevanceSkippedCandidates: relevanceFiltered.skippedCandidateIds.size,
           duplicateTextSkippedCandidates: budgeted.rejected.filter(
             (candidate) => candidate.rejectionReason === "duplicate_text",
           ).length,

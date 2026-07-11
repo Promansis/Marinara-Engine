@@ -44,8 +44,13 @@ export function reciprocalRankFuse(lanes: LtmRankLane[], options: { cooldowns?: 
     lane.items.forEach((item, index) => {
       const rank = index + 1;
       const rawScore = typeof item.rawScore === "number" && Number.isFinite(item.rawScore) ? item.rawScore : 0;
-      const normalizedRawScore =
-        lane.name === "vector" ? Math.max(0, Math.min(1, rawScore)) : topRawScore > 0 ? rawScore / topRawScore : 0;
+      const usesAbsoluteRelevance =
+        lane.name === "vector" || lane.name === "keyword" || lane.name === "direct" || lane.name === "mandatory";
+      const normalizedRawScore = usesAbsoluteRelevance
+        ? Math.max(0, Math.min(1, rawScore))
+        : topRawScore > 0
+          ? rawScore / topRawScore
+          : 0;
       const rawFactor = typeof item.rawScore === "number" ? normalizedRawScore : 1;
       const score = lane.weight * (1 / (RRF_K + rank)) * rawFactor;
       const rawScoreBoost = rawScore * 0.001 * lane.weight;

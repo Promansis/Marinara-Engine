@@ -11,6 +11,7 @@ import {
   DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
   DEFAULT_LTM_EXTRACTION_PROMPTS_BY_MODE,
   DEFAULT_LTM_RECALL_PREAMBLE,
+  LTM_RECALL_STYLE_WEIGHTS,
   isLtmSourceLikeNote,
   ltmEvidenceUnitSchema,
   ltmPoliciesConfigSchema,
@@ -559,14 +560,14 @@ test("generation long-term memory uses global retrieval settings and injects aft
   assert.equal(retrievalInput.maxTokens, 1536);
   assert.equal(retrievalInput.maxChunks, 8);
   assert.equal(retrievalInput.minScore, 0.35);
-  assert.equal(retrievalInput.includeResolved, true);
-  assert.equal(retrievalInput.debug, true);
-  assert.equal(retrievalInput.explain, true);
+  assert.equal(retrievalInput.includeResolved, false);
+  assert.equal(retrievalInput.debug, false);
+  assert.equal(retrievalInput.explain, false);
   assert.equal(retrievalInput.semanticWeight, 0.2);
   assert.equal(retrievalInput.lexicalWeight, 0.75);
   assert.equal(retrievalInput.graphWeight, 0.15);
   assert.equal((retrievalInput as { metadataWeight?: unknown }).metadataWeight, undefined);
-  assert.equal(retrievalInput.metadataMode, "filter_only");
+  assert.equal(retrievalInput.metadataMode, "direct_matches");
   assert.equal(retrievalInput.dedupeExactText, true);
   assert.equal(retrievalInput.applyUsageCooldown, true);
   assert.equal(retrievalInput.mode, "roleplay");
@@ -603,6 +604,69 @@ test("visual novel generation retrieves from the roleplay LTM lane", () => {
   });
 
   assert.equal(plan.retrievalInput.mode, "roleplay");
+});
+
+test("generation resolves global recall defaults with sparse chat overrides", () => {
+  const globalSettings = {
+    version: 1,
+    enableLongTermMemory: true,
+    longTermMemoryBudgetTokens: 2048,
+    longTermMemoryMaxChunks: 12,
+    longTermMemoryScoreThreshold: 0.4,
+    longTermMemoryRecallContextMessages: 6,
+    longTermMemoryRecallStyle: "story",
+    longTermMemorySemanticWeight: 0.9,
+    longTermMemoryLexicalWeight: 0.1,
+    longTermMemoryGraphWeight: 0.2,
+    longTermMemoryKeywordWeight: 0.3,
+    longTermMemoryIncludeResolved: true,
+    longTermMemoryRecallPreamble: "Global recall preamble",
+    longTermMemoryDebug: false,
+  } as const;
+  const planFor = (chatMeta: Record<string, unknown>) =>
+    buildGenerationLongTermMemoryPlan({
+      chatId: "chat_settings",
+      chatMode: "roleplay",
+      promptCharacterIds: ["char_mara"],
+      activeCharacterNames: ["Mara"],
+      inputMessages: [{ role: "user", content: "Remember the archive." }],
+      chatMeta,
+      globalSettings,
+      lorebookGenerationTriggers: [],
+    });
+
+  const globalOnly = planFor({});
+  assert.deepEqual(globalOnly.weights, {
+    semanticWeight: 0.9,
+    lexicalWeight: 0.1,
+    graphWeight: 0.2,
+    keywordWeight: 0.3,
+  });
+
+  const malformedWeight = planFor({ longTermMemorySemanticWeight: 2 });
+  assert.equal(malformedWeight.weights.semanticWeight, globalOnly.weights.semanticWeight);
+
+  for (const style of ["exact", "balanced", "broad", "story"] as const) {
+    const plan = planFor({ enableLongTermMemory: true, longTermMemoryRecallStyle: style });
+    assert.equal(plan.recallStyle, style);
+    assert.deepEqual(plan.weights, LTM_RECALL_STYLE_WEIGHTS[style]);
+  }
+
+  const overridden = planFor({
+    enableLongTermMemory: false,
+    longTermMemoryBudgetTokens: 768,
+    longTermMemoryRecallStyle: "exact",
+    longTermMemorySemanticWeight: 0.4,
+    longTermMemoryLexicalWeight: null,
+  });
+  assert.equal(overridden.enabled, false);
+  assert.equal(overridden.budgetTokens, 768);
+  assert.deepEqual(overridden.weights, {
+    semanticWeight: 0.4,
+    lexicalWeight: LTM_RECALL_STYLE_WEIGHTS.exact.lexicalWeight,
+    graphWeight: LTM_RECALL_STYLE_WEIGHTS.exact.graphWeight,
+    keywordWeight: LTM_RECALL_STYLE_WEIGHTS.exact.keywordWeight,
+  });
 });
 
 test("assembler injects long-term memory before chat summary fallback", async () => {
@@ -7255,7 +7319,7 @@ test("retrieval excludes source notes by default and prioritizes relationship st
       debug: true,
       localEmbedder: async (texts) => texts.map(() => []),
     });
-    assert.equal(thresholded.chunks.length, 1);
+    assert.equal(thresholded.chunks.length, 0);
     assert((thresholded.debug?.funnel.scoreThresholdSkippedCandidates ?? 0) > 0);
 
     const audit = await retrieveLongTermMemory({
@@ -7590,7 +7654,7 @@ test("generation retrieval treats metadata as filter only and honors zero-weight
       "keyword:zero_weight",
       "vector:zero_weight",
     ]);
-    assert.equal(allZero.debug?.metadataMode, "filter_only");
+    assert.equal(allZero.debug?.metadataMode, "direct_matches");
 
     const lexicalOnly = await retrieveLongTermMemory({
       root,
@@ -7823,6 +7887,240 @@ test("retrieval isolates globally scoped chunks by LTM mode", async () => {
       assert.deepEqual(result.chunks.map((chunk) => chunk.chunk.noteId), [`world_mode_${mode}`]);
       assert.equal(result.debug?.funnel.modeFiltered, 2);
     }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("retrieval excludes archived notes and keeps group-scoped notes in their matching group", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-retrieval-group-eligibility-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.initializeLtmStore();
+    const createWorld = async (input: {
+      id: string;
+      status: "active" | "archived";
+      scope: LtmNote["scope"];
+      tags: string[];
+      text: string;
+    }) =>
+      storage.createNote(
+        {
+          id: input.id,
+          type: "world",
+          status: input.status,
+          modes: ["roleplay"],
+          scope: input.scope,
+          tags: input.tags,
+          links: [],
+          sections: { facts: { text: input.text, updatedAt: timestamp } },
+        },
+        { suppressEvent: true },
+      );
+
+    await createWorld({
+      id: "world_archived_password",
+      status: "archived",
+      scope: {},
+      tags: ["sealed_password"],
+      text: "The archived shared password should never enter recall.",
+    });
+    await createWorld({
+      id: "world_group_alpha_password",
+      status: "active",
+      scope: { groupId: "group_alpha", characterIds: ["char_mara"] },
+      tags: ["shared_password"],
+      text: "The group alpha shared password is moonlit iris.",
+    });
+    await createWorld({
+      id: "world_group_beta_password",
+      status: "active",
+      scope: { groupId: "group_beta", characterIds: ["char_mara"] },
+      tags: ["shared_password"],
+      text: "The group beta shared password is brass compass.",
+    });
+    await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
+
+    const groupResult = await retrieveLongTermMemory({
+      root,
+      mode: "roleplay",
+      queryText: "shared password",
+      scope: { chatId: "chat_alpha_now", groupId: "group_alpha", characterIds: ["char_mara"] },
+      characterIds: ["char_mara"],
+      maxChunks: 10,
+      maxTokens: 1000,
+      semanticWeight: 0,
+      lexicalWeight: 1,
+      graphWeight: 0,
+      keywordWeight: 0,
+      debug: true,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+    assert.deepEqual(groupResult.chunks.map((chunk) => chunk.chunk.noteId), ["world_group_alpha_password"]);
+    assert.equal(groupResult.debug?.funnel.archivedFiltered, 1);
+    assert.equal(groupResult.debug?.funnel.scopeFiltered, 1);
+
+    const archivedDirect = await retrieveLongTermMemory({
+      root,
+      mode: "roleplay",
+      tags: ["sealed_password"],
+      scope: { chatId: "chat_alpha_now", groupId: "group_alpha", characterIds: ["char_mara"] },
+      characterIds: ["char_mara"],
+      maxChunks: 10,
+      maxTokens: 1000,
+      minScore: 1,
+      semanticWeight: 0,
+      lexicalWeight: 0,
+      graphWeight: 0,
+      keywordWeight: 0,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+    assert.deepEqual(archivedDirect.chunks, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("retrieval makes explicit matches and mandatory character sections eligible before RRF", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-retrieval-direct-policy-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.initializeLtmStore();
+    await storage.createNote(
+      {
+        id: "world_direct_archive",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_direct_policy" },
+        tags: ["archive_locator"],
+        links: [],
+        sections: { facts: { text: "The archive location is a direct lookup test.", updatedAt: timestamp } },
+      },
+      { suppressEvent: true },
+    );
+    await storage.createNote(
+      {
+        id: "char_mara",
+        type: "character",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_direct_policy", characterIds: ["char_mara"] },
+        tags: ["typed_memory"],
+        links: [],
+        sections: {
+          core: { text: "Mara is a careful archivist.", updatedAt: timestamp },
+          current_state: { text: "Mara is waiting by the archive door.", updatedAt: timestamp },
+          history: { text: "Mara once recovered a lost ledger.", updatedAt: timestamp },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
+
+    const directById = await retrieveLongTermMemory({
+      root,
+      mode: "roleplay",
+      noteIds: ["world_direct_archive"],
+      scope: { chatId: "chat_direct_policy" },
+      maxChunks: 10,
+      maxTokens: 1000,
+      minScore: 1,
+      semanticWeight: 0,
+      lexicalWeight: 0,
+      graphWeight: 0,
+      keywordWeight: 0,
+      debug: true,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+    assert.deepEqual(directById.chunks.map((chunk) => chunk.chunk.id), ["world_direct_archive::facts"]);
+    assert(directById.chunks[0]?.lanes.includes("direct"));
+
+    const directByTag = await retrieveLongTermMemory({
+      root,
+      mode: "roleplay",
+      tags: ["archive_locator"],
+      scope: { chatId: "chat_direct_policy" },
+      maxChunks: 10,
+      maxTokens: 1000,
+      minScore: 1,
+      semanticWeight: 0,
+      lexicalWeight: 0,
+      graphWeight: 0,
+      keywordWeight: 0,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+    assert.deepEqual(directByTag.chunks.map((chunk) => chunk.chunk.id), ["world_direct_archive::facts"]);
+
+    const mandatory = await retrieveLongTermMemory({
+      root,
+      mode: "roleplay",
+      queryText: "unrelated query",
+      scope: { chatId: "chat_direct_policy", characterIds: ["char_mara"] },
+      characterIds: ["char_mara"],
+      maxChunks: 10,
+      maxTokens: 1000,
+      minScore: 1,
+      semanticWeight: 0,
+      lexicalWeight: 0,
+      graphWeight: 0,
+      keywordWeight: 0,
+      debug: true,
+      localEmbedder: async (texts) => texts.map(() => []),
+    });
+    assert.deepEqual(
+      mandatory.chunks.map((chunk) => chunk.chunk.id).sort(),
+      ["char_mara::core", "char_mara::current_state"],
+    );
+    assert(mandatory.chunks.every((chunk) => chunk.lanes.includes("mandatory")));
+    assert.equal(mandatory.debug?.funnel.mandatoryCandidates, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("retrieval rejects an arbitrarily weak best vector match before RRF ordering", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-retrieval-absolute-vector-threshold-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.initializeLtmStore();
+    await storage.createNote(
+      {
+        id: "world_weak_vector",
+        type: "world",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_weak_vector" },
+        tags: ["typed_memory"],
+        links: [],
+        sections: { facts: { text: "A weak vector candidate with unrelated detail.", updatedAt: timestamp } },
+      },
+      { suppressEvent: true },
+    );
+    const embedder = async (texts: string[]) =>
+      texts.map((text) =>
+        text.includes("absolute vector threshold query") ? [1, 0] : [0.05, Math.sqrt(1 - 0.05 ** 2)],
+      );
+    await rebuildLongTermMemoryIndexes({ root, localEmbedder: embedder });
+
+    const result = await retrieveLongTermMemory({
+      root,
+      mode: "roleplay",
+      queryText: "absolute vector threshold query",
+      scope: { chatId: "chat_weak_vector" },
+      maxChunks: 10,
+      maxTokens: 1000,
+      minScore: 0.8,
+      semanticWeight: 1,
+      lexicalWeight: 0,
+      graphWeight: 0,
+      keywordWeight: 0,
+      debug: true,
+      localEmbedder: embedder,
+    });
+    assert.deepEqual(result.chunks, []);
+    assert.equal(result.debug?.funnel.vectorCandidates, 1);
+    assert.equal(result.debug?.funnel.scoreThresholdSkippedCandidates, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

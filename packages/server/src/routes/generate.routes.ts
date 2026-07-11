@@ -2240,24 +2240,10 @@ export async function generateRoutes(app: FastifyInstance) {
               const activeCharacterNames = promptCharacterIds
                 .map((id) => charNameMap.get(id))
                 .filter((name): name is string => !!name);
-              const LTM_CHAT_OVERRIDE_KEYS = [
-                "longTermMemoryBudgetTokens", "longTermMemoryMaxChunks",
-                "longTermMemoryScoreThreshold", "longTermMemoryRecallContextMessages",
-                "longTermMemoryRecallStyle", "longTermMemorySemanticWeight",
-                "longTermMemoryLexicalWeight", "longTermMemoryGraphWeight",
-                "longTermMemoryKeywordWeight", "longTermMemoryIncludeResolved",
-                "longTermMemoryDebug", "longTermMemoryRecallPreamble",
-                "enableLongTermMemory",
-              ];
-              const chatLtmOverrides: Record<string, unknown> = {};
-              for (const key of LTM_CHAT_OVERRIDE_KEYS) {
-                if (key in chatMeta && chatMeta[key] !== undefined && chatMeta[key] !== null) {
-                  chatLtmOverrides[key] = chatMeta[key];
-                }
-              }
               const plan = buildGenerationLongTermMemoryPlan({
                 chatId: input.chatId,
                 chatMode,
+                groupId: typeof chat.groupId === "string" ? chat.groupId : null,
                 promptCharacterIds,
                 activeCharacterNames,
                 inputMessages: mappedMessages.map((m: any) => ({
@@ -2265,7 +2251,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   content: typeof m.content === "string" ? m.content : "",
                 })),
                 chatMeta: chatMeta as Record<string, unknown>,
-                globalSettings: { ...ltmGlobalSettings, ...chatLtmOverrides },
+                globalSettings: ltmGlobalSettings,
                 lorebookGenerationTriggers,
                 ...(activeChatSummary ? { generationGuide: activeChatSummary } : {}),
                 ...(presetGameState ? { gameState: presetGameState } : {}),
