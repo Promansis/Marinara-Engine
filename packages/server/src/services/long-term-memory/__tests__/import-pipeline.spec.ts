@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { ltmImportSourceNotesResponseSchema } from "@marinara-engine/shared";
+import { ltmImportSourceNotesResponseSchema, type CharacterData } from "@marinara-engine/shared";
 import { buildApp } from "../../../app.js";
 import {
   createLongTermMemoryInteropSourceNotes,
@@ -16,6 +18,9 @@ import { createLorebooksStorage } from "../../storage/lorebooks.storage.js";
 import { createConnectionsStorage } from "../../storage/connections.storage.js";
 import { sourceNoteIdForProvenance } from "../source-identity.js";
 import { readLtmDebugLog } from "../debug-log.js";
+import { LongTermMemoryDraftStore } from "../draft-store.js";
+import { rebuildLongTermMemoryIndexes } from "../rebuild.js";
+import { applyLongTermMemoryDraft } from "../reconciliation.js";
 
 async function withTestApp(run: (app: Awaited<ReturnType<typeof buildApp>>, dataDir: string) => Promise<void>) {
   const dataDir = await mkdtemp(join(tmpdir(), "marinara-ltm-import-pipeline-"));
@@ -30,6 +35,222 @@ async function withTestApp(run: (app: Awaited<ReturnType<typeof buildApp>>, data
     if (previousDataDir === undefined) delete process.env.DATA_DIR;
     else process.env.DATA_DIR = previousDataDir;
     await rm(dataDir, { recursive: true, force: true });
+  }
+}
+
+function rosterCharacter(name: string): CharacterData {
+  return {
+    name,
+    description: `${name} is part of the canonical identity fixture.`,
+    personality: "Observant and steady.",
+    scenario: "",
+    first_mes: "",
+    mes_example: "",
+    creator_notes: "",
+    system_prompt: "",
+    post_history_instructions: "",
+    tags: [],
+    creator: "",
+    character_version: "1.0",
+    alternate_greetings: [],
+    extensions: {
+      talkativeness: 0.5,
+      fav: false,
+      world: "",
+      depth_prompt: { prompt: "", depth: 4, role: "system" },
+      backstory: "",
+      appearance: "",
+    },
+    character_book: null,
+  };
+}
+
+async function withCanonicalImportProvider(
+  run: (baseUrl: string, completionOrder: string[]) => Promise<void>,
+) {
+  const completionOrder: string[] = [];
+  let receivedRequests = 0;
+  let releaseResponses!: () => void;
+  const allRequestsReceived = new Promise<void>((resolve) => {
+    releaseResponses = resolve;
+  });
+  const server = createServer((request, response) => {
+    void (async () => {
+      assert.equal(request.method, "POST");
+      assert.equal(request.url, "/v1/chat/completions");
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+        messages?: Array<{ role?: string; content?: string }>;
+      };
+      const userMessage = body.messages?.find((message) => message.role === "user")?.content;
+      assert(userMessage);
+      const payload = JSON.parse(userMessage) as {
+        requiredEvidence: string[];
+        sourceNote: { id: string; sourceHash: string };
+        sourceText: string;
+        trustedSubjects: Array<{ key: string; name: string }>;
+      };
+      const damoKey = payload.trustedSubjects.find((subject) => subject.name === "Damo Korvak")?.key;
+      const lisaKey = payload.trustedSubjects.find((subject) => subject.name === "Lisa Imai")?.key;
+      assert(damoKey);
+      assert(lisaKey);
+      const relationshipKeys = [damoKey, lisaKey].sort((left, right) => left.localeCompare(right));
+      const common = {
+        importance: "major",
+        keywords: ["Damo Korvak", "Lisa Imai", "foundry reunion"],
+        evidence: payload.requiredEvidence,
+        confidence: 0.94,
+        salience: 0.84,
+        status: "active",
+        sourceHash: payload.sourceNote.sourceHash,
+      };
+
+      let rangeId: string;
+      let delayMs: number;
+      let units: Array<Record<string, unknown>>;
+      if (payload.sourceText.includes("kept the foundry vigil")) {
+        rangeId = "range_one";
+        delayMs = 90;
+        units = [
+          {
+            ...common,
+            id: randomUUID(),
+            bucket: "timeline_event",
+            subjectId: "foundry_reunion",
+            subjectKeys: [],
+            sectionKey: "event",
+            text: "Damo and Lisa reunited at the foundry after the long absence.",
+            links: [],
+          },
+          {
+            ...common,
+            id: randomUUID(),
+            bucket: "character_fact",
+            subjectId: "damo",
+            subjectKeys: [damoKey],
+            sectionKey: "facts",
+            text: "Damo meticulously documents every foundry vigil.",
+            links: [],
+          },
+          {
+            ...common,
+            id: randomUUID(),
+            bucket: "relationship_state",
+            subjectId: "lisa_damo",
+            subjectKeys: relationshipKeys,
+            sectionKey: "state",
+            text: "Lisa and Damo trust each other after their foundry reunion.",
+            links: [{ target: "timeline_foundry_reunion", relation: "caused_by" }],
+            dimensions: { trust: 70 },
+            dimensionChanges: { trust: 5 },
+          },
+        ];
+      } else if (payload.sourceText.includes("returned the silver key")) {
+        rangeId = "range_two";
+        delayMs = 45;
+        units = [
+          {
+            ...common,
+            id: randomUUID(),
+            bucket: "timeline_event",
+            subjectId: "silver_key_return",
+            subjectKeys: [],
+            sectionKey: "event",
+            text: "Lisa returned the silver key to Damo before dawn.",
+            links: [],
+          },
+          {
+            ...common,
+            id: randomUUID(),
+            bucket: "character_fact",
+            subjectId: "damo_korvak",
+            subjectKeys: [damoKey],
+            sectionKey: "facts",
+            text: "Damo bears a permanent silver key tattoo on his right wrist.",
+            links: [],
+          },
+          {
+            ...common,
+            id: randomUUID(),
+            bucket: "relationship_state",
+            subjectId: "damo_lisa",
+            subjectKeys: relationshipKeys,
+            sectionKey: "state",
+            text: "Damo and Lisa renewed their trust when Lisa returned the silver key.",
+            links: [{ target: "timeline_silver_key_return", relation: "caused_by" }],
+            dimensions: { trust: 76 },
+            dimensionChanges: { trust: 6 },
+          },
+        ];
+      } else {
+        assert(payload.sourceText.includes("considerate nature"));
+        rangeId = "range_three";
+        delayMs = 0;
+        units = [
+          {
+            ...common,
+            id: randomUUID(),
+            bucket: "character_fact",
+            subjectId: "damo_considerate_nature",
+            subjectKeys: [damoKey],
+            sectionKey: "facts",
+            text: "Damo's considerate nature shows when he returns borrowed equipment precisely.",
+            links: [],
+          },
+          {
+            ...common,
+            id: randomUUID(),
+            bucket: "character_fact",
+            subjectId: "roselia_damo",
+            sectionKey: "facts",
+            text: "Roselia and Damo protected the archive together.",
+            links: [],
+          },
+        ];
+      }
+
+      receivedRequests += 1;
+      if (receivedRequests === 3) releaseResponses();
+      await allRequestsReceived;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      const content = JSON.stringify({ summary: `Canonical import ${rangeId}`, units });
+      response.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+      });
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: null }] })}\n\n`);
+      response.write(
+        `data: ${JSON.stringify({
+          choices: [{ delta: {}, finish_reason: "stop" }],
+          usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+        })}\n\n`,
+      );
+      completionOrder.push(rangeId);
+      response.end("data: [DONE]\n\n");
+    })().catch((error: unknown) => {
+      response.statusCode = 500;
+      response.end(error instanceof Error ? error.message : String(error));
+    });
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => reject(error);
+    server.once("error", onError);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", onError);
+      resolve();
+    });
+  });
+  try {
+    const address = server.address();
+    assert(address && typeof address !== "string");
+    await run(`http://127.0.0.1:${address.port}/v1`, completionOrder);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
   }
 }
 
@@ -568,5 +789,197 @@ test("multi-source direct import publishes one rebuild for the completed batch",
     );
     assert.equal(events.filter((event) => event.action === "import_batch_rebuild").length, 1);
     assert.equal(events.filter((event) => event.action === "apply_rebuild_indexes").length, 0);
+  });
+});
+
+test("three chat summary ranges converge on canonical subjects regardless of provider completion order", async () => {
+  await withCanonicalImportProvider(async (baseUrl, completionOrder) => {
+    await withTestApp(async (app, dataDir) => {
+      const characters = createCharactersStorage(app.db);
+      const lisa = await characters.create(rosterCharacter("Lisa Imai"));
+      const roselia = await characters.create(rosterCharacter("Roselia"));
+      const damo = await characters.createPersona("Damo Korvak", "A considerate field researcher.");
+      assert(lisa && roselia && damo);
+
+      const chats = createChatsStorage(app.db);
+      const chat = await chats.create({
+        name: "Canonical import fixture",
+        mode: "roleplay",
+        characterIds: [lisa.id, roselia.id],
+        groupId: null,
+        personaId: damo.id,
+        promptPresetId: null,
+        connectionId: null,
+      });
+      assert(chat);
+      const rangeIds = ["range_one", "range_two", "range_three"];
+      await chats.updateMetadata(chat.id, {
+        summaryEntries: [
+          {
+            id: rangeIds[0],
+            kind: "rolling",
+            origin: "manual",
+            title: "Foundry reunion",
+            content:
+              "Damo kept the foundry vigil until Lisa arrived, and their trust began to recover. Damo meticulously documents every foundry vigil.",
+            enabled: true,
+            sourceMode: "range",
+            rangeStartIndex: 1,
+            rangeEndIndex: 12,
+            createdAt: "2026-07-11T00:00:00.000Z",
+            updatedAt: "2026-07-11T00:00:00.000Z",
+          },
+          {
+            id: rangeIds[1],
+            kind: "rolling",
+            origin: "manual",
+            title: "Silver key",
+            content:
+              "Lisa returned the silver key to Damo before dawn, renewing their trust. Damo bears a permanent silver key tattoo on his right wrist.",
+            enabled: true,
+            sourceMode: "range",
+            rangeStartIndex: 13,
+            rangeEndIndex: 24,
+            createdAt: "2026-07-11T00:01:00.000Z",
+            updatedAt: "2026-07-11T00:01:00.000Z",
+          },
+          {
+            id: rangeIds[2],
+            kind: "rolling",
+            origin: "manual",
+            title: "Borrowed equipment",
+            content: "Damo's considerate nature showed in how he returned borrowed equipment; Roselia also helped him.",
+            enabled: true,
+            sourceMode: "range",
+            rangeStartIndex: 25,
+            rangeEndIndex: 36,
+            createdAt: "2026-07-11T00:02:00.000Z",
+            updatedAt: "2026-07-11T00:02:00.000Z",
+          },
+        ],
+      });
+
+      const connection = await createConnectionsStorage(app.db).create({
+        name: "Canonical import loopback",
+        provider: "openai",
+        baseUrl,
+        apiKey: "local-test-key",
+        model: "test-model",
+        imagePath: null,
+        maxContext: 128_000,
+        isDefault: false,
+        useForRandom: false,
+        defaultForAgents: false,
+        enableCaching: false,
+        cachingAtDepth: 5,
+        embeddingModel: "",
+        embeddingBaseUrl: "",
+        embeddingConnectionId: null,
+        openrouterProvider: null,
+        imageGenerationSource: null,
+        comfyuiWorkflow: null,
+        imageService: null,
+        imageEndpointId: null,
+        promptPresetId: null,
+        maxTokensOverride: null,
+        maxParallelJobs: 3,
+        treatAsLocalEndpoint: true,
+        claudeFastMode: false,
+      });
+      assert(connection);
+      const sourceIds = rangeIds.map((rangeId) => `${chat.id}:${rangeId}`);
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/long-term-memory/import/source-notes",
+        remoteAddress: "127.0.0.1",
+        payload: {
+          source: "chats",
+          sourceIds,
+          limit: sourceIds.length,
+          connectionId: connection.id,
+          importConcurrency: 3,
+          applyLowRisk: true,
+        },
+      });
+
+      assert.equal(response.statusCode, 200, response.body);
+      const body = ltmImportSourceNotesResponseSchema.parse(response.json());
+      assert.equal(body.batchStatus, "success");
+      assert.deepEqual(body.imported.map((item) => item.sourceId), sourceIds);
+      assert.deepEqual(completionOrder, ["range_three", "range_two", "range_one"]);
+      for (const item of body.imported) {
+        assert.equal(item.extractionStatus, "succeeded");
+        assert.equal(
+          item.accounting.providerCandidates + item.accounting.normalizedAdditions,
+          item.accounting.parserRejections +
+            item.accounting.validationRejections +
+            item.accounting.deduplications +
+            item.accounting.keptUnits,
+        );
+      }
+      const root = join(dataDir, "long-term-memory");
+      for (const item of body.imported.slice(0, 2)) {
+        assert.equal(item.diagnostics.some((diagnostic) => diagnostic.severity === "error"), false);
+      }
+      const pendingDrafts = body.imported.flatMap((item) =>
+        item.draft?.status === "pending" ? [item.draft] : [],
+      );
+      assert.equal(pendingDrafts.length, 2);
+      for (const draft of pendingDrafts) {
+        const accepted = await applyLongTermMemoryDraft(draft.id, { root, rebuildIndexes: false });
+        assert(accepted.appliedMutationIds.length > 0);
+      }
+      await rebuildLongTermMemoryIndexes({ root });
+
+      const storage = new LongTermMemoryStorage(root);
+      const notes = await storage.listNotes();
+      const characterNotes = notes.filter((note) => note.type === "character");
+      assert.equal(characterNotes.length, 1);
+      const damoNote = characterNotes[0]!;
+      assert.equal(damoNote.id, "char_damo_korvak");
+      assert.deepEqual(damoNote.subjects, [
+        { key: `persona:${damo.id}`, ref: { kind: "persona", id: damo.id } },
+      ]);
+      assert.match(damoNote.sections.facts?.text ?? "", /meticulously documents every foundry vigil/);
+      assert.match(damoNote.sections.facts?.text ?? "", /permanent silver key tattoo/);
+      assert.match(damoNote.sections.facts?.text ?? "", /considerate nature/);
+      assert.equal(characterNotes.some((note) => note.id.includes("considerate_nature")), false);
+
+      const relationships = notes.filter((note) => note.type === "relationship");
+      assert.equal(relationships.length, 1);
+      assert.equal(relationships[0]?.id, "rel_damo_korvak_lisa_imai");
+      assert.deepEqual(relationships[0]?.subjects, [
+        { key: `character:${lisa.id}`, ref: { kind: "character", id: lisa.id } },
+        { key: `persona:${damo.id}`, ref: { kind: "persona", id: damo.id } },
+      ]);
+
+      const warnedImport = body.imported.find((item) => item.sourceId.endsWith(":range_three"));
+      assert(warnedImport?.draft);
+      assert.equal(
+        warnedImport.diagnostics.some((diagnostic) => diagnostic.code === "composite_character_subject"),
+        true,
+      );
+      const persistedDraft = await new LongTermMemoryDraftStore(root).getDraft(warnedImport.draft.id);
+      assert.equal(persistedDraft?.operationId, body.operationId);
+      assert.equal(
+        persistedDraft?.diagnostics?.some((diagnostic) => diagnostic.code === "composite_character_subject"),
+        true,
+      );
+
+      const events = await readLtmDebugLog({ operationId: body.operationId, limit: 1_000 }, root);
+      assert.equal(events.filter((event) => event.action === "import_batch_rebuild").length, 1);
+      assert.equal(events.filter((event) => event.action === "apply_rebuild_indexes").length, 0);
+
+      const statusResponse = await app.inject({
+        method: "GET",
+        url: "/api/long-term-memory/status",
+        remoteAddress: "127.0.0.1",
+      });
+      assert.equal(statusResponse.statusCode, 200, statusResponse.body);
+      const status = statusResponse.json();
+      assert.equal(status.indexes.health, "healthy");
+      assert.equal(status.indexes.dirty, false);
+      assert.equal(status.indexes.noteCount, notes.length);
+    });
   });
 });
