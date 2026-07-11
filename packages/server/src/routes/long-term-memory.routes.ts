@@ -638,6 +638,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     "/notes/transfer-preview",
     { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES },
     async (req, reply) => {
+      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory note transfer preview" })) return;
       const body = ltmNoteTransferPreviewRequestSchema.parse(req.body ?? {});
       const destinationChat = await chats.getById(body.destinationChatId);
       if (!destinationChat) return reply.status(404).send({ error: "Destination chat not found" });
@@ -980,7 +981,10 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     }
   });
 
-  app.get("/integrity", async () => ltmIntegrityResponseSchema.parse(await checkLongTermMemoryIntegrity()));
+  app.get("/integrity", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory integrity check" })) return;
+    return ltmIntegrityResponseSchema.parse(await checkLongTermMemoryIntegrity());
+  });
 
   app.post<{ Body: unknown }>("/repair", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req, reply) => {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory repair" })) return;
@@ -1020,7 +1024,8 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     },
   );
 
-  app.post<{ Body: unknown }>("/import/preview", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req) => {
+  app.post<{ Body: unknown }>("/import/preview", { bodyLimit: MAINTENANCE_BODY_LIMIT_BYTES }, async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory source import preview" })) return;
     const body = ltmInteropPreviewRequestSchema.parse(req.body);
     return ltmInteropPreviewResponseSchema.parse(
       await previewLongTermMemoryInterop(app.db, body.source, body.limit, getLongTermMemoryRoot(), body.scope),

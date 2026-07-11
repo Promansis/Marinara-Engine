@@ -8,13 +8,13 @@ Resume Here section short and current; keep completed phase records durable.
 
 - Branch: `fix/ltm-staging-port-rebase`
 - Audit baseline: `c83d66e6edee6c0a9b3ab3021265461b4ff1a1b1`
-- Current phase: Phase 1 - Security and Managed-Agent Lifecycle
-- State: Phase 0 complete; Phase 1 not started
-- Next entrypoint: inspect the privileged guard used by existing LTM routes and
-  add failing route-level negative controls for transfer preview, integrity,
-  and import preview
-- Uncommitted scope: none expected after the Phase 0 commit
-- Blockers: none
+- Current phase: Phase 2 - Transactional Vault Mutations
+- State: Phase 1 implementation complete; Phase 2 not started
+- Next entrypoint: trace the note-ID lock owners and mutation write order for
+  create, update, project, archive, and permanent delete
+- Uncommitted scope: none expected after the Phase 1 commit
+- Blockers: none for Phase 2; one unrelated browser smoke failure is recorded
+  in the Phase 1 residual risk
 
 ## Non-Negotiable Decisions
 
@@ -54,7 +54,7 @@ proof that a later implementation phase passes.
 | Phase | State | Commit | Validation summary |
 | --- | --- | --- | --- |
 | 0 - Documentation baseline | Complete | Commit subject below | Direct path checks and `git diff --check` passed |
-| 1 - Security and managed-agent lifecycle | Not started | Pending | Not run |
+| 1 - Security and managed-agent lifecycle | Complete | Commit subject below | Focused route/lifecycle proof, server suite, static build, and prompt regression passed; one unrelated browser smoke failure recorded |
 | 2 - Transactional vault mutations | Not started | Pending | Not run |
 | 3 - Coherent index recovery | Not started | Pending | Not run |
 | 4 - Context-bound capture and refresh | Not started | Pending | Not run |
@@ -107,6 +107,66 @@ implemented and proven.
 
 Next entrypoint: begin Phase 1 with unauthorized route-level tests for the three
 unguarded private-data endpoints, then align managed-agent lifecycle guards.
+
+### Phase 1 - Security and Managed-Agent Lifecycle
+
+Started: 2026-07-11
+
+Completed: 2026-07-11
+
+Baseline HEAD: `bf3f62bb5982bdb8aa5cc9f48d9148a3ccec02dc`
+
+Commit: record at the start of Phase 2; this atomic commit cannot contain its
+own hash.
+
+Scope:
+
+- Applied the privileged boundary to transfer preview, integrity, and import
+  preview, with authenticated-LAN negative controls that reach the route gate.
+- Made the LTM managed row a singleton lifecycle identity: generic create,
+  copy-type variants, and delete requests are rejected; direct storage creation
+  reuses the existing row; schema-valid updates retain its enabled management
+  surface.
+- Removed the obsolete LTM connectionless executor and excluded managed rows
+  from normal and retry agent resolution. Updated the Agents panel so managed
+  rows remain visible but cannot be copied, deleted, bulk-selected, or dragged
+  into folders.
+- Aligned the managed-agent maintainer guidance with generation-owned recall.
+
+Compatibility and migration:
+
+- Existing valid managed rows retain their current IDs and remain editable by
+  type or ID. New managed rows use a stable lifecycle ID; no schema migration
+  or user-data rewrite is required.
+- A legacy `deletedFromLibrary` marker no longer hides a managed row in the
+  Agents panel and is cleared on managed settings writes.
+
+Validation:
+
+| Command | Result |
+| --- | --- |
+| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/routes.spec.ts src/services/long-term-memory/__tests__/managed-agent-lifecycle.spec.ts` | Passed: 19 tests, 0 failed |
+| `pnpm --filter @marinara-engine/server test` | Passed: 325 tests, 0 failed |
+| `pnpm --filter @marinara-engine/server lint` | Passed TypeScript validation |
+| `pnpm check` | Passed Impeccable context check, workspace lint, TypeScript, and production builds |
+| `pnpm regression:prompt` | Passed deterministic prompt and mode regression checks |
+| Isolated Playwright rerun on ports 5180/7973 | 17 passed, 14 expected skips, 1 unrelated failure: `manual memory recovery survives dismissing the create modal` left `Remove all` visible after dismissal |
+| `git diff --check` | Passed |
+| `marinara-doc-check` | Not installed; no checked-in equivalent command is available |
+
+Manual proof: not completed. Verify the Long-Term Memory card in the Agents
+panel on desktop and mobile: it remains reachable, has no copy/delete controls,
+and its dedicated editor remains usable.
+
+Residual risk: Phase 7 still owns production generation recall. This phase
+intentionally removes the contradictory managed-agent execution path, so it
+does not itself prove generation payload injection. The isolated browser failure
+does not execute the changed route, resolver, or Agents-panel action paths and
+was not changed in this phase.
+
+Next entrypoint: inspect `packages/server/src/lib/concurrency.ts` and
+`packages/server/src/services/long-term-memory/storage.ts` for canonical
+note-ID locking and recoverable mutation transaction boundaries.
 
 ## Progress Update Template
 

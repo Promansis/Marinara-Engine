@@ -438,8 +438,8 @@ export function isRetiredBuiltInAgentId(agentId: string): boolean {
 
 /**
  * Managed agent types — reserved agents that are stored in agent_configs
- * (like custom agents) but have special-cased behavior, UI panels, or
- * connectionless execution paths.
+ * (like custom agents) but have special-cased lifecycle behavior and UI
+ * panels.
  */
 export const MANAGED_AGENT_TYPES = ["long-term-memory"] as const;
 
@@ -451,15 +451,11 @@ export function isManagedAgentType(agentType: string): boolean {
   return MANAGED_AGENT_TYPE_SET.has(agentType);
 }
 
-/**
- * Connectionless agent types — agents that do NOT need an LLM provider/model
- * to execute. Their execution is handled by a dedicated executor function
- * rather than executeAgent / executeAgentBatch in the LLM pipeline.
- */
-export const MANAGED_AGENT_CONNECTIONLESS_TYPES = new Set<string>(["long-term-memory"]);
-
-export function isConnectionlessAgentType(agentType: string): boolean {
-  return MANAGED_AGENT_CONNECTIONLESS_TYPES.has(agentType);
+/** Managed type names and their suffixed variants are reserved lifecycle IDs. */
+export function isReservedManagedAgentType(agentType: string): boolean {
+  return MANAGED_AGENT_TYPES.some(
+    (managedAgentType) => agentType === managedAgentType || agentType.startsWith(`${managedAgentType}-`),
+  );
 }
 
 export type AgentCategory = "writer" | "tracker" | "memory" | "misc";

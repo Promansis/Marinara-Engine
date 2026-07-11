@@ -11,14 +11,8 @@
 // connections are grouped separately and run in parallel.
 // ──────────────────────────────────────────────
 import type { AgentResult, AgentContext, AgentPhase } from "@marinara-engine/shared";
-import { isConnectionlessAgentType } from "@marinara-engine/shared";
 import type { BaseLLMProvider } from "../llm/base-provider.js";
 import { executeAgent, executeAgentBatch, type AgentExecConfig, type AgentToolContext } from "./agent-executor.js";
-import {
-  getConnectionlessAgentExecutor,
-  registerConnectionlessAgentExecutor,
-  executeLongTermMemoryAgent,
-} from "./long-term-memory-agent.js";
 import { logger } from "../../lib/logger.js";
 import { settleAgentJobsWithConcurrencyLimit } from "./agent-concurrency.js";
 export { settleAgentJobsWithConcurrencyLimit } from "./agent-concurrency.js";
@@ -247,43 +241,7 @@ async function executePhase(
   const phaseAgents = agents.filter((a) => a.phase === phase);
   if (phaseAgents.length === 0) return [];
 
-  // Separate connectionless agents (no LLM needed) and run them immediately.
-  const connectionless: ResolvedAgent[] = [];
-  const llmAgents: ResolvedAgent[] = [];
-  for (const agent of phaseAgents) {
-    if (isConnectionlessAgentType(agent.type)) {
-      connectionless.push(agent);
-    } else {
-      llmAgents.push(agent);
-    }
-  }
-
-  const connectionlessResults: AgentResult[] = [];
-  for (const agent of connectionless) {
-    const executor = getConnectionlessAgentExecutor(agent);
-    if (!executor) {
-      logger.warn('[agent-pipeline] No connectionless executor registered for type "%s"', agent.type);
-      connectionlessResults.push({
-        agentId: agent.id,
-        agentType: agent.type,
-        type: "context_injection",
-        data: null,
-        tokensUsed: 0,
-        durationMs: 0,
-        success: false,
-        error: `No connectionless executor registered for type "${agent.type}"`,
-      });
-      continue;
-    }
-    const result = await executor(agent, context);
-    connectionlessResults.push(result);
-    try {
-      onResult?.(result);
-    } catch { /* swallow */ }
-  }
-
-  // LLM agents continue through the existing grouped/batched path.
-  const groups = groupByProviderModel(llmAgents).flatMap(splitGroupForParallelJobs);
+  const groups = groupByProviderModel(phaseAgents).flatMap(splitGroupForParallelJobs);
 
   logger.debug(
     '[agent-pipeline] Phase "%s": %d agents → %d job group(s) %j',
@@ -351,7 +309,7 @@ async function executePhase(
       }
     }
   }
-  return [...connectionlessResults, ...results];
+  return results;
 }
 
 // ──────────────────────────────────────────────
@@ -502,13 +460,4 @@ export function createAgentPipeline(
       return allResults;
     },
   };
-}
-
-/**
- * Register all connectionless agent executors on startup.
- * Must be called once before any agent pipeline is created.
- */
-export function registerConnectionlessExecutors(): void {
-  registerConnectionlessAgentExecutor("long-term-memory", executeLongTermMemoryAgent);
-  logger.info("[agent-pipeline] Registered connectionless executors for: long-term-memory");
 }

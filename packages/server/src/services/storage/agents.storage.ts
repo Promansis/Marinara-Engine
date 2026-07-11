@@ -6,6 +6,7 @@ import type { DB } from "../../db/connection.js";
 import { agentConfigs, agentRuns, agentMemory } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";
 import {
+  AGENT_CONFIG_DELETED_SETTING_KEY,
   BUILT_IN_AGENTS,
   getDefaultBuiltInAgentSettings,
   isManagedAgentType,
@@ -17,6 +18,7 @@ import {
 } from "@marinara-engine/shared";
 
 const BUILTIN_AGENT_ID_PREFIX = "builtin:";
+const MANAGED_AGENT_ID_PREFIX = "managed:";
 const REMOVED_BUILT_IN_AGENT_TYPES = new Set(["editor"]);
 const BUILT_IN_AGENT_TYPES = new Set(BUILT_IN_AGENTS.map((agent) => agent.id));
 type AgentRunRow = typeof agentRuns.$inferSelect;
@@ -34,6 +36,10 @@ function getBuiltinAgentType(agentConfigId: string): string | null {
   if (!agentConfigId.startsWith(BUILTIN_AGENT_ID_PREFIX)) return null;
   const agentType = agentConfigId.slice(BUILTIN_AGENT_ID_PREFIX.length).trim();
   return agentType.length > 0 ? agentType : null;
+}
+
+function getManagedAgentConfigId(agentType: string): string {
+  return `${MANAGED_AGENT_ID_PREFIX}${agentType}`;
 }
 
 function keepLatestConfigPerType<T extends { type: string }>(rows: T[]): T[] {
@@ -207,42 +213,52 @@ export function createAgentsStorage(db: DB) {
 
     async create(input: CreateAgentConfigInput) {
       const builtInType = isBuiltInAgentType(input.type);
-      if (builtInType) {
+      const managedAgentType = isManagedAgentType(input.type);
+      if (builtInType || managedAgentType) {
         const existing = await getByType(input.type);
         if (existing) {
-          return this.update(existing.id, mergeBuiltInCreateUpdate(existing, input));
+          return builtInType ? this.update(existing.id, mergeBuiltInCreateUpdate(existing, input)) : existing;
         }
       }
 
-      const id = newId();
+      const id = managedAgentType ? getManagedAgentConfigId(input.type) : newId();
       const timestamp = now();
       const requestedCustomType = isRemovedBuiltInAgentType(input.type) ? `${input.type}-custom` : input.type;
-      const type = builtInType || isManagedAgentType(input.type) ? input.type : await getUniqueCustomType(requestedCustomType, id);
+      const type = builtInType || managedAgentType ? input.type : await getUniqueCustomType(requestedCustomType, id);
       const settings = { ...(input.settings ?? {}) };
+      if (managedAgentType) delete settings[AGENT_CONFIG_DELETED_SETTING_KEY];
       if (input.resultType) settings.resultType = input.resultType;
-      await db.insert(agentConfigs).values({
-        id,
-        type,
-        name: input.name,
-        description: input.description ?? "",
-        phase: normalizeAgentPhaseForType(type, input.phase),
-        enabled: "true",
-        connectionId: input.connectionId ?? null,
-        imagePath: input.imagePath ?? null,
-        promptTemplate: input.promptTemplate ?? "",
-        settings: JSON.stringify(settings),
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      });
+      try {
+        await db.insert(agentConfigs).values({
+          id,
+          type,
+          name: input.name,
+          description: input.description ?? "",
+          phase: normalizeAgentPhaseForType(type, input.phase),
+          enabled: "true",
+          connectionId: input.connectionId ?? null,
+          imagePath: input.imagePath ?? null,
+          promptTemplate: input.promptTemplate ?? "",
+          settings: JSON.stringify(settings),
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+      } catch (error) {
+        if (!managedAgentType) throw error;
+        const existing = await getByType(input.type);
+        if (existing) return existing;
+        throw error;
+      }
       return this.getById(id);
     },
 
     async update(id: string, data: Partial<CreateAgentConfigInput>) {
+      const current = await getById(id);
+      const managedAgentType = isManagedAgentType(current?.type ?? "");
       const updateFields: Record<string, unknown> = { updatedAt: now() };
       if (data.name !== undefined) updateFields.name = data.name;
       if (data.description !== undefined) updateFields.description = data.description;
       if (data.phase !== undefined) {
-        const current = await getById(id);
         updateFields.phase = normalizeAgentPhaseForType(current?.type ?? "", data.phase);
       }
       if (data.connectionId !== undefined) updateFields.connectionId = data.connectionId;
@@ -251,14 +267,16 @@ export function createAgentsStorage(db: DB) {
       if (data.settings !== undefined || data.resultType !== undefined) {
         if (data.settings !== undefined) {
           const settings = { ...data.settings };
+          if (managedAgentType) delete settings[AGENT_CONFIG_DELETED_SETTING_KEY];
           if (data.resultType !== undefined) settings.resultType = data.resultType;
           updateFields.settings = JSON.stringify(settings);
         } else {
-          const current = await getById(id);
           const currentSettings = parseAgentSettingsRecord(current?.settings);
+          if (managedAgentType) delete currentSettings[AGENT_CONFIG_DELETED_SETTING_KEY];
           updateFields.settings = JSON.stringify({ ...currentSettings, resultType: data.resultType });
         }
       }
+      if (managedAgentType) updateFields.enabled = "true";
       await db.update(agentConfigs).set(updateFields).where(eq(agentConfigs.id, id));
       return this.getById(id);
     },

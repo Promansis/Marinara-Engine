@@ -26,7 +26,6 @@ import { migrateCharacterExtendedDescriptionsToLorebooks } from "./services/lore
 import { migrateLegacyDefaultAgentPrompts } from "./services/agents/default-prompt-migration.js";
 import { getLtmGlobalSettings } from "./services/long-term-memory/settings.js";
 import { migrateLtmChatsForAgentPipeline } from "./services/long-term-memory/agent-migration.js";
-import { registerConnectionlessExecutors } from "./services/agents/agent-pipeline.js";
 import { APP_VERSION } from "@marinara-engine/shared";
 import { existsSync } from "fs";
 import { basename, join, resolve, dirname } from "path";
@@ -112,9 +111,6 @@ export async function buildApp(https?: { cert: Buffer; key: Buffer }) {
 
   // ── Recover orphaned gallery images (files on disk without DB records) ──
   await recoverGalleryImages(db);
-
-  // ── Register connectionless agent executors (long-term-memory, etc.) ──
-  registerConnectionlessExecutors();
 
   // ── Migrate per-chat LTM enablement to agent toggle system ──
   // Idempotent: only touches chats that haven't been migrated yet.

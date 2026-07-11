@@ -12,6 +12,7 @@ import {
   customAgentHasCapability,
   isAgentAvailableInChatMode,
   isAgentConfigDeleted,
+  isManagedAgentType,
   isBuiltInAgentRuntimeDisabled,
   isRetiredBuiltInAgentId,
   normalizeAgentPromptTemplateSelectionMap,
@@ -997,6 +998,7 @@ async function resolveRetryAgents(args: {
   const enabledConfigs = configs.filter(
     (config: any) =>
       !isAgentConfigDeleted(config.settings) &&
+      !isManagedAgentType(config.type) &&
       !isBuiltInAgentRuntimeDisabled(config.type) &&
       !isRetiredBuiltInAgentId(config.type) &&
       agentTypeSet.has(config.type),

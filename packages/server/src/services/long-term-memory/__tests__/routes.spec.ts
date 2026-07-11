@@ -96,6 +96,67 @@ test("LTM routes — guarded endpoints return 403 from non-loopback without auth
   }
 });
 
+test("LTM routes — authenticated LAN clients without an admin secret cannot reach private previews or integrity", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "marinara-ltm-routes-privileged-lan-"));
+  const previousDataDir = process.env.DATA_DIR;
+  const previousBasicAuthUser = process.env.BASIC_AUTH_USER;
+  const previousBasicAuthPass = process.env.BASIC_AUTH_PASS;
+  const previousAdminSecret = process.env.ADMIN_SECRET;
+  const basicAuthUser = "ltm-phase-one";
+  const basicAuthPass = "route-test-password";
+  const adminSecret = "ltm-phase-one-admin-secret";
+
+  process.env.DATA_DIR = dataDir;
+  process.env.BASIC_AUTH_USER = basicAuthUser;
+  process.env.BASIC_AUTH_PASS = basicAuthPass;
+  process.env.ADMIN_SECRET = adminSecret;
+
+  let app: Awaited<ReturnType<typeof buildApp>> | null = null;
+  try {
+    app = await buildApp();
+    const authorization = `Basic ${Buffer.from(`${basicAuthUser}:${basicAuthPass}`).toString("base64")}`;
+    const authenticatedLanRequest = {
+      remoteAddress: "10.0.0.1",
+      headers: { authorization },
+    };
+
+    const guardedControl = await app.inject({
+      method: "GET",
+      url: "/api/long-term-memory/status",
+      ...authenticatedLanRequest,
+    });
+    assert.equal(guardedControl.statusCode, 403, guardedControl.body);
+
+    for (const request of [
+      { method: "POST" as const, url: "/api/long-term-memory/notes/transfer-preview", payload: {} },
+      { method: "GET" as const, url: "/api/long-term-memory/integrity" },
+      { method: "POST" as const, url: "/api/long-term-memory/import/preview", payload: {} },
+    ]) {
+      const response: { statusCode: number } = await app.inject({ ...authenticatedLanRequest, ...request });
+      assert.equal(response.statusCode, 403, `Expected 403 for ${request.method} ${request.url}, got ${response.statusCode}`);
+    }
+
+    const authorizedControl = await app.inject({
+      method: "GET",
+      url: "/api/long-term-memory/status",
+      ...authenticatedLanRequest,
+      headers: { authorization, "x-admin-secret": adminSecret },
+    });
+    assert.equal(authorizedControl.statusCode, 200, authorizedControl.body);
+  } finally {
+    if (app) await app.close();
+    if (previousDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = previousDataDir;
+    if (previousBasicAuthUser === undefined) delete process.env.BASIC_AUTH_USER;
+    else process.env.BASIC_AUTH_USER = previousBasicAuthUser;
+    if (previousBasicAuthPass === undefined) delete process.env.BASIC_AUTH_PASS;
+    else process.env.BASIC_AUTH_PASS = previousBasicAuthPass;
+    if (previousAdminSecret === undefined) delete process.env.ADMIN_SECRET;
+    else process.env.ADMIN_SECRET = previousAdminSecret;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("LTM routes — guarded endpoints work from loopback without auth", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "marinara-ltm-routes-loopback-"));
   const previousDataDir = process.env.DATA_DIR;

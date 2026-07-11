@@ -38,6 +38,7 @@ import {
   getFolderImportEntries,
   getFolderManifestConfig,
   isAgentConfigDeleted,
+  isManagedAgentType,
   isRetiredBuiltInAgentId,
   normalizeAgentPhaseForType,
   normalizeAgentPhaseValue,
@@ -285,7 +286,7 @@ export function AgentsPanel() {
   const agentConfigRows = useMemo(() => (agentConfigs ?? []) as AgentConfigRow[], [agentConfigs]);
   const customToolRows = useMemo(() => (customTools ?? []) as CustomToolRow[], [customTools]);
   const visibleAgentConfigs = useMemo(
-    () => agentConfigRows.filter((config) => !isAgentConfigDeleted(config.settings)),
+    () => agentConfigRows.filter((config) => isManagedAgentType(config.type) || !isAgentConfigDeleted(config.settings)),
     [agentConfigRows],
   );
   const deletedBuiltInTypes = useMemo(
@@ -345,21 +346,21 @@ export function AgentsPanel() {
     () => visibleBuiltInAgents.map((agent) => createBuiltInAgentConfigRow(agent, configByType.get(agent.id))),
     [configByType, visibleBuiltInAgents],
   );
-  const selectableAgents = useMemo(
-    () => [...builtInExportRows, ...managedAgents, ...customAgents],
-    [builtInExportRows, customAgents, managedAgents],
-  );
+  const selectableAgents = useMemo(() => [...builtInExportRows, ...customAgents], [builtInExportRows, customAgents]);
   const selectableAgentById = useMemo(
     () => new Map(selectableAgents.map((agent) => [agent.id, agent])),
     [selectableAgents],
   );
+  const managedAgentIds = useMemo(() => new Set(managedAgents.map((agent) => agent.id)), [managedAgents]);
   const folderedAgentIds = useMemo(() => {
     const ids = new Set<string>();
     for (const folder of agentFolders) {
-      for (const id of folder.itemIds) ids.add(id);
+      for (const id of folder.itemIds) {
+        if (!managedAgentIds.has(id)) ids.add(id);
+      }
     }
     return ids;
-  }, [agentFolders]);
+  }, [agentFolders, managedAgentIds]);
 
   const agentSearchQuery = agentSearch.trim().toLowerCase();
   const agentSearchActive = agentSearchQuery.length > 0;
@@ -496,6 +497,10 @@ export function AgentsPanel() {
 
   const handleDuplicateAgent = useCallback(
     async (agent: AgentConfigRow) => {
+      if (isManagedAgentType(agent.type)) {
+        toast.error("Managed agents cannot be copied");
+        return;
+      }
       try {
         const created = await createAgent.mutateAsync(createDuplicateAgentInput(agent));
         const createdId = typeof created === "object" && created && "id" in created ? String(created.id) : null;
@@ -509,7 +514,7 @@ export function AgentsPanel() {
   );
 
   const handleDeleteSelectedAgents = useCallback(async () => {
-    const ids = selectedAgents.map((agent) => agent.id);
+    const ids = selectedAgents.filter((agent) => !isManagedAgentType(agent.type)).map((agent) => agent.id);
     if (ids.length === 0) return;
     const agentNoun = ids.length === 1 ? "agent" : "agents";
     const deleteMessage =
@@ -671,6 +676,7 @@ export function AgentsPanel() {
       const builtInMeta = BUILT_IN_AGENTS.find((entry) => entry.id === agent.type);
       const category = getAgentUiCategory(agent.type);
       const custom = category === "custom";
+      const managed = isManagedAgentType(agent.type);
       return renderAgentCard({
         id: agent.id,
         type: agent.type,
@@ -680,12 +686,12 @@ export function AgentsPanel() {
         imagePath: agent.imagePath ?? null,
         custom,
         openAgentDetail,
-        onDuplicate: () => void handleDuplicateAgent(agent),
+        onDuplicate: managed ? undefined : () => void handleDuplicateAgent(agent),
         onImagePick: () => handlePickAgentImage(custom ? agent.id : agent.type),
-        selectionMode,
-        selected: selectedAgentIds.has(agent.id),
-        onToggleSelected: () => toggleAgentSelection(agent.id),
-        isDragging: draggedAgentId === agent.id,
+        selectionMode: managed ? false : selectionMode,
+        selected: !managed && selectedAgentIds.has(agent.id),
+        onToggleSelected: managed ? undefined : () => toggleAgentSelection(agent.id),
+        isDragging: !managed && draggedAgentId === agent.id,
         onDragStart: (event) => {
           const ids = getDraggedAgentIds(agent.id);
           setDraggedAgentId(agent.id);
@@ -694,24 +700,26 @@ export function AgentsPanel() {
           event.dataTransfer.setData("text/plain", agent.id);
         },
         onDragEnd: () => setDraggedAgentId(null),
-        nativeDragEnabled: nativeAgentDragEnabled,
+        nativeDragEnabled: nativeAgentDragEnabled && !managed,
         touchSafeDragMode: touchSafeAgentDragMode,
         suppressClickRef: suppressAgentClickRef,
-        onDelete: async () => {
-          const deleteMessage = custom
-            ? `Delete "${agent.name}"?`
-            : `Delete "${agent.name}"? This basic agent will be hidden from the library and pickers.`;
-          if (
-            await showConfirmDialog({
-              title: "Delete Agent",
-              message: deleteMessage,
-              confirmLabel: "Delete",
-              tone: "destructive",
-            })
-          ) {
-            deleteAgent.mutate(custom || !builtInMeta ? agent.id : agent.type);
-          }
-        },
+        onDelete: managed
+          ? undefined
+          : async () => {
+              const deleteMessage = custom
+                ? `Delete "${agent.name}"?`
+                : `Delete "${agent.name}"? This basic agent will be hidden from the library and pickers.`;
+              if (
+                await showConfirmDialog({
+                  title: "Delete Agent",
+                  message: deleteMessage,
+                  confirmLabel: "Delete",
+                  tone: "destructive",
+                })
+              ) {
+                deleteAgent.mutate(custom || !builtInMeta ? agent.id : agent.type);
+              }
+            },
       });
     },
     [
@@ -1069,6 +1077,7 @@ export function AgentsPanel() {
                     : entry.agent;
                 const category = getAgentUiCategory(sourceAgent.type);
                 const custom = category === "custom";
+                const managed = entry.kind === "managed" || isManagedAgentType(sourceAgent.type);
                 return renderAgentCard({
                   id: sourceAgent.id,
                   type: sourceAgent.type,
@@ -1078,12 +1087,12 @@ export function AgentsPanel() {
                   imagePath: sourceAgent.imagePath,
                   custom,
                   openAgentDetail,
-                  onDuplicate: () => void handleDuplicateAgent(sourceAgent),
+                  onDuplicate: managed ? undefined : () => void handleDuplicateAgent(sourceAgent),
                   onImagePick: () => handlePickAgentImage(custom ? sourceAgent.id : sourceAgent.type),
-                  selectionMode,
-                  selected: selectedAgentIds.has(sourceAgent.id),
-                  onToggleSelected: () => toggleAgentSelection(sourceAgent.id),
-                  isDragging: draggedAgentId === sourceAgent.id,
+                  selectionMode: managed ? false : selectionMode,
+                  selected: !managed && selectedAgentIds.has(sourceAgent.id),
+                  onToggleSelected: managed ? undefined : () => toggleAgentSelection(sourceAgent.id),
+                  isDragging: !managed && draggedAgentId === sourceAgent.id,
                   onDragStart: (event) => {
                     const ids = getDraggedAgentIds(sourceAgent.id);
                     setDraggedAgentId(sourceAgent.id);
@@ -1092,25 +1101,27 @@ export function AgentsPanel() {
                     event.dataTransfer.setData("text/plain", sourceAgent.id);
                   },
                   onDragEnd: () => setDraggedAgentId(null),
-                  nativeDragEnabled: nativeAgentDragEnabled,
+                  nativeDragEnabled: nativeAgentDragEnabled && !managed,
                   touchSafeDragMode: touchSafeAgentDragMode,
                   suppressClickRef: suppressAgentClickRef,
-                  onDelete: async () => {
-                    const deleteMessage =
-                      entry.kind === "built-in"
-                        ? `Delete "${entry.agent.name}"? This basic agent will be hidden from the library and pickers.`
-                        : `Delete "${sourceAgent.name}"?`;
-                    if (
-                      await showConfirmDialog({
-                        title: "Delete Agent",
-                        message: deleteMessage,
-                        confirmLabel: "Delete",
-                        tone: "destructive",
-                      })
-                    ) {
-                      deleteAgent.mutate(entry.kind === "built-in" ? sourceAgent.type : sourceAgent.id);
-                    }
-                  },
+                  onDelete: managed
+                    ? undefined
+                    : async () => {
+                        const deleteMessage =
+                          entry.kind === "built-in"
+                            ? `Delete "${entry.agent.name}"? This basic agent will be hidden from the library and pickers.`
+                            : `Delete "${sourceAgent.name}"?`;
+                        if (
+                          await showConfirmDialog({
+                            title: "Delete Agent",
+                            message: deleteMessage,
+                            confirmLabel: "Delete",
+                            tone: "destructive",
+                          })
+                        ) {
+                          deleteAgent.mutate(entry.kind === "built-in" ? sourceAgent.type : sourceAgent.id);
+                        }
+                      },
                 });
               })
             )}
@@ -1211,7 +1222,7 @@ function renderAgentCard({
   imagePath?: string | null;
   custom: boolean;
   openAgentDetail: (id: string) => void;
-  onDuplicate: () => void;
+  onDuplicate?: () => void;
   onImagePick: () => void;
   onDelete?: () => void;
   selectionMode?: boolean;
@@ -1277,7 +1288,7 @@ function renderAgentCard({
           <Check size="0.75rem" />
         </div>
       )}
-      {!selectionMode && (
+      {!selectionMode && nativeDragEnabled && (
         <button
           type="button"
           aria-hidden="true"
@@ -1319,7 +1330,7 @@ function renderAgentCard({
         )}
       </button>
       <button
-        className={cn("min-w-0 flex-1 text-left", !selectionMode && (onDelete ? "pr-16" : "pr-10"))}
+        className={cn("min-w-0 flex-1 text-left", !selectionMode && (onDelete || onDuplicate ? "pr-16" : "pr-10"))}
         onClick={(event) => {
           event.stopPropagation();
           if (suppressClickRef?.current) return;
@@ -1338,18 +1349,20 @@ function renderAgentCard({
           {custom ? "custom" : category}
         </div>
       </button>
-      {!selectionMode && (
+      {!selectionMode && (onDuplicate || onDelete) && (
         <div className="absolute right-2 top-1/2 flex -translate-y-1/2 shrink-0 items-center gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-[var(--border)] transition-opacity group-hover:opacity-100 max-md:opacity-100">
-          <button
-            className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon"
-            title="Copy agent"
-            onClick={(event) => {
-              event.stopPropagation();
-              onDuplicate();
-            }}
-          >
-            <Copy />
-          </button>
+          {onDuplicate && (
+            <button
+              className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon"
+              title="Copy agent"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDuplicate();
+              }}
+            >
+              <Copy />
+            </button>
+          )}
           {onDelete && (
             <button
               className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon mari-chrome-control--danger"

@@ -12,6 +12,7 @@ import {
   DEFAULT_AGENT_TOOLS,
   getDefaultBuiltInAgentSettings,
   isManagedAgentType,
+  isReservedManagedAgentType,
   ltmAgentSettingsSchema,
   normalizeAgentPhaseForType,
 } from "@marinara-engine/shared";
@@ -221,6 +222,14 @@ export async function agentsRoutes(app: FastifyInstance) {
 
   app.post("/", async (req, reply) => {
     const input = createAgentConfigSchema.parse(req.body);
+    if (isReservedManagedAgentType(input.type)) {
+      if (!isManagedAgentType(input.type)) {
+        return reply.status(409).send({ error: "Managed agent type variants cannot be created" });
+      }
+      if (await storage.getByType(input.type)) {
+        return reply.status(409).send({ error: "Managed agent is already configured" });
+      }
+    }
     if (isManagedAgentType(input.type) && input.settings) {
       try {
         ltmAgentSettingsSchema.parse(input.settings);
@@ -299,6 +308,10 @@ export async function agentsRoutes(app: FastifyInstance) {
       const existing = builtInByType ? null : await storage.getById(req.params.id);
       const existingBuiltInType =
         existing && BUILT_IN_AGENTS.some((agent) => agent.id === existing.type) ? existing.type : null;
+
+      if (isManagedAgentType(existing?.type ?? req.params.id)) {
+        return reply.status(403).send({ error: "Managed agents cannot be deleted" });
+      }
 
       if (builtInByType || existingBuiltInType) {
         await storage.softDeleteBuiltIn(builtInByType?.id ?? existingBuiltInType!);
