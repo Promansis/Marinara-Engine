@@ -514,6 +514,7 @@ export function LtmVaultManagerSection({
     importSource,
     importLimit,
     importSource === "chats" ? navigatorScope : undefined,
+    importSource === "chats" ? importMode : undefined,
     { enabled: tab === "import" },
   );
   const deleteNotes = useDeleteLongTermMemoryNotes();

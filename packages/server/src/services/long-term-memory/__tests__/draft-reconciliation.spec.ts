@@ -608,7 +608,7 @@ test("stale and missing source hashes reject before target or index writes", asy
   });
 });
 
-test("hashless legacy drafts require manual confirmation and cannot auto-apply", async () => {
+test("context-unbound legacy drafts require re-extraction before application", async () => {
   await withRoot(async (root, storage) => {
     const source = await createSource(storage, "scene_source_hashless", "Damo keeps careful watch.");
     const store = new LongTermMemoryDraftStore(root);
@@ -622,22 +622,31 @@ test("hashless legacy drafts require manual confirmation and cannot auto-apply",
       source: { sourceNoteId: source.id },
     });
     assert.equal(hashless?.source.sourceHash, undefined);
+    assert.equal(hashless?.source.extractionFingerprint, undefined);
 
-    await assert.rejects(
-      applyLongTermMemoryDraft(draft.id, {
-        root,
-        autoApplyLowRiskOnly: true,
-        rebuildIndexes: false,
-      }),
-      (error: unknown) =>
-        error instanceof LtmDraftApplyError &&
-        error.statusCode === 409 &&
-        error.code === "ltm_draft_source_hash_confirmation_required",
-    );
+    for (const autoApplyLowRiskOnly of [true, false]) {
+      await assert.rejects(
+        applyLongTermMemoryDraft(draft.id, {
+          root,
+          autoApplyLowRiskOnly,
+          rebuildIndexes: false,
+        }),
+        (error: unknown) =>
+          error instanceof LtmDraftApplyError &&
+          error.statusCode === 409 &&
+          error.code === "ltm_draft_source_context_unbound",
+      );
+    }
     assert.equal(await storage.getNote("char_damo"), null);
 
-    const manual = await applyLongTermMemoryDraft(draft.id, { root, rebuildIndexes: false });
-    assert.equal(manual.draft.status, "accepted");
+    const reextracted = await store.createDraft({
+      source: { sourceNoteId: source.id },
+      scope: {},
+      modes: ["roleplay"],
+      response: responseFor(createCharacterMutation(source.id, "Damo keeps careful watch.")),
+    });
+    const applied = await applyLongTermMemoryDraft(reextracted.id, { root, rebuildIndexes: false });
+    assert.equal(applied.draft.status, "accepted");
     assert.equal((await storage.getNote("char_damo"))?.sections.facts?.text, "Damo keeps careful watch.");
   });
 });

@@ -13,7 +13,7 @@ import { LongTermMemoryDraftStore } from "./draft-store.js";
 import { rebuildLongTermMemoryIndexes } from "./rebuild.js";
 import { canUpdateLtmScopedTarget } from "./scoped-targets.js";
 import { LongTermMemoryStorage } from "./storage.js";
-import { sourceHashForLtmSourceNote } from "./source-hash.js";
+import { isLtmSourceExtractionFingerprintCurrent } from "./source-hash.js";
 import {
   groupLtmDraftMutationsByNote,
   projectLtmDraftMutationGroup,
@@ -170,7 +170,6 @@ async function preflightDraftMutations(
 async function assertDraftSourceFresh(
   storage: LongTermMemoryStorage,
   draft: LtmExtractionDraft,
-  autoApplyLowRiskOnly: boolean,
 ) {
   const sourceNoteId = draft.source.sourceNoteId;
   const sourceNote = sourceNoteId ? await storage.getNote(sourceNoteId) : null;
@@ -188,19 +187,16 @@ async function assertDraftSourceFresh(
       "ltm_draft_source_invalid",
     );
   }
-  if (!draft.source.sourceHash) {
-    if (autoApplyLowRiskOnly) {
-      throw new LtmDraftApplyError(
-        "Legacy hashless long-term memory drafts require manual confirmation.",
-        409,
-        "ltm_draft_source_hash_confirmation_required",
-      );
-    }
-    return sourceNote;
-  }
-  if (sourceHashForLtmSourceNote(sourceNote) !== draft.source.sourceHash) {
+  if (!draft.source.extractionFingerprint) {
     throw new LtmDraftApplyError(
-      "The long-term memory draft source changed after extraction. Extract it again before applying this draft.",
+      "This long-term memory draft was created before context-bound extraction. Extract the source again before applying it.",
+      409,
+      "ltm_draft_source_context_unbound",
+    );
+  }
+  if (!isLtmSourceExtractionFingerprintCurrent(sourceNote, draft.source.extractionFingerprint)) {
+    throw new LtmDraftApplyError(
+      "The long-term memory draft source or extraction context changed. Extract it again before applying this draft.",
       409,
       "ltm_draft_source_stale",
     );
@@ -320,7 +316,7 @@ async function applyLongTermMemoryDraftInner(
     }
 
     const storage = new LongTermMemoryStorage(options.root);
-    await assertDraftSourceFresh(storage, draft, options.autoApplyLowRiskOnly === true);
+    await assertDraftSourceFresh(storage, draft);
     const actor = options.actor ?? (options.autoApplyLowRiskOnly ? "auto_low_risk" : "maintenance_api");
     const appliedMutationIds: string[] = [];
     const selectedMutationIds = options.mutationIds ? new Set(options.mutationIds) : null;

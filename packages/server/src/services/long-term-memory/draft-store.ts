@@ -17,7 +17,7 @@ import {
 import { readJsonFile, writeJsonAtomic } from "./atomic-json.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
 import { LongTermMemoryStorage } from "./storage.js";
-import { sourceHashForLtmSourceNote } from "./source-hash.js";
+import { extractionFingerprintForLtmSourceNote, sourceHashForLtmSourceNote } from "./source-hash.js";
 
 export interface CreateLtmExtractionDraftInput {
   scope?: LtmScope;
@@ -108,6 +108,14 @@ export class LongTermMemoryDraftStore {
         ...(!options.source.sourceHash && sourceNote && isLtmSourceLikeNote(sourceNote)
           ? { sourceHash: sourceHashForLtmSourceNote(sourceNote) }
           : {}),
+        ...(!options.source.extractionFingerprint && sourceNote && isLtmSourceLikeNote(sourceNote)
+          ? {
+              extractionFingerprint: extractionFingerprintForLtmSourceNote(sourceNote, {
+                extractionMode:
+                  options.modes.find((mode) => sourceNote.modes.includes(mode)) ?? sourceNote.modes[0],
+              }),
+            }
+          : {}),
       };
       const timestamp = nowIso();
       const candidateCount = options.response.mutations.length;
@@ -141,7 +149,9 @@ export class LongTermMemoryDraftStore {
       });
       await writeJsonAtomic(draftPathForId(draft.id, this.root), draft);
       try {
-        await this.supersedeOlderPendingDrafts(draft);
+        if (draft.mutations.length > 0) {
+          await this.supersedeOlderPendingDrafts(draft);
+        }
       } catch (error) {
         await unlink(draftPathForId(draft.id, this.root)).catch(() => {});
         throw error;

@@ -133,7 +133,14 @@ test("LTM transport contracts - import preserves partial failures and retryabili
           ...sourceNote,
           id: "source_chat_summary_c",
           title: "Chapter three",
-          extracted: true,
+          extractionFingerprint: {
+            version: 2,
+            sourceHash: "a".repeat(64),
+            provenance: null,
+            scope: { chatId: "chat_a", chatIds: ["chat_a"] },
+            modes: ["roleplay"],
+            extractionMode: "roleplay",
+          },
         },
         created: true,
         sourceWriteStatus: "created",
@@ -202,7 +209,20 @@ test("LTM transport contracts - import preserves partial failures and retryabili
       ...payload,
       imported: payload.imported.map((item) =>
         item.extractionStatus === "succeeded"
-          ? { ...item, note: { ...item.note, extracted: false } }
+          ? {
+              ...item,
+              note: {
+                ...item.note,
+                extractionFingerprint: {
+                  version: 2,
+                  sourceHash: "not-a-sha256-hash",
+                  provenance: null,
+                  scope: { chatId: "chat_a", chatIds: ["chat_a"] },
+                  modes: ["roleplay"],
+                  extractionMode: "roleplay",
+                },
+              },
+            }
           : item,
       ),
     }).success,

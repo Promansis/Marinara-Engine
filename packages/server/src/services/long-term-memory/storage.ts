@@ -32,6 +32,7 @@ import { DEFAULT_LTM_POLICIES, DEFAULT_LTM_RETRIEVAL_CONFIG } from "./default-co
 import { markLtmIndexesDirty } from "./index-state.js";
 import { commitLtmMutation, recoverLtmMutations, type LtmMutationFileChange } from "./mutation-transaction.js";
 import { parseStoredLtmNote } from "./stored-note.js";
+import { isLtmSourceExtractionFingerprintCurrent } from "./source-hash.js";
 import {
   getLongTermMemoryDirectories,
   getLongTermMemoryRoot,
@@ -95,6 +96,13 @@ function normalizePatch(patch: UpdateLtmNotePatch) {
     delete next.title;
   }
   return next;
+}
+
+function keepOnlyCurrentExtractionFingerprint(note: LtmNote) {
+  if (!isLtmSourceLikeNote(note) || !note.extractionFingerprint) return note;
+  if (isLtmSourceExtractionFingerprintCurrent(note, note.extractionFingerprint)) return note;
+  const { extractionFingerprint: _extractionFingerprint, ...withoutFingerprint } = note;
+  return ltmNoteSchema.parse(withoutFingerprint);
 }
 
 function normalizeRetrievalConfig(raw: unknown) {
@@ -349,13 +357,13 @@ export class LongTermMemoryStorage {
   async createNote(input: CreateLtmNoteInput, eventContext: LtmEventContext = {}) {
     await this.initializeLtmStore();
     const timestamp = nowIso();
-    const note = ltmNoteSchema.parse({
+    const note = keepOnlyCurrentExtractionFingerprint(ltmNoteSchema.parse({
       ...input,
       scope: normalizeStoredScope(input.scope ?? {}),
       createdAt: input.createdAt ?? timestamp,
       updatedAt: input.updatedAt ?? timestamp,
       version: input.version ?? 1,
-    });
+    }));
     const path = notePathForId(note.id, note.type, this.root);
     return withVaultMutationLock(this.root, () =>
       withNoteWriteLock(this.root, note.id, async () => {
@@ -402,7 +410,7 @@ export class LongTermMemoryStorage {
         if (current && projected.type !== current.type) {
           throw new Error(`Projected long-term memory note ${noteId} cannot change type.`);
         }
-        const next = ltmNoteSchema.parse({
+        const next = keepOnlyCurrentExtractionFingerprint(ltmNoteSchema.parse({
           ...projected,
           id: noteId,
           ...(current
@@ -412,7 +420,7 @@ export class LongTermMemoryStorage {
                 version: current.version + 1,
               }
             : {}),
-        });
+        }));
         const path = notePathForId(next.id, next.type, this.root);
         await commitLtmMutation(this.root, {
           files: [{ path, before: current, after: next }],
@@ -439,13 +447,13 @@ export class LongTermMemoryStorage {
         }
 
         const timestamp = nowIso();
-        const next = ltmNoteSchema.parse({
+        const next = keepOnlyCurrentExtractionFingerprint(ltmNoteSchema.parse({
           ...current,
           id: parsedNextId,
           links: rewriteLinks(current.links, currentId, parsedNextId),
           updatedAt: timestamp,
           version: current.version + 1,
-        });
+        }));
         const oldPath = notePathForId(currentId, current.type, this.root);
         const newPath = notePathForId(parsedNextId, current.type, this.root);
         const draftRewrites = await this.prepareDraftReferenceRewrites(currentId, parsedNextId);
@@ -761,7 +769,7 @@ export class LongTermMemoryStorage {
       const timestamp = nowIso();
       const normalizedPatch = normalizePatch(patch);
       const titlePatch = "title" in patch ? { title: normalizedPatch.title } : {};
-      const next = ltmNoteSchema.parse({
+      const next = keepOnlyCurrentExtractionFingerprint(ltmNoteSchema.parse({
         ...current,
         ...normalizedPatch,
         ...titlePatch,
@@ -771,7 +779,7 @@ export class LongTermMemoryStorage {
         conflicts: normalizedPatch.conflicts ?? current.conflicts,
         updatedAt: timestamp,
         version: current.version + 1,
-      });
+      }));
 
       await commitLtmMutation(this.root, {
         files: [{ path, before: current, after: next }],

@@ -109,7 +109,7 @@ export function NoteRow({
               {!showSourceSummary && (
                 <StatusPill label={friendlyStatus(note.status)} tone={note.status === "active" ? "good" : "neutral"} />
               )}
-              {note.extracted && <StatusPill label="Extracted" />}
+              {note.extractionFingerprint && <StatusPill label="Extracted" />}
               {importance && <ImportanceBadge importance={importance} />}
               {sectionCount > 1 && <StatusPill label={`${sectionCount} details`} />}
             </div>

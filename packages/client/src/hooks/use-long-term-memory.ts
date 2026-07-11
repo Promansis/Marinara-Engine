@@ -50,6 +50,7 @@ import {
   LtmScope,
   LtmStatus,
   LtmLastInjectionResponse,
+  LtmMode,
   LtmPendingDraftsCountResponse,
 } from "@marinara-engine/shared";
 import { api } from "../lib/api-client";
@@ -215,8 +216,8 @@ export const longTermMemoryKeys = {
   drafts: (filter?: LtmDraftFilter) => [...longTermMemoryKeys.all, "drafts", filter ?? {}] as const,
   draftReview: (filter?: LtmDraftReviewFilter) =>
     [...longTermMemoryKeys.all, "drafts", "review", filter ?? {}] as const,
-  importPreview: (source: LtmInteropSource, limit: number, scope?: LtmScope) =>
-    [...longTermMemoryKeys.all, "import-preview", source, limit, scope ?? {}] as const,
+  importPreview: (source: LtmInteropSource, limit: number, scope?: LtmScope, mode?: LtmMode) =>
+    [...longTermMemoryKeys.all, "import-preview", source, limit, scope ?? {}, mode ?? null] as const,
   extractionSettings: () => [...longTermMemoryKeys.all, "extraction-settings"] as const,
   settings: () => [...longTermMemoryKeys.all, "settings"] as const,
   debugLogs: () => [...longTermMemoryKeys.all, "debug-log"] as const,
@@ -559,12 +560,13 @@ export function useLongTermMemoryImportPreview(
   source: LtmInteropSource,
   limit: number,
   scope?: LtmScope,
+  mode?: LtmMode,
   options: { enabled?: boolean } = {},
 ) {
   return useQuery({
-    queryKey: longTermMemoryKeys.importPreview(source, limit, scope),
+    queryKey: longTermMemoryKeys.importPreview(source, limit, scope, mode),
     queryFn: async ({ signal }) => {
-      const body = ltmInteropPreviewRequestSchema.parse({ source, limit, scope });
+      const body = ltmInteropPreviewRequestSchema.parse({ source, limit, scope, mode });
       return ltmInteropPreviewResponseSchema.parse(
         await api.post<unknown>("/long-term-memory/import/preview", body, { signal }),
       );

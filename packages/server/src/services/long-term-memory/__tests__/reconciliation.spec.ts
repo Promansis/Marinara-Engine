@@ -48,6 +48,7 @@ import {
 import { getLtmExtractionConfig, updateLtmExtractionConfig } from "../extraction-config.js";
 import { getLtmGlobalSettings, updateLtmGlobalSettings } from "../settings.js";
 import { extractLongTermMemoryFromSourceNote } from "../source-extraction.js";
+import { extractionFingerprintForLtmSourceNote } from "../source-hash.js";
 import { applyLtmScopeLinksToDerivedNotes } from "../scope-links.js";
 import { readLtmDebugLog } from "../debug-log.js";
 import type { LtmBudgetedChunk } from "../budget.js";
@@ -981,6 +982,145 @@ async function createDraftSourceNote(
     { suppressEvent: true },
   );
 }
+
+test("v2 extraction fingerprints invalidate source context and legacy drafts require re-extraction", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-fingerprint-context-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    const baseScope = {
+      chatId: "chat_fingerprint_a",
+      chatIds: ["chat_fingerprint_a"],
+      groupId: "group_fingerprint_a",
+      characterIds: ["char_fingerprint_a"],
+    };
+    const variants: Array<{ label: string; patch: Partial<LtmNote> }> = [
+      {
+        label: "chat scope",
+        patch: { scope: { ...baseScope, chatId: "chat_fingerprint_b", chatIds: ["chat_fingerprint_b"] } },
+      },
+      { label: "group scope", patch: { scope: { ...baseScope, groupId: "group_fingerprint_b" } } },
+      { label: "enabled modes", patch: { modes: ["conversation"] } },
+      { label: "provenance", patch: { provenance: { kind: "character", sourceId: "char_fingerprint_b" } } },
+    ];
+
+    for (const [index, variant] of variants.entries()) {
+      const sourceId = `source_fingerprint_context_${index}`;
+      await storage.createNote(
+        {
+          id: sourceId,
+          type: "source",
+          status: "active",
+          modes: ["roleplay", "conversation"],
+          scope: baseScope,
+          tags: ["source_summary", "imported_character"],
+          provenance: { kind: "character", sourceId: "char_fingerprint_a" },
+          links: [],
+          sections: { source: { text: "Fingerprint source text.", updatedAt: timestamp, evidence: ["character:char_fingerprint_a"] } },
+        },
+        { suppressEvent: true },
+      );
+      const draft = await new LongTermMemoryDraftStore(root).createDraft({
+        scope: baseScope,
+        modes: ["roleplay", "conversation"],
+        source: { sourceNoteId: sourceId },
+        response: { summary: variant.label, mutations: [threadCreateMutation()] },
+      });
+      await storage.updateNote(sourceId, variant.patch, { suppressEvent: true });
+      await assert.rejects(
+        applyLongTermMemoryDraft(draft.id, { root, rebuildIndexes: false }),
+        /source or extraction context changed/i,
+        variant.label,
+      );
+    }
+
+    const modeSourceId = "source_fingerprint_extraction_mode";
+    await storage.createNote(
+      {
+        id: modeSourceId,
+        type: "source",
+        status: "active",
+        modes: ["roleplay", "conversation"],
+        scope: baseScope,
+        tags: ["source_summary"],
+        links: [],
+        sections: { source: { text: "Mode-bound source text.", updatedAt: timestamp } },
+      },
+      { suppressEvent: true },
+    );
+    const modeSource = (await storage.getNote(modeSourceId))!;
+    const store = new LongTermMemoryDraftStore(root);
+    const roleplayDraft = await store.createDraft({
+      scope: baseScope,
+      modes: modeSource.modes,
+      source: {
+        sourceNoteId: modeSourceId,
+        extractionFingerprint: extractionFingerprintForLtmSourceNote(modeSource, {
+          scope: baseScope,
+          modes: modeSource.modes,
+          extractionMode: "roleplay",
+        }),
+      },
+      response: { summary: "Roleplay extraction", mutations: [threadCreateMutation()] },
+    });
+    await store.createDraft({
+      scope: baseScope,
+      modes: modeSource.modes,
+      source: {
+        sourceNoteId: modeSourceId,
+        extractionFingerprint: extractionFingerprintForLtmSourceNote(modeSource, {
+          scope: baseScope,
+          modes: modeSource.modes,
+          extractionMode: "conversation",
+        }),
+      },
+      response: { summary: "Conversation extraction", mutations: [threadCreateMutation()] },
+    });
+    assert.equal((await store.getDraft(roleplayDraft.id))?.status, "superseded");
+
+    const legacyDraft = await store.createDraft({
+      scope: baseScope,
+      modes: modeSource.modes,
+      source: { sourceNoteId: modeSourceId },
+      response: { summary: "Legacy context", mutations: [threadCreateMutation()] },
+    });
+    await store.updateDraft(legacyDraft.id, {
+      source: { ...legacyDraft.source, extractionFingerprint: undefined },
+    });
+    await assert.rejects(
+      applyLongTermMemoryDraft(legacyDraft.id, { root, rebuildIndexes: false }),
+      /created before context-bound extraction/i,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("diagnostic-only extraction drafts do not supersede useful pending mutations", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-diagnostic-draft-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await createDraftSourceNote(storage, "scene_diagnostic_retry");
+    const store = new LongTermMemoryDraftStore(root);
+    const useful = await store.createDraft({
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_diagnostic_retry" },
+      response: { summary: "Useful extraction", mutations: [threadCreateMutation()] },
+    });
+    const diagnostic = await store.createDraft({
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_diagnostic_retry" },
+      response: { summary: "Diagnostics only", mutations: [] },
+      diagnostics: [{ severity: "warning", code: "candidate_rejected", message: "No candidate survived validation." }],
+    });
+
+    assert.equal((await store.getDraft(useful.id))?.status, "pending");
+    assert.equal((await store.getDraft(diagnostic.id))?.status, "pending");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("draft apply rejects missing create dependencies before writing any mutation", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-apply-create-dependency-"));
@@ -3453,6 +3593,83 @@ test("source note extraction sends the resolved prompt for the source mode", asy
     });
 
     assert.equal(systemPrompt, "Conversation source prompt.");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source extraction persists its requested context before creating a v2 draft", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-extraction-context-binding-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await storage.createNote(
+      {
+        id: "source_context_binding",
+        type: "source",
+        status: "active",
+        modes: ["roleplay", "conversation"],
+        scope: {},
+        tags: ["source_summary"],
+        provenance: { kind: "character", sourceId: "char_context_binding" },
+        links: [],
+        sections: {
+          source: {
+            text: "The archive opens only when Mara returns the recovered key.",
+            updatedAt: timestamp,
+            evidence: ["character:char_context_binding"],
+          },
+        },
+      },
+      { suppressEvent: true },
+    );
+    const requestedScope = {
+      chatId: "chat_context_binding",
+      chatIds: ["chat_context_binding"],
+      groupId: "group_context_binding",
+      characterIds: ["char_context_binding"],
+    };
+    const provider = {
+      maxTokensOverrideValue: undefined,
+      chatComplete: async () => ({
+        content: JSON.stringify({
+          summary: "Archive fact",
+          units: [
+            {
+              id: randomUUID(),
+              bucket: "world_fact",
+              subjectId: "archive",
+              sectionKey: "facts",
+              text: "The archive opens only when Mara returns the recovered key.",
+              evidence: ["source_note:source_context_binding"],
+              confidence: 0.9,
+              salience: 0.8,
+              status: "active",
+              links: [],
+              sourceHash: sourceHashForEvidenceUnitExtraction((await storage.getNote("source_context_binding"))!),
+            },
+          ],
+        }),
+      }),
+    } as any;
+
+    const result = await extractLongTermMemoryFromSourceNote({
+      noteId: "source_context_binding",
+      provider,
+      model: "test-model",
+      root,
+      scope: requestedScope,
+      modes: ["conversation"],
+      mode: "conversation",
+      operationId: randomUUID(),
+    });
+
+    assert(result.draft);
+    assert.deepEqual(result.sourceNote.scope, requestedScope);
+    assert.deepEqual(result.sourceNote.modes, ["conversation"]);
+    assert.deepEqual(result.draft.source.extractionFingerprint?.scope, requestedScope);
+    assert.deepEqual(result.draft.source.extractionFingerprint?.modes, ["conversation"]);
+    assert.equal(result.draft.source.extractionFingerprint?.extractionMode, "conversation");
+    await applyLongTermMemoryDraft(result.draft.id, { root, rebuildIndexes: false });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

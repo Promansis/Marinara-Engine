@@ -120,6 +120,33 @@ const REBUILD_BODY_LIMIT_BYTES = 8 * 1024;
 const MAINTENANCE_BODY_LIMIT_BYTES = 32 * 1024;
 const IDENTITY_REPAIR_BODY_LIMIT_BYTES = 512 * 1024;
 
+function extractionCanMarkSourceCurrent(input: {
+  response: { mutations: unknown[] };
+  diagnostics: Array<{ severity: "warning" | "error" }>;
+  outcome: { state: string; droppedUnits: number };
+}) {
+  if (input.response.mutations.length > 0) return true;
+  return input.outcome.state === "no_suggestions_created" && input.outcome.droppedUnits === 0 && input.diagnostics.length === 0;
+}
+
+async function markSourceExtractionCurrent(
+  storage: LongTermMemoryStorage,
+  note: LtmNote,
+  fingerprint: NonNullable<LtmNote["extractionFingerprint"]> | undefined,
+  summary: string,
+) {
+  if (!fingerprint) return note;
+  return storage.updateNote(
+    note.id,
+    { extractionFingerprint: fingerprint },
+    {
+      actor: "maintenance_api",
+      cause: "source_extraction.completed",
+      summary,
+    },
+  );
+}
+
 const ltmIdentifierSchema = z
   .string()
   .min(1)
@@ -696,15 +723,14 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
           const directResult = await directIngestGameJournal(app.db, sourceNote, undefined, operationId, {
             applyLowRisk: body.applyLowRisk,
           });
-          await storage.updateNote(
-            sourceNote.id,
-            { extracted: true },
-            {
-              actor: "maintenance_api",
-              cause: "source_extraction.retry",
-              summary: `Completed extraction for ${sourceNote.title ?? sourceNote.id}`,
-            },
-          );
+          if (extractionCanMarkSourceCurrent(directResult)) {
+            await markSourceExtractionCurrent(
+              storage,
+              directResult.sourceNote,
+              directResult.draft?.source.extractionFingerprint,
+              `Completed extraction for ${directResult.sourceNote.title ?? directResult.sourceNote.id}`,
+            );
+          }
           await rebuildLongTermMemoryIndexes({
             scope: directResult.appliedMutationIds.length > 0 ? "all" : "source",
           });
@@ -764,15 +790,14 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
                 operationId,
               })
             : null;
-        await storage.updateNote(
-          sourceNote.id,
-          { extracted: true },
-          {
-            actor: "maintenance_api",
-            cause: "source_extraction.retry",
-            summary: `Completed extraction for ${sourceNote.title ?? sourceNote.id}`,
-          },
-        );
+        if (extractionCanMarkSourceCurrent(result)) {
+          await markSourceExtractionCurrent(
+            storage,
+            result.sourceNote,
+            (applyResult?.draft ?? result.draft)?.source.extractionFingerprint,
+            `Completed extraction for ${result.sourceNote.title ?? result.sourceNote.id}`,
+          );
+        }
         await rebuildLongTermMemoryIndexes({ scope: "source" });
 
         return ltmExtractSourceNoteResponseSchema.parse({
@@ -1028,7 +1053,7 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory source import preview" })) return;
     const body = ltmInteropPreviewRequestSchema.parse(req.body);
     return ltmInteropPreviewResponseSchema.parse(
-      await previewLongTermMemoryInterop(app.db, body.source, body.limit, getLongTermMemoryRoot(), body.scope),
+      await previewLongTermMemoryInterop(app.db, body.source, body.limit, getLongTermMemoryRoot(), body.scope, body.mode),
     );
   });
 
@@ -1090,6 +1115,8 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
                 state: "prepared" as const,
                 item,
                 extractionMethod: "direct_ingest" as const,
+                sourceNote: directResult.sourceNote,
+                extractionMode: directResult.extractionMode,
                 diagnostics: directResult.diagnostics,
                 outcome: directResult.outcome,
                 accounting: directResult.accounting,
@@ -1119,6 +1146,8 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
               state: "prepared" as const,
               item,
               extractionMethod: "llm" as const,
+              sourceNote: result.sourceNote,
+              extractionMode: result.extractionMode,
               diagnostics: result.diagnostics,
               outcome: result.outcome,
               accounting: result.accounting,
@@ -1200,10 +1229,11 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
             throwIfImportAborted(signal);
             const draft = await finalizeLongTermMemoryExtractionDraft(
               {
-                sourceNote: item.note,
+                sourceNote: prepared.sourceNote,
                 response: prepared.response,
-                scope: item.note.scope,
-                modes: item.note.modes,
+                scope: prepared.sourceNote.scope,
+                modes: prepared.sourceNote.modes,
+                extractionMode: prepared.extractionMode,
                 operationId,
                 diagnostics: prepared.diagnostics,
                 outcome: prepared.outcome,
@@ -1220,15 +1250,14 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
                     operationId,
                   })
                 : null;
-            const extractedNote = await storage.updateNote(
-              item.note.id,
-              { extracted: true },
-              {
-                actor: "maintenance_api",
-                cause: "interop.source_extraction",
-                summary: `Completed extraction for ${item.title}`,
-              },
-            );
+            const extractedNote = extractionCanMarkSourceCurrent(prepared)
+              ? await markSourceExtractionCurrent(
+                  storage,
+                  prepared.sourceNote,
+                  (applyResult?.draft ?? draft).source.extractionFingerprint,
+                  `Completed extraction for ${item.title}`,
+                )
+              : prepared.sourceNote;
             results.push({
               sourceId: item.sourceId,
               title: item.title,

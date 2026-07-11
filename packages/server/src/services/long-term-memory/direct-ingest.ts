@@ -6,9 +6,11 @@ import {
   type LtmExtractionDroppedCandidate,
   type LtmExtractionOutcome,
   type LtmExtractionResponse,
+  type LtmMode,
   type LtmNote,
   type LtmScope,
   type SessionSummary,
+  withMergedLtmScopeLinks,
 } from "@marinara-engine/shared";
 import { getLtmScopeChatIds } from "@marinara-engine/shared";
 import { LOCAL_SIDECAR_CONNECTION_ID } from "@marinara-engine/shared";
@@ -27,9 +29,11 @@ import { getLongTermMemoryRoot } from "./paths.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import { applyLongTermMemoryDraft } from "./reconciliation.js";
 import { resolveScopedEvidenceUnitTargets } from "./scoped-targets.js";
-import { sourceHashForLtmSourceNote } from "./source-hash.js";
 import { LongTermMemoryStorage } from "./storage.js";
 import type { LtmExtractionDiagnostic } from "./diagnostics.js";
+import { nowIso } from "./ltm-utils.js";
+import { stableJsonHash } from "./chunking.js";
+import { extractionFingerprintForLtmSourceNote, sourceHashForLtmSourceNote } from "./source-hash.js";
 
 function readJsonObject(raw: unknown): Record<string, unknown> {
   if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw as Record<string, unknown>;
@@ -39,6 +43,21 @@ function readJsonObject(raw: unknown): Record<string, unknown> {
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
   } catch {
     return {};
+  }
+}
+
+function readJsonArray(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  }
+  if (typeof raw !== "string" || !raw.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      : [];
+  } catch {
+    return [];
   }
 }
 
@@ -123,6 +142,8 @@ export async function autoApplyGameJournalDraft(options: {
 
 export interface DirectIngestGameJournalResult {
   operationId: string;
+  sourceNote: LtmNote;
+  extractionMode: LtmMode;
   units: LtmEvidenceUnit[];
   draft: LtmExtractionDraft | null;
   diagnostics: LtmExtractionDiagnostic[];
@@ -142,6 +163,70 @@ function emptyExtractionAccounting(): LtmExtractionAccounting {
     deduplications: 0,
     keptUnits: 0,
   };
+}
+
+function gameJournalSourceScope(chat: { id: string; groupId?: string | null; characterIds?: unknown }) {
+  return withMergedLtmScopeLinks(
+    {
+      chatId: chat.id,
+      groupId: typeof chat.groupId === "string" ? chat.groupId : undefined,
+      characterIds: readJsonArray(chat.characterIds),
+    },
+    { chatIds: [chat.id] },
+  );
+}
+
+function gameJournalSourceEvidence(chatId: string, sourceHash: string) {
+  return [`chat:${chatId}`, "game_journal", `game_source_hash:${sourceHash}`];
+}
+
+async function refreshGameJournalSourceNote(options: {
+  storage: LongTermMemoryStorage;
+  sourceNote: LtmNote;
+  chat: { id: string; groupId?: string | null; characterIds?: unknown };
+  sourceText: string;
+  sourceHash: string;
+}) {
+  const { sourceNote } = options;
+  if (sourceNote.type !== "source") return sourceNote;
+  const scope = gameJournalSourceScope(options.chat);
+  const evidence = gameJournalSourceEvidence(options.chat.id, options.sourceHash);
+  const currentSection = sourceNote.sections.source;
+  const tags = Array.from(new Set([...sourceNote.tags, "source_summary", "imported_game_journal"]));
+  const provenance = { kind: "game_journal", sourceId: options.chat.id } as const;
+  const sourceChanged =
+    currentSection?.text !== options.sourceText ||
+    stableJsonHash(currentSection?.evidence ?? []) !== stableJsonHash(evidence);
+  const contextChanged =
+    stableJsonHash(sourceNote.scope) !== stableJsonHash(scope) ||
+    stableJsonHash(sourceNote.modes) !== stableJsonHash(["game"]) ||
+    stableJsonHash(sourceNote.provenance ?? null) !== stableJsonHash(provenance) ||
+    stableJsonHash(sourceNote.tags) !== stableJsonHash(tags);
+  if (!sourceChanged && !contextChanged) return sourceNote;
+
+  return options.storage.updateNote(
+    sourceNote.id,
+    {
+      scope,
+      modes: ["game"],
+      tags,
+      provenance,
+      sections: {
+        ...sourceNote.sections,
+        source: {
+          ...(currentSection ?? { confidence: 0.8 }),
+          text: options.sourceText,
+          evidence,
+          updatedAt: sourceChanged ? nowIso() : currentSection?.updatedAt ?? nowIso(),
+        },
+      },
+    },
+    {
+      actor: "maintenance_api",
+      cause: "interop.game_journal_refresh",
+      summary: `Refreshed game journal source ${sourceNote.title ?? sourceNote.id}`,
+    },
+  );
 }
 
 function directIngestAbortError() {
@@ -190,6 +275,8 @@ export async function directIngestGameJournal(
         logger.warn("[ltm] directIngestGameJournal: chat %s not found, aborting", chatId);
         return {
           operationId: opId,
+          sourceNote,
+          extractionMode: "game",
           units: [],
           draft: null,
           diagnostics: [],
@@ -217,6 +304,8 @@ export async function directIngestGameJournal(
         logger.warn("[ltm] directIngestGameJournal: no game data found for chat %s, aborting", chatId);
         return {
           operationId: opId,
+          sourceNote,
+          extractionMode: "game",
           units: [],
           draft: null,
           diagnostics: [],
@@ -235,7 +324,17 @@ export async function directIngestGameJournal(
       }
 
       const sourceHash = computeGameSourceHash(gameJournal as Journal | null, sessionSummaries as SessionSummary[]);
-      const scope = sourceNote.scope;
+      const sourceText = renderGameSourceText(gameJournal as Journal | null, sessionSummaries as SessionSummary[]);
+      const currentSourceNote = sourceText
+        ? await refreshGameJournalSourceNote({
+            storage,
+            sourceNote,
+            chat,
+            sourceText,
+            sourceHash,
+          })
+        : sourceNote;
+      const scope = currentSourceNote.scope;
       const ctx = { chatId, scope, sourceHash };
 
       const units = mapGameJournalToEvidenceUnits(
@@ -248,6 +347,8 @@ export async function directIngestGameJournal(
         logger.info("[ltm] directIngestGameJournal: no evidence units from game data for chat %s", chatId);
         return {
           operationId: opId,
+          sourceNote: currentSourceNote,
+          extractionMode: "game",
           units: [],
           draft: null,
           diagnostics: [],
@@ -265,7 +366,7 @@ export async function directIngestGameJournal(
         };
       }
 
-      const sourceEvidence = `source_note:${sourceNote.id}`;
+      const sourceEvidence = `source_note:${currentSourceNote.id}`;
       const structuralUnits = units.map((unit) =>
         unit.evidence.includes(sourceEvidence) ? unit : { ...unit, evidence: [...unit.evidence, sourceEvidence] },
       );
@@ -274,7 +375,6 @@ export async function directIngestGameJournal(
       const existingNotes = (await storage.listNotes({ scope, includeGlobal: true })).filter(
         (note) => !isLtmSourceLikeNote(note) && note.type !== "scene",
       );
-      const sourceText = renderGameSourceText(gameJournal as Journal | null, sessionSummaries as SessionSummary[]);
       const structuralSummary = `Direct ingestion of game journal + ${sessionSummaries.length} session summaries`;
       const structuralTargetResolution = await resolveScopedEvidenceUnitTargets({
         storage,
@@ -289,7 +389,7 @@ export async function directIngestGameJournal(
         },
         totalCandidates: structuralUnits.length,
         sourceText,
-        sourceNote,
+        sourceNote: currentSourceNote,
         existingNotes: structuralTargetResolution.existingNotes,
         scope,
         modes: ["game"],
@@ -306,7 +406,7 @@ export async function directIngestGameJournal(
           throwIfDirectIngestAborted(options.signal);
           const { provider, model } = await resolveGameJournalExtractionProvider(db, chat.connectionId);
           const refined = await runLongTermMemoryEvidenceUnitExtraction({
-            sourceNote,
+            sourceNote: currentSourceNote,
             sourceText,
             existingNotes,
             candidateUnits: structuralUnits,
@@ -342,7 +442,7 @@ export async function directIngestGameJournal(
             totalCandidates: refined.totalCandidates,
             parserDroppedCandidates: refined.droppedCandidates,
             sourceText,
-            sourceNote,
+            sourceNote: currentSourceNote,
             existingNotes: refinedTargetResolution.existingNotes,
             scope,
             modes: ["game"],
@@ -378,8 +478,13 @@ export async function directIngestGameJournal(
               modes: ["game"],
               source: {
                 chatId,
-                sourceNoteId: sourceNote.id,
-                sourceHash: sourceHashForLtmSourceNote(sourceNote),
+                sourceNoteId: currentSourceNote.id,
+                sourceHash: sourceHashForLtmSourceNote(currentSourceNote),
+                extractionFingerprint: extractionFingerprintForLtmSourceNote(currentSourceNote, {
+                  scope,
+                  modes: ["game"],
+                  extractionMode: "game",
+                }),
               },
               summary: response.summary,
               response,
@@ -413,7 +518,7 @@ export async function directIngestGameJournal(
         phase: "extraction",
         action: "direct_ingest_completed",
         status: debugStatus,
-        sourceNoteId: sourceNote.id,
+        sourceNoteId: currentSourceNote.id,
         draftId: updatedDraft?.id ?? undefined,
         mutationIds: response.mutations.map((mutation) => mutation.id),
         message: `Direct-ingested ${outcome.keptUnits}/${structuralUnits.length} units → ${response.mutations.length} mutations, ${appliedMutationIds.length} applied`,
@@ -435,6 +540,8 @@ export async function directIngestGameJournal(
 
       return {
         operationId: opId,
+        sourceNote: currentSourceNote,
+        extractionMode: "game",
         units: structuralUnits,
         draft: updatedDraft,
         diagnostics,

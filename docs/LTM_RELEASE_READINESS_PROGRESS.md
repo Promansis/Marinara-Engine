@@ -8,14 +8,15 @@ Resume Here section short and current; keep completed phase records durable.
 
 - Branch: `fix/ltm-staging-port-rebase`
 - Audit baseline: `c83d66e6edee6c0a9b3ab3021265461b4ff1a1b1`
-- Current phase: Phase 3 - Coherent Index Recovery
-- State: Phase 2 implementation complete; Phase 3 not started
-- Next entrypoint: trace `index-state.ts` and `index-generation.ts` parsing,
-  publication, and cache selection paths before adding malformed-state
-  quarantine and coherent-generation recovery
-- Uncommitted scope: none expected after the Phase 2 commit
-- Blockers: none for Phase 3; Phase 2 has one platform-specific recovery proof
-  gap recorded below
+- Current phase: Phase 4 - Context-Bound Capture and Refresh
+- State: Phase 3 committed locally as `941b20d0`; Phase 4 implementation and
+  validation complete locally with its atomic commit pending
+- Next entrypoint: commit the completed Phase 4 scope, then begin Phase 5
+  recall-settings and eligibility work
+- Uncommitted scope: Phase 4 source freshness, import refresh, client status,
+  regression tests, and this progress update
+- Blockers: no Phase 4 implementation blocker. Phase 2's platform-specific
+  interrupted-write proof gap remains recorded below.
 
 ## Non-Negotiable Decisions
 
@@ -57,8 +58,8 @@ proof that a later implementation phase passes.
 | 0 - Documentation baseline | Complete | Commit subject below | Direct path checks and `git diff --check` passed |
 | 1 - Security and managed-agent lifecycle | Complete | Commit subject below | Focused route/lifecycle proof, server suite, static build, and prompt regression passed; one unrelated browser smoke failure recorded |
 | 2 - Transactional vault mutations | Complete | Commit subject below | Focused transaction/recovery proof, affected LTM suites, full server suite, prompt regression, and static validation passed |
-| 3 - Coherent index recovery | Not started | Pending | Not run |
-| 4 - Context-bound capture and refresh | Not started | Pending | Not run |
+| 3 - Coherent index recovery | Committed locally (`941b20d0`) | Complete | Focused corruption/recovery proof, 334-test server suite, prompt regression, and static/build validation passed |
+| 4 - Context-bound capture and refresh | Implementation complete locally | Commit pending | Focused import/freshness/route proof, 339-test server suite, prompt regression, static/build validation, and targeted desktop/mobile browser flows passed |
 | 5 - Recall settings, eligibility, and relevance | Not started | Pending | Not run |
 | 6 - Safe prompt artifacts and truthful receipts | Not started | Pending | Not run |
 | 7 - Mode-neutral production recall | Not started | Pending | Not run |
@@ -233,6 +234,141 @@ Next entrypoint: begin Phase 3 in `packages/server/src/services/long-term-memory
 `index-generation.ts`, and the maintenance/retrieval cache tests; preserve the
 Phase 2 durable revision contract while making state and generation loading
 defensive.
+
+### Phase 3 - Coherent Index Recovery
+
+Started: 2026-07-11
+
+Completed: 2026-07-11 locally; committed as `941b20d0`
+
+Baseline HEAD: `9f9d74ce816196a3521fc50d1d07454d5d49fa77`
+
+Commit: `941b20d0` (`fix(ltm): recover coherent index generations`)
+
+Scope:
+
+- Added defensive index-state recovery: malformed `state.json` is quarantined,
+  replaced with a dirty state carrying a fresh durable revision, and can then
+  rebuild or repair from canonical notes.
+- Added index-artifact quarantine for malformed pointers and invalid generation
+  directories. Generation loading validates typed and source families together,
+  so a missing or corrupt metadata, vector, keyword, or source artifact cannot
+  be combined with another generation.
+- Made publication validate the complete staged generation before atomically
+  replacing the current pointer. Partial rebuilds reuse only a fully validated
+  generation and rebuild missing families from canonical notes.
+- Keyed retrieval caching by both durable state revision and the validated
+  active generation. A warm process revalidates the active generation before
+  returning a cache entry, allowing it to fall back coherently after on-disk
+  corruption.
+- Removed unread flat-index and root-manifest writes. Updated affected legacy
+  tests to inspect generation artifacts through the index APIs instead.
+
+Compatibility and migration:
+
+- Existing canonical notes remain the rebuild source and are not discarded when
+  state or derived index artifacts are quarantined.
+- Existing flat index files are left untouched but are no longer written or
+  used as a read path. Generation directories and pointer history remain the
+  compatibility source for derived index recovery.
+- A valid fallback generation stays selected through pointer history; no
+  unreferenced or partial generation is activated.
+
+Validation:
+
+| Command | Result |
+| --- | --- |
+| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/maintenance.spec.ts` | Passed: 35 tests, 0 failed; covers malformed state, pointer, repair, complete-generation fallback, warm-cache recovery, publication failure, and no flat output |
+| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/reconciliation.spec.ts` | Passed: 117 tests, 0 failed |
+| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/routes.spec.ts` | Passed: 17 tests, 0 failed |
+| `pnpm --filter @marinara-engine/server test` | Passed: 334 tests, 0 failed |
+| `pnpm --filter @marinara-engine/server lint` | Passed TypeScript validation |
+| `pnpm regression:prompt` | Passed deterministic prompt, macro, lorebook, summary, and mode regressions |
+| `pnpm check` | Passed Impeccable context check, workspace lint, TypeScript, and production builds |
+| `git diff --check` | Passed after the final documentation edit |
+| `marinara-doc-check` | Not installed; no checked-in equivalent command is available |
+
+Manual proof: not completed. On supported desktop and Android/Termux
+filesystems, corrupt `indexes/state.json` and one current-generation family,
+restart the server, verify quarantined artifacts and fallback/rebuild behavior,
+then confirm canonical notes remain intact.
+
+Residual risk: automated coverage proves deterministic file fixtures and a
+fresh-cache reload, but not a real power-loss/filesystem-crash sequence on each
+supported runtime. Phase 10 still owns derived-artifact retention and cleanup.
+
+Next entrypoint: commit the completed Phase 4 scope, then begin Phase 5 in the
+resolved recall-settings and eligibility paths.
+
+### Phase 4 - Context-Bound Capture and Refresh
+
+Started: 2026-07-11
+
+Completed: 2026-07-11 locally; atomic commit pending
+
+Baseline: Phase 3 commit `941b20d0` (`fix(ltm): recover coherent index generations`)
+
+Commit: pending; record this hash at the Phase 5 checkpoint
+
+Scope:
+
+- Replaced the `extracted` freshness shortcut with a v2 extraction fingerprint
+  containing source material, provenance, scope, enabled modes, and extraction
+  mode. Source-note writes clear a now-stale fingerprint automatically.
+- Bound source extraction to the persisted chat/group/character scope and mode
+  before draft creation, and reject finalization if that context changes while
+  extraction is in flight. Legacy context-unbound drafts now require
+  re-extraction before any apply path can write mutations.
+- Kept useful pending drafts when a later diagnostic-only extraction returns no
+  mutations. Sources become current only after an authoritative extraction
+  result; a diagnostics-only result remains refreshable.
+- Made import previews compare the live capture fingerprint rather than a
+  boolean. Character capture now includes durable card fields; lorebooks are
+  stable per-entry source units below the 6,000-token call budget; game-journal
+  capture refreshes its source text, scope, and raw journal hash from live data.
+- Updated client cache keys for import mode, source-note status pills, and the
+  legacy review label so the UI follows the server freshness contract.
+
+Compatibility and migration:
+
+- Existing v1 notes keep loading. The old optional `extracted` field remains
+  readable for compatibility but is no longer a freshness authority.
+- A source note without a v2 fingerprint is pending refresh. A legacy pending
+  draft without one is blocked with `ltm_draft_source_context_unbound` until a
+  new extraction creates a context-bound draft.
+- Imported source identities remain stable across title edits. Existing
+  lorebook imports are refreshed as stable entry parts on their next import.
+
+Validation:
+
+| Command | Result |
+| --- | --- |
+| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/import-pipeline.spec.ts` | Passed: 12 tests, 0 failed; covers durable character fields, deterministic lorebook units, game-journal refresh, and diagnostic-only current-state handling |
+| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/reconciliation.spec.ts` | Passed: 120 tests, 0 failed; covers v2 context invalidation, legacy draft blocking, and source-context binding |
+| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/maintenance.spec.ts src/services/long-term-memory/__tests__/routes.spec.ts src/services/long-term-memory/__tests__/draft-reconciliation.spec.ts` | Passed: 62 tests, 0 failed |
+| `pnpm --filter @marinara-engine/server test` | Passed: 339 tests, 0 failed; all tracked server LTM specs discovered |
+| `pnpm --filter @marinara-engine/server lint` | Passed TypeScript validation |
+| `pnpm regression:prompt` | Passed deterministic prompt, lorebook, macro, summary, and mode regressions |
+| `pnpm check` | Passed Impeccable context check, workspace lint, TypeScript, and production builds |
+| Isolated desktop LTM import Playwright flow on ports 5183/7976 | Passed: 2 tests, 0 failed; imported-row and partial-import retry behavior |
+| Isolated mobile LTM Playwright flow on ports 5184/7977 | Passed: 1 test, 0 failed; mobile import entry flow |
+| `pnpm smoke:ui` | Inconclusive: the initial shared-port run had an occupied port after a partial transcript; isolated focused LTM browser flows above passed |
+| `git diff --check` | Passed after the final documentation edit |
+| `marinara-doc-check` | Not installed; no checked-in equivalent command is available |
+
+Manual proof: not completed. Import a changed character, a large lorebook
+entry, a chat summary, and a game journal against a real configured provider;
+verify each becomes pending after an upstream edit, re-extract it, and confirm
+the Import and Review surfaces stay truthful on desktop and mobile.
+
+Residual risk: automated coverage uses deterministic fixtures and mocked
+browser transport. It does not prove a live remote provider, a migrated
+user-sized vault, or every supported filesystem. The interrupted-write
+platform proof gap from Phase 2 remains open; Phase 5 owns recall eligibility
+and relevance behavior.
+
+Next entrypoint: begin Phase 5 in the resolved recall-settings, scope
+eligibility, threshold, direct-match, and mandatory-policy runtime paths.
 
 ## Progress Update Template
 

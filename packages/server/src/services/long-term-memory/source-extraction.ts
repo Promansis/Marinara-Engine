@@ -42,6 +42,11 @@ import {
   noteIdForLtmDraftMutation,
   projectLtmDraftOntoNotes,
 } from "./draft-projector.js";
+import { stableJsonHash } from "./chunking.js";
+import {
+  extractionFingerprintForLtmSourceNote,
+  isLtmSourceExtractionFingerprintCurrent,
+} from "./source-hash.js";
 
 const LTM_EXTRACTION_EXISTING_NOTE_CANDIDATE_CHUNKS = 100;
 
@@ -64,6 +69,7 @@ export type ExtractLongTermMemoryFromSourceNoteOptions = {
 export type ExtractLongTermMemoryFromSourceNoteResult = {
   operationId: string;
   sourceNote: LtmNote;
+  extractionMode: LtmMode;
   response: LtmExtractionResponse;
   draft: LtmExtractionDraft | null;
   diagnostics: LtmExtractionDiagnostic[];
@@ -77,6 +83,31 @@ export function isLtmSourceNote(note: LtmNote) {
 
 export function getLtmSourceNoteText(note: LtmNote) {
   return (note.sections.source?.text ?? note.sections.summary?.text ?? "").trim();
+}
+
+async function bindSourceNoteToExtractionContext(options: {
+  storage: LongTermMemoryStorage;
+  sourceNote: LtmNote;
+  scope: LtmScope;
+  modes: LtmMode[];
+}) {
+  const { sourceNote } = options;
+  if (
+    stableJsonHash(sourceNote.scope) === stableJsonHash(options.scope) &&
+    stableJsonHash(sourceNote.modes) === stableJsonHash(options.modes)
+  ) {
+    return sourceNote;
+  }
+
+  return options.storage.updateNote(
+    sourceNote.id,
+    { scope: options.scope, modes: options.modes },
+    {
+      actor: "maintenance_api",
+      cause: "source_extraction.context_bound",
+      summary: `Bound ${sourceNote.title ?? sourceNote.id} to its extraction context`,
+    },
+  );
 }
 
 function compatibleProjectedCreate(
@@ -173,6 +204,7 @@ export async function finalizeLongTermMemoryExtractionDraft(
     response: LtmExtractionResponse;
     scope: LtmScope;
     modes: LtmMode[];
+    extractionMode?: LtmMode;
     operationId?: string;
     diagnostics?: LtmExtractionDiagnostic[];
     outcome?: LtmExtractionOutcome;
@@ -188,6 +220,14 @@ export async function finalizeLongTermMemoryExtractionDraft(
   if (sourceHashForEvidenceUnitExtraction(currentSource) !== sourceHashForEvidenceUnitExtraction(input.sourceNote)) {
     throw new Error(`Long-term memory source note changed before draft finalization: ${input.sourceNote.id}`);
   }
+  const expectedFingerprint = extractionFingerprintForLtmSourceNote(input.sourceNote, {
+    scope: input.scope,
+    modes: input.modes,
+    extractionMode: input.extractionMode,
+  });
+  if (!isLtmSourceExtractionFingerprintCurrent(currentSource, expectedFingerprint)) {
+    throw new Error(`Long-term memory source extraction context changed before draft finalization: ${input.sourceNote.id}`);
+  }
 
   const response = input.response.mutations.length
     ? await remapDraftCreatesForProjection({
@@ -196,7 +236,11 @@ export async function finalizeLongTermMemoryExtractionDraft(
         overlay: options.overlay,
       })
     : input.response;
-  const source = sourceMetadataForEvidenceUnitDraft(input.sourceNote);
+  const source = sourceMetadataForEvidenceUnitDraft(currentSource, {
+    scope: input.scope,
+    modes: input.modes,
+    extractionMode: input.extractionMode,
+  });
   const projected = response.mutations.length
     ? await (async () => {
         const targetNoteIds = uniqueStrings(response.mutations.map(noteIdForLtmDraftMutation));
@@ -283,7 +327,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
   options: ExtractLongTermMemoryFromSourceNoteOptions & { operationId: string },
 ): Promise<ExtractLongTermMemoryFromSourceNoteResult> {
   const storage = new LongTermMemoryStorage(options.root);
-  const sourceNote = await storage.getNote(options.noteId);
+  let sourceNote = await storage.getNote(options.noteId);
   if (!sourceNote) {
     logger.warn("[ltm] Source note not found: %s", options.noteId);
     throw new Error(`Long-term memory note not found: ${options.noteId}`);
@@ -293,15 +337,26 @@ async function extractLongTermMemoryFromSourceNoteInner(
     throw new Error(`Long-term memory note is not a source note: ${options.noteId}`);
   }
 
+  const requestedScope = options.scope ?? sourceNote.scope;
+  const requestedModes = options.modes?.length ? options.modes : sourceNote.modes;
+  const resolvedMode = options.mode ?? requestedModes[0] ?? "roleplay";
+  if (!requestedModes.includes(resolvedMode)) {
+    throw new Error(`Long-term memory extraction mode is not enabled for source note: ${resolvedMode}`);
+  }
+  sourceNote = await bindSourceNoteToExtractionContext({
+    storage,
+    sourceNote,
+    scope: requestedScope,
+    modes: requestedModes,
+  });
   const sourceText = getLtmSourceNoteText(sourceNote);
   if (!sourceText) {
     logger.warn("[ltm] Source note %s has no source text", options.noteId);
     throw new Error(`Long-term memory source note has no source text: ${options.noteId}`);
   }
 
-  const scope = options.scope ?? sourceNote.scope;
-  const modes = options.modes?.length ? options.modes : sourceNote.modes;
-  const resolvedMode = options.mode ?? modes[0] ?? "roleplay";
+  const scope = sourceNote.scope;
+  const modes = sourceNote.modes;
   const allowedBuckets = [...DEFAULT_LTM_ALLOWED_STREAMS_BY_MODE[resolvedMode]];
   const extractionConfig = await getLtmExtractionConfig(options.root, resolvedMode);
   await recordLtmDebugEvent({
@@ -489,6 +544,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
             response: compiled.compiledResponse,
             scope,
             modes,
+            extractionMode: resolvedMode,
             operationId: options.operationId,
             diagnostics: compiled.diagnostics,
             outcome: compiled.outcome,
@@ -534,6 +590,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
   return {
     operationId: options.operationId,
     sourceNote,
+    extractionMode: resolvedMode,
     response: compiled.compiledResponse,
     draft,
     diagnostics: compiled.diagnostics,

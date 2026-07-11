@@ -30,7 +30,7 @@ import type { DB } from "../../db/connection.js";
 import { createCharactersStorage } from "../storage/characters.storage.js";
 import { createChatsStorage } from "../storage/chats.storage.js";
 import { createLorebooksStorage } from "../storage/lorebooks.storage.js";
-import { renderGameSourceText } from "./game-journal-mapper.js";
+import { computeGameSourceHash, renderGameSourceText } from "./game-journal-mapper.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import {
   getLongTermMemoryDirectories,
@@ -48,6 +48,10 @@ import { LongTermMemoryStorage } from "./storage.js";
 import { sourceNoteIdForProvenance } from "./source-identity.js";
 import { parseStoredLtmNote } from "./stored-note.js";
 import { ltmModeForChatMode } from "./chat-scope.js";
+import {
+  extractionFingerprintForLtmSourceMaterial,
+  extractionFingerprintsEqual,
+} from "./source-hash.js";
 
 export type ImportSourceCandidate = {
   title: string;
@@ -60,11 +64,15 @@ export type ImportSourceCandidate = {
   provenance: LtmSourceProvenance;
   scope?: LtmScope;
   modes: LtmMode[];
+  extractionMode: LtmMode;
   response: {
     summary: string;
     mutations: LtmDraftMutation[];
   };
 };
+
+const LTM_LOREBOOK_ENTRY_MAX_TOKENS = 6_000;
+const LTM_LOREBOOK_ENTRY_MAX_CHARS = LTM_LOREBOOK_ENTRY_MAX_TOKENS * 4;
 
 function chatSummaryMessageRange(entry: ChatSummaryEntry) {
   if (entry.sourceMode === "range" && entry.rangeStartIndex && entry.rangeEndIndex) {
@@ -183,7 +191,7 @@ function hashShort(value: string) {
 
 function textSection(text: string, evidence: string[]) {
   return {
-    text: text.trim().slice(0, 20_000),
+    text: text.trim().slice(0, 24_000),
     updatedAt: nowIso(),
     confidence: 0.8,
     evidence,
@@ -646,13 +654,21 @@ async function characterImportCandidates(
   const rows = sourceIds ? characters.filter((row) => sourceIds.has(row.id)) : characters.slice(0, limit);
   return rows.flatMap((row) => {
     const data = readJsonObject(row.data);
+    const extensions = readJsonObject(data.extensions);
     const name = typeof data.name === "string" ? data.name : "Character";
     const body = compactLines([
       ["Description", data.description],
       ["Personality", data.personality],
       ["Scenario", data.scenario],
       ["First message", data.first_mes],
-      ["Creator notes", row.comment],
+      ["Example messages", data.mes_example],
+      ["Creator notes", data.creator_notes],
+      ["System prompt", data.system_prompt],
+      ["Post-history instructions", data.post_history_instructions],
+      ["Alternate greetings", readJsonArray(data.alternate_greetings).join("\n\n")],
+      ["Backstory", extensions.backstory ?? data.backstory],
+      ["Appearance", extensions.appearance ?? data.appearance],
+      ["Library note", row.comment],
     ]);
     if (!body) return [];
     const noteId = `char_${normalizeIdentifier(name, "character")}_${hashShort(row.id)}`;
@@ -690,11 +706,43 @@ async function characterImportCandidates(
         evidence,
         provenance,
         modes: mutation.note.modes,
+        extractionMode: "roleplay",
         scope: mutation.note.scope,
         response: makeDraftResponse([mutation], `Import ${name}`),
       },
     ];
   });
+}
+
+function splitLorebookEntryText(text: string) {
+  const chunks: string[] = [];
+  let remaining = text.trim();
+  while (remaining.length > LTM_LOREBOOK_ENTRY_MAX_CHARS) {
+    const window = remaining.slice(0, LTM_LOREBOOK_ENTRY_MAX_CHARS + 1);
+    const boundary = Math.max(
+      window.lastIndexOf("\n\n"),
+      window.lastIndexOf("\n"),
+      window.lastIndexOf(". "),
+      window.lastIndexOf(" "),
+    );
+    const end = boundary > LTM_LOREBOOK_ENTRY_MAX_CHARS / 2 ? boundary + (window.startsWith(". ", boundary) ? 1 : 0) : LTM_LOREBOOK_ENTRY_MAX_CHARS;
+    chunks.push(remaining.slice(0, end).trim());
+    remaining = remaining.slice(end).trim();
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+
+function lorebookEntryIdentity(entry: Record<string, unknown>, index: number, part: number) {
+  const rawId = entry.id ?? entry.uid ?? entry.key ?? `position_${index + 1}`;
+  const base = String(rawId).trim() || `position_${index + 1}`;
+  const suffix = part > 0 ? `:part:${part + 1}` : "";
+  const value = `${base}${suffix}`;
+  return value.length <= 120 ? value : `entry_${hashShort(`${base}\0${part}`)}`;
+}
+
+function lorebookCandidateSourceId(bookId: string, entryId: string) {
+  return `lorebook_entry_${hashShort(`${bookId}\0${entryId}`)}`;
 }
 
 async function lorebookImportCandidates(
@@ -704,75 +752,88 @@ async function lorebookImportCandidates(
 ): Promise<ImportSourceCandidate[]> {
   const storage = createLorebooksStorage(db);
   const books = (await storage.list()) as Array<Record<string, unknown>>;
-  const selectedBooks = sourceIds
-    ? books.filter((book) => typeof book.id === "string" && sourceIds.has(book.id))
-    : books.slice(0, limit);
   const candidates: ImportSourceCandidate[] = [];
-  for (const book of selectedBooks) {
+
+  for (const book of books) {
     const id = typeof book.id === "string" ? book.id : "";
-    const name = typeof book.name === "string" && book.name.trim() ? book.name : "Lorebook";
     if (!id) continue;
-    const entries = (await storage.listEntries(id)) as Array<Record<string, unknown>>;
-    const description = typeof book.description === "string" ? book.description.trim() : "";
-    const text = [
-      description ? `Description: ${description}` : "",
-      ...entries
-        .filter((entry) => typeof entry.content === "string" && entry.content.trim())
-        .map((entry) => `${entry.name || "Entry"}: ${entry.content}`),
-    ]
-      .filter(Boolean)
-      .join("\n\n")
-      .trim();
-    if (!text) continue;
+    const name = typeof book.name === "string" && book.name.trim() ? book.name : "Lorebook";
     const category = typeof book.category === "string" ? book.category : "";
     const type: LtmNoteType = category === "character" || category === "npc" ? "character" : "world";
     const prefix = type === "character" ? "char" : "world";
-    const noteId = `${prefix}_${normalizeIdentifier(name, "lorebook")}_${hashShort(id)}`;
-    const provenance = { kind: "lorebook", sourceId: id } satisfies LtmSourceProvenance;
-    const sourceNoteId = sourceNoteIdForProvenance(provenance);
-    const evidence = [`lorebook:${id}`];
     const modes: LtmMode[] = ["roleplay", "conversation", "game"];
-    const mutation: LtmDraftMutation = {
-      ...mutationBase(`Import lorebook ${name}`, evidence),
-      kind: "create_note",
-      note: {
-        id: noteId,
-        type,
-        status: "active",
-        modes,
-        scope: withMergedLtmScopeLinks(
-          {
-            chatId: typeof book.chatId === "string" ? book.chatId : undefined,
-            characterIds: Array.isArray(book.characterIds)
-              ? book.characterIds.filter((value): value is string => typeof value === "string")
-              : undefined,
-          },
-          { chatIds: typeof book.chatId === "string" ? [book.chatId] : [] },
-        ),
-        tags: Array.isArray(book.tags)
-          ? book.tags.map((tag) => normalizeIdentifier(String(tag), "tag")).slice(0, 12)
-          : [],
-        keywords: [],
-        links: [],
-        sections: { lore: textSection(text, evidence) },
+    const scope = withMergedLtmScopeLinks(
+      {
+        chatId: typeof book.chatId === "string" ? book.chatId : undefined,
+        characterIds: Array.isArray(book.characterIds)
+          ? book.characterIds.filter((value): value is string => typeof value === "string")
+          : undefined,
       },
-    };
-    candidates.push({
-      title: name,
-      sourceId: id,
-      sourceText: text,
-      sourceNoteId,
-      legacySourceNoteIds: [
-        `source_import_lorebook_${normalizeIdentifier(name, "lorebook")}_${hashShort(id)}`,
-        `scene_import_lorebook_${normalizeIdentifier(name, "lorebook")}_${hashShort(id)}`,
-      ],
-      sourceTag: "imported_lorebook",
-      evidence,
-      provenance,
-      modes,
-      scope: mutation.note.scope,
-      response: makeDraftResponse([mutation], `Import ${name}`),
-    });
+      { chatIds: typeof book.chatId === "string" ? [book.chatId] : [] },
+    );
+    const tags = Array.isArray(book.tags)
+      ? book.tags.map((tag) => normalizeIdentifier(String(tag), "tag")).slice(0, 12)
+      : [];
+    const rawEntries = (await storage.listEntries(id)) as Array<Record<string, unknown>>;
+    const entries: Array<{ title: string; entry: Record<string, unknown>; text: string }> = [];
+    const description = typeof book.description === "string" ? book.description.trim() : "";
+    if (description) entries.push({ title: "Description", entry: { id: "description" }, text: description });
+    for (const entry of rawEntries) {
+      const text = typeof entry.content === "string" ? entry.content.trim() : "";
+      if (!text) continue;
+      entries.push({
+        title: typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : "Entry",
+        entry,
+        text,
+      });
+    }
+
+    for (const [entryIndex, entry] of entries.entries()) {
+      const chunks = splitLorebookEntryText(entry.text);
+      for (const [part, sourceText] of chunks.entries()) {
+        const entryId = lorebookEntryIdentity(entry.entry, entryIndex, part);
+        const sourceId = lorebookCandidateSourceId(id, entryId);
+        if (sourceIds && !sourceIds.has(sourceId)) continue;
+        const provenance = { kind: "lorebook", sourceId: id, entryId } satisfies LtmSourceProvenance;
+        const sourceNoteId = sourceNoteIdForProvenance(provenance);
+        const evidence = [
+          `lorebook:${id}`,
+          `lorebook_entry:${entryId}`,
+          ...(chunks.length > 1 ? [`lorebook_part:${part + 1}/${chunks.length}`] : []),
+        ];
+        const partLabel = chunks.length > 1 ? ` (${part + 1}/${chunks.length})` : "";
+        const noteId = `${prefix}_${normalizeIdentifier(entry.title, "lorebook")}_${hashShort(`${id}\0${entryId}`)}`;
+        const mutation: LtmDraftMutation = {
+          ...mutationBase(`Import lorebook ${name}: ${entry.title}${partLabel}`, evidence),
+          kind: "create_note",
+          note: {
+            id: noteId,
+            type,
+            status: "active",
+            modes,
+            scope,
+            tags,
+            keywords: [],
+            links: [],
+            sections: { lore: textSection(sourceText, evidence) },
+          },
+        };
+        candidates.push({
+          title: `Lorebook — ${name}: ${entry.title}${partLabel}`,
+          sourceId,
+          sourceText,
+          sourceNoteId,
+          sourceTag: "imported_lorebook",
+          evidence,
+          provenance,
+          modes,
+          extractionMode: "roleplay",
+          scope,
+          response: makeDraftResponse([mutation], `Import ${name}: ${entry.title}${partLabel}`),
+        });
+        if (!sourceIds && candidates.length >= limit) return candidates;
+      }
+    }
   }
   return candidates;
 }
@@ -786,7 +847,11 @@ function buildGameImportCandidate(
   const sourceText = renderGameSourceText(gameJournal as any, sessionSummaries as any);
   const provenance = { kind: "game_journal", sourceId: chat.id } satisfies LtmSourceProvenance;
   const sourceNoteId = sourceNoteIdForProvenance(provenance);
-  const evidence = [`chat:${chat.id}`, "game_journal"];
+  const evidence = [
+    `chat:${chat.id}`,
+    "game_journal",
+    `game_source_hash:${computeGameSourceHash(gameJournal as any, sessionSummaries as any)}`,
+  ];
   const scope = withMergedLtmScopeLinks(
     {
       chatId: chat.id,
@@ -808,6 +873,7 @@ function buildGameImportCandidate(
     evidence,
     provenance,
     modes: ["game"],
+    extractionMode: "game",
     scope,
     response: makeDraftResponse([], `Direct-ingest game journal for ${chatName}`),
   };
@@ -908,6 +974,7 @@ async function chatImportCandidates(
         evidence,
         provenance,
         modes: mutation.note.modes,
+        extractionMode: mode,
         scope: mutation.note.scope,
         response: makeDraftResponse([mutation], `Import ${title}`),
       };
@@ -930,20 +997,38 @@ async function interopImportCandidates(
       : chatImportCandidates(db, limit, sourceIds, scope);
 }
 
+function withRequestedExtractionMode(candidate: ImportSourceCandidate, mode?: LtmMode) {
+  if (!mode || candidate.sourceTag === "imported_game_journal") return candidate;
+  return { ...candidate, modes: [mode], extractionMode: mode };
+}
+
+function sourceScopeForImportCandidate(candidate: ImportSourceCandidate, override?: LtmScope) {
+  return withMergedLtmScopeLinks({ ...(candidate.scope ?? {}), ...(override ?? {}) }, {});
+}
+
+function extractionFingerprintForImportCandidate(candidate: ImportSourceCandidate, scope: LtmScope) {
+  return extractionFingerprintForLtmSourceMaterial({
+    noteId: candidate.sourceNoteId,
+    sourceText: candidate.sourceText,
+    evidence: candidate.evidence,
+    provenance: candidate.provenance,
+    scope,
+    modes: candidate.modes,
+    extractionMode: candidate.extractionMode,
+  });
+}
+
 export async function previewLongTermMemoryInterop(
   db: DB,
   source: LtmInteropSource,
   limit = 25,
   root?: string,
   scope?: LtmScope,
+  mode?: LtmMode,
 ): Promise<LtmInteropPreviewResponse> {
-  const candidates = await interopImportCandidates(
-    db,
-    source,
-    limit,
-    undefined,
-    source === "chats" ? scope : undefined,
-  );
+  const candidates = (
+    await interopImportCandidates(db, source, limit, undefined, source === "chats" ? scope : undefined)
+  ).map((candidate) => withRequestedExtractionMode(candidate, mode));
   const storage = new LongTermMemoryStorage(root ?? getLongTermMemoryRoot());
   const existingNotes = await storage.getNotesByIds(
     candidates.flatMap((candidate) => [candidate.sourceNoteId, ...(candidate.legacySourceNoteIds ?? [])]),
@@ -960,7 +1045,11 @@ export async function previewLongTermMemoryInterop(
       summary: candidate.response.summary,
       snippet,
     };
-    return existing && existing.extracted !== false
+    const extractionFingerprint = extractionFingerprintForImportCandidate(
+      candidate,
+      sourceScopeForImportCandidate(candidate, scope),
+    );
+    return existing && extractionFingerprintsEqual(existing.extractionFingerprint, extractionFingerprint)
       ? {
           ...preview,
           status: "imported" as const,
@@ -1027,18 +1116,18 @@ export async function createLongTermMemoryInteropSourceNotes(
       for (const candidate of candidates) {
         try {
           const now = nowIso();
+          const scope = sourceScopeForImportCandidate(candidate, options.scope);
           const noteInput = {
             id: candidate.sourceNoteId,
             title: candidate.title,
             type: "source" as const,
             status: "active" as const,
             modes: candidate.modes,
-            scope: { ...(candidate.scope ?? {}), ...(options.scope ?? {}) },
+            scope,
             tags: ["source_summary", candidate.sourceTag],
             keywords: [],
             links: [],
             provenance: candidate.provenance,
-            extracted: false,
             sections: {
               source: {
                 ...textSection(candidate.sourceText, candidate.evidence),
@@ -1070,7 +1159,6 @@ export async function createLongTermMemoryInteropSourceNotes(
                 scope: noteInput.scope,
                 tags: Array.from(new Set([...canonicalExisting.tags, ...noteInput.tags])),
                 provenance: noteInput.provenance,
-                extracted: false,
                 sections: { ...canonicalExisting.sections, ...noteInput.sections },
               },
               {
@@ -1164,11 +1252,7 @@ export async function planLongTermMemoryInteropSourceNotes(
   );
   const candidates = resolved
     .filter((candidate) => selected.has(candidate.sourceId))
-    .map((candidate) =>
-      options.mode && candidate.sourceTag !== "imported_game_journal"
-        ? { ...candidate, modes: [options.mode!] }
-        : candidate,
-    );
+    .map((candidate) => withRequestedExtractionMode(candidate, options.mode));
   const resolvedIds = new Set(candidates.map((candidate) => candidate.sourceId));
   return {
     source,

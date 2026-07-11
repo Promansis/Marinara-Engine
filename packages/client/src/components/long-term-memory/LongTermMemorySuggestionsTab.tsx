@@ -711,7 +711,7 @@ export function LongTermMemorySuggestionsTab({
 
 function freshnessLabel(freshness: LtmDraftReviewDraft["freshness"]) {
   if (freshness === "fresh") return "Source current";
-  if (freshness === "hashless") return "Legacy source hash";
+  if (freshness === "hashless") return "Re-extraction required";
   if (freshness === "stale") return "Source changed";
   if (freshness === "missing") return "Source missing";
   if (freshness === "invalid") return "Source invalid";

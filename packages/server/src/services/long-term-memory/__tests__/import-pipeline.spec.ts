@@ -342,7 +342,7 @@ test("import preflights the extraction connection before writing source notes", 
   });
 });
 
-test("lorebook import includes every non-empty entry", async () => {
+test("lorebook import creates stable source units for every non-empty entry", async () => {
   await withTestApp(async (app, dataDir) => {
     const lorebooks = createLorebooksStorage(app.db);
     const book = await lorebooks.create({ name: "Archive", description: "Complete archive lore." });
@@ -357,16 +357,96 @@ test("lorebook import includes every non-empty entry", async () => {
       });
     }
 
+    const preview = await previewLongTermMemoryInterop(
+      app.db,
+      "lorebooks",
+      100,
+      join(dataDir, "long-term-memory"),
+    );
+    const entryRows = preview.samples.filter((sample) => sample.title.includes("Entry "));
+    assert.equal(entryRows.length, 10);
+    assert.equal(new Set(entryRows.map((sample) => sample.sourceId)).size, 10);
+
     const result = await createLongTermMemoryInteropSourceNotes(
       app.db,
       "lorebooks",
-      { sourceIds: [bookId], limit: 1 },
+      { sourceIds: entryRows.map((sample) => sample.sourceId), limit: entryRows.length },
       join(dataDir, "long-term-memory"),
     );
-    assert.equal(result.imported.length, 1);
-    const sourceText = result.imported[0]?.note.sections.source?.text ?? "";
-    assert.match(sourceText, /Entry 1: Archive fact 1\./);
-    assert.match(sourceText, /Entry 10: Archive fact 10\./);
+    assert.equal(result.imported.length, 10);
+    assert.deepEqual(
+      result.imported.map((item) => item.note.sections.source?.text),
+      Array.from({ length: 10 }, (_, index) => `Archive fact ${index + 1}.`),
+    );
+  });
+});
+
+test("large lorebook entries split deterministically below the 6,000-token source budget", async () => {
+  await withTestApp(async (app, dataDir) => {
+    const lorebooks = createLorebooksStorage(app.db);
+    const book = await lorebooks.create({ name: "Long Archive" });
+    assert(book);
+    const bookId = String((book as { id?: unknown }).id ?? "");
+    const content = `${"A".repeat(23_000)}\n\n${"B".repeat(2_500)}`;
+    await lorebooks.createEntry({ lorebookId: bookId, name: "Long entry", content });
+
+    const root = join(dataDir, "long-term-memory");
+    const firstPreview = await previewLongTermMemoryInterop(app.db, "lorebooks", 100, root);
+    const secondPreview = await previewLongTermMemoryInterop(app.db, "lorebooks", 100, root);
+    const rows = firstPreview.samples.filter((sample) => sample.title.includes("Long entry"));
+    assert.equal(rows.length, 2);
+    assert.deepEqual(
+      secondPreview.samples.filter((sample) => sample.title.includes("Long entry")).map((sample) => sample.sourceId),
+      rows.map((sample) => sample.sourceId),
+    );
+
+    const imported = await createLongTermMemoryInteropSourceNotes(
+      app.db,
+      "lorebooks",
+      { sourceIds: rows.map((sample) => sample.sourceId), limit: rows.length },
+      root,
+    );
+    const sourceTexts = imported.imported.map((item) => item.note.sections.source?.text ?? "");
+    assert(sourceTexts.every((text) => Math.ceil(text.length / 4) <= 6_000));
+    assert.equal(sourceTexts.join("\n\n"), content);
+  });
+});
+
+test("character source imports include durable card fields", async () => {
+  await withTestApp(async (app, dataDir) => {
+    const data = rosterCharacter("Mara");
+    data.description = "A meticulous archivist.";
+    data.personality = "Quietly decisive.";
+    data.scenario = "The archive is under siege.";
+    data.first_mes = "Keep your voice down.";
+    data.mes_example = "<START>\nMara: The key stays with me.";
+    data.creator_notes = "Preserve her exacting voice.";
+    data.system_prompt = "Never break archive protocol.";
+    data.post_history_instructions = "Prioritize continuity.";
+    data.alternate_greetings = ["The stacks are closed."];
+    data.extensions.backstory = "She inherited the archive from her mother.";
+    data.extensions.appearance = "Silver hair and ink-stained hands.";
+    const character = await createCharactersStorage(app.db).create(data);
+    assert(character);
+
+    const imported = await createLongTermMemoryInteropSourceNotes(
+      app.db,
+      "characters",
+      { sourceIds: [character.id], limit: 1 },
+      join(dataDir, "long-term-memory"),
+    );
+    const sourceText = imported.imported[0]?.note.sections.source?.text ?? "";
+    for (const expected of [
+      "Example messages",
+      "Creator notes",
+      "System prompt",
+      "Post-history instructions",
+      "Alternate greetings",
+      "Backstory",
+      "Appearance",
+    ]) {
+      assert.match(sourceText, new RegExp(expected));
+    }
   });
 });
 
@@ -502,7 +582,7 @@ test("manual source extraction persists successful retry state", async () => {
     );
     const sourceNote = imported.imported[0]?.note;
     assert(sourceNote);
-    assert.equal(sourceNote.extracted, false);
+    assert.equal(sourceNote.extractionFingerprint, undefined);
 
     const response = await app.inject({
       method: "POST",
@@ -512,9 +592,29 @@ test("manual source extraction persists successful retry state", async () => {
     });
 
     assert.equal(response.statusCode, 200);
-    assert.equal((await new LongTermMemoryStorage(root).getNote(sourceNote.id))?.extracted, true);
+    assert((await new LongTermMemoryStorage(root).getNote(sourceNote.id))?.extractionFingerprint);
     const preview = await previewLongTermMemoryInterop(app.db, "chats", 100, root);
     assert.equal(preview.samples.find((sample) => sample.sourceId === `${chat.id}:game_journal`)?.status, "imported");
+
+    await chats.updateMetadata(chat.id, {
+      gamePreviousSessionSummaries: [
+        {
+          sessionNumber: 1,
+          summary: "The party recovered the archive key and mapped the sealed annex.",
+          resumePoint: "Outside the archive at dawn.",
+          partyDynamics: "The party worked together without conflict.",
+          partyState: "Everyone is ready to continue.",
+          keyDiscoveries: ["Archive key", "Sealed annex"],
+          characterMoments: [],
+          littleDetails: [],
+          statsSnapshot: {},
+          npcUpdates: [],
+          timestamp: "2026-07-11T00:00:00.000Z",
+        },
+      ],
+    });
+    const stalePreview = await previewLongTermMemoryInterop(app.db, "chats", 100, root);
+    assert.equal(stalePreview.samples.find((sample) => sample.sourceId === `${chat.id}:game_journal`)?.status, "pending");
   });
 });
 
@@ -576,6 +676,7 @@ test("direct game extraction persists a diagnostic-only draft when every candida
         (diagnostic: { code?: string }) => diagnostic.code === "candidate_dropped_unsupported_bucket",
       ),
     );
+    assert.equal((await new LongTermMemoryStorage(root).getNote(sourceNote.id))?.extractionFingerprint, undefined);
   });
 });
 

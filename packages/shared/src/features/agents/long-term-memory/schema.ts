@@ -424,6 +424,22 @@ export const ltmScopeSchema = z
   })
   .strict();
 
+/**
+ * The context that a source was successfully extracted against. Keep the
+ * source material hash separate from the context fields so a stale draft can
+ * explain whether its content or extraction context changed.
+ */
+export const ltmExtractionFingerprintSchema = z
+  .object({
+    version: z.literal(2),
+    sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
+    provenance: ltmSourceProvenanceSchema.nullable(),
+    scope: ltmScopeSchema,
+    modes: z.array(ltmModeSchema).min(1).max(8),
+    extractionMode: ltmModeSchema,
+  })
+  .strict();
+
 export const ltmNoteTransferModeSchema = z.enum(["copy", "move"]);
 
 export const ltmNoteTransferConflictSeveritySchema = z.enum(["hard", "soft"]);
@@ -571,7 +587,7 @@ export const ltmEvidenceUnitSchema = z
  */
 export const ltmSectionSchema = z
   .object({
-    text: z.string().min(1).max(20_000),
+    text: z.string().min(1).max(24_000),
     updatedAt: ltmIsoTimestampSchema,
     salience: z.number().finite().min(0).max(1).optional(),
     confidence: z.number().finite().min(0).max(1).optional(),
@@ -611,6 +627,8 @@ export const ltmNoteSchema = z
     provenance: ltmSourceProvenanceSchema.optional(),
     subjects: ltmSubjectsSchema.optional(),
     version: z.number().int().min(1),
+    extractionFingerprint: ltmExtractionFingerprintSchema.optional(),
+    // Legacy v1 metadata. Freshness is derived exclusively from extractionFingerprint.
     extracted: z.boolean().optional(),
   })
   .strict()
@@ -637,6 +655,14 @@ export const ltmNoteSchema = z
         code: z.ZodIssueCode.custom,
         path: ["provenance"],
         message: "Only source notes can store import provenance.",
+      });
+    }
+
+    if (note.extractionFingerprint && !isLtmSourceLikeNote(note)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["extractionFingerprint"],
+        message: "Only source notes can store an extraction fingerprint.",
       });
     }
 
@@ -1343,6 +1369,7 @@ export const ltmDraftSourceSchema = z
       .string()
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
+    extractionFingerprint: ltmExtractionFingerprintSchema.optional(),
   })
   .refine((value) => Boolean(value.sourceNoteId), {
     message: "Long-term memory drafts must be tied to a source note.",
@@ -1580,6 +1607,7 @@ export const ltmDraftFreshnessSchema = z.enum([
 
 export const ltmDraftBlockReasonCodeSchema = z.enum([
   "source_stale",
+  "source_context_unbound",
   "source_missing",
   "source_invalid",
   "draft_superseded",
@@ -1701,6 +1729,7 @@ export const ltmInteropPreviewRequestSchema = z
     source: ltmInteropSourceSchema,
     limit: z.number().int().min(1).max(100).default(100),
     scope: ltmScopeSchema.optional(),
+    mode: ltmModeSchema.optional(),
   })
   .strict();
 
@@ -1829,14 +1858,6 @@ export const ltmImportedSourceResultSchema = z
         message: "Source write status must agree with whether the note was created or refreshed.",
       });
     }
-    const expectedExtracted = result.extractionStatus === "succeeded";
-    if (result.note.extracted !== expectedExtracted) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["note", "extracted"],
-        message: `Persisted source extraction state must be ${expectedExtracted}.`,
-      });
-    }
   });
 
 export const ltmImportSourceWriteFailureSchema = z
@@ -1963,6 +1984,7 @@ export type LtmExtractionSettings = z.infer<typeof ltmExtractionSettingsSchema>;
 export type LtmResolvedExtractionSettings = z.infer<typeof ltmResolvedExtractionSettingsSchema>;
 export type LtmMode = z.infer<typeof ltmModeSchema>;
 export type LtmScope = z.infer<typeof ltmScopeSchema>;
+export type LtmExtractionFingerprint = z.infer<typeof ltmExtractionFingerprintSchema>;
 export type LtmSubjectReference = z.infer<typeof ltmSubjectReferenceSchema>;
 export type LtmSubject = z.infer<typeof ltmSubjectSchema>;
 export type LtmNoteTransferMode = z.infer<typeof ltmNoteTransferModeSchema>;

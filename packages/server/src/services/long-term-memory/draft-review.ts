@@ -15,7 +15,7 @@ import {
 import { noteIdForLtmDraftMutation, projectLtmDraftOntoNotes } from "./draft-projector.js";
 import { LongTermMemoryDraftStore } from "./draft-store.js";
 import { nowIso, uniqueStrings } from "./ltm-utils.js";
-import { sourceHashForLtmSourceNote } from "./source-hash.js";
+import { isLtmSourceExtractionFingerprintCurrent } from "./source-hash.js";
 import { LongTermMemoryStorage } from "./storage.js";
 
 export type ProjectLtmDraftReviewOptions = {
@@ -176,8 +176,8 @@ function draftFreshness(draft: LtmDraftReviewDraft["draft"], sourceNote: LtmNote
   if (draft.status !== "pending") return "not_pending";
   if (!sourceNote) return "missing";
   if (!isLtmSourceLikeNote(sourceNote)) return "invalid";
-  if (!draft.source.sourceHash) return "hashless";
-  return sourceHashForLtmSourceNote(sourceNote) === draft.source.sourceHash ? "fresh" : "stale";
+  if (!draft.source.extractionFingerprint) return "hashless";
+  return isLtmSourceExtractionFingerprintCurrent(sourceNote, draft.source.extractionFingerprint) ? "fresh" : "stale";
 }
 
 function blockReasonsForDraft(
@@ -189,8 +189,13 @@ function blockReasonsForDraft(
     reasons.push({ code: "source_missing", message: "The source note no longer exists." });
   } else if (freshness === "invalid") {
     reasons.push({ code: "source_invalid", message: "The source is no longer a source note." });
+  } else if (freshness === "hashless") {
+    reasons.push({
+      code: "source_context_unbound",
+      message: "This legacy draft is not bound to its extraction context. Extract the source again before applying it.",
+    });
   } else if (freshness === "stale") {
-    reasons.push({ code: "source_stale", message: "The source changed after this extraction." });
+    reasons.push({ code: "source_stale", message: "The source or extraction context changed after this extraction." });
   } else if (freshness === "superseded") {
     reasons.push({ code: "draft_superseded", message: "A newer extraction superseded this draft." });
   } else if (freshness === "not_pending") {

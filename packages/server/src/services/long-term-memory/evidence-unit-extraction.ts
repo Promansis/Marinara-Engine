@@ -31,7 +31,7 @@ import { logger } from "../../lib/logger.js";
 import { countBy, safeSnippet } from "./ltm-utils.js";
 import { DEFAULT_LTM_EXTRACTION_PROMPT } from "@marinara-engine/shared";
 import { stableJsonHash } from "./chunking.js";
-import { sourceHashForLtmSourceNote } from "./source-hash.js";
+import { extractionFingerprintForLtmSourceNote, sourceHashForLtmSourceNote } from "./source-hash.js";
 import { recordLtmDebugEvent } from "./debug-log.js";
 import type { LtmExtractionDiagnostic } from "./diagnostics.js";
 import { deduplicateUnits } from "./dedup.js";
@@ -1291,14 +1291,23 @@ export function sourceHashForEvidenceUnitExtraction(note: LtmNote) {
   return sourceHashForLtmSourceNote(note);
 }
 
-export function sourceMetadataForEvidenceUnitDraft(note: LtmNote): LtmExtractionDraft["source"] {
+export function sourceMetadataForEvidenceUnitDraft(
+  note: LtmNote,
+  context: { scope?: LtmScope; modes?: LtmMode[]; extractionMode?: LtmMode } = {},
+): LtmExtractionDraft["source"] {
   const evidence = evidenceFromSourceNote(note);
   const chatId = evidence.find((item) => item.startsWith("chat:"))?.slice("chat:".length);
   const summaryEntryId = evidence.find((item) => item.startsWith("summary_entry:"))?.slice("summary_entry:".length);
+  const modes = context.modes?.length ? context.modes : note.modes;
   return {
     ...(chatId ? { chatId } : {}),
     sourceNoteId: note.id,
     ...(summaryEntryId ? { summaryEntryId } : {}),
     sourceHash: sourceHashForEvidenceUnitExtraction(note),
+    extractionFingerprint: extractionFingerprintForLtmSourceNote(note, {
+      scope: context.scope ?? note.scope,
+      modes,
+      extractionMode: context.extractionMode ?? modes[0],
+    }),
   };
 }
