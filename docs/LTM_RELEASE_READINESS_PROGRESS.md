@@ -8,13 +8,14 @@ Resume Here section short and current; keep completed phase records durable.
 
 - Branch: `fix/ltm-staging-port-rebase`
 - Audit baseline: `c83d66e6edee6c0a9b3ab3021265461b4ff1a1b1`
-- Current phase: Phase 2 - Transactional Vault Mutations
-- State: Phase 1 implementation complete; Phase 2 not started
-- Next entrypoint: trace the note-ID lock owners and mutation write order for
-  create, update, project, archive, and permanent delete
-- Uncommitted scope: none expected after the Phase 1 commit
-- Blockers: none for Phase 2; one unrelated browser smoke failure is recorded
-  in the Phase 1 residual risk
+- Current phase: Phase 3 - Coherent Index Recovery
+- State: Phase 2 implementation complete; Phase 3 not started
+- Next entrypoint: trace `index-state.ts` and `index-generation.ts` parsing,
+  publication, and cache selection paths before adding malformed-state
+  quarantine and coherent-generation recovery
+- Uncommitted scope: none expected after the Phase 2 commit
+- Blockers: none for Phase 3; Phase 2 has one platform-specific recovery proof
+  gap recorded below
 
 ## Non-Negotiable Decisions
 
@@ -55,7 +56,7 @@ proof that a later implementation phase passes.
 | --- | --- | --- | --- |
 | 0 - Documentation baseline | Complete | Commit subject below | Direct path checks and `git diff --check` passed |
 | 1 - Security and managed-agent lifecycle | Complete | Commit subject below | Focused route/lifecycle proof, server suite, static build, and prompt regression passed; one unrelated browser smoke failure recorded |
-| 2 - Transactional vault mutations | Not started | Pending | Not run |
+| 2 - Transactional vault mutations | Complete | Commit subject below | Focused transaction/recovery proof, affected LTM suites, full server suite, prompt regression, and static validation passed |
 | 3 - Coherent index recovery | Not started | Pending | Not run |
 | 4 - Context-bound capture and refresh | Not started | Pending | Not run |
 | 5 - Recall settings, eligibility, and relevance | Not started | Pending | Not run |
@@ -167,6 +168,71 @@ was not changed in this phase.
 Next entrypoint: inspect `packages/server/src/lib/concurrency.ts` and
 `packages/server/src/services/long-term-memory/storage.ts` for canonical
 note-ID locking and recoverable mutation transaction boundaries.
+
+### Phase 2 - Transactional Vault Mutations
+
+Started: 2026-07-11
+
+Completed: 2026-07-11
+
+Baseline HEAD: `69c695ca65af4b3776064d91c966edf8023439ef`
+
+Commit: record at the start of Phase 3; this atomic commit cannot contain its
+own hash.
+
+Scope:
+
+- Added a durable LTM mutation journal with pre-commit rollback and
+  post-commit roll-forward recovery. Events carry stable IDs, publish only
+  after the vault commit, and are replayed idempotently after an interruption.
+- Canonicalized vault mutation locking on note IDs, added a per-vault mutation
+  lock, and moved create, update, projection, archive-through-update, and
+  permanent deletion onto the transaction path.
+- Made permanent deletion repair inbound links in the same transaction, mark
+  retrieval state dirty before an unlink, and defer its delete and link-repair
+  events until the data commit succeeds.
+- Keyed retrieval bundles by persisted index revision. When indexes are dirty,
+  retrieval checks canonical vault-note existence so a warm bundle cannot
+  return a deleted note.
+- Added focused recovery, event, link-integrity, warm-cache, and concurrent
+  projection/update regression coverage.
+
+Compatibility and migration:
+
+- Existing valid v1 notes, event logs, settings, and indexes remain readable;
+  an absent transaction directory is created on initialization without a data
+  rewrite.
+- Interrupted Phase 2 journals are self-contained snapshots under
+  `long-term-memory/transactions`. Pre-commit journals restore their
+  before-state; committed journals restore their after-state and only append
+  missing event IDs.
+
+Validation:
+
+| Command                                                                                                                                                                    | Result                                                                                                                          |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/mutation-transactions.spec.ts`                                              | Passed: 4 tests, 0 failed                                                                                                       |
+| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/routes.spec.ts src/services/long-term-memory/__tests__/maintenance.spec.ts` | Passed: 47 tests, 0 failed                                                                                                      |
+| `pnpm --filter @marinara-engine/server test`                                                                                                                               | Passed: 329 tests, 0 failed                                                                                                     |
+| `pnpm --filter @marinara-engine/server lint`                                                                                                                               | Passed TypeScript validation                                                                                                    |
+| `pnpm regression:prompt`                                                                                                                                                   | Passed deterministic prompt, macro, lorebook, summary, and mode regressions                                                     |
+| `pnpm check`                                                                                                                                                               | Passed Impeccable context check, workspace lint, TypeScript, and production builds; existing Vite large-chunk advisory remained |
+| `git diff --check`                                                                                                                                                         | Passed                                                                                                                          |
+| `marinara-doc-check`                                                                                                                                                       | Not installed; no checked-in equivalent command is available                                                                    |
+
+Manual proof: not completed. Simulate an interrupted write on the supported
+desktop and Android/Termux filesystems, restart the server, and verify that a
+pending journal either rolls back or completes without duplicate event rows.
+
+Residual risk: the transaction tests prove deterministic journal recovery but
+not an actual power-loss/filesystem-crash sequence on every supported runtime.
+Phase 3 still owns malformed index-state quarantine and coherent-generation
+selection.
+
+Next entrypoint: begin Phase 3 in `packages/server/src/services/long-term-memory/index-state.ts`,
+`index-generation.ts`, and the maintenance/retrieval cache tests; preserve the
+Phase 2 durable revision contract while making state and generation loading
+defensive.
 
 ## Progress Update Template
 

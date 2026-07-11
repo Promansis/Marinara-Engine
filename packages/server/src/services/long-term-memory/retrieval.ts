@@ -27,6 +27,8 @@ import { searchLtmKeywordIndex } from "./keyword-index.js";
 import { getLtmMetadataMatches } from "./metadata-index.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
 import { applyLtmBudget, type LtmBudgetedChunk, type LtmBudgetRejectedCandidate } from "./budget.js";
+import { readLtmIndexState } from "./index-state.js";
+import { LongTermMemoryStorage } from "./storage.js";
 
 const COOLDOWN_MAX_AGE_MINUTES = 30;
 const COOLDOWN_TIER_1_MINUTES = 5;
@@ -159,13 +161,19 @@ type LtmRetrievalBundle = {
   keywords: LtmKeywordIndex | null;
   embeddings: LtmEmbeddingIndex | null;
   config: LtmRetrievalConfig;
+  revision: number;
+  dirty: boolean;
   warnings: string[];
 };
 
 const retrievalBundleCache = new Map<string, Promise<LtmRetrievalBundle>>();
 
-function retrievalBundleCacheKey(root: string, includeSourceNotes: boolean) {
-  return `${root}\0${includeSourceNotes ? "source" : "typed"}`;
+function retrievalBundleCacheKey(root: string, includeSourceNotes: boolean, revision: number) {
+  return `${root}\0${includeSourceNotes ? "source" : "typed"}\0${revision}`;
+}
+
+function retrievalBundleCachePrefix(root: string, includeSourceNotes: boolean) {
+  return `${root}\0${includeSourceNotes ? "source" : "typed"}\0`;
 }
 
 export function invalidateLongTermMemoryRetrievalCache(root?: string, includeSourceNotes?: boolean) {
@@ -174,7 +182,10 @@ export function invalidateLongTermMemoryRetrievalCache(root?: string, includeSou
     return;
   }
   if (typeof includeSourceNotes === "boolean") {
-    retrievalBundleCache.delete(retrievalBundleCacheKey(root, includeSourceNotes));
+    const prefix = retrievalBundleCachePrefix(root, includeSourceNotes);
+    for (const key of retrievalBundleCache.keys()) {
+      if (key.startsWith(prefix)) retrievalBundleCache.delete(key);
+    }
     return;
   }
   for (const key of retrievalBundleCache.keys()) {
@@ -183,9 +194,15 @@ export function invalidateLongTermMemoryRetrievalCache(root?: string, includeSou
 }
 
 async function loadRetrievalBundle(root: string, includeSourceNotes: boolean): Promise<LtmRetrievalBundle> {
-  const key = retrievalBundleCacheKey(root, includeSourceNotes);
+  const state = await readLtmIndexState(root);
+  const key = retrievalBundleCacheKey(root, includeSourceNotes, state.revision);
   const cached = retrievalBundleCache.get(key);
   if (cached) return cached;
+
+  const prefix = retrievalBundleCachePrefix(root, includeSourceNotes);
+  for (const cachedKey of retrievalBundleCache.keys()) {
+    if (cachedKey.startsWith(prefix) && cachedKey !== key) retrievalBundleCache.delete(cachedKey);
+  }
 
   const load = (async () => {
     const dirs = getLongTermMemoryDirectories(root);
@@ -205,7 +222,17 @@ async function loadRetrievalBundle(root: string, includeSourceNotes: boolean): P
     const graph = generation.bundle?.graph ?? null;
     const keywords = generation.bundle?.keywords ?? null;
     const embeddings = generation.bundle?.embeddings ?? null;
-    return { metadata, bm25, graph, keywords, embeddings, config, warnings };
+    return {
+      metadata,
+      bm25,
+      graph,
+      keywords,
+      embeddings,
+      config,
+      revision: state.revision,
+      dirty: state.dirty,
+      warnings,
+    };
   })();
 
   retrievalBundleCache.set(key, load);
@@ -215,6 +242,18 @@ async function loadRetrievalBundle(root: string, includeSourceNotes: boolean): P
     retrievalBundleCache.delete(key);
     throw err;
   }
+}
+
+async function excludeMissingVaultChunks(root: string, chunks: LtmMemoryChunk[], warnings: string[]) {
+  if (chunks.length === 0) return chunks;
+  const noteIds = Array.from(new Set(chunks.map((chunk) => chunk.noteId)));
+  const notes = await new LongTermMemoryStorage(root).getNotesByIds(noteIds);
+  const present = chunks.filter((chunk) => notes.has(chunk.noteId));
+  const excluded = chunks.length - present.length;
+  if (excluded > 0) {
+    warnings.push(`Excluded ${excluded} stale index chunk(s) whose vault notes no longer exist.`);
+  }
+  return present;
 }
 
 function resolveRetrievalWeights(config: LtmRetrievalConfig, input: RetrieveLongTermMemoryInput) {
@@ -230,9 +269,7 @@ function uniqueSorted(values: string[]) {
 }
 
 function extractQuerySignals(input: RetrieveLongTermMemoryInput) {
-  const recentMessagesText = input.recentMessages?.length
-    ? input.recentMessages.filter(Boolean).join("\n")
-    : "";
+  const recentMessagesText = input.recentMessages?.length ? input.recentMessages.filter(Boolean).join("\n") : "";
   const queryParts = [
     input.queryText ?? "",
     recentMessagesText || (input.recentUserMessage ?? ""),
@@ -322,9 +359,7 @@ function compactScoreMap(scores: Record<string, number> | undefined) {
   return Object.fromEntries(Object.entries(scores).map(([key, value]) => [key, Number(value.toFixed(6))]));
 }
 
-function activeRelevanceLanes(
-  weights: { semantic: number; lexical: number; graph: number; keyword: number },
-) {
+function activeRelevanceLanes(weights: { semantic: number; lexical: number; graph: number; keyword: number }) {
   return [
     ...(weights.semantic > 0 ? ["vector"] : []),
     ...(weights.lexical > 0 ? ["bm25"] : []),
@@ -333,9 +368,7 @@ function activeRelevanceLanes(
   ];
 }
 
-function skippedRelevanceLanes(
-  weights: { semantic: number; lexical: number; graph: number; keyword: number },
-) {
+function skippedRelevanceLanes(weights: { semantic: number; lexical: number; graph: number; keyword: number }) {
   return [
     ...(weights.semantic <= 0 ? ["vector:zero_weight"] : []),
     ...(weights.lexical <= 0 ? ["bm25:zero_weight"] : []),
@@ -352,16 +385,14 @@ function formatSelectedCandidate(candidate: LtmBudgetedChunk): LtmRetrievalDebug
     noteType: candidate.chunk.noteType,
     status: candidate.chunk.status,
     score: Number(candidate.score.toFixed(6)),
-    normalizedScore:
-      candidate.normalizedScore === undefined ? undefined : Number(candidate.normalizedScore.toFixed(6)),
+    normalizedScore: candidate.normalizedScore === undefined ? undefined : Number(candidate.normalizedScore.toFixed(6)),
     finalNormalizedScore:
       candidate.finalNormalizedScore === undefined ? undefined : Number(candidate.finalNormalizedScore.toFixed(6)),
     lanes: candidate.lanes,
     reasons: candidate.reasons,
     laneScores: compactScoreMap(candidate.laneScores),
     rawLaneScores: compactScoreMap(candidate.rawLaneScores),
-    cooldownPenalty:
-      candidate.cooldownPenalty === undefined ? undefined : Number(candidate.cooldownPenalty.toFixed(6)),
+    cooldownPenalty: candidate.cooldownPenalty === undefined ? undefined : Number(candidate.cooldownPenalty.toFixed(6)),
     tier: candidate.tier,
     estimatedTokens: candidate.estimatedTokens,
     budgetIncluded: true,
@@ -380,16 +411,14 @@ function formatRejectedCandidate(
     noteType: chunk?.noteType,
     status: chunk?.status,
     score: Number(candidate.score.toFixed(6)),
-    normalizedScore:
-      candidate.normalizedScore === undefined ? undefined : Number(candidate.normalizedScore.toFixed(6)),
+    normalizedScore: candidate.normalizedScore === undefined ? undefined : Number(candidate.normalizedScore.toFixed(6)),
     finalNormalizedScore:
       candidate.finalNormalizedScore === undefined ? undefined : Number(candidate.finalNormalizedScore.toFixed(6)),
     lanes: candidate.lanes,
     reasons: candidate.reasons,
     laneScores: compactScoreMap(candidate.laneScores),
     rawLaneScores: compactScoreMap(candidate.rawLaneScores),
-    cooldownPenalty:
-      candidate.cooldownPenalty === undefined ? undefined : Number(candidate.cooldownPenalty.toFixed(6)),
+    cooldownPenalty: candidate.cooldownPenalty === undefined ? undefined : Number(candidate.cooldownPenalty.toFixed(6)),
     estimatedTokens: candidate.estimatedTokens,
     budgetIncluded: false,
     rejectionReason: candidate.rejectionReason,
@@ -466,7 +495,9 @@ function filterRecentContextDuplicates(
     if (!chunk) return true;
     const chunkTokens = tokenize(chunk.text);
     if (chunkTokens.size === 0) return true;
-    return !recentTokens.some((messageTokens) => jaccardSimilarity(chunkTokens, messageTokens) > ACTIVE_CONTEXT_DEDUP_THRESHOLD);
+    return !recentTokens.some(
+      (messageTokens) => jaccardSimilarity(chunkTokens, messageTokens) > ACTIVE_CONTEXT_DEDUP_THRESHOLD,
+    );
   });
   return { ranked: filtered, skipped: ranked.length - filtered.length };
 }
@@ -542,9 +573,12 @@ export async function retrieveLongTermMemory(
 
   const signals = extractQuerySignals(input);
   const characterIds = uniqueSorted(signals.characterIds);
-  const chunksById = new Map(Object.entries(metadata.chunks));
-  const allChunks = Object.values(metadata.chunks);
-  const allowedChunkIds = new Set(allChunks.filter((chunk) => candidateAllowed(chunk, input, config, characterIds)).map((chunk) => chunk.id));
+  const indexedChunks = Object.values(metadata.chunks);
+  const allChunks = bundle.dirty ? await excludeMissingVaultChunks(root, indexedChunks, warnings) : indexedChunks;
+  const chunksById = new Map(allChunks.map((chunk) => [chunk.id, chunk]));
+  const allowedChunkIds = new Set(
+    allChunks.filter((chunk) => candidateAllowed(chunk, input, config, characterIds)).map((chunk) => chunk.id),
+  );
   const filterCounts = includeDebug ? summarizeCandidateFilters(allChunks, input, config, characterIds) : null;
   if (generationLanesDisabled) {
     warnings.push("No active long-term memory relevance lanes; retrieval returned no chunks.");
@@ -702,7 +736,12 @@ export async function retrieveLongTermMemory(
         if (!Number.isFinite(injectedAt)) return [];
         const ageMinutes = (now - injectedAt) / 60_000;
         if (ageMinutes < 0 || ageMinutes > COOLDOWN_MAX_AGE_MINUTES) return [];
-        const penalty = ageMinutes < COOLDOWN_TIER_1_MINUTES ? COOLDOWN_PENALTY_TIER_1 : ageMinutes < COOLDOWN_TIER_2_MINUTES ? COOLDOWN_PENALTY_TIER_2 : COOLDOWN_PENALTY_TIER_3;
+        const penalty =
+          ageMinutes < COOLDOWN_TIER_1_MINUTES
+            ? COOLDOWN_PENALTY_TIER_1
+            : ageMinutes < COOLDOWN_TIER_2_MINUTES
+              ? COOLDOWN_PENALTY_TIER_2
+              : COOLDOWN_PENALTY_TIER_3;
         return [
           {
             chunkId: entry.chunkId,
@@ -714,7 +753,10 @@ export async function retrieveLongTermMemory(
     : [];
   const ranked = applyImportanceMultiplier(reciprocalRankFuse(lanes, { cooldowns }), chunksById);
   const activeContextDedup = filterRecentContextDuplicates(ranked, chunksById, input);
-  logger.debug({ laneCount: lanes.length, rankedCount: activeContextDedup.ranked.length }, "[ltm] Retrieval lanes fused");
+  logger.debug(
+    { laneCount: lanes.length, rankedCount: activeContextDedup.ranked.length },
+    "[ltm] Retrieval lanes fused",
+  );
   const budgeted = applyLtmBudget(activeContextDedup.ranked, chunksById, {
     maxChunks: input.maxChunks ?? config.maxChunks,
     maxTokens: input.maxTokens ?? config.maxTokens,
@@ -750,8 +792,7 @@ export async function retrieveLongTermMemory(
           sourceSummariesSkipped: filterCounts?.sourceSummariesSkipped ?? 0,
           modeFiltered: filterCounts?.modeFiltered ?? 0,
           scopeFiltered: filterCounts?.scopeFiltered ?? 0,
-          statusFiltered:
-            filterCounts?.resolvedFiltered ?? 0,
+          statusFiltered: filterCounts?.resolvedFiltered ?? 0,
           keywordCandidates: laneCount("keyword"),
           vectorCandidates: laneCount("vector"),
           bm25Candidates: laneCount("bm25"),
@@ -774,10 +815,7 @@ export async function retrieveLongTermMemory(
       }
     : undefined;
 
-  logger.debug(
-    { selectedCount: budgeted.chunks.length, totalChunks: allChunks.length },
-    "[ltm] Retrieval completed",
-  );
+  logger.debug({ selectedCount: budgeted.chunks.length, totalChunks: allChunks.length }, "[ltm] Retrieval completed");
 
   return {
     chunks: budgeted.chunks,

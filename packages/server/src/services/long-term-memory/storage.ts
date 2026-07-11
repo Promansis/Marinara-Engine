@@ -1,6 +1,8 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, unlink } from "node:fs/promises";
 import { z } from "zod";
+import { withKeyedLock } from "../../lib/concurrency.js";
 import { logger } from "../../lib/logger.js";
 import { isEnoent, nowIso } from "./ltm-utils.js";
 import {
@@ -28,6 +30,7 @@ import {
 import { appendJsonLineAtomic, createJsonFileExclusive, readJsonFile, writeJsonAtomic } from "./atomic-json.js";
 import { DEFAULT_LTM_POLICIES, DEFAULT_LTM_RETRIEVAL_CONFIG } from "./default-config.js";
 import { markLtmIndexesDirty } from "./index-state.js";
+import { commitLtmMutation, recoverLtmMutations, type LtmMutationFileChange } from "./mutation-transaction.js";
 import { parseStoredLtmNote } from "./stored-note.js";
 import {
   getLongTermMemoryDirectories,
@@ -54,6 +57,8 @@ type PreparedDraftRewrite = {
 
 const noteWriteLocks = new Map<string, Promise<void>>();
 const initLocks = new Map<string, Promise<void>>();
+const vaultMutationLocks = new Map<string, Promise<void>>();
+const activeVaultMutationRoots = new AsyncLocalStorage<Set<string>>();
 
 export type LtmListNotesFilter = {
   type?: LtmNoteType;
@@ -79,8 +84,6 @@ export type ProjectLtmNoteResult = {
   created: boolean;
   changed: boolean;
 };
-
-
 
 function normalizeStoredScope(scope: LtmScope) {
   return withMergedLtmScopeLinks(scope, {});
@@ -168,31 +171,36 @@ function eventFor(
   });
 }
 
-async function withNoteWriteLock<T>(path: string, operation: () => Promise<T>): Promise<T> {
-  const previous = noteWriteLocks.get(path) ?? Promise.resolve();
-  let release!: () => void;
-  const current = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const tail = previous.then(
-    () => current,
-    () => current,
-  );
-  noteWriteLocks.set(path, tail);
-
-  try {
-    await previous.catch(() => {});
-    return await operation();
-  } finally {
-    release();
-    if (noteWriteLocks.get(path) === tail) {
-      noteWriteLocks.delete(path);
-    }
-  }
-}
-
 function noteIdWriteLockKey(root: string, id: string) {
   return `${root}\0note:${id}`;
+}
+
+function vaultMutationLockKey(root: string) {
+  return `${root}\0vault-mutation`;
+}
+
+async function withNoteWriteLock<T>(root: string, id: string, operation: () => Promise<T>): Promise<T> {
+  return withKeyedLock(noteWriteLocks, noteIdWriteLockKey(root, id), operation);
+}
+
+async function withNoteWriteLocks<T>(root: string, ids: string[], operation: () => Promise<T>): Promise<T> {
+  const sortedIds = Array.from(new Set(ids)).sort((left, right) => left.localeCompare(right));
+  const lockNext = async (index: number): Promise<T> => {
+    const id = sortedIds[index];
+    if (!id) return operation();
+    return withNoteWriteLock(root, id, () => lockNext(index + 1));
+  };
+  return lockNext(0);
+}
+
+async function withVaultMutationLock<T>(root: string, operation: () => Promise<T>): Promise<T> {
+  const activeRoots = activeVaultMutationRoots.getStore();
+  if (activeRoots?.has(root)) return operation();
+  return withKeyedLock(vaultMutationLocks, vaultMutationLockKey(root), () => {
+    const nextRoots = new Set(activeRoots);
+    nextRoots.add(root);
+    return activeVaultMutationRoots.run(nextRoots, operation);
+  });
 }
 
 export class LongTermMemoryStorage {
@@ -213,6 +221,10 @@ export class LongTermMemoryStorage {
   }
 
   async initializeLtmStore() {
+    // Public mutations initialize before acquiring the vault lock. Nested reads
+    // inside that lock must not wait on another initializer that is itself
+    // waiting for the same vault lock.
+    if (activeVaultMutationRoots.getStore()?.has(this.root)) return;
     const existingLock = initLocks.get(this.root);
     if (existingLock) {
       await existingLock;
@@ -235,8 +247,11 @@ export class LongTermMemoryStorage {
       mkdir(dirs.indexes, { recursive: true }),
       mkdir(dirs.config, { recursive: true }),
       mkdir(dirs.drafts, { recursive: true }),
+      mkdir(dirs.transactions, { recursive: true }),
       ...LTM_VAULT_FOLDERS.map((folder) => mkdir(safeJoin(dirs.vault, folder), { recursive: true })),
     ]);
+
+    await withVaultMutationLock(this.root, () => recoverLtmMutations(this.root));
 
     const policiesPath = safeJoin(dirs.config, "policies.json");
     const retrievalPath = safeJoin(dirs.config, "retrieval.json");
@@ -342,29 +357,31 @@ export class LongTermMemoryStorage {
       version: input.version ?? 1,
     });
     const path = notePathForId(note.id, note.type, this.root);
-    return withNoteWriteLock(noteIdWriteLockKey(this.root, note.id), async () => {
-      const existing = await this.getNote(note.id);
-      if (existing) {
-        throw new Error(`Long-term memory note already exists: ${note.id}`);
-      }
-
-      if (!eventContext.suppressEvent) {
-        await this.appendEvent(eventFor(`${note.type}.created`, note.id, eventContext, { note }));
-      }
-      await createJsonFileExclusive(path, note);
-      await this.markIndexesDirty();
-      return note;
-    });
+    return withVaultMutationLock(this.root, () =>
+      withNoteWriteLock(this.root, note.id, async () => {
+        const existing = await this.getNote(note.id);
+        if (existing) {
+          throw new Error(`Long-term memory note already exists: ${note.id}`);
+        }
+        await commitLtmMutation(this.root, {
+          files: [{ path, before: null, after: note }],
+          events: eventContext.suppressEvent ? [] : [eventFor(`${note.type}.created`, note.id, eventContext, { note })],
+        });
+        return note;
+      }),
+    );
   }
 
   async updateNote(id: string, patch: UpdateLtmNotePatch, eventContext: LtmEventContext = {}) {
     await this.initializeLtmStore();
-    const existing = await this.getRequiredNote(id);
-    if (patch.type && patch.type !== existing.type) {
-      const { type, ...restPatch } = patch;
-      return this.changeNoteType(existing, type, restPatch, eventContext);
-    }
-    return this.writeNotePatch(existing, patch, `${existing.type}.updated`, eventContext);
+    return withVaultMutationLock(this.root, async () => {
+      const existing = await this.getRequiredNote(id);
+      if (patch.type && patch.type !== existing.type) {
+        const { type, ...restPatch } = patch;
+        return this.changeNoteType(existing, type, restPatch, eventContext);
+      }
+      return this.writeNotePatch(existing, patch, `${existing.type}.updated`, eventContext);
+    });
   }
 
   async projectNote(
@@ -374,38 +391,38 @@ export class LongTermMemoryStorage {
   ): Promise<ProjectLtmNoteResult> {
     await this.initializeLtmStore();
     const noteId = ltmNoteIdSchema.parse(id);
-    return withNoteWriteLock(noteIdWriteLockKey(this.root, noteId), async () => {
-      const current = await this.getNote(noteId);
-      const projected = await projector(current);
-      if (!projected) return { note: current, created: false, changed: false };
-      if (projected.id !== noteId) {
-        throw new Error(`Projected long-term memory note id changed from ${noteId} to ${projected.id}.`);
-      }
-      if (current && projected.type !== current.type) {
-        throw new Error(`Projected long-term memory note ${noteId} cannot change type.`);
-      }
-      const next = ltmNoteSchema.parse({
-        ...projected,
-        id: noteId,
-        ...(current
-          ? {
-              type: current.type,
-              createdAt: current.createdAt,
-              version: current.version + 1,
-            }
-          : {}),
-      });
-      const path = notePathForId(next.id, next.type, this.root);
-      if (!eventContext.suppressEvent) {
-        await this.appendEvent(
-          eventFor(`${next.type}.${current ? "updated" : "created"}`, next.id, eventContext, { note: next }),
-        );
-      }
-      if (current) await writeJsonAtomic(path, next);
-      else await createJsonFileExclusive(path, next);
-      await this.markIndexesDirty();
-      return { note: next, created: !current, changed: true };
-    });
+    return withVaultMutationLock(this.root, () =>
+      withNoteWriteLock(this.root, noteId, async () => {
+        const current = await this.getNote(noteId);
+        const projected = await projector(current);
+        if (!projected) return { note: current, created: false, changed: false };
+        if (projected.id !== noteId) {
+          throw new Error(`Projected long-term memory note id changed from ${noteId} to ${projected.id}.`);
+        }
+        if (current && projected.type !== current.type) {
+          throw new Error(`Projected long-term memory note ${noteId} cannot change type.`);
+        }
+        const next = ltmNoteSchema.parse({
+          ...projected,
+          id: noteId,
+          ...(current
+            ? {
+                type: current.type,
+                createdAt: current.createdAt,
+                version: current.version + 1,
+              }
+            : {}),
+        });
+        const path = notePathForId(next.id, next.type, this.root);
+        await commitLtmMutation(this.root, {
+          files: [{ path, before: current, after: next }],
+          events: eventContext.suppressEvent
+            ? []
+            : [eventFor(`${next.type}.${current ? "updated" : "created"}`, next.id, eventContext, { note: next })],
+        });
+        return { note: next, created: !current, changed: true };
+      }),
+    );
   }
 
   async renameNoteId(id: string, nextId: string, eventContext: LtmEventContext = {}) {
@@ -414,11 +431,8 @@ export class LongTermMemoryStorage {
     const parsedNextId = ltmNoteIdSchema.parse(nextId);
     if (currentId === parsedNextId) return this.getRequiredNote(currentId);
 
-    const [firstId, secondId] = currentId < parsedNextId
-      ? [currentId, parsedNextId]
-      : [parsedNextId, currentId];
-    return withNoteWriteLock(noteIdWriteLockKey(this.root, firstId), () =>
-      withNoteWriteLock(noteIdWriteLockKey(this.root, secondId), async () => {
+    return withVaultMutationLock(this.root, () =>
+      withNoteWriteLocks(this.root, [currentId, parsedNextId], async () => {
         const current = await this.getRequiredNote(currentId);
         if (await this.getNote(parsedNextId)) {
           throw new Error(`Long-term memory note already exists: ${parsedNextId}`);
@@ -446,10 +460,12 @@ export class LongTermMemoryStorage {
         await this.writePreparedDraftRewrites(draftRewrites);
         await this.rewriteNoteReferences(currentId, parsedNextId, eventContext);
         if (!eventContext.suppressEvent) {
-          await this.appendEvent(eventFor(`${current.type}.renamed`, parsedNextId, eventContext, {
-            previousNoteId: currentId,
-            note: next,
-          }));
+          await this.appendEvent(
+            eventFor(`${current.type}.renamed`, parsedNextId, eventContext, {
+              previousNoteId: currentId,
+              note: next,
+            }),
+          );
         }
         await this.markIndexesDirty();
         return next;
@@ -462,14 +478,16 @@ export class LongTermMemoryStorage {
     const parsedFromId = ltmNoteIdSchema.parse(fromId);
     const parsedToId = ltmNoteIdSchema.parse(toId);
     if (parsedFromId === parsedToId) return { rewrittenNoteCount: 0, rewrittenDraftCount: 0 };
-    if (!(await this.getNote(parsedToId))) {
-      throw new Error(`Long-term memory replacement note does not exist: ${parsedToId}`);
-    }
+    return withVaultMutationLock(this.root, async () => {
+      if (!(await this.getNote(parsedToId))) {
+        throw new Error(`Long-term memory replacement note does not exist: ${parsedToId}`);
+      }
 
-    const draftRewrites = await this.prepareDraftReferenceRewrites(parsedFromId, parsedToId);
-    const rewrittenNoteCount = await this.rewriteNoteReferences(parsedFromId, parsedToId, eventContext);
-    await this.writePreparedDraftRewrites(draftRewrites);
-    return { rewrittenNoteCount, rewrittenDraftCount: draftRewrites.length };
+      const draftRewrites = await this.prepareDraftReferenceRewrites(parsedFromId, parsedToId);
+      const rewrittenNoteCount = await this.rewriteNoteReferences(parsedFromId, parsedToId, eventContext);
+      await this.writePreparedDraftRewrites(draftRewrites);
+      return { rewrittenNoteCount, rewrittenDraftCount: draftRewrites.length };
+    });
   }
 
   async archiveNote(id: string, eventContext: LtmEventContext = {}) {
@@ -502,61 +520,83 @@ export class LongTermMemoryStorage {
 
   async deleteNote(id: string, eventContext: LtmEventContext = {}) {
     await this.initializeLtmStore();
-    const existing = await this.getRequiredNote(id);
-    const path = notePathForId(existing.id, existing.type, this.root);
-    return withNoteWriteLock(path, async () => {
-      const current = await this.getRequiredNote(id);
-      if (!eventContext.suppressEvent) {
-        await this.appendEvent(eventFor(`${current.type}.deleted`, current.id, eventContext, { note: current }));
-      }
-      await unlink(path);
-      await this.markIndexesDirty();
-      return current;
-    });
+    const result = await this.deleteNotesPermanently([id], eventContext);
+    const deleted = result.deletedNotes[0];
+    if (!deleted) throw new Error(`Long-term memory note not found: ${id}`);
+    return deleted;
   }
 
   async deleteNotesPermanently(ids: string[], eventContext: LtmEventContext = {}) {
     await this.initializeLtmStore();
     const wantedIds = [...new Set(ids.map((id) => ltmNoteIdSchema.parse(id)))];
-    const existingNotes = await this.getNotesByIds(wantedIds);
-    const deletedIds: string[] = [];
-    const failedIds: string[] = [];
-    const deletedNotes: LtmNote[] = [];
+    return withVaultMutationLock(this.root, async () => {
+      const allNotes = await this.listNotes();
+      const notesById = new Map(allNotes.map((note) => [note.id, note]));
+      const deletedNotes = wantedIds.flatMap((id) => {
+        const note = notesById.get(id);
+        return note ? [note] : [];
+      });
+      const deletedIds = deletedNotes.map((note) => note.id);
+      const failedIds = wantedIds.filter((id) => !notesById.has(id));
+      if (deletedNotes.length === 0) return { deletedIds, failedIds, deletedNotes };
 
-    for (const id of wantedIds) {
-      const existing = existingNotes.get(id);
-      if (!existing) {
-        failedIds.push(id);
-        continue;
-      }
-
-      const path = notePathForId(existing.id, existing.type, this.root);
-      const deleted = await withNoteWriteLock(path, async () => {
-        const current = await this.readNoteByIdInFolder(existing.id, vaultFolderForNoteType(existing.type));
-        if (!current) return null;
-        if (!eventContext.suppressEvent) {
-          await this.appendEvent(eventFor(`${current.type}.deleted`, current.id, eventContext, { note: current }));
-        }
-        try {
-          await unlink(path);
-        } catch (err) {
-          if (isEnoent(err)) return null;
-          throw err;
-        }
-        return current;
+      const deletedIdSet = new Set(deletedIds);
+      const timestamp = nowIso();
+      const linkRepairs = allNotes.flatMap((note) => {
+        if (deletedIdSet.has(note.id)) return [];
+        const removedTargetIds = note.links.filter((link) => deletedIdSet.has(link.target)).map((link) => link.target);
+        if (removedTargetIds.length === 0) return [];
+        const links = note.links.filter((link) => !deletedIdSet.has(link.target));
+        const next = ltmNoteSchema.parse({
+          ...note,
+          links,
+          updatedAt: timestamp,
+          version: note.version + 1,
+        });
+        return [{ before: note, after: next, removedTargetIds: Array.from(new Set(removedTargetIds)).sort() }];
       });
 
-      if (deleted) {
-        deletedIds.push(deleted.id);
-        deletedNotes.push(deleted);
-      } else {
-        failedIds.push(id);
-      }
-    }
-
-    if (deletedIds.length > 0) await this.markIndexesDirty();
-
-    return { deletedIds, failedIds, deletedNotes };
+      return withNoteWriteLocks(
+        this.root,
+        [...deletedIds, ...linkRepairs.map((repair) => repair.before.id)],
+        async () => {
+          const files: LtmMutationFileChange[] = [
+            ...deletedNotes.map((note) => ({
+              path: notePathForId(note.id, note.type, this.root),
+              before: note,
+              after: null,
+            })),
+            ...linkRepairs.map((repair) => ({
+              path: notePathForId(repair.after.id, repair.after.type, this.root),
+              before: repair.before,
+              after: repair.after,
+            })),
+          ];
+          const events = eventContext.suppressEvent
+            ? []
+            : [
+                ...deletedNotes.map((note) => eventFor(`${note.type}.deleted`, note.id, eventContext, { note })),
+                ...linkRepairs.map((repair) =>
+                  eventFor(
+                    `${repair.after.type}.updated`,
+                    repair.after.id,
+                    {
+                      ...eventContext,
+                      summary: eventContext.summary ?? "Removed links to permanently deleted memories",
+                      payload: {
+                        ...(eventContext.payload ?? {}),
+                        removedDeletedNoteIds: repair.removedTargetIds,
+                      },
+                    },
+                    { patch: { links: repair.after.links }, note: repair.after },
+                  ),
+                ),
+              ];
+          await commitLtmMutation(this.root, { files, events });
+          return { deletedIds, failedIds, deletedNotes };
+        },
+      );
+    });
   }
 
   async removeNoteFromScope(
@@ -572,9 +612,7 @@ export class LongTermMemoryStorage {
     const existingChatIds = getLtmScopeChatIds(existing.scope);
     const existingCharacterIds = existing.scope.characterIds ?? [];
     const remainingChatIds = existingChatIds.filter((chatId) => !chatIdsToRemove.has(chatId));
-    const remainingCharacterIds = existingCharacterIds.filter(
-      (characterId) => !characterIdsToRemove.has(characterId),
-    );
+    const remainingCharacterIds = existingCharacterIds.filter((characterId) => !characterIdsToRemove.has(characterId));
     const removeGroupId = Boolean(scopeToRemove.groupId && existing.scope.groupId === scopeToRemove.groupId);
     const remainingGroupId = removeGroupId ? undefined : existing.scope.groupId;
     const changed =
@@ -608,11 +646,15 @@ export class LongTermMemoryStorage {
     if (remainingCharacterIds.length > 0) nextScope.characterIds = remainingCharacterIds;
     else delete nextScope.characterIds;
 
-    const note = await this.updateNote(id, { scope: nextScope }, {
-      ...eventContext,
-      cause: eventContext.cause ?? "api.unscope",
-      summary: eventContext.summary ?? "Removed from scope via long-term memory API",
-    });
+    const note = await this.updateNote(
+      id,
+      { scope: nextScope },
+      {
+        ...eventContext,
+        cause: eventContext.cause ?? "api.unscope",
+        summary: eventContext.summary ?? "Removed from scope via long-term memory API",
+      },
+    );
     return { note, deleted: false, changed: true };
   }
 
@@ -714,7 +756,7 @@ export class LongTermMemoryStorage {
     eventContext: LtmEventContext,
   ) {
     const path = notePathForId(existing.id, existing.type, this.root);
-    return withNoteWriteLock(path, async () => {
+    return withNoteWriteLock(this.root, existing.id, async () => {
       const current = await this.getRequiredNote(existing.id);
       const timestamp = nowIso();
       const normalizedPatch = normalizePatch(patch);
@@ -731,11 +773,12 @@ export class LongTermMemoryStorage {
         version: current.version + 1,
       });
 
-      if (!eventContext.suppressEvent) {
-        await this.appendEvent(eventFor(eventType, existing.id, eventContext, { patch: normalizedPatch, note: next }));
-      }
-      await writeJsonAtomic(path, next);
-      await this.markIndexesDirty();
+      await commitLtmMutation(this.root, {
+        files: [{ path, before: current, after: next }],
+        events: eventContext.suppressEvent
+          ? []
+          : [eventFor(eventType, existing.id, eventContext, { patch: normalizedPatch, note: next })],
+      });
       return next;
     });
   }
@@ -757,74 +800,71 @@ export class LongTermMemoryStorage {
 
     const oldPath = notePathForId(existing.id, existing.type, this.root);
     const newPath = notePathForId(nextId, nextType, this.root);
-    const [firstPath, secondPath] = oldPath < newPath ? [oldPath, newPath] : [newPath, oldPath];
-    return withNoteWriteLock(firstPath, () =>
-      withNoteWriteLock(secondPath, async () => {
-        const current = await this.getRequiredNote(existing.id);
-        if (isLtmSourceLikeNote(current)) {
-          throw new Error("Long-term memory source notes cannot change type.");
-        }
-        const timestamp = nowIso();
-        const normalizedPatch = normalizePatch(patch);
-        const titlePatch = "title" in patch ? { title: normalizedPatch.title } : {};
-        const nextSubjects =
-          nextType === "character"
-            ? normalizedPatch.subjects?.length === 1
+    return withNoteWriteLocks(this.root, [existing.id, nextId], async () => {
+      const current = await this.getRequiredNote(existing.id);
+      if (isLtmSourceLikeNote(current)) {
+        throw new Error("Long-term memory source notes cannot change type.");
+      }
+      const timestamp = nowIso();
+      const normalizedPatch = normalizePatch(patch);
+      const titlePatch = "title" in patch ? { title: normalizedPatch.title } : {};
+      const nextSubjects =
+        nextType === "character"
+          ? normalizedPatch.subjects?.length === 1
+            ? normalizedPatch.subjects
+            : current.subjects?.length === 1
+              ? current.subjects
+              : undefined
+          : nextType === "relationship"
+            ? normalizedPatch.subjects?.length === 2
               ? normalizedPatch.subjects
-              : current.subjects?.length === 1
+              : current.subjects?.length === 2
                 ? current.subjects
                 : undefined
-            : nextType === "relationship"
-              ? normalizedPatch.subjects?.length === 2
-                ? normalizedPatch.subjects
-                : current.subjects?.length === 2
-                  ? current.subjects
-                  : undefined
-              : undefined;
-        const next = ltmNoteSchema.parse({
-          ...current,
-          ...normalizedPatch,
-          ...titlePatch,
-          id: nextId,
-          type: nextType,
-          scope: normalizeStoredScope(normalizedPatch.scope ?? current.scope),
-          links: normalizedPatch.links
-            ? rewriteLinks(normalizedPatch.links, current.id, nextId)
-            : rewriteLinks(current.links, current.id, nextId),
-          sections: normalizedPatch.sections ?? current.sections,
-          conflicts: normalizedPatch.conflicts ?? current.conflicts,
-          subjects: nextSubjects,
-          updatedAt: timestamp,
-          version: current.version + 1,
-        });
-        const draftRewrites = await this.prepareDraftReferenceRewrites(current.id, next.id);
+            : undefined;
+      const next = ltmNoteSchema.parse({
+        ...current,
+        ...normalizedPatch,
+        ...titlePatch,
+        id: nextId,
+        type: nextType,
+        scope: normalizeStoredScope(normalizedPatch.scope ?? current.scope),
+        links: normalizedPatch.links
+          ? rewriteLinks(normalizedPatch.links, current.id, nextId)
+          : rewriteLinks(current.links, current.id, nextId),
+        sections: normalizedPatch.sections ?? current.sections,
+        conflicts: normalizedPatch.conflicts ?? current.conflicts,
+        subjects: nextSubjects,
+        updatedAt: timestamp,
+        version: current.version + 1,
+      });
+      const draftRewrites = await this.prepareDraftReferenceRewrites(current.id, next.id);
 
-        if (!eventContext.suppressEvent) {
-          const moveContext = {
-            ...eventContext,
-            payload: {
-              ...(eventContext.payload ?? {}),
-              previousNoteId: current.id,
-              previousType: current.type,
-              draftRewriteCount: draftRewrites.length,
-            },
-          };
-          await this.appendEvent(eventFor(`${current.type}.deleted`, current.id, moveContext, { note: current }));
-          await this.appendEvent(
-            eventFor(`${next.type}.created`, next.id, moveContext, {
-              note: next,
-              patch: { ...normalizedPatch, type: nextType },
-            }),
-          );
-        }
-        await createJsonFileExclusive(newPath, next);
-        await unlink(oldPath);
-        await this.writePreparedDraftRewrites(draftRewrites);
-        await this.rewriteNoteReferences(current.id, next.id, eventContext);
-        await this.markIndexesDirty();
-        return next;
-      }),
-    );
+      if (!eventContext.suppressEvent) {
+        const moveContext = {
+          ...eventContext,
+          payload: {
+            ...(eventContext.payload ?? {}),
+            previousNoteId: current.id,
+            previousType: current.type,
+            draftRewriteCount: draftRewrites.length,
+          },
+        };
+        await this.appendEvent(eventFor(`${current.type}.deleted`, current.id, moveContext, { note: current }));
+        await this.appendEvent(
+          eventFor(`${next.type}.created`, next.id, moveContext, {
+            note: next,
+            patch: { ...normalizedPatch, type: nextType },
+          }),
+        );
+      }
+      await createJsonFileExclusive(newPath, next);
+      await unlink(oldPath);
+      await this.writePreparedDraftRewrites(draftRewrites);
+      await this.rewriteNoteReferences(current.id, next.id, eventContext);
+      await this.markIndexesDirty();
+      return next;
+    });
   }
 
   private async rewriteNoteReferences(fromId: string, toId: string, eventContext: LtmEventContext) {
