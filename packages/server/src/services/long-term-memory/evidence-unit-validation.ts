@@ -16,7 +16,7 @@ const CHARACTER_FACT_DURABLE_SECTION_KEYS = new Set(["developments", "abilities"
 const EVENT_SHAPED_CHARACTER_FACT_PATTERN =
   /\b(?:arrived|departed|entered|left|went|came|returned|walked|ran|fled|attacked|fought|killed|died|met|spoke|told|asked|answered|promised|decided|agreed|refused|accepted|rejected|gave|took|found|discovered|revealed|learned|opened|closed|escaped|rescued|betrayed|confronted|warned|saved|stopped)\b/i;
 const THREAD_RESOLUTION_PATTERN =
-  /\b(?:resolve|resolved|resolver|resolution|would resolve|will resolve|until|when|if|requires|needs|awaits|pending|unresolved|open question|pay off|payoff|future|follow-?up|goal|must|should|cool(?:s|ed|ing)?|confess(?:ion|es|ed|ing)?|confront(?:s|ed|ing)?|dy(?:e|ing) down|explain(?:s|ed|ing|ation)?|updates?)\b/i;
+  /\b(?:resolve|resolved|resolver|resolution|would resolve|will resolve|until|when|if|requires|needs|awaits|pending|unresolved|open question|pay off|payoff|future|follow-?up|goal|must|should|tomorrow|next (?:day|class|session)|cool(?:s|ed|ing)?|confess(?:ion|es|ed|ing)?|confront(?:s|ed|ing)?|dy(?:e|ing) down|explain(?:s|ed|ing|ation)?|updates?)\b/i;
 const SCENE_ONLY_TONE_PATTERN =
   /\b(?:this scene|single scene|momentarily|for the scene|scene tone|currently|right now)\b/i;
 const RELATIONSHIP_CHANGE_PATTERN =
@@ -739,6 +739,9 @@ function dropReasonDiagnosticCode(reason: LtmExtractionDropReason) {
 function userFacingDropMessageForCode(code: string, reason: LtmExtractionDropReason): string {
   if (code === "relationship_state_missing_caused_by") {
     return "Dropped a relationship_state change missing a caused_by link to a timeline event or existing note.";
+  }
+  if (code === "vague_thread") {
+    return "Dropped a thread that did not state what future event or condition would resolve it.";
   }
   return userFacingDropMessage(reason);
 }

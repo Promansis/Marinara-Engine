@@ -150,6 +150,62 @@ test("relationship_state with caused_by timeline link is kept", () => {
   assert.equal(result.keptUnits.length, 2);
 });
 
+test("scheduled near-future thread is kept", () => {
+  const sourceNote = note("source_test", {
+    source: {
+      text: "Lisa and Damo will attend the same classes starting tomorrow; Lisa will walk him in on his first day.",
+      updatedAt: timestamp,
+    },
+  });
+
+  const result = validateLtmEvidenceUnits({
+    units: [
+      unit("thread", {
+        subjectId: "lisa_damo_first_day",
+        sectionKey: "objective",
+        text: "Lisa and Damo will attend the same classes starting tomorrow; Lisa will walk him in on his first day.",
+      }),
+    ],
+    sourceText: sourceNote.sections.source!.text,
+    sourceNote,
+    existingNotes: [],
+    expectedSourceHash: sourceHash,
+  });
+
+  assert.equal(result.keptUnits.length, 1);
+  assert.equal(result.droppedCandidates.length, 0);
+});
+
+test("thread without a resolution condition is rejected with a specific message", () => {
+  const sourceNote = note("source_test", {
+    source: {
+      text: "Lisa and Damo are uneasy around one another.",
+      updatedAt: timestamp,
+    },
+  });
+
+  const result = validateLtmEvidenceUnits({
+    units: [
+      unit("thread", {
+        subjectId: "lisa_damo_tension",
+        sectionKey: "objective",
+        text: "Lisa and Damo are uneasy around one another.",
+      }),
+    ],
+    sourceText: sourceNote.sections.source!.text,
+    sourceNote,
+    existingNotes: [],
+    expectedSourceHash: sourceHash,
+  });
+
+  assert.equal(result.keptUnits.length, 0);
+  assert.equal(result.droppedCandidates[0]?.reason, "unsupported_bucket");
+  assert.equal(
+    result.droppedCandidates[0]?.message,
+    "Dropped a thread that did not state what future event or condition would resolve it.",
+  );
+});
+
 test("deduplicateUnits drops exact duplicates against existing sections", () => {
   const existing = note("timeline_map_confession", {
     event: {
