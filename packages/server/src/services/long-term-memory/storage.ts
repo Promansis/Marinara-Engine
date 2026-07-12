@@ -256,6 +256,7 @@ export class LongTermMemoryStorage {
       mkdir(dirs.config, { recursive: true }),
       mkdir(dirs.drafts, { recursive: true }),
       mkdir(dirs.transactions, { recursive: true }),
+      mkdir(dirs.receipts, { recursive: true }),
       ...LTM_VAULT_FOLDERS.map((folder) => mkdir(safeJoin(dirs.vault, folder), { recursive: true })),
     ]);
 

@@ -868,8 +868,12 @@ export async function retrieveLongTermMemory(
         })
       : null;
   const now = Date.now();
-  const cooldowns = usage
-    ? Object.values(usage.chunks).flatMap((entry) => {
+  const chatUsage =
+    typeof input.scope?.chatId === "string" && input.scope.chatId.trim()
+      ? usage?.chats[input.scope.chatId]?.chunks
+      : undefined;
+  const cooldowns = chatUsage
+    ? Object.values(chatUsage).flatMap((entry) => {
         const injectedAt = Date.parse(entry.lastInjectedAt);
         if (!Number.isFinite(injectedAt)) return [];
         const ageMinutes = (now - injectedAt) / 60_000;

@@ -4,7 +4,7 @@ import { pruneEmptyPromptWrappers } from "./runtime-agent-sections.js";
 export type GenerationPromptMessage = {
   role: "system" | "user" | "assistant";
   content: string;
-  contextKind?: "prompt" | "history" | "injection";
+  contextKind?: "prompt" | "history" | "injection" | "long_term_memory";
   characterId?: string | null;
   images?: string[];
   files?: Array<{ type: string; data: string; filename?: string }>;
@@ -241,6 +241,7 @@ export function scopeIndividualGroupMessagesForTarget(
   const scoped = messages
     .map((message) => {
       let next: GenerationPromptMessage = { ...message };
+      if (next.contextKind === "long_term_memory") return next;
       const isHistoryMessage =
         next.contextKind === "history" ||
         (next.contextKind === undefined && next.role !== "system" && next.characterId != null);

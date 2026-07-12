@@ -20,6 +20,7 @@ import { createAgentsStorage } from "../storage/agents.storage.js";
 import { processLorebooks, type LorebookFinalContentResolver, type LorebookScanResult } from "../lorebook/index.js";
 import { wrapContent } from "./format-engine.js";
 import { sanitizePromptLeaf } from "./prompt-escaping.js";
+import { serializeLongTermMemoryPromptArtifact, type LtmPromptArtifact } from "../long-term-memory/prompt.js";
 import { agentRuns } from "../../db/schema/index.js";
 import { eq, and, desc } from "drizzle-orm";
 
@@ -43,7 +44,7 @@ export interface MarkerContext {
   /** Optional scan-only messages for lorebook matching. */
   lorebookScanMessages?: ChatMLMessage[];
   chatSummary: string | null;
-  longTermMemoryBlock?: string | null;
+  longTermMemoryArtifact?: LtmPromptArtifact | null;
   wrapFormat: WrapFormat;
   /** When false, agent_data markers expand to empty strings */
   enableAgents: boolean;
@@ -470,7 +471,7 @@ function expandChatSummary(ctx: MarkerContext): ExpandedMarker {
 }
 
 function expandLongTermMemory(ctx: MarkerContext): ExpandedMarker {
-  return { content: ctx.longTermMemoryBlock ?? "" };
+  return { content: serializeLongTermMemoryPromptArtifact(ctx.longTermMemoryArtifact)?.content ?? "" };
 }
 
 // ── Agent Data ─────────────────────────────────

@@ -27,7 +27,11 @@ import { LongTermMemoryDraftStore } from "../draft-store.js";
 import { checkLongTermMemoryIntegrity } from "../maintenance.js";
 import { renameWithRetry } from "../atomic-json.js";
 import { getLongTermMemoryDirectories, notePathForId } from "../paths.js";
-import { formatLongTermMemoryBlock, injectLongTermMemoryPromptBlock } from "../prompt.js";
+import {
+  createLongTermMemoryPromptArtifact,
+  formatLongTermMemoryBlock,
+  injectLongTermMemoryPromptBlock,
+} from "../prompt.js";
 import {
   applyGenerationLongTermMemoryInjection,
   buildGenerationLongTermMemoryPlan,
@@ -59,6 +63,34 @@ import { assemblePrompt, type AssemblerInput } from "../../prompt/index.js";
 
 const timestamp = "2026-06-10T00:00:00.000Z";
 const sourceHash = "a".repeat(64);
+
+function promptArtifact(text: string) {
+  return createLongTermMemoryPromptArtifact(
+    [
+      {
+        chunk: {
+          id: "world_archive_key::facts",
+          noteId: "world_archive_key",
+          sectionKey: "facts",
+          text,
+          noteType: "world",
+          status: "active",
+          scope: {},
+          tags: ["typed_memory"],
+          keywords: [],
+          updatedAt: timestamp,
+          sourceHash,
+        },
+        score: 1,
+        reasons: ["bm25"],
+        lanes: ["bm25"],
+        tier: 1,
+        estimatedTokens: 16,
+      } satisfies LtmBudgetedChunk,
+    ],
+    { maxTokens: 4096 },
+  );
+}
 
 async function readJsonText(path: string) {
   return readFile(path, "utf8");
@@ -366,7 +398,7 @@ test("long-term memory prompt injection inserts a system message before chat his
   assert.equal(result.insertAt, 1);
   assert.equal(result.block, "[WORLD]\nMara hid the archive key behind the clock in the tower foyer.");
   assert.deepEqual(messages.map((message) => message.role), ["system", "system", "user", "assistant"]);
-  assert.equal(messages[1]?.contextKind, "injection");
+  assert.equal(messages[1]?.contextKind, "long_term_memory");
   assert.equal(messages[1]?.content, result.block);
 });
 
@@ -585,7 +617,7 @@ test("generation long-term memory uses global retrieval settings and injects aft
   assert.equal(result.injection.insertAt, 2);
   assert.equal(result.injection.insertedBeforeRole, "user");
   assert.deepEqual(finalMessages.map((message) => message.role), ["system", "system", "system", "user", "assistant"]);
-  assert.equal(finalMessages[2]?.contextKind, "injection");
+  assert.equal(finalMessages[2]?.contextKind, "long_term_memory");
   assert.equal(
     finalMessages[2]?.content,
     `${DEFAULT_LTM_RECALL_PREAMBLE}\n\n[WORLD]\nMara hid the archive key behind the clock in the tower foyer.`,
@@ -737,7 +769,7 @@ test("assembler injects long-term memory before chat summary fallback", async ()
     ],
     lorebookScanMessages: [],
     chatSummary: "Summary says Mara hid the archive key behind the clock.",
-    longTermMemoryBlock: "[WORLD]\nMara hid the archive key behind the clock in the tower foyer.",
+    longTermMemoryArtifact: promptArtifact("Mara hid the archive key behind the clock in the tower foyer."),
     suppressChatSummary: true,
     enableAgents: false,
     activeAgentIds: [],
@@ -745,17 +777,15 @@ test("assembler injects long-term memory before chat summary fallback", async ()
     excludedLorebookIds: [],
     excludedLorebookSourceAgentIds: [],
     generationTriggers: ["chat"],
-  } satisfies AssemblerInput & {
-    longTermMemoryBlock: string;
-    suppressChatSummary: boolean;
-  };
+  } satisfies AssemblerInput & { suppressChatSummary: boolean };
 
   const result = await assemblePrompt(input);
   const systemPrompt = result.messages.find((message) => message.role === "system")?.content ?? "";
+  const ltmPrompt = result.messages.find((message) => message.contextKind === "long_term_memory")?.content ?? "";
 
-  assert.match(systemPrompt, /\[WORLD\]\nMara hid the archive key behind the clock in the tower foyer\./);
+  assert.match(ltmPrompt, /\[WORLD\]\n\s+Mara hid the archive key behind the clock in the tower foyer\./);
   assert.match(systemPrompt, /Summary says Mara hid the archive key behind the clock/);
-  assert.deepEqual(result.messages.map((message) => message.role), ["system", "user", "assistant"]);
+  assert.deepEqual(result.messages.map((message) => message.role), ["system", "system", "user", "assistant"]);
 });
 
 test("assembler places long-term memory at an explicit long_term_memory marker", async () => {
@@ -842,7 +872,7 @@ test("assembler places long-term memory at an explicit long_term_memory marker",
     ],
     lorebookScanMessages: [],
     chatSummary: "Summary says Mara hid the archive key behind the clock.",
-    longTermMemoryBlock: "[WORLD]\nMara hid the archive key behind the clock in the tower foyer.",
+    longTermMemoryArtifact: promptArtifact("Mara hid the archive key behind the clock in the tower foyer."),
     suppressChatSummary: true,
     enableAgents: false,
     activeAgentIds: [],
@@ -850,21 +880,18 @@ test("assembler places long-term memory at an explicit long_term_memory marker",
     excludedLorebookIds: [],
     excludedLorebookSourceAgentIds: [],
     generationTriggers: ["chat"],
-  } satisfies AssemblerInput & {
-    longTermMemoryBlock: string;
-    suppressChatSummary: boolean;
-  };
+  } satisfies AssemblerInput & { suppressChatSummary: boolean };
 
   const result = await assemblePrompt(input);
   const systemPrompt = result.messages.find((message) => message.role === "system")?.content ?? "";
+  const ltmPrompt = result.messages.find((message) => message.contextKind === "long_term_memory")?.content ?? "";
 
-  assert.deepEqual(result.messages.map((message) => message.role), ["system", "user", "assistant"]);
+  assert.deepEqual(result.messages.map((message) => message.role), ["system", "system", "user", "assistant"]);
   assert.match(systemPrompt, /<system>\n    <persona>\n    Base system prompt\n    <\/persona>\n<\/system>/);
   assert.match(
-    systemPrompt,
+    ltmPrompt,
     /<long_term_memory>\n    \[WORLD\]\n    Mara hid the archive key behind the clock in the tower foyer\.\n<\/long_term_memory>/,
   );
-  assert.ok(systemPrompt.indexOf("</system>") < systemPrompt.indexOf("<long_term_memory>"));
   assert.match(systemPrompt, /Summary says Mara hid the archive key behind the clock/);
 });
 

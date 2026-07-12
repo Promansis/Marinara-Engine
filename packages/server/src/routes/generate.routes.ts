@@ -196,11 +196,16 @@ import {
 } from "../services/memory-recall-embedding.js";
 import { recordLtmDebugEvent } from "../services/long-term-memory/debug-log.js";
 import { getLtmGlobalSettings } from "../services/long-term-memory/settings.js";
-import { recordLongTermMemoryInjection } from "../services/long-term-memory/usage.js";
 import {
   buildGenerationLongTermMemoryPlan,
+  recordGenerationLongTermMemoryDispatch,
   retrieveGenerationLongTermMemoryBlock,
 } from "../services/long-term-memory/generation-injection.js";
+import {
+  isLongTermMemoryPromptArtifactPresent,
+  type LtmPromptArtifact,
+  type LtmSerializedPromptArtifact,
+} from "../services/long-term-memory/prompt.js";
 import { postToDiscordWebhook } from "../services/discord-webhook.js";
 import { newId } from "../utils/id-generator.js";
 import {
@@ -1067,7 +1072,9 @@ function uniqueEmojiNames(names: Array<string | null | undefined>): string[] {
 }
 
 function appendToFirstSystemMessage(messages: GenerationPromptMessage[], content: string): void {
-  const systemMessage = messages.find((message) => message.role === "system");
+  const systemMessage = messages.find(
+    (message) => message.role === "system" && message.contextKind !== "long_term_memory",
+  );
   if (systemMessage) {
     systemMessage.content = systemMessage.content ? `${systemMessage.content}\n\n${content}` : content;
     return;
@@ -1887,6 +1894,9 @@ export async function generateRoutes(app: FastifyInstance) {
         // doesn't burn an extra generation pass with no new context to read.
         let mariFetchSucceededThisIteration = false;
         let finalMessages: GenerationPromptMessage[] = [...runningMessagesForFollowUp];
+        let longTermMemoryArtifact: LtmPromptArtifact | null = null;
+        let serializedLongTermMemoryArtifact: LtmSerializedPromptArtifact | null = null;
+        let longTermMemoryDispatchAccountingAttempted = false;
         let conversationCommandsReminder: string | null = null;
         const conversationCommandsEnabled = chatMode === "conversation" && chatMeta.characterCommands !== false;
         let temperature: number | undefined = 1;
@@ -2232,7 +2242,6 @@ export async function generateRoutes(app: FastifyInstance) {
             }),
           );
           // ── LTM retrieval for marker expansion ──
-          let longTermMemoryBlock: string | null = null;
           if (chatEnableAgents && (!hasPerChatAgentList || perChatAgentSet.has("long-term-memory"))) {
             try {
               const ltmGlobalSettings = await getLtmGlobalSettings();
@@ -2258,14 +2267,12 @@ export async function generateRoutes(app: FastifyInstance) {
                 requestDebug: isDebug,
               });
               if (plan.enabled) {
-                const { retrieval, block } = await retrieveGenerationLongTermMemoryBlock({ plan });
-                if (retrieval.chunks.length > 0) {
-                  await recordLongTermMemoryInjection(retrieval.chunks);
-                }
+                const { retrieval, artifact } = await retrieveGenerationLongTermMemoryBlock({ plan });
+                longTermMemoryArtifact = artifact;
                 if (plan.debugEnabled && retrieval.debug) {
                   await recordLtmDebugEvent({
                     operationId: crypto.randomUUID(),
-                    phase: "injection",
+                    phase: "retrieval",
                     action: "generate-route-ltm-retrieval",
                     status: "ok",
                     message: `Generate route retrieved ${retrieval.chunks.length} chunks (${retrieval.usedTokens} tokens)`,
@@ -2279,7 +2286,6 @@ export async function generateRoutes(app: FastifyInstance) {
                     }),
                   });
                 }
-                longTermMemoryBlock = block || null;
               }
             } catch (err) {
               logger.warn(err, "[generate] LTM retrieval failed — continuing without LTM block");
@@ -2292,7 +2298,7 @@ export async function generateRoutes(app: FastifyInstance) {
             groups: groups as any,
             choiceBlocks: choiceBlocks as any,
             chatChoices,
-            longTermMemoryBlock,
+            longTermMemoryArtifact,
             chatId: input.chatId,
             characterIds: promptCharacterIds,
             personaId,
@@ -2338,6 +2344,7 @@ export async function generateRoutes(app: FastifyInstance) {
           };
 
           const assembled = await assemblePrompt(assemblerInput);
+          serializedLongTermMemoryArtifact = assembled.longTermMemoryArtifact ?? null;
           if (assembled.lorebookActivatedEntries || assembled.lorebookBudgetSkippedEntries) {
             lorebookScanSnapshot = {
               activatedEntries: assembled.lorebookActivatedEntries ?? [],
@@ -6234,19 +6241,26 @@ export async function generateRoutes(app: FastifyInstance) {
               ? scopedMessagesForGen.map((message) => ({ ...message }))
               : scopedMessagesForGen;
           if (!promptTargetCharacterId && targetCharId) {
-            applyRegexScriptsToPromptMessages(targetScopedMessagesForGen, await getPromptRegexScripts(), {
-              resolveMacros: (value, randomSeed) =>
-                resolveMacros(value, promptMacroContext, { trimResult: false, randomSeed }),
-              targetCharacterId: targetCharId,
-              targetedOnly: true,
-            });
+            applyRegexScriptsToPromptMessages(
+              targetScopedMessagesForGen.filter((message) => message.contextKind !== "long_term_memory"),
+              await getPromptRegexScripts(),
+              {
+                resolveMacros: (value, randomSeed) =>
+                  resolveMacros(value, promptMacroContext, { trimResult: false, randomSeed }),
+                targetCharacterId: targetCharId,
+                targetedOnly: true,
+              },
+            );
           }
           const preparedMessagesForGen = targetScopedMessagesForGen.map((message) => ({
             ...message,
-            content: (targetCharacterProfile
-              ? resolveDeferredCharacterMacros(message.content, targetCharacterProfile, promptMacroContext)
-              : message.content
-            ).replace(/\n([ \t]*\n){2,}/g, "\n\n"),
+            content:
+              message.contextKind === "long_term_memory"
+                ? message.content
+                : (targetCharacterProfile
+                    ? resolveDeferredCharacterMacros(message.content, targetCharacterProfile, promptMacroContext)
+                    : message.content
+                  ).replace(/\n([ \t]*\n){2,}/g, "\n\n"),
           }));
           dedupeLastMessageWrappers(preparedMessagesForGen);
           if (
@@ -6277,7 +6291,12 @@ export async function generateRoutes(app: FastifyInstance) {
               if (!message.content.trim() && !message.images?.length && !message.files?.length) continue;
 
               const last = merged[merged.length - 1];
-              if (last && last.role === message.role) {
+              if (
+                last &&
+                last.role === message.role &&
+                last.contextKind !== "long_term_memory" &&
+                message.contextKind !== "long_term_memory"
+              ) {
                 last.content = `${last.content}\n\n${message.content}`;
                 delete last.contextKind;
                 if (message.images?.length) {
@@ -6329,6 +6348,17 @@ export async function generateRoutes(app: FastifyInstance) {
           );
           finalPromptSent = initialProviderMessages;
           rememberMainPromptPreviewForAgents(initialProviderMessages);
+
+          const recordLongTermMemoryDispatchAfterProviderAccept = async (messages: ChatMessage[]) => {
+            if (longTermMemoryDispatchAccountingAttempted || !serializedLongTermMemoryArtifact) return;
+            if (!isLongTermMemoryPromptArtifactPresent(messages, serializedLongTermMemoryArtifact)) return;
+            longTermMemoryDispatchAccountingAttempted = true;
+            await recordGenerationLongTermMemoryDispatch({
+              chatId: input.chatId,
+              artifact: serializedLongTermMemoryArtifact,
+              finalMessages: messages,
+            });
+          };
 
           // Reset per-character accumulators
           fullResponse = "";
@@ -6443,8 +6473,10 @@ export async function generateRoutes(app: FastifyInstance) {
               }
 
               let result;
+              let providerMessagesForDispatch = loopMessages;
               try {
                 loopMessages = fitPromptForSend(loopMessages);
+                providerMessagesForDispatch = loopMessages;
                 rememberMainPromptPreviewForAgents(loopMessages);
                 logPromptSentToModel(
                   loopMessages,
@@ -6481,6 +6513,9 @@ export async function generateRoutes(app: FastifyInstance) {
                     ? undefined
                     : (items) => encryptedReasoningCache.set(input.chatId, items),
                   onChatCompletionsReasoning: rememberChatCompletionsReasoning,
+                  onPromptFitted: (messages) => {
+                    providerMessagesForDispatch = messages;
+                  },
                 });
               } catch (err: any) {
                 // If the error was caused by an abort, cancel silently and skip post-processing.
@@ -6494,6 +6529,8 @@ export async function generateRoutes(app: FastifyInstance) {
               if (abortController.signal.aborted) {
                 return null;
               }
+
+              await recordLongTermMemoryDispatchAfterProviderAccept(providerMessagesForDispatch);
 
               // If provider doesn't support onToken (fell back to non-streaming),
               // write the content conventionally
@@ -6606,6 +6643,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 loopMessages = fitPromptForSend(loopMessages);
                 rememberMainPromptPreviewForAgents(loopMessages);
                 logPromptSentToModel(loopMessages, "Prompt sent to model (final tool follow-up)");
+                let finalProviderMessagesForDispatch = loopMessages;
                 const finalResult = await provider.chatComplete(loopMessages, {
                   model: conn.model,
                   temperature,
@@ -6636,7 +6674,13 @@ export async function generateRoutes(app: FastifyInstance) {
                     ? undefined
                     : (items) => encryptedReasoningCache.set(input.chatId, items),
                   onChatCompletionsReasoning: rememberChatCompletionsReasoning,
+                  onPromptFitted: (messages) => {
+                    finalProviderMessagesForDispatch = messages;
+                  },
                 });
+                if (!abortController.signal.aborted) {
+                  await recordLongTermMemoryDispatchAfterProviderAccept(finalProviderMessagesForDispatch);
+                }
                 if (finalResult.content && fullResponse.length === prevLen) {
                   await writeContentChunked(finalResult.content);
                 }
@@ -6661,6 +6705,7 @@ export async function generateRoutes(app: FastifyInstance) {
             }
           } else {
             logPromptSentToModel(initialProviderMessages);
+            let providerMessagesForDispatch = initialProviderMessages;
             const gen = provider.chat(initialProviderMessages, {
               model: conn.model,
               temperature,
@@ -6694,9 +6739,16 @@ export async function generateRoutes(app: FastifyInstance) {
                 ? undefined
                 : (items) => encryptedReasoningCache.set(input.chatId, items),
               onChatCompletionsReasoning: rememberChatCompletionsReasoning,
+              onPromptFitted: (messages) => {
+                providerMessagesForDispatch = messages;
+              },
             });
             try {
               let result = await gen.next();
+              if (abortController.signal.aborted) {
+                return null;
+              }
+              await recordLongTermMemoryDispatchAfterProviderAccept(providerMessagesForDispatch);
               while (!result.done) {
                 if (abortController.signal.aborted) {
                   return null;

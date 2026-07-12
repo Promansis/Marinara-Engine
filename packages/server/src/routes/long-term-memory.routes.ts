@@ -18,7 +18,6 @@ import {
   ltmGlobalSettingsSchema,
   ltmExtractionDraftSchema,
   ltmExtractionResponseSchema,
-  ltmInjectionUiSummarySchema,
   ltmImportSourceNotesRequestSchema,
   ltmImportSourceNotesResponseSchema,
   ltmIdentityRepairApplyRequestSchema,
@@ -107,6 +106,7 @@ import {
 } from "../services/long-term-memory/note-transfer.js";
 import { withConcurrency } from "../lib/concurrency.js";
 import { loadTrustedLtmSubjectCatalog } from "../services/long-term-memory/subject-identity.js";
+import { readLongTermMemoryInjectionReceipt } from "../services/long-term-memory/usage.js";
 import {
   applyLtmIdentityRepairs,
   LtmIdentityRepairError,
@@ -581,30 +581,29 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
 
   app.get<{ Params: { chatId: string } }>("/last-injection/:chatId", async (req, reply) => {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory last injection" })) return;
-    const events = await readLtmDebugLog({
-      phase: "injection",
-      chatId: req.params.chatId,
-      limit: 1,
-    });
-    const last = events[0];
-    if (!last || !last.uiSummary) {
-      return reply.send({ memoryCount: 0, tokenCount: 0, memories: [] });
-    }
-    let summary;
-    try {
-      summary = ltmInjectionUiSummarySchema.parse(JSON.parse(last.uiSummary));
-    } catch {
+    const receipt = await readLongTermMemoryInjectionReceipt(req.params.chatId);
+    if (!receipt) {
       return reply.send({ memoryCount: 0, tokenCount: 0, memories: [] });
     }
     const notes = await storage.listNotes();
     const titleMap = new Map(notes.map((n) => [n.id, n.title?.trim() || n.id]));
+    const memories = new Map<string, { noteId: string; title: string; tokenCount: number }>();
+    for (const chunk of receipt.chunks) {
+      const existing = memories.get(chunk.noteId);
+      if (existing) {
+        existing.tokenCount += chunk.tokenCount;
+      } else {
+        memories.set(chunk.noteId, {
+          noteId: chunk.noteId,
+          title: titleMap.get(chunk.noteId) ?? chunk.noteId,
+          tokenCount: chunk.tokenCount,
+        });
+      }
+    }
     return reply.send({
-      memoryCount: summary.memoryCount,
-      tokenCount: summary.tokenCount,
-      memories: summary.memories.map((m) => ({
-        ...m,
-        title: titleMap.get(m.noteId) ?? m.title,
-      })),
+      memoryCount: memories.size,
+      tokenCount: receipt.serializedTokenCount,
+      memories: Array.from(memories.values()),
     });
   });
 

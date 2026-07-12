@@ -85,7 +85,7 @@ type DryRunPromptMessage = {
   content: string;
   images?: string[];
   files?: Array<{ type: string; data: string; filename?: string }>;
-  contextKind?: "prompt" | "history" | "injection";
+  contextKind?: "prompt" | "history" | "injection" | "long_term_memory";
   characterId?: string | null;
   providerMetadata?: Record<string, unknown>;
 };
@@ -1542,7 +1542,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
       promptMessages: Array<{
         role: "system" | "user" | "assistant";
         content: string;
-        contextKind?: "prompt" | "history" | "injection";
+        contextKind?: "prompt" | "history" | "injection" | "long_term_memory";
         images?: string[];
         files?: Array<{ type: string; data: string; filename?: string }>;
         providerMetadata?: Record<string, unknown>;

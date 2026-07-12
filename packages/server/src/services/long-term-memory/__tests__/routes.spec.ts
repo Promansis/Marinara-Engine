@@ -12,6 +12,8 @@ import { loadLtmIndexGeneration } from "../index-generation.js";
 import { getLongTermMemoryDirectories } from "../paths.js";
 import { rebuildLongTermMemoryIndexes } from "../rebuild.js";
 import { LongTermMemoryStorage } from "../storage.js";
+import { recordLongTermMemoryInjection } from "../usage.js";
+import type { LtmBudgetedChunk } from "../budget.js";
 
 const bulkDeleteTimestamp = "2026-07-08T00:00:00.000Z";
 
@@ -42,6 +44,29 @@ async function withLtmStorage(run: (storage: LongTermMemoryStorage, root: string
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+}
+
+function receiptChunk(): LtmBudgetedChunk {
+  return {
+    chunk: {
+      id: "world_receipt::facts",
+      noteId: "world_receipt",
+      sectionKey: "facts",
+      text: "Mara keeps the archive key behind the clock.",
+      sourceHash: "a".repeat(64),
+      noteType: "world",
+      status: "active",
+      tags: [],
+      keywords: [],
+      scope: {},
+      updatedAt: bulkDeleteTimestamp,
+    },
+    score: 1,
+    reasons: ["direct"],
+    lanes: ["direct"],
+    tier: 1,
+    estimatedTokens: 11,
+  };
 }
 
 test("LTM routes — guarded endpoints return 403 from non-loopback without auth", async () => {
@@ -224,6 +249,51 @@ test("LTM routes — guarded endpoints work from loopback without auth", async (
     if (app) await app.close();
     if (previousDataDir === undefined) delete process.env.DATA_DIR;
     else process.env.DATA_DIR = previousDataDir;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("LTM routes — last injection reads a durable dispatch receipt without debug events", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "marinara-ltm-routes-receipt-"));
+  const previousDataDir = process.env.DATA_DIR;
+  const previousBasicAuthUser = process.env.BASIC_AUTH_USER;
+  const previousBasicAuthPass = process.env.BASIC_AUTH_PASS;
+  const previousAdminSecret = process.env.ADMIN_SECRET;
+  delete process.env.BASIC_AUTH_USER;
+  delete process.env.BASIC_AUTH_PASS;
+  delete process.env.ADMIN_SECRET;
+  process.env.DATA_DIR = dataDir;
+
+  let app: Awaited<ReturnType<typeof buildApp>> | null = null;
+  try {
+    await recordLongTermMemoryInjection({
+      chatId: "chat_receipt",
+      chunks: [receiptChunk()],
+      serializedTokenCount: 23,
+    });
+    app = await buildApp();
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/long-term-memory/last-injection/chat_receipt",
+      remoteAddress: "127.0.0.1",
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(JSON.parse(response.body), {
+      memoryCount: 1,
+      tokenCount: 23,
+      memories: [{ noteId: "world_receipt", title: "world_receipt", tokenCount: 11 }],
+    });
+  } finally {
+    if (app) await app.close();
+    if (previousDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = previousDataDir;
+    if (previousBasicAuthUser === undefined) delete process.env.BASIC_AUTH_USER;
+    else process.env.BASIC_AUTH_USER = previousBasicAuthUser;
+    if (previousBasicAuthPass === undefined) delete process.env.BASIC_AUTH_PASS;
+    else process.env.BASIC_AUTH_PASS = previousBasicAuthPass;
+    if (previousAdminSecret === undefined) delete process.env.ADMIN_SECRET;
+    else process.env.ADMIN_SECRET = previousAdminSecret;
     await rm(dataDir, { recursive: true, force: true });
   }
 });

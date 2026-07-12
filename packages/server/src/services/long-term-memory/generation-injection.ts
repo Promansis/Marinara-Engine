@@ -17,7 +17,14 @@ import {
   type RetrieveLongTermMemoryInput,
   type RetrieveLongTermMemoryResult,
 } from "./retrieval.js";
-import { formatLongTermMemoryBlock, injectLongTermMemoryPromptBlock } from "./prompt.js";
+import {
+  createLongTermMemoryPromptArtifact,
+  injectLongTermMemoryPromptBlock,
+  isLongTermMemoryPromptArtifactPresent,
+  type LtmPromptArtifact,
+  type LtmSerializedPromptArtifact,
+} from "./prompt.js";
+import { recordLongTermMemoryInjection } from "./usage.js";
 
 type GenerationPromptInputMessage = Pick<ChatMessage, "role" | "content">;
 
@@ -83,7 +90,18 @@ export interface RetrieveGenerationLongTermMemoryBlockInput {
 
 export interface RetrieveGenerationLongTermMemoryBlockResult {
   retrieval: RetrieveLongTermMemoryResult;
-  block: string;
+  artifact: LtmPromptArtifact | null;
+}
+
+export interface RecordGenerationLongTermMemoryDispatchInput {
+  chatId: string;
+  artifact: LtmSerializedPromptArtifact | null | undefined;
+  finalMessages: ReadonlyArray<Pick<ChatMessage, "content">>;
+  recordInjection?: (input: {
+    chatId: string;
+    chunks: LtmSerializedPromptArtifact["chunks"];
+    serializedTokenCount: number;
+  }) => Promise<unknown>;
 }
 
 export function resolveGenerationLongTermMemoryScope(chat: {
@@ -320,11 +338,11 @@ export function buildGenerationLongTermMemoryPlan(
 export async function applyGenerationLongTermMemoryInjection(
   input: ApplyGenerationLongTermMemoryInjectionInput,
 ): Promise<ApplyGenerationLongTermMemoryInjectionResult> {
-  const { retrieval, block } = await retrieveGenerationLongTermMemoryBlock({
+  const { retrieval, artifact } = await retrieveGenerationLongTermMemoryBlock({
     plan: input.plan,
     retrieveLongTermMemoryFn: input.retrieveLongTermMemoryFn,
   });
-  if (retrieval.chunks.length === 0) {
+  if (!artifact) {
     logger.debug("[ltm] No chunks retrieved for generation injection");
     return {
       retrieval,
@@ -339,6 +357,7 @@ export async function applyGenerationLongTermMemoryInjection(
 
   const injection = injectLongTermMemoryPromptBlock(input.finalMessages, retrieval.chunks, {
     preamble: input.plan.recallPreamble,
+    maxTokens: artifact.maxTokens,
   });
   return {
     retrieval,
@@ -357,9 +376,32 @@ export async function retrieveGenerationLongTermMemoryBlock(
   const retrieval = await (input.retrieveLongTermMemoryFn ?? retrieveLongTermMemory)(input.plan.retrievalInput);
   return {
     retrieval,
-    block:
-      retrieval.chunks.length > 0
-        ? formatLongTermMemoryBlock(retrieval.chunks, { preamble: input.plan.recallPreamble })
-        : "",
+    artifact: createLongTermMemoryPromptArtifact(retrieval.chunks, {
+      preamble: input.plan.recallPreamble,
+      maxTokens: retrieval.maxTokens,
+    }),
   };
+}
+
+/**
+ * Persist accounting only once a provider has accepted a payload containing
+ * the complete serialized LTM artifact. Telemetry must never make generation
+ * fail after dispatch succeeds.
+ */
+export async function recordGenerationLongTermMemoryDispatch(
+  input: RecordGenerationLongTermMemoryDispatchInput,
+): Promise<boolean> {
+  if (!input.artifact || !isLongTermMemoryPromptArtifactPresent(input.finalMessages, input.artifact)) return false;
+
+  try {
+    await (input.recordInjection ?? recordLongTermMemoryInjection)({
+      chatId: input.chatId,
+      chunks: input.artifact.chunks,
+      serializedTokenCount: input.artifact.estimatedTokens,
+    });
+    return true;
+  } catch (err) {
+    logger.warn(err, "[ltm] Failed to persist post-dispatch injection accounting");
+    return false;
+  }
 }

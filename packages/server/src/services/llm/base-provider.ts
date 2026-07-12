@@ -49,7 +49,7 @@ export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
   /** Internal context-fitting hint: prompt data is preserved before chat history. */
-  contextKind?: "prompt" | "history" | "injection";
+  contextKind?: "prompt" | "history" | "injection" | "long_term_memory";
   /** For tool result messages */
   tool_call_id?: string;
   /** For assistant messages with tool calls */
@@ -129,6 +129,8 @@ export interface ChatOptions {
   onEncryptedReasoning?: (items: unknown[]) => void;
   /** Callback to receive Chat Completions reasoning fields that must be replayed for some providers */
   onChatCompletionsReasoning?: (metadata: Record<string, unknown>) => void;
+  /** Internal callback after the provider's own final context fit, before dispatch. */
+  onPromptFitted?: (messages: ChatMessage[]) => void;
   /** Force a specific response format (e.g. { type: "json_object" } or a JSON schema config) */
   responseFormat?: { type: string; [key: string]: unknown };
   /** Raw provider request parameters merged into the outgoing request body. */
@@ -186,7 +188,10 @@ export interface ContextFitResult {
   trimmed: boolean;
 }
 
-type ContextFitOptions = Pick<ChatOptions, "maxContext" | "maxTokens" | "tools" | "suppressModelParameters">;
+type ContextFitOptions = Pick<
+  ChatOptions,
+  "maxContext" | "maxTokens" | "tools" | "suppressModelParameters" | "onPromptFitted"
+>;
 
 const CHARS_PER_TOKEN = 4;
 const MESSAGE_OVERHEAD_TOKENS = 6;
@@ -331,6 +336,10 @@ function findOldestRemovableSystemMessage(messages: ChatMessage[]): number {
   return -1;
 }
 
+function findOldestRemovableLongTermMemoryArtifact(messages: ChatMessage[]): number {
+  return messages.findIndex((message) => message.contextKind === "long_term_memory");
+}
+
 function findLargestMessageIndex(
   messages: ChatMessage[],
   predicate: (message: ChatMessage, index: number) => boolean,
@@ -449,6 +458,15 @@ export function fitMessagesToContext(
     const block = findOldestRemovableConversationBlock(fittedMessages);
     if (!block) break;
     fittedMessages.splice(block.start, block.deleteCount);
+    estimatedTokensAfter = estimateMessagesTokens(fittedMessages);
+  }
+
+  // Long-term memory is serialized as one artifact. Once history has been
+  // exhausted, drop that artifact as a whole instead of truncating its content.
+  while (estimatedTokensAfter > inputBudget) {
+    const artifactIndex = findOldestRemovableLongTermMemoryArtifact(fittedMessages);
+    if (artifactIndex < 0) break;
+    fittedMessages.splice(artifactIndex, 1);
     estimatedTokensAfter = estimateMessagesTokens(fittedMessages);
   }
 
@@ -589,7 +607,9 @@ export abstract class BaseLLMProvider {
   }
 
   protected fitMessagesToContext(messages: ChatMessage[], options: ContextFitOptions) {
-    return fitMessagesToContext(messages, options, this.defaultMaxContext);
+    const result = fitMessagesToContext(messages, options, this.defaultMaxContext);
+    options.onPromptFitted?.(result.messages);
+    return result;
   }
 
   protected logContextTrim(result: ContextFitResult, model: string): void {

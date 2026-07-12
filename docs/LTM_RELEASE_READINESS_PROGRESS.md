@@ -8,14 +8,14 @@ Resume Here section short and current; keep completed phase records durable.
 
 - Branch: `fix/ltm-staging-port-rebase`
 - Audit baseline: `c83d66e6edee6c0a9b3ab3021265461b4ff1a1b1`
-- Current phase: Phase 5 - Recall Settings, Eligibility, and Relevance
-- State: Phase 4 committed locally as `d7592ca0`; Phase 5 implementation and
-  validation are complete locally with its atomic commit pending
-- Next entrypoint: commit the completed Phase 5 scope, then begin Phase 6
-  safe prompt-artifact and dispatch-receipt work
-- Uncommitted scope: Phase 5 settings resolution, retrieval eligibility and
-  ranking, focused regression coverage, and this progress update
-- Blockers: no Phase 5 implementation blocker. Phase 2's platform-specific
+- Current phase: Phase 6 - Safe Prompt Artifacts and Truthful Receipts
+- State: Phase 5 is committed locally as `881027c8`; Phase 6 implementation
+  and validation are complete locally with its atomic commit pending
+- Next entrypoint: commit the completed Phase 6 scope, then begin Phase 7
+  mode-neutral production recall work
+- Uncommitted scope: Phase 6 prompt artifacts, final-fit preservation,
+  post-dispatch accounting, focused regression coverage, and this progress update
+- Blockers: no Phase 6 implementation blocker. Phase 2's platform-specific
   interrupted-write proof gap remains recorded below.
 
 ## Non-Negotiable Decisions
@@ -60,8 +60,8 @@ proof that a later implementation phase passes.
 | 2 - Transactional vault mutations | Complete | Commit subject below | Focused transaction/recovery proof, affected LTM suites, full server suite, prompt regression, and static validation passed |
 | 3 - Coherent index recovery | Committed locally (`941b20d0`) | Complete | Focused corruption/recovery proof, 334-test server suite, prompt regression, and static/build validation passed |
 | 4 - Context-bound capture and refresh | Committed locally (`d7592ca0`) | Complete | Focused import/freshness/route proof, 339-test server suite, prompt regression, static/build validation, and targeted desktop/mobile browser flows passed |
-| 5 - Recall settings, eligibility, and relevance | Implementation and validation complete locally | Commit pending | Focused 135-test LTM proof, 343-test server suite, prompt regression, static/build validation, and an isolated desktop LTM settings flow passed |
-| 6 - Safe prompt artifacts and truthful receipts | Not started | Pending | Not run |
+| 5 - Recall settings, eligibility, and relevance | Committed locally (`881027c8`) | Complete | Focused 135-test LTM proof, 343-test server suite, prompt regression, static/build validation, and an isolated desktop LTM settings flow passed |
+| 6 - Safe prompt artifacts and truthful receipts | Implementation and validation complete locally | Commit pending | Focused artifact/receipt proof, 350-test server suite, prompt regression, static/build validation, and durable Last Injection route proof passed |
 | 7 - Mode-neutral production recall | Not started | Pending | Not run |
 | 8 - Truthful client behavior and accessibility | Not started | Pending | Not run |
 | 9 - Consistent full-backup restore | Not started | Pending | Not run |
@@ -374,11 +374,11 @@ eligibility, threshold, direct-match, and mandatory-policy runtime paths.
 
 Started: 2026-07-11
 
-Completed: 2026-07-11 locally; atomic commit pending
+Completed: 2026-07-11 locally; committed as `881027c8`
 
 Baseline HEAD: `d7592ca0` (`fix(ltm): make extraction refreshable and context-bound`)
 
-Commit: pending; record this hash at the Phase 6 checkpoint
+Commit: `881027c8` (`fix(ltm): correct recall eligibility and relevance`)
 
 Scope:
 
@@ -439,8 +439,82 @@ plus the surrounding desktop chat-settings flow. Phase 7 still owns end-to-end
 provider-payload proof across every mode and preset state; Phase 8 owns full
 client persistence, accessibility, and mobile control proof.
 
-Next entrypoint: commit the completed Phase 5 scope, then begin Phase 6 in the
-structured prompt-artifact, final-fit, and post-dispatch receipt paths.
+Next entrypoint: begin Phase 6 in the structured prompt-artifact, final-fit,
+and post-dispatch receipt paths.
+
+### Phase 6 - Safe Prompt Artifacts and Truthful Receipts
+
+Started: 2026-07-12
+
+Completed: 2026-07-12 locally; atomic commit pending
+
+Baseline HEAD: `881027c8` (`fix(ltm): correct recall eligibility and relevance`)
+
+Commit: pending
+
+Scope:
+
+- Replaced the preformatted LTM block with a structured prompt artifact that
+  remains distinct through marker/fallback placement, group handling, strict
+  roles, single-user mode, regex processing, target scoping, and final context
+  fitting.
+- Serialize selected chunks only after placement is known. Final-budget
+  accounting includes the preamble, section wrapper, labels, separators,
+  escaped content, and ChatML overhead. The fitter removes the dedicated LTM
+  message as a whole rather than truncating memory text.
+- XML-escaped untrusted memory leaves and preamble text, kept the LTM artifact
+  macro-opaque, and retained literal `{{user}}` through both marker and
+  fallback placement.
+- Moved injection accounting from retrieval time to the first successful
+  provider dispatch containing the complete post-fit artifact. Provider-owned
+  final fitting reports its message list back to the route; telemetry failures
+  are caught and cannot fail generation.
+- Added a durable per-chat dispatch receipt under the LTM events root. Usage
+  now keys cooldown data by chat and chunk, while Last Injection reads receipts
+  instead of optional debug events.
+- Quarantine malformed usage and receipt data before continuing with valid
+  recall. Existing v1 global usage entries remain readable as legacy history
+  but do not impose a cross-chat cooldown.
+
+Compatibility and migration:
+
+- Existing notes, retrieval settings, debug logs, and global settings remain
+  unchanged. The new receipts directory is created during store initialization
+  and lazily by atomic receipt writes.
+- A valid v1 `usage.json` is parsed into `legacyChunks` when next read or
+  rewritten. Because its records have no chat owner, it is never applied as a
+  global cooldown to unrelated chats.
+- Chats with no durable dispatch receipt continue to receive the established
+  empty Last Injection response. Receipt note titles are resolved from current
+  notes when still available and otherwise fall back to the persisted note ID.
+
+Validation:
+
+| Command | Result |
+| --- | --- |
+| `env LOG_LEVEL=silent pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/prompt-artifact.spec.ts src/services/long-term-memory/__tests__/usage.spec.ts` | Passed: 11 tests, 0 failed; covers escaping, macro opacity, final serialization budget, atomic fitting, post-dispatch gating, chat-scoped usage, v1 compatibility, receipts, and corruption quarantine |
+| `env LOG_LEVEL=silent pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/reconciliation.spec.ts src/services/long-term-memory/__tests__/routes.spec.ts` | Passed: 142 tests, 0 failed; includes marker/fallback placement and durable Last Injection route proof without debug events |
+| `pnpm --filter @marinara-engine/server lint` | Passed TypeScript validation |
+| `pnpm --filter @marinara-engine/server test` | Passed: 350 tests, 0 failed; all tracked server LTM specs discovered |
+| `pnpm regression:prompt` | Passed deterministic prompt, macro, lorebook, summary, and mode regressions |
+| `pnpm check` | Passed Impeccable context check, workspace lint, TypeScript, and production builds |
+| `git diff --check` | Passed after the final documentation update |
+| `marinara-doc-check` | Not installed; `command -v marinara-doc-check` returned no executable and no checked-in equivalent command is available |
+
+Manual proof: not completed. With a configured streaming provider and a
+tool-capable provider, send a recalled-memory chat turn, confirm Last Injection
+updates only after the provider accepts a payload, then force a dispatch error
+and confirm no receipt or cooldown update is written. Repeat with a preset LTM
+marker and without one.
+
+Residual risk: automated fixtures cover the route's post-fit callback and
+provider-independent dispatch gate, but not a live remote response from every
+provider adapter. Phase 7 still owns mode-neutral reachability across
+Conversation, Roleplay, Visual Novel, and Game, including presetless recall.
+
+Next entrypoint: commit the completed Phase 6 scope, then begin Phase 7 by
+moving recall orchestration outside preset and mode guards while preserving the
+Phase 6 artifact and receipt contracts.
 
 ## Progress Update Template
 
