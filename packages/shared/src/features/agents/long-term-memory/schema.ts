@@ -814,6 +814,13 @@ const ltmRetrievalConfigShape = z
     lexicalWeight: z.number().finite().min(0).max(1).default(0.3),
     graphWeight: z.number().finite().min(0).max(1).default(0.1),
     keywordWeight: z.number().finite().min(0).max(1).default(0.2),
+    maxMetadataCandidates: z.number().int().min(1).max(5_000).default(256),
+    maxDirectCandidates: z.number().int().min(1).max(5_000).default(128),
+    maxLexicalCandidates: z.number().int().min(1).max(5_000).default(128),
+    maxKeywordCandidates: z.number().int().min(1).max(5_000).default(128),
+    maxVectorCandidates: z.number().int().min(1).max(5_000).default(256),
+    maxGraphCandidates: z.number().int().min(1).max(5_000).default(128),
+    maxMandatoryCandidates: z.number().int().min(1).max(5_000).default(128),
   })
   .strict()
   .refine(
@@ -826,6 +833,35 @@ export const ltmRetrievalConfigSchema = z.preprocess((value) => {
   const { enabled: _enabled, ...rest } = value as Record<string, unknown>;
   return rest;
 }, ltmRetrievalConfigShape);
+
+export const ltmRetentionConfigSchema = z
+  .object({
+    version: z.literal(1).default(1),
+    auditWindowDays: z.number().int().min(1).max(3_650).default(30),
+    usageRetentionDays: z.number().int().min(1).max(3_650).default(180),
+    receiptRetentionDays: z.number().int().min(1).max(3_650).default(180),
+    eventRetentionDays: z.number().int().min(1).max(3_650).default(180),
+    incompleteGenerationRetentionDays: z.number().int().min(1).max(3_650).default(30),
+    quarantineRetentionDays: z.number().int().min(1).max(3_650).default(90),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    for (const key of [
+      "usageRetentionDays",
+      "receiptRetentionDays",
+      "eventRetentionDays",
+      "incompleteGenerationRetentionDays",
+      "quarantineRetentionDays",
+    ] as const) {
+      if (value[key] < value.auditWindowDays) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [key],
+          message: `${key} cannot be shorter than auditWindowDays.`,
+        });
+      }
+    }
+  });
 
 export const ltmIndexMetadataSchema = z
   .object({
@@ -878,6 +914,8 @@ export const ltmEmbeddingIndexSchema = z
     dimension: z.number().int().min(1).nullable(),
     embeddedChunkCount: z.number().int().min(0),
     chunks: z.array(ltmEmbeddingIndexEntrySchema),
+    /** Optional for pre-Phase 10 generations. New generations index entries by chunk ID. */
+    byChunkId: z.record(z.string().min(1).max(240), z.number().int().min(0)).optional(),
   })
   .strict()
   .superRefine((index, ctx) => {
@@ -915,6 +953,24 @@ export const ltmEmbeddingIndexSchema = z
         path: ["dimension"],
         message: "Embedding dimension must be null when no vectors are stored.",
       });
+    }
+    if (index.byChunkId) {
+      if (Object.keys(index.byChunkId).length !== index.chunks.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["byChunkId"],
+          message: "Embedding chunk catalog must contain every embedding entry.",
+        });
+      }
+      for (const [chunkId, entryIndex] of Object.entries(index.byChunkId)) {
+        if (index.chunks[entryIndex]?.chunkId !== chunkId) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["byChunkId", chunkId],
+            message: `Embedding chunk catalog entry ${chunkId} does not match its index position.`,
+          });
+        }
+      }
     }
   });
 
@@ -985,11 +1041,15 @@ export const ltmMetadataIndexSchema = z
     byType: ltmIndexStringBucketsSchema,
     byStatus: ltmIndexStringBucketsSchema,
     byTag: ltmIndexStringBucketsSchema,
+    /** Optional for pre-Phase 10 generations. New generations group chunks by mode. */
+    byMode: ltmIndexStringBucketsSchema.optional(),
     byScope: z
       .object({
         chatId: ltmIndexStringBucketsSchema,
         groupId: ltmIndexStringBucketsSchema,
         characterId: ltmIndexStringBucketsSchema,
+        /** Optional for pre-Phase 10 generations. New generations list globally scoped chunks directly. */
+        global: z.array(z.string().min(1).max(240)).optional(),
       })
       .strict(),
   })
@@ -2013,6 +2073,7 @@ export type LtmDebugEvent = z.infer<typeof ltmDebugEventSchema>;
 export type LtmPolicy = z.infer<typeof ltmPolicySchema>;
 export type LtmPoliciesConfig = z.infer<typeof ltmPoliciesConfigSchema>;
 export type LtmRetrievalConfig = z.infer<typeof ltmRetrievalConfigSchema>;
+export type LtmRetentionConfig = z.infer<typeof ltmRetentionConfigSchema>;
 export type LtmIndexMetadata = z.infer<typeof ltmIndexMetadataSchema>;
 export type LtmIndexHealth = z.infer<typeof ltmIndexHealthSchema>;
 export type LtmMemoryChunk = z.infer<typeof ltmMemoryChunkSchema>;

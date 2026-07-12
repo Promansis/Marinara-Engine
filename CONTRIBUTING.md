@@ -236,14 +236,15 @@ Release helpers now in the repo:
 
 ## Architecture: Managed Custom Agents
 
-The agent system supports *managed custom agents* — DB-row agents with a reserved `type` (e.g. `"long-term-memory"`) registered in `MANAGED_AGENT_TYPES`. These agents behave like custom agents but have dedicated:
-- **Feature panels** in `AgentEditor` (looked up via `MANAGED_AGENT_FEATURE_PANELS`) instead of generic custom-agent sections.
+The agent system supports _managed custom agents_ — DB-row agents with a reserved `type` (e.g. `"long-term-memory"`) registered in `MANAGED_AGENT_TYPES`. These agents behave like custom agents but have dedicated:
+
+- **Feature sections** in `AgentEditor` instead of generic custom-agent sections.
 - **Settings schemas** validated server-side via manual route-handler branches (`ltmAgentSettingsSchema` for LTM).
 - **Lifecycle-only identities** that remain out of the generic agent pipeline; generation-owned LTM recall owns retrieval and prompt placement.
 
 Key files:
+
 - `packages/shared/src/types/agent.ts` — `ManagedAgentType`, `MANAGED_AGENT_TYPES`, `isManagedAgentType()`
-- `packages/shared/src/features/agents/agent-feature-panels.ts` — `MANAGED_AGENT_FEATURE_PANELS`
 - `packages/server/src/services/generation/agent-resolution.ts` — excludes managed lifecycle rows from generic agent execution
 
 ### Long-Term Memory Extraction Model

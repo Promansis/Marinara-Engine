@@ -74,7 +74,7 @@ Android-specific rule:
 
 ## Managed Agents
 
-- A *managed agent* is a DB-row agent with a reserved `type` (e.g. `"long-term-memory"`) registered in `MANAGED_AGENT_TYPES` and `isManagedAgentType()`. It behaves like a custom agent (DB config, no built-in match) but skips the generic custom-agent sections in AgentEditor (abilities, result type, etc.) in favor of a dedicated feature panel looked up via `MANAGED_AGENT_FEATURE_PANELS`.
+- A _managed agent_ is a DB-row agent with a reserved `type` (e.g. `"long-term-memory"`) registered in `MANAGED_AGENT_TYPES` and `isManagedAgentType()`. It behaves like a custom agent (DB config, no built-in match) but skips the generic custom-agent sections in AgentEditor (abilities, result type, etc.) in favor of its dedicated feature section.
 - The `"memory"` category in `AgentCategory` covers managed memory agents. Currently `"long-term-memory"` is the only managed agent.
 - Managed LTM is a lifecycle and settings identity, not a generic pipeline agent. Keep it out of `agent-pipeline.ts`; generation-owned recall is responsible for retrieving and placing memory context.
 - `ltmAgentSettingsSchema` defines the settings schema validated server-side for LTM agent configs. Route handlers branch on `type === "long-term-memory"` to apply this schema (manual branch, not discriminated union).

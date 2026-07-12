@@ -5,6 +5,7 @@ import {
   isLtmSourceLikeNote,
   ltmPoliciesConfigSchema,
   ltmRetrievalConfigSchema,
+  getLtmScopeChatIds,
   isGlobalLtmScope,
   matchesLtmScope,
   jaccardSimilarity,
@@ -173,7 +174,12 @@ type LtmRetrievalBundle = {
 
 const retrievalBundleCache = new Map<string, Promise<LtmRetrievalBundle>>();
 
-function retrievalBundleCacheKey(root: string, includeSourceNotes: boolean, revision: number, generationId: string | null) {
+function retrievalBundleCacheKey(
+  root: string,
+  includeSourceNotes: boolean,
+  revision: number,
+  generationId: string | null,
+) {
   return `${root}\0${includeSourceNotes ? "source" : "typed"}\0${revision}\0${generationId ?? "none"}`;
 }
 
@@ -230,7 +236,9 @@ async function loadRetrievalBundle(root: string, includeSourceNotes: boolean): P
     warnings.push(...generation.warnings);
     const family = generation.bundles[includeSourceNotes ? "source" : "typed"] ?? null;
     if (generation.manifest && !family) {
-      warnings.push(`Current long-term memory generation has no ${includeSourceNotes ? "source" : "typed"} index family.`);
+      warnings.push(
+        `Current long-term memory generation has no ${includeSourceNotes ? "source" : "typed"} index family.`,
+      );
     }
     const metadata = family?.metadata ?? null;
     const bm25 = family?.bm25 ?? null;
@@ -415,6 +423,83 @@ function candidateAllowed(
   return resolveLtmPolicyDecision(chunk, policies, characterIds).allowed;
 }
 
+function collectCatalogChunkIds(
+  index: LtmMetadataIndex,
+  input: RetrieveLongTermMemoryInput,
+  characterIds: string[],
+  policies: LtmPoliciesConfig,
+  limit: number,
+) {
+  const selected: string[] = [];
+  const seen = new Set<string>();
+  let inspected = 0;
+  const maxInspected = Math.max(limit, limit * 4);
+  const addFromBucket = (chunkIds: string[] | undefined) => {
+    if (!chunkIds) return;
+    for (const chunkId of chunkIds) {
+      if (selected.length >= limit || inspected >= maxInspected) return;
+      inspected += 1;
+      if (seen.has(chunkId)) continue;
+      const chunk = index.chunks[chunkId];
+      if (!chunk || !candidateAllowed(chunk, input, characterIds, policies)) continue;
+      seen.add(chunkId);
+      selected.push(chunkId);
+    }
+  };
+
+  // Prefer the most specific maintained scope catalog. The direct mode and
+  // global catalogs make the normal generation path bounded without scanning
+  // every indexed chunk.
+  for (const chatId of getLtmScopeChatIds(input.scope)) addFromBucket(index.byScope.chatId[chatId]);
+  if (input.scope?.groupId) addFromBucket(index.byScope.groupId[input.scope.groupId]);
+  for (const characterId of characterIds) addFromBucket(index.byScope.characterId[characterId]);
+  addFromBucket(index.byScope.global);
+  if (input.mode) addFromBucket(index.byMode?.[input.mode]);
+
+  // Older coherent generations have no global catalog. They remain readable
+  // until a rebuild writes the bounded Phase 10 catalogs.
+  if (!index.byScope.global) {
+    addFromBucket(index.byStatus.active);
+    if (input.includeResolved) addFromBucket(index.byStatus.resolved);
+  }
+
+  return selected;
+}
+
+function collectMandatoryCatalogChunkIds(index: LtmMetadataIndex, characterIds: string[], limit: number) {
+  const selected: string[] = [];
+  const seen = new Set<string>();
+  const addFromBucket = (chunkIds: string[] | undefined) => {
+    if (!chunkIds) return;
+    for (const chunkId of chunkIds) {
+      if (selected.length >= limit) return;
+      if (seen.has(chunkId)) continue;
+      seen.add(chunkId);
+      selected.push(chunkId);
+    }
+  };
+
+  for (const characterId of characterIds) {
+    addFromBucket(index.byNoteId[characterId]);
+    addFromBucket(index.byScope.characterId[characterId]);
+  }
+  return selected;
+}
+
+function uniqueCandidateIds(groups: ReadonlyArray<ReadonlyArray<string>>, limit?: number) {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const group of groups) {
+    for (const id of group) {
+      if (limit !== undefined && ids.length >= limit) return ids;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      ids.push(id);
+    }
+  }
+  return ids;
+}
+
 function mandatoryPolicyItems(
   chunks: LtmMemoryChunk[],
   allowedChunkIds: Set<string>,
@@ -424,9 +509,7 @@ function mandatoryPolicyItems(
   return chunks.flatMap((chunk) => {
     if (!allowedChunkIds.has(chunk.id)) return [];
     const decision = resolveLtmPolicyDecision(chunk, policies, characterIds);
-    return decision.mandatory
-      ? [{ chunkId: chunk.id, reason: `policy:${chunk.noteType}:always`, rawScore: 1 }]
-      : [];
+    return decision.mandatory ? [{ chunkId: chunk.id, reason: `policy:${chunk.noteType}:always`, rawScore: 1 }] : [];
   });
 }
 
@@ -538,28 +621,30 @@ async function vectorLane(
   embeddings: LtmEmbeddingIndex | null,
   queryText: string,
   input: RetrieveLongTermMemoryInput,
-  config: LtmRetrievalConfig,
   chunksById: Map<string, LtmMemoryChunk>,
-  characterIds: string[],
   allowedChunkIds: Set<string>,
+  candidateChunkIds: string[],
 ) {
   if (!embeddings || !embeddings.dimension || queryText.trim().length === 0) return { items: [], available: false };
 
   const queryEmbedding = (await embedMemoryRecallTexts([queryText], input))[0];
   if (!queryEmbedding || queryEmbedding.length === 0) return { items: [], available: false };
 
-  const items = embeddings.chunks
-    .flatMap((entry) => {
-      const chunk = chunksById.get(entry.chunkId);
-      if (!entry.vector || !chunk || !allowedChunkIds.has(chunk.id)) return [];
+  const legacyEntries = embeddings.byChunkId ? null : new Map(embeddings.chunks.map((entry) => [entry.chunkId, entry]));
+  const items = candidateChunkIds
+    .flatMap((chunkId) => {
+      const entry = embeddings.byChunkId
+        ? embeddings.chunks[embeddings.byChunkId[chunkId] ?? -1]
+        : legacyEntries?.get(chunkId);
+      const chunk = chunksById.get(chunkId);
+      if (!entry || !entry.vector || !chunk || !allowedChunkIds.has(chunk.id)) return [];
       if (entry.vector.length !== queryEmbedding.length) {
         return [];
       }
       const score = cosineSimilarity(queryEmbedding, entry.vector);
-      return score > 0 ? [{ chunkId: entry.chunkId, reason: "vector", rawScore: score }] : [];
+      return score > 0 ? [{ chunkId, reason: "vector", rawScore: score }] : [];
     })
-    .sort((a, b) => b.rawScore - a.rawScore || a.chunkId.localeCompare(b.chunkId))
-    .slice(0, 50);
+    .sort((a, b) => b.rawScore - a.rawScore || a.chunkId.localeCompare(b.chunkId));
 
   return { items, available: items.length > 0 };
 }
@@ -664,6 +749,8 @@ export async function retrieveLongTermMemory(
                 scopeFiltered: 0,
                 statusFiltered: 0,
                 policyFiltered: 0,
+                catalogCandidates: 0,
+                vectorCatalogCandidates: 0,
                 metadataCandidates: 0,
                 directCandidates: 0,
                 mandatoryCandidates: 0,
@@ -688,26 +775,74 @@ export async function retrieveLongTermMemory(
   const signals = extractQuerySignals(input);
   const characterIds = uniqueSorted(signals.characterIds);
   const indexedChunks = Object.values(metadata.chunks);
-  const allChunks = bundle.dirty ? await excludeMissingVaultChunks(root, indexedChunks, warnings) : indexedChunks;
-  const chunksById = new Map(allChunks.map((chunk) => [chunk.id, chunk]));
-  const allowedChunkIds = new Set(
-    allChunks.filter((chunk) => candidateAllowed(chunk, input, characterIds, policies)).map((chunk) => chunk.id),
-  );
-  const filterCounts = includeDebug ? summarizeCandidateFilters(allChunks, input, characterIds, policies) : null;
-  const metadataMatches = getLtmMetadataMatches(metadata, {
-    noteIds: signals.noteIds,
-    tags: signals.tags,
-    scope: input.scope,
+  const filterCounts = includeDebug ? summarizeCandidateFilters(indexedChunks, input, characterIds, policies) : null;
+  const metadataCandidateIds = collectCatalogChunkIds(
+    metadata,
+    input,
     characterIds,
-  }).filter((candidate) => {
-    const chunk = chunksById.get(candidate.chunkId);
-    return chunk ? allowedChunkIds.has(chunk.id) : false;
+    policies,
+    config.maxMetadataCandidates,
+  );
+  const directMatches = getLtmMetadataMatches(
+    metadata,
+    {
+      noteIds: signals.noteIds,
+      tags: signals.tags,
+    },
+    {
+      topK: config.maxDirectCandidates,
+      maxBucketEntries: config.maxDirectCandidates,
+    },
+  );
+  const mandatoryCandidateIds = collectMandatoryCatalogChunkIds(metadata, characterIds, config.maxMandatoryCandidates);
+  const bm25Matches =
+    bm25 && weights.lexical > 0 && signals.queryText.trim().length > 0
+      ? searchLtmBm25(bm25, signals.queryText, {
+          topK: config.maxLexicalCandidates,
+          maxPostingsPerTerm: config.maxLexicalCandidates,
+        })
+      : [];
+  const keywordMatches =
+    keywords && weights.keyword > 0 && signals.queryText.trim().length > 0
+      ? searchLtmKeywordIndex(keywords, signals.queryText, {
+          topK: config.maxKeywordCandidates,
+          maxCandidatesPerKeyword: config.maxKeywordCandidates,
+          maxKeywordCatalogEntries: config.maxKeywordCandidates,
+        })
+      : [];
+  const catalogCandidateIds = uniqueCandidateIds([
+    metadataCandidateIds,
+    directMatches.map((match) => match.chunkId),
+    mandatoryCandidateIds,
+    bm25Matches.map((match) => match.chunkId),
+    keywordMatches.map((match) => match.chunkId),
+  ]);
+  const indexedCatalogChunks = catalogCandidateIds.flatMap((chunkId) => {
+    const chunk = metadata.chunks[chunkId];
+    return chunk ? [chunk] : [];
   });
-  const directItems = metadataMatches.flatMap((match) => {
+  const catalogChunks = bundle.dirty
+    ? await excludeMissingVaultChunks(root, indexedCatalogChunks, warnings)
+    : indexedCatalogChunks;
+  const chunksById = new Map(catalogChunks.map((chunk) => [chunk.id, chunk]));
+  const allowedChunkIds = new Set(
+    catalogChunks.filter((chunk) => candidateAllowed(chunk, input, characterIds, policies)).map((chunk) => chunk.id),
+  );
+  const directItems = directMatches.flatMap((match) => {
     const reasons = match.reasons.filter((reason) => reason.startsWith("note:") || reason.startsWith("tag:"));
-    return reasons.length > 0 ? [{ chunkId: match.chunkId, reason: reasons.join(","), rawScore: 1 }] : [];
+    return reasons.length > 0 && allowedChunkIds.has(match.chunkId)
+      ? [{ chunkId: match.chunkId, reason: reasons.join(","), rawScore: 1 }]
+      : [];
   });
-  const mandatoryItems = mandatoryPolicyItems(allChunks, allowedChunkIds, policies, characterIds);
+  const mandatoryItems = mandatoryPolicyItems(
+    mandatoryCandidateIds.flatMap((chunkId) => {
+      const chunk = chunksById.get(chunkId);
+      return chunk ? [chunk] : [];
+    }),
+    allowedChunkIds,
+    policies,
+    characterIds,
+  );
 
   if (generationLanesDisabled && directItems.length === 0 && mandatoryItems.length === 0) {
     warnings.push("No active long-term memory relevance lanes; retrieval returned no chunks.");
@@ -740,13 +875,15 @@ export async function retrieveLongTermMemory(
               skippedLanes,
               metadataMode,
               funnel: {
-                totalChunks: allChunks.length,
+                totalChunks: indexedChunks.length,
                 sourceSummariesSkipped: filterCounts?.sourceSummariesSkipped ?? 0,
                 archivedFiltered: filterCounts?.archivedFiltered ?? 0,
                 modeFiltered: filterCounts?.modeFiltered ?? 0,
                 scopeFiltered: filterCounts?.scopeFiltered ?? 0,
                 statusFiltered: (filterCounts?.archivedFiltered ?? 0) + (filterCounts?.resolvedFiltered ?? 0),
                 policyFiltered: filterCounts?.policyFiltered ?? 0,
+                catalogCandidates: catalogCandidateIds.length,
+                vectorCatalogCandidates: 0,
                 metadataCandidates: 0,
                 directCandidates: 0,
                 mandatoryCandidates: 0,
@@ -770,7 +907,8 @@ export async function retrieveLongTermMemory(
     };
   }
   if (!input.includeSourceNotes && input.debug) {
-    const skippedSourceChunks = filterCounts?.sourceSummariesSkipped ?? allChunks.filter(isSourceSummaryChunk).length;
+    const skippedSourceChunks =
+      filterCounts?.sourceSummariesSkipped ?? indexedChunks.filter(isSourceSummaryChunk).length;
     if (skippedSourceChunks > 0) {
       warnings.push(
         `Skipped ${skippedSourceChunks} source summary chunk(s); set includeSourceNotes to search source audit indexes.`,
@@ -779,35 +917,39 @@ export async function retrieveLongTermMemory(
   } else if (input.includeSourceNotes && input.debug) {
     warnings.push("Searching source audit indexes; normal memory stream indexes are not included.");
   }
+  const bm25Items = bm25Matches.flatMap((match) => {
+    const chunk = chunksById.get(match.chunkId);
+    return chunk && allowedChunkIds.has(chunk.id)
+      ? [{ chunkId: match.chunkId, reason: "bm25", rawScore: match.score }]
+      : [];
+  });
+  const keywordItems = keywordMatches.flatMap((match) => {
+    const chunk = chunksById.get(match.chunkId);
+    return chunk && allowedChunkIds.has(chunk.id)
+      ? [
+          {
+            chunkId: match.chunkId,
+            reason: match.reasons.join(","),
+            rawScore: normalizeKeywordRelevance(match.score, signals.queryText),
+          },
+        ]
+      : [];
+  });
+  const vectorCandidateIds = uniqueCandidateIds(
+    [
+      directItems.map((item) => item.chunkId),
+      mandatoryItems.map((item) => item.chunkId),
+      keywordItems.map((item) => item.chunkId),
+      bm25Items.map((item) => item.chunkId),
+      metadataCandidateIds,
+    ],
+    config.maxVectorCandidates,
+  );
   const vector =
     weights.semantic > 0
-      ? await vectorLane(embeddings, signals.queryText, input, config, chunksById, characterIds, allowedChunkIds)
+      ? await vectorLane(embeddings, signals.queryText, input, chunksById, allowedChunkIds, vectorCandidateIds)
       : { items: [], available: Boolean(embeddings?.embeddedChunkCount) };
-  const bm25Items =
-    bm25 && signals.queryText.trim().length > 0
-      ? searchLtmBm25(bm25, signals.queryText).flatMap((match) => {
-          const chunk = chunksById.get(match.chunkId);
-          return chunk && allowedChunkIds.has(chunk.id)
-            ? [{ chunkId: match.chunkId, reason: "bm25", rawScore: match.score }]
-            : [];
-        })
-      : [];
-  const keywordItems =
-    keywords && weights.keyword > 0 && signals.queryText.trim().length > 0
-      ? searchLtmKeywordIndex(keywords, signals.queryText).flatMap((match) => {
-          const chunk = chunksById.get(match.chunkId);
-          return chunk && allowedChunkIds.has(chunk.id)
-            ? [
-                {
-                  chunkId: match.chunkId,
-                  reason: match.reasons.join(","),
-                  rawScore: normalizeKeywordRelevance(match.score, signals.queryText),
-                },
-              ]
-            : [];
-        })
-      : [];
-  const metadataGraphSeedMatches = metadataMatches.filter((match) =>
+  const metadataGraphSeedMatches = directMatches.filter((match) =>
     match.reasons.some((reason) => reason.startsWith("note:") || reason.startsWith("tag:")),
   );
   const graphSeeds = uniqueSorted([
@@ -847,16 +989,36 @@ export async function retrieveLongTermMemory(
     });
   }
 
-  if (weights.graph > 0 && graph && graphSeeds.length > 0) {
+  const graphMatches =
+    weights.graph > 0 && graph && graphSeeds.length > 0
+      ? expandLtmGraph(graph, graphSeeds, {
+          topK: config.maxGraphCandidates,
+          maxVisited: config.maxGraphCandidates,
+        })
+      : [];
+  const indexedGraphChunks = graphMatches.flatMap((match) => {
+    const chunk = metadata.chunks[match.chunkId];
+    return chunk ? [chunk] : [];
+  });
+  const graphChunks = bundle.dirty
+    ? await excludeMissingVaultChunks(root, indexedGraphChunks, warnings)
+    : indexedGraphChunks;
+  for (const chunk of graphChunks) {
+    chunksById.set(chunk.id, chunk);
+    if (candidateAllowed(chunk, input, characterIds, policies)) allowedChunkIds.add(chunk.id);
+  }
+  const graphItems = graphMatches.flatMap((match) => {
+    const chunk = chunksById.get(match.chunkId);
+    return chunk && allowedChunkIds.has(chunk.id)
+      ? [{ chunkId: match.chunkId, reason: `graph:${match.viaNoteId}:${match.distance}`, rawScore: match.score }]
+      : [];
+  });
+
+  if (weights.graph > 0 && graphItems.length > 0) {
     lanes.push({
       name: "graph",
       weight: weights.graph,
-      items: expandLtmGraph(graph, graphSeeds).flatMap((match) => {
-        const chunk = chunksById.get(match.chunkId);
-        return chunk && allowedChunkIds.has(chunk.id)
-          ? [{ chunkId: match.chunkId, reason: `graph:${match.viaNoteId}:${match.distance}`, rawScore: match.score }]
-          : [];
-      }),
+      items: graphItems,
     });
   }
 
@@ -936,13 +1098,15 @@ export async function retrieveLongTermMemory(
         skippedLanes,
         metadataMode,
         funnel: {
-          totalChunks: allChunks.length,
+          totalChunks: indexedChunks.length,
           sourceSummariesSkipped: filterCounts?.sourceSummariesSkipped ?? 0,
           archivedFiltered: filterCounts?.archivedFiltered ?? 0,
           modeFiltered: filterCounts?.modeFiltered ?? 0,
           scopeFiltered: filterCounts?.scopeFiltered ?? 0,
           statusFiltered: (filterCounts?.archivedFiltered ?? 0) + (filterCounts?.resolvedFiltered ?? 0),
           policyFiltered: filterCounts?.policyFiltered ?? 0,
+          catalogCandidates: catalogCandidateIds.length,
+          vectorCatalogCandidates: vectorCandidateIds.length,
           metadataCandidates: laneCount("direct"),
           directCandidates: laneCount("direct"),
           mandatoryCandidates: laneCount("mandatory"),
@@ -967,7 +1131,10 @@ export async function retrieveLongTermMemory(
       }
     : undefined;
 
-  logger.debug({ selectedCount: budgeted.chunks.length, totalChunks: allChunks.length }, "[ltm] Retrieval completed");
+  logger.debug(
+    { selectedCount: budgeted.chunks.length, totalChunks: indexedChunks.length },
+    "[ltm] Retrieval completed",
+  );
 
   return {
     chunks: budgeted.chunks,

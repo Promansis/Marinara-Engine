@@ -256,6 +256,12 @@ Long-term memory extraction stores durable retrospective memories in seven bucke
 
 Compiled memory sections may include `importance` as `critical`, `major`, `moderate`, or `minor`. Retrieval gives critical and major memories a small ranking boost, and minor memories a small penalty, while keeping the normal semantic, lexical, keyword, metadata, and graph lanes intact.
 
+### Retrieval and Retention
+
+Recall uses bounded exact candidate catalogs for scope/status, direct note or tag matches, lexical and keyword matches, vectors, and graph expansion. It does not install or require an ANN service. A rebuilt index reuses vectors whose stable chunk source hash has not changed.
+
+Initialized vaults also maintain `long-term-memory/config/retention.json`. Its defaults retain usage, receipts, events, incomplete generations, and quarantined artifacts past a 30-day audit window. Every retention period must be at least `auditWindowDays`; active and fallback index generations plus pending mutation recovery data are never retention inputs.
+
 Relationship memories can store dimensions on a 0-100 scale: `trust`, `intimacy`, `tension`, `hostility`, `dependency`, `affection`, `lust`, and `protectiveness`. A value of 50 is the neutral baseline. Sections can also store `dimensionChanges` from -100 to 100 when a memory changed the relationship.
 
 Use the migration helper after updating older LTM vaults:

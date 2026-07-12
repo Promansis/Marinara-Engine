@@ -75,16 +75,6 @@ export interface OrchestrateGenerationLongTermMemoryRecallResult {
   artifact: LtmPromptArtifact | null;
 }
 
-export interface RetrieveGenerationLongTermMemoryBlockInput {
-  plan: GenerationLongTermMemoryPlan;
-  retrieveLongTermMemoryFn?: (input: RetrieveLongTermMemoryInput) => Promise<RetrieveLongTermMemoryResult>;
-}
-
-export interface RetrieveGenerationLongTermMemoryBlockResult {
-  retrieval: RetrieveLongTermMemoryResult;
-  artifact: LtmPromptArtifact | null;
-}
-
 export interface RecordGenerationLongTermMemoryDispatchInput {
   chatId: string;
   artifact: LtmSerializedPromptArtifact | null | undefined;
@@ -96,7 +86,7 @@ export interface RecordGenerationLongTermMemoryDispatchInput {
   }) => Promise<unknown>;
 }
 
-export function resolveGenerationLongTermMemoryScope(chat: {
+function resolveGenerationLongTermMemoryScope(chat: {
   id: string;
   groupId?: string | null;
   characterIds?: string[];
@@ -121,23 +111,15 @@ function throwIfLongTermMemoryRecallAborted(signal?: AbortSignal) {
   if (signal?.aborted) throw longTermMemoryRecallAbortError();
 }
 
-export const resolveGenerationLongTermMemorySettings = (input: {
-  chatMode: string;
-  chatMeta: Record<string, unknown>;
-  globalSettings?: LtmResolvedGlobalSettings;
-  requestDebug?: boolean;
-}) =>
-  resolveLongTermMemoryRecallSettings({
+export function buildGenerationLongTermMemoryPlan(
+  input: BuildGenerationLongTermMemoryPlanInput,
+): GenerationLongTermMemoryPlan {
+  const settings = resolveLongTermMemoryRecallSettings({
     chatMode: input.chatMode,
     chatMetadata: input.chatMeta,
     globalSettings: input.globalSettings,
     requestDebug: input.requestDebug,
   });
-
-export function buildGenerationLongTermMemoryPlan(
-  input: BuildGenerationLongTermMemoryPlanInput,
-): GenerationLongTermMemoryPlan {
-  const settings = resolveGenerationLongTermMemorySettings(input);
   const scope = resolveGenerationLongTermMemoryScope({
     id: input.chatId,
     groupId: input.groupId,
@@ -223,26 +205,14 @@ export async function orchestrateGenerationLongTermMemoryRecall(
     return { plan, retrieval: null, artifact: null };
   }
 
-  const { retrieval, artifact } = await retrieveGenerationLongTermMemoryBlock({
-    plan,
-    retrieveLongTermMemoryFn: input.retrieveLongTermMemoryFn,
+  const retrieval = await (input.retrieveLongTermMemoryFn ?? retrieveLongTermMemory)(plan.retrievalInput);
+  const artifact = createLongTermMemoryPromptArtifact(retrieval.chunks, {
+    preamble: plan.recallPreamble,
+    maxTokens: retrieval.maxTokens,
   });
   throwIfLongTermMemoryRecallAborted(input.signal);
 
   return { plan, retrieval, artifact };
-}
-
-export async function retrieveGenerationLongTermMemoryBlock(
-  input: RetrieveGenerationLongTermMemoryBlockInput,
-): Promise<RetrieveGenerationLongTermMemoryBlockResult> {
-  const retrieval = await (input.retrieveLongTermMemoryFn ?? retrieveLongTermMemory)(input.plan.retrievalInput);
-  return {
-    retrieval,
-    artifact: createLongTermMemoryPromptArtifact(retrieval.chunks, {
-      preamble: input.plan.recallPreamble,
-      maxTokens: retrieval.maxTokens,
-    }),
-  };
 }
 
 /**

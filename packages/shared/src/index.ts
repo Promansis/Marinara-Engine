@@ -70,7 +70,6 @@ export * from "./features/agents/long-term-memory/utils.js";
 // Feature registries
 export * from "./features/agents/agent-manifest.types.js";
 export * from "./features/agents/agent-registry.js";
-export * from "./features/agents/agent-feature-panels.js";
 export * from "./features/function-calls/tool-definitions.js";
 export * from "./features/folder-packages/manifest-package.js";
 

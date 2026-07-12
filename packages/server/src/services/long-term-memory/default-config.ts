@@ -1,4 +1,4 @@
-import type { LtmPoliciesConfig, LtmRetrievalConfig } from "@marinara-engine/shared";
+import type { LtmPoliciesConfig, LtmRetentionConfig, LtmRetrievalConfig } from "@marinara-engine/shared";
 
 export const DEFAULT_LTM_POLICIES: LtmPoliciesConfig = {
   version: 1,
@@ -32,4 +32,21 @@ export const DEFAULT_LTM_RETRIEVAL_CONFIG: LtmRetrievalConfig = {
   lexicalWeight: 0.3,
   graphWeight: 0.1,
   keywordWeight: 0.2,
+  maxMetadataCandidates: 256,
+  maxDirectCandidates: 128,
+  maxLexicalCandidates: 128,
+  maxKeywordCandidates: 128,
+  maxVectorCandidates: 256,
+  maxGraphCandidates: 128,
+  maxMandatoryCandidates: 128,
+};
+
+export const DEFAULT_LTM_RETENTION_CONFIG: LtmRetentionConfig = {
+  version: 1,
+  auditWindowDays: 30,
+  usageRetentionDays: 180,
+  receiptRetentionDays: 180,
+  eventRetentionDays: 180,
+  incompleteGenerationRetentionDays: 30,
+  quarantineRetentionDays: 90,
 };

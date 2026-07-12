@@ -33,7 +33,9 @@ export function buildLtmGraphIndex(notes: LtmNote[], chunks: LtmMemoryChunk[]): 
   }
 
   for (const note of liveNotes.slice().sort((a, b) => a.id.localeCompare(b.id))) {
-    for (const link of note.links.slice().sort((a, b) => a.target.localeCompare(b.target) || a.relation.localeCompare(b.relation))) {
+    for (const link of note.links
+      .slice()
+      .sort((a, b) => a.target.localeCompare(b.target) || a.relation.localeCompare(b.relation))) {
       if (!liveNoteIds.has(link.target)) continue;
       const edge = { source: note.id, target: link.target, relation: link.relation };
       nodes[note.id]?.outgoing.push(edge);
@@ -50,11 +52,14 @@ export function buildLtmGraphIndex(notes: LtmNote[], chunks: LtmMemoryChunk[]): 
 export function expandLtmGraph(
   index: LtmGraphIndex,
   seedNoteIds: string[],
-  options: { maxHops?: number; topK?: number } = {},
+  options: { maxHops?: number; topK?: number; maxVisited?: number; maxCandidates?: number } = {},
 ) {
   const maxHops = options.maxHops ?? 2;
-  const visited = new Set(seedNoteIds);
-  const queue = seedNoteIds.map((noteId) => ({ noteId, distance: 0 }));
+  const maxVisited = Math.max(1, options.maxVisited ?? 256);
+  const maxCandidates = Math.max(1, options.maxCandidates ?? options.topK ?? 50);
+  const boundedSeeds = seedNoteIds.slice(0, maxVisited);
+  const visited = new Set(boundedSeeds);
+  const queue = boundedSeeds.map((noteId) => ({ noteId, distance: 0 }));
   const scores = new Map<string, { score: number; viaNoteId: string; distance: number }>();
 
   while (queue.length > 0) {
@@ -70,7 +75,7 @@ export function expandLtmGraph(
 
     for (const neighbor of neighbors) {
       const distance = current.distance + 1;
-      if (!visited.has(neighbor)) {
+      if (!visited.has(neighbor) && visited.size < maxVisited) {
         visited.add(neighbor);
         queue.push({ noteId: neighbor, distance });
       }
@@ -78,6 +83,7 @@ export function expandLtmGraph(
       const neighborNode = index.nodes[neighbor];
       if (!neighborNode) continue;
       for (const chunkId of neighborNode.chunkIds) {
+        if (!scores.has(chunkId) && scores.size >= maxCandidates) continue;
         const score = 1 / (distance + 1);
         const existing = scores.get(chunkId);
         if (!existing || score > existing.score) {
@@ -90,5 +96,5 @@ export function expandLtmGraph(
   return Array.from(scores.entries())
     .map(([chunkId, value]) => ({ chunkId, ...value }))
     .sort((a, b) => b.score - a.score || a.chunkId.localeCompare(b.chunkId))
-    .slice(0, options.topK ?? 50);
+    .slice(0, maxCandidates);
 }

@@ -207,7 +207,6 @@ type AvailableAgent = {
   phase: AgentPhase;
   builtIn: boolean;
   runtimeDisabled?: boolean;
-  managed?: boolean;
 };
 
 type AgentAddPreview = {
@@ -1422,11 +1421,11 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
       ? renderConnectionStep()
       : currentStep.key === "prompt"
         ? renderPromptStep()
-      : currentStep.key === "participants"
-        ? renderParticipantsStep()
-        : currentStep.key === "memory"
-          ? renderMemoryStep()
-        : renderAutomationStep();
+        : currentStep.key === "participants"
+          ? renderParticipantsStep()
+          : currentStep.key === "memory"
+            ? renderMemoryStep()
+            : renderAutomationStep();
   const busyContent =
     scheduleState === "generating" ? (
       <div className="flex items-center justify-center gap-2 py-1">
@@ -1930,16 +1929,13 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
       return;
     }
     const builtInMeta = BUILT_IN_AGENTS.find((entry) => entry.id === agent.id) ?? null;
-    const isManaged = isManagedAgentType(agent.id);
     let nextSettings: Record<string, unknown> = {
       ...mergeBuiltInAgentSettings(agent.id, config?.settings),
     };
-    if (!isManaged) {
-      nextSettings.contextSize = contextSize;
-      nextSettings.maxTokens = normalizeAgentMaxTokens(maxTokens);
-      const intervalMeta = getAgentRunIntervalMeta(agent.id, !!builtInMeta);
-      if (intervalMeta && runInterval != null) nextSettings.runInterval = runInterval;
-    }
+    nextSettings.contextSize = contextSize;
+    nextSettings.maxTokens = normalizeAgentMaxTokens(maxTokens);
+    const intervalMeta = getAgentRunIntervalMeta(agent.id, !!builtInMeta);
+    if (intervalMeta && runInterval != null) nextSettings.runInterval = runInterval;
     nextSettings = applyAgentAddSetupToAgentSettings(agent.id, setup, nextSettings, {
       allowSecretPlot: supportsNarrativeDirectorSecretPlot,
     });
@@ -2372,11 +2368,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
                   </div>
                 </div>
 
-                {agentAddPreview.agent.managed ? (
-                  <p className="rounded-lg bg-[var(--accent)] px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-                    This agent runs as a connectionless retrieval step — no model call or token budget is needed.
-                  </p>
-                ) : agentAddPreview.agent.runtimeDisabled ? (
+                {agentAddPreview.agent.runtimeDisabled ? (
                   <p className="rounded-lg bg-[var(--accent)] px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
                     This adds instructions to the Roleplay prompt without making a separate model call.
                   </p>

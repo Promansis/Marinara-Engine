@@ -98,11 +98,7 @@ function assertSameIds(label: string, expected: string[], actual: string[]) {
   }
 }
 
-function assertChunkBucketReferences(
-  label: string,
-  buckets: Record<string, string[]>,
-  chunkIds: Set<string>,
-) {
+function assertChunkBucketReferences(label: string, buckets: Record<string, string[]>, chunkIds: Set<string>) {
   for (const [key, values] of Object.entries(buckets)) {
     const seen = new Set<string>();
     for (const chunkId of values) {
@@ -129,9 +125,15 @@ function validateFamilyCoherence(bundle: LtmIndexFamilyBundle) {
   assertChunkBucketReferences("metadata type", bundle.metadata.byType, chunkIdSet);
   assertChunkBucketReferences("metadata status", bundle.metadata.byStatus, chunkIdSet);
   assertChunkBucketReferences("metadata tag", bundle.metadata.byTag, chunkIdSet);
+  if (bundle.metadata.byMode) {
+    assertChunkBucketReferences("metadata mode", bundle.metadata.byMode, chunkIdSet);
+  }
   assertChunkBucketReferences("metadata chat scope", bundle.metadata.byScope.chatId, chunkIdSet);
   assertChunkBucketReferences("metadata group scope", bundle.metadata.byScope.groupId, chunkIdSet);
   assertChunkBucketReferences("metadata character scope", bundle.metadata.byScope.characterId, chunkIdSet);
+  if (bundle.metadata.byScope.global) {
+    assertChunkBucketReferences("metadata global scope", { global: bundle.metadata.byScope.global }, chunkIdSet);
+  }
   if (bundle.bm25.chunkCount !== chunkIds.length) {
     throw new Error("Long-term memory BM25 chunk count does not match metadata.");
   }
@@ -168,6 +170,13 @@ function validateFamilyCoherence(bundle: LtmIndexFamilyBundle) {
     if (entry.sourceHash !== bundle.metadata.chunks[entry.chunkId]?.sourceHash) {
       throw new Error(`Long-term memory embedding source hash does not match chunk ${entry.chunkId}.`);
     }
+  }
+  if (bundle.embeddings.byChunkId) {
+    assertSameIds(
+      "embedding catalog",
+      chunkIds,
+      Object.keys(bundle.embeddings.byChunkId).sort((a, b) => a.localeCompare(b)),
+    );
   }
   assertSameIds(
     "keyword",
@@ -282,16 +291,14 @@ export async function readLtmIndexGenerationManifest(root: string, generationId:
     throw new Error(`Long-term memory generation manifest id mismatch: ${generationId}.`);
   }
   if (stableJsonHash(manifest.sourceFiles) !== manifest.sourceHash) {
-    throw new Error(`Long-term memory generation ${generationId} source hash does not match its source file inventory.`);
+    throw new Error(
+      `Long-term memory generation ${generationId} source hash does not match its source file inventory.`,
+    );
   }
   return manifest;
 }
 
-export async function readLtmIndexFamilyGeneration(
-  root: string,
-  generationId: string,
-  family: LtmIndexFamily,
-) {
+export async function readLtmIndexFamilyGeneration(root: string, generationId: string, family: LtmIndexFamily) {
   const manifest = await readLtmIndexGenerationManifest(root, generationId);
   const summary = manifest.families[family];
   if (!summary) return null;
@@ -304,7 +311,7 @@ export async function readLtmIndexFamilyGeneration(
     if (!expectedHash || (await fileHash(path)) !== expectedHash) {
       throw new Error(`Long-term memory generation ${generationId} has an invalid ${name} hash.`);
     }
-    bundle[key] = await readValidatedJson(path, (value) => FILE_SCHEMAS[key].parse(value)) as never;
+    bundle[key] = (await readValidatedJson(path, (value) => FILE_SCHEMAS[key].parse(value))) as never;
   }
   validateFamilyCoherence(bundle);
   if (Object.keys(bundle.metadata.chunks).length !== summary.chunkCount) {
@@ -332,7 +339,8 @@ async function listGenerationManifests(root: string) {
     }
   }
   return manifests.sort(
-    (left, right) => right.generatedAt.localeCompare(left.generatedAt) || right.generationId.localeCompare(left.generationId),
+    (left, right) =>
+      right.generatedAt.localeCompare(left.generatedAt) || right.generationId.localeCompare(left.generationId),
   );
 }
 

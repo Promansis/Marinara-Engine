@@ -39,14 +39,14 @@ export async function renameWithRetry(
     try {
       await renameFn(fromPath, toPath);
       return;
-  } catch (err) {
-    if (!isRetryableAtomicRenameError(err) || attempt === ATOMIC_RENAME_RETRY_DELAYS_MS.length) {
-      if (!isRetryableAtomicRenameError(err)) {
-        logger.warn(err, "[ltm] Atomic rename non-retryable error from %s to %s", fromPath, toPath);
+    } catch (err) {
+      if (!isRetryableAtomicRenameError(err) || attempt === ATOMIC_RENAME_RETRY_DELAYS_MS.length) {
+        if (!isRetryableAtomicRenameError(err)) {
+          logger.warn(err, "[ltm] Atomic rename non-retryable error from %s to %s", fromPath, toPath);
+        }
+        throw err;
       }
-      throw err;
-    }
-    lastError = err;
+      lastError = err;
       const delayMs = ATOMIC_RENAME_RETRY_DELAYS_MS[attempt];
       if (delayMs === undefined) throw err;
       await sleep(delayMs);
@@ -59,6 +59,25 @@ export async function writeJsonAtomic(path: string, value: unknown) {
   await mkdir(dirname(path), { recursive: true });
   const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}-${randomUUID()}`;
   const content = `${JSON.stringify(value, null, 2)}\n`;
+  let handle;
+  try {
+    handle = await open(tmpPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
+    await handle.writeFile(content, "utf8");
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+    await renameWithRetry(tmpPath, path);
+    await fsyncPath(dirname(path));
+  } catch (err) {
+    await handle?.close().catch(() => {});
+    await unlink(tmpPath).catch(() => {});
+    throw err;
+  }
+}
+
+export async function writeTextAtomic(path: string, content: string) {
+  await mkdir(dirname(path), { recursive: true });
+  const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}-${randomUUID()}`;
   let handle;
   try {
     handle = await open(tmpPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);

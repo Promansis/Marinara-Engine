@@ -110,10 +110,7 @@ import {
 import { useUpdateGameWidgets } from "../../hooks/use-game";
 import { useRegexScripts, useUpdateRegexScript, type RegexScriptRow } from "../../hooks/use-regex-scripts";
 import { api } from "../../lib/api-client";
-import {
-  appendLocalSidecarConnectionOption,
-  filterLanguageGenerationConnections,
-} from "../../lib/connection-filters";
+import { appendLocalSidecarConnectionOption, filterLanguageGenerationConnections } from "../../lib/connection-filters";
 import { getConnectedChatDisplayName } from "../../lib/chat-display";
 import { getTouchReorderDropIndex } from "../../lib/touch-reorder";
 import {
@@ -156,7 +153,11 @@ import type {
   PromptPreset,
 } from "@marinara-engine/shared";
 import { useAgentConfigs, useCreateAgent, useUpdateAgent, type AgentConfigRow } from "../../hooks/use-agents";
-import { useLastInjection, useLongTermMemorySettings, useLongTermMemoryExtractionSettings } from "../../hooks/use-long-term-memory";
+import {
+  useLastInjection,
+  useLongTermMemorySettings,
+  useLongTermMemoryExtractionSettings,
+} from "../../hooks/use-long-term-memory";
 import {
   RecallStylePresets,
   RecallBudgetControls,
@@ -486,7 +487,6 @@ type AvailableAgent = {
   phase: AgentPhase;
   builtIn: boolean;
   runtimeDisabled?: boolean;
-  managed?: boolean;
 };
 
 type DrawerPersona = {
@@ -745,22 +745,19 @@ export function ChatSettingsDrawer({
       ),
     [isGame, sidecarModelDisplayName, sidecarModelDownloaded, textConnectionsList],
   );
-  const illustratorPromptConnectionsList = useMemo(
-    () => {
-      const options: Array<{ id: string; name: string; model?: string | null }> = [];
-      for (const connection of chatGenerationConnectionsList) {
-        const id = typeof connection.id === "string" ? connection.id.trim() : "";
-        if (!id) continue;
-        options.push({
-          id,
-          name: connection.name || "Connection",
-          model: connection.model ?? null,
-        });
-      }
-      return options;
-    },
-    [chatGenerationConnectionsList],
-  );
+  const illustratorPromptConnectionsList = useMemo(() => {
+    const options: Array<{ id: string; name: string; model?: string | null }> = [];
+    for (const connection of chatGenerationConnectionsList) {
+      const id = typeof connection.id === "string" ? connection.id.trim() : "";
+      if (!id) continue;
+      options.push({
+        id,
+        name: connection.name || "Connection",
+        model: connection.model ?? null,
+      });
+    }
+    return options;
+  }, [chatGenerationConnectionsList]);
   const { data: allPersonas } = usePersonas();
   const { data: agentConfigs } = useAgentConfigs();
   const { data: customTools } = useCustomTools();
@@ -1313,10 +1310,7 @@ export function ChatSettingsDrawer({
     () => mergeBuiltInAgentSettings("continuity", continuityConfig?.settings),
     [continuityConfig?.settings],
   );
-  const htmlDefaults = useMemo(
-    () => mergeBuiltInAgentSettings("html", htmlConfig?.settings),
-    [htmlConfig?.settings],
-  );
+  const htmlDefaults = useMemo(() => mergeBuiltInAgentSettings("html", htmlConfig?.settings), [htmlConfig?.settings]);
   const directorDefaults = useMemo(
     () => mergeBuiltInAgentSettings("director", directorConfig?.settings),
     [directorConfig?.settings],
@@ -1473,17 +1467,19 @@ export function ChatSettingsDrawer({
     flushDebouncedRecallSettings();
     onClose();
   }, [flushDebouncedRecallSettings, onClose]);
-  const setLtmAgentEnabled = useCallback((enabled: boolean) => {
-    updateMeta.mutate({
-      id: chat.id,
-      enableLongTermMemory: enabled,
-    });
-  }, [chat.id, updateMeta]);
+  const setLtmAgentEnabled = useCallback(
+    (enabled: boolean) => {
+      updateMeta.mutate({
+        id: chat.id,
+        enableLongTermMemory: enabled,
+      });
+    },
+    [chat.id, updateMeta],
+  );
   const toggleLtmEnabled = useCallback(() => {
     setLtmAgentEnabled(!ltmRecallEnabled);
   }, [ltmRecallEnabled, setLtmAgentEnabled]);
-  const refinePassEnabled =
-    metadata.refinePass ?? ltmExtractionSettings.data?.refinePass ?? false;
+  const refinePassEnabled = metadata.refinePass ?? ltmExtractionSettings.data?.refinePass ?? false;
   const getKnowledgeAgentSourceSettings = useCallback(
     (agentType: KnowledgeAgentType) => {
       const config = agentConfigsByType.get(agentType);
@@ -2601,17 +2597,14 @@ export function ChatSettingsDrawer({
     }
     const normalizedMaxTokens = normalizeAgentMaxTokens(maxTokens);
     const builtInMeta = BUILT_IN_AGENTS.find((entry) => entry.id === agent.id) ?? null;
-    const isManaged = isManagedAgentType(agent.id);
     let nextSettings: Record<string, unknown> = {
       ...mergeBuiltInAgentSettings(agent.id, config?.settings),
     };
-    if (!isManaged) {
-      nextSettings.contextSize = contextSize;
-      nextSettings.maxTokens = normalizedMaxTokens;
-      const intervalMeta = getAgentRunIntervalMeta(agent.id, !!builtInMeta);
-      if (intervalMeta && runInterval != null) {
-        nextSettings.runInterval = runInterval;
-      }
+    nextSettings.contextSize = contextSize;
+    nextSettings.maxTokens = normalizedMaxTokens;
+    const intervalMeta = getAgentRunIntervalMeta(agent.id, !!builtInMeta);
+    if (intervalMeta && runInterval != null) {
+      nextSettings.runInterval = runInterval;
     }
     nextSettings = applyAgentAddSetupToAgentSettings(agent.id, setup, nextSettings, {
       allowSecretPlot: supportsNarrativeDirectorSecretPlot,
@@ -3343,16 +3336,16 @@ export function ChatSettingsDrawer({
           {modeCapabilities.supportsPromptPresets && isRoleplayMode && !metadata.sceneSystemPrompt && (
             <div style={{ order: CHAT_SETTINGS_ORDER.promptPreset }}>
               <PromptPresetSection
-              promptPresetId={chat.promptPresetId ?? null}
-              presets={promptPresetOptions}
-              hasVariables={currentPromptPresetHasVariables}
-              showLorebookMarkerWarning={showLorebookMarkerWarning}
-              showLongTermMemoryBlockWarning={showLongTermMemoryPromptBlockWarning}
-              onEditVariables={() => {
-                if (chat.promptPresetId) setChoiceModalPresetId(chat.promptPresetId);
-              }}
-              onPromptPresetChange={setPreset}
-            />
+                promptPresetId={chat.promptPresetId ?? null}
+                presets={promptPresetOptions}
+                hasVariables={currentPromptPresetHasVariables}
+                showLorebookMarkerWarning={showLorebookMarkerWarning}
+                showLongTermMemoryBlockWarning={showLongTermMemoryPromptBlockWarning}
+                onEditVariables={() => {
+                  if (chat.promptPresetId) setChoiceModalPresetId(chat.promptPresetId);
+                }}
+                onPromptPresetChange={setPreset}
+              />
             </div>
           )}
 
@@ -3361,16 +3354,16 @@ export function ChatSettingsDrawer({
             <div style={{ order: CHAT_SETTINGS_ORDER.promptPreset }}>
               <ConversationPromptSection
                 chatId={chat.id}
-              customPrompt={(metadata.customSystemPrompt as string) ?? ""}
-              promptPresetId={effectiveModePromptPresetId}
-              promptPresets={promptPresetOptions}
-              selectedPresetName={selectedModePromptPreset?.name ?? null}
-              selectedPresetPrompt={selectedModePromptPreset?.conversationPrompt ?? ""}
-              showLongTermMemoryBlockWarning={showLongTermMemoryPromptBlockWarning}
-              onCustomPromptChange={(id, customSystemPrompt) => updateMeta.mutate({ id, customSystemPrompt })}
-              onPromptPresetChange={handleModePromptPresetChange}
-              onOpenPromptPreset={openSelectedModePromptPreset}
-            />
+                customPrompt={(metadata.customSystemPrompt as string) ?? ""}
+                promptPresetId={effectiveModePromptPresetId}
+                promptPresets={promptPresetOptions}
+                selectedPresetName={selectedModePromptPreset?.name ?? null}
+                selectedPresetPrompt={selectedModePromptPreset?.conversationPrompt ?? ""}
+                showLongTermMemoryBlockWarning={showLongTermMemoryPromptBlockWarning}
+                onCustomPromptChange={(id, customSystemPrompt) => updateMeta.mutate({ id, customSystemPrompt })}
+                onPromptPresetChange={handleModePromptPresetChange}
+                onOpenPromptPreset={openSelectedModePromptPreset}
+              />
             </div>
           )}
 
@@ -3380,16 +3373,16 @@ export function ChatSettingsDrawer({
                 expanded={gamePromptExpanded}
                 storedValue={(metadata.gameSystemPrompt as string) ?? ""}
                 value={gamePromptDraft}
-              specialInstructionsValue={gameSpecialInstructionsDraft}
-              promptPresetId={effectiveModePromptPresetId}
-              promptPresets={promptPresetOptions}
-              selectedPresetName={selectedModePromptPreset?.name ?? null}
-              selectedPresetPrompt={selectedModePromptPreset?.gamePrompt ?? ""}
-              showLongTermMemoryBlockWarning={showLongTermMemoryPromptBlockWarning}
-              onCommit={(gameSystemPrompt) => updateMeta.mutate({ id: chat.id, gameSystemPrompt })}
-              onSpecialInstructionsCommit={(gameSpecialInstructions) =>
-                updateMeta.mutate({ id: chat.id, gameSpecialInstructions })
-              }
+                specialInstructionsValue={gameSpecialInstructionsDraft}
+                promptPresetId={effectiveModePromptPresetId}
+                promptPresets={promptPresetOptions}
+                selectedPresetName={selectedModePromptPreset?.name ?? null}
+                selectedPresetPrompt={selectedModePromptPreset?.gamePrompt ?? ""}
+                showLongTermMemoryBlockWarning={showLongTermMemoryPromptBlockWarning}
+                onCommit={(gameSystemPrompt) => updateMeta.mutate({ id: chat.id, gameSystemPrompt })}
+                onSpecialInstructionsCommit={(gameSpecialInstructions) =>
+                  updateMeta.mutate({ id: chat.id, gameSpecialInstructions })
+                }
                 onExpandedChange={setGamePromptExpanded}
                 onValueChange={setGamePromptDraft}
                 onSpecialInstructionsChange={setGameSpecialInstructionsDraft}
@@ -4803,9 +4796,7 @@ export function ChatSettingsDrawer({
                     <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Selfie Connection</span>
                     <select
                       value={(metadata.imageGenConnectionId as string) ?? ""}
-                      onChange={(e) =>
-                        updateMeta.mutate({ id: chat.id, imageGenConnectionId: e.target.value || null })
-                      }
+                      onChange={(e) => updateMeta.mutate({ id: chat.id, imageGenConnectionId: e.target.value || null })}
                       className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
                     >
                       <option value="">None (selfies disabled)</option>
@@ -4844,8 +4835,8 @@ export function ChatSettingsDrawer({
                     }
                   />
                   <p className="text-[0.55rem] text-[var(--muted-foreground)]">
-                    Used for character selfies when Commands are enabled. The prompt model writes the selfie prompt;
-                    the selfie connection renders the final image.
+                    Used for character selfies when Commands are enabled. The prompt model writes the selfie prompt; the
+                    selfie connection renders the final image.
                   </p>
 
                   {/* Selfie resolution picker */}
@@ -5654,17 +5645,18 @@ export function ChatSettingsDrawer({
                   title="Long-Term Memory"
                   description="Long-term memory recalls facts and events from past conversations."
                 >
-                    <AgentSettingsToggle
-                      label="Use Long-Term Memory in this chat"
-                      description="Turns on Long-Term Memory for this chat and injects saved memories from past conversations into the prompt."
-                      enabled={ltmRecallEnabled}
-                      onToggle={toggleLtmEnabled}
-                    />
-                    {!ltmRecallEnabled && (
-                      <p className="text-xs text-[var(--muted-foreground)]">
-                        Long-Term Memory is off for this chat — turn it on to recall facts from past conversations into your messages.
-                      </p>
-                    )}
+                  <AgentSettingsToggle
+                    label="Use Long-Term Memory in this chat"
+                    description="Turns on Long-Term Memory for this chat and injects saved memories from past conversations into the prompt."
+                    enabled={ltmRecallEnabled}
+                    onToggle={toggleLtmEnabled}
+                  />
+                  {!ltmRecallEnabled && (
+                    <p className="text-xs text-[var(--muted-foreground)]">
+                      Long-Term Memory is off for this chat — turn it on to recall facts from past conversations into
+                      your messages.
+                    </p>
+                  )}
                   <div
                     aria-live="polite"
                     className="mt-2 rounded-lg bg-[var(--secondary)]/35 px-3 py-2 text-xs ring-1 ring-[var(--border)]"
@@ -5676,7 +5668,10 @@ export function ChatSettingsDrawer({
                         Checking the last dispatched memory context...
                       </div>
                     ) : ltmLastInjection.isError ? (
-                      <div role="alert" className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[var(--destructive)]">
+                      <div
+                        role="alert"
+                        className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[var(--destructive)]"
+                      >
                         <span>Could not load the last dispatched memory context.</span>
                         <button
                           type="button"
@@ -5693,81 +5688,82 @@ export function ChatSettingsDrawer({
                     ) : (
                       <div className="mt-1 flex flex-wrap gap-1.5 text-[var(--muted-foreground)]">
                         <span>
-                          {ltmLastInjection.data!.memoryCount} memor{ltmLastInjection.data!.memoryCount === 1 ? "y" : "ies"}
+                          {ltmLastInjection.data!.memoryCount} memor
+                          {ltmLastInjection.data!.memoryCount === 1 ? "y" : "ies"}
                         </span>
                         <span aria-hidden="true">-</span>
                         <span>~{ltmLastInjection.data!.tokenCount.toLocaleString()} tokens</span>
                       </div>
                     )}
                   </div>
-                    {showLongTermMemoryPromptBlockWarning && (
-                      <div className="flex items-start gap-2 rounded-lg bg-amber-400/10 px-3 py-2 text-[0.6875rem] text-amber-200 ring-1 ring-amber-400/25">
-                        <AlertTriangle size="0.75rem" className="mt-[0.125rem] shrink-0" />
-                        <p className="leading-snug">
-                          This chat can recall long-term memories, but the selected prompt preset has no Long-Term
-                          Memory block.
-                        </p>
-                      </div>
-                    )}
-                    <div className="mt-2 space-y-2">
-                      <RecallStylePresets
+                  {showLongTermMemoryPromptBlockWarning && (
+                    <div className="flex items-start gap-2 rounded-lg bg-amber-400/10 px-3 py-2 text-[0.6875rem] text-amber-200 ring-1 ring-amber-400/25">
+                      <AlertTriangle size="0.75rem" className="mt-[0.125rem] shrink-0" />
+                      <p className="leading-snug">
+                        This chat can recall long-term memories, but the selected prompt preset has no Long-Term Memory
+                        block.
+                      </p>
+                    </div>
+                  )}
+                  <div className="mt-2 space-y-2">
+                    <RecallStylePresets
+                      values={{
+                        longTermMemoryRecallStyle: ltmResolvedSettings.recallStyle,
+                      }}
+                      onChange={(patch) => debouncedUpdatePerChat(patch)}
+                    />
+                    <RecallBudgetControls
+                      values={{
+                        longTermMemoryBudgetTokens: ltmResolvedSettings.budgetTokens ?? 4096,
+                        longTermMemoryMaxChunks: ltmResolvedSettings.maxChunks ?? 20,
+                      }}
+                      onChange={(patch) => debouncedUpdatePerChat(patch)}
+                    />
+                  </div>
+                  <div className="mt-2">
+                    <FieldGroup
+                      label="Advanced Long-Term Memory settings"
+                      collapsible
+                      expanded={chatRecallAdvancedOpen}
+                      onExpandedChange={setChatRecallAdvancedOpen}
+                    >
+                      <RecallThresholdControls
+                        values={{
+                          longTermMemoryScoreThreshold: ltmResolvedSettings.scoreThreshold ?? 0,
+                          longTermMemoryRecallContextMessages: ltmResolvedSettings.contextMessages,
+                        }}
+                        onChange={(patch) => debouncedUpdatePerChat(patch)}
+                      />
+                      <RecallRankingWeights
                         values={{
                           longTermMemoryRecallStyle: ltmResolvedSettings.recallStyle,
+                          longTermMemorySemanticWeight: ltmResolvedSettings.weights.semanticWeight,
+                          longTermMemoryLexicalWeight: ltmResolvedSettings.weights.lexicalWeight,
+                          longTermMemoryGraphWeight: ltmResolvedSettings.weights.graphWeight,
+                          longTermMemoryKeywordWeight: ltmResolvedSettings.weights.keywordWeight,
                         }}
                         onChange={(patch) => debouncedUpdatePerChat(patch)}
                       />
-                      <RecallBudgetControls
+                      <RecallToggles
                         values={{
-                          longTermMemoryBudgetTokens: ltmResolvedSettings.budgetTokens ?? 4096,
-                          longTermMemoryMaxChunks: ltmResolvedSettings.maxChunks ?? 20,
+                          longTermMemoryIncludeResolved: ltmResolvedSettings.includeResolved,
+                          longTermMemoryDebug: ltmResolvedSettings.debugEnabled,
                         }}
                         onChange={(patch) => debouncedUpdatePerChat(patch)}
                       />
-                    </div>
-                    <div className="mt-2">
-                      <FieldGroup
-                        label="Advanced Long-Term Memory settings"
-                        collapsible
-                        expanded={chatRecallAdvancedOpen}
-                        onExpandedChange={setChatRecallAdvancedOpen}
-                      >
-                        <RecallThresholdControls
-                          values={{
-                            longTermMemoryScoreThreshold: ltmResolvedSettings.scoreThreshold ?? 0,
-                            longTermMemoryRecallContextMessages: ltmResolvedSettings.contextMessages,
-                          }}
-                          onChange={(patch) => debouncedUpdatePerChat(patch)}
-                        />
-                        <RecallRankingWeights
-                          values={{
-                            longTermMemoryRecallStyle: ltmResolvedSettings.recallStyle,
-                            longTermMemorySemanticWeight: ltmResolvedSettings.weights.semanticWeight,
-                            longTermMemoryLexicalWeight: ltmResolvedSettings.weights.lexicalWeight,
-                            longTermMemoryGraphWeight: ltmResolvedSettings.weights.graphWeight,
-                            longTermMemoryKeywordWeight: ltmResolvedSettings.weights.keywordWeight,
-                          }}
-                          onChange={(patch) => debouncedUpdatePerChat(patch)}
-                        />
-                        <RecallToggles
-                          values={{
-                            longTermMemoryIncludeResolved: ltmResolvedSettings.includeResolved,
-                            longTermMemoryDebug: ltmResolvedSettings.debugEnabled,
-                          }}
-                          onChange={(patch) => debouncedUpdatePerChat(patch)}
-                        />
-                        {isGame && (
-                          <label className="flex items-center gap-2 rounded-lg px-1 py-1 text-xs text-[var(--foreground)]">
-                            <input
-                              type="checkbox"
-                              checked={refinePassEnabled}
-                              onChange={(event) => debouncedUpdatePerChat({ refinePass: event.target.checked } as any)}
-                              className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-                            />
-                            <span>Run a second refine pass over imported game summaries</span>
-                          </label>
-                        )}
-                      </FieldGroup>
-                    </div>
+                      {isGame && (
+                        <label className="flex items-center gap-2 rounded-lg px-1 py-1 text-xs text-[var(--foreground)]">
+                          <input
+                            type="checkbox"
+                            checked={refinePassEnabled}
+                            onChange={(event) => debouncedUpdatePerChat({ refinePass: event.target.checked } as any)}
+                            className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+                          />
+                          <span>Run a second refine pass over imported game summaries</span>
+                        </label>
+                      )}
+                    </FieldGroup>
+                  </div>
                 </AgentSettingsCard>
 
                 {!isGame && (
@@ -6785,9 +6781,7 @@ export function ChatSettingsDrawer({
                         />
                         {renderIllustratorPromptConnectionSelect()}
                         <label className="flex flex-col gap-1">
-                          <span className="text-[0.625rem] font-medium text-[var(--foreground)]">
-                            Image Connection
-                          </span>
+                          <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Image Connection</span>
                           <select
                             value={(metadata.gameImageConnectionId as string) ?? ""}
                             onChange={(e) =>
@@ -7395,11 +7389,7 @@ export function ChatSettingsDrawer({
               </div>
             </div>
 
-            {agentAddPreview.agent.managed ? (
-              <div className="rounded-xl bg-[var(--secondary)]/70 px-3 py-2.5 text-[0.6875rem] leading-5 text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-                This agent runs as a connectionless retrieval step — no model call or token budget is needed.
-              </div>
-            ) : agentAddIsRuntimeDisabled ? (
+            {agentAddIsRuntimeDisabled ? (
               <div className="rounded-xl bg-[var(--secondary)]/70 px-3 py-2.5 text-[0.6875rem] leading-5 text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
                 This adds its instructions to the next Roleplay prompt. It does not make a separate model call or use an
                 agent connection.
@@ -7856,9 +7846,7 @@ function MemoryRecallMemoriesModal({
               className={CHAT_SETTINGS_ICON_ACTION_CLASS}
               title="Rebuild memories from current chat messages"
             >
-              <RefreshCw
-                className={cn((memoriesQuery.isFetching || refreshMemories.isPending) && "animate-spin")}
-              />
+              <RefreshCw className={cn((memoriesQuery.isFetching || refreshMemories.isPending) && "animate-spin")} />
             </button>
             <button
               type="button"

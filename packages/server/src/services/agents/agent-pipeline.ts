@@ -66,7 +66,7 @@ function groupByProviderModel(agents: ResolvedAgent[]): AgentGroup[] {
   for (const agent of agents) {
     // Use a composite key: object reference hash + model
     // Two agents share a group if they have the same provider instance and model
-    // Connectionless agents are filtered out before this function, so provider is non-null.
+    // Agent resolution guarantees a provider for every executable pipeline row.
     const provider = agent.provider!;
     const model = agent.model!;
     const key = `${providerKey(provider)}::${model}::${postProcessingDataKey(agent)}`;
@@ -195,10 +195,12 @@ async function executeGroup(
     toolAgents,
     AGENT_GROUP_MAX_CONCURRENT_TOOL_CALLS,
     (agent) =>
-      executeAgent(agent, buildAgentContext(agent, context), agent.provider!, agent.model!, agent.toolContext).then((result) => {
-        safeOnResult(result);
-        return result;
-      }),
+      executeAgent(agent, buildAgentContext(agent, context), agent.provider!, agent.model!, agent.toolContext).then(
+        (result) => {
+          safeOnResult(result);
+          return result;
+        },
+      ),
   ).then((settled) =>
     settled.map((entry, index) => {
       if (entry.status === "fulfilled") return entry.value;
@@ -260,10 +262,8 @@ async function executePhase(
     );
   }
 
-  const settled = await settleAgentJobsWithConcurrencyLimit(
-    groups,
-    AGENT_PHASE_MAX_CONCURRENT_GROUPS,
-    (group) => executeGroup(group, context, onResult),
+  const settled = await settleAgentJobsWithConcurrencyLimit(groups, AGENT_PHASE_MAX_CONCURRENT_GROUPS, (group) =>
+    executeGroup(group, context, onResult),
   );
 
   const results: AgentResult[] = [];

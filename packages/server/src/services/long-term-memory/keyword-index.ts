@@ -51,14 +51,27 @@ export function buildLtmKeywordIndex(chunks: LtmMemoryChunk[]): LtmKeywordIndex 
   };
 }
 
-export function searchLtmKeywordIndex(index: LtmKeywordIndex, queryText: string, options: { topK?: number } = {}) {
+export function searchLtmKeywordIndex(
+  index: LtmKeywordIndex,
+  queryText: string,
+  options: {
+    topK?: number;
+    maxCandidatesPerKeyword?: number;
+    maxKeywordCatalogEntries?: number;
+    maxCandidates?: number;
+  } = {},
+) {
   const normalizedTerms = normalizeKeywordTerms(queryText);
   const normalizedQuery = normalizedTerms.join(" ");
   if (normalizedTerms.length === 0 || normalizedQuery.length === 0) return [];
+  const maxCandidatesPerKeyword = Math.max(1, options.maxCandidatesPerKeyword ?? 128);
+  const maxKeywordCatalogEntries = Math.max(1, options.maxKeywordCatalogEntries ?? 512);
+  const maxCandidates = Math.max(1, options.maxCandidates ?? options.topK ?? 50);
 
   const hits = new Map<string, { score: number; reasons: string[]; matchedKeywords: Set<string> }>();
 
   const add = (chunkId: string, keyword: string, score: number, reason: string) => {
+    if (!hits.has(chunkId) && hits.size >= maxCandidates) return;
     const existing = hits.get(chunkId) ?? { score: 0, reasons: [], matchedKeywords: new Set<string>() };
     const dedupeKey = `${keyword}\0${reason}`;
     if (existing.matchedKeywords.has(dedupeKey)) return;
@@ -69,25 +82,29 @@ export function searchLtmKeywordIndex(index: LtmKeywordIndex, queryText: string,
   };
 
   for (const term of normalizedTerms) {
-    for (const chunkId of index.byKeyword[term] ?? []) {
+    for (const chunkId of (index.byKeyword[term] ?? []).slice(0, maxCandidatesPerKeyword)) {
       add(chunkId, term, 3, `keyword:exact:${term}`);
     }
   }
 
-  for (const [keyword, chunkIds] of Object.entries(index.byKeyword)) {
+  for (const [keyword, chunkIds] of Object.entries(index.byKeyword)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .slice(0, maxKeywordCatalogEntries)) {
     if (normalizedTerms.includes(keyword)) continue;
     const exactContained = normalizedQuery.includes(keyword) || keyword.includes(normalizedQuery);
     if (!exactContained) {
       const overlappingTerm = normalizedTerms.find((term) => keyword.includes(term) || term.includes(keyword));
       if (!overlappingTerm) continue;
-      const overlapRatio = Math.min(overlappingTerm.length, keyword.length) / Math.max(overlappingTerm.length, keyword.length);
-      for (const chunkId of chunkIds) {
+      const overlapRatio =
+        Math.min(overlappingTerm.length, keyword.length) / Math.max(overlappingTerm.length, keyword.length);
+      for (const chunkId of chunkIds.slice(0, maxCandidatesPerKeyword)) {
         add(chunkId, keyword, 0.75 + overlapRatio * 0.75, `keyword:fuzzy:${keyword}`);
       }
       continue;
     }
-    const overlapRatio = Math.min(normalizedQuery.length, keyword.length) / Math.max(normalizedQuery.length, keyword.length);
-    for (const chunkId of chunkIds) {
+    const overlapRatio =
+      Math.min(normalizedQuery.length, keyword.length) / Math.max(normalizedQuery.length, keyword.length);
+    for (const chunkId of chunkIds.slice(0, maxCandidatesPerKeyword)) {
       add(chunkId, keyword, 1.25 + overlapRatio, `keyword:fuzzy:${keyword}`);
     }
   }
@@ -99,5 +116,5 @@ export function searchLtmKeywordIndex(index: LtmKeywordIndex, queryText: string,
       reasons: value.reasons,
     }))
     .sort((left, right) => right.score - left.score || left.chunkId.localeCompare(right.chunkId))
-    .slice(0, options.topK ?? 50);
+    .slice(0, maxCandidates);
 }

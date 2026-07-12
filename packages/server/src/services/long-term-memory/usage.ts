@@ -169,7 +169,7 @@ async function readUsageIndex(root: string) {
   }
 }
 
-function parseReceipt(value: unknown): LtmInjectionReceipt {
+export function parseLongTermMemoryInjectionReceipt(value: unknown): LtmInjectionReceipt {
   if (!isRecord(value) || value.version !== 1 || typeof value.chatId !== "string" || !value.chatId.trim()) {
     throw new Error("Malformed long-term memory injection receipt.");
   }
@@ -245,7 +245,7 @@ export async function validateLongTermMemoryInjectionReceipts(root = getLongTerm
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
     const path = safeJoin(receiptsDir, entry.name);
-    const receipt = parseReceipt(JSON.parse(await readFile(path, "utf8")));
+    const receipt = parseLongTermMemoryInjectionReceipt(JSON.parse(await readFile(path, "utf8")));
     if (basename(longTermMemoryInjectionReceiptPath(receipt.chatId, root)) !== entry.name) {
       throw new Error(`Long-term memory receipt filename does not match chat ${receipt.chatId}.`);
     }
@@ -257,7 +257,7 @@ export async function readLongTermMemoryInjectionReceipt(chatId: string, root = 
   try {
     const raw = await readJsonFile<unknown>(path, null);
     if (raw === null) return null;
-    const receipt = parseReceipt(raw);
+    const receipt = parseLongTermMemoryInjectionReceipt(raw);
     if (receipt.chatId !== chatId) {
       throw new Error("Long-term memory injection receipt chat ID does not match its receipt path.");
     }

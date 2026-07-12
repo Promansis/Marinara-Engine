@@ -61,18 +61,25 @@ export function buildLtmBm25Index(chunks: LtmMemoryChunk[]): LtmBm25Index {
   };
 }
 
-export function searchLtmBm25(index: LtmBm25Index, query: string, options: { topK?: number } = {}) {
+export function searchLtmBm25(
+  index: LtmBm25Index,
+  query: string,
+  options: { topK?: number; maxPostingsPerTerm?: number; maxCandidates?: number } = {},
+) {
   if (index.chunkCount === 0 || index.avgDocLength === 0) return [];
 
   const scores = new Map<string, number>();
   const queryTerms = new Set(tokenizeLtmText(query));
+  const maxPostingsPerTerm = Math.max(1, options.maxPostingsPerTerm ?? 128);
+  const maxCandidates = Math.max(1, options.maxCandidates ?? options.topK ?? 50);
 
   for (const term of queryTerms) {
     const entry = index.terms[term];
     if (!entry) continue;
 
     const idf = Math.log(1 + (index.chunkCount - entry.documentFrequency + 0.5) / (entry.documentFrequency + 0.5));
-    for (const posting of entry.postings) {
+    for (const posting of entry.postings.slice(0, maxPostingsPerTerm)) {
+      if (!scores.has(posting.chunkId) && scores.size >= maxCandidates) continue;
       const document = index.documents[posting.chunkId];
       if (!document) continue;
       const denominator = posting.count + K1 * (1 - B + B * (document.length / index.avgDocLength));
@@ -84,5 +91,5 @@ export function searchLtmBm25(index: LtmBm25Index, query: string, options: { top
   return Array.from(scores.entries())
     .map(([chunkId, score]) => ({ chunkId, score }))
     .sort((a, b) => b.score - a.score || a.chunkId.localeCompare(b.chunkId))
-    .slice(0, options.topK ?? 50);
+    .slice(0, maxCandidates);
 }

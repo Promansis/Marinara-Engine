@@ -102,36 +102,86 @@ export async function hashLongTermMemoryVaultFiles(root: string) {
   return hashes;
 }
 
-async function buildEmbeddingIndex(chunks: LtmMemoryChunk[], options: MemoryRecallEmbeddingOptions) {
-  let vectors: number[][] = [];
-  if (chunks.length > 0) {
-    try {
-      vectors = await embedMemoryRecallTexts(
-        chunks.map((chunk) => chunk.text),
-        options,
-      );
-    } catch (err) {
-      logger.warn(err, "[ltm] Embedding failed for %d chunks", chunks.length);
-      throw err;
+function embeddingModelLabel(options: MemoryRecallEmbeddingOptions) {
+  return options.embeddingSource?.label ?? "Xenova/all-MiniLM-L6-v2";
+}
+
+async function embedIndexChunks(chunks: LtmMemoryChunk[], options: MemoryRecallEmbeddingOptions) {
+  if (chunks.length === 0) return [] as number[][];
+  try {
+    return await embedMemoryRecallTexts(
+      chunks.map((chunk) => chunk.text),
+      options,
+    );
+  } catch (err) {
+    logger.warn(err, "[ltm] Embedding failed for %d chunks", chunks.length);
+    throw err;
+  }
+}
+
+function reusableVectorsBySourceHash(previous: LtmEmbeddingIndex | undefined, model: string) {
+  if (!previous || previous.model !== model || !previous.dimension) return new Map<string, number[]>();
+  const reusable = new Map<string, number[]>();
+  for (const entry of previous.chunks) {
+    if (!entry.vector || entry.vector.length !== previous.dimension || reusable.has(entry.sourceHash)) continue;
+    reusable.set(entry.sourceHash, entry.vector);
+  }
+  return reusable;
+}
+
+async function buildEmbeddingIndex(
+  chunks: LtmMemoryChunk[],
+  options: MemoryRecallEmbeddingOptions,
+  previous?: LtmEmbeddingIndex,
+) {
+  const model = embeddingModelLabel(options);
+  const reusable = reusableVectorsBySourceHash(previous, model);
+  let entries = chunks.map((chunk) => {
+    const vector = reusable.get(chunk.sourceHash);
+    return vector
+      ? { chunkId: chunk.id, sourceHash: chunk.sourceHash, vector: [...vector] }
+      : { chunkId: chunk.id, sourceHash: chunk.sourceHash };
+  });
+  const missingChunkIndexes = entries.flatMap((entry, index) => (entry.vector ? [] : [index]));
+
+  if (missingChunkIndexes.length > 0) {
+    const vectors = await embedIndexChunks(
+      missingChunkIndexes.map((index) => chunks[index]!),
+      options,
+    );
+    for (const [vectorIndex, chunkIndex] of missingChunkIndexes.entries()) {
+      const vector = vectors[vectorIndex];
+      if (vector && vector.length > 0) {
+        entries[chunkIndex] = { ...entries[chunkIndex]!, vector };
+      }
     }
   }
 
-  const dimension = vectors.find((vector) => vector.length > 0)?.length ?? null;
-  const entries = chunks.map((chunk, index) => {
-    const vector = vectors[index];
-    return vector && vector.length > 0
-      ? { chunkId: chunk.id, sourceHash: chunk.sourceHash, vector }
-      : { chunkId: chunk.id, sourceHash: chunk.sourceHash };
-  });
+  const vectorDimensions = Array.from(
+    new Set(entries.flatMap((entry) => (entry.vector && entry.vector.length > 0 ? [entry.vector.length] : []))),
+  );
+  if (vectorDimensions.length > 1) {
+    // A provider with the same label returned a new dimension. Rebuild this
+    // family coherently rather than mixing vectors from different models.
+    const vectors = await embedIndexChunks(chunks, options);
+    entries = chunks.map((chunk, index) => {
+      const vector = vectors[index];
+      return vector && vector.length > 0
+        ? { chunkId: chunk.id, sourceHash: chunk.sourceHash, vector }
+        : { chunkId: chunk.id, sourceHash: chunk.sourceHash };
+    });
+  }
 
+  const dimension = entries.find((entry) => entry.vector && entry.vector.length > 0)?.vector?.length ?? null;
   const embeddedChunkCount = entries.filter((entry) => entry.vector && entry.vector.length > 0).length;
 
   return {
     version: 1,
-    model: options.embeddingSource?.label ?? "Xenova/all-MiniLM-L6-v2",
+    model,
     dimension,
     embeddedChunkCount,
     chunks: entries,
+    byChunkId: Object.fromEntries(entries.map((entry, index) => [entry.chunkId, index])),
   } satisfies LtmEmbeddingIndex;
 }
 
@@ -146,18 +196,20 @@ function includesSourceIndexes(scope: LtmRebuildScope) {
 async function buildTypedIndexes(
   notes: Awaited<ReturnType<LongTermMemoryStorage["listNotes"]>>,
   options: MemoryRecallEmbeddingOptions,
+  previousEmbeddings?: LtmEmbeddingIndex,
 ) {
   const chunks = chunkNotes(notes);
-  const embeddings = await buildEmbeddingIndex(chunks, options);
+  const embeddings = await buildEmbeddingIndex(chunks, options, previousEmbeddings);
   return { chunks, bundle: { ...buildDeterministicIndexes(notes, chunks), embeddings } satisfies LtmIndexFamilyBundle };
 }
 
 async function buildSourceIndexes(
   notes: Awaited<ReturnType<LongTermMemoryStorage["listNotes"]>>,
   options: MemoryRecallEmbeddingOptions,
+  previousEmbeddings?: LtmEmbeddingIndex,
 ) {
   const chunks = chunkNotes(notes, { sourceNotesOnly: true });
-  const embeddings = await buildEmbeddingIndex(chunks, options);
+  const embeddings = await buildEmbeddingIndex(chunks, options, previousEmbeddings);
   return { chunks, bundle: { ...buildDeterministicIndexes(notes, chunks), embeddings } satisfies LtmIndexFamilyBundle };
 }
 
@@ -231,22 +283,26 @@ async function rebuildLongTermMemoryIndexesAttempt(
 
   const typedChunks = chunkNotes(notes);
   const sourceChunks = chunkNotes(notes, { sourceNotesOnly: true });
-  let typedResult = includesTypedIndexes(scope) ? await buildTypedIndexes(notes, options) : null;
-  let sourceResult = includesSourceIndexes(scope) ? await buildSourceIndexes(notes, options) : null;
   // A partial rebuild can reuse only a fully validated generation. Reusing
   // individual families would let a damaged generation become a mixed one.
   const previousGeneration = await loadLtmIndexGeneration(root);
-  const previousTyped = typedResult ? null : (previousGeneration.bundles.typed ?? null);
-  const previousSource = sourceResult ? null : (previousGeneration.bundles.source ?? null);
+  const previousTyped = previousGeneration.bundles.typed ?? null;
+  const previousSource = previousGeneration.bundles.source ?? null;
+  let typedResult = includesTypedIndexes(scope)
+    ? await buildTypedIndexes(notes, options, previousTyped?.embeddings)
+    : null;
+  let sourceResult = includesSourceIndexes(scope)
+    ? await buildSourceIndexes(notes, options, previousSource?.embeddings)
+    : null;
   if (!typedResult && (!previousTyped || !indexFamilyMatchesSnapshot(previousTyped, notes, typedChunks))) {
-    typedResult = await buildTypedIndexes(notes, options);
+    typedResult = await buildTypedIndexes(notes, options, previousTyped?.embeddings);
   }
   if (
     !sourceResult &&
     ((previousSource && !indexFamilyMatchesSnapshot(previousSource, notes, sourceChunks)) ||
       (!previousSource && sourceChunks.length > 0))
   ) {
-    sourceResult = await buildSourceIndexes(notes, options);
+    sourceResult = await buildSourceIndexes(notes, options, previousSource?.embeddings);
   }
   const typedBundle = typedResult?.bundle ?? previousTyped;
   const sourceBundle = sourceResult?.bundle ?? previousSource;

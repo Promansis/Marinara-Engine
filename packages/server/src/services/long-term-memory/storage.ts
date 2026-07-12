@@ -15,6 +15,7 @@ import {
   ltmNoteSchema,
   ltmNoteTypeSchema,
   ltmPoliciesConfigSchema,
+  ltmRetentionConfigSchema,
   ltmRetrievalConfigSchema,
   ltmDraftNoteInputSchema,
   getLtmScopeChatIds,
@@ -27,12 +28,13 @@ import {
   type LtmNoteType,
 } from "@marinara-engine/shared";
 import { appendJsonLineAtomic, createJsonFileExclusive, readJsonFile, writeJsonAtomic } from "./atomic-json.js";
-import { DEFAULT_LTM_POLICIES, DEFAULT_LTM_RETRIEVAL_CONFIG } from "./default-config.js";
+import { DEFAULT_LTM_POLICIES, DEFAULT_LTM_RETENTION_CONFIG, DEFAULT_LTM_RETRIEVAL_CONFIG } from "./default-config.js";
 import { markLtmIndexesDirty } from "./index-state.js";
 import { commitLtmMutation, recoverLtmMutations, type LtmMutationFileChange } from "./mutation-transaction.js";
 import { parseStoredLtmNote } from "./stored-note.js";
 import { isLtmSourceExtractionFingerprintCurrent } from "./source-hash.js";
 import { isLtmVaultLockHeld, withLtmVaultLock } from "./vault-lock.js";
+import { longTermMemoryRetentionConfigPath, runLongTermMemoryRetention } from "./retention.js";
 import {
   getLongTermMemoryDirectories,
   getLongTermMemoryRoot,
@@ -114,6 +116,13 @@ function normalizeRetrievalConfig(raw: unknown) {
     lexicalWeight: input.lexicalWeight,
     graphWeight: input.graphWeight,
     keywordWeight: input.keywordWeight,
+    maxMetadataCandidates: input.maxMetadataCandidates,
+    maxDirectCandidates: input.maxDirectCandidates,
+    maxLexicalCandidates: input.maxLexicalCandidates,
+    maxKeywordCandidates: input.maxKeywordCandidates,
+    maxVectorCandidates: input.maxVectorCandidates,
+    maxGraphCandidates: input.maxGraphCandidates,
+    maxMandatoryCandidates: input.maxMandatoryCandidates,
   };
 }
 
@@ -251,19 +260,27 @@ export class LongTermMemoryStorage {
 
       const policiesPath = safeJoin(dirs.config, "policies.json");
       const retrievalPath = safeJoin(dirs.config, "retrieval.json");
+      const retentionPath = longTermMemoryRetentionConfigPath(this.root);
       const settingsPath = safeJoin(dirs.config, "settings.json");
       const existingPolicies = ltmPoliciesConfigSchema.parse(await readJsonFile(policiesPath, DEFAULT_LTM_POLICIES));
       const existingRetrieval = ltmRetrievalConfigSchema.parse(
         normalizeRetrievalConfig(await readJsonFile(retrievalPath, DEFAULT_LTM_RETRIEVAL_CONFIG)),
       );
+      const existingRetention = ltmRetentionConfigSchema.parse(
+        await readJsonFile(retentionPath, DEFAULT_LTM_RETENTION_CONFIG),
+      );
       const existingSettings = ltmGlobalSettingsSchema.parse(await readJsonFile(settingsPath, { version: 1 }));
 
       await writeJsonIfChanged(policiesPath, existingPolicies);
       await writeJsonIfChanged(retrievalPath, existingRetrieval);
+      await writeJsonIfChanged(retentionPath, existingRetention);
       await writeJsonIfChanged(
         settingsPath,
         existingSettings.version === 1 ? existingSettings : DEFAULT_LTM_GLOBAL_SETTINGS,
       );
+      await runLongTermMemoryRetention({ root: this.root }).catch((err) => {
+        logger.warn(err, "[ltm] Failed to retain expired long-term memory artifacts");
+      });
     });
   }
 

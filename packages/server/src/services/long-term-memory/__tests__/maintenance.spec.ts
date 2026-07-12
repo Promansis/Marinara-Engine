@@ -1,6 +1,6 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -10,6 +10,7 @@ import {
   ltmGraphIndexSchema,
   ltmKeywordIndexSchema,
   ltmMetadataIndexSchema,
+  ltmRetentionConfigSchema,
 } from "@marinara-engine/shared";
 import {
   checkLongTermMemoryIntegrity,
@@ -31,7 +32,16 @@ import {
 } from "../index-generation.js";
 import { rebuildLongTermMemoryIndexes } from "../rebuild.js";
 import { invalidateLongTermMemoryRetrievalCache, retrieveLongTermMemory } from "../retrieval.js";
+import { runLongTermMemoryRetention } from "../retention.js";
 import { LongTermMemoryStorage } from "../storage.js";
+import {
+  longTermMemoryInjectionReceiptPath,
+  longTermMemoryUsagePath,
+  readLongTermMemoryUsage,
+  recordLongTermMemoryInjection,
+} from "../usage.js";
+import type { LtmBudgetedChunk } from "../budget.js";
+import { DEFAULT_LTM_RETRIEVAL_CONFIG } from "../default-config.js";
 
 const timestamp = "2026-06-21T12:00:00.000Z";
 
@@ -78,6 +88,30 @@ async function listFilesRecursively(root: string): Promise<string[]> {
     }
   }
   return files;
+}
+
+function budgetedChunk(id: string): LtmBudgetedChunk {
+  return {
+    chunk: {
+      id,
+      noteId: "world_test_mem",
+      sectionKey: "facts",
+      text: "A retained memory.",
+      noteType: "world",
+      status: "active",
+      modes: ["roleplay"],
+      scope: {},
+      tags: [],
+      keywords: [],
+      updatedAt: timestamp,
+      sourceHash: "a".repeat(64),
+    },
+    score: 1,
+    reasons: [],
+    lanes: [],
+    tier: 3,
+    estimatedTokens: 8,
+  };
 }
 
 test("persisted LTM index schemas reject malformed family payloads", () => {
@@ -520,6 +554,257 @@ test("index rebuild writes no unread flat-index artifacts", async () => {
     ]) {
       assert.equal(entries.includes(legacyFile), false, legacyFile);
     }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rebuild reuses embeddings for unchanged chunk source hashes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-embedding-reuse-"));
+  try {
+    await writeNote(root, validNote());
+    const batches: string[][] = [];
+    const localEmbedder = async (texts: string[]) => {
+      batches.push([...texts]);
+      return texts.map((text) => [text.length, 1]);
+    };
+
+    const first = await rebuildLongTermMemoryIndexes({ root, localEmbedder });
+    await rebuildLongTermMemoryIndexes({ root, localEmbedder });
+
+    assert.equal(batches.length, 1, "an unchanged family must reuse its prior vectors");
+    const firstFamily = await readLtmIndexFamilyGeneration(root, first.generation.generationId, "typed");
+    assert.equal(firstFamily?.bundle.embeddings.byChunkId?.["world_test_mem::facts"], 0);
+
+    await new LongTermMemoryStorage(root).updateNote(
+      "world_test_mem",
+      { sections: { facts: { text: "Only this memory changed.", updatedAt: timestamp } } },
+      { suppressEvent: true },
+    );
+    await rebuildLongTermMemoryIndexes({ root, localEmbedder });
+
+    assert.deepEqual(batches.map((batch) => batch.length), [1, 1]);
+    assert.deepEqual(batches[1], ["Only this memory changed."]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("retrieval bounds catalog work while preserving a fixed relevance corpus", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-bounded-retrieval-"));
+  try {
+    for (let index = 0; index < 3; index += 1) {
+      await writeNote(
+        root,
+        validNote({
+          id: `world_candidate_${index}`,
+          sections: {
+            facts: {
+              text: index === 2 ? "The target constellation matters." : `Background candidate ${index}.`,
+              updatedAt: timestamp,
+            },
+          },
+        }),
+      );
+    }
+    const localEmbedder = async (texts: string[]) =>
+      texts.map((text) => (text.toLocaleLowerCase().includes("target") ? [1, 0] : [0, 1]));
+    await rebuildLongTermMemoryIndexes({ root, localEmbedder });
+
+    const input = {
+      root,
+      queryText: "target",
+      semanticWeight: 1,
+      lexicalWeight: 0,
+      graphWeight: 0,
+      keywordWeight: 0,
+      maxChunks: 3,
+      localEmbedder,
+    };
+    const baseline = await retrieveLongTermMemory(input);
+
+    const dirs = getLongTermMemoryDirectories(root);
+    const fixedCorpusConfig = {
+      ...DEFAULT_LTM_RETRIEVAL_CONFIG,
+      maxMetadataCandidates: 3,
+      maxDirectCandidates: 3,
+      maxLexicalCandidates: 3,
+      maxKeywordCandidates: 3,
+      maxVectorCandidates: 3,
+      maxGraphCandidates: 3,
+      maxMandatoryCandidates: 3,
+    };
+    await writeFile(join(dirs.config, "retrieval.json"), JSON.stringify(fixedCorpusConfig));
+    invalidateLongTermMemoryRetrievalCache(root);
+    const boundedEquivalent = await retrieveLongTermMemory(input);
+    assert.deepEqual(
+      boundedEquivalent.chunks.map((item) => item.chunk.id),
+      baseline.chunks.map((item) => item.chunk.id),
+    );
+
+    const cappedConfig = { ...fixedCorpusConfig, maxMetadataCandidates: 2, maxVectorCandidates: 2 };
+    await writeFile(join(dirs.config, "retrieval.json"), JSON.stringify(cappedConfig));
+    invalidateLongTermMemoryRetrievalCache(root);
+    const capped = await retrieveLongTermMemory({ ...input, debug: true });
+    assert.equal(capped.debug?.funnel.catalogCandidates, 2);
+    assert.equal(capped.debug?.funnel.vectorCatalogCandidates, 2);
+    assert.ok((capped.debug?.funnel.vectorCandidates ?? 0) <= 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("retention honors its audit floor and preserves active generations", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-retention-"));
+  try {
+    await writeNote(root, validNote());
+    const rebuild = await rebuildLongTermMemoryIndexes({ root, localEmbedder: async (texts) => texts.map(() => []) });
+    const dirs = getLongTermMemoryDirectories(root);
+    const now = new Date("2026-08-01T00:00:00.000Z");
+    const old = new Date("2026-05-01T00:00:00.000Z");
+    const current = new Date("2026-07-25T00:00:00.000Z");
+
+    await recordLongTermMemoryInjection({ chatId: "chat_old", chunks: [budgetedChunk("old_chunk")], serializedTokenCount: 8 }, root);
+    await recordLongTermMemoryInjection(
+      { chatId: "chat_current", chunks: [budgetedChunk("current_chunk")], serializedTokenCount: 8 },
+      root,
+    );
+    const usagePath = longTermMemoryUsagePath(root);
+    const usage = await readLongTermMemoryUsage(root);
+    const oldUsage = usage.chats.chat_old?.chunks.old_chunk;
+    const currentUsage = usage.chats.chat_current?.chunks.current_chunk;
+    assert.ok(oldUsage);
+    assert.ok(currentUsage);
+    oldUsage.lastRetrievedAt = old.toISOString();
+    oldUsage.lastInjectedAt = old.toISOString();
+    currentUsage.lastRetrievedAt = current.toISOString();
+    currentUsage.lastInjectedAt = current.toISOString();
+    await writeFile(usagePath, JSON.stringify(usage));
+
+    for (const [chatId, date] of [["chat_old", old], ["chat_current", current]] as const) {
+      const path = longTermMemoryInjectionReceiptPath(chatId, root);
+      const receipt = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+      receipt.dispatchedAt = date.toISOString();
+      await writeFile(path, JSON.stringify(receipt));
+    }
+    await writeFile(
+      dirs.eventLog,
+      [
+        JSON.stringify({ id: randomUUID(), ts: old.toISOString(), type: "note.updated", target: "world_test_mem" }),
+        JSON.stringify({ id: randomUUID(), ts: current.toISOString(), type: "note.updated", target: "world_test_mem" }),
+        "",
+      ].join("\n"),
+    );
+
+    const incompleteGeneration = join(dirs.indexes, "generations", randomUUID());
+    await mkdir(incompleteGeneration, { recursive: true });
+    await utimes(incompleteGeneration, old, old);
+    const oldQuarantine = join(root, "quarantine", "old.json");
+    const currentQuarantine = join(root, "quarantine", "current.json");
+    await mkdir(join(root, "quarantine"), { recursive: true });
+    await writeFile(oldQuarantine, "old");
+    await writeFile(currentQuarantine, "current");
+    await utimes(oldQuarantine, old, old);
+    await utimes(currentQuarantine, current, current);
+
+    const config = {
+      version: 1 as const,
+      auditWindowDays: 7,
+      usageRetentionDays: 30,
+      receiptRetentionDays: 30,
+      eventRetentionDays: 30,
+      incompleteGenerationRetentionDays: 30,
+      quarantineRetentionDays: 30,
+    };
+    const result = await runLongTermMemoryRetention({ root, now, config, force: true });
+
+    assert.deepEqual(
+      {
+        usageEntries: result.usageEntries,
+        receipts: result.receipts,
+        events: result.events,
+        incompleteGenerations: result.incompleteGenerations,
+        quarantineArtifacts: result.quarantineArtifacts,
+      },
+      { usageEntries: 1, receipts: 1, events: 1, incompleteGenerations: 1, quarantineArtifacts: 1 },
+    );
+    assert.equal((await readLongTermMemoryUsage(root)).chats.chat_old, undefined);
+    assert.ok((await readLongTermMemoryUsage(root)).chats.chat_current);
+    await assert.rejects(readFile(longTermMemoryInjectionReceiptPath("chat_old", root), "utf8"));
+    assert.doesNotReject(readFile(longTermMemoryInjectionReceiptPath("chat_current", root), "utf8"));
+    assert.match(await readFile(dirs.eventLog, "utf8"), /2026-07-25/);
+    assert.doesNotMatch(await readFile(dirs.eventLog, "utf8"), /2026-05-01/);
+    assert.equal((await readdir(join(dirs.indexes, "generations"))).includes(rebuild.generation.generationId), true);
+    assert.equal((await readdir(join(dirs.indexes, "generations"))).includes(basename(incompleteGeneration)), false);
+    await assert.rejects(readFile(oldQuarantine, "utf8"));
+    assert.equal(await readFile(currentQuarantine, "utf8"), "current");
+    assert.equal(
+      ltmRetentionConfigSchema.safeParse({ ...config, eventRetentionDays: 6 }).success,
+      false,
+      "retention cannot shorten the configured audit window",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("vault initialization schedules retention for expired operational artifacts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-retention-initialize-"));
+  try {
+    await recordLongTermMemoryInjection(
+      { chatId: "chat_expired", chunks: [budgetedChunk("expired_chunk")], serializedTokenCount: 8 },
+      root,
+    );
+    const receiptPath = longTermMemoryInjectionReceiptPath("chat_expired", root);
+    const receipt = JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, unknown>;
+    receipt.dispatchedAt = "2000-01-01T00:00:00.000Z";
+    await writeFile(receiptPath, JSON.stringify(receipt));
+
+    const usage = await readLongTermMemoryUsage(root);
+    const expiredUsage = usage.chats.chat_expired?.chunks.expired_chunk;
+    assert.ok(expiredUsage);
+    expiredUsage.lastRetrievedAt = "2000-01-01T00:00:00.000Z";
+    expiredUsage.lastInjectedAt = "2000-01-01T00:00:00.000Z";
+    await writeFile(longTermMemoryUsagePath(root), JSON.stringify(usage));
+
+    await new LongTermMemoryStorage(root).initializeLtmStore();
+
+    await assert.rejects(readFile(receiptPath, "utf8"));
+    assert.equal((await readLongTermMemoryUsage(root)).chats.chat_expired, undefined);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("retention never deletes artifacts while mutation recovery is pending", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-retention-pending-"));
+  try {
+    const dirs = getLongTermMemoryDirectories(root);
+    await recordLongTermMemoryInjection({ chatId: "chat_pending", chunks: [budgetedChunk("pending_chunk")], serializedTokenCount: 8 }, root);
+    const receiptPath = longTermMemoryInjectionReceiptPath("chat_pending", root);
+    const receipt = JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, unknown>;
+    receipt.dispatchedAt = "2026-01-01T00:00:00.000Z";
+    await writeFile(receiptPath, JSON.stringify(receipt));
+    await mkdir(dirs.transactions, { recursive: true });
+    await writeFile(join(dirs.transactions, "pending.json"), "{}");
+
+    const result = await runLongTermMemoryRetention({
+      root,
+      now: "2026-08-01T00:00:00.000Z",
+      config: {
+        version: 1,
+        auditWindowDays: 7,
+        usageRetentionDays: 30,
+        receiptRetentionDays: 30,
+        eventRetentionDays: 30,
+        incompleteGenerationRetentionDays: 30,
+        quarantineRetentionDays: 30,
+      },
+      force: true,
+    });
+
+    assert.equal(result.skippedPendingRecovery, true);
+    assert.doesNotReject(readFile(receiptPath, "utf8"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
