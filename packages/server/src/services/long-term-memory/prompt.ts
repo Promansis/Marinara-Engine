@@ -154,22 +154,22 @@ export function isLongTermMemoryPromptArtifactPresent(
   return messages.some((message) => message.content.includes(artifact.content));
 }
 
-export function injectLongTermMemoryPromptBlock(
+export function injectLongTermMemoryPromptArtifact(
   messages: ChatMessage[],
-  chunks: LtmBudgetedChunk[],
-  options?: FormatLongTermMemoryBlockOptions,
-): { block: string; insertAt: number; inserted: boolean } {
-  const block = formatLongTermMemoryBlock(chunks, options);
-  if (!block) {
-    return { block, insertAt: messages.length, inserted: false };
+  artifact: LtmPromptArtifact | null | undefined,
+  options?: Pick<FormatLongTermMemoryBlockOptions, "wrapFormat" | "wrapperName">,
+): { artifact: LtmSerializedPromptArtifact | null; insertAt: number | null; inserted: boolean } {
+  const serializedArtifact = serializeLongTermMemoryPromptArtifact(artifact, options);
+  if (!serializedArtifact) {
+    return { artifact: null, insertAt: null, inserted: false };
   }
 
   const firstChatIdx = messages.findIndex((message) => message.role === "user" || message.role === "assistant");
   const insertAt = firstChatIdx >= 0 ? firstChatIdx : messages.length;
   messages.splice(insertAt, 0, {
     role: "system",
-    content: block,
+    content: serializedArtifact.content,
     contextKind: "long_term_memory",
   });
-  return { block, insertAt, inserted: true };
+  return { artifact: serializedArtifact, insertAt, inserted: true };
 }

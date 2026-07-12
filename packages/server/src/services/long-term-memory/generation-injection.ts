@@ -19,7 +19,6 @@ import {
 } from "./retrieval.js";
 import {
   createLongTermMemoryPromptArtifact,
-  injectLongTermMemoryPromptBlock,
   isLongTermMemoryPromptArtifactPresent,
   type LtmPromptArtifact,
   type LtmSerializedPromptArtifact,
@@ -44,6 +43,7 @@ export interface BuildGenerationLongTermMemoryPlanInput {
   requestDebug?: boolean;
   mentionedCharacterNames?: string[];
   embeddingSource?: MemoryRecallEmbeddingSource;
+  signal?: AbortSignal;
 }
 
 export interface GenerationLongTermMemoryPlan {
@@ -67,20 +67,14 @@ export interface GenerationLongTermMemoryPlan {
   hasGameState: boolean;
 }
 
-export interface ApplyGenerationLongTermMemoryInjectionInput {
-  plan: GenerationLongTermMemoryPlan;
-  finalMessages: ChatMessage[];
+export interface OrchestrateGenerationLongTermMemoryRecallInput extends BuildGenerationLongTermMemoryPlanInput {
   retrieveLongTermMemoryFn?: (input: RetrieveLongTermMemoryInput) => Promise<RetrieveLongTermMemoryResult>;
 }
 
-export interface ApplyGenerationLongTermMemoryInjectionResult {
-  retrieval: RetrieveLongTermMemoryResult;
-  injection: {
-    block: string;
-    inserted: boolean;
-    insertAt: number | null;
-    insertedBeforeRole: ChatMessage["role"] | null;
-  };
+export interface OrchestrateGenerationLongTermMemoryRecallResult {
+  plan: GenerationLongTermMemoryPlan;
+  retrieval: RetrieveLongTermMemoryResult | null;
+  artifact: LtmPromptArtifact | null;
 }
 
 export interface RetrieveGenerationLongTermMemoryBlockInput {
@@ -172,6 +166,16 @@ function readLongTermMemoryRecallStyle(value: unknown): LongTermMemoryRecallStyl
 
 function readLongTermMemoryRecallPreamble(value: unknown) {
   return typeof value === "string" ? value : undefined;
+}
+
+function longTermMemoryRecallAbortError() {
+  const error = new Error("Long-term memory recall was cancelled.");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfLongTermMemoryRecallAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw longTermMemoryRecallAbortError();
 }
 
 function readSparseChatRecallWeight(value: unknown, fallback: number) {
@@ -324,7 +328,8 @@ export function buildGenerationLongTermMemoryPlan(
       metadataMode: "direct_matches",
       dedupeExactText: true,
       applyUsageCooldown: true,
-      embeddingSource: input.embeddingSource ?? undefined,
+      ...(input.embeddingSource ? { embeddingSource: input.embeddingSource } : {}),
+      ...(input.signal ? { signal: input.signal } : {}),
       debug: settings.debugEnabled,
       explain: settings.debugEnabled,
     },
@@ -335,39 +340,23 @@ export function buildGenerationLongTermMemoryPlan(
   };
 }
 
-export async function applyGenerationLongTermMemoryInjection(
-  input: ApplyGenerationLongTermMemoryInjectionInput,
-): Promise<ApplyGenerationLongTermMemoryInjectionResult> {
-  const { retrieval, artifact } = await retrieveGenerationLongTermMemoryBlock({
-    plan: input.plan,
-    retrieveLongTermMemoryFn: input.retrieveLongTermMemoryFn,
-  });
-  if (!artifact) {
-    logger.debug("[ltm] No chunks retrieved for generation injection");
-    return {
-      retrieval,
-      injection: {
-        block: "",
-        inserted: false,
-        insertAt: null,
-        insertedBeforeRole: null,
-      },
-    };
+export async function orchestrateGenerationLongTermMemoryRecall(
+  input: OrchestrateGenerationLongTermMemoryRecallInput,
+): Promise<OrchestrateGenerationLongTermMemoryRecallResult> {
+  throwIfLongTermMemoryRecallAborted(input.signal);
+
+  const plan = buildGenerationLongTermMemoryPlan(input);
+  if (!plan.enabled) {
+    return { plan, retrieval: null, artifact: null };
   }
 
-  const injection = injectLongTermMemoryPromptBlock(input.finalMessages, retrieval.chunks, {
-    preamble: input.plan.recallPreamble,
-    maxTokens: artifact.maxTokens,
+  const { retrieval, artifact } = await retrieveGenerationLongTermMemoryBlock({
+    plan,
+    retrieveLongTermMemoryFn: input.retrieveLongTermMemoryFn,
   });
-  return {
-    retrieval,
-    injection: {
-      block: injection.block,
-      inserted: injection.inserted,
-      insertAt: injection.insertAt,
-      insertedBeforeRole: input.finalMessages[injection.insertAt + 1]?.role ?? null,
-    },
-  };
+  throwIfLongTermMemoryRecallAborted(input.signal);
+
+  return { plan, retrieval, artifact };
 }
 
 export async function retrieveGenerationLongTermMemoryBlock(

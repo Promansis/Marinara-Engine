@@ -30,11 +30,11 @@ import { getLongTermMemoryDirectories, notePathForId } from "../paths.js";
 import {
   createLongTermMemoryPromptArtifact,
   formatLongTermMemoryBlock,
-  injectLongTermMemoryPromptBlock,
+  injectLongTermMemoryPromptArtifact,
 } from "../prompt.js";
 import {
-  applyGenerationLongTermMemoryInjection,
   buildGenerationLongTermMemoryPlan,
+  orchestrateGenerationLongTermMemoryRecall,
 } from "../generation-injection.js";
 import { loadLtmIndexGeneration, readLtmIndexFamilyGeneration } from "../index-generation.js";
 import { rebuildLongTermMemoryIndexes } from "../rebuild.js";
@@ -360,46 +360,24 @@ test("long-term memory prompt injection can include a recall preamble", () => {
   );
 });
 
-test("long-term memory prompt injection inserts a system message before chat history", () => {
+test("long-term memory prompt fallback inserts a dedicated system message before chat history", () => {
   const messages: ChatMessage[] = [
     { role: "system", content: "System prelude", contextKind: "prompt" as const },
     { role: "user", content: "Where did Mara leave the key?" },
     { role: "assistant", content: "I think it was near the archive." },
   ];
 
-  const result = injectLongTermMemoryPromptBlock(
+  const result = injectLongTermMemoryPromptArtifact(
     messages,
-    [
-      {
-        chunk: {
-          id: "world_archive_key::facts",
-          noteId: "world_archive_key",
-          sectionKey: "facts",
-          text: "Mara hid the archive key behind the clock in the tower foyer.",
-          noteType: "world",
-          status: "active",
-          scope: {},
-          tags: ["typed_memory"],
-          keywords: [],
-          updatedAt: timestamp,
-          sourceHash,
-        },
-        score: 1,
-        reasons: ["bm25"],
-        lanes: ["bm25"],
-        tier: 1,
-        estimatedTokens: 16,
-      } satisfies LtmBudgetedChunk,
-    ],
-    { preamble: "" },
+    promptArtifact("Mara hid the archive key behind the clock in the tower foyer."),
   );
 
   assert.equal(result.inserted, true);
   assert.equal(result.insertAt, 1);
-  assert.equal(result.block, "[WORLD]\nMara hid the archive key behind the clock in the tower foyer.");
+  assert.equal(result.artifact?.content, "[WORLD]\nMara hid the archive key behind the clock in the tower foyer.");
   assert.deepEqual(messages.map((message) => message.role), ["system", "system", "user", "assistant"]);
   assert.equal(messages[1]?.contextKind, "long_term_memory");
-  assert.equal(messages[1]?.content, result.block);
+  assert.equal(messages[1]?.content, result.artifact?.content);
 });
 
 test("long-term memory storage reads individual notes without listing the vault", async () => {
@@ -503,7 +481,13 @@ test("generation long-term memory uses global retrieval settings and injects aft
     { role: "assistant", content: "I need to think about Mara's habits.", contextKind: "history" as const },
   ];
 
-  const plan = buildGenerationLongTermMemoryPlan({
+  const controller = new AbortController();
+  const embeddingSource = {
+    label: "phase-seven-test",
+    embed: async () => [[0.1, 0.2]],
+  };
+  const captured = { current: null as RetrieveLongTermMemoryInput | null };
+  const result = await orchestrateGenerationLongTermMemoryRecall({
     chatId: "chat_test",
     chatMode: "roleplay",
     groupId: "group_test",
@@ -546,12 +530,8 @@ test("generation long-term memory uses global retrieval settings and injects aft
     lorebookGenerationTriggers: ["chat", "roleplay", "archive"],
     requestDebug: false,
     mentionedCharacterNames: ["Jules"],
-  });
-
-  const captured = { current: null as RetrieveLongTermMemoryInput | null };
-  const result = await applyGenerationLongTermMemoryInjection({
-    plan,
-    finalMessages,
+    embeddingSource,
+    signal: controller.signal,
     retrieveLongTermMemoryFn: async (input) => {
       captured.current = input;
       return {
@@ -602,6 +582,8 @@ test("generation long-term memory uses global retrieval settings and injects aft
   assert.equal(retrievalInput.metadataMode, "direct_matches");
   assert.equal(retrievalInput.dedupeExactText, true);
   assert.equal(retrievalInput.applyUsageCooldown, true);
+  assert.equal(retrievalInput.embeddingSource, embeddingSource);
+  assert.equal(retrievalInput.signal, controller.signal);
   assert.equal(retrievalInput.mode, "roleplay");
   assert.equal(retrievalInput.scope?.chatId, "chat_test");
   assert.deepEqual(retrievalInput.scope?.chatIds, ["chat_test"]);
@@ -613,15 +595,103 @@ test("generation long-term memory uses global retrieval settings and injects aft
   assert.match(retrievalInput.queryText ?? "", /Active characters: Mara/);
   assert.match(retrievalInput.queryText ?? "", /Generation triggers: chat, roleplay, archive/);
   assert.match(retrievalInput.queryText ?? "", /Generation guide:\nFocus on emotional continuity\./);
-  assert.equal(result.injection.inserted, true);
-  assert.equal(result.injection.insertAt, 2);
-  assert.equal(result.injection.insertedBeforeRole, "user");
+  const injection = injectLongTermMemoryPromptArtifact(finalMessages, result.artifact);
+  assert.equal(injection.inserted, true);
+  assert.equal(injection.insertAt, 2);
   assert.deepEqual(finalMessages.map((message) => message.role), ["system", "system", "system", "user", "assistant"]);
   assert.equal(finalMessages[2]?.contextKind, "long_term_memory");
   assert.equal(
     finalMessages[2]?.content,
     `${DEFAULT_LTM_RECALL_PREAMBLE}\n\n[WORLD]\nMara hid the archive key behind the clock in the tower foyer.`,
   );
+});
+
+test("generation recall orchestrator reaches fallback provider payloads in every mode without a preset", async () => {
+  const modes = [
+    ["conversation", "conversation"],
+    ["roleplay", "roleplay"],
+    ["visual_novel", "roleplay"],
+    ["game", "game"],
+  ] as const;
+
+  for (const [chatMode, expectedLtmMode] of modes) {
+    const controller = new AbortController();
+    const embeddingSource = {
+      label: `${chatMode}-embedding`,
+      embed: async () => [[0.1, 0.2]],
+    };
+    const captured = { current: null as RetrieveLongTermMemoryInput | null };
+    const recall = await orchestrateGenerationLongTermMemoryRecall({
+      chatId: `chat_${chatMode}`,
+      chatMode,
+      groupId: `group_${chatMode}`,
+      promptCharacterIds: [`character_${chatMode}`],
+      activeCharacterNames: [`Character ${chatMode}`],
+      inputMessages: [{ role: "user", content: `Remember ${chatMode} history.` }],
+      chatMeta: { enableLongTermMemory: true },
+      lorebookGenerationTriggers: ["chat"],
+      embeddingSource,
+      signal: controller.signal,
+      retrieveLongTermMemoryFn: async (input) => {
+        captured.current = input;
+        const artifact = promptArtifact(`${chatMode} recall reaches the final provider payload.`);
+        assert.ok(artifact);
+        return {
+          chunks: artifact.chunks,
+          usedTokens: 16,
+          maxTokens: 4096,
+          embeddingsAvailable: true,
+          warnings: [],
+        };
+      },
+    });
+
+    assert.ok(captured.current, `${chatMode} should invoke retrieval`);
+    assert.equal(captured.current.mode, expectedLtmMode);
+    assert.equal(captured.current.scope?.chatId, `chat_${chatMode}`);
+    assert.equal(captured.current.scope?.groupId, `group_${chatMode}`);
+    assert.deepEqual(captured.current.scope?.characterIds, [`character_${chatMode}`]);
+    assert.equal(captured.current.embeddingSource, embeddingSource);
+    assert.equal(captured.current.signal, controller.signal);
+
+    const providerPayload: ChatMessage[] = [
+      { role: "system", content: `${chatMode} prompt setup`, contextKind: "prompt" },
+      { role: "user", content: `Continue the ${chatMode} scene.`, contextKind: "history" },
+    ];
+    const injection = injectLongTermMemoryPromptArtifact(providerPayload, recall.artifact, {
+      wrapFormat: "xml",
+      wrapperName: "Long Term Memory",
+    });
+    assert.equal(injection.inserted, true);
+    assert.equal(providerPayload[1]?.contextKind, "long_term_memory");
+    assert.match(providerPayload[1]?.content ?? "", new RegExp(`${chatMode} recall reaches the final provider payload\\.`));
+  }
+});
+
+test("generation recall orchestrator propagates request cancellation", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  let retrieved = false;
+
+  await assert.rejects(
+    () =>
+      orchestrateGenerationLongTermMemoryRecall({
+        chatId: "cancelled_chat",
+        chatMode: "conversation",
+        promptCharacterIds: [],
+        activeCharacterNames: [],
+        inputMessages: [{ role: "user", content: "Do not retrieve." }],
+        chatMeta: { enableLongTermMemory: true },
+        lorebookGenerationTriggers: [],
+        signal: controller.signal,
+        retrieveLongTermMemoryFn: async () => {
+          retrieved = true;
+          throw new Error("retrieval should not run");
+        },
+      }),
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+  assert.equal(retrieved, false);
 });
 
 test("visual novel generation retrieves from the roleplay LTM lane", () => {
@@ -789,6 +859,28 @@ test("assembler injects long-term memory before chat summary fallback", async ()
 });
 
 test("assembler places long-term memory at an explicit long_term_memory marker", async () => {
+  const markerRecall = await orchestrateGenerationLongTermMemoryRecall({
+    chatId: "chat_marker",
+    chatMode: "roleplay",
+    promptCharacterIds: [],
+    activeCharacterNames: [],
+    inputMessages: [{ role: "user", content: "Where is the archive key?" }],
+    chatMeta: { enableLongTermMemory: true },
+    lorebookGenerationTriggers: [],
+    retrieveLongTermMemoryFn: async () => {
+      const artifact = promptArtifact("Mara hid the archive key behind the clock in the tower foyer.");
+      assert.ok(artifact);
+      return {
+        chunks: artifact.chunks,
+        usedTokens: 16,
+        maxTokens: 4096,
+        embeddingsAvailable: false,
+        warnings: [],
+      };
+    },
+  });
+  assert.ok(markerRecall.artifact);
+
   const input = {
     db: {} as AssemblerInput["db"],
     preset: {
@@ -872,7 +964,7 @@ test("assembler places long-term memory at an explicit long_term_memory marker",
     ],
     lorebookScanMessages: [],
     chatSummary: "Summary says Mara hid the archive key behind the clock.",
-    longTermMemoryArtifact: promptArtifact("Mara hid the archive key behind the clock in the tower foyer."),
+    longTermMemoryArtifact: markerRecall.artifact,
     suppressChatSummary: true,
     enableAgents: false,
     activeAgentIds: [],

@@ -197,11 +197,11 @@ import {
 import { recordLtmDebugEvent } from "../services/long-term-memory/debug-log.js";
 import { getLtmGlobalSettings } from "../services/long-term-memory/settings.js";
 import {
-  buildGenerationLongTermMemoryPlan,
+  orchestrateGenerationLongTermMemoryRecall,
   recordGenerationLongTermMemoryDispatch,
-  retrieveGenerationLongTermMemoryBlock,
 } from "../services/long-term-memory/generation-injection.js";
 import {
+  injectLongTermMemoryPromptArtifact,
   isLongTermMemoryPromptArtifactPresent,
   type LtmPromptArtifact,
   type LtmSerializedPromptArtifact,
@@ -2204,6 +2204,60 @@ export async function generateRoutes(app: FastifyInstance) {
 
         sendProgress("assembling");
         const _tAssemble = Date.now();
+        try {
+          const charNameMap = await getGroupHistoryCharacterNamesById();
+          const activeCharacterNames = promptCharacterIds
+            .map((id) => charNameMap.get(id))
+            .filter((name): name is string => !!name);
+          const ltmGameState = chatMode === "game" ? await selectedGameStateForPrompt() : null;
+          const ltmRecall = await orchestrateGenerationLongTermMemoryRecall({
+            chatId: input.chatId,
+            chatMode,
+            groupId: typeof chat.groupId === "string" ? chat.groupId : null,
+            promptCharacterIds,
+            activeCharacterNames,
+            inputMessages: currentInputMessages().map((message) => ({
+              role: message.role as "system" | "user" | "assistant" | "tool",
+              content: typeof message.content === "string" ? message.content : "",
+            })),
+            chatMeta: chatMeta as Record<string, unknown>,
+            globalSettings: ltmGlobalSettings,
+            lorebookGenerationTriggers,
+            ...(activeChatSummary ? { generationGuide: activeChatSummary } : {}),
+            ...(ltmGameState ? { gameState: ltmGameState } : {}),
+            mentionedCharacterNames: input.mentionedCharacterNames,
+            embeddingSource: memoryRecallEmbeddingSource ?? undefined,
+            signal: abortController.signal,
+            requestDebug: isDebug,
+          });
+          longTermMemoryArtifact = ltmRecall.artifact;
+
+          if (ltmRecall.plan.debugEnabled && ltmRecall.retrieval?.debug) {
+            try {
+              await recordLtmDebugEvent({
+                operationId: crypto.randomUUID(),
+                phase: "retrieval",
+                action: "generate-route-ltm-retrieval",
+                status: "ok",
+                message: `Generate route retrieved ${ltmRecall.retrieval.chunks.length} chunks (${ltmRecall.retrieval.usedTokens} tokens)`,
+                durationMs: Date.now() - _tAssemble,
+                counts: { chunks: ltmRecall.retrieval.chunks.length, tokens: ltmRecall.retrieval.usedTokens },
+                diagnostics: [ltmRecall.retrieval.debug as unknown as Record<string, unknown>],
+                chatId: input.chatId,
+                uiSummary: JSON.stringify({
+                  memoryCount: new Set(ltmRecall.retrieval.chunks.map((chunk) => chunk.chunk.noteId).filter(Boolean)).size,
+                  tokenCount: ltmRecall.retrieval.usedTokens,
+                }),
+              });
+            } catch (err) {
+              logger.warn(err, "[generate] Failed to record LTM retrieval debug event");
+            }
+          }
+        } catch (err) {
+          if (abortController.signal.aborted || isAbortLikeError(err)) throw err;
+          logger.warn(err, "[generate] LTM retrieval failed; continuing without LTM block");
+        }
+
         if (presetId && resolvedPreset && chatMode !== "conversation") {
           const preset = resolvedPreset;
           wrapFormat = (preset.wrapFormat as "xml" | "markdown" | "none") || "xml";
@@ -2212,7 +2266,6 @@ export async function generateRoutes(app: FastifyInstance) {
             presets.listGroups(presetId),
             presets.listChoiceBlocksForPreset(presetId),
           ]);
-          const presetGameState = await selectedGameStateForPrompt();
           for (const section of sections) {
             if (section.enabled !== "true" || section.isMarker !== "true" || !section.markerConfig) continue;
             try {
@@ -2241,56 +2294,6 @@ export async function generateRoutes(app: FastifyInstance) {
               ];
             }),
           );
-          // ── LTM retrieval for marker expansion ──
-          if (chatEnableAgents && (!hasPerChatAgentList || perChatAgentSet.has("long-term-memory"))) {
-            try {
-              const ltmGlobalSettings = await getLtmGlobalSettings();
-              const charNameMap = await getGroupHistoryCharacterNamesById();
-              const activeCharacterNames = promptCharacterIds
-                .map((id) => charNameMap.get(id))
-                .filter((name): name is string => !!name);
-              const plan = buildGenerationLongTermMemoryPlan({
-                chatId: input.chatId,
-                chatMode,
-                groupId: typeof chat.groupId === "string" ? chat.groupId : null,
-                promptCharacterIds,
-                activeCharacterNames,
-                inputMessages: mappedMessages.map((m: any) => ({
-                  role: m.role as "system" | "user" | "assistant" | "tool",
-                  content: typeof m.content === "string" ? m.content : "",
-                })),
-                chatMeta: chatMeta as Record<string, unknown>,
-                globalSettings: ltmGlobalSettings,
-                lorebookGenerationTriggers,
-                ...(activeChatSummary ? { generationGuide: activeChatSummary } : {}),
-                ...(presetGameState ? { gameState: presetGameState } : {}),
-                requestDebug: isDebug,
-              });
-              if (plan.enabled) {
-                const { retrieval, artifact } = await retrieveGenerationLongTermMemoryBlock({ plan });
-                longTermMemoryArtifact = artifact;
-                if (plan.debugEnabled && retrieval.debug) {
-                  await recordLtmDebugEvent({
-                    operationId: crypto.randomUUID(),
-                    phase: "retrieval",
-                    action: "generate-route-ltm-retrieval",
-                    status: "ok",
-                    message: `Generate route retrieved ${retrieval.chunks.length} chunks (${retrieval.usedTokens} tokens)`,
-                    durationMs: Date.now() - _tAssemble,
-                    counts: { chunks: retrieval.chunks.length, tokens: retrieval.usedTokens },
-                    diagnostics: [retrieval.debug as unknown as Record<string, unknown>],
-                    chatId: input.chatId,
-                    uiSummary: JSON.stringify({
-                      memoryCount: new Set(retrieval.chunks.map((c: any) => c.chunk?.noteId).filter(Boolean)).size,
-                      tokenCount: retrieval.usedTokens,
-                    }),
-                  });
-                }
-              }
-            } catch (err) {
-              logger.warn(err, "[generate] LTM retrieval failed — continuing without LTM block");
-            }
-          }
           const assemblerInput: AssemblerInput = {
             db: app.db,
             preset: preset as any,
@@ -5860,6 +5863,16 @@ export async function generateRoutes(app: FastifyInstance) {
             const secretPlotBlock = formatSecretPlotSystemBlock(directorSecretPlotArcForPrompt, wrapFormat);
             appendSecretPlotSystemMessage(finalMessages, secretPlotBlock);
           }
+        }
+
+        // Presets place the structured artifact at their marker (or assembler
+        // fallback). All other production paths use the same safe fallback.
+        if (!serializedLongTermMemoryArtifact && longTermMemoryArtifact) {
+          const fallback = injectLongTermMemoryPromptArtifact(finalMessages, longTermMemoryArtifact, {
+            wrapFormat,
+            wrapperName: "Long Term Memory",
+          });
+          serializedLongTermMemoryArtifact = fallback.artifact;
         }
 
         // ── Early exit if client disconnected during knowledge retrieval / injection ──

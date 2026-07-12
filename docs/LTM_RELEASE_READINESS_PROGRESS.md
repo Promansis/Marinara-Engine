@@ -8,14 +8,14 @@ Resume Here section short and current; keep completed phase records durable.
 
 - Branch: `fix/ltm-staging-port-rebase`
 - Audit baseline: `c83d66e6edee6c0a9b3ab3021265461b4ff1a1b1`
-- Current phase: Phase 6 - Safe Prompt Artifacts and Truthful Receipts
-- State: Phase 5 is committed locally as `881027c8`; Phase 6 implementation
+- Current phase: Phase 7 - Mode-Neutral Production Recall
+- State: Phase 6 is committed locally as `d06bca17`; Phase 7 implementation
   and validation are complete locally with its atomic commit pending
-- Next entrypoint: commit the completed Phase 6 scope, then begin Phase 7
-  mode-neutral production recall work
-- Uncommitted scope: Phase 6 prompt artifacts, final-fit preservation,
-  post-dispatch accounting, focused regression coverage, and this progress update
-- Blockers: no Phase 6 implementation blocker. Phase 2's platform-specific
+- Next entrypoint: commit the completed Phase 7 scope, then begin Phase 8
+  truthful client behavior and accessibility work
+- Uncommitted scope: Phase 7 generation orchestration, mode/preset provider
+  payload coverage, focused regression updates, and this progress update
+- Blockers: no Phase 7 implementation blocker. Phase 2's platform-specific
   interrupted-write proof gap remains recorded below.
 
 ## Non-Negotiable Decisions
@@ -61,8 +61,8 @@ proof that a later implementation phase passes.
 | 3 - Coherent index recovery | Committed locally (`941b20d0`) | Complete | Focused corruption/recovery proof, 334-test server suite, prompt regression, and static/build validation passed |
 | 4 - Context-bound capture and refresh | Committed locally (`d7592ca0`) | Complete | Focused import/freshness/route proof, 339-test server suite, prompt regression, static/build validation, and targeted desktop/mobile browser flows passed |
 | 5 - Recall settings, eligibility, and relevance | Committed locally (`881027c8`) | Complete | Focused 135-test LTM proof, 343-test server suite, prompt regression, static/build validation, and an isolated desktop LTM settings flow passed |
-| 6 - Safe prompt artifacts and truthful receipts | Implementation and validation complete locally | Commit pending | Focused artifact/receipt proof, 350-test server suite, prompt regression, static/build validation, and durable Last Injection route proof passed |
-| 7 - Mode-neutral production recall | Not started | Pending | Not run |
+| 6 - Safe prompt artifacts and truthful receipts | Committed locally (`d06bca17`) | Complete | Focused artifact/receipt proof, 350-test server suite, prompt regression, static/build validation, and durable Last Injection route proof passed |
+| 7 - Mode-neutral production recall | Implementation and validation complete locally | Commit pending | Focused orchestrator and live provider-payload proof across every mode/preset state, 353-test server suite, prompt regression, and static/build validation passed |
 | 8 - Truthful client behavior and accessibility | Not started | Pending | Not run |
 | 9 - Consistent full-backup restore | Not started | Pending | Not run |
 | 10 - Bounded exact retrieval and dead-path cleanup | Not started | Pending | Not run |
@@ -446,11 +446,11 @@ and post-dispatch receipt paths.
 
 Started: 2026-07-12
 
-Completed: 2026-07-12 locally; atomic commit pending
+Completed: 2026-07-12 locally; committed as `d06bca17`
 
 Baseline HEAD: `881027c8` (`fix(ltm): correct recall eligibility and relevance`)
 
-Commit: pending
+Commit: `d06bca17` (`fix(ltm): make prompt injection and receipts truthful`)
 
 Scope:
 
@@ -512,9 +512,73 @@ provider-independent dispatch gate, but not a live remote response from every
 provider adapter. Phase 7 still owns mode-neutral reachability across
 Conversation, Roleplay, Visual Novel, and Game, including presetless recall.
 
-Next entrypoint: commit the completed Phase 6 scope, then begin Phase 7 by
-moving recall orchestration outside preset and mode guards while preserving the
-Phase 6 artifact and receipt contracts.
+Next entrypoint: begin Phase 7 by moving recall orchestration outside preset
+and mode guards while preserving the Phase 6 artifact and receipt contracts.
+
+### Phase 7 - Mode-Neutral Production Recall
+
+Started: 2026-07-12
+
+Completed: 2026-07-12 locally; atomic commit pending
+
+Baseline HEAD: `d06bca17` (`fix(ltm): make prompt injection and receipts truthful`)
+
+Commit: pending
+
+Scope:
+
+- Added one request-scoped generation recall orchestrator outside preset and
+  mode guards. It receives the production chat, group, prompt character IDs,
+  active names, request messages, resolved settings, embedding source, and
+  abort signal.
+- Removed the preset-only retrieval branch, its duplicate global-settings
+  read, and the managed-agent activation gate. LTM recall now follows resolved
+  recall settings rather than the generic agent pipeline toggle.
+- Presets continue to place the structured Phase 6 artifact at an explicit LTM
+  marker or the assembler fallback. Conversation and every presetless path use
+  the same dedicated, wrapped safe fallback before the provider payload is fit.
+- Replaced the unused helper-only injection path with artifact-aware fallback
+  injection so final serialization, whole-artifact fitting, macro opacity, and
+  dispatch receipts remain one contract.
+- Optional retrieval failures remain fail-open, while request cancellation is
+  rethrown as an abort and provider failures remain outside the recall handler.
+
+Compatibility and mode behavior:
+
+- Conversation, Roleplay, Visual Novel, and Game now retrieve with and without
+  a prompt preset. Visual Novel continues to resolve the Roleplay LTM lane.
+- Group and character scope, active-character names, embedding-source choice,
+  query signals, and cancellation propagate into the retrieval request.
+- The managed `long-term-memory` agent remains excluded from generic agent
+  resolution; it is still the lifecycle/settings identity, not a pipeline run.
+
+Validation:
+
+| Command | Result |
+| --- | --- |
+| `env LOG_LEVEL=silent pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/reconciliation.spec.ts` | Passed: 126 tests, 0 failed; covers the shared orchestrator, scope, embedding source, cancellation, marker placement, and safe fallback |
+| `env LOG_LEVEL=silent pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/production-recall.spec.ts` | Passed: 1 test, 0 failed; a recording provider saw scoped recalled memory in Conversation, Roleplay, Visual Novel, and Game, both presetless and marker-preset paths, with agents disabled |
+| `pnpm --filter @marinara-engine/server lint` | Passed TypeScript validation |
+| `pnpm --filter @marinara-engine/server test` | Passed: 353 tests, 0 failed; all discovered server LTM specs passed |
+| `pnpm regression:prompt` | Passed deterministic prompt, macro, lorebook, summary, and mode regressions |
+| `pnpm check` | Passed Impeccable context check, workspace lint, TypeScript, and production builds |
+| `git diff --check` | Passed after the final documentation update |
+| `marinara-doc-check` | Not installed; `command -v marinara-doc-check` returned no executable and no checked-in equivalent command is available |
+
+Manual proof: not completed. With a configured remote provider, generate one
+recalled turn in each mode with and without a preset, then confirm the provider
+payload includes the recalled artifact only for the matching scope. Abort a
+request during embedding/retrieval and confirm no provider request or receipt
+is written.
+
+Residual risk: the route fixture uses a local OpenAI-compatible recording
+provider and proves final request payloads, but it does not exercise every
+remote provider adapter's message transformation. Phase 8 still owns client
+state, selected-chat Test Recall, persistence, accessibility, and browser proof.
+
+Next entrypoint: commit the completed Phase 7 scope, then begin Phase 8 by
+aligning client recall controls and accessibility behavior with these runtime
+contracts.
 
 ## Progress Update Template
 
