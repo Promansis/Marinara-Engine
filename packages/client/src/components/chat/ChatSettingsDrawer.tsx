@@ -160,6 +160,7 @@ import { useLastInjection, useLongTermMemorySettings, useLongTermMemoryExtractio
 import {
   RecallStylePresets,
   RecallBudgetControls,
+  RecallRankingWeights,
   RecallThresholdControls,
   RecallToggles,
   useDebouncedRecallSettings,
@@ -167,7 +168,6 @@ import {
 import { FieldGroup } from "../agents/AgentEditor";
 import { useAgentStore } from "../../stores/agent.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
-import { getAgentUiCategory } from "../../lib/agent-display";
 import {
   BUILT_IN_AGENTS,
   BUILT_IN_TOOLS,
@@ -196,6 +196,7 @@ import {
   mergeBuiltInAgentSettings,
   normalizeAgentPhaseForType,
   normalizeAgentPromptTemplateSelectionMap,
+  resolveLongTermMemoryRecallSettings,
   resolveAgentPromptTemplate,
 } from "@marinara-engine/shared";
 import type { Chat, CharacterGroup, Lorebook } from "@marinara-engine/shared";
@@ -1162,18 +1163,7 @@ export function ChatSettingsDrawer({
         if (isAgentConfigDeleted(c.settings)) continue;
         if (isRetiredBuiltInAgentId(c.type)) continue;
         if (!BUILT_IN_AGENTS.some((b) => b.id === c.type)) {
-          if (isManagedAgentType(c.type)) {
-            agents.push({
-              id: c.type,
-              name: c.name,
-              description: c.description,
-              category: getAgentUiCategory(c.type),
-              phase: normalizeAgentPhaseForType(c.type, c.phase),
-              builtIn: false,
-              managed: true,
-            });
-            continue;
-          }
+          if (isManagedAgentType(c.type)) continue;
           agents.push({
             id: c.type,
             name: c.name,
@@ -1304,8 +1294,6 @@ export function ChatSettingsDrawer({
       ? metadata.hapticSensitivity
       : "standard";
   const agentWriteApprovalRequired = metadata.agentWriteApprovalRequired === true;
-  const ltmActive = activeAgentIds.includes("long-term-memory");
-  const ltmRecallEnabled = ltmActive && metadata.enableLongTermMemory !== false;
   const knowledgeRetrievalActive = activeAgentIds.includes("knowledge-retrieval");
   const knowledgeRouterActive = activeAgentIds.includes("knowledge-router");
   const illustratorConfig = agentConfigsByType.get("illustrator");
@@ -1462,25 +1450,35 @@ export function ChatSettingsDrawer({
     },
     [chat.id, updateMeta],
   );
-  const ltmGlobalSettings = useLongTermMemorySettings({ enabled: ltmActive });
-  const ltmExtractionSettings = useLongTermMemoryExtractionSettings({ enabled: ltmActive });
-  const ltmLastInjection = useLastInjection(chat.id, { enabled: ltmActive });
+  const ltmGlobalSettings = useLongTermMemorySettings();
+  const ltmExtractionSettings = useLongTermMemoryExtractionSettings();
+  const ltmLastInjection = useLastInjection(chat.id);
+  const ltmResolvedSettings = useMemo(
+    () =>
+      resolveLongTermMemoryRecallSettings({
+        chatMode: chat.mode,
+        chatMetadata: metadata,
+        globalSettings: ltmGlobalSettings.data,
+      }),
+    [chat.mode, ltmGlobalSettings.data, metadata],
+  );
+  const ltmRecallEnabled = ltmResolvedSettings.enabled;
   const [chatRecallAdvancedOpen, setChatRecallAdvancedOpen] = useState(false);
-  const debouncedUpdatePerChat = useDebouncedRecallSettings(
+  const { flush: flushDebouncedRecallSettings, schedule: debouncedUpdatePerChat } = useDebouncedRecallSettings(
     useCallback((patch) => updateMeta.mutate({ id: chat.id, ...patch }), [updateMeta, chat.id]),
     400,
+    `${chat.id}:${open ? "open" : "closed"}`,
   );
+  const closeWithPendingRecallSave = useCallback(() => {
+    flushDebouncedRecallSettings();
+    onClose();
+  }, [flushDebouncedRecallSettings, onClose]);
   const setLtmAgentEnabled = useCallback((enabled: boolean) => {
-    const nextActiveAgentIds = enabled
-      ? Array.from(new Set([...readLatestActiveAgentIds(), "long-term-memory"]))
-      : readLatestActiveAgentIds().filter((id) => id !== "long-term-memory");
     updateMeta.mutate({
       id: chat.id,
       enableLongTermMemory: enabled,
-      enableAgents: enabled ? true : undefined,
-      activeAgentIds: nextActiveAgentIds,
     });
-  }, [chat.id, readLatestActiveAgentIds, updateMeta]);
+  }, [chat.id, updateMeta]);
   const toggleLtmEnabled = useCallback(() => {
     setLtmAgentEnabled(!ltmRecallEnabled);
   }, [ltmRecallEnabled, setLtmAgentEnabled]);
@@ -1608,7 +1606,7 @@ export function ChatSettingsDrawer({
     (metadata.enableAgents ? 1 : 0) +
     (gameLorebookKeeperEnabled ? 1 : 0) +
     (gameMusicDjEnabled ? 1 : 0) +
-    (ltmActive ? 1 : 0) +
+    (ltmRecallEnabled ? 1 : 0) +
     activeCustomAgents.length;
   const lorebookKeeperTargetLorebookId =
     typeof metadata.lorebookKeeperTargetLorebookId === "string" ? metadata.lorebookKeeperTargetLorebookId : "";
@@ -2128,10 +2126,7 @@ export function ChatSettingsDrawer({
   };
 
   const toggleAgent = async (agentId: string, options?: { skipDirectorRemovalWarning?: boolean }) => {
-    if (agentId === "long-term-memory") {
-      setLtmAgentEnabled(!readLatestActiveAgentIds().includes(agentId));
-      return;
-    }
+    if (isManagedAgentType(agentId)) return;
 
     const wasRemoving = readLatestActiveAgentIds().includes(agentId);
     if (wasRemoving && agentId === "director" && !options?.skipDirectorRemovalWarning) {
@@ -2313,8 +2308,7 @@ export function ChatSettingsDrawer({
     hasScopedOrGlobalLorebooks &&
     !currentPromptPresetHasLorebookMarker;
   const showLongTermMemoryPromptBlockWarning =
-    ltmActive &&
-    metadata.enableLongTermMemory !== false &&
+    ltmRecallEnabled &&
     !!effectiveModePromptPresetId &&
     !!effectivePromptPresetFull &&
     !currentPromptPresetHasLongTermMemoryMarker;
@@ -2465,7 +2459,7 @@ export function ChatSettingsDrawer({
     () =>
       availableAgents.filter(
         (agent) =>
-          (agent.builtIn || agent.managed) &&
+          agent.builtIn &&
           agent.id !== "spotify" &&
           agent.id !== "youtube" &&
           agent.id !== "lorebook-keeper" &&
@@ -2573,6 +2567,7 @@ export function ChatSettingsDrawer({
   }, [effectiveModePromptPresetId, onClose, openPresetDetail]);
 
   const openAgentAddModal = (agent: AvailableAgent) => {
+    if (isManagedAgentType(agent.id)) return;
     setAgentAddCadenceInputFocused(false);
     const config = agentConfigsByType.get(agent.id) ?? null;
     const mergedSettings = mergeBuiltInAgentSettings(agent.id, config?.settings);
@@ -2600,6 +2595,10 @@ export function ChatSettingsDrawer({
     if (!agentAddPreview) return;
 
     const { agent, config, contextSize, maxTokens, runInterval, setup } = agentAddPreview;
+    if (isManagedAgentType(agent.id)) {
+      setAgentAddPreview(null);
+      return;
+    }
     const normalizedMaxTokens = normalizeAgentMaxTokens(maxTokens);
     const builtInMeta = BUILT_IN_AGENTS.find((entry) => entry.id === agent.id) ?? null;
     const isManaged = isManagedAgentType(agent.id);
@@ -2646,7 +2645,6 @@ export function ChatSettingsDrawer({
         id: chat.id,
         enableAgents: true,
         activeAgentIds: Array.from(new Set([...readLatestActiveAgentIds(), agent.id])),
-        ...(agent.id === "long-term-memory" ? { enableLongTermMemory: true } : {}),
         ...buildAgentAddMetadataPatch(agent.id, setup, metadata, {
           allowSecretPlot: supportsNarrativeDirectorSecretPlot,
         }),
@@ -3106,12 +3104,12 @@ export function ChatSettingsDrawer({
       if (!(target instanceof Node)) return;
       if (panelRef.current?.contains(target)) return;
       if (target instanceof Element && target.closest("[data-chat-floating-panel]")) return;
-      onClose();
+      closeWithPendingRecallSave();
     };
 
     document.addEventListener("pointerdown", handlePointerDown, true);
     return () => document.removeEventListener("pointerdown", handlePointerDown, true);
-  }, [onClose, open]);
+  }, [closeWithPendingRecallSave, open]);
 
   if (!open) return null;
   const anchoredOnMobile = !!anchor && typeof window !== "undefined" && window.innerWidth < 768;
@@ -3151,7 +3149,7 @@ export function ChatSettingsDrawer({
           </h3>
           <button
             type="button"
-            onClick={onClose}
+            onClick={closeWithPendingRecallSave}
             aria-label="Close chat settings"
             className={ROLEPLAY_POPOVER_CLOSE_BUTTON}
           >
@@ -5651,12 +5649,11 @@ export function ChatSettingsDrawer({
                   </AgentSettingsCard>
                 )}
 
-                {(ltmActive || isGame) && (
-                  <AgentSettingsCard
-                    icon={<BrainCircuit size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
-                    title="Long-Term Memory"
-                    description="Long-term memory recalls facts and events from past conversations."
-                  >
+                <AgentSettingsCard
+                  icon={<BrainCircuit size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
+                  title="Long-Term Memory"
+                  description="Long-term memory recalls facts and events from past conversations."
+                >
                     <AgentSettingsToggle
                       label="Use Long-Term Memory in this chat"
                       description="Turns on Long-Term Memory for this chat and injects saved memories from past conversations into the prompt."
@@ -5668,13 +5665,41 @@ export function ChatSettingsDrawer({
                         Long-Term Memory is off for this chat — turn it on to recall facts from past conversations into your messages.
                       </p>
                     )}
-                    {ltmRecallEnabled &&
-                      (ltmLastInjection.data?.memoryCount ?? 0) === 0 &&
-                      !ltmLastInjection.isLoading && (
-                        <p className="text-xs text-[var(--muted-foreground)]">
-                          Send a message to see recalled memories.
-                        </p>
-                      )}
+                  <div
+                    aria-live="polite"
+                    className="mt-2 rounded-lg bg-[var(--secondary)]/35 px-3 py-2 text-xs ring-1 ring-[var(--border)]"
+                  >
+                    <div className="font-medium text-[var(--foreground)]">Last Injection</div>
+                    {ltmLastInjection.isLoading ? (
+                      <div className="mt-1 flex items-center gap-2 text-[var(--muted-foreground)]">
+                        <Loader2 size="0.75rem" className="animate-spin" aria-hidden="true" />
+                        Checking the last dispatched memory context...
+                      </div>
+                    ) : ltmLastInjection.isError ? (
+                      <div role="alert" className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[var(--destructive)]">
+                        <span>Could not load the last dispatched memory context.</span>
+                        <button
+                          type="button"
+                          onClick={() => void ltmLastInjection.refetch()}
+                          className="rounded-md px-1.5 py-0.5 text-[0.6875rem] font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    ) : (ltmLastInjection.data?.memoryCount ?? 0) === 0 ? (
+                      <p className="mt-1 text-[var(--muted-foreground)]">
+                        No recalled memories have been dispatched for this chat yet.
+                      </p>
+                    ) : (
+                      <div className="mt-1 flex flex-wrap gap-1.5 text-[var(--muted-foreground)]">
+                        <span>
+                          {ltmLastInjection.data!.memoryCount} memor{ltmLastInjection.data!.memoryCount === 1 ? "y" : "ies"}
+                        </span>
+                        <span aria-hidden="true">-</span>
+                        <span>~{ltmLastInjection.data!.tokenCount.toLocaleString()} tokens</span>
+                      </div>
+                    )}
+                  </div>
                     {showLongTermMemoryPromptBlockWarning && (
                       <div className="flex items-start gap-2 rounded-lg bg-amber-400/10 px-3 py-2 text-[0.6875rem] text-amber-200 ring-1 ring-amber-400/25">
                         <AlertTriangle size="0.75rem" className="mt-[0.125rem] shrink-0" />
@@ -5687,21 +5712,14 @@ export function ChatSettingsDrawer({
                     <div className="mt-2 space-y-2">
                       <RecallStylePresets
                         values={{
-                          longTermMemoryRecallStyle:
-                            metadata.longTermMemoryRecallStyle ??
-                            ltmGlobalSettings.data?.longTermMemoryRecallStyle ??
-                            "balanced",
+                          longTermMemoryRecallStyle: ltmResolvedSettings.recallStyle,
                         }}
                         onChange={(patch) => debouncedUpdatePerChat(patch)}
                       />
                       <RecallBudgetControls
                         values={{
-                          longTermMemoryBudgetTokens:
-                            metadata.longTermMemoryBudgetTokens ??
-                            ltmGlobalSettings.data?.longTermMemoryBudgetTokens ??
-                            4096,
-                          longTermMemoryMaxChunks:
-                            metadata.longTermMemoryMaxChunks ?? ltmGlobalSettings.data?.longTermMemoryMaxChunks ?? 20,
+                          longTermMemoryBudgetTokens: ltmResolvedSettings.budgetTokens ?? 4096,
+                          longTermMemoryMaxChunks: ltmResolvedSettings.maxChunks ?? 20,
                         }}
                         onChange={(patch) => debouncedUpdatePerChat(patch)}
                       />
@@ -5715,25 +5733,25 @@ export function ChatSettingsDrawer({
                       >
                         <RecallThresholdControls
                           values={{
-                            longTermMemoryScoreThreshold:
-                              metadata.longTermMemoryScoreThreshold ??
-                              ltmGlobalSettings.data?.longTermMemoryScoreThreshold ??
-                              0,
-                            longTermMemoryRecallContextMessages:
-                              metadata.longTermMemoryRecallContextMessages ??
-                              ltmGlobalSettings.data?.longTermMemoryRecallContextMessages ??
-                              4,
+                            longTermMemoryScoreThreshold: ltmResolvedSettings.scoreThreshold ?? 0,
+                            longTermMemoryRecallContextMessages: ltmResolvedSettings.contextMessages,
+                          }}
+                          onChange={(patch) => debouncedUpdatePerChat(patch)}
+                        />
+                        <RecallRankingWeights
+                          values={{
+                            longTermMemoryRecallStyle: ltmResolvedSettings.recallStyle,
+                            longTermMemorySemanticWeight: ltmResolvedSettings.weights.semanticWeight,
+                            longTermMemoryLexicalWeight: ltmResolvedSettings.weights.lexicalWeight,
+                            longTermMemoryGraphWeight: ltmResolvedSettings.weights.graphWeight,
+                            longTermMemoryKeywordWeight: ltmResolvedSettings.weights.keywordWeight,
                           }}
                           onChange={(patch) => debouncedUpdatePerChat(patch)}
                         />
                         <RecallToggles
                           values={{
-                            longTermMemoryIncludeResolved:
-                              metadata.longTermMemoryIncludeResolved ??
-                              ltmGlobalSettings.data?.longTermMemoryIncludeResolved ??
-                              false,
-                            longTermMemoryDebug:
-                              metadata.longTermMemoryDebug ?? ltmGlobalSettings.data?.longTermMemoryDebug ?? false,
+                            longTermMemoryIncludeResolved: ltmResolvedSettings.includeResolved,
+                            longTermMemoryDebug: ltmResolvedSettings.debugEnabled,
                           }}
                           onChange={(patch) => debouncedUpdatePerChat(patch)}
                         />
@@ -5750,8 +5768,7 @@ export function ChatSettingsDrawer({
                         )}
                       </FieldGroup>
                     </div>
-                  </AgentSettingsCard>
-                )}
+                </AgentSettingsCard>
 
                 {!isGame && (
                   <div className="flex flex-col gap-2">
@@ -6867,10 +6884,6 @@ export function ChatSettingsDrawer({
                                 <div key={agent.id} className="space-y-1.5">
                                   <button
                                     onClick={() => {
-                                      if (agent.id === "long-term-memory") {
-                                        void toggleAgent(agent.id);
-                                        return;
-                                      }
                                       const latestActiveAgentIds = readLatestActiveAgentIds();
                                       if (active) {
                                         updateMeta.mutate({

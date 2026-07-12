@@ -27,13 +27,16 @@ export function ImportPreviewRowItem({
   onImport: () => void;
 }) {
   const imported = sample.status === "imported";
+  const stale = sample.freshness === "stale";
+  const importLabel = stale ? `Refresh memory from ${sample.title}` : `Import ${sample.title}`;
   return (
     <article
       className={cn(
         "group relative grid grid-cols-[auto_minmax(0,1fr)] gap-3 pr-12",
         listRowClassName,
         selected && selectedListRowClassName,
-        imported && "bg-amber-500/5 ring-amber-500/20",
+        imported && "bg-emerald-500/5 ring-emerald-500/20",
+        stale && "bg-amber-500/5 ring-amber-500/20",
       )}
     >
       <input
@@ -49,7 +52,8 @@ export function ImportPreviewRowItem({
           <div className="truncate text-xs font-medium text-[var(--foreground)]" title={sample.title}>
             {sample.title}
           </div>
-          {imported && <StatusPill label="Imported" tone="warn" title={sample.existingNoteTitle ?? sample.title} />}
+          {imported && <StatusPill label="Current" tone="good" title={sample.existingNoteTitle ?? sample.title} />}
+          {stale && <StatusPill label="Source changed" tone="warn" title={sample.existingNoteTitle ?? sample.title} />}
         </div>
         {sample.snippet && (
           <div className="mt-1 truncate text-[10px] leading-relaxed text-[var(--muted-foreground)]" title={sample.snippet}>
@@ -58,7 +62,12 @@ export function ImportPreviewRowItem({
         )}
         {imported && sample.existingNoteTitle && (
           <div className="mt-1 truncate text-[10px] leading-relaxed text-[var(--muted-foreground)]">
-            Already exists as {sample.existingNoteTitle}
+            Current as {sample.existingNoteTitle}
+          </div>
+        )}
+        {stale && sample.existingNoteTitle && (
+          <div className="mt-1 truncate text-[10px] leading-relaxed text-[var(--muted-foreground)]">
+            Refreshes {sample.existingNoteTitle} with the changed source
           </div>
         )}
       </div>
@@ -71,8 +80,8 @@ export function ImportPreviewRowItem({
             rowActionButtonClassName,
             "mari-chrome-control--primary",
           )}
-          aria-label={`Import ${sample.title}`}
-          title="Import"
+          aria-label={importLabel}
+          title={stale ? "Refresh memory" : "Import"}
         >
           {importing ? <Loader2 size="0.75rem" className="animate-spin" /> : imported ? <Check size="0.75rem" /> : <Import size="0.75rem" />}
         </button>

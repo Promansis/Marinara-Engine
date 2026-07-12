@@ -421,6 +421,7 @@ test("LTM transport contracts - import preview validates source, scope, and row 
         summary: "Import chapter one",
         snippet: "A short source preview.",
         status: "pending",
+        freshness: "new",
       },
     ],
   };
@@ -437,6 +438,20 @@ test("LTM transport contracts - import preview validates source, scope, and row 
       samples: [{ ...response.samples[0], status: "failed" }],
     }).success,
     false,
+  );
+  assert.equal(
+    ltmInteropPreviewResponseSchema.parse({
+      ...response,
+      samples: [
+        {
+          ...response.samples[0],
+          freshness: "stale",
+          existingNoteId: "source_chat_summary_a",
+          existingNoteTitle: "Earlier chapter one",
+        },
+      ],
+    }).samples[0]?.freshness,
+    "stale",
   );
 });
 

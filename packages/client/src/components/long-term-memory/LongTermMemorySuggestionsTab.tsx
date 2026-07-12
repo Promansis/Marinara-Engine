@@ -93,6 +93,9 @@ function outcomeSummary(outcome: LtmExtractionOutcome, mutationCount?: number, a
     }
     return `Kept ${outcome.keptUnits} candidate${outcome.keptUnits === 1 ? "" : "s"} and dropped ${outcome.droppedUnits}.`;
   }
+  if (outcome.droppedUnits === 0) {
+    return "No usable suggestions were created from the latest extraction.";
+  }
   if (accounting) {
     const rejected = accounting.parserRejections + accounting.validationRejections;
     if (rejected > 0) {
@@ -897,9 +900,10 @@ function ExtractionOutcomePanel({
   const readableDropped = outcome.droppedCandidates.filter((candidate) => candidate.snippet);
   const visibleDropped = showAllDropped ? readableDropped : readableDropped.slice(0, 3);
   const hiddenCount = readableDropped.length - visibleDropped.length;
-  const rejectedCount = accounting
+  const rejectedCount = outcome.droppedUnits;
+  const historicalRejectedCount = accounting
     ? accounting.parserRejections + accounting.validationRejections
-    : outcome.droppedUnits;
+    : rejectedCount;
   const unreadableCount = Math.max(0, rejectedCount - readableDropped.length);
 
   return (
@@ -912,7 +916,10 @@ function ExtractionOutcomePanel({
               label={`${accounting?.keptUnits ?? outcome.keptUnits} kept`}
               tone={(accounting?.keptUnits ?? outcome.keptUnits) > 0 ? "good" : "neutral"}
             />
-            <StatusPill label={`${rejectedCount} rejected`} tone={rejectedCount > 0 ? "warn" : "neutral"} />
+            <StatusPill
+              label={`${historicalRejectedCount} rejected`}
+              tone={historicalRejectedCount > 0 ? "warn" : "neutral"}
+            />
             {accounting ? <StatusPill label={`${accounting.deduplications} deduplicated`} /> : null}
           </div>
           <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">

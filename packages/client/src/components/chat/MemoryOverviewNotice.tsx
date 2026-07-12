@@ -23,6 +23,8 @@ export function MemoryOverviewNotice({ chatId, onViewAll }: Props) {
       <button
         type="button"
         onClick={() => setExpanded((prev) => !prev)}
+        aria-expanded={expanded}
+        aria-label={`${expanded ? "Hide" : "Show"} last injected memories`}
         className="flex w-full items-center gap-2 rounded-lg px-1 py-1.5 text-xs ring-1 ring-[var(--border)] hover:bg-[var(--accent)]"
       >
         <BrainCircuit size="0.75rem" className="text-[var(--primary)]" />

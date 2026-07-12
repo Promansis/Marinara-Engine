@@ -10,6 +10,7 @@ import {
   Import,
   Loader2,
   Plus,
+  RefreshCw,
   RotateCcw,
   Search,
   Trash2,
@@ -89,7 +90,9 @@ import {
   findNavigatorThread,
   LtmNavigatorSelector,
   navigatorSelectionLabel,
+  normalizeChatCharacterIds,
   noteFilterFromNavigatorScope,
+  selectedNavigatorChat,
   scopeFromNavigatorSelection,
   type CharacterLookup,
   type LtmNavigatorSelection,
@@ -112,6 +115,7 @@ import {
   isSourceSummaryNote,
   memoryRowTitle,
   optionalTrimmedText,
+  parseMetadata,
   readLongTermMemoryRecallSearchSettings,
   scopeDraftFromLtmScope,
   sourceNoteTitle,
@@ -462,6 +466,34 @@ export function LtmVaultManagerSection({
     () => navigatorSelectionLabel(selectedNavigatorThread, navigatorSelection),
     [navigatorSelection, selectedNavigatorThread],
   );
+  const selectedRecallChat = useMemo(
+    () => selectedNavigatorChat(selectedNavigatorThread, navigatorSelection),
+    [navigatorSelection, selectedNavigatorThread],
+  );
+  const selectedRecallMetadata = useMemo(
+    () => (selectedRecallChat ? parseMetadata(selectedRecallChat.metadata) : {}),
+    [selectedRecallChat],
+  );
+  const selectedRecallSettings = useMemo(
+    () =>
+      readLongTermMemoryRecallSearchSettings(
+        ltmSettings,
+        selectedRecallMetadata,
+        selectedRecallChat?.mode ?? "roleplay",
+      ),
+    [ltmSettings, selectedRecallChat?.mode, selectedRecallMetadata],
+  );
+  const selectedRecallCharacterIds = useMemo(
+    () => (selectedRecallChat ? normalizeChatCharacterIds(selectedRecallChat.characterIds) : []),
+    [selectedRecallChat],
+  );
+  const selectedRecallCharacterNames = useMemo(
+    () =>
+      selectedRecallCharacterIds
+        .map((characterId) => characterLookup.get(characterId)?.name)
+        .filter((name): name is string => Boolean(name)),
+    [characterLookup, selectedRecallCharacterIds],
+  );
   const selectedImportChatMode = useMemo<LtmMode | null>(() => {
     if (importSource !== "chats") return null;
     const scopeChatIds = navigatorScope.chatIds ?? (navigatorScope.chatId ? [navigatorScope.chatId] : []);
@@ -470,8 +502,11 @@ export function LtmVaultManagerSection({
     const selectedChat = (chats as Chat[]).find((chat) => chat.id === selectedChatId);
     return selectedChat ? ltmModeForChatMode(selectedChat.mode) : null;
   }, [chats, importSource, navigatorScope.chatId, navigatorScope.chatIds]);
-  const activeRecallSettings = useMemo(() => readLongTermMemoryRecallSearchSettings(ltmSettings), [ltmSettings]);
-  const activeChatMessages = useChatMessages(activeChatId, activeRecallSettings.contextMessages, Boolean(openNoteId));
+  const selectedRecallMessages = useChatMessages(
+    selectedRecallChat?.id ?? null,
+    20,
+    Boolean(openNoteId && selectedRecallChat),
+  );
   const notes = useLongTermMemoryNotes(navigatorNoteFilter, {
     enabled: Boolean(selectedNavigatorThread) && (tab === "notes" || Boolean(openNoteId)),
   });
@@ -592,6 +627,7 @@ export function LtmVaultManagerSection({
   const importRows = useMemo(() => importPreview.data?.samples ?? [], [importPreview.data?.samples]);
   const pendingImportRows = useMemo(() => importRows.filter((sample) => sample.status === "pending"), [importRows]);
   const importedImportRows = useMemo(() => importRows.filter((sample) => sample.status === "imported"), [importRows]);
+  const staleImportRows = useMemo(() => pendingImportRows.filter((sample) => sample.freshness === "stale"), [pendingImportRows]);
   const lastImportFailures = useMemo(() => {
     if (!lastImportResult) return [];
     return [
@@ -648,11 +684,11 @@ export function LtmVaultManagerSection({
   const viewingRecallResult = openNote ? (recallResultByNoteId[openNote.id] ?? null) : null;
   const recentRecallMessages = useMemo(
     () =>
-      (activeChatMessages.data?.pages.flat() ?? [])
-        .slice(-activeRecallSettings.contextMessages)
+      (selectedRecallMessages.data?.pages.flat() ?? [])
+        .slice(-selectedRecallSettings.contextMessages)
         .map((message) => message.content)
         .filter(Boolean),
-    [activeChatMessages.data?.pages, activeRecallSettings.contextMessages],
+    [selectedRecallMessages.data?.pages, selectedRecallSettings.contextMessages],
   );
   const pendingDraftsForOpenNote = useMemo(
     () =>
@@ -966,22 +1002,32 @@ export function LtmVaultManagerSection({
 
   const runViewingNoteRecall = async () => {
     if (!openNote) return;
+    if (!selectedRecallChat) {
+      toast.error("Choose a specific chat branch before testing recall.");
+      return;
+    }
+    if (!selectedRecallSettings.enabled) {
+      toast.error(`Long-Term Memory is off for ${navigatorScopeLabel}. Turn it on in Chat Settings before testing recall.`);
+      return;
+    }
     const recallQuery = viewingRecallQuery.trim();
     if (!recallQuery) return;
     try {
       const result = await searchMemory.mutateAsync({
         queryText: recallQuery,
         recentMessages: recentRecallMessages,
-        noteIds: [openNote.id],
-        scope: openNote.scope,
-        characterIds: openNote.scope.characterIds,
-        includeResolved: activeRecallSettings.includeResolved,
-        maxChunks: activeRecallSettings.maxChunks,
-        maxTokens: activeRecallSettings.maxTokens,
-        minScore: activeRecallSettings.minScore,
-        semanticWeight: activeRecallSettings.semanticWeight,
-        lexicalWeight: activeRecallSettings.lexicalWeight,
-        graphWeight: activeRecallSettings.graphWeight,
+        mentionedCharacterNames: selectedRecallCharacterNames,
+        mode: ltmModeForChatMode(selectedRecallChat.mode),
+        scope: navigatorScope,
+        characterIds: selectedRecallCharacterIds,
+        includeResolved: selectedRecallSettings.includeResolved,
+        maxChunks: selectedRecallSettings.maxChunks,
+        maxTokens: selectedRecallSettings.maxTokens,
+        minScore: selectedRecallSettings.minScore,
+        semanticWeight: selectedRecallSettings.semanticWeight,
+        lexicalWeight: selectedRecallSettings.lexicalWeight,
+        graphWeight: selectedRecallSettings.graphWeight,
+        keywordWeight: selectedRecallSettings.keywordWeight,
         debug: true,
       });
       setRecallResultByNoteId((current) => ({ ...current, [openNote.id]: result }));
@@ -1688,10 +1734,27 @@ export function LtmVaultManagerSection({
                 </div>
                 <div className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">
                   {importPreview.data?.importedCount ?? 0} source{importPreview.data?.importedCount === 1 ? "" : "s"}{" "}
-                  already imported
+                  current in Memory
                 </div>
+                {staleImportRows.length > 0 && (
+                  <div className="mt-1 text-[0.6875rem] text-amber-700 dark:text-amber-200">
+                    {staleImportRows.length} source{staleImportRows.length === 1 ? "" : "s"} changed since import
+                  </div>
+                )}
               </div>
-              {importPreview.isLoading ? <Loader2 className="animate-spin" size="1rem" /> : <FileJson size="1rem" />}
+              <div className="flex items-center gap-1">
+                {importPreview.isFetching ? <Loader2 className="animate-spin" size="1rem" /> : <FileJson size="1rem" />}
+                <button
+                  type="button"
+                  onClick={() => void importPreview.refetch()}
+                  disabled={importPreview.isFetching}
+                  aria-label="Refresh available imports"
+                  title="Refresh available imports"
+                  className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon text-[var(--muted-foreground)] active:scale-90 disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  <RefreshCw size="0.75rem" aria-hidden="true" />
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1868,7 +1931,7 @@ export function LtmVaultManagerSection({
                       Imported source{importedImportRows.length === 1 ? "" : "s"} ({importedImportRows.length})
                     </div>
                     <div className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">
-                      Already saved in Memory. These stay visible for reference, but cannot be imported again.
+                      These source snapshots are current. They stay visible for reference and cannot be imported again.
                     </div>
                   </div>
                   {importedRowsOpen ? <Check size="0.875rem" /> : <Import size="0.875rem" />}
@@ -2093,6 +2156,11 @@ export function LtmVaultManagerSection({
         recallQuery={viewingRecallQuery}
         recallResult={viewingRecallResult}
         recallPending={searchMemory.isPending}
+        recallContext={{
+          chatLabel: selectedRecallChat ? navigatorScopeLabel : null,
+          mode: selectedRecallChat ? ltmModeForChatMode(selectedRecallChat.mode) : null,
+          enabled: selectedRecallSettings.enabled,
+        }}
         editorDirty={editedNoteDirty}
         latestExtractionResult={latestExtractionResultForOpenNote}
         onClose={closeOpenMemory}

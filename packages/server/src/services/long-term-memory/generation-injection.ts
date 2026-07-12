@@ -1,7 +1,5 @@
 import {
-  LTM_RECALL_STYLE_WEIGHTS,
-  parseLongTermMemoryRecallStyle,
-  DEFAULT_LTM_RECALL_STYLE_BY_MODE,
+  resolveLongTermMemoryRecallSettings,
   withMergedLtmScopeLinks,
   type LtmResolvedGlobalSettings,
   type LongTermMemoryRecallStyle,
@@ -113,61 +111,6 @@ export function resolveGenerationLongTermMemoryScope(chat: {
   );
 }
 
-export function parseLongTermMemoryBudgetTokens(value: unknown) {
-  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
-  return Math.max(128, Math.min(16_384, Math.floor(value)));
-}
-
-export function parseLongTermMemoryMaxChunks(value: unknown) {
-  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
-  return Math.max(1, Math.min(100, Math.floor(value)));
-}
-
-export function parseLongTermMemoryScoreThreshold(value: unknown) {
-  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
-  return Math.max(0, Math.min(1, value));
-}
-
-export function parseLongTermMemoryContextMessages(value: unknown) {
-  if (typeof value !== "number" || !Number.isFinite(value)) return 4;
-  return Math.max(1, Math.min(20, Math.floor(value)));
-}
-
-function parseSparseChatNumber(value: unknown, min: number, max: number, integer = false) {
-  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
-  if (integer && !Number.isInteger(value)) return undefined;
-  if (value < min || value > max) return undefined;
-  return value;
-}
-
-function parseSparseChatBudgetTokens(value: unknown) {
-  return parseSparseChatNumber(value, 128, 16_384, true);
-}
-
-function parseSparseChatMaxChunks(value: unknown) {
-  return parseSparseChatNumber(value, 1, 100, true);
-}
-
-function parseSparseChatScoreThreshold(value: unknown) {
-  return parseSparseChatNumber(value, 0, 1);
-}
-
-function parseSparseChatContextMessages(value: unknown) {
-  return parseSparseChatNumber(value, 1, 20, true);
-}
-
-function readLongTermMemoryBoolean(value: unknown) {
-  return typeof value === "boolean" ? value : undefined;
-}
-
-function readLongTermMemoryRecallStyle(value: unknown): LongTermMemoryRecallStyle | undefined {
-  return value === "balanced" || value === "exact" || value === "broad" || value === "story" ? value : undefined;
-}
-
-function readLongTermMemoryRecallPreamble(value: unknown) {
-  return typeof value === "string" ? value : undefined;
-}
-
 function longTermMemoryRecallAbortError() {
   const error = new Error("Long-term memory recall was cancelled.");
   error.name = "AbortError";
@@ -178,88 +121,18 @@ function throwIfLongTermMemoryRecallAborted(signal?: AbortSignal) {
   if (signal?.aborted) throw longTermMemoryRecallAbortError();
 }
 
-function readSparseChatRecallWeight(value: unknown, fallback: number) {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1 ? value : fallback;
-}
-
-function resolveSparseChatRecallWeights(chatMeta: Record<string, unknown>, fallback: LtmRecallWeights): LtmRecallWeights {
-  return {
-    semanticWeight: readSparseChatRecallWeight(chatMeta.longTermMemorySemanticWeight, fallback.semanticWeight),
-    lexicalWeight: readSparseChatRecallWeight(chatMeta.longTermMemoryLexicalWeight, fallback.lexicalWeight),
-    graphWeight: readSparseChatRecallWeight(chatMeta.longTermMemoryGraphWeight, fallback.graphWeight),
-    keywordWeight: readSparseChatRecallWeight(chatMeta.longTermMemoryKeywordWeight, fallback.keywordWeight),
-  };
-}
-
-export interface ResolvedGenerationLongTermMemorySettings {
-  enabled: boolean;
-  budgetTokens?: number;
-  maxChunks?: number;
-  scoreThreshold?: number;
-  recallStyle: LongTermMemoryRecallStyle;
-  weights: LtmRecallWeights;
-  debugEnabled: boolean;
-  contextMessages: number;
-  includeResolved: boolean;
-  recallPreamble: string;
-}
-
-/**
- * Global settings are the durable default. Chat metadata only supplies sparse
- * overrides, including an optional style-specific weight profile.
- */
-export function resolveGenerationLongTermMemorySettings(input: {
+export const resolveGenerationLongTermMemorySettings = (input: {
   chatMode: string;
   chatMeta: Record<string, unknown>;
   globalSettings?: LtmResolvedGlobalSettings;
   requestDebug?: boolean;
-}): ResolvedGenerationLongTermMemorySettings {
-  const { chatMeta, globalSettings } = input;
-  const modeFallback = DEFAULT_LTM_RECALL_STYLE_BY_MODE[ltmModeForChatMode(input.chatMode)];
-  const chatRecallStyle = readLongTermMemoryRecallStyle(chatMeta.longTermMemoryRecallStyle);
-  const globalRecallStyle = globalSettings
-    ? parseLongTermMemoryRecallStyle(globalSettings.longTermMemoryRecallStyle)
-    : modeFallback;
-  const recallStyle = chatRecallStyle ?? globalRecallStyle;
-  const styleWeights = LTM_RECALL_STYLE_WEIGHTS[recallStyle];
-  const globalWeights: LtmRecallWeights = globalSettings
-    ? {
-        semanticWeight: globalSettings.longTermMemorySemanticWeight,
-        lexicalWeight: globalSettings.longTermMemoryLexicalWeight,
-        graphWeight: globalSettings.longTermMemoryGraphWeight,
-        keywordWeight: globalSettings.longTermMemoryKeywordWeight,
-      }
-    : styleWeights;
-
-  return {
-    enabled: readLongTermMemoryBoolean(chatMeta.enableLongTermMemory) ?? globalSettings?.enableLongTermMemory ?? false,
-    budgetTokens:
-      parseSparseChatBudgetTokens(chatMeta.longTermMemoryBudgetTokens) ??
-      parseLongTermMemoryBudgetTokens(globalSettings?.longTermMemoryBudgetTokens),
-    maxChunks:
-      parseSparseChatMaxChunks(chatMeta.longTermMemoryMaxChunks) ??
-      parseLongTermMemoryMaxChunks(globalSettings?.longTermMemoryMaxChunks),
-    scoreThreshold:
-      parseSparseChatScoreThreshold(chatMeta.longTermMemoryScoreThreshold) ??
-      parseLongTermMemoryScoreThreshold(globalSettings?.longTermMemoryScoreThreshold),
-    recallStyle,
-    weights: resolveSparseChatRecallWeights(chatMeta, chatRecallStyle ? styleWeights : globalWeights),
-    debugEnabled:
-      (readLongTermMemoryBoolean(chatMeta.longTermMemoryDebug) ?? globalSettings?.longTermMemoryDebug ?? false) ||
-      input.requestDebug === true,
-    contextMessages:
-      parseSparseChatContextMessages(chatMeta.longTermMemoryRecallContextMessages) ??
-      parseLongTermMemoryContextMessages(globalSettings?.longTermMemoryRecallContextMessages),
-    includeResolved:
-      readLongTermMemoryBoolean(chatMeta.longTermMemoryIncludeResolved) ??
-      globalSettings?.longTermMemoryIncludeResolved ??
-      false,
-    recallPreamble:
-      readLongTermMemoryRecallPreamble(chatMeta.longTermMemoryRecallPreamble) ??
-      globalSettings?.longTermMemoryRecallPreamble ??
-      "",
-  };
-}
+}) =>
+  resolveLongTermMemoryRecallSettings({
+    chatMode: input.chatMode,
+    chatMetadata: input.chatMeta,
+    globalSettings: input.globalSettings,
+    requestDebug: input.requestDebug,
+  });
 
 export function buildGenerationLongTermMemoryPlan(
   input: BuildGenerationLongTermMemoryPlanInput,

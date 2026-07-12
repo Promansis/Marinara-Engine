@@ -14,7 +14,7 @@ import {
   friendlySectionKey,
   friendlyStatus,
 } from "../long-term-memory/ltm-editor-utils";
-import { LTM_RECALL_STYLE_WEIGHTS } from "@marinara-engine/shared";
+import { resolveLongTermMemoryRecallSettings } from "@marinara-engine/shared";
 import { ChevronDown, ChevronRight, Info } from "lucide-react";
 import { StatusPill } from "./LtmPills";
 
@@ -159,24 +159,25 @@ export function characterNameFromRow(row: unknown) {
   return typeof parsed.name === "string" && parsed.name.trim() ? parsed.name.trim() : "Unknown";
 }
 
-export function readLongTermMemoryRecallSearchSettings(settings: LtmResolvedGlobalSettings | undefined) {
-  const recallStyle = settings?.longTermMemoryRecallStyle ?? "balanced";
-  const styleWeights = LTM_RECALL_STYLE_WEIGHTS[recallStyle];
-  const weights = settings
-    ? {
-        semanticWeight: settings.longTermMemorySemanticWeight,
-        lexicalWeight: settings.longTermMemoryLexicalWeight,
-        graphWeight: settings.longTermMemoryGraphWeight,
-        keywordWeight: settings.longTermMemoryKeywordWeight,
-      }
-    : styleWeights;
+export function readLongTermMemoryRecallSearchSettings(
+  settings: LtmResolvedGlobalSettings | undefined,
+  chatMetadata: Record<string, unknown> = {},
+  chatMode = "roleplay",
+) {
+  const resolved = resolveLongTermMemoryRecallSettings({
+    chatMode,
+    chatMetadata,
+    globalSettings: settings,
+  });
   return {
-    maxTokens: settings?.longTermMemoryBudgetTokens ?? DEFAULT_LTM_BUDGET_TOKENS,
-    maxChunks: settings?.longTermMemoryMaxChunks ?? DEFAULT_LTM_MAX_CHUNKS,
-    minScore: settings?.longTermMemoryScoreThreshold ?? DEFAULT_LTM_SCORE_THRESHOLD,
-    includeResolved: settings?.longTermMemoryIncludeResolved ?? false,
-    contextMessages: settings?.longTermMemoryRecallContextMessages ?? DEFAULT_LTM_CONTEXT_MESSAGES,
-    ...weights,
+    enabled: resolved.enabled,
+    recallStyle: resolved.recallStyle,
+    maxTokens: resolved.budgetTokens ?? DEFAULT_LTM_BUDGET_TOKENS,
+    maxChunks: resolved.maxChunks ?? DEFAULT_LTM_MAX_CHUNKS,
+    minScore: resolved.scoreThreshold ?? DEFAULT_LTM_SCORE_THRESHOLD,
+    includeResolved: resolved.includeResolved,
+    contextMessages: resolved.contextMessages ?? DEFAULT_LTM_CONTEXT_MESSAGES,
+    ...resolved.weights,
   };
 }
 

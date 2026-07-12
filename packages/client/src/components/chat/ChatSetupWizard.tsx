@@ -35,7 +35,6 @@ import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
 import { api } from "../../lib/api-client";
-import { getAgentUiCategory } from "../../lib/agent-display";
 import { appendLocalSidecarConnectionOption } from "../../lib/connection-filters";
 import { getAgentRunIntervalMeta } from "../../lib/agent-cadence";
 import { getCharacterTitle, parseCharacterDisplayData } from "../../lib/character-display";
@@ -919,10 +918,6 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
       trimmedConversationSystemPrompt !== baseConversationPromptText
         ? trimmedConversationSystemPrompt
         : null;
-    const currentActiveAgentIds = readChatActiveAgentIds(chat);
-    const nextActiveAgentIds = enableLtm
-      ? Array.from(new Set([...currentActiveAgentIds, "long-term-memory"]))
-      : currentActiveAgentIds.filter((id) => id !== "long-term-memory");
     await updateMeta.mutateAsync({
       id: chat.id,
       autonomousMessages: autonomousEnabled,
@@ -932,8 +927,6 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
       chatParameters: customizeParameters ? generationParameters : null,
       customSystemPrompt,
       enableLongTermMemory: enableLtm,
-      enableAgents: enableLtm ? true : undefined,
-      activeAgentIds: nextActiveAgentIds,
     });
     if (autonomousEnabled && generateSchedule) {
       setScheduleState("generating");
@@ -1387,7 +1380,9 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
   const renderMemoryStep = () => (
     <div className="space-y-2">
       <button
+        type="button"
         onClick={() => setEnableLtm((value) => !value)}
+        aria-pressed={enableLtm}
         className={cn(
           "mari-chat-option-field flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
           enableLtm && "mari-chat-option-field--active",
@@ -1626,18 +1621,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
       if (isAgentConfigDeleted(config.settings)) continue;
       if (isRetiredBuiltInAgentId(config.type)) continue;
       if (BUILT_IN_AGENTS.some((agent) => agent.id === config.type)) continue;
-      if (isManagedAgentType(config.type)) {
-        agents.push({
-          id: config.type,
-          name: config.name,
-          description: config.description,
-          category: getAgentUiCategory(config.type),
-          phase: normalizeAgentPhaseForType(config.type, config.phase),
-          builtIn: false,
-          managed: true,
-        });
-        continue;
-      }
+      if (isManagedAgentType(config.type)) continue;
       agents.push({
         id: config.type,
         name: config.name,
@@ -1900,6 +1884,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
 
   const openAgentAddPreview = useCallback(
     (agent: AvailableAgent) => {
+      if (isManagedAgentType(agent.id)) return;
       const config = agentConfigsByType.get(agent.id) ?? null;
       const mergedSettings = mergeBuiltInAgentSettings(agent.id, config?.settings);
       const intervalMeta = getAgentRunIntervalMeta(agent.id, agent.builtIn);
@@ -1926,11 +1911,11 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
 
   const removeAgentFromChat = useCallback(
     (agentId: string) => {
+      if (isManagedAgentType(agentId)) return;
       const latestActiveAgentIds = readLatestActiveAgentIds();
       updateMeta.mutate({
         id: chat.id,
         activeAgentIds: latestActiveAgentIds.filter((id) => id !== agentId),
-        ...(agentId === "long-term-memory" ? { enableLongTermMemory: false } : {}),
       });
       if (agentAddPreview?.agent.id === agentId) setAgentAddPreview(null);
     },
@@ -1940,6 +1925,10 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
   const confirmAddAgent = useCallback(async () => {
     if (!agentAddPreview) return;
     const { agent, config, contextSize, maxTokens, runInterval, setup } = agentAddPreview;
+    if (isManagedAgentType(agent.id)) {
+      setAgentAddPreview(null);
+      return;
+    }
     const builtInMeta = BUILT_IN_AGENTS.find((entry) => entry.id === agent.id) ?? null;
     const isManaged = isManagedAgentType(agent.id);
     let nextSettings: Record<string, unknown> = {
@@ -1983,7 +1972,6 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
         id: chat.id,
         enableAgents: true,
         activeAgentIds: Array.from(new Set([...readLatestActiveAgentIds(), agent.id])),
-        ...(agent.id === "long-term-memory" ? { enableLongTermMemory: true } : {}),
         ...buildAgentAddMetadataPatch(agent.id, setup, metadata, {
           allowSecretPlot: supportsNarrativeDirectorSecretPlot,
         }),
@@ -2337,7 +2325,6 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
               id: chat.id,
               enableAgents: !agentsEnabled,
               activeAgentIds: !agentsEnabled ? readLatestActiveAgentIds() : [],
-              ...(!agentsEnabled ? {} : { enableLongTermMemory: false }),
             })
           }
           className={cn(

@@ -376,6 +376,233 @@ test("LTM notes selection uses shared action bar and opens delete confirmation",
   await expect(page.getByRole("dialog", { name: "Permanently Delete" })).toBeVisible();
 });
 
+test("LTM recall uses the selected chat runtime settings and refreshable source freshness", async ({ page }) => {
+  const response = await page.request.post("/api/chats", {
+    data: {
+      name: "Selected LTM Recall Smoke",
+      mode: "conversation",
+      characterIds: [],
+      groupId: "ltm_selected_recall_group",
+    },
+  });
+  expect(response.ok()).toBeTruthy();
+  const chat = (await response.json()) as { id: string };
+
+  const metadataResponse = await page.request.patch(`/api/chats/${chat.id}/metadata`, {
+    data: {
+      enableLongTermMemory: true,
+      longTermMemoryRecallStyle: "exact",
+      longTermMemoryBudgetTokens: 1536,
+      longTermMemoryMaxChunks: 7,
+      longTermMemoryScoreThreshold: 0.25,
+      longTermMemoryRecallContextMessages: 3,
+      longTermMemorySemanticWeight: 0.11,
+      longTermMemoryLexicalWeight: 0.22,
+      longTermMemoryGraphWeight: 0.33,
+      longTermMemoryKeywordWeight: 0.44,
+      longTermMemoryIncludeResolved: true,
+    },
+  });
+  expect(metadataResponse.ok()).toBeTruthy();
+
+  await page.route("**/api/long-term-memory/settings", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        version: 1,
+        enableLongTermMemory: false,
+        longTermMemoryBudgetTokens: 2048,
+        longTermMemoryMaxChunks: 12,
+        longTermMemoryScoreThreshold: 0,
+        longTermMemoryRecallContextMessages: 4,
+        longTermMemoryRecallStyle: "balanced",
+        longTermMemorySemanticWeight: 0.6,
+        longTermMemoryLexicalWeight: 0.3,
+        longTermMemoryGraphWeight: 0.1,
+        longTermMemoryKeywordWeight: 0.2,
+        longTermMemoryIncludeResolved: false,
+        longTermMemoryRecallPreamble: "Relevant long-term memories for this reply:",
+        longTermMemoryDebug: false,
+      }),
+    });
+  });
+
+  await page.route(/\/api\/long-term-memory\/notes(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        ltmNote({
+          scope: { chatId: chat.id, chatIds: [chat.id], groupId: "ltm_selected_recall_group" },
+          modes: ["conversation"],
+        }),
+      ]),
+    });
+  });
+
+  let recallPayload: Record<string, unknown> | null = null;
+  await page.route("**/api/long-term-memory/search", async (route) => {
+    recallPayload = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        chunks: [],
+        usedTokens: 0,
+        maxTokens: 1536,
+        embeddingsAvailable: false,
+        warnings: [],
+        debug: {
+          weights: {
+            semanticWeight: 0.11,
+            lexicalWeight: 0.22,
+            graphWeight: 0.33,
+            keywordWeight: 0.44,
+          },
+        },
+      }),
+    });
+  });
+
+  let importPreviewRequests = 0;
+  await page.route("**/api/long-term-memory/import/preview", async (route) => {
+    importPreviewRequests += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        source: "chats",
+        scanned: 2,
+        draftable: 1,
+        importedCount: 1,
+        samples: [
+          {
+            sourceId: "chat:changed",
+            title: "Changed session summary",
+            mutationCount: 1,
+            summary: "The source changed after its first import.",
+            snippet: "Changed source text",
+            status: "pending",
+            freshness: "stale",
+            existingNoteId: "source_changed_session",
+            existingNoteTitle: "Previous session summary",
+          },
+          {
+            sourceId: "chat:current",
+            title: "Current session summary",
+            mutationCount: 1,
+            summary: "The source is current.",
+            snippet: "Current source text",
+            status: "imported",
+            freshness: "current",
+            existingNoteId: "source_current_session",
+            existingNoteTitle: "Current session summary",
+          },
+        ],
+      }),
+    });
+  });
+
+  await page.addInitScript((chatId) => {
+    localStorage.setItem("marinara-active-chat-id", chatId);
+  }, chat.id);
+  await page.goto("/");
+
+  const vaultDialog = await openLtmVaultFromAgentEditor(page);
+  await vaultDialog.getByRole("button", { name: "Scene 1 memory" }).click();
+  await vaultDialog.getByRole("button", { name: "Open Shared UI Selection Memory" }).click();
+
+  const noteDialog = page.getByRole("dialog", { name: "Shared UI Selection Memory" });
+  await noteDialog.getByRole("button", { name: "Recall", exact: true }).click();
+  const recallInput = noteDialog.getByLabel("Test recall query for Selected LTM Recall Smoke");
+  await expect(recallInput).toBeVisible();
+  await expect(recallInput).toHaveAccessibleName("Test recall query for Selected LTM Recall Smoke");
+  await expect(noteDialog.getByRole("button", { name: "Test Recall" })).toBeVisible();
+
+  await recallInput.fill("Where is the archive key?");
+  await recallInput.press("Enter");
+  await expect.poll(() => recallPayload).not.toBeNull();
+  expect(recallPayload).toMatchObject({
+    mode: "conversation",
+    scope: { chatId: chat.id, chatIds: [chat.id], groupId: "ltm_selected_recall_group" },
+    characterIds: [],
+    includeResolved: true,
+    maxChunks: 7,
+    maxTokens: 1536,
+    minScore: 0.25,
+    semanticWeight: 0.11,
+    lexicalWeight: 0.22,
+    graphWeight: 0.33,
+    keywordWeight: 0.44,
+  });
+
+  await noteDialog.getByRole("button", { name: "Close dialog" }).click();
+  await expect(noteDialog).toBeHidden();
+  await vaultDialog.getByRole("tab", { name: "Import" }).click();
+  await expect(vaultDialog.getByText("Source changed", { exact: true })).toBeVisible();
+  await vaultDialog.getByRole("button", { name: /Imported source/ }).click();
+  await expect(vaultDialog.getByText("Current", { exact: true })).toBeVisible();
+  const refreshButton = vaultDialog.getByRole("button", { name: "Refresh available imports" });
+  await expect(refreshButton).toBeVisible();
+  await refreshButton.click();
+  await expect.poll(() => importPreviewRequests).toBeGreaterThanOrEqual(2);
+});
+
+test("LTM chat overrides flush when Chat Settings closes", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "LTM debounce persistence is covered on desktop.");
+
+  const response = await page.request.post("/api/chats", {
+    data: {
+      name: "LTM Override Flush Smoke",
+      mode: "conversation",
+      characterIds: [],
+    },
+  });
+  expect(response.ok()).toBeTruthy();
+  const chat = (await response.json()) as { id: string };
+
+  const metadataResponse = await page.request.patch(`/api/chats/${chat.id}/metadata`, {
+    data: { enableLongTermMemory: true },
+  });
+  expect(metadataResponse.ok()).toBeTruthy();
+
+  await page.addInitScript((chatId) => {
+    localStorage.setItem("marinara-active-chat-id", chatId);
+  }, chat.id);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Chat Settings" }).click();
+  const drawer = page.locator(".mari-chat-settings-drawer");
+  await drawer.getByRole("button", { name: /^Agents/ }).click();
+  const budgetInput = drawer.getByRole("spinbutton", { name: "Recall context budget" });
+  const chunksInput = drawer.getByRole("spinbutton", { name: "Max memories injected" });
+  await budgetInput.fill("1536");
+  await chunksInput.fill("7");
+  await drawer.getByRole("button", { name: "Close chat settings" }).click();
+
+  await expect
+    .poll(async () => {
+      const current = await page.request.get(`/api/chats/${chat.id}`);
+      if (!current.ok()) return null;
+      const body = (await current.json()) as {
+        metadata?: string | { longTermMemoryBudgetTokens?: number; longTermMemoryMaxChunks?: number };
+      };
+      const metadata =
+        typeof body.metadata === "string"
+          ? (JSON.parse(body.metadata) as { longTermMemoryBudgetTokens?: number; longTermMemoryMaxChunks?: number })
+          : body.metadata;
+      return [metadata?.longTermMemoryBudgetTokens, metadata?.longTermMemoryMaxChunks];
+    })
+    .toEqual([1536, 7]);
+
+  await page.reload();
+  await page.getByRole("button", { name: "Chat Settings" }).click();
+  await drawer.getByRole("button", { name: /^Agents/ }).click();
+  await expect(drawer.getByRole("spinbutton", { name: "Recall context budget" })).toHaveValue("1536");
+  await expect(drawer.getByRole("spinbutton", { name: "Max memories injected" })).toHaveValue("7");
+});
+
 test("LTM import selection shows shared action bar and keeps imported rows disabled", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("desktop"), "LTM shared action bar import coverage runs on desktop.");
 

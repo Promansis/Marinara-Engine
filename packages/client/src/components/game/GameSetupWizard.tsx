@@ -666,7 +666,7 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
         spotifyArtist:
           enableSpotifyDj && gameSpotifySourceType === "artist" ? gameSpotifyArtist.trim() || undefined : undefined,
         enableLorebookKeeper: enableLorebookKeeper || undefined,
-        enableLongTermMemory: enableLongTermMemory || undefined,
+        enableLongTermMemory,
         language: normalizedLanguage || undefined,
         generationParameters: customizeParameters ? generationParameters : undefined,
         promptPresetId,
@@ -1526,6 +1526,7 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                 <button
                   type="button"
                   onClick={() => setEnableLongTermMemory((prev) => !prev)}
+                  aria-pressed={enableLongTermMemory}
                   className={cn(
                     "flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left transition-all",
                     enableLongTermMemory

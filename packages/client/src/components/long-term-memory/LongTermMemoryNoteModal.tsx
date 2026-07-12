@@ -1,6 +1,14 @@
 import { useMemo } from "react";
 import { Loader2, Pencil, Search } from "lucide-react";
-import type { Chat, LtmDraftMutation, LtmExtractionDraft, LtmExtractionDroppedCandidate, LtmLink, LtmNote } from "@marinara-engine/shared";
+import type {
+  Chat,
+  LtmDraftMutation,
+  LtmExtractionDraft,
+  LtmExtractionDroppedCandidate,
+  LtmLink,
+  LtmMode,
+  LtmNote,
+} from "@marinara-engine/shared";
 import {
   dedupeEvidenceEntries,
   displayNoteTitle,
@@ -422,41 +430,53 @@ function MemoryContentsPanel({
 }
 
 function MemoryRecallPanel({
-  note,
   result,
   pending,
   query,
+  context,
   onQueryChange,
   onRun,
 }: {
-  note: LtmNote;
   result: LtmSearchResponse | null;
   pending: boolean;
   query: string;
+  context: { chatLabel: string | null; mode: LtmMode | null; enabled: boolean };
   onQueryChange: (query: string) => void;
   onRun: () => void;
 }) {
+  const canRun = Boolean(context.chatLabel && context.enabled && query.trim() && !pending);
   return (
     <div className="space-y-3">
+      {!context.chatLabel ? (
+        <p role="alert" className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-100">
+          Choose a specific chat branch in the memory navigator before testing recall.
+        </p>
+      ) : !context.enabled ? (
+        <p role="status" className="rounded-lg bg-[var(--secondary)]/35 p-3 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+          Long-Term Memory is off for {context.chatLabel}. Turn it on in Chat Settings before testing recall.
+        </p>
+      ) : null}
       <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
         <input
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter") onRun();
+            if (event.key === "Enter" && canRun) onRun();
           }}
           placeholder="Test a recall query"
+          aria-label={context.chatLabel ? `Test recall query for ${context.chatLabel}` : "Test recall query"}
+          disabled={!context.chatLabel || !context.enabled}
           className={inputClassName}
         />
-        <ToolButton onClick={onRun} disabled={!query.trim() || pending} tone="primary">
+        <ToolButton onClick={onRun} disabled={!canRun} tone="primary">
           {pending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Search size="0.875rem" />}
-          Test
+          Test Recall
         </ToolButton>
       </div>
       <div className="rounded-lg bg-[var(--secondary)]/25 p-3 ring-1 ring-[var(--border)]">
         <div className="flex flex-wrap gap-1.5">
-          <StatusPill label={`Focused on ${friendlyNoteType(note.type)}`} />
-          <StatusPill label={friendlyStatus(note.status)} tone={note.status === "active" ? "good" : "neutral"} />
+          <StatusPill label={context.chatLabel ? `Selected chat: ${context.chatLabel}` : "No chat selected"} />
+          {context.mode && <StatusPill label={friendlyMode(context.mode)} />}
           <StatusPill label="Debug funnel on" />
         </div>
       </div>
@@ -621,6 +641,7 @@ export function MemoryNoteModal({
   recallQuery,
   recallResult,
   recallPending,
+  recallContext,
   editorDirty,
   latestExtractionResult,
   onClose,
@@ -648,6 +669,7 @@ export function MemoryNoteModal({
   recallQuery: string;
   recallResult: LtmSearchResponse | null;
   recallPending: boolean;
+  recallContext: { chatLabel: string | null; mode: LtmMode | null; enabled: boolean };
   editorDirty: boolean;
   latestExtractionResult: LongTermMemoryLatestExtractionResult | null;
   onClose: () => void;
@@ -751,10 +773,10 @@ export function MemoryNoteModal({
               )}
               {safeActiveTab === "recall" && !isSourceNote && (
                 <MemoryRecallPanel
-                  note={note}
                   result={recallResult}
                   pending={recallPending}
                   query={recallQuery}
+                  context={recallContext}
                   onQueryChange={onRecallQueryChange}
                   onRun={onRunRecall}
                 />

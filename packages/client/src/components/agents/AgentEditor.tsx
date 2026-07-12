@@ -730,7 +730,10 @@ export function AgentEditor() {
     },
     [patchGlobalSettings],
   );
-  const debouncedPatchGlobal = useDebouncedRecallSettings(autosaveLtmRecallDraft, 400);
+  const { flush: flushLtmRecallDraft, schedule: debouncedPatchGlobal } = useDebouncedRecallSettings(
+    autosaveLtmRecallDraft,
+    400,
+  );
   const [recallAdvancedOpen, setRecallAdvancedOpen] = useState(false);
   const [maintenanceOpen, setMaintenanceOpen] = useState(false);
   const rebuildMemories = useRebuildLongTermMemory();
@@ -1266,6 +1269,7 @@ export function AgentEditor() {
 
   const handleSave = useCallback(async (): Promise<boolean> => {
     if (!agentDetailId) return false;
+    flushLtmRecallDraft();
     setSaveError(null);
     if (isLtmAgent && ltmPromptDraftDirty) {
       setSaveError("Save the prompt option in Extraction Prompt before saving the agent.");
@@ -1544,6 +1548,7 @@ export function AgentEditor() {
     isKnowledgeRetrievalAgent,
     isKnowledgeRouterAgent,
     isLtmAgent,
+    flushLtmRecallDraft,
     ltmPromptDraftDirty,
     ltmDraft,
     updateAgent,

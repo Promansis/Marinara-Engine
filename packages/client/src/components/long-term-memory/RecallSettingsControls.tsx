@@ -375,22 +375,45 @@ export function RecallToggles({
 
 /* ── Debounce hook ── */
 
-export function useDebouncedRecallSettings(onChange: (patch: Partial<RecallSettingsValues>) => void, delay = 400) {
+export function useDebouncedRecallSettings(
+  onChange: (patch: Partial<RecallSettingsValues>) => void,
+  delay = 400,
+  scopeKey?: string,
+) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingRef = useRef<{
+    patch: Partial<RecallSettingsValues>;
+    onChange: (patch: Partial<RecallSettingsValues>) => void;
+  } | null>(null);
+
+  const flush = useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    const pending = pendingRef.current;
+    pendingRef.current = null;
+    if (pending) pending.onChange(pending.patch);
+  }, []);
 
   useEffect(() => {
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
+      flush();
     };
-  }, []);
+  }, [flush, scopeKey]);
 
-  const debouncedOnChange = useCallback(
-    (values: Partial<RecallSettingsValues>) => {
+  const schedule = useCallback(
+    (patch: Partial<RecallSettingsValues>) => {
       if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => onChange(values), delay);
+      const pending = pendingRef.current;
+      pendingRef.current = {
+        patch: { ...(pending?.patch ?? {}), ...patch },
+        onChange,
+      };
+      timerRef.current = setTimeout(flush, delay);
     },
-    [onChange, delay],
+    [delay, flush, onChange],
   );
 
-  return debouncedOnChange;
+  return { flush, schedule };
 }

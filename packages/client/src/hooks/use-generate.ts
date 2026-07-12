@@ -11,6 +11,7 @@ import { chatBackgroundMetadataToUrl } from "../lib/backgrounds";
 import { formatGenerationParameterError } from "../lib/generation-parameter-errors";
 import { requestChatScrollToBottom } from "../lib/chat-scroll-events";
 import { agentKeys } from "./use-agents";
+import { longTermMemoryKeys } from "./use-long-term-memory";
 import { discardPendingGameStatePatch } from "./use-game-state-patcher";
 import { turnGameKeys } from "./turn-game-keys";
 import type { PendingAgentWriteApproval, PendingCardUpdate } from "../stores/agent.store";
@@ -2151,6 +2152,7 @@ export function useGenerate() {
 
             case "done": {
               sawDoneEvent = true;
+              qc.invalidateQueries({ queryKey: longTermMemoryKeys.lastInjection(params.chatId) });
               if (spriteChangeReceived) {
                 qc.invalidateQueries({ queryKey: chatKeys.messages(params.chatId) });
               }

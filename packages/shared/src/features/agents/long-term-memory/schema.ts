@@ -1742,10 +1742,18 @@ const ltmInteropPreviewSampleBaseSchema = z.object({
 });
 
 export const ltmInteropPreviewSampleSchema = z.discriminatedUnion("status", [
-  ltmInteropPreviewSampleBaseSchema.extend({ status: z.literal("pending") }).strict(),
+  ltmInteropPreviewSampleBaseSchema
+    .extend({
+      status: z.literal("pending"),
+      freshness: z.enum(["new", "stale"]).default("new"),
+      existingNoteId: ltmNoteIdSchema.optional(),
+      existingNoteTitle: z.string().min(1).max(240).optional(),
+    })
+    .strict(),
   ltmInteropPreviewSampleBaseSchema
     .extend({
       status: z.literal("imported"),
+      freshness: z.literal("current").default("current"),
       existingNoteId: ltmNoteIdSchema,
       existingNoteTitle: z.string().min(1).max(240),
     })

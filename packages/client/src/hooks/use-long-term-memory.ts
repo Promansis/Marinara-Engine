@@ -78,6 +78,7 @@ export type LtmSearchInput = {
   mentionedCharacterNames?: string[];
   noteIds?: string[];
   tags?: string[];
+  mode?: LtmMode;
   scope?: LtmScope;
   characterIds?: string[];
   includeResolved?: boolean;

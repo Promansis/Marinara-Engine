@@ -1049,14 +1049,23 @@ export async function previewLongTermMemoryInterop(
       candidate,
       sourceScopeForImportCandidate(candidate, scope),
     );
-    return existing && extractionFingerprintsEqual(existing.extractionFingerprint, extractionFingerprint)
-      ? {
-          ...preview,
-          status: "imported" as const,
-          existingNoteId: existing.id,
-          existingNoteTitle: existing.title?.trim() || candidate.title,
-        }
-      : { ...preview, status: "pending" as const };
+    if (!existing) return { ...preview, status: "pending" as const, freshness: "new" as const };
+    if (extractionFingerprintsEqual(existing.extractionFingerprint, extractionFingerprint)) {
+      return {
+        ...preview,
+        status: "imported" as const,
+        freshness: "current" as const,
+        existingNoteId: existing.id,
+        existingNoteTitle: existing.title?.trim() || candidate.title,
+      };
+    }
+    return {
+      ...preview,
+      status: "pending" as const,
+      freshness: "stale" as const,
+      existingNoteId: existing.id,
+      existingNoteTitle: existing.title?.trim() || candidate.title,
+    };
   });
   return {
     source,

@@ -64,6 +64,7 @@ export * from "./constants/conversation-prompt.js";
 export * from "./constants/game-prompt.js";
 export * from "./constants/achievements.js";
 export * from "./features/agents/long-term-memory/constants.js";
+export * from "./features/agents/long-term-memory/runtime-settings.js";
 export * from "./features/agents/long-term-memory/utils.js";
 
 // Feature registries

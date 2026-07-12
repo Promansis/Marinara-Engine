@@ -594,7 +594,9 @@ test("manual source extraction persists successful retry state", async () => {
     assert.equal(response.statusCode, 200);
     assert((await new LongTermMemoryStorage(root).getNote(sourceNote.id))?.extractionFingerprint);
     const preview = await previewLongTermMemoryInterop(app.db, "chats", 100, root);
-    assert.equal(preview.samples.find((sample) => sample.sourceId === `${chat.id}:game_journal`)?.status, "imported");
+    const currentSample = preview.samples.find((sample) => sample.sourceId === `${chat.id}:game_journal`);
+    assert.equal(currentSample?.status, "imported");
+    assert.equal(currentSample?.freshness, "current");
 
     await chats.updateMetadata(chat.id, {
       gamePreviousSessionSummaries: [
@@ -614,7 +616,9 @@ test("manual source extraction persists successful retry state", async () => {
       ],
     });
     const stalePreview = await previewLongTermMemoryInterop(app.db, "chats", 100, root);
-    assert.equal(stalePreview.samples.find((sample) => sample.sourceId === `${chat.id}:game_journal`)?.status, "pending");
+    const staleSample = stalePreview.samples.find((sample) => sample.sourceId === `${chat.id}:game_journal`);
+    assert.equal(staleSample?.status, "pending");
+    assert.equal(staleSample?.freshness, "stale");
   });
 });
 

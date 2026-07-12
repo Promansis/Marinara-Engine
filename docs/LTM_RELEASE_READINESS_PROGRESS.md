@@ -8,14 +8,15 @@ Resume Here section short and current; keep completed phase records durable.
 
 - Branch: `fix/ltm-staging-port-rebase`
 - Audit baseline: `c83d66e6edee6c0a9b3ab3021265461b4ff1a1b1`
-- Current phase: Phase 7 - Mode-Neutral Production Recall
-- State: Phase 6 is committed locally as `d06bca17`; Phase 7 implementation
+- Current phase: Phase 8 - Truthful Client Behavior and Accessibility
+- State: Phase 7 is committed locally as `1efa7658`; Phase 8 implementation
   and validation are complete locally with its atomic commit pending
-- Next entrypoint: commit the completed Phase 7 scope, then begin Phase 8
-  truthful client behavior and accessibility work
-- Uncommitted scope: Phase 7 generation orchestration, mode/preset provider
-  payload coverage, focused regression updates, and this progress update
-- Blockers: no Phase 7 implementation blocker. Phase 2's platform-specific
+- Next entrypoint: commit the completed Phase 8 scope, then begin Phase 9
+  consistent full-backup restore work
+- Uncommitted scope: Phase 8 shared settings resolution, client runtime state,
+  import freshness, accessibility, focused browser coverage, and this progress
+  update
+- Blockers: no Phase 8 implementation blocker. Phase 2's platform-specific
   interrupted-write proof gap remains recorded below.
 
 ## Non-Negotiable Decisions
@@ -62,8 +63,8 @@ proof that a later implementation phase passes.
 | 4 - Context-bound capture and refresh | Committed locally (`d7592ca0`) | Complete | Focused import/freshness/route proof, 339-test server suite, prompt regression, static/build validation, and targeted desktop/mobile browser flows passed |
 | 5 - Recall settings, eligibility, and relevance | Committed locally (`881027c8`) | Complete | Focused 135-test LTM proof, 343-test server suite, prompt regression, static/build validation, and an isolated desktop LTM settings flow passed |
 | 6 - Safe prompt artifacts and truthful receipts | Committed locally (`d06bca17`) | Complete | Focused artifact/receipt proof, 350-test server suite, prompt regression, static/build validation, and durable Last Injection route proof passed |
-| 7 - Mode-neutral production recall | Implementation and validation complete locally | Commit pending | Focused orchestrator and live provider-payload proof across every mode/preset state, 353-test server suite, prompt regression, and static/build validation passed |
-| 8 - Truthful client behavior and accessibility | Not started | Pending | Not run |
+| 7 - Mode-neutral production recall | Committed locally (`1efa7658`) | Complete | Focused orchestrator and live provider-payload proof across every mode/preset state, 353-test server suite, prompt regression, and static/build validation passed |
+| 8 - Truthful client behavior and accessibility | Implementation and validation complete locally | Commit pending | Focused 146-test LTM proof, prompt regression, static/build validation, and 36-test desktop/mobile browser smoke passed |
 | 9 - Consistent full-backup restore | Not started | Pending | Not run |
 | 10 - Bounded exact retrieval and dead-path cleanup | Not started | Pending | Not run |
 | 11 - Final release-readiness proof | Not started | Pending | Not run |
@@ -519,11 +520,11 @@ and mode guards while preserving the Phase 6 artifact and receipt contracts.
 
 Started: 2026-07-12
 
-Completed: 2026-07-12 locally; atomic commit pending
+Completed: 2026-07-12
 
 Baseline HEAD: `d06bca17` (`fix(ltm): make prompt injection and receipts truthful`)
 
-Commit: pending
+Commit: `1efa7658` (`fix(ltm): enable mode-neutral generation recall`)
 
 Scope:
 
@@ -573,12 +574,83 @@ is written.
 
 Residual risk: the route fixture uses a local OpenAI-compatible recording
 provider and proves final request payloads, but it does not exercise every
-remote provider adapter's message transformation. Phase 8 still owns client
-state, selected-chat Test Recall, persistence, accessibility, and browser proof.
+remote provider adapter's message transformation. Phase 8 supplies the client
+state, persistence, accessibility, and browser proof recorded below.
 
-Next entrypoint: commit the completed Phase 7 scope, then begin Phase 8 by
-aligning client recall controls and accessibility behavior with these runtime
-contracts.
+Next entrypoint: continue with the completed Phase 8 record below, then begin
+Phase 9 full-backup restore work.
+
+### Phase 8 - Truthful Client Behavior and Accessibility
+
+Started: 2026-07-12
+
+Completed: 2026-07-12 locally; atomic commit pending
+
+Baseline HEAD: `1efa7658` (`fix(ltm): enable mode-neutral generation recall`)
+
+Commit: pending
+
+Scope:
+
+- Moved the production recall-settings resolver into a shared pure contract so
+  generation, chat controls, and vault Test Recall use the same enablement,
+  style, sparse override, weight, and fallback rules.
+- Made the Chat Settings LTM card runtime-owned: it follows resolved LTM
+  settings rather than `activeAgentIds`, controls only
+  `enableLongTermMemory`, keeps Last Injection visible even when recall is
+  off, and refreshes that receipt when generation completes.
+- Excluded the managed LTM agent from generic Chat Settings and setup-wizard
+  add/remove paths while retaining the dedicated LTM controls and vault.
+- Made Test Recall use the selected concrete branch, its group/character
+  scope, LTM mode, recent context, all resolved ranking weights including
+  `keywordWeight`, and truthful disabled/no-branch states.
+- Distinguished new, stale, and current import sources in the shared preview
+  contract and vault UI; stale sources remain actionable as refreshes.
+- Flushed debounced chat/global recall edits on close, scope changes, saves,
+  and unmount; rapid Chat Settings edits now persist before reload.
+- Added accessible modal close names, recall labels/statuses, pressed states,
+  loading/error/empty states, a refresh control, and keyboard Test Recall
+  behavior. Cleared extraction candidates now remove only actionable recovery
+  controls while keeping historical accounting visible.
+
+Compatibility and mode behavior:
+
+- Existing `activeAgentIds` values are left intact for compatibility, but they
+  no longer determine whether LTM recalls at runtime. Conversation, Roleplay,
+  Visual Novel compatibility, and Game resolve from the same settings contract.
+- Pending legacy import-preview rows default to `new`; already imported rows
+  default to `current`. The server emits explicit freshness for every newly
+  generated preview.
+- Test Recall requires a concrete branch. Group-level navigation remains
+  available for vault browsing, and selecting a branch carries its `groupId`
+  into the search scope.
+
+Validation:
+
+| Command | Result |
+| --- | --- |
+| `env LOG_LEVEL=silent pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/contracts.spec.ts src/services/long-term-memory/__tests__/import-pipeline.spec.ts src/services/long-term-memory/__tests__/reconciliation.spec.ts` | Passed: 146 tests, 0 failed; covers shared resolver behavior, import freshness, and production recall contracts |
+| `pnpm regression:prompt` | Passed deterministic prompt, macro, lorebook, summary, and mode regressions |
+| `pnpm check` | Passed Impeccable context check, workspace lint, TypeScript, and production builds |
+| `pnpm smoke:ui` | Passed: 36 desktop/mobile browser tests, including loading/error, recovery, selection, refresh, and mobile overflow flows |
+| `PLAYWRIGHT_SKIP_WEBSERVER=true PLAYWRIGHT_BASE_URL=http://127.0.0.1:5179 pnpm exec playwright test -c playwright.config.ts --project=desktop-chromium -g 'LTM recall uses the selected chat runtime settings' --timeout=60000 --reporter=line` | Passed: 1 test; verifies group-scoped Test Recall payloads, all resolved weights, keyboard operation, and import freshness |
+| `PLAYWRIGHT_SKIP_WEBSERVER=true PLAYWRIGHT_BASE_URL=http://127.0.0.1:5179 pnpm exec playwright test -c playwright.config.ts --project=desktop-chromium -g 'LTM chat overrides flush' --timeout=60000 --reporter=line` | Passed: 1 test; verifies close/reload persistence of rapid overrides |
+| `PLAYWRIGHT_SKIP_WEBSERVER=true PLAYWRIGHT_BASE_URL=http://127.0.0.1:5179 pnpm exec playwright test -c playwright.config.ts --project=mobile-chromium -g 'LTM recall uses the selected chat runtime settings' --timeout=60000 --reporter=line` | Passed: 1 test; verifies the selected-chat, keyboard, freshness, and refresh flow on mobile |
+| `git diff --check` | Passed after the final documentation update |
+| `marinara-doc-check` | Not installed; `command -v marinara-doc-check` returned no executable and no checked-in equivalent command is available |
+
+Manual proof: not completed. With a configured remote provider, verify that a
+real recalled turn and Last Injection receipt agree after toggling LTM in each
+supported mode. Verify the touched controls with the target screen reader and
+on a packaged mobile/device build.
+
+Residual risk: browser proof uses local route fixtures for recall and receipt
+states, not every remote provider adapter or assistive-technology stack. The
+Phase 2 interrupted-write platform proof gap remains, and full-backup restore
+is still owned by Phase 9.
+
+Next entrypoint: commit the completed Phase 8 scope, then begin Phase 9 with
+an opt-in, atomic full-backup LTM restore staging path.
 
 ## Progress Update Template
 
