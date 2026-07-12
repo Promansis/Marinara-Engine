@@ -9,6 +9,7 @@ import {
 } from "@marinara-engine/shared";
 import { readJsonFile, writeJsonAtomic } from "./atomic-json.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
+import { withLtmVaultLock } from "./vault-lock.js";
 
 function settingsPath(root = getLongTermMemoryRoot()) {
   return safeJoin(getLongTermMemoryDirectories(root).config, "settings.json");
@@ -130,19 +131,22 @@ export async function updateLtmGlobalSettings(
   input: unknown,
   root = getLongTermMemoryRoot(),
 ): Promise<LtmResolvedGlobalSettings> {
-  const existingRaw = await readJsonFile<unknown>(settingsPath(root), { version: 1 });
-  const existing = ltmGlobalSettingsSchema.parse(existingRaw);
-  const patch = ltmGlobalSettingsSchema.parse(input ?? {});
-  const styleChanged =
-    patch.longTermMemoryRecallStyle !== undefined && patch.longTermMemoryRecallStyle !== existing.longTermMemoryRecallStyle;
-  const patchClearsWeights = styleChanged && RECALL_WEIGHT_KEYS.every((key) => patch[key] === undefined);
-  const merged: LtmGlobalSettings = { ...existing, ...patch, version: 1 };
-  if (patchClearsWeights) {
-    for (const key of RECALL_WEIGHT_KEYS) {
-      merged[key] = null;
+  return withLtmVaultLock(root, async () => {
+    const existingRaw = await readJsonFile<unknown>(settingsPath(root), { version: 1 });
+    const existing = ltmGlobalSettingsSchema.parse(existingRaw);
+    const patch = ltmGlobalSettingsSchema.parse(input ?? {});
+    const styleChanged =
+      patch.longTermMemoryRecallStyle !== undefined &&
+      patch.longTermMemoryRecallStyle !== existing.longTermMemoryRecallStyle;
+    const patchClearsWeights = styleChanged && RECALL_WEIGHT_KEYS.every((key) => patch[key] === undefined);
+    const merged: LtmGlobalSettings = { ...existing, ...patch, version: 1 };
+    if (patchClearsWeights) {
+      for (const key of RECALL_WEIGHT_KEYS) {
+        merged[key] = null;
+      }
     }
-  }
-  const parsed = normalizePersistedSettings(merged);
-  await writeJsonAtomic(settingsPath(root), parsed);
-  return resolveGlobalSettings(parsed);
+    const parsed = normalizePersistedSettings(merged);
+    await writeJsonAtomic(settingsPath(root), parsed);
+    return resolveGlobalSettings(parsed);
+  });
 }

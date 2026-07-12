@@ -8,15 +8,11 @@ Resume Here section short and current; keep completed phase records durable.
 
 - Branch: `fix/ltm-staging-port-rebase`
 - Audit baseline: `c83d66e6edee6c0a9b3ab3021265461b4ff1a1b1`
-- Current phase: Phase 8 - Truthful Client Behavior and Accessibility
-- State: Phase 7 is committed locally as `1efa7658`; Phase 8 implementation
-  and validation are complete locally with its atomic commit pending
-- Next entrypoint: commit the completed Phase 8 scope, then begin Phase 9
-  consistent full-backup restore work
-- Uncommitted scope: Phase 8 shared settings resolution, client runtime state,
-  import freshness, accessibility, focused browser coverage, and this progress
-  update
-- Blockers: no Phase 8 implementation blocker. Phase 2's platform-specific
+- Current phase: Phase 10 - Bounded Exact Retrieval and Dead-Path Cleanup
+- State: Phase 9 is complete; Phase 10 has not started
+- Next entrypoint: begin Phase 10 bounded exact retrieval and dead-path cleanup
+- Uncommitted scope: none
+- Blockers: no Phase 9 implementation blocker. Phase 2's platform-specific
   interrupted-write proof gap remains recorded below.
 
 ## Non-Negotiable Decisions
@@ -40,34 +36,34 @@ Resume Here section short and current; keep completed phase records durable.
 
 Audit performed read-only at `c83d66e6`:
 
-| Proof | Baseline result |
-| --- | --- |
-| Tracked server LTM suites | 322 passed, 0 failed; all 19 tracked specs discovered |
-| Deterministic prompt regression | Passed |
-| Focused LTM Playwright flow | 11 passed, 11 expected project-specific skips |
-| `pnpm check` | Passed lint, TypeScript, and production builds; existing Vite large-chunk advisory remained |
-| Negative controls | Reproduced reachability, deleted-cache recall, lost update, prompt breakout, auth bypass, stale weights, weak relevance, budget, corruption, mixed-generation, dangling-link, event, and receipt failures |
-| Worktree after audit | Clean |
+| Proof                           | Baseline result                                                                                                                                                                                           |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tracked server LTM suites       | 322 passed, 0 failed; all 19 tracked specs discovered                                                                                                                                                     |
+| Deterministic prompt regression | Passed                                                                                                                                                                                                    |
+| Focused LTM Playwright flow     | 11 passed, 11 expected project-specific skips                                                                                                                                                             |
+| `pnpm check`                    | Passed lint, TypeScript, and production builds; existing Vite large-chunk advisory remained                                                                                                               |
+| Negative controls               | Reproduced reachability, deleted-cache recall, lost update, prompt breakout, auth bypass, stale weights, weak relevance, budget, corruption, mixed-generation, dangling-link, event, and receipt failures |
+| Worktree after audit            | Clean                                                                                                                                                                                                     |
 
 This evidence describes the unremediated baseline. It must not be reused as
 proof that a later implementation phase passes.
 
 ## Phase Ledger
 
-| Phase | State | Commit | Validation summary |
-| --- | --- | --- | --- |
-| 0 - Documentation baseline | Complete | Commit subject below | Direct path checks and `git diff --check` passed |
-| 1 - Security and managed-agent lifecycle | Complete | Commit subject below | Focused route/lifecycle proof, server suite, static build, and prompt regression passed; one unrelated browser smoke failure recorded |
-| 2 - Transactional vault mutations | Complete | Commit subject below | Focused transaction/recovery proof, affected LTM suites, full server suite, prompt regression, and static validation passed |
-| 3 - Coherent index recovery | Committed locally (`941b20d0`) | Complete | Focused corruption/recovery proof, 334-test server suite, prompt regression, and static/build validation passed |
-| 4 - Context-bound capture and refresh | Committed locally (`d7592ca0`) | Complete | Focused import/freshness/route proof, 339-test server suite, prompt regression, static/build validation, and targeted desktop/mobile browser flows passed |
-| 5 - Recall settings, eligibility, and relevance | Committed locally (`881027c8`) | Complete | Focused 135-test LTM proof, 343-test server suite, prompt regression, static/build validation, and an isolated desktop LTM settings flow passed |
-| 6 - Safe prompt artifacts and truthful receipts | Committed locally (`d06bca17`) | Complete | Focused artifact/receipt proof, 350-test server suite, prompt regression, static/build validation, and durable Last Injection route proof passed |
-| 7 - Mode-neutral production recall | Committed locally (`1efa7658`) | Complete | Focused orchestrator and live provider-payload proof across every mode/preset state, 353-test server suite, prompt regression, and static/build validation passed |
-| 8 - Truthful client behavior and accessibility | Implementation and validation complete locally | Commit pending | Focused 146-test LTM proof, prompt regression, static/build validation, and 36-test desktop/mobile browser smoke passed |
-| 9 - Consistent full-backup restore | Not started | Pending | Not run |
-| 10 - Bounded exact retrieval and dead-path cleanup | Not started | Pending | Not run |
-| 11 - Final release-readiness proof | Not started | Pending | Not run |
+| Phase                                              | State                                          | Commit               | Validation summary                                                                                                                                                |
+| -------------------------------------------------- | ---------------------------------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0 - Documentation baseline                         | Complete                                       | Commit subject below | Direct path checks and `git diff --check` passed                                                                                                                  |
+| 1 - Security and managed-agent lifecycle           | Complete                                       | Commit subject below | Focused route/lifecycle proof, server suite, static build, and prompt regression passed; one unrelated browser smoke failure recorded                             |
+| 2 - Transactional vault mutations                  | Complete                                       | Commit subject below | Focused transaction/recovery proof, affected LTM suites, full server suite, prompt regression, and static validation passed                                       |
+| 3 - Coherent index recovery                        | Committed locally (`941b20d0`)                 | Complete             | Focused corruption/recovery proof, 334-test server suite, prompt regression, and static/build validation passed                                                   |
+| 4 - Context-bound capture and refresh              | Committed locally (`d7592ca0`)                 | Complete             | Focused import/freshness/route proof, 339-test server suite, prompt regression, static/build validation, and targeted desktop/mobile browser flows passed         |
+| 5 - Recall settings, eligibility, and relevance    | Committed locally (`881027c8`)                 | Complete             | Focused 135-test LTM proof, 343-test server suite, prompt regression, static/build validation, and an isolated desktop LTM settings flow passed                   |
+| 6 - Safe prompt artifacts and truthful receipts    | Committed locally (`d06bca17`)                 | Complete             | Focused artifact/receipt proof, 350-test server suite, prompt regression, static/build validation, and durable Last Injection route proof passed                  |
+| 7 - Mode-neutral production recall                 | Committed locally (`1efa7658`)                 | Complete             | Focused orchestrator and live provider-payload proof across every mode/preset state, 353-test server suite, prompt regression, and static/build validation passed |
+| 8 - Truthful client behavior and accessibility     | Committed locally (`5ced1bc7`)                 | Complete             | Focused 146-test LTM proof, prompt regression, static/build validation, and 36-test desktop/mobile browser smoke passed                                           |
+| 9 - Consistent full-backup restore                 | Complete                                       | Commit subject below | Focused snapshot/restore and ZIP route proof, tracked LTM specs, prompt regression, static/build validation, and browser smoke passed                              |
+| 10 - Bounded exact retrieval and dead-path cleanup | Not started                                    | Pending              | Not run                                                                                                                                                           |
+| 11 - Final release-readiness proof                 | Not started                                    | Pending              | Not run                                                                                                                                                           |
 
 ## Phase Records
 
@@ -90,10 +86,10 @@ Changed behavior: none; documentation only.
 
 Validation:
 
-| Command | Result |
-| --- | --- |
-| `git diff --check` | Passed |
-| Direct referenced-path checks | Passed |
+| Command                                                    | Result |
+| ---------------------------------------------------------- | ------ |
+| `git diff --check`                                         | Passed |
+| Direct referenced-path checks                              | Passed |
 | Phase, commit-subject, and resume-section checks with `rg` | Passed |
 
 The workflow-recommended `marinara-doc-check` executable is not installed in
@@ -146,16 +142,16 @@ Compatibility and migration:
 
 Validation:
 
-| Command | Result |
-| --- | --- |
-| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/routes.spec.ts src/services/long-term-memory/__tests__/managed-agent-lifecycle.spec.ts` | Passed: 19 tests, 0 failed |
-| `pnpm --filter @marinara-engine/server test` | Passed: 325 tests, 0 failed |
-| `pnpm --filter @marinara-engine/server lint` | Passed TypeScript validation |
-| `pnpm check` | Passed Impeccable context check, workspace lint, TypeScript, and production builds |
-| `pnpm regression:prompt` | Passed deterministic prompt and mode regression checks |
-| Isolated Playwright rerun on ports 5180/7973 | 17 passed, 14 expected skips, 1 unrelated failure: `manual memory recovery survives dismissing the create modal` left `Remove all` visible after dismissal |
-| `git diff --check` | Passed |
-| `marinara-doc-check` | Not installed; no checked-in equivalent command is available |
+| Command                                                                                                                                                                                | Result                                                                                                                                                     |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/routes.spec.ts src/services/long-term-memory/__tests__/managed-agent-lifecycle.spec.ts` | Passed: 19 tests, 0 failed                                                                                                                                 |
+| `pnpm --filter @marinara-engine/server test`                                                                                                                                           | Passed: 325 tests, 0 failed                                                                                                                                |
+| `pnpm --filter @marinara-engine/server lint`                                                                                                                                           | Passed TypeScript validation                                                                                                                               |
+| `pnpm check`                                                                                                                                                                           | Passed Impeccable context check, workspace lint, TypeScript, and production builds                                                                         |
+| `pnpm regression:prompt`                                                                                                                                                               | Passed deterministic prompt and mode regression checks                                                                                                     |
+| Isolated Playwright rerun on ports 5180/7973                                                                                                                                           | 17 passed, 14 expected skips, 1 unrelated failure: `manual memory recovery survives dismissing the create modal` left `Remove all` visible after dismissal |
+| `git diff --check`                                                                                                                                                                     | Passed                                                                                                                                                     |
+| `marinara-doc-check`                                                                                                                                                                   | Not installed; no checked-in equivalent command is available                                                                                               |
 
 Manual proof: not completed. Verify the Long-Term Memory card in the Agents
 panel on desktop and mobile: it remains reachable, has no copy/delete controls,
@@ -277,17 +273,17 @@ Compatibility and migration:
 
 Validation:
 
-| Command | Result |
-| --- | --- |
-| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/maintenance.spec.ts` | Passed: 35 tests, 0 failed; covers malformed state, pointer, repair, complete-generation fallback, warm-cache recovery, publication failure, and no flat output |
-| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/reconciliation.spec.ts` | Passed: 117 tests, 0 failed |
-| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/routes.spec.ts` | Passed: 17 tests, 0 failed |
-| `pnpm --filter @marinara-engine/server test` | Passed: 334 tests, 0 failed |
-| `pnpm --filter @marinara-engine/server lint` | Passed TypeScript validation |
-| `pnpm regression:prompt` | Passed deterministic prompt, macro, lorebook, summary, and mode regressions |
-| `pnpm check` | Passed Impeccable context check, workspace lint, TypeScript, and production builds |
-| `git diff --check` | Passed after the final documentation edit |
-| `marinara-doc-check` | Not installed; no checked-in equivalent command is available |
+| Command                                                                                                                | Result                                                                                                                                                          |
+| ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/maintenance.spec.ts`    | Passed: 35 tests, 0 failed; covers malformed state, pointer, repair, complete-generation fallback, warm-cache recovery, publication failure, and no flat output |
+| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/reconciliation.spec.ts` | Passed: 117 tests, 0 failed                                                                                                                                     |
+| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/routes.spec.ts`         | Passed: 17 tests, 0 failed                                                                                                                                      |
+| `pnpm --filter @marinara-engine/server test`                                                                           | Passed: 334 tests, 0 failed                                                                                                                                     |
+| `pnpm --filter @marinara-engine/server lint`                                                                           | Passed TypeScript validation                                                                                                                                    |
+| `pnpm regression:prompt`                                                                                               | Passed deterministic prompt, macro, lorebook, summary, and mode regressions                                                                                     |
+| `pnpm check`                                                                                                           | Passed Impeccable context check, workspace lint, TypeScript, and production builds                                                                              |
+| `git diff --check`                                                                                                     | Passed after the final documentation edit                                                                                                                       |
+| `marinara-doc-check`                                                                                                   | Not installed; no checked-in equivalent command is available                                                                                                    |
 
 Manual proof: not completed. On supported desktop and Android/Termux
 filesystems, corrupt `indexes/state.json` and one current-generation family,
@@ -342,20 +338,20 @@ Compatibility and migration:
 
 Validation:
 
-| Command | Result |
-| --- | --- |
-| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/import-pipeline.spec.ts` | Passed: 12 tests, 0 failed; covers durable character fields, deterministic lorebook units, game-journal refresh, and diagnostic-only current-state handling |
-| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/reconciliation.spec.ts` | Passed: 120 tests, 0 failed; covers v2 context invalidation, legacy draft blocking, and source-context binding |
-| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/maintenance.spec.ts src/services/long-term-memory/__tests__/routes.spec.ts src/services/long-term-memory/__tests__/draft-reconciliation.spec.ts` | Passed: 62 tests, 0 failed |
-| `pnpm --filter @marinara-engine/server test` | Passed: 339 tests, 0 failed; all tracked server LTM specs discovered |
-| `pnpm --filter @marinara-engine/server lint` | Passed TypeScript validation |
-| `pnpm regression:prompt` | Passed deterministic prompt, lorebook, macro, summary, and mode regressions |
-| `pnpm check` | Passed Impeccable context check, workspace lint, TypeScript, and production builds |
-| Isolated desktop LTM import Playwright flow on ports 5183/7976 | Passed: 2 tests, 0 failed; imported-row and partial-import retry behavior |
-| Isolated mobile LTM Playwright flow on ports 5184/7977 | Passed: 1 test, 0 failed; mobile import entry flow |
-| `pnpm smoke:ui` | Inconclusive: the initial shared-port run had an occupied port after a partial transcript; isolated focused LTM browser flows above passed |
-| `git diff --check` | Passed after the final documentation edit |
-| `marinara-doc-check` | Not installed; no checked-in equivalent command is available |
+| Command                                                                                                                                                                                                                                         | Result                                                                                                                                                      |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/import-pipeline.spec.ts`                                                                                                                         | Passed: 12 tests, 0 failed; covers durable character fields, deterministic lorebook units, game-journal refresh, and diagnostic-only current-state handling |
+| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/reconciliation.spec.ts`                                                                                                                          | Passed: 120 tests, 0 failed; covers v2 context invalidation, legacy draft blocking, and source-context binding                                              |
+| `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/maintenance.spec.ts src/services/long-term-memory/__tests__/routes.spec.ts src/services/long-term-memory/__tests__/draft-reconciliation.spec.ts` | Passed: 62 tests, 0 failed                                                                                                                                  |
+| `pnpm --filter @marinara-engine/server test`                                                                                                                                                                                                    | Passed: 339 tests, 0 failed; all tracked server LTM specs discovered                                                                                        |
+| `pnpm --filter @marinara-engine/server lint`                                                                                                                                                                                                    | Passed TypeScript validation                                                                                                                                |
+| `pnpm regression:prompt`                                                                                                                                                                                                                        | Passed deterministic prompt, lorebook, macro, summary, and mode regressions                                                                                 |
+| `pnpm check`                                                                                                                                                                                                                                    | Passed Impeccable context check, workspace lint, TypeScript, and production builds                                                                          |
+| Isolated desktop LTM import Playwright flow on ports 5183/7976                                                                                                                                                                                  | Passed: 2 tests, 0 failed; imported-row and partial-import retry behavior                                                                                   |
+| Isolated mobile LTM Playwright flow on ports 5184/7977                                                                                                                                                                                          | Passed: 1 test, 0 failed; mobile import entry flow                                                                                                          |
+| `pnpm smoke:ui`                                                                                                                                                                                                                                 | Inconclusive: the initial shared-port run had an occupied port after a partial transcript; isolated focused LTM browser flows above passed                  |
+| `git diff --check`                                                                                                                                                                                                                              | Passed after the final documentation edit                                                                                                                   |
+| `marinara-doc-check`                                                                                                                                                                                                                            | Not installed; no checked-in equivalent command is available                                                                                                |
 
 Manual proof: not completed. Import a changed character, a large lorebook
 entry, a chat summary, and a game journal against a real configured provider;
@@ -418,16 +414,16 @@ Compatibility and migration:
 
 Validation:
 
-| Command | Result |
-| --- | --- |
+| Command                                                                                                                                                                        | Result                                                                                                                                       |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/reconciliation.spec.ts src/services/long-term-memory/__tests__/ranking.spec.ts` | Passed: 135 tests, 0 failed; covers settings merge, policy runtime, direct lanes, scope/archive eligibility, and absolute threshold controls |
-| `pnpm --filter @marinara-engine/server lint` | Passed TypeScript validation |
-| `pnpm --filter @marinara-engine/server test` | Passed: 343 tests, 0 failed; all tracked server LTM specs discovered |
-| `pnpm regression:prompt` | Passed deterministic prompt, macro, lorebook, summary, and mode regressions |
-| `pnpm exec playwright test -c playwright.config.ts e2e/core-flows.e2e.ts --grep 'memory recall modal accepts clicks from chat settings'` | Passed: 1 desktop test, 0 failed; 1 mobile project skip is intentional in the test |
-| `pnpm check` | Passed Impeccable context check, workspace lint, TypeScript, and production builds |
-| `git diff --check` | Passed after the final documentation update |
-| `marinara-doc-check` | Not installed; no checked-in equivalent command is available |
+| `pnpm --filter @marinara-engine/server lint`                                                                                                                                   | Passed TypeScript validation                                                                                                                 |
+| `pnpm --filter @marinara-engine/server test`                                                                                                                                   | Passed: 343 tests, 0 failed; all tracked server LTM specs discovered                                                                         |
+| `pnpm regression:prompt`                                                                                                                                                       | Passed deterministic prompt, macro, lorebook, summary, and mode regressions                                                                  |
+| `pnpm exec playwright test -c playwright.config.ts e2e/core-flows.e2e.ts --grep 'memory recall modal accepts clicks from chat settings'`                                       | Passed: 1 desktop test, 0 failed; 1 mobile project skip is intentional in the test                                                           |
+| `pnpm check`                                                                                                                                                                   | Passed Impeccable context check, workspace lint, TypeScript, and production builds                                                           |
+| `git diff --check`                                                                                                                                                             | Passed after the final documentation update                                                                                                  |
+| `marinara-doc-check`                                                                                                                                                           | Not installed; no checked-in equivalent command is available                                                                                 |
 
 Manual proof: not completed. In a real configured chat, select each recall
 style after setting custom lane weights, reload the chat, and verify the saved
@@ -491,16 +487,16 @@ Compatibility and migration:
 
 Validation:
 
-| Command | Result |
-| --- | --- |
+| Command                                                                                                                                                                                            | Result                                                                                                                                                                                                 |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `env LOG_LEVEL=silent pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/prompt-artifact.spec.ts src/services/long-term-memory/__tests__/usage.spec.ts` | Passed: 11 tests, 0 failed; covers escaping, macro opacity, final serialization budget, atomic fitting, post-dispatch gating, chat-scoped usage, v1 compatibility, receipts, and corruption quarantine |
-| `env LOG_LEVEL=silent pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/reconciliation.spec.ts src/services/long-term-memory/__tests__/routes.spec.ts` | Passed: 142 tests, 0 failed; includes marker/fallback placement and durable Last Injection route proof without debug events |
-| `pnpm --filter @marinara-engine/server lint` | Passed TypeScript validation |
-| `pnpm --filter @marinara-engine/server test` | Passed: 350 tests, 0 failed; all tracked server LTM specs discovered |
-| `pnpm regression:prompt` | Passed deterministic prompt, macro, lorebook, summary, and mode regressions |
-| `pnpm check` | Passed Impeccable context check, workspace lint, TypeScript, and production builds |
-| `git diff --check` | Passed after the final documentation update |
-| `marinara-doc-check` | Not installed; `command -v marinara-doc-check` returned no executable and no checked-in equivalent command is available |
+| `env LOG_LEVEL=silent pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/reconciliation.spec.ts src/services/long-term-memory/__tests__/routes.spec.ts` | Passed: 142 tests, 0 failed; includes marker/fallback placement and durable Last Injection route proof without debug events                                                                            |
+| `pnpm --filter @marinara-engine/server lint`                                                                                                                                                       | Passed TypeScript validation                                                                                                                                                                           |
+| `pnpm --filter @marinara-engine/server test`                                                                                                                                                       | Passed: 350 tests, 0 failed; all tracked server LTM specs discovered                                                                                                                                   |
+| `pnpm regression:prompt`                                                                                                                                                                           | Passed deterministic prompt, macro, lorebook, summary, and mode regressions                                                                                                                            |
+| `pnpm check`                                                                                                                                                                                       | Passed Impeccable context check, workspace lint, TypeScript, and production builds                                                                                                                     |
+| `git diff --check`                                                                                                                                                                                 | Passed after the final documentation update                                                                                                                                                            |
+| `marinara-doc-check`                                                                                                                                                                               | Not installed; `command -v marinara-doc-check` returned no executable and no checked-in equivalent command is available                                                                                |
 
 Manual proof: not completed. With a configured streaming provider and a
 tool-capable provider, send a recalled-memory chat turn, confirm Last Injection
@@ -555,16 +551,16 @@ Compatibility and mode behavior:
 
 Validation:
 
-| Command | Result |
-| --- | --- |
-| `env LOG_LEVEL=silent pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/reconciliation.spec.ts` | Passed: 126 tests, 0 failed; covers the shared orchestrator, scope, embedding source, cancellation, marker placement, and safe fallback |
+| Command                                                                                                                                        | Result                                                                                                                                                                                     |
+| ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `env LOG_LEVEL=silent pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/reconciliation.spec.ts`    | Passed: 126 tests, 0 failed; covers the shared orchestrator, scope, embedding source, cancellation, marker placement, and safe fallback                                                    |
 | `env LOG_LEVEL=silent pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/production-recall.spec.ts` | Passed: 1 test, 0 failed; a recording provider saw scoped recalled memory in Conversation, Roleplay, Visual Novel, and Game, both presetless and marker-preset paths, with agents disabled |
-| `pnpm --filter @marinara-engine/server lint` | Passed TypeScript validation |
-| `pnpm --filter @marinara-engine/server test` | Passed: 353 tests, 0 failed; all discovered server LTM specs passed |
-| `pnpm regression:prompt` | Passed deterministic prompt, macro, lorebook, summary, and mode regressions |
-| `pnpm check` | Passed Impeccable context check, workspace lint, TypeScript, and production builds |
-| `git diff --check` | Passed after the final documentation update |
-| `marinara-doc-check` | Not installed; `command -v marinara-doc-check` returned no executable and no checked-in equivalent command is available |
+| `pnpm --filter @marinara-engine/server lint`                                                                                                   | Passed TypeScript validation                                                                                                                                                               |
+| `pnpm --filter @marinara-engine/server test`                                                                                                   | Passed: 353 tests, 0 failed; all discovered server LTM specs passed                                                                                                                        |
+| `pnpm regression:prompt`                                                                                                                       | Passed deterministic prompt, macro, lorebook, summary, and mode regressions                                                                                                                |
+| `pnpm check`                                                                                                                                   | Passed Impeccable context check, workspace lint, TypeScript, and production builds                                                                                                         |
+| `git diff --check`                                                                                                                             | Passed after the final documentation update                                                                                                                                                |
+| `marinara-doc-check`                                                                                                                           | Not installed; `command -v marinara-doc-check` returned no executable and no checked-in equivalent command is available                                                                    |
 
 Manual proof: not completed. With a configured remote provider, generate one
 recalled turn in each mode with and without a preset, then confirm the provider
@@ -584,11 +580,11 @@ Phase 9 full-backup restore work.
 
 Started: 2026-07-12
 
-Completed: 2026-07-12 locally; atomic commit pending
+Completed: 2026-07-12
 
 Baseline HEAD: `1efa7658` (`fix(ltm): enable mode-neutral generation recall`)
 
-Commit: pending
+Commit: `5ced1bc7` (`fix(ltm): align recall controls with runtime behavior`)
 
 Scope:
 
@@ -627,17 +623,17 @@ Compatibility and mode behavior:
 
 Validation:
 
-| Command | Result |
-| --- | --- |
-| `env LOG_LEVEL=silent pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/contracts.spec.ts src/services/long-term-memory/__tests__/import-pipeline.spec.ts src/services/long-term-memory/__tests__/reconciliation.spec.ts` | Passed: 146 tests, 0 failed; covers shared resolver behavior, import freshness, and production recall contracts |
-| `pnpm regression:prompt` | Passed deterministic prompt, macro, lorebook, summary, and mode regressions |
-| `pnpm check` | Passed Impeccable context check, workspace lint, TypeScript, and production builds |
-| `pnpm smoke:ui` | Passed: 36 desktop/mobile browser tests, including loading/error, recovery, selection, refresh, and mobile overflow flows |
-| `PLAYWRIGHT_SKIP_WEBSERVER=true PLAYWRIGHT_BASE_URL=http://127.0.0.1:5179 pnpm exec playwright test -c playwright.config.ts --project=desktop-chromium -g 'LTM recall uses the selected chat runtime settings' --timeout=60000 --reporter=line` | Passed: 1 test; verifies group-scoped Test Recall payloads, all resolved weights, keyboard operation, and import freshness |
-| `PLAYWRIGHT_SKIP_WEBSERVER=true PLAYWRIGHT_BASE_URL=http://127.0.0.1:5179 pnpm exec playwright test -c playwright.config.ts --project=desktop-chromium -g 'LTM chat overrides flush' --timeout=60000 --reporter=line` | Passed: 1 test; verifies close/reload persistence of rapid overrides |
-| `PLAYWRIGHT_SKIP_WEBSERVER=true PLAYWRIGHT_BASE_URL=http://127.0.0.1:5179 pnpm exec playwright test -c playwright.config.ts --project=mobile-chromium -g 'LTM recall uses the selected chat runtime settings' --timeout=60000 --reporter=line` | Passed: 1 test; verifies the selected-chat, keyboard, freshness, and refresh flow on mobile |
-| `git diff --check` | Passed after the final documentation update |
-| `marinara-doc-check` | Not installed; `command -v marinara-doc-check` returned no executable and no checked-in equivalent command is available |
+| Command                                                                                                                                                                                                                                                               | Result                                                                                                                     |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `env LOG_LEVEL=silent pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/contracts.spec.ts src/services/long-term-memory/__tests__/import-pipeline.spec.ts src/services/long-term-memory/__tests__/reconciliation.spec.ts` | Passed: 146 tests, 0 failed; covers shared resolver behavior, import freshness, and production recall contracts            |
+| `pnpm regression:prompt`                                                                                                                                                                                                                                              | Passed deterministic prompt, macro, lorebook, summary, and mode regressions                                                |
+| `pnpm check`                                                                                                                                                                                                                                                          | Passed Impeccable context check, workspace lint, TypeScript, and production builds                                         |
+| `pnpm smoke:ui`                                                                                                                                                                                                                                                       | Passed: 36 desktop/mobile browser tests, including loading/error, recovery, selection, refresh, and mobile overflow flows  |
+| `PLAYWRIGHT_SKIP_WEBSERVER=true PLAYWRIGHT_BASE_URL=http://127.0.0.1:5179 pnpm exec playwright test -c playwright.config.ts --project=desktop-chromium -g 'LTM recall uses the selected chat runtime settings' --timeout=60000 --reporter=line`                       | Passed: 1 test; verifies group-scoped Test Recall payloads, all resolved weights, keyboard operation, and import freshness |
+| `PLAYWRIGHT_SKIP_WEBSERVER=true PLAYWRIGHT_BASE_URL=http://127.0.0.1:5179 pnpm exec playwright test -c playwright.config.ts --project=desktop-chromium -g 'LTM chat overrides flush' --timeout=60000 --reporter=line`                                                 | Passed: 1 test; verifies close/reload persistence of rapid overrides                                                       |
+| `PLAYWRIGHT_SKIP_WEBSERVER=true PLAYWRIGHT_BASE_URL=http://127.0.0.1:5179 pnpm exec playwright test -c playwright.config.ts --project=mobile-chromium -g 'LTM recall uses the selected chat runtime settings' --timeout=60000 --reporter=line`                        | Passed: 1 test; verifies the selected-chat, keyboard, freshness, and refresh flow on mobile                                |
+| `git diff --check`                                                                                                                                                                                                                                                    | Passed after the final documentation update                                                                                |
+| `marinara-doc-check`                                                                                                                                                                                                                                                  | Not installed; `command -v marinara-doc-check` returned no executable and no checked-in equivalent command is available    |
 
 Manual proof: not completed. With a configured remote provider, verify that a
 real recalled turn and Last Injection receipt agree after toggling LTM in each
@@ -646,11 +642,82 @@ on a packaged mobile/device build.
 
 Residual risk: browser proof uses local route fixtures for recall and receipt
 states, not every remote provider adapter or assistive-technology stack. The
-Phase 2 interrupted-write platform proof gap remains, and full-backup restore
-is still owned by Phase 9.
+Phase 2 interrupted-write platform proof gap remains; Phase 9 now owns and
+records full-backup restore proof below.
 
-Next entrypoint: commit the completed Phase 8 scope, then begin Phase 9 with
-an opt-in, atomic full-backup LTM restore staging path.
+Next entrypoint: continue with the completed Phase 9 record below.
+
+### Phase 9 - Consistent Full-Backup Restore
+
+Started: 2026-07-12
+
+Completed: 2026-07-12
+
+Baseline HEAD: `5ced1bc7` (`fix(ltm): align recall controls with runtime behavior`)
+
+Commit: `fix(backup): restore long-term memory safely`
+
+Scope:
+
+- Extracted the LTM vault lock into a shared re-entrant server primitive and
+  applied it to canonical note, draft, settings, extraction-config,
+  usage/receipt, identity-repair, maintenance, initialization, and
+  backup-snapshot paths. Restore keeps that lock through its local rebuild;
+  ordinary rebuilds retain their existing concurrent-mutation retry behavior.
+- Made full-backup folder and ZIP creation capture `long-term-memory` under
+  that lock, so in-process canonical mutations cannot interleave with a vault
+  snapshot.
+- Added an explicit `restoreLongTermMemory=true` full-backup import path and a
+  Settings import checkbox. Normal profile/full-backup imports continue to
+  leave the live LTM root untouched.
+- Staged ZIP LTM entries under safe validated paths, rejected missing or
+  derived-only vault payloads, validated canonical notes, links, drafts,
+  settings, extraction config, events, valid usage, receipts, and metadata,
+  then removed imported derived indexes before publication.
+- Published a staged root through sibling directory renames, retained the
+  complete prior root through rebuild and integrity verification, and restored
+  that prior root if staging, publication, rebuild, verification, or an
+  injected boundary failed.
+- Preserved valid usage and dispatch receipts while locally rebuilding index
+  generations, and documented the opt-in flow and recovery behavior.
+
+Compatibility and mode behavior:
+
+- Existing full-backup archives remain importable for profile data. LTM restore
+  is unavailable unless the archive has canonical LTM data and the user opts
+  in explicitly.
+- Imported index files are never activated. The restored canonical root gets a
+  fresh local index generation, so Conversation, Roleplay, Visual Novel, and
+  Game retain the same mode-neutral recall contract.
+- Backups without a restorable LTM payload leave the live vault untouched and
+  return a clear import error only when the opt-in control was selected.
+
+Validation:
+
+| Command                                                                                                                                     | Result                                                                                                                                                                       |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `env LOG_LEVEL=silent pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/backup-restore.spec.ts` | Passed: 4 tests; canonical round-trip, derived-index discard/rebuild, rollback at every publication boundary, concurrent snapshot coherence, default preservation, and opt-in ZIP route restore |
+| `env LOG_LEVEL=silent pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/*.spec.ts`              | Passed: 357 tests, 0 failed; all 24 tracked LTM specs discovered                                                                                                             |
+| `pnpm --filter @marinara-engine/server build`                                                                                               | Passed TypeScript and server production build                                                                                                                                |
+| `pnpm --filter @marinara-engine/client build`                                                                                               | Passed TypeScript and client production build                                                                                                                                |
+| `pnpm regression:prompt`                                                                                                                    | Passed deterministic prompt, macro, lorebook, summary, and LTM prompt regressions                                                                                            |
+| `pnpm check`                                                                                                                                | Passed Impeccable context check, workspace lint, TypeScript, and production builds                                                                                           |
+| `PLAYWRIGHT_CLIENT_PORT=5189 PLAYWRIGHT_SERVER_PORT=7981 pnpm smoke:ui`                                                                     | Passed: 21 desktop/mobile browser tests, 15 expected project-specific skips, 0 failed                                                                                      |
+| `git diff --check`                                                                                                                          | Passed after the final documentation update                                                                                                                                  |
+| `marinara-doc-check`                                                                                                                        | Not installed; `command -v marinara-doc-check` returned no executable and no checked-in equivalent command is available                                                      |
+
+Manual proof: not completed. Import a real full-backup ZIP through Settings with
+and without the opt-in control on each packaged desktop/mobile target. Verify a
+large production vault rebuild and a deliberately interrupted process-level
+restore on the target filesystem before release.
+
+Residual risk: automated rollback proof injects recoverable failures at each
+application boundary, but it cannot simulate a host/process crash between
+directory renames on every desktop/mobile filesystem. The Phase 2
+interrupted-write platform proof gap remains.
+
+Next entrypoint: begin Phase 10 with bounded exact retrieval and dead-path
+cleanup.
 
 ## Progress Update Template
 
@@ -674,8 +741,8 @@ Compatibility and migration:
 
 Validation:
 
-| Command | Result |
-| --- | --- |
+| Command         | Result                              |
+| --------------- | ----------------------------------- |
 | `exact command` | pass/fail counts and relevant skips |
 
 Manual proof: none, completed details, or explicit remaining work.

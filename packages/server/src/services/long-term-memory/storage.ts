@@ -1,4 +1,3 @@
-import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, unlink } from "node:fs/promises";
 import { z } from "zod";
@@ -33,6 +32,7 @@ import { markLtmIndexesDirty } from "./index-state.js";
 import { commitLtmMutation, recoverLtmMutations, type LtmMutationFileChange } from "./mutation-transaction.js";
 import { parseStoredLtmNote } from "./stored-note.js";
 import { isLtmSourceExtractionFingerprintCurrent } from "./source-hash.js";
+import { isLtmVaultLockHeld, withLtmVaultLock } from "./vault-lock.js";
 import {
   getLongTermMemoryDirectories,
   getLongTermMemoryRoot,
@@ -58,8 +58,6 @@ type PreparedDraftRewrite = {
 
 const noteWriteLocks = new Map<string, Promise<void>>();
 const initLocks = new Map<string, Promise<void>>();
-const vaultMutationLocks = new Map<string, Promise<void>>();
-const activeVaultMutationRoots = new AsyncLocalStorage<Set<string>>();
 
 export type LtmListNotesFilter = {
   type?: LtmNoteType;
@@ -183,10 +181,6 @@ function noteIdWriteLockKey(root: string, id: string) {
   return `${root}\0note:${id}`;
 }
 
-function vaultMutationLockKey(root: string) {
-  return `${root}\0vault-mutation`;
-}
-
 async function withNoteWriteLock<T>(root: string, id: string, operation: () => Promise<T>): Promise<T> {
   return withKeyedLock(noteWriteLocks, noteIdWriteLockKey(root, id), operation);
 }
@@ -199,16 +193,6 @@ async function withNoteWriteLocks<T>(root: string, ids: string[], operation: () 
     return withNoteWriteLock(root, id, () => lockNext(index + 1));
   };
   return lockNext(0);
-}
-
-async function withVaultMutationLock<T>(root: string, operation: () => Promise<T>): Promise<T> {
-  const activeRoots = activeVaultMutationRoots.getStore();
-  if (activeRoots?.has(root)) return operation();
-  return withKeyedLock(vaultMutationLocks, vaultMutationLockKey(root), () => {
-    const nextRoots = new Set(activeRoots);
-    nextRoots.add(root);
-    return activeVaultMutationRoots.run(nextRoots, operation);
-  });
 }
 
 export class LongTermMemoryStorage {
@@ -229,10 +213,12 @@ export class LongTermMemoryStorage {
   }
 
   async initializeLtmStore() {
-    // Public mutations initialize before acquiring the vault lock. Nested reads
-    // inside that lock must not wait on another initializer that is itself
-    // waiting for the same vault lock.
-    if (activeVaultMutationRoots.getStore()?.has(this.root)) return;
+    // Nested work must initialize re-entrantly rather than wait on an
+    // initializer that is itself waiting on the same vault lock.
+    if (isLtmVaultLockHeld(this.root)) {
+      await this.initializeLtmStoreUnlocked();
+      return;
+    }
     const existingLock = initLocks.get(this.root);
     if (existingLock) {
       await existingLock;
@@ -249,34 +235,36 @@ export class LongTermMemoryStorage {
   }
 
   private async initializeLtmStoreUnlocked() {
-    const dirs = this.dirs;
-    await Promise.all([
-      mkdir(dirs.events, { recursive: true }),
-      mkdir(dirs.indexes, { recursive: true }),
-      mkdir(dirs.config, { recursive: true }),
-      mkdir(dirs.drafts, { recursive: true }),
-      mkdir(dirs.transactions, { recursive: true }),
-      mkdir(dirs.receipts, { recursive: true }),
-      ...LTM_VAULT_FOLDERS.map((folder) => mkdir(safeJoin(dirs.vault, folder), { recursive: true })),
-    ]);
+    return withLtmVaultLock(this.root, async () => {
+      const dirs = this.dirs;
+      await Promise.all([
+        mkdir(dirs.events, { recursive: true }),
+        mkdir(dirs.indexes, { recursive: true }),
+        mkdir(dirs.config, { recursive: true }),
+        mkdir(dirs.drafts, { recursive: true }),
+        mkdir(dirs.transactions, { recursive: true }),
+        mkdir(dirs.receipts, { recursive: true }),
+        ...LTM_VAULT_FOLDERS.map((folder) => mkdir(safeJoin(dirs.vault, folder), { recursive: true })),
+      ]);
 
-    await withVaultMutationLock(this.root, () => recoverLtmMutations(this.root));
+      await recoverLtmMutations(this.root);
 
-    const policiesPath = safeJoin(dirs.config, "policies.json");
-    const retrievalPath = safeJoin(dirs.config, "retrieval.json");
-    const settingsPath = safeJoin(dirs.config, "settings.json");
-    const existingPolicies = ltmPoliciesConfigSchema.parse(await readJsonFile(policiesPath, DEFAULT_LTM_POLICIES));
-    const existingRetrieval = ltmRetrievalConfigSchema.parse(
-      normalizeRetrievalConfig(await readJsonFile(retrievalPath, DEFAULT_LTM_RETRIEVAL_CONFIG)),
-    );
-    const existingSettings = ltmGlobalSettingsSchema.parse(await readJsonFile(settingsPath, { version: 1 }));
+      const policiesPath = safeJoin(dirs.config, "policies.json");
+      const retrievalPath = safeJoin(dirs.config, "retrieval.json");
+      const settingsPath = safeJoin(dirs.config, "settings.json");
+      const existingPolicies = ltmPoliciesConfigSchema.parse(await readJsonFile(policiesPath, DEFAULT_LTM_POLICIES));
+      const existingRetrieval = ltmRetrievalConfigSchema.parse(
+        normalizeRetrievalConfig(await readJsonFile(retrievalPath, DEFAULT_LTM_RETRIEVAL_CONFIG)),
+      );
+      const existingSettings = ltmGlobalSettingsSchema.parse(await readJsonFile(settingsPath, { version: 1 }));
 
-    await writeJsonIfChanged(policiesPath, existingPolicies);
-    await writeJsonIfChanged(retrievalPath, existingRetrieval);
-    await writeJsonIfChanged(
-      settingsPath,
-      existingSettings.version === 1 ? existingSettings : DEFAULT_LTM_GLOBAL_SETTINGS,
-    );
+      await writeJsonIfChanged(policiesPath, existingPolicies);
+      await writeJsonIfChanged(retrievalPath, existingRetrieval);
+      await writeJsonIfChanged(
+        settingsPath,
+        existingSettings.version === 1 ? existingSettings : DEFAULT_LTM_GLOBAL_SETTINGS,
+      );
+    });
   }
 
   async listNotes(filter: LtmListNotesFilter = {}) {
@@ -358,15 +346,17 @@ export class LongTermMemoryStorage {
   async createNote(input: CreateLtmNoteInput, eventContext: LtmEventContext = {}) {
     await this.initializeLtmStore();
     const timestamp = nowIso();
-    const note = keepOnlyCurrentExtractionFingerprint(ltmNoteSchema.parse({
-      ...input,
-      scope: normalizeStoredScope(input.scope ?? {}),
-      createdAt: input.createdAt ?? timestamp,
-      updatedAt: input.updatedAt ?? timestamp,
-      version: input.version ?? 1,
-    }));
+    const note = keepOnlyCurrentExtractionFingerprint(
+      ltmNoteSchema.parse({
+        ...input,
+        scope: normalizeStoredScope(input.scope ?? {}),
+        createdAt: input.createdAt ?? timestamp,
+        updatedAt: input.updatedAt ?? timestamp,
+        version: input.version ?? 1,
+      }),
+    );
     const path = notePathForId(note.id, note.type, this.root);
-    return withVaultMutationLock(this.root, () =>
+    return withLtmVaultLock(this.root, () =>
       withNoteWriteLock(this.root, note.id, async () => {
         const existing = await this.getNote(note.id);
         if (existing) {
@@ -383,7 +373,7 @@ export class LongTermMemoryStorage {
 
   async updateNote(id: string, patch: UpdateLtmNotePatch, eventContext: LtmEventContext = {}) {
     await this.initializeLtmStore();
-    return withVaultMutationLock(this.root, async () => {
+    return withLtmVaultLock(this.root, async () => {
       const existing = await this.getRequiredNote(id);
       if (patch.type && patch.type !== existing.type) {
         const { type, ...restPatch } = patch;
@@ -400,7 +390,7 @@ export class LongTermMemoryStorage {
   ): Promise<ProjectLtmNoteResult> {
     await this.initializeLtmStore();
     const noteId = ltmNoteIdSchema.parse(id);
-    return withVaultMutationLock(this.root, () =>
+    return withLtmVaultLock(this.root, () =>
       withNoteWriteLock(this.root, noteId, async () => {
         const current = await this.getNote(noteId);
         const projected = await projector(current);
@@ -411,17 +401,19 @@ export class LongTermMemoryStorage {
         if (current && projected.type !== current.type) {
           throw new Error(`Projected long-term memory note ${noteId} cannot change type.`);
         }
-        const next = keepOnlyCurrentExtractionFingerprint(ltmNoteSchema.parse({
-          ...projected,
-          id: noteId,
-          ...(current
-            ? {
-                type: current.type,
-                createdAt: current.createdAt,
-                version: current.version + 1,
-              }
-            : {}),
-        }));
+        const next = keepOnlyCurrentExtractionFingerprint(
+          ltmNoteSchema.parse({
+            ...projected,
+            id: noteId,
+            ...(current
+              ? {
+                  type: current.type,
+                  createdAt: current.createdAt,
+                  version: current.version + 1,
+                }
+              : {}),
+          }),
+        );
         const path = notePathForId(next.id, next.type, this.root);
         await commitLtmMutation(this.root, {
           files: [{ path, before: current, after: next }],
@@ -440,7 +432,7 @@ export class LongTermMemoryStorage {
     const parsedNextId = ltmNoteIdSchema.parse(nextId);
     if (currentId === parsedNextId) return this.getRequiredNote(currentId);
 
-    return withVaultMutationLock(this.root, () =>
+    return withLtmVaultLock(this.root, () =>
       withNoteWriteLocks(this.root, [currentId, parsedNextId], async () => {
         const current = await this.getRequiredNote(currentId);
         if (await this.getNote(parsedNextId)) {
@@ -448,13 +440,15 @@ export class LongTermMemoryStorage {
         }
 
         const timestamp = nowIso();
-        const next = keepOnlyCurrentExtractionFingerprint(ltmNoteSchema.parse({
-          ...current,
-          id: parsedNextId,
-          links: rewriteLinks(current.links, currentId, parsedNextId),
-          updatedAt: timestamp,
-          version: current.version + 1,
-        }));
+        const next = keepOnlyCurrentExtractionFingerprint(
+          ltmNoteSchema.parse({
+            ...current,
+            id: parsedNextId,
+            links: rewriteLinks(current.links, currentId, parsedNextId),
+            updatedAt: timestamp,
+            version: current.version + 1,
+          }),
+        );
         const oldPath = notePathForId(currentId, current.type, this.root);
         const newPath = notePathForId(parsedNextId, current.type, this.root);
         const draftRewrites = await this.prepareDraftReferenceRewrites(currentId, parsedNextId);
@@ -487,7 +481,7 @@ export class LongTermMemoryStorage {
     const parsedFromId = ltmNoteIdSchema.parse(fromId);
     const parsedToId = ltmNoteIdSchema.parse(toId);
     if (parsedFromId === parsedToId) return { rewrittenNoteCount: 0, rewrittenDraftCount: 0 };
-    return withVaultMutationLock(this.root, async () => {
+    return withLtmVaultLock(this.root, async () => {
       if (!(await this.getNote(parsedToId))) {
         throw new Error(`Long-term memory replacement note does not exist: ${parsedToId}`);
       }
@@ -504,27 +498,29 @@ export class LongTermMemoryStorage {
   }
 
   async archiveSourceNoteWithDerived(id: string, eventContext: LtmEventContext = {}) {
-    await this.initializeLtmStore();
-    const existing = await this.getRequiredNote(id);
-    const relatedNotes = isLtmSourceLikeNote(existing) ? await this.listNotes() : [];
-    const derived = relatedNotes.filter(
-      (note) => note.id !== id && note.links.some((link) => link.relation === "extracted_from" && link.target === id),
-    );
-    const archiveContext = {
-      ...eventContext,
-      payload: {
-        ...(eventContext.payload ?? {}),
-        cascadeFromSourceNoteId: id,
-      },
-    };
+    return withLtmVaultLock(this.root, async () => {
+      await this.initializeLtmStore();
+      const existing = await this.getRequiredNote(id);
+      const relatedNotes = isLtmSourceLikeNote(existing) ? await this.listNotes() : [];
+      const derived = relatedNotes.filter(
+        (note) => note.id !== id && note.links.some((link) => link.relation === "extracted_from" && link.target === id),
+      );
+      const archiveContext = {
+        ...eventContext,
+        payload: {
+          ...(eventContext.payload ?? {}),
+          cascadeFromSourceNoteId: id,
+        },
+      };
 
-    const archived: LtmNote[] = [];
-    archived.push(await this.updateNote(existing.id, { status: "archived" }, eventContext));
-    for (const note of derived) {
-      archived.push(await this.updateNote(note.id, { status: "archived" }, archiveContext));
-    }
+      const archived: LtmNote[] = [];
+      archived.push(await this.updateNote(existing.id, { status: "archived" }, eventContext));
+      for (const note of derived) {
+        archived.push(await this.updateNote(note.id, { status: "archived" }, archiveContext));
+      }
 
-    return archived;
+      return archived;
+    });
   }
 
   async deleteNote(id: string, eventContext: LtmEventContext = {}) {
@@ -538,7 +534,7 @@ export class LongTermMemoryStorage {
   async deleteNotesPermanently(ids: string[], eventContext: LtmEventContext = {}) {
     await this.initializeLtmStore();
     const wantedIds = [...new Set(ids.map((id) => ltmNoteIdSchema.parse(id)))];
-    return withVaultMutationLock(this.root, async () => {
+    return withLtmVaultLock(this.root, async () => {
       const allNotes = await this.listNotes();
       const notesById = new Map(allNotes.map((note) => [note.id, note]));
       const deletedNotes = wantedIds.flatMap((id) => {
@@ -681,7 +677,7 @@ export class LongTermMemoryStorage {
 
   async appendEvent(event: LtmEvent) {
     const parsed = ltmEventSchema.parse(event);
-    await appendJsonLineAtomic(this.dirs.eventLog, parsed);
+    await withLtmVaultLock(this.root, () => appendJsonLineAtomic(this.dirs.eventLog, parsed));
     return parsed;
   }
 
@@ -770,17 +766,19 @@ export class LongTermMemoryStorage {
       const timestamp = nowIso();
       const normalizedPatch = normalizePatch(patch);
       const titlePatch = "title" in patch ? { title: normalizedPatch.title } : {};
-      const next = keepOnlyCurrentExtractionFingerprint(ltmNoteSchema.parse({
-        ...current,
-        ...normalizedPatch,
-        ...titlePatch,
-        scope: normalizeStoredScope(normalizedPatch.scope ?? current.scope),
-        links: normalizedPatch.links ?? current.links,
-        sections: normalizedPatch.sections ?? current.sections,
-        conflicts: normalizedPatch.conflicts ?? current.conflicts,
-        updatedAt: timestamp,
-        version: current.version + 1,
-      }));
+      const next = keepOnlyCurrentExtractionFingerprint(
+        ltmNoteSchema.parse({
+          ...current,
+          ...normalizedPatch,
+          ...titlePatch,
+          scope: normalizeStoredScope(normalizedPatch.scope ?? current.scope),
+          links: normalizedPatch.links ?? current.links,
+          sections: normalizedPatch.sections ?? current.sections,
+          conflicts: normalizedPatch.conflicts ?? current.conflicts,
+          updatedAt: timestamp,
+          version: current.version + 1,
+        }),
+      );
 
       await commitLtmMutation(this.root, {
         files: [{ path, before: current, after: next }],

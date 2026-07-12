@@ -29,6 +29,7 @@ import { checkLongTermMemoryIntegrity } from "./maintenance.js";
 import { getLongTermMemoryRoot } from "./paths.js";
 import { rebuildLongTermMemoryIndexes } from "./rebuild.js";
 import { LongTermMemoryStorage, type UpdateLtmNotePatch } from "./storage.js";
+import { withLtmVaultLock } from "./vault-lock.js";
 import { isAdditiveLtmSection } from "./draft-projector.js";
 import {
   analyzeTrustedLtmNoteSubjects,
@@ -115,97 +116,103 @@ export async function applyLtmIdentityRepairs(
 ): Promise<LtmIdentityRepairApplyResponse> {
   const parsedRequest = ltmIdentityRepairApplyRequestSchema.parse(request);
   const root = options.root ?? getLongTermMemoryRoot();
-  return withIdentityRepairLock(root, async () => {
-    const storage = new LongTermMemoryStorage(root);
-    await storage.initializeLtmStore();
-    const catalog = await options.loadCatalog();
-    const { groups } = analyzeIdentityRepairGroups(catalog);
-    const groupsById = new Map(groups.map((group) => [group.id, group]));
-    const prepared = parsedRequest.repairs.map((selection) => prepareIdentityRepair(groupsById, selection));
-    assertDisjointRepairSelections(prepared);
+  return withIdentityRepairLock(root, () =>
+    withLtmVaultLock(root, async () => {
+      const storage = new LongTermMemoryStorage(root);
+      await storage.initializeLtmStore();
+      const catalog = await options.loadCatalog();
+      const { groups } = analyzeIdentityRepairGroups(catalog);
+      const groupsById = new Map(groups.map((group) => [group.id, group]));
+      const prepared = parsedRequest.repairs.map((selection) => prepareIdentityRepair(groupsById, selection));
+      assertDisjointRepairSelections(prepared);
 
-    const backup = await createLtmIdentityRepairBackup(root);
-    const rebuild = options.rebuild ?? rebuildLongTermMemoryIndexes;
-    const checkIntegrity = options.checkIntegrity ?? checkLongTermMemoryIntegrity;
+      const backup = await createLtmIdentityRepairBackup(root);
+      const rebuild = options.rebuild ?? rebuildLongTermMemoryIndexes;
+      const checkIntegrity = options.checkIntegrity ?? checkLongTermMemoryIntegrity;
 
-    try {
-      await options.hooks?.afterBackup?.(backup);
-      const results: LtmIdentityRepairApplyResponse["repairs"] = [];
+      try {
+        await options.hooks?.afterBackup?.(backup);
+        const results: LtmIdentityRepairApplyResponse["repairs"] = [];
 
-      for (const [index, repair] of prepared.entries()) {
-        const eventContext = {
-          actor: "maintenance_api",
-          cause: "identity_repair",
-          summary: `Merged canonical identity into ${repair.canonical.note.id}`,
-          payload: {
-            candidateId: repair.group.id,
-            archivedNoteIds: repair.archived.map((match) => match.note.id),
-          },
-        };
-        await storage.updateNote(repair.canonical.note.id, repair.patch, eventContext);
-        await options.hooks?.afterCanonicalWrite?.(repair.canonical.note.id, index);
-
-        let rewrittenNoteCount = 0;
-        let rewrittenDraftCount = 0;
-        for (const duplicate of repair.archived) {
-          const rewritten = await storage.redirectReferences(duplicate.note.id, repair.canonical.note.id, eventContext);
-          rewrittenNoteCount += rewritten.rewrittenNoteCount;
-          rewrittenDraftCount += rewritten.rewrittenDraftCount;
-          await storage.updateNote(
-            duplicate.note.id,
-            { status: "archived", subjects: repair.group.subjects },
-            {
-              ...eventContext,
-              summary: `Archived identity duplicate ${duplicate.note.id}`,
-              payload: {
-                ...eventContext.payload,
-                canonicalNoteId: repair.canonical.note.id,
-              },
+        for (const [index, repair] of prepared.entries()) {
+          const eventContext = {
+            actor: "maintenance_api",
+            cause: "identity_repair",
+            summary: `Merged canonical identity into ${repair.canonical.note.id}`,
+            payload: {
+              candidateId: repair.group.id,
+              archivedNoteIds: repair.archived.map((match) => match.note.id),
             },
-          );
+          };
+          await storage.updateNote(repair.canonical.note.id, repair.patch, eventContext);
+          await options.hooks?.afterCanonicalWrite?.(repair.canonical.note.id, index);
+
+          let rewrittenNoteCount = 0;
+          let rewrittenDraftCount = 0;
+          for (const duplicate of repair.archived) {
+            const rewritten = await storage.redirectReferences(
+              duplicate.note.id,
+              repair.canonical.note.id,
+              eventContext,
+            );
+            rewrittenNoteCount += rewritten.rewrittenNoteCount;
+            rewrittenDraftCount += rewritten.rewrittenDraftCount;
+            await storage.updateNote(
+              duplicate.note.id,
+              { status: "archived", subjects: repair.group.subjects },
+              {
+                ...eventContext,
+                summary: `Archived identity duplicate ${duplicate.note.id}`,
+                payload: {
+                  ...eventContext.payload,
+                  canonicalNoteId: repair.canonical.note.id,
+                },
+              },
+            );
+          }
+
+          results.push({
+            candidateId: repair.group.id,
+            canonicalNoteId: repair.canonical.note.id,
+            archivedNoteIds: repair.archived.map((match) => match.note.id),
+            excludedNoteIds: repair.excludedNoteIds,
+            rewrittenNoteCount,
+            rewrittenDraftCount,
+          });
         }
 
-        results.push({
-          candidateId: repair.group.id,
-          canonicalNoteId: repair.canonical.note.id,
-          archivedNoteIds: repair.archived.map((match) => match.note.id),
-          excludedNoteIds: repair.excludedNoteIds,
-          rewrittenNoteCount,
-          rewrittenDraftCount,
+        const rebuildResult = await rebuild({ root });
+        const integrity = await checkIntegrity(root);
+        return ltmIdentityRepairApplyResponseSchema.parse({
+          repairedAt: nowIso(),
+          backup: { id: backup.id, createdAt: backup.createdAt },
+          repairs: results,
+          rebuild: {
+            generatedAt: rebuildResult.generatedAt,
+            noteCount: rebuildResult.noteCount,
+            chunkCount: rebuildResult.chunkCount,
+            sourceChunkCount: rebuildResult.sourceChunkCount,
+            embeddedChunkCount: rebuildResult.embeddedChunkCount,
+            embeddingsAvailable: rebuildResult.embeddingsAvailable,
+            manifest: rebuildResult.manifest,
+          },
+          integrity,
         });
+      } catch (error) {
+        try {
+          await restoreLtmIdentityRepairBackup(root, backup);
+        } catch (restoreError) {
+          logger.error(restoreError, "[ltm] Failed to restore identity-repair backup %s", backup.id);
+          throw new LtmIdentityRepairError(
+            `Identity repair failed and its backup could not be restored: ${errorMessage(error)}`,
+            500,
+            "identity_repair_restore_failed",
+          );
+        }
+        throw error;
       }
-
-      const rebuildResult = await rebuild({ root });
-      const integrity = await checkIntegrity(root);
-      return ltmIdentityRepairApplyResponseSchema.parse({
-        repairedAt: nowIso(),
-        backup: { id: backup.id, createdAt: backup.createdAt },
-        repairs: results,
-        rebuild: {
-          generatedAt: rebuildResult.generatedAt,
-          noteCount: rebuildResult.noteCount,
-          chunkCount: rebuildResult.chunkCount,
-          sourceChunkCount: rebuildResult.sourceChunkCount,
-          embeddedChunkCount: rebuildResult.embeddedChunkCount,
-          embeddingsAvailable: rebuildResult.embeddingsAvailable,
-          manifest: rebuildResult.manifest,
-        },
-        integrity,
-      });
-    } catch (error) {
-      try {
-        await restoreLtmIdentityRepairBackup(root, backup);
-      } catch (restoreError) {
-        logger.error(restoreError, "[ltm] Failed to restore identity-repair backup %s", backup.id);
-        throw new LtmIdentityRepairError(
-          `Identity repair failed and its backup could not be restored: ${errorMessage(error)}`,
-          500,
-          "identity_repair_restore_failed",
-        );
-      }
-      throw error;
-    }
-  });
+    }),
+  );
 }
 
 export function getLtmIdentityRepairBackupsRoot(root = getLongTermMemoryRoot()) {
@@ -213,45 +220,49 @@ export function getLtmIdentityRepairBackupsRoot(root = getLongTermMemoryRoot()) 
 }
 
 export async function createLtmIdentityRepairBackup(root = getLongTermMemoryRoot()): Promise<LtmIdentityRepairBackup> {
-  const id = randomUUID();
-  const createdAt = nowIso();
-  const backupsRoot = getLtmIdentityRepairBackupsRoot(root);
-  const directory = join(backupsRoot, id);
-  const snapshotRoot = join(directory, basename(root));
-  await mkdir(backupsRoot, { recursive: true });
-  await mkdir(directory);
-  try {
-    await cp(root, snapshotRoot, { recursive: true, errorOnExist: true, force: false });
-    await writeJsonAtomic(join(directory, "manifest.json"), {
-      version: 1,
-      id,
-      createdAt,
-      sourceDirectory: basename(root),
-      purpose: "long-term-memory-identity-repair",
-    });
-  } catch (error) {
-    await rm(directory, { recursive: true, force: true }).catch(() => {});
-    throw error;
-  }
-  return { id, createdAt, directory, snapshotRoot };
+  return withLtmVaultLock(root, async () => {
+    const id = randomUUID();
+    const createdAt = nowIso();
+    const backupsRoot = getLtmIdentityRepairBackupsRoot(root);
+    const directory = join(backupsRoot, id);
+    const snapshotRoot = join(directory, basename(root));
+    await mkdir(backupsRoot, { recursive: true });
+    await mkdir(directory);
+    try {
+      await cp(root, snapshotRoot, { recursive: true, errorOnExist: true, force: false });
+      await writeJsonAtomic(join(directory, "manifest.json"), {
+        version: 1,
+        id,
+        createdAt,
+        sourceDirectory: basename(root),
+        purpose: "long-term-memory-identity-repair",
+      });
+    } catch (error) {
+      await rm(directory, { recursive: true, force: true }).catch(() => {});
+      throw error;
+    }
+    return { id, createdAt, directory, snapshotRoot };
+  });
 }
 
 export async function restoreLtmIdentityRepairBackup(root: string, backup: LtmIdentityRepairBackup) {
-  const parent = dirname(root);
-  const restoreId = randomUUID();
-  const stagingRoot = join(parent, `.${basename(root)}-identity-restore-${restoreId}`);
-  const failedRoot = join(parent, `.${basename(root)}-identity-failed-${restoreId}`);
-  await rm(stagingRoot, { recursive: true, force: true });
-  await rm(failedRoot, { recursive: true, force: true });
-  await cp(backup.snapshotRoot, stagingRoot, { recursive: true, errorOnExist: true, force: false });
-  await rename(root, failedRoot);
-  try {
-    await rename(stagingRoot, root);
-  } catch (error) {
-    await rename(failedRoot, root).catch(() => {});
-    throw error;
-  }
-  await rm(failedRoot, { recursive: true, force: true });
+  return withLtmVaultLock(root, async () => {
+    const parent = dirname(root);
+    const restoreId = randomUUID();
+    const stagingRoot = join(parent, `.${basename(root)}-identity-restore-${restoreId}`);
+    const failedRoot = join(parent, `.${basename(root)}-identity-failed-${restoreId}`);
+    await rm(stagingRoot, { recursive: true, force: true });
+    await rm(failedRoot, { recursive: true, force: true });
+    await cp(backup.snapshotRoot, stagingRoot, { recursive: true, errorOnExist: true, force: false });
+    await rename(root, failedRoot);
+    try {
+      await rename(stagingRoot, root);
+    } catch (error) {
+      await rename(failedRoot, root).catch(() => {});
+      throw error;
+    }
+    await rm(failedRoot, { recursive: true, force: true });
+  });
 }
 
 function analyzeIdentityRepairGroups(catalog: TrustedLtmSubjectCatalog) {

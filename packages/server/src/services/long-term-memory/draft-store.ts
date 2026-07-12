@@ -18,6 +18,7 @@ import { readJsonFile, writeJsonAtomic } from "./atomic-json.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
 import { LongTermMemoryStorage } from "./storage.js";
 import { extractionFingerprintForLtmSourceNote, sourceHashForLtmSourceNote } from "./source-hash.js";
+import { withLtmVaultLock } from "./vault-lock.js";
 
 export interface CreateLtmExtractionDraftInput {
   scope?: LtmScope;
@@ -39,8 +40,6 @@ export type LtmDraftListFilter = {
   status?: LtmExtractionDraft["status"];
   chatId?: string;
 };
-
-
 
 function draftPathForId(id: string, root = getLongTermMemoryRoot()) {
   return safeJoin(getLongTermMemoryDirectories(root).drafts, `${id}.json`);
@@ -92,7 +91,7 @@ export class LongTermMemoryDraftStore {
 
   async withDraftLock<T>(id: string, operation: () => Promise<T>): Promise<T> {
     await this.initialize();
-    return withDraftWriteLock(draftPathForId(id, this.root), operation);
+    return withLtmVaultLock(this.root, () => withDraftWriteLock(draftPathForId(id, this.root), operation));
   }
 
   async createDraft(options: StoreLtmDraftOptions) {
@@ -101,63 +100,64 @@ export class LongTermMemoryDraftStore {
       throw new Error("Long-term memory drafts must be tied to a source note.");
     }
     const sourceNoteId = options.source.sourceNoteId;
-    return withDraftWriteLock(sourceDraftLockKey(this.root, sourceNoteId), async () => {
-      const sourceNote = await this.storage.getNote(sourceNoteId);
-      const source = {
-        ...options.source,
-        ...(!options.source.sourceHash && sourceNote && isLtmSourceLikeNote(sourceNote)
-          ? { sourceHash: sourceHashForLtmSourceNote(sourceNote) }
-          : {}),
-        ...(!options.source.extractionFingerprint && sourceNote && isLtmSourceLikeNote(sourceNote)
-          ? {
-              extractionFingerprint: extractionFingerprintForLtmSourceNote(sourceNote, {
-                extractionMode:
-                  options.modes.find((mode) => sourceNote.modes.includes(mode)) ?? sourceNote.modes[0],
-              }),
-            }
-          : {}),
-      };
-      const timestamp = nowIso();
-      const candidateCount = options.response.mutations.length;
-      const draft = ltmExtractionDraftSchema.parse({
-        id: randomUUID(),
-        status: "pending",
-        createdAt: timestamp,
-        updatedAt: timestamp,
-        operationId: options.operationId ?? randomUUID(),
-        source,
-        scope: options.scope ?? {},
-        modes: options.modes,
-        summary: options.summary ?? options.response.summary ?? "",
-        mutations: options.response.mutations,
-        diagnostics: options.diagnostics ?? [],
-        extractionOutcome: options.outcome ?? {
-          state: candidateCount > 0 ? "success" : "no_suggestions_created",
-          totalCandidates: candidateCount,
-          keptUnits: candidateCount,
-          droppedUnits: 0,
-          droppedCandidates: [],
-        },
-        accounting: options.accounting ?? {
-          providerCandidates: candidateCount,
-          normalizedAdditions: 0,
-          parserRejections: 0,
-          validationRejections: 0,
-          deduplications: 0,
-          keptUnits: candidateCount,
-        },
-      });
-      await writeJsonAtomic(draftPathForId(draft.id, this.root), draft);
-      try {
-        if (draft.mutations.length > 0) {
-          await this.supersedeOlderPendingDrafts(draft);
+    return withLtmVaultLock(this.root, () =>
+      withDraftWriteLock(sourceDraftLockKey(this.root, sourceNoteId), async () => {
+        const sourceNote = await this.storage.getNote(sourceNoteId);
+        const source = {
+          ...options.source,
+          ...(!options.source.sourceHash && sourceNote && isLtmSourceLikeNote(sourceNote)
+            ? { sourceHash: sourceHashForLtmSourceNote(sourceNote) }
+            : {}),
+          ...(!options.source.extractionFingerprint && sourceNote && isLtmSourceLikeNote(sourceNote)
+            ? {
+                extractionFingerprint: extractionFingerprintForLtmSourceNote(sourceNote, {
+                  extractionMode: options.modes.find((mode) => sourceNote.modes.includes(mode)) ?? sourceNote.modes[0],
+                }),
+              }
+            : {}),
+        };
+        const timestamp = nowIso();
+        const candidateCount = options.response.mutations.length;
+        const draft = ltmExtractionDraftSchema.parse({
+          id: randomUUID(),
+          status: "pending",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          operationId: options.operationId ?? randomUUID(),
+          source,
+          scope: options.scope ?? {},
+          modes: options.modes,
+          summary: options.summary ?? options.response.summary ?? "",
+          mutations: options.response.mutations,
+          diagnostics: options.diagnostics ?? [],
+          extractionOutcome: options.outcome ?? {
+            state: candidateCount > 0 ? "success" : "no_suggestions_created",
+            totalCandidates: candidateCount,
+            keptUnits: candidateCount,
+            droppedUnits: 0,
+            droppedCandidates: [],
+          },
+          accounting: options.accounting ?? {
+            providerCandidates: candidateCount,
+            normalizedAdditions: 0,
+            parserRejections: 0,
+            validationRejections: 0,
+            deduplications: 0,
+            keptUnits: candidateCount,
+          },
+        });
+        await writeJsonAtomic(draftPathForId(draft.id, this.root), draft);
+        try {
+          if (draft.mutations.length > 0) {
+            await this.supersedeOlderPendingDrafts(draft);
+          }
+        } catch (error) {
+          await unlink(draftPathForId(draft.id, this.root)).catch(() => {});
+          throw error;
         }
-      } catch (error) {
-        await unlink(draftPathForId(draft.id, this.root)).catch(() => {});
-        throw error;
-      }
-      return draft;
-    });
+        return draft;
+      }),
+    );
   }
 
   private async supersedeOlderPendingDrafts(replacement: LtmExtractionDraft) {
@@ -217,45 +217,51 @@ export class LongTermMemoryDraftStore {
 
   async updateDraftStatus(id: string, status: LtmExtractionDraft["status"], patch: Partial<LtmExtractionDraft> = {}) {
     const parsedStatus = ltmDraftStatusSchema.parse(status);
-    const draft = await this.getDraft(id);
-    if (!draft) return null;
-    const next = ltmExtractionDraftSchema.parse({
-      ...draft,
-      ...patch,
-      status: parsedStatus,
-      updatedAt: nowIso(),
+    return withLtmVaultLock(this.root, async () => {
+      const draft = await this.getDraft(id);
+      if (!draft) return null;
+      const next = ltmExtractionDraftSchema.parse({
+        ...draft,
+        ...patch,
+        status: parsedStatus,
+        updatedAt: nowIso(),
+      });
+      await writeJsonAtomic(draftPathForId(id, this.root), next);
+      return next;
     });
-    await writeJsonAtomic(draftPathForId(id, this.root), next);
-    return next;
   }
 
   async updateDraft(id: string, patch: Partial<Omit<LtmExtractionDraft, "id" | "createdAt" | "updatedAt">>) {
-    const draft = await this.getDraft(id);
-    if (!draft) return null;
-    const next = ltmExtractionDraftSchema.parse({
-      ...draft,
-      ...patch,
-      id: draft.id,
-      createdAt: draft.createdAt,
-      updatedAt: nowIso(),
-      appliedAt: patch.appliedAt ?? draft.appliedAt,
-      appliedMutationIds: patch.appliedMutationIds ?? draft.appliedMutationIds,
-      skippedMutationIds: patch.skippedMutationIds ?? draft.skippedMutationIds,
+    return withLtmVaultLock(this.root, async () => {
+      const draft = await this.getDraft(id);
+      if (!draft) return null;
+      const next = ltmExtractionDraftSchema.parse({
+        ...draft,
+        ...patch,
+        id: draft.id,
+        createdAt: draft.createdAt,
+        updatedAt: nowIso(),
+        appliedAt: patch.appliedAt ?? draft.appliedAt,
+        appliedMutationIds: patch.appliedMutationIds ?? draft.appliedMutationIds,
+        skippedMutationIds: patch.skippedMutationIds ?? draft.skippedMutationIds,
+      });
+      await writeJsonAtomic(draftPathForId(id, this.root), next);
+      return next;
     });
-    await writeJsonAtomic(draftPathForId(id, this.root), next);
-    return next;
   }
 
   async deleteDraft(id: string) {
     await this.initialize();
-    try {
-      await unlink(draftPathForId(id, this.root));
-      return true;
-    } catch (err) {
-      if (isEnoent(err)) return false;
-      logger.warn(err, "[ltm] Failed to delete draft %s", id);
-      throw err;
-    }
+    return withLtmVaultLock(this.root, async () => {
+      try {
+        await unlink(draftPathForId(id, this.root));
+        return true;
+      } catch (err) {
+        if (isEnoent(err)) return false;
+        logger.warn(err, "[ltm] Failed to delete draft %s", id);
+        throw err;
+      }
+    });
   }
 
   async deleteDraftMutation(id: string, mutationId: string) {
@@ -265,22 +271,24 @@ export class LongTermMemoryDraftStore {
   }
 
   async deleteDraftMutations(id: string, mutationIds: string[]) {
-    const draft = await this.getDraft(id);
-    if (!draft) return { draft: null, deleted: false as const, reason: "not_found" as const };
-    if (draft.status !== "pending") return { draft, deleted: false as const, reason: "not_pending" as const };
-    const uniqueMutationIds = Array.from(new Set(mutationIds));
-    const draftMutationIds = new Set(draft.mutations.map((mutation) => mutation.id));
-    if (uniqueMutationIds.some((mutationId) => !draftMutationIds.has(mutationId))) {
-      return { draft, deleted: false as const, reason: "not_found" as const };
-    }
+    return withLtmVaultLock(this.root, async () => {
+      const draft = await this.getDraft(id);
+      if (!draft) return { draft: null, deleted: false as const, reason: "not_found" as const };
+      if (draft.status !== "pending") return { draft, deleted: false as const, reason: "not_pending" as const };
+      const uniqueMutationIds = Array.from(new Set(mutationIds));
+      const draftMutationIds = new Set(draft.mutations.map((mutation) => mutation.id));
+      if (uniqueMutationIds.some((mutationId) => !draftMutationIds.has(mutationId))) {
+        return { draft, deleted: false as const, reason: "not_found" as const };
+      }
 
-    const mutationIdSet = new Set(uniqueMutationIds);
-    const nextMutations = draft.mutations.filter((mutation) => !mutationIdSet.has(mutation.id));
-    if (nextMutations.length === 0) {
-      await this.deleteDraft(id);
-      return { draft: null, deleted: true as const };
-    }
-    const next = await this.updateDraft(id, { mutations: nextMutations });
-    return { draft: next, deleted: true as const };
+      const mutationIdSet = new Set(uniqueMutationIds);
+      const nextMutations = draft.mutations.filter((mutation) => !mutationIdSet.has(mutation.id));
+      if (nextMutations.length === 0) {
+        await this.deleteDraft(id);
+        return { draft: null, deleted: true as const };
+      }
+      const next = await this.updateDraft(id, { mutations: nextMutations });
+      return { draft: next, deleted: true as const };
+    });
   }
 }

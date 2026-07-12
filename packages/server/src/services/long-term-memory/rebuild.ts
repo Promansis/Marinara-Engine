@@ -11,12 +11,7 @@ import { logger } from "../../lib/logger.js";
 import { isEnoent } from "./ltm-utils.js";
 import { embedMemoryRecallTexts, type MemoryRecallEmbeddingOptions } from "../memory-recall.js";
 import { buildLtmBm25Index } from "./bm25.js";
-import {
-  CURRENT_LTM_CHUNK_FORMAT_VERSION,
-  chunkNotes,
-  stableJsonHash,
-  type LtmMemoryChunk,
-} from "./chunking.js";
+import { CURRENT_LTM_CHUNK_FORMAT_VERSION, chunkNotes, stableJsonHash, type LtmMemoryChunk } from "./chunking.js";
 import { buildLtmGraphIndex } from "./graph.js";
 import {
   loadLtmIndexGeneration,
@@ -93,7 +88,9 @@ export async function hashLongTermMemoryVaultFiles(root: string) {
 
   const hashes: Record<string, string> = {};
   for (const file of files) {
-    const relativePath = relative(root, file).split(/[\\/]+/).join("/");
+    const relativePath = relative(root, file)
+      .split(/[\\/]+/)
+      .join("/");
     try {
       hashes[relativePath] = stableJsonHash(await readFile(file, "utf8"));
     } catch (err) {
@@ -181,12 +178,15 @@ function indexFamilyMatchesSnapshot(
   chunks: LtmMemoryChunk[],
 ) {
   const expected = buildDeterministicIndexes(notes, chunks);
-  return stableJsonHash(expected) === stableJsonHash({
-    metadata: bundle.metadata,
-    bm25: bundle.bm25,
-    graph: bundle.graph,
-    keywords: bundle.keywords,
-  });
+  return (
+    stableJsonHash(expected) ===
+    stableJsonHash({
+      metadata: bundle.metadata,
+      bm25: bundle.bm25,
+      graph: bundle.graph,
+      keywords: bundle.keywords,
+    })
+  );
 }
 
 export async function rebuildLongTermMemoryIndexes(options: LtmRebuildOptions = {}): Promise<LtmRebuildResult> {
@@ -236,8 +236,8 @@ async function rebuildLongTermMemoryIndexesAttempt(
   // A partial rebuild can reuse only a fully validated generation. Reusing
   // individual families would let a damaged generation become a mixed one.
   const previousGeneration = await loadLtmIndexGeneration(root);
-  const previousTyped = typedResult ? null : previousGeneration.bundles.typed ?? null;
-  const previousSource = sourceResult ? null : previousGeneration.bundles.source ?? null;
+  const previousTyped = typedResult ? null : (previousGeneration.bundles.typed ?? null);
+  const previousSource = sourceResult ? null : (previousGeneration.bundles.source ?? null);
   if (!typedResult && (!previousTyped || !indexFamilyMatchesSnapshot(previousTyped, notes, typedChunks))) {
     typedResult = await buildTypedIndexes(notes, options);
   }

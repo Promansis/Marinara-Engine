@@ -45,13 +45,11 @@ import { CURRENT_LTM_CHUNK_FORMAT_VERSION, stableJsonHash } from "./chunking.js"
 import { loadLtmIndexGeneration, ltmIndexPointerPath } from "./index-generation.js";
 import { readLtmIndexState } from "./index-state.js";
 import { LongTermMemoryStorage } from "./storage.js";
+import { withLtmVaultLock } from "./vault-lock.js";
 import { sourceNoteIdForProvenance } from "./source-identity.js";
 import { parseStoredLtmNote } from "./stored-note.js";
 import { ltmModeForChatMode } from "./chat-scope.js";
-import {
-  extractionFingerprintForLtmSourceMaterial,
-  extractionFingerprintsEqual,
-} from "./source-hash.js";
+import { extractionFingerprintForLtmSourceMaterial, extractionFingerprintsEqual } from "./source-hash.js";
 
 export type ImportSourceCandidate = {
   title: string;
@@ -542,106 +540,108 @@ export async function repairLongTermMemory(
   actions: LtmRepairAction[],
   root = getLongTermMemoryRoot(),
 ): Promise<LtmRepairResponse> {
-  return withLtmDebugOperation(
-    {
-      root,
-      phase: "repair",
-      action: "repair",
-      message: "Repair long-term memory store",
-      details: { actions },
-    },
-    async (operationId) => {
-      const results: LtmRepairResponse["actions"] = [];
-      const dirs = getLongTermMemoryDirectories(root);
-      let rebuildNeeded = false;
+  return withLtmVaultLock(root, () =>
+    withLtmDebugOperation(
+      {
+        root,
+        phase: "repair",
+        action: "repair",
+        message: "Repair long-term memory store",
+        details: { actions },
+      },
+      async (operationId) => {
+        const results: LtmRepairResponse["actions"] = [];
+        const dirs = getLongTermMemoryDirectories(root);
+        let rebuildNeeded = false;
 
-      for (const action of actions) {
-        if (action === "rebuild_indexes") {
-          rebuildNeeded = true;
-          results.push({ action, result: "rebuilt" });
-          continue;
+        for (const action of actions) {
+          if (action === "rebuild_indexes") {
+            rebuildNeeded = true;
+            results.push({ action, result: "rebuilt" });
+            continue;
+          }
+
+          if (action === "backfill_imported_source_titles") {
+            const storage = new LongTermMemoryStorage(root);
+            const sourceNotes = await storage.listNotes({ type: "source" });
+            let patched = 0;
+            for (const note of sourceNotes) {
+              if (!isBackfillableImportedSourceNote(note)) continue;
+              if (note.title?.trim()) continue;
+              await storage.updateNote(
+                note.id,
+                { title: importedSourceTitleFromNote(note) },
+                {
+                  actor: "maintenance_api",
+                  cause: "repair.backfill_imported_source_titles",
+                  summary: "Backfilled imported source note title",
+                },
+              );
+              patched += 1;
+            }
+            results.push({ action, result: patched > 0 ? "backfilled" : "no_titles_to_backfill", count: patched });
+            rebuildNeeded ||= patched > 0;
+            await recordLtmDebugEvent({
+              root,
+              operationId,
+              phase: "repair",
+              action: "repair_backfill_source_titles",
+              status: "ok",
+              counts: { notes: patched },
+            });
+            continue;
+          }
+
+          const quarantineDir = join(dirs.root, "quarantine", `malformed-${Date.now()}`);
+          let moved = 0;
+          for (const file of await listVaultFiles(root)) {
+            try {
+              const raw = JSON.parse(await readFile(file.path, "utf8"));
+              parseStoredLtmNote(raw);
+            } catch {
+              await mkdir(join(quarantineDir, file.folder), { recursive: true });
+              await rename(file.path, join(quarantineDir, file.folder, basename(file.path)));
+              moved += 1;
+            }
+          }
+          results.push({ action, result: moved > 0 ? "quarantined" : "no_malformed_notes", count: moved });
+          rebuildNeeded ||= moved > 0;
         }
 
-        if (action === "backfill_imported_source_titles") {
-          const storage = new LongTermMemoryStorage(root);
-          const sourceNotes = await storage.listNotes({ type: "source" });
-          let patched = 0;
-          for (const note of sourceNotes) {
-            if (!isBackfillableImportedSourceNote(note)) continue;
-            if (note.title?.trim()) continue;
-            await storage.updateNote(
-              note.id,
-              { title: importedSourceTitleFromNote(note) },
-              {
-                actor: "maintenance_api",
-                cause: "repair.backfill_imported_source_titles",
-                summary: "Backfilled imported source note title",
-              },
-            );
-            patched += 1;
-          }
-          results.push({ action, result: patched > 0 ? "backfilled" : "no_titles_to_backfill", count: patched });
-          rebuildNeeded ||= patched > 0;
+        if (rebuildNeeded) {
+          const rebuild = await rebuildLongTermMemoryIndexes({ root });
+          const explicitRebuild = results.find((result) => result.action === "rebuild_indexes");
+          if (explicitRebuild) explicitRebuild.count = rebuild.chunkCount;
           await recordLtmDebugEvent({
             root,
             operationId,
-            phase: "repair",
-            action: "repair_backfill_source_titles",
+            phase: "rebuild",
+            action: "repair_rebuild_indexes",
             status: "ok",
-            counts: { notes: patched },
+            counts: { chunks: rebuild.chunkCount, notes: rebuild.noteCount },
           });
-          continue;
         }
 
-        const quarantineDir = join(dirs.root, "quarantine", `malformed-${Date.now()}`);
-        let moved = 0;
-        for (const file of await listVaultFiles(root)) {
-          try {
-            const raw = JSON.parse(await readFile(file.path, "utf8"));
-            parseStoredLtmNote(raw);
-          } catch {
-            await mkdir(join(quarantineDir, file.folder), { recursive: true });
-            await rename(file.path, join(quarantineDir, file.folder, basename(file.path)));
-            moved += 1;
-          }
-        }
-        results.push({ action, result: moved > 0 ? "quarantined" : "no_malformed_notes", count: moved });
-        rebuildNeeded ||= moved > 0;
-      }
-
-      if (rebuildNeeded) {
-        const rebuild = await rebuildLongTermMemoryIndexes({ root });
-        const explicitRebuild = results.find((result) => result.action === "rebuild_indexes");
-        if (explicitRebuild) explicitRebuild.count = rebuild.chunkCount;
+        const result = {
+          repairedAt: nowIso(),
+          actions: results,
+          integrity: await checkLongTermMemoryIntegrity(root),
+        };
         await recordLtmDebugEvent({
           root,
           operationId,
-          phase: "rebuild",
-          action: "repair_rebuild_indexes",
-          status: "ok",
-          counts: { chunks: rebuild.chunkCount, notes: rebuild.noteCount },
+          phase: "repair",
+          action: "repair_result",
+          status: result.integrity.ok ? "ok" : "warning",
+          counts: {
+            actions: results.length,
+            issues: result.integrity.issues.length,
+          },
+          details: { actions: results },
         });
-      }
-
-      const result = {
-        repairedAt: nowIso(),
-        actions: results,
-        integrity: await checkLongTermMemoryIntegrity(root),
-      };
-      await recordLtmDebugEvent({
-        root,
-        operationId,
-        phase: "repair",
-        action: "repair_result",
-        status: result.integrity.ok ? "ok" : "warning",
-        counts: {
-          actions: results.length,
-          issues: result.integrity.issues.length,
-        },
-        details: { actions: results },
-      });
-      return result;
-    },
+        return result;
+      },
+    ),
   );
 }
 
@@ -725,7 +725,10 @@ function splitLorebookEntryText(text: string) {
       window.lastIndexOf(". "),
       window.lastIndexOf(" "),
     );
-    const end = boundary > LTM_LOREBOOK_ENTRY_MAX_CHARS / 2 ? boundary + (window.startsWith(". ", boundary) ? 1 : 0) : LTM_LOREBOOK_ENTRY_MAX_CHARS;
+    const end =
+      boundary > LTM_LOREBOOK_ENTRY_MAX_CHARS / 2
+        ? boundary + (window.startsWith(". ", boundary) ? 1 : 0)
+        : LTM_LOREBOOK_ENTRY_MAX_CHARS;
     chunks.push(remaining.slice(0, end).trim());
     remaining = remaining.slice(end).trim();
   }
@@ -1086,162 +1089,164 @@ export async function createLongTermMemoryInteropSourceNotes(
   imported: LtmInteropSourceNoteImport[];
   writeFailures: LtmImportSourceWriteFailure[];
 }> {
-  return withLtmDebugOperation(
-    {
-      operationId: options.operationId,
-      root,
-      phase: "import",
-      action: "import_source_notes",
-      source,
-      counts: { selectedSources: options.sourceIds.length },
-      details: { sourceIds: options.sourceIds, scope: options.scope },
-    },
-    async (operationId) => {
-      const plan = options.plan ?? (await planLongTermMemoryInteropSourceNotes(db, source, options));
-      const storage = new LongTermMemoryStorage(root);
-      const candidates = plan.candidates;
-      const imported: LtmInteropSourceNoteImport[] = [];
-      const writeFailures: LtmImportSourceWriteFailure[] = [];
-      await recordLtmDebugEvent({
+  return withLtmVaultLock(root, () =>
+    withLtmDebugOperation(
+      {
+        operationId: options.operationId,
         root,
-        operationId,
         phase: "import",
-        action: "source_candidates_resolved",
-        status: candidates.length ? "ok" : "skipped",
+        action: "import_source_notes",
         source,
-        counts: {
-          selectedSources: options.sourceIds.length,
-          resolvedSources: candidates.length,
-          missingSources: Math.max(0, options.sourceIds.length - candidates.length),
-        },
-        details: {
-          resolvedSourceIds: candidates.map((candidate) => candidate.sourceId),
-          missingSourceIds: options.sourceIds.filter(
-            (sourceId) => !candidates.some((candidate) => candidate.sourceId === sourceId),
-          ),
-        },
-      });
+        counts: { selectedSources: options.sourceIds.length },
+        details: { sourceIds: options.sourceIds, scope: options.scope },
+      },
+      async (operationId) => {
+        const plan = options.plan ?? (await planLongTermMemoryInteropSourceNotes(db, source, options));
+        const storage = new LongTermMemoryStorage(root);
+        const candidates = plan.candidates;
+        const imported: LtmInteropSourceNoteImport[] = [];
+        const writeFailures: LtmImportSourceWriteFailure[] = [];
+        await recordLtmDebugEvent({
+          root,
+          operationId,
+          phase: "import",
+          action: "source_candidates_resolved",
+          status: candidates.length ? "ok" : "skipped",
+          source,
+          counts: {
+            selectedSources: options.sourceIds.length,
+            resolvedSources: candidates.length,
+            missingSources: Math.max(0, options.sourceIds.length - candidates.length),
+          },
+          details: {
+            resolvedSourceIds: candidates.map((candidate) => candidate.sourceId),
+            missingSourceIds: options.sourceIds.filter(
+              (sourceId) => !candidates.some((candidate) => candidate.sourceId === sourceId),
+            ),
+          },
+        });
 
-      for (const candidate of candidates) {
-        try {
-          const now = nowIso();
-          const scope = sourceScopeForImportCandidate(candidate, options.scope);
-          const noteInput = {
-            id: candidate.sourceNoteId,
-            title: candidate.title,
-            type: "source" as const,
-            status: "active" as const,
-            modes: candidate.modes,
-            scope,
-            tags: ["source_summary", candidate.sourceTag],
-            keywords: [],
-            links: [],
-            provenance: candidate.provenance,
-            sections: {
-              source: {
-                ...textSection(candidate.sourceText, candidate.evidence),
-                updatedAt: now,
+        for (const candidate of candidates) {
+          try {
+            const now = nowIso();
+            const scope = sourceScopeForImportCandidate(candidate, options.scope);
+            const noteInput = {
+              id: candidate.sourceNoteId,
+              title: candidate.title,
+              type: "source" as const,
+              status: "active" as const,
+              modes: candidate.modes,
+              scope,
+              tags: ["source_summary", candidate.sourceTag],
+              keywords: [],
+              links: [],
+              provenance: candidate.provenance,
+              sections: {
+                source: {
+                  ...textSection(candidate.sourceText, candidate.evidence),
+                  updatedAt: now,
+                },
               },
-            },
-          };
-          const noteIds = [...(candidate.legacySourceNoteIds ?? []), candidate.sourceNoteId];
-          const existingNotes = await storage.getNotesByIds(noteIds);
-          const existing = noteIds
-            .map((noteId) => existingNotes.get(noteId))
-            .find((note): note is LtmNote => Boolean(note));
-          if (existing) {
-            const canonicalExisting =
-              existing.id === candidate.sourceNoteId
-                ? existing
-                : await storage.renameNoteId(existing.id, candidate.sourceNoteId, {
-                    actor: "maintenance_api",
-                    cause: "interop.source_identity_migration",
-                    summary: `Migrated imported source identity for ${candidate.title}`,
-                  });
-            const titlePatch = canonicalExisting.title?.trim() ? {} : { title: candidate.title };
-            const note = await storage.updateNote(
-              canonicalExisting.id,
-              {
-                status: "active",
-                ...titlePatch,
-                modes: noteInput.modes,
-                scope: noteInput.scope,
-                tags: Array.from(new Set([...canonicalExisting.tags, ...noteInput.tags])),
-                provenance: noteInput.provenance,
-                sections: { ...canonicalExisting.sections, ...noteInput.sections },
-              },
-              {
-                actor: "maintenance_api",
-                cause: "interop.source_import",
-                summary: `Refreshed ${source} import source ${candidate.title}`,
-              },
-            );
-            imported.push({ sourceId: candidate.sourceId, title: candidate.title, note, created: false });
+            };
+            const noteIds = [...(candidate.legacySourceNoteIds ?? []), candidate.sourceNoteId];
+            const existingNotes = await storage.getNotesByIds(noteIds);
+            const existing = noteIds
+              .map((noteId) => existingNotes.get(noteId))
+              .find((note): note is LtmNote => Boolean(note));
+            if (existing) {
+              const canonicalExisting =
+                existing.id === candidate.sourceNoteId
+                  ? existing
+                  : await storage.renameNoteId(existing.id, candidate.sourceNoteId, {
+                      actor: "maintenance_api",
+                      cause: "interop.source_identity_migration",
+                      summary: `Migrated imported source identity for ${candidate.title}`,
+                    });
+              const titlePatch = canonicalExisting.title?.trim() ? {} : { title: candidate.title };
+              const note = await storage.updateNote(
+                canonicalExisting.id,
+                {
+                  status: "active",
+                  ...titlePatch,
+                  modes: noteInput.modes,
+                  scope: noteInput.scope,
+                  tags: Array.from(new Set([...canonicalExisting.tags, ...noteInput.tags])),
+                  provenance: noteInput.provenance,
+                  sections: { ...canonicalExisting.sections, ...noteInput.sections },
+                },
+                {
+                  actor: "maintenance_api",
+                  cause: "interop.source_import",
+                  summary: `Refreshed ${source} import source ${candidate.title}`,
+                },
+              );
+              imported.push({ sourceId: candidate.sourceId, title: candidate.title, note, created: false });
+              await recordLtmDebugEvent({
+                root,
+                operationId,
+                phase: "source_note",
+                action: "source_note_refreshed",
+                status: "ok",
+                source,
+                sourceId: candidate.sourceId,
+                sourceNoteId: note.id,
+                counts: { sourceChars: candidate.sourceText.length },
+                message: `Refreshed ${candidate.title}`,
+              }).catch((debugError) => {
+                logger.warn(debugError, "[ltm] Failed to record refreshed import source %s", candidate.sourceId);
+              });
+              continue;
+            }
+
+            const note = await storage.createNote(noteInput, {
+              actor: "maintenance_api",
+              cause: "interop.source_import",
+              summary: `Imported ${source} source ${candidate.title}`,
+            });
+            imported.push({ sourceId: candidate.sourceId, title: candidate.title, note, created: true });
             await recordLtmDebugEvent({
               root,
               operationId,
               phase: "source_note",
-              action: "source_note_refreshed",
+              action: "source_note_created",
               status: "ok",
               source,
               sourceId: candidate.sourceId,
               sourceNoteId: note.id,
               counts: { sourceChars: candidate.sourceText.length },
-              message: `Refreshed ${candidate.title}`,
+              message: `Created ${candidate.title}`,
             }).catch((debugError) => {
-              logger.warn(debugError, "[ltm] Failed to record refreshed import source %s", candidate.sourceId);
+              logger.warn(debugError, "[ltm] Failed to record created import source %s", candidate.sourceId);
             });
-            continue;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to write imported source note";
+            writeFailures.push({
+              sourceId: candidate.sourceId,
+              title: candidate.title,
+              sourceWriteStatus: "failed",
+              extractionStatus: "not_started",
+              retryable: true,
+              error: { code: "source_write_failed", message },
+            });
+            await recordLtmDebugEvent({
+              root,
+              operationId,
+              phase: "source_note",
+              action: "source_note_write_failed",
+              status: "error",
+              source,
+              sourceId: candidate.sourceId,
+              sourceNoteId: candidate.sourceNoteId,
+              error,
+            }).catch((debugError) => {
+              logger.warn(debugError, "[ltm] Failed to record import write failure for %s", candidate.sourceId);
+            });
           }
-
-          const note = await storage.createNote(noteInput, {
-            actor: "maintenance_api",
-            cause: "interop.source_import",
-            summary: `Imported ${source} source ${candidate.title}`,
-          });
-          imported.push({ sourceId: candidate.sourceId, title: candidate.title, note, created: true });
-          await recordLtmDebugEvent({
-            root,
-            operationId,
-            phase: "source_note",
-            action: "source_note_created",
-            status: "ok",
-            source,
-            sourceId: candidate.sourceId,
-            sourceNoteId: note.id,
-            counts: { sourceChars: candidate.sourceText.length },
-            message: `Created ${candidate.title}`,
-          }).catch((debugError) => {
-            logger.warn(debugError, "[ltm] Failed to record created import source %s", candidate.sourceId);
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "Failed to write imported source note";
-          writeFailures.push({
-            sourceId: candidate.sourceId,
-            title: candidate.title,
-            sourceWriteStatus: "failed",
-            extractionStatus: "not_started",
-            retryable: true,
-            error: { code: "source_write_failed", message },
-          });
-          await recordLtmDebugEvent({
-            root,
-            operationId,
-            phase: "source_note",
-            action: "source_note_write_failed",
-            status: "error",
-            source,
-            sourceId: candidate.sourceId,
-            sourceNoteId: candidate.sourceNoteId,
-            error,
-          }).catch((debugError) => {
-            logger.warn(debugError, "[ltm] Failed to record import write failure for %s", candidate.sourceId);
-          });
         }
-      }
 
-      return { source, imported, writeFailures };
-    },
+        return { source, imported, writeFailures };
+      },
+    ),
   );
 }
 

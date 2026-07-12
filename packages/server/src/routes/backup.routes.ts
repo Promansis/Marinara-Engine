@@ -21,7 +21,7 @@ import { createLorebooksStorage } from "../services/storage/lorebooks.storage.js
 import { createPromptsStorage } from "../services/storage/prompts.storage.js";
 import { createAgentsStorage } from "../services/storage/agents.storage.js";
 import { createThemesStorage } from "../services/storage/themes.storage.js";
-import type { ExportEnvelope } from "@marinara-engine/shared";
+import { ltmSafeRelativePathSchema, type ExportEnvelope } from "@marinara-engine/shared";
 import { getDataDir } from "../utils/data-dir.js";
 import { getDatabaseFilePath, getFileStorageDir } from "../config/runtime-config.js";
 import { normalizeTimestampOverrides } from "../services/import/import-timestamps.js";
@@ -29,6 +29,12 @@ import { flushDB } from "../db/connection.js";
 import { requirePrivilegedAccess } from "../middleware/privileged-gate.js";
 import { assertInsideDir } from "../utils/security.js";
 import { logger } from "../lib/logger.js";
+import {
+  copyLongTermMemoryBackupSnapshot,
+  restoreLongTermMemoryBackup,
+  type RestoreLongTermMemoryBackupResult,
+} from "../services/long-term-memory/backup-restore.js";
+import { getLongTermMemoryRoot, safeJoin } from "../services/long-term-memory/paths.js";
 
 /** Directories inside DATA_DIR that should be included in every backup. */
 export const FULL_BACKUP_DATA_DIRS = [
@@ -130,6 +136,7 @@ type StoredZipEntryRecord = {
 type ProfileImportInput = {
   envelope: ExportEnvelope;
   readAsset?: ProfileAssetReader;
+  longTermMemoryArchive?: { zip: ProfileZipArchive; basePath: string; reservedAssetBytes: number };
   warnings?: ProfileImportWarning[];
   cleanup?: () => Promise<void>;
   fileFingerprint?: string;
@@ -418,10 +425,7 @@ const REDACTED_UPDATE_COLUMNS: Record<string, string> = {
   custom_tools: "webhookUrl",
 };
 
-export function buildProfileUpdateSet(
-  tableName: string,
-  cleanRow: Record<string, unknown>,
-): Record<string, unknown> {
+export function buildProfileUpdateSet(tableName: string, cleanRow: Record<string, unknown>): Record<string, unknown> {
   const updateSet: Record<string, unknown> = { ...cleanRow };
   const secretColumn = REDACTED_UPDATE_COLUMNS[tableName];
   if (secretColumn) delete updateSet[secretColumn];
@@ -1569,6 +1573,45 @@ async function readProfileArchiveAsset(
   return readProfileArchiveEntryBuffer(zip, entry, asset.expectedSize);
 }
 
+function stageLongTermMemoryArchive(input: ProfileImportInput) {
+  const archive = input.longTermMemoryArchive;
+  if (!archive) return null;
+  const prefix = `${archive.basePath ? `${archive.basePath}/` : ""}long-term-memory/`;
+  const entries = archive.zip.entries.filter((entry) => !entry.isDirectory && entry.entryName.startsWith(prefix));
+  const hasCanonicalData = entries.some((entry) => {
+    const path = entry.entryName.slice(prefix.length);
+    return ["vault/", "config/", "events/", "drafts/", "transactions/"].some((directory) => path.startsWith(directory));
+  });
+  if (entries.length === 0 || !hasCanonicalData) return null;
+
+  return async (stagingRoot: string) => {
+    const seenPaths = new Set<string>();
+    let totalBytes = archive.reservedAssetBytes;
+    await mkdir(stagingRoot, { recursive: true });
+    for (const entry of entries) {
+      const rawPath = entry.entryName.slice(prefix.length);
+      const parsedPath = ltmSafeRelativePathSchema.safeParse(rawPath);
+      if (!parsedPath.success) {
+        throw new ProfileImportRequestError(`Long-term memory archive path is unsafe: ${entry.entryName}.`);
+      }
+      if (seenPaths.has(parsedPath.data)) {
+        throw new ProfileImportRequestError(`Long-term memory archive repeats ${parsedPath.data}.`);
+      }
+      seenPaths.add(parsedPath.data);
+      const size = getZipEntryUncompressedSize(entry);
+      if (size === null) {
+        throw new ProfileImportRequestError(`Long-term memory archive entry ${entry.entryName} has an invalid size.`);
+      }
+      assertProfileArchiveEntryLimit(entry.entryName, size);
+      totalBytes += size;
+      assertProfileArchiveTotalLimit(totalBytes);
+      const destination = safeJoin(stagingRoot, parsedPath.data);
+      await mkdir(dirname(destination), { recursive: true });
+      await writeFile(destination, await readProfileArchiveEntryBuffer(archive.zip, entry, size));
+    }
+  };
+}
+
 async function readProfileImportRequest(req: FastifyRequest): Promise<ProfileImportInput> {
   const contentType = String(req.headers["content-type"] ?? "").toLowerCase();
   if (!contentType.includes("multipart/form-data")) {
@@ -1596,10 +1639,15 @@ async function readProfileImportRequest(req: FastifyRequest): Promise<ProfileImp
     const { envelope, basePath } = await readProfileEnvelopeFromArchive(zip);
     const warnings: ProfileImportWarning[] = [];
     const archiveAssets = validateProfileArchiveAssets(zip, basePath, envelope, warnings);
+    const reservedAssetBytes = Array.from(archiveAssets.values()).reduce(
+      (total, asset) => total + asset.expectedSize,
+      0,
+    );
     const fingerprint = await fileFingerprint(archivePath);
     return {
       envelope,
       readAsset: (safePath) => readProfileArchiveAsset(zip, archiveAssets, safePath),
+      longTermMemoryArchive: { zip, basePath, reservedAssetBytes },
       warnings,
       cleanup: () => rm(uploadDir, { recursive: true, force: true }),
       fileFingerprint: fingerprint,
@@ -1632,11 +1680,11 @@ function buildBackupRestoreNotes() {
     "For one-click import inside Marinara:",
     "1. Open Settings -> Import.",
     "2. Use Import Profile and select the downloaded backup zip archive.",
-    "3. This restores profile data and supported assets; it does not restore the raw long-term-memory directory.",
+    "3. To replace Long-Term Memory too, enable the explicit Restore Long-Term Memory option before importing.",
     "4. If this backup has been extracted, marinara-profile.json restores profile data without asset files.",
     "",
-    "To restore Long-Term Memory, stop Marinara and copy the backup's long-term-memory directory into DATA_DIR.",
-    "Move any existing DATA_DIR/long-term-memory directory aside first, then restart and run memory integrity or reindexing.",
+    "Opt-in Long-Term Memory restore validates a staged vault, rebuilds its indexes locally, and restores the prior vault if verification fails.",
+    "Manual directory recovery remains available for older backups that do not contain a Marinara profile archive.",
     "",
     "The .marinara.json importer is for individual characters, personas, lorebooks, and presets.",
   ].join("\n");
@@ -1705,13 +1753,16 @@ export async function backupRoutes(app: FastifyInstance) {
       }
       await copyPersistedEncryptionKey(dataDir, backupDir);
 
-      // 2. Copy data directories
+      // 2. Copy data directories. LTM is copied under its vault lock so this
+      // filesystem backup represents one coherent canonical snapshot.
       for (const dirName of FULL_BACKUP_DATA_DIRS) {
+        if (dirName === "long-term-memory") continue;
         const src = resolveBackupDir(dataDir, dirName);
         if (existsSync(src)) {
           await cp(src, join(backupDir, dirName), { recursive: true });
         }
       }
+      await copyLongTermMemoryBackupSnapshot(getLongTermMemoryRoot(dataDir), join(backupDir, "long-term-memory"));
 
       return reply.send({
         success: true,
@@ -1755,23 +1806,36 @@ export async function backupRoutes(app: FastifyInstance) {
       }
 
       // 2. Recursively add each data directory under backupName/<dir>/...
-      for (const dirName of FULL_BACKUP_DATA_DIRS) {
-        const src = resolveBackupDir(dataDir, dirName);
-        if (!existsSync(src)) continue;
-        const stack: string[] = [src];
-        while (stack.length > 0) {
-          const current = stack.pop()!;
-          for (const entry of readdirSync(current)) {
-            const full = join(current, entry);
-            const st = statSync(full);
-            if (st.isDirectory()) {
-              stack.push(full);
-            } else if (st.isFile()) {
-              const rel = [dirName, relative(src, full)].filter(Boolean).join("/").split(/[\\/]/g).join("/");
-              zip.addFile(`${backupName}/${rel}`, await readFile(full));
+      // Stage LTM first so zipping does not interleave with a vault mutation.
+      const ltmSnapshotDirectory = await mkdtemp(join(tmpdir(), "marinara-ltm-backup-"));
+      try {
+        const ltmSnapshotRoot = join(ltmSnapshotDirectory, "long-term-memory");
+        const hasLtmSnapshot = await copyLongTermMemoryBackupSnapshot(getLongTermMemoryRoot(dataDir), ltmSnapshotRoot);
+        for (const dirName of FULL_BACKUP_DATA_DIRS) {
+          const src =
+            dirName === "long-term-memory"
+              ? hasLtmSnapshot
+                ? ltmSnapshotRoot
+                : null
+              : resolveBackupDir(dataDir, dirName);
+          if (!src || !existsSync(src)) continue;
+          const stack: string[] = [src];
+          while (stack.length > 0) {
+            const current = stack.pop()!;
+            for (const entry of readdirSync(current)) {
+              const full = join(current, entry);
+              const st = statSync(full);
+              if (st.isDirectory()) {
+                stack.push(full);
+              } else if (st.isFile()) {
+                const rel = [dirName, relative(src, full)].filter(Boolean).join("/").split(/[\\/]/g).join("/");
+                zip.addFile(`${backupName}/${rel}`, await readFile(full));
+              }
             }
           }
         }
+      } finally {
+        await rm(ltmSnapshotDirectory, { recursive: true, force: true });
       }
       await addPersistedEncryptionKeyToZip(dataDir, zip, backupName);
 
@@ -1865,6 +1929,8 @@ export async function backupRoutes(app: FastifyInstance) {
 
     const wantsProgressStream = String(req.headers.accept ?? "").includes("text/event-stream");
     const previewOnly = (req.query as { preview?: unknown } | undefined)?.preview === "true";
+    const restoreLongTermMemory =
+      (req.query as { restoreLongTermMemory?: unknown } | undefined)?.restoreLongTermMemory === "true";
     const expectedFingerprint =
       typeof req.headers["x-profile-preview-fingerprint"] === "string"
         ? req.headers["x-profile-preview-fingerprint"].trim()
@@ -1888,6 +1954,7 @@ export async function backupRoutes(app: FastifyInstance) {
 
       const data = envelope.data as Record<string, any>;
       const warnings = importInput.warnings ?? [];
+      const longTermMemoryStage = stageLongTermMemoryArchive(importInput);
       const profileStoragePreviewStats = isProfileStorageSnapshot(data.fileStorage)
         ? previewProfileStorageSnapshotStats(data.fileStorage, importInput.readAsset, warnings)
         : null;
@@ -1900,9 +1967,10 @@ export async function backupRoutes(app: FastifyInstance) {
           actualFingerprint: importInput.fileFingerprint,
         });
       }
-      const totalItems = isProfileStorageSnapshot(data.fileStorage)
+      const profileTotalItems = isProfileStorageSnapshot(data.fileStorage)
         ? Math.max(1, countProfileStorageSnapshotItems(data.fileStorage))
         : Math.max(1, countLegacyProfileImportItems(data));
+      const totalItems = profileTotalItems + (restoreLongTermMemory ? 1 : 0);
 
       if (previewOnly) {
         const imported = profileStoragePreviewStats ?? previewLegacyProfileImportStats(data);
@@ -1913,7 +1981,15 @@ export async function backupRoutes(app: FastifyInstance) {
           warnings,
           fileFingerprint: importInput.fileFingerprint,
           totalItems,
+          longTermMemoryAvailable: Boolean(longTermMemoryStage),
         };
+      }
+
+      if (restoreLongTermMemory && !longTermMemoryStage) {
+        return reply.status(400).send({
+          error: "Long-Term Memory backup not found",
+          message: "This import archive does not contain a restorable long-term-memory directory.",
+        });
       }
 
       const sendEvent = (event: { type: string; data?: unknown; [key: string]: unknown }) => {
@@ -1921,8 +1997,17 @@ export async function backupRoutes(app: FastifyInstance) {
           reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
         }
       };
+      let restoredLongTermMemory: RestoreLongTermMemoryBackupResult | null = null;
+      let longTermMemoryCompletedItems = 0;
       const sendProgress = (progress: ProfileImportProgress) => {
-        sendEvent({ type: "progress", data: progress });
+        sendEvent({
+          type: "progress",
+          data: {
+            ...progress,
+            completedItems: Math.min(totalItems, progress.completedItems + longTermMemoryCompletedItems),
+            totalItems,
+          },
+        });
       };
 
       if (wantsProgressStream) {
@@ -1941,6 +2026,43 @@ export async function backupRoutes(app: FastifyInstance) {
       }
 
       try {
+        if (restoreLongTermMemory && longTermMemoryStage) {
+          sendEvent({
+            type: "progress",
+            data: {
+              phase: "long_term_memory",
+              label: "Staging long-term memory restore",
+              completedItems: 0,
+              totalItems,
+            },
+          });
+          restoredLongTermMemory = await restoreLongTermMemoryBackup({
+            root: getLongTermMemoryRoot(getDataDir()),
+            stage: longTermMemoryStage,
+            hooks: {
+              onPhase: (phase) => {
+                const labels: Record<string, string> = {
+                  staged: "Validating long-term memory restore",
+                  current_root_moved: "Publishing long-term memory restore",
+                  published: "Rebuilding long-term memory indexes",
+                  rebuilt: "Verifying long-term memory restore",
+                  verified: "Long-term memory restore verified",
+                };
+                sendEvent({
+                  type: "progress",
+                  data: {
+                    phase: "long_term_memory",
+                    label: labels[phase] ?? "Restoring long-term memory",
+                    completedItems: phase === "verified" ? 1 : 0,
+                    totalItems,
+                  },
+                });
+              },
+            },
+          });
+          longTermMemoryCompletedItems = 1;
+        }
+
         if (isProfileStorageSnapshot(data.fileStorage)) {
           const imported = await importProfileStorageSnapshot(
             app,
@@ -1948,7 +2070,20 @@ export async function backupRoutes(app: FastifyInstance) {
             wantsProgressStream ? sendProgress : undefined,
             importInput.readAsset,
           );
-          const payload = { success: true, imported, warnings };
+          const payload = {
+            success: true,
+            imported,
+            warnings,
+            ...(restoredLongTermMemory
+              ? {
+                  longTermMemory: {
+                    restored: true,
+                    noteCount: restoredLongTermMemory.integrity.noteCount,
+                    chunkCount: restoredLongTermMemory.rebuild.chunkCount,
+                  },
+                }
+              : {}),
+          };
           if (wantsProgressStream) {
             sendEvent({ type: "done", data: payload });
             reply.raw.end();
@@ -2320,7 +2455,20 @@ export async function backupRoutes(app: FastifyInstance) {
           }
         }
 
-        const payload = { success: true, imported: stats, warnings };
+        const payload = {
+          success: true,
+          imported: stats,
+          warnings,
+          ...(restoredLongTermMemory
+            ? {
+                longTermMemory: {
+                  restored: true,
+                  noteCount: restoredLongTermMemory.integrity.noteCount,
+                  chunkCount: restoredLongTermMemory.rebuild.chunkCount,
+                },
+              }
+            : {}),
+        };
         if (wantsProgressStream) {
           sendEvent({ type: "done", data: payload });
           reply.raw.end();

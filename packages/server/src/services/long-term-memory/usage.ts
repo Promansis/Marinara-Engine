@@ -1,12 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, rename } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, readFile, readdir, rename } from "node:fs/promises";
+import { basename, dirname } from "node:path";
 import { logger } from "../../lib/logger.js";
 import { readJsonFile, writeJsonAtomic } from "./atomic-json.js";
 import type { LtmBudgetedChunk } from "./budget.js";
 import { quarantineLtmIndexArtifact } from "./index-quarantine.js";
 import { isEnoent } from "./ltm-utils.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
+import { withLtmVaultLock } from "./vault-lock.js";
 
 export type LtmChunkUsage = {
   chunkId: string;
@@ -227,6 +228,30 @@ export async function readLongTermMemoryUsage(root = getLongTermMemoryRoot()) {
   return readUsageIndex(root);
 }
 
+/** Strictly validate durable accounting without quarantining or repairing it. */
+export async function validateLongTermMemoryUsage(root = getLongTermMemoryRoot()) {
+  const raw = await readJsonFile<unknown>(longTermMemoryUsagePath(root), emptyUsageIndex());
+  return parseUsageIndex(raw);
+}
+
+/** Strictly validate every durable dispatch receipt in a vault. */
+export async function validateLongTermMemoryInjectionReceipts(root = getLongTermMemoryRoot()) {
+  const receiptsDir = getLongTermMemoryDirectories(root).receipts;
+  const entries = await readdir(receiptsDir, { withFileTypes: true }).catch((err) => {
+    if (isEnoent(err)) return [];
+    throw err;
+  });
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+    const path = safeJoin(receiptsDir, entry.name);
+    const receipt = parseReceipt(JSON.parse(await readFile(path, "utf8")));
+    if (basename(longTermMemoryInjectionReceiptPath(receipt.chatId, root)) !== entry.name) {
+      throw new Error(`Long-term memory receipt filename does not match chat ${receipt.chatId}.`);
+    }
+  }
+}
+
 export async function readLongTermMemoryInjectionReceipt(chatId: string, root = getLongTermMemoryRoot()) {
   const path = longTermMemoryInjectionReceiptPath(chatId, root);
   try {
@@ -280,28 +305,30 @@ export async function recordLongTermMemoryInjection(
     })),
   };
 
-  await Promise.all([
-    withWriteLock(usagePath, async () => {
-      const usage = await readUsageIndex(root);
-      const chatUsage = usage.chats[chatId] ?? { chunks: {} };
-      for (const item of chunks) {
-        const existing = chatUsage.chunks[item.chunk.id];
-        chatUsage.chunks[item.chunk.id] = {
-          chunkId: item.chunk.id,
-          noteId: item.chunk.noteId,
-          sectionKey: item.chunk.sectionKey,
-          lastRetrievedAt: now,
-          lastInjectedAt: now,
-          retrievalCount: (existing?.retrievalCount ?? 0) + 1,
-          injectionCount: (existing?.injectionCount ?? 0) + 1,
-          totalInjectedTokens: (existing?.totalInjectedTokens ?? 0) + Math.max(0, Math.floor(item.estimatedTokens)),
-        };
-      }
-      usage.chats[chatId] = chatUsage;
-      await writeJsonAtomic(usagePath, usage);
-    }),
-    withWriteLock(receiptPath, () => writeJsonAtomic(receiptPath, receipt)),
-  ]);
+  await withLtmVaultLock(root, () =>
+    Promise.all([
+      withWriteLock(usagePath, async () => {
+        const usage = await readUsageIndex(root);
+        const chatUsage = usage.chats[chatId] ?? { chunks: {} };
+        for (const item of chunks) {
+          const existing = chatUsage.chunks[item.chunk.id];
+          chatUsage.chunks[item.chunk.id] = {
+            chunkId: item.chunk.id,
+            noteId: item.chunk.noteId,
+            sectionKey: item.chunk.sectionKey,
+            lastRetrievedAt: now,
+            lastInjectedAt: now,
+            retrievalCount: (existing?.retrievalCount ?? 0) + 1,
+            injectionCount: (existing?.injectionCount ?? 0) + 1,
+            totalInjectedTokens: (existing?.totalInjectedTokens ?? 0) + Math.max(0, Math.floor(item.estimatedTokens)),
+          };
+        }
+        usage.chats[chatId] = chatUsage;
+        await writeJsonAtomic(usagePath, usage);
+      }),
+      withWriteLock(receiptPath, () => writeJsonAtomic(receiptPath, receipt)),
+    ]),
+  );
 
   return receipt;
 }

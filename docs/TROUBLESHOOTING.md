@@ -201,6 +201,21 @@ Run the migration while Marinara is stopped so the backup and migrated files can
 
 ---
 
+## Full-Backup Long-Term Memory Restore
+
+An ordinary profile import intentionally leaves the current Long-Term Memory
+vault untouched. To restore it from a Marinara full-backup ZIP, choose
+**Settings -> Import**, enable **Restore Long-Term Memory from full backup**,
+and select the archive.
+
+The restore validates a staged vault and rebuilds indexes before it is accepted.
+If the import reports a Long-Term Memory restore failure, the prior vault was
+kept or restored; check the server log for the failed stage before trying again.
+Use manual directory recovery only for backups without a `marinara-profile.json`
+archive or when the application itself cannot start.
+
+---
+
 ## Still Stuck?
 
 - Check the [open issues](https://github.com/Pasta-Devs/Marinara-Engine/issues) on GitHub.

@@ -17,6 +17,7 @@ import {
 } from "@marinara-engine/shared";
 import { readJsonFile, writeJsonAtomic } from "./atomic-json.js";
 import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from "./paths.js";
+import { withLtmVaultLock } from "./vault-lock.js";
 
 const LTM_EXTRACTION_MODES = ["roleplay", "conversation", "game"] as const satisfies readonly LtmMode[];
 
@@ -160,7 +161,9 @@ export async function updateLtmExtractionConfig(
   input: unknown,
   root = getLongTermMemoryRoot(),
 ): Promise<LtmResolvedExtractionSettings> {
-  const parsed = normalizePersistedConfig(ltmExtractionSettingsSchema.parse(input ?? {}));
-  await writeJsonAtomic(extractionConfigPath(root), parsed);
-  return resolveExtractionConfig(parsed);
+  return withLtmVaultLock(root, async () => {
+    const parsed = normalizePersistedConfig(ltmExtractionSettingsSchema.parse(input ?? {}));
+    await writeJsonAtomic(extractionConfigPath(root), parsed);
+    return resolveExtractionConfig(parsed);
+  });
 }
