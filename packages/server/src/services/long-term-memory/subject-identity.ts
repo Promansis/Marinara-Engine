@@ -69,6 +69,8 @@ type CatalogIndex = {
   tokens: string[];
 };
 
+const SOURCE_BACKED_NPC_NAME_PATTERN = /\b[A-Z][\p{L}\p{N}'-]*(?:\s+[A-Z][\p{L}\p{N}'-]*){1,3}\b/gu;
+
 type SubjectMatch =
   | { status: "matched"; entries: TrustedLtmSubjectCatalogEntry[]; basis: string }
   | { status: "ambiguous"; keys: string[]; basis: string }
@@ -314,11 +316,13 @@ export function resolveLtmSubjectIdentities({
   catalog,
   existingNotes,
   enforceTrustedSubjects = true,
+  sourceBackedNpcSourceText,
 }: {
   units: LtmEvidenceUnit[];
   catalog: TrustedLtmSubjectCatalog;
   existingNotes: LtmNote[];
   enforceTrustedSubjects?: boolean;
+  sourceBackedNpcSourceText?: string;
 }): LtmSubjectIdentityResolution {
   const index = buildCatalogIndex(catalog);
   const legacyBindings = inferLegacyBindings(catalog, index);
@@ -335,6 +339,30 @@ export function resolveLtmSubjectIdentities({
 
     const match = resolveUnitSubjects(unit, index);
     if (match.status !== "matched") {
+      const sourceBackedNpc = sourceBackedNpcSubject(unit, sourceBackedNpcSourceText);
+      if (sourceBackedNpc && match.status === "untrusted") {
+        addCatalogEntry(index, sourceBackedNpc);
+        const subjects = [sourceBackedNpc.subject];
+        const canonicalNoteId = canonicalNoteIdForEntries([sourceBackedNpc], unit.bucket);
+        const originalNoteId = noteIdForEvidenceUnit(unit);
+        const nextUnit: LtmEvidenceUnit = {
+          ...unit,
+          subjectId: subjectIdForTarget(canonicalNoteId, unit.bucket),
+          subjectKeys: subjects.map((subject) => subject.key),
+          subjects,
+        };
+        resolved.push({ unit: nextUnit, originalNoteId, targetNoteId: canonicalNoteId });
+        diagnostics.push({
+          severity: "warning",
+          code: "source_backed_npc_identity",
+          candidateIndex,
+          mutationId: unit.id,
+          noteId: canonicalNoteId,
+          message: `Accepted ${sourceBackedNpc.name} as an unbound NPC identity from the imported source.`,
+          details: { subjectKeys: nextUnit.subjectKeys, matchBasis: "source_backed_npc" },
+        });
+        continue;
+      }
       if (!enforceTrustedSubjects) {
         const fallbackSubjects = fallbackSubjectsForUnit(unit);
         const targetNoteId = noteIdForEvidenceUnit(unit);
@@ -402,6 +430,42 @@ export function resolveLtmSubjectIdentities({
     droppedCandidates,
     legacyBindings,
   };
+}
+
+function sourceBackedNpcSubject(unit: LtmEvidenceUnit, sourceText: string | undefined): TrustedLtmSubjectCatalogEntry | null {
+  if (unit.bucket !== "character_fact" || !sourceText || (unit.subjectKeys?.length ?? 0) > 0) return null;
+  const slug = stripNotePrefix(normalizeSubjectIdentifier(unit.subjectId, ""));
+  if (slug.split("_").length < 2) return null;
+  const sourceNames = sourceBackedNpcNames(sourceText);
+  const name = sourceNames.get(slug);
+  if (!name) return null;
+  return {
+    subject: { key: `npc:${slug}` },
+    name,
+    aliases: [],
+    canonicalSlug: slug,
+  };
+}
+
+function sourceBackedNpcNames(sourceText: string) {
+  const names = new Map<string, string>();
+  for (const match of sourceText.matchAll(SOURCE_BACKED_NPC_NAME_PATTERN)) {
+    const name = match[0]!.trim();
+    const slug = normalizeSubjectIdentifier(name, "");
+    if (slug && !names.has(slug)) names.set(slug, name);
+  }
+  return names;
+}
+
+function addCatalogEntry(index: CatalogIndex, entry: TrustedLtmSubjectCatalogEntry) {
+  if (index.byKey.has(entry.subject.key)) return;
+  index.entries.push(entry);
+  index.byKey.set(entry.subject.key, entry);
+  addIndexEntry(index.exact, normalizeSubjectIdentifier(entry.name, ""), entry);
+  for (const alias of entry.aliases) addIndexEntry(index.aliases, normalizeSubjectIdentifier(alias, ""), entry);
+  index.tokens = uniqueStrings([...index.tokens, normalizeSubjectIdentifier(entry.name, ""), entry.canonicalSlug]).sort(
+    (left, right) => right.length - left.length || left.localeCompare(right),
+  );
 }
 
 export function subjectsEqual(left: readonly LtmSubject[] | undefined, right: readonly LtmSubject[] | undefined) {

@@ -279,6 +279,32 @@ test("matching subjects do not bypass current visibility scope", async () => {
   assert.equal(scoped.diagnostics[0]?.code, "target_note_scoped_variant");
 });
 
+test("imported summaries admit explicitly named unbound NPC character facts", () => {
+  const result = resolveLtmSubjectIdentities({
+    catalog: damoLisaCatalog(),
+    existingNotes: [],
+    sourceBackedNpcSourceText: "Sayo Hikawa watched Damo perform at The Foundry.",
+    units: [unit("character_fact", "sayo_hikawa", { subjectKeys: [] })],
+  });
+
+  assert.equal(result.droppedCandidates.length, 0);
+  assert.equal(noteIdForEvidenceUnit(result.units[0]!), "char_sayo_hikawa");
+  assert.deepEqual(result.units[0]?.subjects, [{ key: "npc:sayo_hikawa" }]);
+  assert.equal(result.diagnostics[0]?.code, "source_backed_npc_identity");
+});
+
+test("unbound NPC admission requires an explicit multi-word source name", () => {
+  const result = resolveLtmSubjectIdentities({
+    catalog: damoLisaCatalog(),
+    existingNotes: [],
+    sourceBackedNpcSourceText: "The guitarist watched Damo perform.",
+    units: [unit("character_fact", "guitarist", { subjectKeys: [] })],
+  });
+
+  assert.equal(result.units.length, 0);
+  assert.equal(result.droppedCandidates[0]?.reason, "untrusted_subject");
+});
+
 test("provider schema and prompt keep trusted subject cardinality server-owned", () => {
   const catalog = damoLisaCatalog();
   const promptCatalog = trustedLtmSubjectPromptCatalog(catalog);
@@ -312,4 +338,35 @@ test("provider schema and prompt keep trusted subject cardinality server-owned",
   });
   const payload = JSON.parse(messages[1]!.content) as Record<string, unknown>;
   assert.deepEqual(payload.trustedSubjects, promptCatalog);
+});
+
+test("provider schema permits unbound NPC character facts only when requested", () => {
+  const format = evidenceUnitResponseFormat({
+    allowedBuckets: ["character_fact", "relationship_state"],
+    sourceHash,
+    allowSourceBackedNpcSubjects: true,
+  });
+  const serializedFormat = JSON.stringify(format);
+  assert.match(serializedFormat, /"minItems":0,"maxItems":1/);
+
+  const source = note({
+    id: "source_summary",
+    type: "source",
+    tags: ["source_summary", "imported_chat"],
+    sections: { source: { text: "Sayo Hikawa watched Damo perform.", updatedAt: timestamp } },
+  });
+  const messages = evidenceUnitMessages({
+    sourceNote: source,
+    sourceText: source.sections.source!.text,
+    existingNotes: [],
+    provider: {} as BaseLLMProvider,
+    model: "test-model",
+    scope: source.scope,
+    modes: ["roleplay"],
+    sourceHash,
+    systemPrompt: "A custom template that says nothing about subjects.",
+    allowSourceBackedNpcSubjects: true,
+  });
+  const payload = JSON.parse(messages[1]!.content) as { targetNoteRules?: string[] };
+  assert.match(payload.targetNoteRules?.join(" ") ?? "", /explicitly named multi-word NPC/);
 });

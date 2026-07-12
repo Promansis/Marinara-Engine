@@ -1607,6 +1607,74 @@ test("structured roleplay character backfill keeps developments when optional ti
   assert.equal(create.note.links.some((link) => link.target === "timeline_brainworms_mention"), false);
 });
 
+test("imported chat extraction creates an unbound source-backed NPC memory", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-imported-npc-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    const sourceText = "Sayo Hikawa watched Damo perform at The Foundry.";
+    await storage.createNote(
+      {
+        id: "source_imported_npc",
+        type: "source",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_a" },
+        tags: ["source_summary", "imported_chat"],
+        links: [],
+        sections: {
+          source: { text: sourceText, updatedAt: timestamp, evidence: ["chat:chat_a"] },
+        },
+      },
+      { suppressEvent: true },
+    );
+    const sourceNote = await storage.getNote("source_imported_npc");
+    assert(sourceNote);
+    const unitSourceHash = sourceHashForEvidenceUnitExtraction(sourceNote);
+    const provider = {
+      maxTokensOverrideValue: undefined,
+      chatComplete: async () => ({
+        content: JSON.stringify({
+          summary: "Sayo fact",
+          units: [
+            {
+              id: randomUUID(),
+              bucket: "character_fact",
+              subjectId: "sayo_hikawa",
+              subjectKeys: [],
+              sectionKey: "facts",
+              text: "Sayo Hikawa watched Damo perform at The Foundry.",
+              importance: "major",
+              evidence: ["source_note:source_imported_npc"],
+              confidence: 0.95,
+              salience: 0.8,
+              status: "active",
+              links: [],
+              sourceHash: unitSourceHash,
+            },
+          ],
+        }),
+      }),
+    } as any;
+
+    const result = await extractLongTermMemoryFromSourceNote({
+      noteId: sourceNote.id,
+      provider,
+      model: "test-model",
+      root,
+      trustedSubjectCatalog: buildTrustedLtmSubjectCatalog({ roster: [], notes: [] }),
+    });
+
+    const create = result.response.mutations.find(
+      (mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> =>
+        mutation.kind === "create_note" && mutation.note.id === "char_sayo_hikawa",
+    );
+    assert.ok(create);
+    assert.deepEqual(create.note.subjects, [{ key: "npc:sayo_hikawa" }]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("source extraction canonicalizes shorthand character subjects to trusted existing notes", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-shorthand-character-"));
   try {

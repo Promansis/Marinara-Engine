@@ -449,6 +449,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
     allowedBuckets,
     mode: resolvedMode,
     aiKeywordExtraction: extractionConfig.aiKeywordExtraction,
+    allowSourceBackedNpcSubjects: sourceNote.tags.includes("imported_chat"),
     trustedSubjectCatalog: options.trustedSubjectCatalog,
   };
 
@@ -472,6 +473,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
     catalog: options.trustedSubjectCatalog ?? { entries: [], notes: [] },
     existingNotes,
     enforceTrustedSubjects: Boolean(options.trustedSubjectCatalog),
+    sourceBackedNpcSourceText: sourceNote.tags.includes("imported_chat") ? sourceText : undefined,
   });
   const targetResolution = await resolveScopedEvidenceUnitTargets({
     storage,

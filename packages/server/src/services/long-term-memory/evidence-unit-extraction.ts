@@ -123,6 +123,7 @@ export interface RunLongTermMemoryEvidenceUnitExtractionOptions {
   mode?: LtmMode;
   aiKeywordExtraction?: boolean;
   refinePass?: boolean;
+  allowSourceBackedNpcSubjects?: boolean;
   trustedSubjectCatalog?: TrustedLtmSubjectCatalog;
 }
 
@@ -288,6 +289,7 @@ export function evidenceUnitResponseFormat(options: {
   allowedBuckets: readonly LtmEvidenceUnit["bucket"][];
   sourceHash: string;
   trustedSubjectKeys?: readonly string[];
+  allowSourceBackedNpcSubjects?: boolean;
 }): NonNullable<ChatOptions["responseFormat"]> {
   const trustedSubjectKeys = options.trustedSubjectKeys?.length
     ? [...options.trustedSubjectKeys]
@@ -371,7 +373,11 @@ export function evidenceUnitResponseFormat(options: {
               allOf: [
                 {
                   if: { properties: { bucket: { const: "character_fact" } }, required: ["bucket"] },
-                  then: { properties: { subjectKeys: { minItems: 1, maxItems: 1 } } },
+                  then: {
+                    properties: {
+                      subjectKeys: { minItems: options.allowSourceBackedNpcSubjects ? 0 : 1, maxItems: 1 },
+                    },
+                  },
                 },
                 {
                   if: { properties: { bucket: { const: "relationship_state" } }, required: ["bucket"] },
@@ -847,7 +853,9 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
           bucket: "one allowed stream value from allowedStreams",
           subjectId: "real lowercase_snake_case subject",
           subjectKeys:
-            "character_fact: exactly one trustedSubjects key; relationship_state: exactly two distinct trustedSubjects keys; all other streams: []",
+            options.allowSourceBackedNpcSubjects
+              ? "character_fact: exactly one trustedSubjects key, or [] only for a newly introduced, explicitly named NPC from this imported source; relationship_state: exactly two distinct trustedSubjects keys; all other streams: []"
+              : "character_fact: exactly one trustedSubjects key; relationship_state: exactly two distinct trustedSubjects keys; all other streams: []",
           sectionKey: "real lowercase_snake_case section",
           text: "compact memory text, not transcript summary",
           importance: "one of critical, major, moderate, minor",
@@ -897,7 +905,9 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
           "For timeline_event, subjectId must name the specific event or beat, not just a person, character, place, or broad entity. Use damo_arrival or lisa_minimizing_damo instead of damo_korvak.",
           "Do not intentionally target an existing note id unless that exact note appears in existingTypedNotes. If a broad note is not listed, use a source-specific subjectId for a new in-scope note.",
           "relationship_state dimension keys must come only from allowedRelationshipDimensions. Put professional curiosity, reputation, gossip, or attention as text/thread/world/timeline facts, not dimensions.",
-          "Character and relationship identities must use only trustedSubjects keys. Never invent a subject key. Relationship subjectKeys are an unordered pair; emit them sorted by key.",
+          options.allowSourceBackedNpcSubjects
+            ? "Character identities must use trustedSubjects keys, except an explicitly named multi-word NPC from this imported source may use subjectKeys: [] and its exact normalized name as subjectId. Never invent a subject key. Relationship subjectKeys are an unordered pair; emit them sorted by key."
+            : "Character and relationship identities must use only trustedSubjects keys. Never invent a subject key. Relationship subjectKeys are an unordered pair; emit them sorted by key.",
         ],
         trustedSubjects: trustedLtmSubjectPromptCatalog(
           options.trustedSubjectCatalog ?? { entries: [], notes: [] },
@@ -941,6 +951,7 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
       allowedBuckets: options.allowedBuckets ?? DEFAULT_LTM_EVIDENCE_UNIT_ALLOWED_BUCKETS,
       sourceHash: options.sourceHash,
       trustedSubjectKeys: options.trustedSubjectCatalog?.entries.map((entry) => entry.subject.key),
+      allowSourceBackedNpcSubjects: options.allowSourceBackedNpcSubjects,
     }),
   };
   await recordLtmDebugEvent({
