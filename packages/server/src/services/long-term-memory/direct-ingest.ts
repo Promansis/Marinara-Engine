@@ -217,7 +217,7 @@ async function refreshGameJournalSourceNote(options: {
           ...(currentSection ?? { confidence: 0.8 }),
           text: options.sourceText,
           evidence,
-          updatedAt: sourceChanged ? nowIso() : currentSection?.updatedAt ?? nowIso(),
+          updatedAt: sourceChanged ? nowIso() : (currentSection?.updatedAt ?? nowIso()),
         },
       },
     },
@@ -426,6 +426,7 @@ export async function directIngestGameJournal(
             mode: "game",
             aiKeywordExtraction: extractionConfig.aiKeywordExtraction,
             refinePass: true,
+            resolveSubjectNames: false,
             signal: options.signal,
           });
           const refinedTargetResolution = await resolveScopedEvidenceUnitTargets({

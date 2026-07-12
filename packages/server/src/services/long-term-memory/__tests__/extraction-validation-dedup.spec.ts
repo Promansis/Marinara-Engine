@@ -338,6 +338,10 @@ test("source hashes ignore refresh timestamps but change with source text", () =
 
   assert.equal(sourceHashForEvidenceUnitExtraction(first), sourceHashForEvidenceUnitExtraction(refreshed));
   assert.notEqual(sourceHashForEvidenceUnitExtraction(refreshed), sourceHashForEvidenceUnitExtraction(changed));
+  assert.notEqual(
+    sourceHashForEvidenceUnitExtraction(first),
+    sourceHashForEvidenceUnitExtraction({ ...first, title: "Roselia" }),
+  );
 });
 
 test("candidate identity is stable when a provider changes its model-owned UUID", () => {
@@ -620,6 +624,8 @@ test("evidence unit response format constrains target shape and relationship dim
 
   assert.equal(responseFormat.type, "json_schema");
   assert.ok(unitSchema.required.includes("importance"));
+  assert.ok(unitSchema.required.includes("subjectNames"));
+  assert.equal(unitSchema.required.includes("subjectKeys"), false);
   assert.deepEqual(unitSchema.properties.bucket.enum, ["timeline_event", "relationship_state"]);
   assert.deepEqual(unitSchema.properties.sourceHash.enum, [sourceHash]);
   assert.equal(unitSchema.properties.dimensions.additionalProperties, false);
@@ -630,6 +636,55 @@ test("evidence unit response format constrains target shape and relationship dim
   assert.ok(unitSchema.properties.dimensionChanges.properties.respect);
   assert.ok(unitSchema.properties.dimensionChanges.properties.loyalty);
   assert.equal("maxItems" in jsonSchema.schema.properties.units, false);
+});
+
+test("game refine prompt preserves structural subjects without requesting subject names", () => {
+  const sourceNote = note("source_game_refine", {
+    source: {
+      text: "Mirelle reinforced the gate while the party regrouped.",
+      updatedAt: timestamp,
+    },
+  });
+  const candidateUnits = [
+    unit("character_fact", { subjectId: "npc_mirelle", sectionKey: "developments" }),
+    unit("relationship_state", { subjectId: "party" }),
+  ];
+  const messages = evidenceUnitMessages({
+    sourceNote,
+    sourceText: sourceNote.sections.source!.text,
+    existingNotes: [],
+    candidateUnits,
+    provider: null as never,
+    model: "test-model",
+    scope: {},
+    modes: ["game"],
+    mode: "game",
+    sourceHash,
+    refinePass: true,
+    resolveSubjectNames: false,
+    systemPrompt: "Custom game guidance. Copy source-visible character names into subjectNames.",
+  });
+  const payload = JSON.parse(messages[1]!.content) as {
+    unitFields: Record<string, unknown>;
+    targetNoteRules: string[];
+  };
+  const responseFormat = evidenceUnitResponseFormat({
+    allowedBuckets: ["character_fact", "relationship_state"],
+    sourceHash,
+    resolveSubjectNames: false,
+  });
+  const unitSchema = (responseFormat.json_schema as any).schema.properties.units.items;
+
+  assert.match(messages[0]!.content, /Preserve character_fact and relationship_state subjectId values/);
+  assert.match(messages[0]!.content, /Never add subjectNames or choose database subject keys/);
+  assert.match(messages[0]!.content, /Custom game guidance/);
+  assert(
+    messages[0]!.content.lastIndexOf("Preserve character_fact") >
+      messages[0]!.content.indexOf("Copy source-visible character names"),
+  );
+  assert.equal("subjectNames" in payload.unitFields, false);
+  assert(payload.targetNoteRules.some((rule) => rule.includes("Preserve the character_fact")));
+  assert.equal(unitSchema.required.includes("subjectNames"), false);
 });
 
 test("evidence unit payload accepts more than forty valid units", () => {
@@ -1607,11 +1662,11 @@ test("structured roleplay character backfill keeps developments when optional ti
   assert.equal(create.note.links.some((link) => link.target === "timeline_brainworms_mention"), false);
 });
 
-test("imported chat extraction creates an unbound source-backed NPC memory", async () => {
+test("LLM source extraction creates a review-required single-name character memory", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-imported-npc-"));
   try {
     const storage = new LongTermMemoryStorage(root);
-    const sourceText = "Sayo Hikawa watched Damo perform at The Foundry.";
+    const sourceText = "Roselia guarded the archive through the night.";
     await storage.createNote(
       {
         id: "source_imported_npc",
@@ -1634,15 +1689,15 @@ test("imported chat extraction creates an unbound source-backed NPC memory", asy
       maxTokensOverrideValue: undefined,
       chatComplete: async () => ({
         content: JSON.stringify({
-          summary: "Sayo fact",
+          summary: "Roselia fact",
           units: [
             {
               id: randomUUID(),
               bucket: "character_fact",
-              subjectId: "sayo_hikawa",
-              subjectKeys: [],
+              subjectId: "provider_guess",
+              subjectNames: ["Roselia"],
               sectionKey: "facts",
-              text: "Sayo Hikawa watched Damo perform at The Foundry.",
+              text: sourceText,
               importance: "major",
               evidence: ["source_note:source_imported_npc"],
               confidence: 0.95,
@@ -1666,10 +1721,12 @@ test("imported chat extraction creates an unbound source-backed NPC memory", asy
 
     const create = result.response.mutations.find(
       (mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> =>
-        mutation.kind === "create_note" && mutation.note.id === "char_sayo_hikawa",
+        mutation.kind === "create_note" && mutation.note.id === "char_roselia",
     );
     assert.ok(create);
-    assert.deepEqual(create.note.subjects, [{ key: "npc:sayo_hikawa" }]);
+    assert.equal(create.note.title, "Roselia");
+    assert.equal(create.risk, "medium");
+    assert.deepEqual(create.note.subjects, [{ key: "npc:roselia" }]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1679,10 +1736,7 @@ test("source extraction canonicalizes shorthand character subjects to trusted ex
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-shorthand-character-"));
   try {
     const storage = new LongTermMemoryStorage(root);
-    const sourceText = [
-      "### thread",
-      "- A placeholder thread section to keep the structured normalizer active without adding another note.",
-    ].join("\n");
+    const sourceText = "Damo is meticulous about borrowed equipment placement.";
     await storage.createNote(
       {
         id: "scene_source_shorthand_character",
@@ -1739,8 +1793,8 @@ test("source extraction canonicalizes shorthand character subjects to trusted ex
             {
               id: randomUUID(),
               bucket: "character_fact",
-              subjectId: "damo",
-              subjectKeys: ["character:damo-id"],
+              subjectId: "provider_guess",
+              subjectNames: ["Damo"],
               sectionKey: "facts",
               text: "Damo is meticulous about borrowed equipment placement.",
               importance: "moderate",
@@ -1778,6 +1832,12 @@ test("source extraction canonicalizes shorthand character subjects to trusted ex
         (mutation) => mutation.kind === "update_section" && mutation.noteId === "char_damo_korvak_baa242cfa4",
       ),
       true,
+    );
+    assert.equal(
+      result.draft.mutations.find(
+        (mutation) => mutation.kind === "update_section" && mutation.noteId === "char_damo_korvak_baa242cfa4",
+      )?.risk,
+      "low",
     );
     assert.equal(result.draft.mutations.some((mutation) => mutation.kind === "create_note"), false);
   } finally {

@@ -9,9 +9,9 @@ import {
 import { stableJsonHash } from "./chunking.js";
 
 function normalizedStrings(values: readonly (string | null | undefined)[]) {
-  return Array.from(new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value)))).sort(
-    (left, right) => left.localeCompare(right),
-  );
+  return Array.from(
+    new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value))),
+  ).sort((left, right) => left.localeCompare(right));
 }
 
 function normalizedScope(scope: LtmScope | null | undefined): LtmScope {
@@ -30,11 +30,13 @@ function sourceSection(note: Pick<LtmNote, "sections">) {
 
 export function sourceHashForLtmSourceMaterial(input: {
   noteId: string;
+  sourceTitle?: string;
   sourceText: string;
   evidence?: readonly string[];
 }) {
   return stableJsonHash({
     noteId: input.noteId,
+    sourceTitle: input.sourceTitle?.trim() ?? "",
     sourceText: input.sourceText.trim(),
     evidence: normalizedStrings(input.evidence ?? []),
   });
@@ -44,6 +46,7 @@ export function sourceHashForLtmSourceNote(note: LtmNote) {
   const section = sourceSection(note);
   return sourceHashForLtmSourceMaterial({
     noteId: note.id,
+    sourceTitle: note.title,
     sourceText: section?.text ?? "",
     evidence: section?.evidence,
   });
@@ -51,6 +54,7 @@ export function sourceHashForLtmSourceNote(note: LtmNote) {
 
 export function extractionFingerprintForLtmSourceMaterial(input: {
   noteId: string;
+  sourceTitle?: string;
   sourceText: string;
   evidence?: readonly string[];
   provenance?: LtmSourceProvenance | null;
@@ -82,6 +86,7 @@ export function extractionFingerprintForLtmSourceNote(
   const section = sourceSection(note);
   return extractionFingerprintForLtmSourceMaterial({
     noteId: note.id,
+    sourceTitle: note.title,
     sourceText: section?.text ?? "",
     evidence: section?.evidence,
     provenance: options.provenance ?? note.provenance ?? null,

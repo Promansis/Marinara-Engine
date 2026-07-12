@@ -26,27 +26,13 @@ import type { LtmExtractionDiagnostic } from "./diagnostics.js";
 import { LongTermMemoryDraftStore } from "./draft-store.js";
 import { uniqueStrings } from "./ltm-utils.js";
 import { retrieveLongTermMemory, type RetrieveLongTermMemoryInput } from "./retrieval.js";
-import {
-  canUpdateLtmScopedTarget,
-  resolveScopedEvidenceUnitTargets,
-  scopedVariantNoteId,
-} from "./scoped-targets.js";
+import { canUpdateLtmScopedTarget, resolveScopedEvidenceUnitTargets, scopedVariantNoteId } from "./scoped-targets.js";
 import { LongTermMemoryStorage } from "./storage.js";
 import { normalizeStructuredSummaryEvidenceUnits } from "./structured-summary-normalizer.js";
-import {
-  resolveLtmSubjectIdentities,
-  subjectsEqual,
-  type TrustedLtmSubjectCatalog,
-} from "./subject-identity.js";
-import {
-  noteIdForLtmDraftMutation,
-  projectLtmDraftOntoNotes,
-} from "./draft-projector.js";
+import { resolveLtmSubjectIdentities, subjectsEqual, type TrustedLtmSubjectCatalog } from "./subject-identity.js";
+import { noteIdForLtmDraftMutation, projectLtmDraftOntoNotes } from "./draft-projector.js";
 import { stableJsonHash } from "./chunking.js";
-import {
-  extractionFingerprintForLtmSourceNote,
-  isLtmSourceExtractionFingerprintCurrent,
-} from "./source-hash.js";
+import { extractionFingerprintForLtmSourceNote, isLtmSourceExtractionFingerprintCurrent } from "./source-hash.js";
 
 const LTM_EXTRACTION_EXISTING_NOTE_CANDIDATE_CHUNKS = 100;
 
@@ -226,7 +212,9 @@ export async function finalizeLongTermMemoryExtractionDraft(
     extractionMode: input.extractionMode,
   });
   if (!isLtmSourceExtractionFingerprintCurrent(currentSource, expectedFingerprint)) {
-    throw new Error(`Long-term memory source extraction context changed before draft finalization: ${input.sourceNote.id}`);
+    throw new Error(
+      `Long-term memory source extraction context changed before draft finalization: ${input.sourceNote.id}`,
+    );
   }
 
   const response = input.response.mutations.length
@@ -298,12 +286,14 @@ async function getExistingTypedNotes(options: {
   });
   const noteIds = Array.from(new Set(retrieval.chunks.map((chunk) => chunk.chunk.noteId)));
   const notesById = await options.storage.getNotesByIds(noteIds);
-  return noteIds.map((noteId) => notesById.get(noteId)).filter((note): note is LtmNote => {
-    if (!note) return false;
-    if (isLtmSourceNote(note)) return false;
-    if (!canUpdateLtmScopedTarget(note.scope, options.scope)) return false;
-    return true;
-  });
+  return noteIds
+    .map((noteId) => notesById.get(noteId))
+    .filter((note): note is LtmNote => {
+      if (!note) return false;
+      if (isLtmSourceNote(note)) return false;
+      if (!canUpdateLtmScopedTarget(note.scope, options.scope)) return false;
+      return true;
+    });
 }
 
 export async function extractLongTermMemoryFromSourceNote(
@@ -449,7 +439,7 @@ async function extractLongTermMemoryFromSourceNoteInner(
     allowedBuckets,
     mode: resolvedMode,
     aiKeywordExtraction: extractionConfig.aiKeywordExtraction,
-    allowSourceBackedNpcSubjects: sourceNote.tags.includes("imported_chat"),
+    resolveSubjectNames: true,
     trustedSubjectCatalog: options.trustedSubjectCatalog,
   };
 
@@ -473,7 +463,8 @@ async function extractLongTermMemoryFromSourceNoteInner(
     catalog: options.trustedSubjectCatalog ?? { entries: [], notes: [] },
     existingNotes,
     enforceTrustedSubjects: Boolean(options.trustedSubjectCatalog),
-    sourceBackedNpcSourceText: sourceNote.tags.includes("imported_chat") ? sourceText : undefined,
+    sourceBackedNpcSourceText: sourceText,
+    sourceBackedNpcSourceTitle: sourceNote.title,
   });
   const targetResolution = await resolveScopedEvidenceUnitTargets({
     storage,

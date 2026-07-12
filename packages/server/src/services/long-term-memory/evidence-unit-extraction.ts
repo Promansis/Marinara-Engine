@@ -40,6 +40,7 @@ import type { LtmSuggestionMetadata } from "./evidence-unit-compiler.js";
 import { noteIdForEvidenceUnit, validateLtmEvidenceUnits } from "./evidence-unit-validation.js";
 import { normalizeStructuredSummaryEvidenceUnits } from "./structured-summary-normalizer.js";
 import {
+  filterDominatedLtmSubjectNotesForPrompt,
   trustedLtmSubjectPromptCatalog,
   type TrustedLtmSubjectCatalog,
 } from "./subject-identity.js";
@@ -123,7 +124,7 @@ export interface RunLongTermMemoryEvidenceUnitExtractionOptions {
   mode?: LtmMode;
   aiKeywordExtraction?: boolean;
   refinePass?: boolean;
-  allowSourceBackedNpcSubjects?: boolean;
+  resolveSubjectNames?: boolean;
   trustedSubjectCatalog?: TrustedLtmSubjectCatalog;
 }
 
@@ -288,12 +289,9 @@ function relationshipDimensionSchema(minimum: number, maximum: number) {
 export function evidenceUnitResponseFormat(options: {
   allowedBuckets: readonly LtmEvidenceUnit["bucket"][];
   sourceHash: string;
-  trustedSubjectKeys?: readonly string[];
-  allowSourceBackedNpcSubjects?: boolean;
+  resolveSubjectNames?: boolean;
 }): NonNullable<ChatOptions["responseFormat"]> {
-  const trustedSubjectKeys = options.trustedSubjectKeys?.length
-    ? [...options.trustedSubjectKeys]
-    : ["__no_trusted_subjects__"];
+  const resolveSubjectNames = options.resolveSubjectNames !== false;
   return {
     type: "json_schema",
     json_schema: {
@@ -323,7 +321,7 @@ export function evidenceUnitResponseFormat(options: {
                 "status",
                 "links",
                 "sourceHash",
-                "subjectKeys",
+                ...(resolveSubjectNames ? ["subjectNames"] : []),
               ],
               properties: {
                 id: { type: "string", format: "uuid" },
@@ -361,38 +359,44 @@ export function evidenceUnitResponseFormat(options: {
                   },
                 },
                 sourceHash: { type: "string", enum: [options.sourceHash] },
+                subjectNames: {
+                  type: "array",
+                  uniqueItems: true,
+                  maxItems: 2,
+                  items: { type: "string", minLength: 1, maxLength: 240 },
+                },
                 subjectKeys: {
                   type: "array",
                   uniqueItems: true,
                   maxItems: 3,
-                  items: { type: "string", enum: trustedSubjectKeys },
+                  items: { type: "string", minLength: 1, maxLength: 240 },
                 },
                 dimensions: relationshipDimensionSchema(0, 100),
                 dimensionChanges: relationshipDimensionSchema(-100, 100),
               },
-              allOf: [
-                {
-                  if: { properties: { bucket: { const: "character_fact" } }, required: ["bucket"] },
-                  then: {
-                    properties: {
-                      subjectKeys: { minItems: options.allowSourceBackedNpcSubjects ? 0 : 1, maxItems: 1 },
-                    },
-                  },
-                },
-                {
-                  if: { properties: { bucket: { const: "relationship_state" } }, required: ["bucket"] },
-                  then: { properties: { subjectKeys: { minItems: 2, maxItems: 2 } } },
-                },
-                {
-                  if: {
-                    properties: {
-                      bucket: { not: { enum: ["character_fact", "relationship_state"] } },
-                    },
-                    required: ["bucket"],
-                  },
-                  then: { properties: { subjectKeys: { maxItems: 0 } } },
-                },
-              ],
+              ...(resolveSubjectNames
+                ? {
+                    allOf: [
+                      {
+                        if: { properties: { bucket: { const: "character_fact" } }, required: ["bucket"] },
+                        then: { properties: { subjectNames: { minItems: 1, maxItems: 1 } } },
+                      },
+                      {
+                        if: { properties: { bucket: { const: "relationship_state" } }, required: ["bucket"] },
+                        then: { properties: { subjectNames: { minItems: 2, maxItems: 2 } } },
+                      },
+                      {
+                        if: {
+                          properties: {
+                            bucket: { not: { enum: ["character_fact", "relationship_state"] } },
+                          },
+                          required: ["bucket"],
+                        },
+                        then: { properties: { subjectNames: { maxItems: 0 } } },
+                      },
+                    ],
+                  }
+                : {}),
             },
           },
         },
@@ -825,6 +829,14 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
     anchor: modeDescs?.anchor ?? "recurring motif, planted callback, or continuity anchor",
   };
   const filteredBucketDescriptions: Record<string, string> = {};
+  const resolveSubjectNames = options.resolveSubjectNames !== false;
+  const configuredSystemPrompt = options.systemPrompt?.trim();
+  const systemPrompt =
+    options.refinePass && options.mode === "game"
+      ? [configuredSystemPrompt, DEFAULT_LTM_EXTRACTION_PROMPT_GAME_REFINE]
+          .filter((prompt, index, prompts): prompt is string => Boolean(prompt) && prompts.indexOf(prompt) === index)
+          .join("\n\n")
+      : configuredSystemPrompt || DEFAULT_LTM_EXTRACTION_PROMPT;
   for (const bucket of allowedBuckets) {
     const desc = allBucketDescriptions[bucket];
     if (desc) {
@@ -835,11 +847,7 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
   return [
     {
       role: "system",
-      content:
-        options.systemPrompt?.trim() ||
-        (options.refinePass && options.mode === "game"
-          ? DEFAULT_LTM_EXTRACTION_PROMPT_GAME_REFINE
-          : DEFAULT_LTM_EXTRACTION_PROMPT),
+      content: systemPrompt,
     },
     {
       role: "user",
@@ -851,11 +859,15 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
         unitFields: {
           id: "uuid",
           bucket: "one allowed stream value from allowedStreams",
-          subjectId: "real lowercase_snake_case subject",
-          subjectKeys:
-            options.allowSourceBackedNpcSubjects
-              ? "character_fact: exactly one trustedSubjects key, or [] only for a newly introduced, explicitly named NPC from this imported source; relationship_state: exactly two distinct trustedSubjects keys; all other streams: []"
-              : "character_fact: exactly one trustedSubjects key; relationship_state: exactly two distinct trustedSubjects keys; all other streams: []",
+          subjectId: resolveSubjectNames
+            ? "real lowercase_snake_case source label; the server replaces character and relationship labels with canonical targets"
+            : "real lowercase_snake_case subject preserved from the supplied candidate units",
+          ...(resolveSubjectNames
+            ? {
+                subjectNames:
+                  "character_fact: exactly one source-visible character name; relationship_state: exactly two source-visible character names; all other streams: []",
+              }
+            : {}),
           sectionKey: "real lowercase_snake_case section",
           text: "compact memory text, not transcript summary",
           importance: "one of critical, major, moderate, minor",
@@ -891,6 +903,7 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
         streamDescriptions: filteredBucketDescriptions,
         sourceNote: {
           id: options.sourceNote.id,
+          title: options.sourceNote.title,
           status: options.sourceNote.status,
           tags: options.sourceNote.tags,
           scope: options.sourceNote.scope,
@@ -901,17 +914,21 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
         scope: options.scope,
         modes: options.modes,
         targetNoteRules: [
-          "The compiler derives the target note id from bucket + subjectId: timeline_event -> timeline_<subjectId>, character_fact -> char_<subjectId>, relationship_state -> rel_<subjectId>, world_fact or anchor -> world_<subjectId> unless anchor sectionKey starts with tone, thread -> thread_<subjectId>, tone -> tone_<subjectId>.",
+          resolveSubjectNames
+            ? "The server derives character_fact and relationship_state subjects and target note ids from subjectNames. Never choose or invent database subject keys or character/relationship target ids."
+            : "Preserve the character_fact and relationship_state subjectId values from the supplied candidate units.",
+          "For other streams, the compiler derives the target note id from bucket + subjectId: timeline_event -> timeline_<subjectId>, world_fact or anchor -> world_<subjectId> unless anchor sectionKey starts with tone, thread -> thread_<subjectId>, tone -> tone_<subjectId>.",
           "For timeline_event, subjectId must name the specific event or beat, not just a person, character, place, or broad entity. Use damo_arrival or lisa_minimizing_damo instead of damo_korvak.",
           "Do not intentionally target an existing note id unless that exact note appears in existingTypedNotes. If a broad note is not listed, use a source-specific subjectId for a new in-scope note.",
           "relationship_state dimension keys must come only from allowedRelationshipDimensions. Put professional curiosity, reputation, gossip, or attention as text/thread/world/timeline facts, not dimensions.",
-          options.allowSourceBackedNpcSubjects
-            ? "Character identities must use trustedSubjects keys, except an explicitly named multi-word NPC from this imported source may use subjectKeys: [] and its exact normalized name as subjectId. Never invent a subject key. Relationship subjectKeys are an unordered pair; emit them sorted by key."
-            : "Character and relationship identities must use only trustedSubjects keys. Never invent a subject key. Relationship subjectKeys are an unordered pair; emit them sorted by key.",
+          ...(resolveSubjectNames
+            ? [
+                "Copy each subjectNames value exactly from the sourceText or sourceNote.title. Use the visible short name when the source says a short name; the server resolves exact names and unique aliases.",
+                "A genuinely new identity may be a one to four token proper name visible in the source. Never use lowercase descriptors or generic roles such as guitarist, User, Assistant, or Narrator as character names.",
+              ]
+            : []),
         ],
-        trustedSubjects: trustedLtmSubjectPromptCatalog(
-          options.trustedSubjectCatalog ?? { entries: [], notes: [] },
-        ),
+        trustedSubjects: trustedLtmSubjectPromptCatalog(options.trustedSubjectCatalog ?? { entries: [], notes: [] }),
         userInstruction: options.instruction?.trim() || undefined,
         ...(options.candidateUnits?.length ? { candidateUnits: options.candidateUnits } : {}),
         ...(options.aiKeywordExtraction
@@ -920,7 +937,13 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
                 "For each unit, include 3-5 concise keywords or short phrases in keywords. Prefer concrete recall terms and multi-word entities when relevant.",
             }
           : {}),
-        existingTypedNotes: formatExistingNotes(options.existingNotes, options.maxExistingNoteTokens),
+        existingTypedNotes: formatExistingNotes(
+          filterDominatedLtmSubjectNotesForPrompt(
+            options.existingNotes,
+            options.trustedSubjectCatalog ?? { entries: [], notes: [] },
+          ),
+          options.maxExistingNoteTokens,
+        ),
         sourceText: options.sourceText,
         refinePass: options.refinePass === true,
       }),
@@ -950,8 +973,7 @@ export async function runLongTermMemoryEvidenceUnitExtraction(
     responseFormat: evidenceUnitResponseFormat({
       allowedBuckets: options.allowedBuckets ?? DEFAULT_LTM_EVIDENCE_UNIT_ALLOWED_BUCKETS,
       sourceHash: options.sourceHash,
-      trustedSubjectKeys: options.trustedSubjectCatalog?.entries.map((entry) => entry.subject.key),
-      allowSourceBackedNpcSubjects: options.allowSourceBackedNpcSubjects,
+      resolveSubjectNames: options.resolveSubjectNames,
     }),
   };
   await recordLtmDebugEvent({

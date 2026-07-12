@@ -86,11 +86,13 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
       30,
     );
     const resolvedSubjects = units.find((unit) => unit.subjects)?.subjects;
+    const resolvedSubjectNames = units.find((unit) => unit.subjectNames?.length)?.subjectNames;
     const subjects = resolvedSubjects ?? subjectsForNewNote(target.noteType, noteId);
 
     if (!existing) {
       const note = {
         id: noteId,
+        ...(target.noteType === "character" && resolvedSubjectNames?.[0] ? { title: resolvedSubjectNames[0] } : {}),
         type: target.noteType,
         status: target.status,
         modes: options.modes,
@@ -108,6 +110,7 @@ export function compileLtmEvidenceUnits(options: CompileLtmEvidenceUnitsOptions)
           units,
           confidence,
           note,
+          creating: true,
         }),
         confidence,
         summary: `Create ${target.noteType} memory ${noteId}`,
@@ -507,14 +510,23 @@ function riskForCompiledMutation({
   confidence,
   note,
   sourceBacked = true,
+  creating = false,
 }: {
   units: LtmEvidenceUnit[];
   confidence: number;
-  note: Pick<LtmNote, "type" | "tags" | "conflicts">;
+  note: Pick<LtmNote, "type" | "tags" | "conflicts" | "subjects">;
   sourceBacked?: boolean;
+  creating?: boolean;
 }): LtmDraftRisk {
   const baseRisk = maxRisk(units.map(riskForEvidenceUnit));
   if (baseRisk !== "low") return baseRisk;
+  if (
+    creating &&
+    note.type === "character" &&
+    note.subjects?.some((subject) => subject.key.startsWith("npc:") && !subject.ref)
+  ) {
+    return "medium";
+  }
   if (confidence < 0.85) return "medium";
   if (!isTypedMemoryNote(note)) return "medium";
   if (note.conflicts?.length) return "medium";

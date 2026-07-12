@@ -1012,6 +1012,7 @@ function sourceScopeForImportCandidate(candidate: ImportSourceCandidate, overrid
 function extractionFingerprintForImportCandidate(candidate: ImportSourceCandidate, scope: LtmScope) {
   return extractionFingerprintForLtmSourceMaterial({
     noteId: candidate.sourceNoteId,
+    sourceTitle: candidate.title,
     sourceText: candidate.sourceText,
     evidence: candidate.evidence,
     provenance: candidate.provenance,
@@ -1162,7 +1163,7 @@ export async function createLongTermMemoryInteropSourceNotes(
                       cause: "interop.source_identity_migration",
                       summary: `Migrated imported source identity for ${candidate.title}`,
                     });
-              const titlePatch = canonicalExisting.title?.trim() ? {} : { title: candidate.title };
+              const titlePatch = canonicalExisting.title === candidate.title ? {} : { title: candidate.title };
               const note = await storage.updateNote(
                 canonicalExisting.id,
                 {

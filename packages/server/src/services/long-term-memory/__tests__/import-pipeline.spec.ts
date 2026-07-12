@@ -5,8 +5,14 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { ltmImportSourceNotesResponseSchema, type CharacterData } from "@marinara-engine/shared";
+import {
+  ltmImportSourceNotesResponseSchema,
+  type CharacterData,
+  type LtmMode,
+  type LtmSourceProvenance,
+} from "@marinara-engine/shared";
 import { buildApp } from "../../../app.js";
+import type { BaseLLMProvider } from "../../llm/base-provider.js";
 import {
   createLongTermMemoryInteropSourceNotes,
   previewLongTermMemoryInterop,
@@ -21,6 +27,9 @@ import { readLtmDebugLog } from "../debug-log.js";
 import { LongTermMemoryDraftStore } from "../draft-store.js";
 import { rebuildLongTermMemoryIndexes } from "../rebuild.js";
 import { applyLongTermMemoryDraft } from "../reconciliation.js";
+import { extractLongTermMemoryFromSourceNote } from "../source-extraction.js";
+import { extractionFingerprintForLtmSourceNote } from "../source-hash.js";
+import { directIngestGameJournal } from "../direct-ingest.js";
 
 async function withTestApp(run: (app: Awaited<ReturnType<typeof buildApp>>, dataDir: string) => Promise<void>) {
   const dataDir = await mkdtemp(join(tmpdir(), "marinara-ltm-import-pipeline-"));
@@ -89,13 +98,7 @@ async function withCanonicalImportProvider(
         requiredEvidence: string[];
         sourceNote: { id: string; sourceHash: string };
         sourceText: string;
-        trustedSubjects: Array<{ key: string; name: string }>;
       };
-      const damoKey = payload.trustedSubjects.find((subject) => subject.name === "Damo Korvak")?.key;
-      const lisaKey = payload.trustedSubjects.find((subject) => subject.name === "Lisa Imai")?.key;
-      assert(damoKey);
-      assert(lisaKey);
-      const relationshipKeys = [damoKey, lisaKey].sort((left, right) => left.localeCompare(right));
       const common = {
         importance: "major",
         keywords: ["Damo Korvak", "Lisa Imai", "foundry reunion"],
@@ -118,7 +121,7 @@ async function withCanonicalImportProvider(
             id: randomUUID(),
             bucket: "timeline_event",
             subjectId: "foundry_reunion",
-            subjectKeys: [],
+            subjectNames: [],
             sectionKey: "event",
             text: "Damo and Lisa reunited at the foundry after the long absence.",
             links: [],
@@ -128,7 +131,7 @@ async function withCanonicalImportProvider(
             id: randomUUID(),
             bucket: "character_fact",
             subjectId: "damo",
-            subjectKeys: [damoKey],
+            subjectNames: ["Damo"],
             sectionKey: "facts",
             text: "Damo meticulously documents every foundry vigil.",
             links: [],
@@ -138,7 +141,7 @@ async function withCanonicalImportProvider(
             id: randomUUID(),
             bucket: "relationship_state",
             subjectId: "lisa_damo",
-            subjectKeys: relationshipKeys,
+            subjectNames: ["Lisa", "Damo"],
             sectionKey: "state",
             text: "Lisa and Damo trust each other after their foundry reunion.",
             links: [{ target: "timeline_foundry_reunion", relation: "caused_by" }],
@@ -155,7 +158,7 @@ async function withCanonicalImportProvider(
             id: randomUUID(),
             bucket: "timeline_event",
             subjectId: "silver_key_return",
-            subjectKeys: [],
+            subjectNames: [],
             sectionKey: "event",
             text: "Lisa returned the silver key to Damo before dawn.",
             links: [],
@@ -165,7 +168,7 @@ async function withCanonicalImportProvider(
             id: randomUUID(),
             bucket: "character_fact",
             subjectId: "damo_korvak",
-            subjectKeys: [damoKey],
+            subjectNames: ["Damo"],
             sectionKey: "facts",
             text: "Damo bears a permanent silver key tattoo on his right wrist.",
             links: [],
@@ -175,7 +178,7 @@ async function withCanonicalImportProvider(
             id: randomUUID(),
             bucket: "relationship_state",
             subjectId: "damo_lisa",
-            subjectKeys: relationshipKeys,
+            subjectNames: ["Damo", "Lisa"],
             sectionKey: "state",
             text: "Damo and Lisa renewed their trust when Lisa returned the silver key.",
             links: [{ target: "timeline_silver_key_return", relation: "caused_by" }],
@@ -193,7 +196,7 @@ async function withCanonicalImportProvider(
             id: randomUUID(),
             bucket: "character_fact",
             subjectId: "damo_considerate_nature",
-            subjectKeys: [damoKey],
+            subjectNames: ["Damo"],
             sectionKey: "facts",
             text: "Damo's considerate nature shows when he returns borrowed equipment precisely.",
             links: [],
@@ -247,6 +250,80 @@ async function withCanonicalImportProvider(
     const address = server.address();
     assert(address && typeof address !== "string");
     await run(`http://127.0.0.1:${address.port}/v1`, completionOrder);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+}
+
+type StructuralRefineRequest = {
+  systemPrompt: string;
+  candidateUnits: Array<Record<string, unknown>>;
+  requiredUnitFields: string[];
+};
+
+async function withStructuralRefineProvider(
+  run: (baseUrl: string, requests: StructuralRefineRequest[]) => Promise<void>,
+) {
+  const requests: StructuralRefineRequest[] = [];
+  const server = createServer((request, response) => {
+    void (async () => {
+      assert.equal(request.method, "POST");
+      assert.equal(request.url, "/v1/chat/completions");
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+        messages?: Array<{ role?: string; content?: string }>;
+        response_format?: {
+          json_schema?: { schema?: { properties?: { units?: { items?: { required?: string[] } } } } };
+        };
+      };
+      const systemPrompt = body.messages?.find((message) => message.role === "system")?.content;
+      const userMessage = body.messages?.find((message) => message.role === "user")?.content;
+      assert(systemPrompt);
+      assert(userMessage);
+      const payload = JSON.parse(userMessage) as { candidateUnits?: Array<Record<string, unknown>> };
+      assert(payload.candidateUnits);
+      requests.push({
+        systemPrompt,
+        candidateUnits: payload.candidateUnits,
+        requiredUnitFields:
+          body.response_format?.json_schema?.schema?.properties?.units?.items?.required ?? [],
+      });
+
+      const content = JSON.stringify({ summary: "Structural game refinement", units: payload.candidateUnits });
+      response.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+      });
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: null }] })}\n\n`);
+      response.write(
+        `data: ${JSON.stringify({
+          choices: [{ delta: {}, finish_reason: "stop" }],
+          usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+        })}\n\n`,
+      );
+      response.end("data: [DONE]\n\n");
+    })().catch((error: unknown) => {
+      response.statusCode = 500;
+      response.end(error instanceof Error ? error.message : String(error));
+    });
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => reject(error);
+    server.once("error", onError);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", onError);
+      resolve();
+    });
+  });
+  try {
+    const address = server.address();
+    assert(address && typeof address !== "string");
+    await run(`http://127.0.0.1:${address.port}/v1`, requests);
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
@@ -450,6 +527,62 @@ test("character source imports include durable card fields", async () => {
   });
 });
 
+test("renamed imported sources refresh their title and can become current again", async () => {
+  await withTestApp(async (app, dataDir) => {
+    const characters = createCharactersStorage(app.db);
+    const character = await characters.create({
+      ...rosterCharacter("Mara"),
+      description: "A disciplined musician with meticulous rehearsal habits.",
+    });
+    assert(character);
+    const root = join(dataDir, "long-term-memory");
+    const storage = new LongTermMemoryStorage(root);
+    const first = await createLongTermMemoryInteropSourceNotes(
+      app.db,
+      "characters",
+      { sourceIds: [character.id], limit: 1 },
+      root,
+    );
+    const firstNote = first.imported[0]?.note;
+    assert(firstNote);
+    await storage.updateNote(
+      firstNote.id,
+      { extractionFingerprint: extractionFingerprintForLtmSourceNote(firstNote, { extractionMode: "roleplay" }) },
+      { suppressEvent: true },
+    );
+    assert.equal(
+      (await previewLongTermMemoryInterop(app.db, "characters", 100, root)).samples[0]?.freshness,
+      "current",
+    );
+
+    await characters.update(character.id, { name: "Roselia" }, undefined, { skipVersionSnapshot: true });
+    const stale = await previewLongTermMemoryInterop(app.db, "characters", 100, root);
+    assert.equal(stale.samples[0]?.freshness, "stale");
+    assert.equal(stale.samples[0]?.title, "Roselia");
+
+    const refreshed = await createLongTermMemoryInteropSourceNotes(
+      app.db,
+      "characters",
+      { sourceIds: [character.id], limit: 1 },
+      root,
+    );
+    const refreshedNote = refreshed.imported[0]?.note;
+    assert(refreshedNote);
+    assert.equal(refreshed.imported[0]?.created, false);
+    assert.equal(refreshedNote.title, "Roselia");
+    assert.equal(refreshedNote.extractionFingerprint, undefined);
+    const currentNote = await storage.updateNote(
+      refreshedNote.id,
+      { extractionFingerprint: extractionFingerprintForLtmSourceNote(refreshedNote, { extractionMode: "roleplay" }) },
+      { suppressEvent: true },
+    );
+    assert.equal(currentNote.title, "Roselia");
+    const current = await previewLongTermMemoryInterop(app.db, "characters", 100, root);
+    assert.equal(current.samples[0]?.freshness, "current");
+    assert.equal(current.samples[0]?.existingNoteTitle, "Roselia");
+  });
+});
+
 test("identical chat summaries remain distinct import candidates", async () => {
   await withTestApp(async (app, dataDir) => {
     const chats = createChatsStorage(app.db);
@@ -543,6 +676,251 @@ test("visual novel chat imports use the roleplay LTM lane", async () => {
   });
 });
 
+test("source-visible character names resolve new NPCs for every LLM source and extraction mode", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-source-identities-"));
+  const modes = ["conversation", "roleplay", "game"] as const satisfies readonly LtmMode[];
+  const sources = [
+    {
+      kind: "chat_summary",
+      title: "Chat recap",
+      sourceText: "Roselia prefers quiet rehearsal rooms and keeps meticulous practice notes.",
+      tags: ["source_summary", "imported_chat"],
+      provenance: { kind: "chat_summary", sourceId: "chat_identity", entryId: "recap" },
+    },
+    {
+      kind: "lorebook",
+      title: "Lorebook - Roselia",
+      sourceText: "Roselia has perfect pitch and follows a disciplined rehearsal routine.",
+      tags: ["source_summary", "imported_lorebook"],
+      provenance: { kind: "lorebook", sourceId: "lorebook_identity", entryId: "roselia" },
+    },
+    {
+      kind: "character_card",
+      title: "Roselia",
+      sourceText: "A disciplined musician with perfect pitch and meticulous rehearsal habits.",
+      tags: ["source_summary", "imported_character"],
+      provenance: { kind: "character", sourceId: "character_identity" },
+    },
+    {
+      kind: "manual",
+      title: "Manual memory note",
+      sourceText: "Roselia values precise arrangements and quiet preparation before a performance.",
+      tags: ["source_summary"],
+      provenance: undefined,
+    },
+  ] as const satisfies ReadonlyArray<{
+    kind: string;
+    title: string;
+    sourceText: string;
+    tags: readonly string[];
+    provenance?: LtmSourceProvenance;
+  }>;
+  const requests: Array<{ sourceNoteId: string; title?: string; modes: LtmMode[]; sourceText: string }> = [];
+  const provider = {
+    maxTokensOverrideValue: undefined,
+    chatComplete: async (messages: Array<{ role: string; content: string }>) => {
+      const userMessage = messages.find((message) => message.role === "user")?.content;
+      assert(userMessage);
+      const payload = JSON.parse(userMessage) as {
+        requiredEvidence: string[];
+        sourceNote: { id: string; title?: string; sourceHash: string };
+        sourceText: string;
+        modes: LtmMode[];
+        unitFields: { subjectNames?: string };
+      };
+      assert.match(payload.unitFields.subjectNames ?? "", /source-visible character name/i);
+      requests.push({
+        sourceNoteId: payload.sourceNote.id,
+        title: payload.sourceNote.title,
+        modes: payload.modes,
+        sourceText: payload.sourceText,
+      });
+      return {
+        content: JSON.stringify({
+          summary: "Roselia identity fact",
+          units: [
+            {
+              id: randomUUID(),
+              bucket: "character_fact",
+              subjectId: "roselia",
+              subjectNames: ["Roselia"],
+              sectionKey: "facts",
+              text: payload.sourceText,
+              importance: "major",
+              keywords: ["Roselia", "rehearsal"],
+              evidence: payload.requiredEvidence,
+              confidence: 0.95,
+              salience: 0.8,
+              status: "active",
+              links: [],
+              sourceHash: payload.sourceNote.sourceHash,
+            },
+          ],
+        }),
+      };
+    },
+  } as unknown as BaseLLMProvider;
+
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    for (const source of sources) {
+      for (const mode of modes) {
+        const noteId = `source_identity_${source.kind}_${mode}`;
+        const chatId = `chat_identity_${source.kind}_${mode}`;
+        await storage.createNote(
+          {
+            id: noteId,
+            title: source.title,
+            type: "source",
+            status: "active",
+            modes: [mode],
+            scope: { chatId, chatIds: [chatId] },
+            tags: [...source.tags],
+            keywords: [],
+            links: [],
+            ...(source.provenance ? { provenance: source.provenance } : {}),
+            sections: {
+              source: {
+                text: source.sourceText,
+                updatedAt: "2026-07-12T00:00:00.000Z",
+                evidence: [`source_fixture:${source.kind}`, `chat:${chatId}`],
+              },
+            },
+          },
+          { suppressEvent: true },
+        );
+
+        const result = await extractLongTermMemoryFromSourceNote({
+          noteId,
+          provider,
+          model: "test-model",
+          root,
+          mode,
+          trustedSubjectCatalog: { entries: [], notes: [] },
+          persistDraft: false,
+          embeddingSource: {
+            label: "test",
+            embed: async (texts) => texts.map(() => []),
+          },
+        });
+        const create = result.response.mutations.find(
+          (mutation) => mutation.kind === "create_note" && mutation.note.id === "char_roselia",
+        );
+        assert(create && create.kind === "create_note", `${source.kind}/${mode} did not create char_roselia`);
+        assert.equal(result.extractionMode, mode);
+        assert.equal(create.note.title, "Roselia");
+        assert.deepEqual(create.note.subjects, [{ key: "npc:roselia" }]);
+        assert.equal(create.risk, "medium");
+      }
+    }
+
+    assert.equal(requests.length, sources.length * modes.length);
+    assert.deepEqual(new Set(requests.flatMap((request) => request.modes)), new Set(modes));
+    const cardRequests = requests.filter((request) => request.sourceNoteId.includes("character_card"));
+    assert.equal(cardRequests.length, modes.length);
+    assert(cardRequests.every((request) => request.title === "Roselia"));
+    assert(cardRequests.every((request) => !request.sourceText.includes("Roselia")));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("direct game refinement preserves structural character and relationship identities", async () => {
+  await withStructuralRefineProvider(async (baseUrl, requests) => {
+    await withTestApp(async (app, dataDir) => {
+      const connection = await createConnectionsStorage(app.db).create({
+        name: "Structural game refine loopback",
+        provider: "openai",
+        baseUrl,
+        apiKey: "local-test-key",
+        model: "test-model",
+        imagePath: null,
+        maxContext: 128_000,
+        isDefault: false,
+        useForRandom: false,
+        defaultForAgents: false,
+        enableCaching: false,
+        cachingAtDepth: 5,
+        embeddingModel: "",
+        embeddingBaseUrl: "",
+        embeddingConnectionId: null,
+        openrouterProvider: null,
+        imageGenerationSource: null,
+        comfyuiWorkflow: null,
+        imageService: null,
+        imageEndpointId: null,
+        promptPresetId: null,
+        maxTokensOverride: null,
+        maxParallelJobs: 1,
+        treatAsLocalEndpoint: true,
+        claudeFastMode: false,
+      });
+      assert(connection);
+      const chats = createChatsStorage(app.db);
+      const chat = await chats.create({
+        name: "Structural game refine fixture",
+        mode: "game",
+        characterIds: [],
+        groupId: null,
+        personaId: null,
+        promptPresetId: null,
+        connectionId: connection.id,
+      });
+      assert(chat);
+      await chats.updateMetadata(chat.id, {
+        gamePreviousSessionSummaries: [
+          {
+            sessionNumber: 1,
+            summary: "Mirelle reinforced the archive gate before the siege.",
+            resumePoint: "The party regrouped inside the secured archive.",
+            partyDynamics: "The party trusted each other after defending the gate together.",
+            partyState: "The archive remains secure.",
+            keyDiscoveries: ["The gate can be reinforced from inside."],
+            characterMoments: [],
+            littleDetails: [],
+            statsSnapshot: {},
+            npcUpdates: ["Mirelle: permanently took command of the archive guard."],
+            timestamp: "2026-07-12T00:00:00.000Z",
+          },
+        ],
+      });
+
+      const root = join(dataDir, "long-term-memory");
+      const imported = await createLongTermMemoryInteropSourceNotes(
+        app.db,
+        "chats",
+        { sourceIds: [`${chat.id}:game_journal`], limit: 1 },
+        root,
+      );
+      const sourceNote = imported.imported[0]?.note;
+      assert(sourceNote);
+      const result = await directIngestGameJournal(app.db, sourceNote, root, randomUUID(), {
+        refinePass: true,
+        persistDraft: false,
+      });
+
+      assert.equal(requests.length, 1);
+      const request = requests[0]!;
+      assert.match(request.systemPrompt, /Preserve character_fact and relationship_state subjectId values/);
+      assert.match(request.systemPrompt, /Never add subjectNames or choose database subject keys/);
+      assert.equal(request.requiredUnitFields.includes("subjectNames"), false);
+      assert(request.candidateUnits.some((unit) => unit.bucket === "character_fact" && unit.subjectId === "npc_mirelle"));
+      assert(request.candidateUnits.some((unit) => unit.bucket === "relationship_state" && unit.subjectId === "party"));
+      assert(
+        result.response.mutations.some(
+          (mutation) => mutation.kind === "create_note" && mutation.note.id === "char_npc_mirelle",
+        ),
+      );
+      assert(
+        result.response.mutations.some(
+          (mutation) => mutation.kind === "create_note" && mutation.note.id === "rel_party",
+        ),
+      );
+      assert.equal(result.response.summary, "Structural game refinement");
+    });
+  });
+});
+
 test("manual source extraction persists successful retry state", async () => {
   await withTestApp(async (app, dataDir) => {
     const chats = createChatsStorage(app.db);
@@ -592,6 +970,10 @@ test("manual source extraction persists successful retry state", async () => {
     });
 
     assert.equal(response.statusCode, 200);
+    const extraction = response.json() as { operationId: string };
+    const events = await readLtmDebugLog({ operationId: extraction.operationId, limit: 1_000 }, root);
+    assert.equal(events.some((event) => event.action === "evidence_unit_request"), false);
+    assert.equal(events.some((event) => event.action === "direct_ingest_completed"), true);
     assert((await new LongTermMemoryStorage(root).getNote(sourceNote.id))?.extractionFingerprint);
     const preview = await previewLongTermMemoryInterop(app.db, "chats", 100, root);
     const currentSample = preview.samples.find((sample) => sample.sourceId === `${chat.id}:game_journal`);

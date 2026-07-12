@@ -6267,6 +6267,108 @@ test("evidence unit compiler gates low-risk typed-memory suggestions by confiden
   assert.equal(sourceBackedUpdate.mutations[0]?.risk, "low");
 });
 
+test("provisional NPC character creates require review and low-risk auto-apply leaves them pending", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-provisional-character-risk-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    await createDraftSourceNote(storage, "scene_source_test");
+
+    const compiled = compileLtmEvidenceUnits({
+      units: [
+        evidenceUnit("character_fact", {
+          subjectId: "roselia",
+          subjectNames: ["Roselia"],
+          subjects: [{ key: "npc:roselia" }],
+          text: "Roselia keeps careful records of every archive key.",
+          confidence: 0.95,
+        }),
+      ],
+      existingNotes: [],
+      scope: {},
+      modes: ["roleplay"],
+      createdAt: timestamp,
+    });
+    const create = compiled.mutations.find(
+      (mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> =>
+        mutation.kind === "create_note",
+    );
+    assert(create);
+    assert.equal(create.note.id, "char_roselia");
+    assert.equal(create.note.title, "Roselia");
+    assert.deepEqual(create.note.subjects, [{ key: "npc:roselia" }]);
+    assert.equal(create.risk, "medium");
+
+    const draft = await new LongTermMemoryDraftStore(root).createDraft({
+      scope: {},
+      modes: ["roleplay"],
+      source: { sourceNoteId: "scene_source_test" },
+      response: compiled,
+    });
+    const applied = await applyLongTermMemoryDraft(draft.id, {
+      root,
+      actor: "test",
+      autoApplyLowRiskOnly: true,
+      rebuildIndexes: false,
+    });
+
+    assert.deepEqual(applied.appliedMutationIds, []);
+    assert.deepEqual(applied.skippedMutationIds, [create.id]);
+    assert.equal(applied.draft.status, "pending");
+    assert.equal(await storage.getNote("char_roselia"), null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("accepted NPC character updates retain normal low-risk classification", () => {
+  const acceptedRoselia: LtmNote = {
+    id: "char_roselia",
+    title: "Roselia",
+    type: "character",
+    status: "active",
+    modes: ["roleplay"],
+    scope: {},
+    tags: ["typed_memory"],
+    keywords: [],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    links: [],
+    sections: {
+      facts: {
+        text: "Roselia catalogs the archive's sealed rooms.",
+        updatedAt: timestamp,
+        evidence: ["source_note:scene_old"],
+      },
+    },
+    subjects: [{ key: "npc:roselia" }],
+    version: 1,
+  };
+  const compiled = compileLtmEvidenceUnits({
+    units: [
+      evidenceUnit("character_fact", {
+        subjectId: "roselia",
+        subjectNames: ["Roselia"],
+        subjects: [{ key: "npc:roselia" }],
+        text: "Roselia also records which archive keys have been returned.",
+        confidence: 0.95,
+      }),
+    ],
+    existingNotes: [acceptedRoselia],
+    scope: {},
+    modes: ["roleplay"],
+    createdAt: timestamp,
+  });
+
+  const update = compiled.mutations.find(
+    (mutation): mutation is Extract<LtmDraftMutation, { kind: "update_section" }> =>
+      mutation.kind === "update_section",
+  );
+  assert(update);
+  assert.equal(update.noteId, "char_roselia");
+  assert.equal(update.risk, "low");
+  assert.equal(compiled.mutations.some((mutation) => mutation.kind === "create_note"), false);
+});
+
 test("timeline events create historical notes and relationship state links to them", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-timeline-layer-"));
   try {

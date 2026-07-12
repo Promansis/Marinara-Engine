@@ -574,6 +574,7 @@ export const ltmEvidenceUnitSchema = z
     status: ltmEvidenceUnitStatusSchema,
     links: z.array(ltmLinkSchema).max(50).default([]),
     sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
+    subjectNames: z.array(z.string().trim().min(1).max(240)).max(2).optional(),
     subjectKeys: z.array(z.string().trim().min(1).max(240)).max(3).optional(),
     subjects: ltmSubjectsSchema.optional(),
     dimensions: ltmRelationshipDimensionsSchema.optional(),
