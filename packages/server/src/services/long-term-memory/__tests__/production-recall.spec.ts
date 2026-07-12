@@ -11,6 +11,7 @@ import { createConnectionsStorage } from "../../storage/connections.storage.js";
 import { createPromptsStorage } from "../../storage/prompts.storage.js";
 import { rebuildLongTermMemoryIndexes } from "../rebuild.js";
 import { LongTermMemoryStorage } from "../storage.js";
+import { readLongTermMemoryInjectionReceipt } from "../usage.js";
 
 type ProviderMessage = { role?: string; content?: string };
 
@@ -231,6 +232,12 @@ test("generation route dispatches LTM in every mode with and without a preset", 
           const providerText = providerPayload.map((message) => message.content ?? "").join("\n");
           assert.match(providerText, /Phase seven observatory key is hidden beneath the east clock\./);
           assert.doesNotMatch(providerText, /Other group memory must not reach this provider payload\./);
+
+          // Receipt creation is intentionally post-dispatch. Checking it here
+          // proves the provider-visible final payload, not a helper-only plan.
+          const receipt = await readLongTermMemoryInjectionReceipt(chat.id);
+          assert.ok(receipt, `${mode} ${preset ? "preset" : "fallback"} dispatch should write a receipt`);
+          assert.ok(receipt.chunks.some((chunk) => chunk.noteId === "world_phase_seven_observatory_key"));
         }
       }
     });

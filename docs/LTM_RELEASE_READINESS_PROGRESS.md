@@ -8,16 +8,16 @@ Resume Here section short and current; keep completed phase records durable.
 
 - Branch: `fix/ltm-staging-port-rebase`
 - Audit baseline: `c83d66e6edee6c0a9b3ab3021265461b4ff1a1b1`
-- Current phase: Phase 10 - Bounded Exact Retrieval and Dead-Path Cleanup
-- State: Phase 10 implementation and automated proof are complete locally;
-  the phase commit is pending explicit authorization.
-- Next entrypoint: review and commit Phase 10 as
-  `perf(ltm): bound retrieval and remove legacy paths`, then begin Phase 11.
-- Uncommitted scope: Phase 10 retrieval, rebuild, retention, cleanup,
-  documentation, and regression-test changes.
-- Blockers: no implementation blocker. Phase 2's platform-specific
-  interrupted-write proof gap and the Phase 9 process-interruption restore
-  proof remain recorded below.
+- Current phase: Phase 11 - Final Release-Readiness Proof
+- State: Phase 11 implementation and all required automated proof are complete
+  locally; the phase commit is pending.
+- Next entrypoint: review and commit Phase 11 as
+  `test(ltm): validate release-readiness remediation`.
+- Uncommitted scope: Phase 11 production lifecycle regression matrix,
+  mode/preset dispatch receipt assertions, and final readiness ledger.
+- Blockers: no automated blocker. Final readiness remains conditional on the
+  manual production-scale, desktop, Android/Termux, interrupted-write, and
+  process-interruption proof gaps recorded below.
 
 ## Non-Negotiable Decisions
 
@@ -66,8 +66,8 @@ proof that a later implementation phase passes.
 | 7 - Mode-neutral production recall                 | Committed locally (`1efa7658`)      | Complete             | Focused orchestrator and live provider-payload proof across every mode/preset state, 353-test server suite, prompt regression, and static/build validation passed |
 | 8 - Truthful client behavior and accessibility     | Committed locally (`5ced1bc7`)      | Complete             | Focused 146-test LTM proof, prompt regression, static/build validation, and 36-test desktop/mobile browser smoke passed                                           |
 | 9 - Consistent full-backup restore                 | Complete                            | Commit subject below | Focused snapshot/restore and ZIP route proof, tracked LTM specs, prompt regression, static/build validation, and browser smoke passed                             |
-| 10 - Bounded exact retrieval and dead-path cleanup | Implemented locally; commit pending | Pending              | 362 tracked LTM tests, prompt regression, client/server builds, browser smoke, and `pnpm check` passed                                                            |
-| 11 - Final release-readiness proof                 | Not started                         | Pending              | Not run                                                                                                                                                           |
+| 10 - Bounded exact retrieval and dead-path cleanup | Committed locally (`3df16606`)      | Complete             | 362 tracked LTM tests, prompt regression, client/server builds, browser smoke, and `pnpm check` passed                                                            |
+| 11 - Final release-readiness proof                 | Implemented locally; commit pending | Pending              | 365 tracked LTM tests, root/server test commands, prompt regression, targeted browser proof, full browser smoke, and `pnpm check` passed                          |
 
 ## Phase Records
 
@@ -727,11 +727,11 @@ cleanup.
 
 Started: 2026-07-12
 
-Completed: 2026-07-12 locally; commit pending explicit authorization
+Completed: 2026-07-12
 
 Baseline HEAD: `b1ec45d6` (`fix(backup): restore long-term memory safely`)
 
-Commit: pending (`perf(ltm): bound retrieval and remove legacy paths`)
+Commit: `3df16606` (`perf(ltm): bound retrieval and remove legacy paths`)
 
 Scope:
 
@@ -768,18 +768,18 @@ Compatibility and mode behavior:
 
 Validation:
 
-| Command                                                                                                                                  | Result                                                                                                                                              |
-| ---------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Command                                                                                                                                  | Result                                                                                                                                                                                         |
+| ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `env LOG_LEVEL=silent pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/maintenance.spec.ts` | Passed: 40 tests; includes bounded catalogs, embedding reuse, direct and vault-initialization retention, audit-window retention, active-generation protection, and pending-recovery protection |
-| `env LOG_LEVEL=silent pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/*.spec.ts`           | Passed: 362 tests, 0 failed; all 24 tracked LTM specs discovered                                                                                    |
-| `pnpm --filter @marinara-engine/server build`                                                                                            | Passed TypeScript and server production build                                                                                                       |
-| `pnpm --filter @marinara-engine/client build`                                                                                            | Passed TypeScript and client production build                                                                                                       |
-| `pnpm regression:prompt`                                                                                                                 | Passed deterministic prompt, macro, lorebook, summary, and LTM prompt regressions                                                                   |
-| `PLAYWRIGHT_CLIENT_PORT=5190 PLAYWRIGHT_SERVER_PORT=7982 pnpm smoke:ui`                                                                  | Passed on isolated ports; Playwright scheduled 36 desktop/mobile smoke tests                                                                        |
-| `pnpm check`                                                                                                                             | Passed Impeccable context check, workspace lint, TypeScript, and production builds                                                                  |
-| static call-site search for removed helpers/registry/connectionless preview surface                                                      | Passed: no executable consumer remains                                                                                                              |
-| `git diff --check`                                                                                                                       | Passed after the final ledger update                                                                                                                |
-| `marinara-doc-check`                                                                                                                     | Not installed; `command -v marinara-doc-check` returned no executable and no checked-in equivalent command is available                             |
+| `env LOG_LEVEL=silent pnpm --filter @marinara-engine/server exec tsx --test src/services/long-term-memory/__tests__/*.spec.ts`           | Passed: 362 tests, 0 failed; all 24 tracked LTM specs discovered                                                                                                                               |
+| `pnpm --filter @marinara-engine/server build`                                                                                            | Passed TypeScript and server production build                                                                                                                                                  |
+| `pnpm --filter @marinara-engine/client build`                                                                                            | Passed TypeScript and client production build                                                                                                                                                  |
+| `pnpm regression:prompt`                                                                                                                 | Passed deterministic prompt, macro, lorebook, summary, and LTM prompt regressions                                                                                                              |
+| `PLAYWRIGHT_CLIENT_PORT=5190 PLAYWRIGHT_SERVER_PORT=7982 pnpm smoke:ui`                                                                  | Passed on isolated ports; Playwright scheduled 36 desktop/mobile smoke tests                                                                                                                   |
+| `pnpm check`                                                                                                                             | Passed Impeccable context check, workspace lint, TypeScript, and production builds                                                                                                             |
+| static call-site search for removed helpers/registry/connectionless preview surface                                                      | Passed: no executable consumer remains                                                                                                                                                         |
+| `git diff --check`                                                                                                                       | Passed after the final ledger update                                                                                                                                                           |
+| `marinara-doc-check`                                                                                                                     | Not installed; `command -v marinara-doc-check` returned no executable and no checked-in equivalent command is available                                                                        |
 
 Manual proof: run recall against a production-sized vault with the target
 embedding provider before release to choose candidate caps that preserve the
@@ -792,8 +792,95 @@ corpora and direct/mandatory lanes, but a very large global vault may need
 operator tuning and manual quality validation. The Phase 2 interrupted-write
 and Phase 9 process-interruption platform proof gaps remain.
 
-Next entrypoint: commit the green Phase 10 change when authorized, then begin
-the Phase 11 end-to-end release-readiness matrix.
+Next entrypoint: begin the Phase 11 end-to-end release-readiness matrix.
+
+### Phase 11 - Final Release-Readiness Proof
+
+Started: 2026-07-12
+
+Completed: 2026-07-12 locally; commit pending
+
+Baseline HEAD: `3df16606` (`perf(ltm): bound retrieval and remove legacy paths`)
+
+Commit: pending (`test(ltm): validate release-readiness remediation`)
+
+Scope:
+
+- Added `release-readiness.spec.ts`, an authoritative route-level lifecycle
+  matrix that follows source capture, streamed extraction, draft acceptance,
+  rebuild, scoped recall, final provider payload fitting, post-dispatch receipt
+  and usage creation, restart, permanent deletion, and full-vault restore.
+- The same matrix covers rejected provider dispatch with a final-payload
+  negative control and an unauthenticated remote mutation before capture.
+- Extended the production generation matrix so every Conversation, Roleplay,
+  Visual Novel, and Game preset/fallback dispatch proves its own durable receipt
+  after the provider receives the final payload.
+- Reconciled the current LTM documentation: README retains the lifecycle-only
+  managed-agent wording, configuration documents bounded exact retrieval and
+  retention, troubleshooting documents explicit full-backup restore, and
+  CONTRIBUTING keeps generation as the recall owner. No user-facing wording
+  contradicted the final implementation.
+
+Compatibility and mode behavior:
+
+- The lifecycle fixture uses a disposable `DATA_DIR` and a loopback
+  OpenAI-compatible provider. It exercises the actual route, persisted vault,
+  and restart paths without requiring a paid or network provider.
+- Existing source summaries remain excluded from normal recall. The route-level
+  scope negative control proves a similarly relevant foreign-group note does
+  not reach the provider payload.
+- The all-mode matrix keeps both marker-preset and fallback placement active
+  for Conversation, Roleplay, Visual Novel, and Game; durable accounting is
+  written only after accepted dispatch and is absent after provider rejection.
+- Snapshot restore preserves canonical data and receipts while rebuilding
+  derived indexes locally. Existing backups and explicit opt-in restore behavior
+  are unchanged.
+
+Release-readiness matrix:
+
+| Contract                       | Positive proof                                                                                          | Negative proof                                                                                                | Authoritative coverage                                                                                        |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Capture, draft, and rebuild    | Source route streams a structured extraction, persists a pending draft, accepts it, and rebuilds        | Remote unauthenticated creation is rejected before capture                                                    | `release-readiness.spec.ts`                                                                                   |
+| Scope, mode, and preset recall | Route dispatch reaches the final provider payload for all modes with marker and fallback placement      | Foreign group memory is excluded; archived/mode/relevance controls remain in tracked retrieval specs          | `production-recall.spec.ts`, `release-readiness.spec.ts`, `reconciliation.spec.ts`                            |
+| Final fit and accounting       | Provider-visible fitted artifact writes durable receipt and chat-scoped usage                           | Rejected provider dispatch writes neither receipt nor usage                                                   | `production-recall.spec.ts`, `release-readiness.spec.ts`, `prompt-artifact.spec.ts`, `usage.spec.ts`          |
+| Deletion, restart, and restore | Permanent deletion removes recall after restart; snapshot restore restores canonical recall and receipt | Mutation rollback, stale-cache, corrupt-state, and mixed-generation controls remain green                     | `release-readiness.spec.ts`, `mutation-transactions.spec.ts`, `maintenance.spec.ts`, `backup-restore.spec.ts` |
+| Auth, corruption, and recovery | Loopback routes, repair, quarantine, coherent generation, and full-backup restoration pass              | LAN/private route gates, malformed state, corrupt families, malformed usage/receipts, and rollback cases pass | `routes.spec.ts`, `maintenance.spec.ts`, `usage.spec.ts`, `backup-restore.spec.ts`                            |
+
+Validation:
+
+| Command                                      | Result                                                                                                                                                         |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm test`                                  | Passed: Windows installer staging-layout guard and the workspace server suite; 365 tests passed, 0 failed                                                      |
+| `pnpm --filter @marinara-engine/server test` | Passed: 25 LTM `*.spec.ts` files, 365 tests passed, 0 failed                                                                                                   |
+| `pnpm regression:prompt`                     | Passed deterministic prompt, macro, lorebook, summary, and LTM prompt regressions                                                                              |
+| Targeted LTM browser matrix                  | Passed: 15 browser tests, 13 expected project-specific skips, 0 failed across 28 selected desktop/mobile rows                                                  |
+| `pnpm smoke:ui`                              | Passed: 21 browser tests, 15 expected project-specific skips, 0 failed across 36 desktop/mobile rows                                                           |
+| `pnpm check`                                 | Passed Impeccable context check, workspace lint, TypeScript, and production builds; existing Vite entry-chunk advisory remained (554.66 kB after minification) |
+| `git diff --check`                           | Passed after the final documentation and tracked-test review                                                                                                   |
+| `marinara-doc-check`                         | Not installed; `command -v marinara-doc-check` returned no executable and no checked-in equivalent command is available                                        |
+
+Exact targeted browser command:
+
+```bash
+pnpm exec playwright test -c playwright.config.ts e2e/core-flows.e2e.ts --grep "LTM|memory recall"
+```
+
+Manual proof: before a release, verify production-scale recall quality and the
+configured retention policy against the target embedding provider on desktop,
+Android, and Termux filesystems. Import a real full-backup ZIP through Settings
+with and without its explicit LTM opt-in on each packaged target. Exercise an
+interrupted vault mutation and a process-level restore interruption on those
+filesystems; the automated injected-failure coverage cannot prove every
+host/process-crash boundary.
+
+Residual risk: automated release-readiness proof is green, but it cannot
+establish production-scale recall quality, a real audit-window retention run,
+or process-crash atomicity on every supported filesystem. Do not describe the
+release as fully ready until that manual proof is completed.
+
+Next entrypoint: commit Phase 11 as
+`test(ltm): validate release-readiness remediation`. No version, pull request,
+or release work belongs to this phase.
 
 ## Progress Update Template
 
