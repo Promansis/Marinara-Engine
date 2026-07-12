@@ -1074,6 +1074,10 @@ test("three chat summary ranges converge on canonical subjects regardless of pro
       const events = await readLtmDebugLog({ operationId: body.operationId, limit: 1_000 }, root);
       assert.equal(events.filter((event) => event.action === "import_batch_rebuild").length, 1);
       assert.equal(events.filter((event) => event.action === "apply_rebuild_indexes").length, 0);
+      const finalizedDraftEvents = events.filter((event) => event.phase === "draft" && event.action === "draft_created");
+      assert.equal(finalizedDraftEvents.length, body.imported.length);
+      assert(finalizedDraftEvents.every((event) => event.draftId));
+      assert(finalizedDraftEvents.every((event) => typeof event.counts?.mutations === "number"));
 
       const statusResponse = await app.inject({
         method: "GET",

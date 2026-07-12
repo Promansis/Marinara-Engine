@@ -466,13 +466,17 @@ function InjectionDecisionSummary({ summary }: { summary: OperationSummary }) {
 
 function DraftApplySummary({ summary }: { summary: OperationSummary }) {
   const draftEvent =
-    latestEvent(summary.events, "draft", "draft_created") ?? latestEvent(summary.events, "draft", "draft_skipped");
+    latestEvent(summary.events, "draft", "draft_created") ??
+    latestEvent(summary.events, "draft", "draft_deferred") ??
+    latestEvent(summary.events, "draft", "draft_skipped");
   const selectionEvent = latestEvent(summary.events, "apply", "mutations_selected");
   const skippedMutationIds = getStringArray(selectionEvent?.details, "skippedMutationIds");
   const selectedMutationIds = selectionEvent?.mutationIds ?? [];
   const draftState = draftEvent
     ? draftEvent.action === "draft_created"
       ? "Created"
+      : draftEvent.action === "draft_deferred"
+        ? "Deferred"
       : "Skipped"
     : selectionEvent
       ? "Existing"
@@ -481,16 +485,16 @@ function DraftApplySummary({ summary }: { summary: OperationSummary }) {
   const selectedCount = selectionEvent?.counts?.selectedMutations ?? selectedMutationIds.length;
   const skippedCount = selectionEvent?.counts?.skippedMutations ?? skippedMutationIds.length;
   const totalMutations = selectionEvent?.counts?.totalMutations ?? draftEvent?.counts?.mutations;
-  const remainingPending = skippedCount > 0 ? skippedCount : 0;
+  const remainingPending = selectionEvent ? (skippedCount > 0 ? skippedCount : 0) : totalMutations;
 
   return (
     <div className="space-y-3">
       <div className="grid gap-2 sm:grid-cols-5">
         <Metric label="Draft" value={draftState} />
         <Metric label="Total mutations" value={totalMutations} />
-        <Metric label="Selected" value={selectionEvent ? selectedCount : null} />
-        <Metric label="Skipped" value={selectionEvent ? skippedCount : null} />
-        <Metric label="Pending" value={selectionEvent ? remainingPending : null} />
+        <Metric label="Selected" value={selectionEvent ? selectedCount : draftEvent ? "Not auto-applied" : null} />
+        <Metric label="Skipped" value={selectionEvent ? skippedCount : draftEvent ? "Not evaluated" : null} />
+        <Metric label="Pending" value={remainingPending} />
       </div>
 
       <div className="flex flex-wrap gap-1.5">

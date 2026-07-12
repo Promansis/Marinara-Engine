@@ -1240,6 +1240,28 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
               },
               { overlay },
             );
+            await recordLtmDebugEvent({
+              operationId,
+              phase: "draft",
+              action: "draft_created",
+              status: "ok",
+              source: imported.source,
+              sourceId: item.sourceId,
+              sourceNoteId: prepared.sourceNote.id,
+              draftId: draft.id,
+              counts: {
+                mutations: draft.mutations.length,
+                diagnostics: prepared.diagnostics.length,
+                droppedUnits: prepared.outcome.droppedUnits,
+                generatedMutations: draft.mutations.length,
+                returnedMutations: draft.mutations.length,
+              },
+              diagnostics: prepared.diagnostics.map((diagnostic) => ({ ...diagnostic })),
+              details: {
+                reason: "created_for_batch_overlay",
+                extractionOutcome: prepared.outcome,
+              },
+            });
             const applyResult =
               body.applyLowRisk && draft.mutations.length > 0
                 ? await applyLongTermMemoryDraft(draft.id, {
