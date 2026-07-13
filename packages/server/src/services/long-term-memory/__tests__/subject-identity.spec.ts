@@ -633,6 +633,26 @@ test("a composite character candidate is rejected without removing valid individ
   assert.equal(result.diagnostics[0]?.code, "composite_character_subject");
 });
 
+test("an exact character identity wins over an alternate composite segmentation", () => {
+  const catalog = buildTrustedLtmSubjectCatalog({
+    roster: [
+      { kind: "persona", id: "damo-persona-id", name: "Damo" },
+      { kind: "character", id: "damo-character-id", name: "Damo Korvak", aliases: ["Korvak"] },
+    ],
+    notes: [],
+  });
+  const result = resolveLtmSubjectIdentities({
+    catalog,
+    existingNotes: [],
+    units: [unit("character_fact", "damo_korvak")],
+  });
+
+  assert.equal(result.droppedCandidates.length, 0);
+  assert.equal(noteIdForEvidenceUnit(result.units[0]!), "char_damo_korvak");
+  assert.deepEqual(result.units[0]?.subjectKeys, ["character:damo-character-id"]);
+  assert.equal(result.diagnostics.some((diagnostic) => diagnostic.code === "composite_character_subject"), false);
+});
+
 test("renamed and deleted roster entities retain identity through already-bound in-scope notes", () => {
   const subject = { key: "persona:damo-id", ref: { kind: "persona", id: "damo-id" } } satisfies LtmSubject;
   const bound = note({

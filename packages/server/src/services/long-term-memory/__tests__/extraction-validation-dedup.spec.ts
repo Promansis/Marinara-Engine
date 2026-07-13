@@ -1796,6 +1796,87 @@ test("LLM source extraction creates a review-required single-name character memo
   }
 });
 
+test("structured character backfill preserves an exact identity that also has a composite parse", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-exact-character-backfill-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    const sourceText = [
+      "### character_fact",
+      "- `[MAJOR] damo_korvak | facts: Damo Korvak trains at the gym every morning.`",
+      "- `[MAJOR] damo_korvak | abilities: Damo Korvak studies advanced harmony and counterpoint.`",
+    ].join("\n");
+    await storage.createNote(
+      {
+        id: "source_exact_character_backfill",
+        type: "source",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_a" },
+        tags: ["source_summary", "imported_chat"],
+        links: [],
+        sections: {
+          source: { text: sourceText, updatedAt: timestamp, evidence: ["chat:chat_a"] },
+        },
+      },
+      { suppressEvent: true },
+    );
+    const sourceNote = await storage.getNote("source_exact_character_backfill");
+    assert(sourceNote);
+    const unitSourceHash = sourceHashForEvidenceUnitExtraction(sourceNote);
+    const provider = {
+      maxTokensOverrideValue: undefined,
+      chatComplete: async () => ({
+        content: JSON.stringify({
+          summary: "Damo character facts",
+          units: [
+            {
+              id: randomUUID(),
+              bucket: "character_fact",
+              subjectId: "provider_guess",
+              subjectNames: ["Damo Korvak"],
+              sectionKey: "facts",
+              text: "Damo Korvak trains at the gym every morning.",
+              importance: "major",
+              evidence: ["source_note:source_exact_character_backfill"],
+              confidence: 0.95,
+              salience: 0.8,
+              status: "active",
+              links: [],
+              sourceHash: unitSourceHash,
+            },
+          ],
+        }),
+      }),
+    } as any;
+
+    const result = await extractLongTermMemoryFromSourceNote({
+      noteId: sourceNote.id,
+      provider,
+      model: "test-model",
+      root,
+      trustedSubjectCatalog: buildTrustedLtmSubjectCatalog({
+        roster: [
+          { kind: "persona", id: "damo-persona-id", name: "Damo" },
+          { kind: "character", id: "damo-character-id", name: "Damo Korvak", aliases: ["Korvak"] },
+        ],
+        notes: [],
+      }),
+    });
+
+    assert.equal(result.outcome.droppedCandidates.length, 0);
+    assert.equal(result.diagnostics.some((diagnostic) => diagnostic.code === "composite_character_subject"), false);
+    const create = result.response.mutations.find(
+      (mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> =>
+        mutation.kind === "create_note" && mutation.note.id === "char_damo_korvak",
+    );
+    assert(create);
+    assert.match(create.note.sections.facts?.text ?? "", /trains at the gym every morning/);
+    assert.match(create.note.sections.abilities?.text ?? "", /advanced harmony and counterpoint/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("source extraction joins structured relationship support through canonical subject names", async () => {
   const root = await mkdtemp(join(tmpdir(), "marinara-ltm-identity-aware-structured-"));
   try {

@@ -1147,6 +1147,8 @@ function resolveUnitSubjects(unit: LtmSubjectIdentityCandidate, index: CatalogIn
 
   const raw = stripNotePrefix(normalizeSubjectIdentifier(unit.subjectId, ""));
   if (unit.bucket === "character_fact") {
+    const direct = matchDirect(index, raw);
+    if (direct.status !== "untrusted") return direct;
     const composite = segmentSubjectIdentifier(raw, index).filter(
       (sequence) => new Set(sequence.map(subjectEntryKey)).size > 1,
     );
@@ -1157,8 +1159,6 @@ function resolveUnitSubjects(unit: LtmSubjectIdentityCandidate, index: CatalogIn
         basis: "composite",
       };
     }
-    const direct = matchDirect(index, raw);
-    if (direct.status !== "untrusted") return direct;
     return matchTraitPrefix(index, raw);
   }
   return matchRelationship(index, raw);
