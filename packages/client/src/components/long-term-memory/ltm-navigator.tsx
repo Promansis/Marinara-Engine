@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
 import { GitBranch, Search } from "lucide-react";
 import type { Chat, LtmScope } from "@marinara-engine/shared";
 import { cn } from "../../lib/utils";
@@ -74,7 +74,10 @@ export function buildNavigatorThreads(chats: Chat[] | undefined, characters: Cha
           .toLowerCase(),
       };
     })
-    .sort((left, right) => new Date(right.representative.updatedAt).getTime() - new Date(left.representative.updatedAt).getTime());
+    .sort(
+      (left, right) =>
+        new Date(right.representative.updatedAt).getTime() - new Date(left.representative.updatedAt).getTime(),
+    );
 }
 
 export function buildNavigatorGroupLookup(threads: LtmNavigatorThread[]): LtmGroupLookup {
@@ -93,7 +96,8 @@ export function buildNavigatorGroupLookup(threads: LtmNavigatorThread[]): LtmGro
 
 export function findNavigatorThread(threads: LtmNavigatorThread[], selection: LtmNavigatorSelection) {
   if (selection.groupId) return threads.find((thread) => thread.groupId === selection.groupId) ?? null;
-  if (selection.chatId) return threads.find((thread) => thread.chats.some((chat) => chat.id === selection.chatId)) ?? null;
+  if (selection.chatId)
+    return threads.find((thread) => thread.chats.some((chat) => chat.id === selection.chatId)) ?? null;
   return null;
 }
 
@@ -109,7 +113,10 @@ export function navigatorSelectionLabel(thread: LtmNavigatorThread | null, selec
   return thread?.title ?? "No chat selected";
 }
 
-export function scopeFromNavigatorSelection(thread: LtmNavigatorThread | null, selection: LtmNavigatorSelection): LtmScope {
+export function scopeFromNavigatorSelection(
+  thread: LtmNavigatorThread | null,
+  selection: LtmNavigatorSelection,
+): LtmScope {
   if (!thread) return {};
   const branch = selectedNavigatorChat(thread, selection);
   if (branch) {
@@ -175,6 +182,10 @@ export function LtmNavigatorSelector({
   const selectedThreadId = selectedThread?.id ?? "";
   const selectedBranchId = selection.chatId ?? "";
   const followsActive = Boolean(activeChatId && selectedBranchId === activeChatId);
+  const fieldId = useId();
+  const searchId = `${fieldId}-search`;
+  const chatSelectId = `${fieldId}-chat`;
+  const branchSelectId = `${fieldId}-branch`;
 
   return (
     <div className={cn(sectionCardClassName, "space-y-2")}>
@@ -188,31 +199,47 @@ export function LtmNavigatorSelector({
         <StatusPill label={scopeLabel} />
       </div>
       <div>
-        <h4 className="text-xs font-semibold text-[var(--foreground)]">Memory scope</h4>
-        <p className="mt-0.5 text-[0.6875rem] text-[var(--muted-foreground)]">
+        <h4 className="text-sm font-semibold text-[var(--foreground)]">Memory scope</h4>
+        <p className="mt-1 text-xs leading-relaxed text-[var(--muted-foreground)]">
           Choose which chat or branch to scope memories to. Global memories are always included.
         </p>
       </div>
-      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)]">
+      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)]">
         <div className="space-y-1.5">
-          <div className="flex items-center gap-2 rounded-lg bg-[var(--secondary)] px-2.5 py-2 ring-1 ring-[var(--border)] focus-within:ring-2 focus-within:ring-[var(--ring)]/60">
-            <Search size="0.8125rem" className="shrink-0 text-[var(--muted-foreground)]" />
+          <label htmlFor={searchId} className="block text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">
+            Search chats
+          </label>
+          <div className="relative">
+            <Search
+              size="0.875rem"
+              className="mari-chrome-field-icon pointer-events-none absolute left-3 top-1/2 -translate-y-1/2"
+              aria-hidden="true"
+            />
             <input
+              id={searchId}
               value={query}
               onChange={(event) => onQueryChange(event.target.value)}
-              placeholder="Find chat, branch, ID, or character"
-              className="min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]/60"
+              placeholder="Name, branch, ID, or character"
+              className={cn(compactInputClassName, "min-h-10 pl-9")}
             />
           </div>
+          <label htmlFor={chatSelectId} className="block text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">
+            Chat or grouped chat
+          </label>
           <select
+            id={chatSelectId}
             value={selectedThreadId}
             onChange={(event) => {
               const thread = threads.find((item) => item.id === event.target.value);
-              if (thread) onSelect({ groupId: thread.groupId, chatId: thread.groupId ? null : thread.representative.id });
+              if (thread)
+                onSelect({ groupId: thread.groupId, chatId: thread.groupId ? null : thread.representative.id });
             }}
-            className={compactInputClassName}
+            className={cn(compactInputClassName, "min-h-10")}
           >
-            {filteredThreads.length === 0 && <option value={selectedThreadId}>No chats match</option>}
+            {threads.length === 0 && <option value="">No chats available</option>}
+            {threads.length > 0 && filteredThreads.length === 0 && (
+              <option value={selectedThreadId}>No chats match your search</option>
+            )}
             {filteredThreads.map((thread) => (
               <option key={thread.id} value={thread.id}>
                 {thread.title} {thread.chats.length > 1 ? `(${thread.chats.length} branches)` : ""}
@@ -221,11 +248,15 @@ export function LtmNavigatorSelector({
           </select>
         </div>
         <div className="space-y-1.5">
-          <div className="flex min-h-9 items-center gap-2 rounded-lg bg-[var(--secondary)]/45 px-2.5 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-            <GitBranch size="0.8125rem" className="shrink-0" />
-            <span className="truncate">Branch</span>
-          </div>
+          <label
+            htmlFor={branchSelectId}
+            className="flex min-h-10 items-center gap-2 text-[0.6875rem] font-semibold text-[var(--muted-foreground)] md:items-end md:pb-1.5"
+          >
+            <GitBranch size="0.875rem" className="shrink-0" aria-hidden="true" />
+            Branch
+          </label>
           <select
+            id={branchSelectId}
             value={selectedBranchId}
             onChange={(event) => {
               if (!selectedThread) return;
@@ -233,7 +264,7 @@ export function LtmNavigatorSelector({
               onSelect({ groupId: selectedThread.groupId, chatId });
             }}
             disabled={!selectedThread || selectedThread.chats.length <= 1}
-            className={compactInputClassName}
+            className={cn(compactInputClassName, "min-h-10")}
           >
             {selectedThread?.groupId && <option value="">All branches</option>}
             {selectedThread?.chats.map((chat) => (

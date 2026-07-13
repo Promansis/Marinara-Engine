@@ -11,7 +11,7 @@ import {
   type LtmExtractionVerbosity,
 } from "@marinara-engine/shared";
 import { useConnections } from "../../hooks/use-connections";
-import { showAlertDialog, showPromptDialog } from "../../lib/app-dialogs";
+import { showAlertDialog, showConfirmDialog, showPromptDialog } from "../../lib/app-dialogs";
 import { MODE_LABELS } from "./ltm-panel-shared";
 import { MacroTextarea } from "../ui/MacroTextarea";
 import { FieldGroup } from "../agents/AgentEditor";
@@ -183,7 +183,7 @@ export function LtmExtractionConnectionSection({
           </option>
         ))}
       </select>
-      <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
+      <p className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">
         When empty, uses the workspace default connection from Settings.
       </p>
     </FieldGroup>
@@ -249,21 +249,29 @@ export function LtmExtractionPromptSection({
     [activePromptTemplateIdsByMode, onChangePromptTemplates, onChangeActivePromptTemplateIdsByMode],
   );
 
-  const confirmDiscardPromptEdits = useCallback(() => {
-    return !hasPromptDraftEdits || confirm("Discard unsaved prompt edits?");
+  const confirmDiscardPromptEdits = useCallback(async () => {
+    return (
+      !hasPromptDraftEdits ||
+      showConfirmDialog({
+        title: "Discard prompt edits?",
+        message: "Discard unsaved prompt edits?",
+        confirmLabel: "Discard",
+        tone: "destructive",
+      })
+    );
   }, [hasPromptDraftEdits]);
 
   const handleModeChange = useCallback(
-    (mode: LtmMode) => {
-      if (mode === selectedMode || !confirmDiscardPromptEdits()) return;
+    async (mode: LtmMode) => {
+      if (mode === selectedMode || !(await confirmDiscardPromptEdits())) return;
       setSelectedMode(mode);
     },
     [confirmDiscardPromptEdits, selectedMode],
   );
 
   const handleSelectPrompt = useCallback(
-    (id: string) => {
-      if (!confirmDiscardPromptEdits()) return;
+    async (id: string) => {
+      if (!(await confirmDiscardPromptEdits())) return;
       const next = { ...activePromptTemplateIdsByMode };
       if (id) next[selectedMode] = id;
       else delete next[selectedMode];
@@ -294,9 +302,7 @@ export function LtmExtractionPromptSection({
 
     if (selectedTemplate) {
       publishTemplates(
-        localTemplates.map((template) =>
-          template.id === selectedTemplate.id ? { ...template, prompt } : template,
-        ),
+        localTemplates.map((template) => (template.id === selectedTemplate.id ? { ...template, prompt } : template)),
       );
       return;
     }
@@ -338,17 +344,22 @@ export function LtmExtractionPromptSection({
       return;
     }
     publishTemplates(
-      localTemplates.map((template) =>
-        template.id === selectedTemplate.id ? { ...template, name } : template,
-      ),
+      localTemplates.map((template) => (template.id === selectedTemplate.id ? { ...template, name } : template)),
     );
   }, [localTemplates, publishTemplates, selectedTemplate]);
 
   const handleRemoveTemplate = useCallback(
-    (id: string | null) => {
+    async (id: string | null) => {
       if (!id) return;
       const template = localTemplates.find((item) => item.id === id);
-      if (!template || !confirm(`Remove "${template.name}"?`)) return;
+      if (!template) return;
+      const confirmed = await showConfirmDialog({
+        title: "Remove prompt?",
+        message: `Remove "${template.name}"?`,
+        confirmLabel: "Remove",
+        tone: "destructive",
+      });
+      if (!confirmed) return;
       const nextTemplates = localTemplates.filter((item) => item.id !== id);
       const nextActiveIds: ActivePromptTemplateIdsByMode = {};
       for (const mode of LTM_EXTRACTION_MODES) {
@@ -385,7 +396,7 @@ export function LtmExtractionPromptSection({
 
       <div className="mb-3 grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto]">
         <label className="block">
-          <span className="mb-1 block text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+          <span className="mb-1 block text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
             Prompt option
           </span>
           <select
@@ -443,16 +454,16 @@ export function LtmExtractionPromptSection({
 
       <div className="mb-2 flex items-center gap-2">
         {isUsingDefaultPrompt ? (
-          <span className="flex items-center gap-1 rounded-lg bg-emerald-400/10 px-2.5 py-1 text-[0.625rem] font-medium text-emerald-400">
+          <span className="flex items-center gap-1 rounded-lg bg-emerald-500/10 px-2.5 py-1 text-[0.6875rem] font-medium text-emerald-700 dark:text-emerald-200">
             <Check size="0.625rem" /> Built-in default
           </span>
         ) : (
-          <span className="flex items-center gap-1 rounded-lg bg-amber-400/10 px-2.5 py-1 text-[0.625rem] font-medium text-amber-400">
+          <span className="flex items-center gap-1 rounded-lg bg-amber-500/10 px-2.5 py-1 text-[0.6875rem] font-medium text-amber-700 dark:text-amber-200">
             <FileText size="0.625rem" /> Custom prompt
           </span>
         )}
         {hasPromptDraftEdits && (
-          <span className="rounded-lg bg-amber-400/10 px-2.5 py-1 text-[0.625rem] font-medium text-amber-400">
+          <span className="rounded-lg bg-amber-500/10 px-2.5 py-1 text-[0.6875rem] font-medium text-amber-700 dark:text-amber-200">
             Unsaved prompt edit
           </span>
         )}

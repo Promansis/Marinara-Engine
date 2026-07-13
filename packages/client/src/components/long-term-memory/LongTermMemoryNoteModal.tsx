@@ -27,16 +27,13 @@ import {
 } from "./ltm-editor-utils";
 import { LongTermMemoryNoteEditor } from "./LongTermMemoryNoteEditor";
 import { LongTermMemorySuggestionsTab } from "./LongTermMemorySuggestionsTab";
+import { LtmTabRail } from "./LtmTabRail";
 import { type LtmManagedExtractionPrefs } from "./ltm-managed-extraction-prefs";
 import { Modal } from "../ui/Modal";
 import { cn } from "../../lib/utils";
 import type { LtmSearchResponse } from "../../hooks/use-long-term-memory";
 import type { LongTermMemoryLatestExtractionResult } from "../../stores/ltm-extraction-results.store";
-import {
-  emptyStateClassName,
-  inputClassName,
-  listRowClassName,
-} from "./LtmFields";
+import { emptyStateClassName, inputClassName, listRowClassName } from "./LtmFields";
 import { StatusPill, ToolButton } from "./LtmPills";
 import {
   compactLtmText,
@@ -63,24 +60,20 @@ import {
 export function MutationPreview({ mutation }: { mutation: LtmDraftMutation }) {
   return (
     <article className="rounded-lg bg-[var(--secondary)]/45 p-3 ring-1 ring-[var(--border)]">
-      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <StatusPill label={mutationKindLabel(mutation.kind)} />
-          <StatusPill label={mutationRiskLabel(mutation.risk)} tone={mutationRiskTone(mutation.risk)} />
-        </div>
-        <div className="flex flex-wrap gap-1.5 sm:justify-end">
-          <StatusPill label={`Risk ${mutationRiskLabel(mutation.risk)}`} tone={mutationRiskTone(mutation.risk)} />
-          <StatusPill label={`Confidence ${Math.round(mutation.confidence * 100)}%`} />
-          <StatusPill label={`${mutation.evidence.length} evidence`} />
-        </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <StatusPill label={mutationKindLabel(mutation.kind)} />
+        <StatusPill label={mutationRiskLabel(mutation.risk)} tone={mutationRiskTone(mutation.risk)} />
+        <span className="text-[0.6875rem] text-[var(--muted-foreground)]">
+          {Math.round(mutation.confidence * 100)}% confidence, {mutation.evidence.length} evidence
+        </span>
       </div>
       <div className="mt-2 text-xs font-medium text-[var(--foreground)]">{mutation.summary}</div>
-      <div className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">Applies to: {mutationTarget(mutation)}</div>
+      <div className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">Applies to: {mutationTarget(mutation)}</div>
       <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-[var(--background)] p-2 text-[0.6875rem] leading-relaxed text-[var(--foreground)] ring-1 ring-[var(--border)]">
         {mutationText(mutation)}
       </pre>
       {mutation.evidence.length > 0 && (
-        <div className="mt-2 rounded-md bg-[var(--background)]/70 p-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+        <div className="mt-2 rounded-md bg-[var(--background)]/70 p-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
           <span className="font-medium text-[var(--foreground)]">Evidence:</span>{" "}
           {mutation.evidence.map(friendlyEvidence).join(", ")}
         </div>
@@ -101,13 +94,15 @@ export function SourceNoteReference({
   onOpenSourceNote?: (noteId: string) => void;
 }) {
   if (!sourceNoteId) return null;
-  const label = noteLookup ? sourceReferenceLabel(sourceNoteId, noteLookup, chatLookup) : friendlyIdentifier(sourceNoteId);
+  const label = noteLookup
+    ? sourceReferenceLabel(sourceNoteId, noteLookup, chatLookup)
+    : friendlyIdentifier(sourceNoteId);
   if (onOpenSourceNote) {
     return (
       <button
         type="button"
         onClick={() => onOpenSourceNote(sourceNoteId)}
-        className="min-w-0 truncate rounded-md bg-[var(--muted)]/40 px-1.5 py-0.5 text-left text-[0.625rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+        className="min-w-0 truncate rounded-md bg-[var(--muted)]/40 px-1.5 py-0.5 text-left text-[0.6875rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
         title={`Open source note ${sourceNoteId}`}
       >
         From: {label}
@@ -156,11 +151,7 @@ function GraphLinks({
   onOpenNote?: (noteId: string) => void;
 }) {
   if (links.length === 0) {
-    return (
-      <p className={emptyStateClassName}>
-        No related memories yet.
-      </p>
-    );
+    return <p className={emptyStateClassName}>No related memories yet.</p>;
   }
 
   return (
@@ -169,12 +160,12 @@ function GraphLinks({
         const label = noteReferenceLabel(link.target, noteLookup, chatLookup);
         const content = (
           <>
-          <span className="shrink-0 rounded-md bg-[var(--muted)]/50 px-1.5 py-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
-            {humanRelationLabel(link.relation)}
-          </span>
-          <span className="min-w-0 truncate text-[var(--foreground)]" title={label}>
-            {label}
-          </span>
+            <span className="shrink-0 rounded-md bg-[var(--muted)]/50 px-1.5 py-0.5 text-[0.6875rem] text-[var(--muted-foreground)]">
+              {humanRelationLabel(link.relation)}
+            </span>
+            <span className="min-w-0 truncate text-[var(--foreground)]" title={label}>
+              {label}
+            </span>
           </>
         );
         if (onOpenNote) {
@@ -246,9 +237,7 @@ function DerivedActiveMemories({
           Loading extracted memories...
         </div>
       ) : groups.length === 0 ? (
-        <p className={emptyStateClassName}>
-          No active memories link back to this source note yet.
-        </p>
+        <p className={emptyStateClassName}>No active memories link back to this source note yet.</p>
       ) : (
         <div className="space-y-3">
           {groups.map((group) => (
@@ -310,7 +299,9 @@ function MemoryOverviewPanel({
   const sourceIds = sourceLinkIds(note);
   const conflictCount = pendingConflictCount(note);
   const isSourceNote = isSourceSummaryNote(note);
-  const derivedCount = activeNotes.filter((candidate) => candidate.id !== note.id && isDerivedFromSource(candidate, note.id)).length;
+  const derivedCount = activeNotes.filter(
+    (candidate) => candidate.id !== note.id && isDerivedFromSource(candidate, note.id),
+  ).length;
 
   return (
     <div className="space-y-3">
@@ -330,8 +321,9 @@ function MemoryOverviewPanel({
           )}
           {conflictCount > 0 && <StatusPill label={`${conflictCount} needs review`} tone="warn" />}
         </div>
-        <div className="mt-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-          {humanScopeLabel(note, chatLookup, displayContext.groups)} · updated {new Date(note.updatedAt).toLocaleString()}
+        <div className="mt-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+          {humanScopeLabel(note, chatLookup, displayContext.groups)} · updated{" "}
+          {new Date(note.updatedAt).toLocaleString()}
         </div>
       </div>
 
@@ -389,13 +381,7 @@ function MemoryOverviewPanel({
   );
 }
 
-function MemoryContentsPanel({
-  note,
-  displayContext,
-}: {
-  note: LtmNote;
-  displayContext: LtmDisplayLookupContext;
-}) {
+function MemoryContentsPanel({ note, displayContext }: { note: LtmNote; displayContext: LtmDisplayLookupContext }) {
   return (
     <div className="space-y-2">
       {Object.entries(note.sections).map(([key, section]) => (
@@ -407,18 +393,28 @@ function MemoryContentsPanel({
           <summary className="cursor-pointer list-none">
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-xs font-semibold text-[var(--foreground)]">{friendlySectionKey(key)}</span>
-              {typeof section.salience === "number" && <StatusPill label={`Importance: ${humanScoreLabel(section.salience)}`} />}
-              {typeof section.confidence === "number" && <StatusPill label={`Confidence: ${humanScoreLabel(section.confidence)}`} />}
+              {typeof section.salience === "number" && (
+                <StatusPill label={`Importance: ${humanScoreLabel(section.salience)}`} />
+              )}
+              {typeof section.confidence === "number" && (
+                <StatusPill label={`Confidence: ${humanScoreLabel(section.confidence)}`} />
+              )}
             </div>
           </summary>
           <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-[var(--foreground)]">{section.text}</p>
           {(section.evidence ?? []).length > 0 && (
-            <div className="mt-2 rounded-md bg-[var(--background)]/55 p-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+            <div className="mt-2 rounded-md bg-[var(--background)]/55 p-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
               <div className="mb-1 font-medium text-[var(--foreground)]">Evidence</div>
               <div className="flex flex-wrap gap-1.5">
                 {dedupeEvidenceEntries(section.evidence ?? [], displayContext).map((entry) => {
                   const resolved = resolveEvidenceDisplay(entry, displayContext);
-                  return <StatusPill key={`${key}-${entry}`} label={resolved.label} title={resolved.tooltip ?? resolved.label} />;
+                  return (
+                    <StatusPill
+                      key={`${key}-${entry}`}
+                      label={resolved.label}
+                      title={resolved.tooltip ?? resolved.label}
+                    />
+                  );
                 })}
               </div>
             </div>
@@ -448,11 +444,17 @@ function MemoryRecallPanel({
   return (
     <div className="space-y-3">
       {!context.chatLabel ? (
-        <p role="alert" className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-100">
+        <p
+          role="alert"
+          className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-100"
+        >
           Choose a specific chat branch in the memory navigator before testing recall.
         </p>
       ) : !context.enabled ? (
-        <p role="status" className="rounded-lg bg-[var(--secondary)]/35 p-3 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+        <p
+          role="status"
+          className="rounded-lg bg-[var(--secondary)]/35 p-3 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]"
+        >
           Long-Term Memory is off for {context.chatLabel}. Turn it on in Chat Settings before testing recall.
         </p>
       ) : null}
@@ -496,7 +498,10 @@ function MemoryRecallPanel({
             />
           </div>
           {result.warnings.map((warning) => (
-            <p key={warning} className="rounded-md bg-amber-500/10 px-2 py-1 text-[0.6875rem] text-amber-200">
+            <p
+              key={warning}
+              className="rounded-md bg-amber-500/10 px-2 py-1 text-[0.6875rem] text-amber-700 dark:text-amber-200"
+            >
               {warning}
             </p>
           ))}
@@ -596,11 +601,7 @@ function _MemorySuggestionsPanel({
   }
 
   if (drafts.length === 0) {
-    return (
-      <p className={emptyStateClassName}>
-        No pending suggestions for this source.
-      </p>
-    );
+    return <p className={emptyStateClassName}>No pending suggestions for this source.</p>;
   }
 
   return (
@@ -615,7 +616,12 @@ function _MemorySuggestionsPanel({
           <div className="truncate text-xs font-semibold text-[var(--foreground)]">
             {draft.summary || "Untitled suggestion"}
           </div>
-          <DraftMetadataPills draft={draft} noteLookup={noteLookup} chatLookup={chatLookup} onOpenSourceNote={onOpenSourceNote} />
+          <DraftMetadataPills
+            draft={draft}
+            noteLookup={noteLookup}
+            chatLookup={chatLookup}
+            onOpenSourceNote={onOpenSourceNote}
+          />
         </button>
       ))}
     </div>
@@ -695,7 +701,7 @@ export function MemoryNoteModal({
       ...(isSourceNote ? [{ id: "suggestions" as const, label: "Suggestions" }] : []),
     ];
   }, [isSourceNote, mode, note]);
-  const safeActiveTab = tabs.some((tab) => tab.id === activeTab) ? activeTab : tabs[0]?.id ?? "overview";
+  const safeActiveTab = tabs.some((tab) => tab.id === activeTab) ? activeTab : (tabs[0]?.id ?? "overview");
 
   return (
     <Modal
@@ -706,18 +712,17 @@ export function MemoryNoteModal({
     >
       {note && (
         <div className="grid gap-4">
-          <div className="grid gap-3 rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-[var(--foreground)]" title={humanMemoryTitle(note, chatLookup)}>
-                {humanMemoryTitle(note, chatLookup)}
-              </div>
-              <div className="mt-2 flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--border)]/70 pb-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap gap-1.5">
                 <StatusPill label={isSourceNote ? sourceTypeLabel(note) : friendlyNoteType(note.type)} />
                 <StatusPill label={friendlyStatus(note.status)} tone={note.status === "active" ? "good" : "neutral"} />
                 {note.modes.map((item) => (
                   <StatusPill key={item} label={friendlyMode(item)} />
                 ))}
-                {note.links.length > 0 && <StatusPill label={`${note.links.length} linked memor${note.links.length === 1 ? "y" : "ies"}`} />}
+                {note.links.length > 0 && (
+                  <StatusPill label={`${note.links.length} linked memor${note.links.length === 1 ? "y" : "ies"}`} />
+                )}
                 {editorDirty && <StatusPill label="Unsaved changes" tone="warn" />}
               </div>
             </div>
@@ -728,68 +733,69 @@ export function MemoryNoteModal({
                   Edit
                 </ToolButton>
               ) : (
-                <ToolButton onClick={() => onModeChange("view")}>
-                  Cancel
-                </ToolButton>
+                <ToolButton onClick={() => onModeChange("view")}>Cancel</ToolButton>
               )}
             </div>
           </div>
 
           {mode === "view" && (
             <>
-              <div className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--secondary)]/45 p-1 ring-1 ring-[var(--border)] sm:grid-cols-5">
-                {tabs.map((tab) => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => onTabChange(tab.id)}
-                    className={cn(
-                      "min-h-9 rounded-lg px-2 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60",
-                      safeActiveTab === tab.id
-                        ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm ring-1 ring-[var(--border)]"
-                        : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                    )}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
+              <LtmTabRail
+                tabs={tabs}
+                activeId={safeActiveTab}
+                onChange={onTabChange}
+                ariaLabel="Memory detail views"
+                idPrefix="ltm-note"
+              />
 
-              {safeActiveTab === "overview" && (
-                <MemoryOverviewPanel
-                  note={note}
-                  activeNotes={activeNotes}
-                  noteLookup={noteLookup}
-                  chatLookup={chatLookup}
-                  displayContext={displayContext}
-                  activeNotesLoading={activeNotesLoading}
-                  pendingSuggestionCount={pendingDrafts.length}
-                  onOpenNote={onOpenNote}
-                />
-              )}
-              {safeActiveTab === "content" && <MemoryContentsPanel note={note} displayContext={displayContext} />}
-              {safeActiveTab === "links" && (
-                <GraphLinks links={note.links} noteLookup={noteLookup} chatLookup={chatLookup} onOpenNote={onOpenNote} />
-              )}
-              {safeActiveTab === "recall" && !isSourceNote && (
-                <MemoryRecallPanel
-                  result={recallResult}
-                  pending={recallPending}
-                  query={recallQuery}
-                  context={recallContext}
-                  onQueryChange={onRecallQueryChange}
-                  onRun={onRunRecall}
-                />
-              )}
-              {safeActiveTab === "suggestions" && isSourceNote && (
-                <LongTermMemorySuggestionsTab
-                  note={note}
-                  extractionPrefs={extractionPrefs}
-                  latestExtractionResult={latestExtractionResult}
-                  onLatestExtractionResultChange={onLatestExtractionResultChange}
-                  onRecoverDroppedCandidate={onRecoverDroppedCandidate}
-                />
-              )}
+              <div
+                id={`ltm-note-panel-${safeActiveTab}`}
+                role="tabpanel"
+                aria-labelledby={`ltm-note-tab-${safeActiveTab}`}
+                tabIndex={0}
+                className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
+              >
+                {safeActiveTab === "overview" && (
+                  <MemoryOverviewPanel
+                    note={note}
+                    activeNotes={activeNotes}
+                    noteLookup={noteLookup}
+                    chatLookup={chatLookup}
+                    displayContext={displayContext}
+                    activeNotesLoading={activeNotesLoading}
+                    pendingSuggestionCount={pendingDrafts.length}
+                    onOpenNote={onOpenNote}
+                  />
+                )}
+                {safeActiveTab === "content" && <MemoryContentsPanel note={note} displayContext={displayContext} />}
+                {safeActiveTab === "links" && (
+                  <GraphLinks
+                    links={note.links}
+                    noteLookup={noteLookup}
+                    chatLookup={chatLookup}
+                    onOpenNote={onOpenNote}
+                  />
+                )}
+                {safeActiveTab === "recall" && !isSourceNote && (
+                  <MemoryRecallPanel
+                    result={recallResult}
+                    pending={recallPending}
+                    query={recallQuery}
+                    context={recallContext}
+                    onQueryChange={onRecallQueryChange}
+                    onRun={onRunRecall}
+                  />
+                )}
+                {safeActiveTab === "suggestions" && isSourceNote && (
+                  <LongTermMemorySuggestionsTab
+                    note={note}
+                    extractionPrefs={extractionPrefs}
+                    latestExtractionResult={latestExtractionResult}
+                    onLatestExtractionResultChange={onLatestExtractionResultChange}
+                    onRecoverDroppedCandidate={onRecoverDroppedCandidate}
+                  />
+                )}
+              </div>
             </>
           )}
 

@@ -1,14 +1,7 @@
 import { Check, Import, Loader2 } from "lucide-react";
 import { cn } from "../../lib/utils";
-import {
-  listRowClassName,
-  selectedListRowClassName,
-} from "./LtmFields";
-import {
-  rowActionButtonClassName,
-  rowActionGroupClassName,
-  type ImportPreviewRow,
-} from "./ltm-panel-shared";
+import { listRowClassName, selectedListRowClassName } from "./LtmFields";
+import { rowActionButtonClassName, rowActionGroupClassName, type ImportPreviewRow } from "./ltm-panel-shared";
 import { StatusPill } from "./LtmPills";
 
 export function ImportPreviewRowItem({
@@ -56,17 +49,20 @@ export function ImportPreviewRowItem({
           {stale && <StatusPill label="Source changed" tone="warn" title={sample.existingNoteTitle ?? sample.title} />}
         </div>
         {sample.snippet && (
-          <div className="mt-1 truncate text-[10px] leading-relaxed text-[var(--muted-foreground)]" title={sample.snippet}>
+          <div
+            className="mt-1 truncate text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]"
+            title={sample.snippet}
+          >
             {sample.snippet}
           </div>
         )}
         {imported && sample.existingNoteTitle && (
-          <div className="mt-1 truncate text-[10px] leading-relaxed text-[var(--muted-foreground)]">
+          <div className="mt-1 truncate text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
             Current as {sample.existingNoteTitle}
           </div>
         )}
         {stale && sample.existingNoteTitle && (
-          <div className="mt-1 truncate text-[10px] leading-relaxed text-[var(--muted-foreground)]">
+          <div className="mt-1 truncate text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
             Refreshes {sample.existingNoteTitle} with the changed source
           </div>
         )}
@@ -76,14 +72,17 @@ export function ImportPreviewRowItem({
           type="button"
           onClick={onImport}
           disabled={disabled || importing || imported}
-          className={cn(
-            rowActionButtonClassName,
-            "mari-chrome-control--primary",
-          )}
+          className={cn(rowActionButtonClassName, "mari-chrome-control--primary")}
           aria-label={importLabel}
           title={stale ? "Refresh memory" : "Import"}
         >
-          {importing ? <Loader2 size="0.75rem" className="animate-spin" /> : imported ? <Check size="0.75rem" /> : <Import size="0.75rem" />}
+          {importing ? (
+            <Loader2 size="0.75rem" className="animate-spin" />
+          ) : imported ? (
+            <Check size="0.75rem" />
+          ) : (
+            <Import size="0.75rem" />
+          )}
         </button>
       </div>
     </article>

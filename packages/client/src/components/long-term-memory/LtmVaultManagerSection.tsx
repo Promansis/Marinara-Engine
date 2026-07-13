@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   AlertCircle,
@@ -67,6 +67,7 @@ import {
 } from "../../stores/ltm-extraction-results.store";
 import { LongTermMemoryNoteTransferModal } from "../long-term-memory/LongTermMemoryNoteTransferModal";
 import { LongTermMemoryIdentityRepairSection } from "../long-term-memory/LongTermMemoryIdentityRepairSection";
+import { LtmTabRail } from "../long-term-memory/LtmTabRail";
 import {
   readLtmManagedExtractionPrefs,
   type LtmManagedExtractionPrefs,
@@ -220,7 +221,12 @@ function QueryFailure({
           <AlertCircle size="0.875rem" className="shrink-0 text-[var(--destructive)]" />
           {stale ? `${label} could not refresh` : `${label} could not load`}
         </div>
-        <p className="mt-1 break-words text-[0.6875rem] text-[var(--muted-foreground)]">{detail}</p>
+        <details className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">
+          <summary className="cursor-pointer font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60">
+            Technical details
+          </summary>
+          <p className="mt-1 break-words">{detail}</p>
+        </details>
       </div>
       <ToolButton onClick={onRetry}>
         <RotateCcw size="0.75rem" />
@@ -627,7 +633,10 @@ export function LtmVaultManagerSection({
   const importRows = useMemo(() => importPreview.data?.samples ?? [], [importPreview.data?.samples]);
   const pendingImportRows = useMemo(() => importRows.filter((sample) => sample.status === "pending"), [importRows]);
   const importedImportRows = useMemo(() => importRows.filter((sample) => sample.status === "imported"), [importRows]);
-  const staleImportRows = useMemo(() => pendingImportRows.filter((sample) => sample.freshness === "stale"), [pendingImportRows]);
+  const staleImportRows = useMemo(
+    () => pendingImportRows.filter((sample) => sample.freshness === "stale"),
+    [pendingImportRows],
+  );
   const lastImportFailures = useMemo(() => {
     if (!lastImportResult) return [];
     return [
@@ -931,21 +940,6 @@ export function LtmVaultManagerSection({
     return true;
   };
 
-  const handleTabKeyDown = async (event: KeyboardEvent<HTMLButtonElement>, currentTab: TabId) => {
-    const currentIndex = LTM_TAB_IDS.indexOf(currentTab);
-    let nextIndex: number | null = null;
-    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % LTM_TAB_IDS.length;
-    else if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + LTM_TAB_IDS.length) % LTM_TAB_IDS.length;
-    else if (event.key === "Home") nextIndex = 0;
-    else if (event.key === "End") nextIndex = LTM_TAB_IDS.length - 1;
-    if (nextIndex === null) return;
-    event.preventDefault();
-    const nextTab = LTM_TAB_IDS[nextIndex]!;
-    if (await setTabWithGuards(nextTab)) {
-      window.requestAnimationFrame(() => document.getElementById(`ltm-tab-${nextTab}`)?.focus());
-    }
-  };
-
   const openMemory = async (id: string, options: { mode?: MemoryModalMode; tab?: MemoryModalTab } = {}) => {
     if (openNoteId === id && memoryModalMode === (options.mode ?? "view")) return;
     if (memoryModalMode === "edit" && !(await confirmDiscardEditor())) return;
@@ -1007,7 +1001,9 @@ export function LtmVaultManagerSection({
       return;
     }
     if (!selectedRecallSettings.enabled) {
-      toast.error(`Long-Term Memory is off for ${navigatorScopeLabel}. Turn it on in Chat Settings before testing recall.`);
+      toast.error(
+        `Long-Term Memory is off for ${navigatorScopeLabel}. Turn it on in Chat Settings before testing recall.`,
+      );
       return;
     }
     const recallQuery = viewingRecallQuery.trim();
@@ -1540,33 +1536,13 @@ export function LtmVaultManagerSection({
   return (
     <div className="flex min-h-full flex-col gap-3 p-3 text-[var(--foreground)]">
       <div className="sticky top-0 z-10 -mx-3 bg-[var(--background)]/95 px-3 py-2 backdrop-blur-sm">
-        <div
-          role="tablist"
-          aria-label="Long-term memory views"
-          className="grid grid-cols-4 gap-1 rounded-xl bg-[var(--secondary)]/35 p-1 ring-1 ring-[var(--border)]/80"
-        >
-          {LTM_TAB_IDS.map((id) => (
-            <button
-              key={id}
-              id={`ltm-tab-${id}`}
-              role="tab"
-              type="button"
-              aria-controls={`ltm-panel-${id}`}
-              aria-selected={tab === id}
-              tabIndex={tab === id ? 0 : -1}
-              onClick={() => void setTabWithGuards(id)}
-              onKeyDown={(event) => void handleTabKeyDown(event, id)}
-              className={cn(
-                "min-w-0 truncate rounded-lg px-2 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60",
-                tab === id
-                  ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
-                  : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-              )}
-            >
-              {TAB_LABELS[id]}
-            </button>
-          ))}
-        </div>
+        <LtmTabRail
+          tabs={LTM_TAB_IDS.map((id) => ({ id, label: TAB_LABELS[id] }))}
+          activeId={tab}
+          onChange={setTabWithGuards}
+          ariaLabel="Long-term memory views"
+          idPrefix="ltm"
+        />
       </div>
 
       {tab === "notes" && (
@@ -1609,26 +1585,28 @@ export function LtmVaultManagerSection({
             </div>
           )}
           <section className="space-y-3">
-            <div className="grid grid-cols-[1fr_auto] gap-2">
-              <div className="flex items-center gap-2 rounded-xl bg-[var(--secondary)] px-3 py-2 shadow-sm ring-1 ring-[var(--border)] transition-shadow focus-within:ring-2 focus-within:ring-[var(--ring)]/60">
+            <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+              <label className="mari-chrome-field flex min-h-10 items-center gap-2 px-3">
                 <Search size="0.875rem" className="text-[var(--muted-foreground)]" />
                 <input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder="Search memories"
-                  className="min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]/60"
+                  aria-label="Search memories"
+                  className="min-w-0 flex-1 bg-transparent text-sm text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]/60"
                 />
-              </div>
+              </label>
               <ToolButton onClick={requestCreateNote} disabled={creatingNote}>
                 <Plus size="0.875rem" />
                 New
               </ToolButton>
             </div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid gap-2 sm:grid-cols-3">
               <select
                 value={noteType}
                 onChange={(event) => setNoteType(event.target.value as "all" | LtmNoteType)}
                 className={compactInputClassName}
+                aria-label="Memory type"
               >
                 {NOTE_TYPES.map((type) => (
                   <option key={type} value={type}>
@@ -1640,6 +1618,7 @@ export function LtmVaultManagerSection({
                 value={noteStatus}
                 onChange={(event) => setNoteStatus(event.target.value as "all" | LtmStatus)}
                 className={compactInputClassName}
+                aria-label="Memory status"
               >
                 {NOTE_STATUSES.map((statusId) => (
                   <option key={statusId} value={statusId}>
@@ -1651,6 +1630,7 @@ export function LtmVaultManagerSection({
                 value={noteMode}
                 onChange={(event) => setNoteMode(event.target.value as "all" | LtmMode)}
                 className={compactInputClassName}
+                aria-label="Memory mode"
               >
                 <option value="all">Any mode</option>
                 {(["roleplay", "conversation", "game"] as const).map((mode) => (
@@ -1689,7 +1669,28 @@ export function LtmVaultManagerSection({
               )}
               {notes.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
               {!notes.isLoading && !notes.isError && filteredNotes.length === 0 && (
-                <p className={emptyStateClassName}>No matching memories.</p>
+                <div className={cn(emptyStateClassName, "space-y-3")}>
+                  <p>No matching memories.</p>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {(query || noteType !== "all" || noteStatus !== "all" || noteMode !== "all") && (
+                      <ToolButton
+                        onClick={() => {
+                          setQuery("");
+                          setNoteType("all");
+                          setNoteStatus("all");
+                          setNoteMode("all");
+                        }}
+                      >
+                        <RotateCcw size="0.875rem" />
+                        Clear filters
+                      </ToolButton>
+                    )}
+                    <ToolButton onClick={requestCreateNote} disabled={creatingNote} tone="primary">
+                      <Plus size="0.875rem" />
+                      New memory
+                    </ToolButton>
+                  </div>
+                </div>
               )}
               {!notes.isLoading && filteredNotes.length > 0 && (
                 <TypeMemoryGroups

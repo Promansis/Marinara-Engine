@@ -146,12 +146,13 @@ export function SuggestionRow({
                 <StatusPill label={dispositionLabel(row.disposition)} tone={dispositionTone(row.disposition)} />
                 <StatusPill label={mutationKindLabel(mutation.kind)} />
                 <StatusPill label={mutationRiskLabel(mutation.risk)} tone={mutationRiskTone(mutation.risk)} />
-                <StatusPill label="AI confident" title={`AI is ${Math.round(mutation.confidence * 100)}% confident`} />
-                <StatusPill label={referenceLabel(mutation.evidence.length)} />
-                <StatusPill label={draftStatusLabel(draft.status)} />
                 {hasEdits ? <StatusPill label="edited" /> : null}
               </div>
               <h4 className="mt-2 text-sm font-medium text-[var(--foreground)]">{mutationTargetTitle(mutation)}</h4>
+              <p className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">
+                {Math.round(mutation.confidence * 100)}% confidence, {referenceLabel(mutation.evidence.length)},{" "}
+                {draftStatusLabel(draft.status)}
+              </p>
               <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-[var(--muted-foreground)]">
                 {compactMutationText(editedMutation ?? mutation, noteLookup)}
               </p>

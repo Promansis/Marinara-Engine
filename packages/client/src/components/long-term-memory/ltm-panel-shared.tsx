@@ -2,7 +2,16 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { Chat, LtmDraftMutation, LtmExtractionDraft, LtmMode, LtmNote, LtmNoteType, LtmScope, LtmStatus } from "@marinara-engine/shared";
+import type {
+  Chat,
+  LtmDraftMutation,
+  LtmExtractionDraft,
+  LtmMode,
+  LtmNote,
+  LtmNoteType,
+  LtmScope,
+  LtmStatus,
+} from "@marinara-engine/shared";
 import { isLtmSourceLikeNote } from "@marinara-engine/shared";
 import type { LtmInteropPreview, LtmInteropSource } from "../../hooks/use-long-term-memory";
 import type { LtmResolvedGlobalSettings } from "../../hooks/use-long-term-memory";
@@ -76,10 +85,26 @@ export const TAB_LABELS: Record<TabId, string> = {
 
 export const LTM_GLOBAL_SETTINGS_MIGRATION_KEY = "ltm:global-settings-migrated:v1";
 export const LTM_RECALL_STYLES: Array<{ id: LtmRecallStyle; label: string; description: string }> = [
-  { id: "balanced", label: "Balanced", description: "Mixes meaning, exact wording, and linked story notes. Good default for most chats." },
-  { id: "exact", label: "Exact", description: "Favors direct keyword and name matches. Best when you need specific facts recalled precisely." },
-  { id: "broad", label: "Broad", description: "Looks farther through linked memories. Good for catching indirect connections." },
-  { id: "story", label: "Story", description: "Leans toward arcs, relationships, and scene continuity. Best for long-running stories." },
+  {
+    id: "balanced",
+    label: "Balanced",
+    description: "Mixes meaning, exact wording, and linked story notes. Good default for most chats.",
+  },
+  {
+    id: "exact",
+    label: "Exact",
+    description: "Favors direct keyword and name matches. Best when you need specific facts recalled precisely.",
+  },
+  {
+    id: "broad",
+    label: "Broad",
+    description: "Looks farther through linked memories. Good for catching indirect connections.",
+  },
+  {
+    id: "story",
+    label: "Story",
+    description: "Leans toward arcs, relationships, and scene continuity. Best for long-running stories.",
+  },
 ];
 
 export const DEFAULT_LTM_BUDGET_TOKENS = 2048;
@@ -107,15 +132,15 @@ export const MODE_LABELS: Record<LtmMode, string> = {
 };
 
 export const MODE_BADGE_COLORS: Record<LtmMode, string> = {
-  roleplay: "bg-amber-500/15 text-amber-600 ring-amber-500/30",
-  conversation: "bg-blue-500/15 text-blue-600 ring-blue-500/30",
-  game: "bg-violet-500/15 text-violet-600 ring-violet-500/30",
+  roleplay: "mari-chat-logo-mode--roleplay",
+  conversation: "mari-chat-logo-mode--conversation",
+  game: "mari-chat-logo-mode--game",
 };
 
 // ── CSS class constants ────────────────────────
 
 export const rowActionButtonClassName =
-  "mari-chrome-control mari-chrome-control--small mari-chrome-control--icon shrink-0 text-[var(--muted-foreground)] active:scale-90 disabled:cursor-not-allowed disabled:opacity-45";
+  "mari-chrome-control mari-chrome-control--small mari-chrome-control--icon shrink-0 text-[var(--muted-foreground)] active:scale-90 disabled:cursor-not-allowed disabled:opacity-45 max-md:!h-10 max-md:!min-h-10 max-md:!w-10 max-md:!min-w-10";
 
 export const rowActionGroupClassName =
   "absolute right-2 top-1/2 flex shrink-0 -translate-y-1/2 items-center justify-end gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-[var(--border)] transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100";
@@ -301,7 +326,9 @@ export function sourceSummaryEvidenceValue(note: LtmNote, prefix: string) {
 }
 
 export function sourceSummaryChatName(note: LtmNote, chatLookup?: Map<string, Chat>) {
-  return sourceSummaryEvidenceValue(note, "chat_name:") || chatLookup?.get(note.scope.chatId ?? "")?.name || "Unknown Chat";
+  return (
+    sourceSummaryEvidenceValue(note, "chat_name:") || chatLookup?.get(note.scope.chatId ?? "")?.name || "Unknown Chat"
+  );
 }
 
 export function sourceSummaryMessageRange(note: LtmNote) {
@@ -352,7 +379,11 @@ export function noteReferenceLabel(noteId: string, noteLookup: Map<string, LtmNo
   return isSourceSummaryNote(note) ? sourceNoteTitle(note, chatLookup) : displayNoteTitle(note);
 }
 
-export function sourceReferenceLabel(sourceNoteId: string, noteLookup: Map<string, LtmNote>, chatLookup?: Map<string, Chat>) {
+export function sourceReferenceLabel(
+  sourceNoteId: string,
+  noteLookup: Map<string, LtmNote>,
+  chatLookup?: Map<string, Chat>,
+) {
   const note = noteLookup.get(sourceNoteId);
   return note ? sourceNoteTitle(note, chatLookup) : "Unknown source note";
 }
@@ -441,7 +472,7 @@ export function mutationText(mutation: LtmDraftMutation) {
 export function ModeBadge({ mode }: { mode: LtmMode }) {
   return (
     <span
-      className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[0.625rem] font-medium ring-1 ring-inset ${MODE_BADGE_COLORS[mode]}`}
+      className={`mari-chat-mode-badge inline-flex items-center rounded-full px-2 py-0.5 text-[0.6875rem] font-semibold ${MODE_BADGE_COLORS[mode]}`}
     >
       {MODE_LABELS[mode]}
     </span>
@@ -467,9 +498,7 @@ export function Section({
       tabIndex={labelledBy ? 0 : undefined}
       className="space-y-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
     >
-      <h3 className="px-1 text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
-        {title}
-      </h3>
+      <h3 className="px-1 text-sm font-semibold text-[var(--foreground)]">{title}</h3>
       {children}
     </section>
   );
@@ -489,25 +518,18 @@ export function DisclosureHeader({
   children?: ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className={disclosureButtonClassName}
-      aria-expanded={open}
-    >
+    <button type="button" onClick={onToggle} className={disclosureButtonClassName} aria-expanded={open}>
       <span className="min-w-0">
         <span className="block truncate">{title}</span>
         {description && (
-          <span className="mt-0.5 block truncate text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+          <span className="mt-0.5 block truncate text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
             {description}
           </span>
         )}
       </span>
       <span className="flex min-w-0 shrink items-center justify-end gap-1 overflow-hidden">
         {children}
-        <span className="shrink-0">
-          {open ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
-        </span>
+        <span className="shrink-0">{open ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}</span>
       </span>
     </button>
   );
@@ -681,8 +703,9 @@ export function SourceInfoPopover({
           event.stopPropagation();
           setOpen((current) => !current);
         }}
-        className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-[var(--secondary)]/70 px-2 py-0.5 text-[0.625rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
+        className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-[var(--secondary)]/70 px-2 py-0.5 text-[0.6875rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
         aria-expanded={open}
+        aria-haspopup="dialog"
         aria-label={`Show ${uniqueSourceIds.length} source note${uniqueSourceIds.length === 1 ? "" : "s"}`}
       >
         <Info size="0.6875rem" />
@@ -694,10 +717,12 @@ export function SourceInfoPopover({
             ref={popoverRef}
             onMouseEnter={cancelClose}
             onMouseLeave={scheduleClose}
-            className="fixed z-[9999] w-[min(20rem,calc(100vw-1rem))] rounded-lg bg-[var(--popover)] p-2 text-[0.6875rem] text-[var(--popover-foreground)] shadow-xl ring-1 ring-[var(--border)]"
+            role="dialog"
+            aria-label="Source notes"
+            className="fixed z-[10020] w-[min(20rem,calc(100vw-1rem))] rounded-lg bg-[var(--popover)] p-2 text-[0.6875rem] text-[var(--popover-foreground)] shadow-xl ring-1 ring-[var(--border)]"
             style={{ top: pos.top, left: pos.left, visibility: pos.ready ? "visible" : "hidden" }}
           >
-            <div className="mb-1.5 px-1 text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+            <div className="mb-1.5 px-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
               Source notes
             </div>
             <div className="grid gap-1">
@@ -710,7 +735,7 @@ export function SourceInfoPopover({
                       <span className="min-w-0 flex-1 truncate font-medium text-[var(--foreground)]">{title}</span>
                       {source && <StatusPill label={friendlyStatus(source.status)} tone="neutral" />}
                     </div>
-                    <p className="mt-0.5 line-clamp-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+                    <p className="mt-0.5 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
                       {source ? noteTextPreview(source) || "Source has no summary text." : sourceId}
                     </p>
                   </>
@@ -718,7 +743,10 @@ export function SourceInfoPopover({
 
                 if (!onOpenSource) {
                   return (
-                    <div key={sourceId} className="rounded-md bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]/70">
+                    <div
+                      key={sourceId}
+                      className="rounded-md bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]/70"
+                    >
                       {content}
                     </div>
                   );

@@ -12,14 +12,12 @@ export function StatusPill({
 }) {
   return (
     <span
-      title={title ?? label}
+      aria-label={title ? `${label}: ${title}` : undefined}
       className={cn(
-        "inline-flex max-w-full min-w-0 items-center truncate rounded-md border px-1.5 py-0.5 text-[0.625rem] font-medium leading-tight",
-        tone === "good" &&
-          "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-200",
-        tone === "warn" && "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-200",
-        tone === "bad" &&
-          "border-[var(--destructive)]/30 bg-[var(--destructive)]/10 text-[var(--destructive)]",
+        "inline-flex max-w-full min-w-0 items-center break-words rounded-md border px-1.5 py-0.5 text-[0.6875rem] font-medium leading-tight",
+        tone === "good" && "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200",
+        tone === "warn" && "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-200",
+        tone === "bad" && "border-[var(--destructive)]/30 bg-[var(--destructive)]/10 text-[var(--destructive)]",
         tone === "neutral" && "border-[var(--border)] bg-[var(--secondary)]/70 text-[var(--muted-foreground)]",
       )}
     >
@@ -50,7 +48,7 @@ export function ToolButton({
       disabled={disabled}
       className={cn(
         "mari-chrome-control max-w-full overflow-hidden whitespace-nowrap text-xs",
-        size === "small" ? "mari-chrome-control--small" : tone !== "primary" && "px-3 py-2",
+        size === "small" ? "mari-chrome-control--small max-md:min-h-10 max-md:px-3" : tone !== "primary" && "px-3 py-2",
         tone === "primary" && "mari-chrome-control--primary",
         tone === "danger" && "mari-chrome-control--danger",
       )}

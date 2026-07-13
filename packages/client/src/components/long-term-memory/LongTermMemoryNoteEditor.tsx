@@ -20,6 +20,7 @@ import {
 } from "../../hooks/use-long-term-memory";
 import { useChat } from "../../hooks/use-chats";
 import { cn } from "../../lib/utils";
+import { showConfirmDialog } from "../../lib/app-dialogs";
 import { useChatStore } from "../../stores/chat.store";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import {
@@ -59,6 +60,7 @@ import {
 import { ImportanceBadge } from "./ImportanceBadge";
 import { LinkedContextPanel } from "./LinkedContextPanel";
 import { RelationshipDimensionsEditor } from "./RelationshipDimensionsEditor";
+import { LtmTabRail } from "./LtmTabRail";
 
 type LongTermMemoryNoteEditorProps = {
   note: LtmNote;
@@ -143,7 +145,9 @@ export function LongTermMemoryNoteEditor({
   const [keywordsText, setKeywordsText] = useState(note.keywords.join(", "));
   const [linkDraft, setLinkDraft] = useState<LinkDraft>({ target: "", relation: "", aspect: "" });
   const [activeTab, setActiveTab] = useState<"details" | "suggestions">("details");
-  const [latestExtractionResult, setLatestExtractionResult] = useState<LongTermMemoryLatestExtractionResult | null>(null);
+  const [latestExtractionResult, setLatestExtractionResult] = useState<LongTermMemoryLatestExtractionResult | null>(
+    null,
+  );
   const updateNote = useUpdateLongTermMemoryNote();
   const applyScopeToDerived = useApplyLongTermMemoryScopeToDerived();
   const rebuild = useRebuildLongTermMemory();
@@ -215,8 +219,18 @@ export function LongTermMemoryNoteEditor({
     }
   };
 
-  const cancel = () => {
-    if (dirty && !confirm("Discard unsaved memory changes?")) return;
+  const cancel = async () => {
+    if (
+      dirty &&
+      !(await showConfirmDialog({
+        title: "Discard memory changes?",
+        message: "Your unsaved changes to this memory will be lost.",
+        confirmLabel: "Discard",
+        tone: "destructive",
+      }))
+    ) {
+      return;
+    }
     onCancel();
   };
 
@@ -282,7 +296,13 @@ export function LongTermMemoryNoteEditor({
 
   const setLinkedScope = (next: { chatIds: string[]; characterIds: string[]; groupId?: string }) => {
     setDraft((current) => {
-      const { chatId: _chatId, chatIds: _chatIds, characterIds: _characterIds, groupId: _groupId, ...restScope } = current.scope;
+      const {
+        chatId: _chatId,
+        chatIds: _chatIds,
+        characterIds: _characterIds,
+        groupId: _groupId,
+        ...restScope
+      } = current.scope;
       return {
         ...current,
         scope: withMergedLtmScopeLinks(
@@ -353,12 +373,12 @@ export function LongTermMemoryNoteEditor({
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="text-sm font-semibold text-[var(--foreground)]">{friendlyIdentifier(draft.id)}</div>
-              <div className="mt-2 text-[0.625rem] text-[var(--muted-foreground)]">
+              <div className="mt-2 text-[0.6875rem] text-[var(--muted-foreground)]">
                 {friendlyStatus(draft.status)} · updated {new Date(draft.updatedAt).toLocaleString()}
               </div>
             </div>
             {dirty ? (
-              <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-amber-600 dark:text-amber-200">
+              <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[0.6875rem] font-semibold text-amber-700 dark:text-amber-200">
                 Unsaved
               </span>
             ) : null}
@@ -370,30 +390,25 @@ export function LongTermMemoryNoteEditor({
       )}
 
       {!embedded && (
-        <div className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--secondary)]/45 p-1 ring-1 ring-[var(--border)]">
-        {(["details", "suggestions"] as const).map((tab) => {
-          const disabled = tab === "suggestions" && !sourceMemory;
-          return (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => !disabled && setActiveTab(tab)}
-              disabled={disabled}
-              className={cn(
-                "rounded-lg px-3 py-2 text-xs font-semibold transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45",
-                activeTab === tab
-                  ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm ring-1 ring-[var(--border)]"
-                  : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-              )}
-            >
-              {tab === "details" ? "Details" : "Suggestions"}
-            </button>
-          );
-        })}
-        </div>
+        <LtmTabRail
+          tabs={[
+            { id: "details" as const, label: "Details" },
+            { id: "suggestions" as const, label: "Suggestions", disabled: !sourceMemory },
+          ]}
+          activeId={activeTab}
+          onChange={setActiveTab}
+          ariaLabel="Memory editor views"
+          idPrefix="ltm-editor"
+        />
       )}
 
       {!embedded && activeTab === "suggestions" && onRecoverDroppedCandidate ? (
+        <div
+          id="ltm-editor-panel-suggestions"
+          role="tabpanel"
+          aria-labelledby="ltm-editor-tab-suggestions"
+          tabIndex={0}
+        >
         <LongTermMemorySuggestionsTab
           note={savedBaseline}
           extractionPrefs={extractionPrefs}
@@ -401,10 +416,17 @@ export function LongTermMemoryNoteEditor({
           onLatestExtractionResultChange={setLatestExtractionResult}
           onRecoverDroppedCandidate={onRecoverDroppedCandidate}
         />
+        </div>
       ) : null}
 
       {(embedded || activeTab === "details") && (
-      <div className="grid gap-4">
+      <div
+        id={embedded ? undefined : "ltm-editor-panel-details"}
+        role={embedded ? undefined : "tabpanel"}
+        aria-labelledby={embedded ? undefined : "ltm-editor-tab-details"}
+        tabIndex={embedded ? undefined : 0}
+        className="grid gap-4"
+      >
         <SettingField label="Title">
           <input
             value={titleText}
@@ -425,7 +447,7 @@ export function LongTermMemoryNoteEditor({
                 <div className={cn(compactInputClassName, "flex items-center")}>
                   {draft.type === "source" ? "Source" : friendlyNoteType(draft.type)}
                 </div>
-                <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
                   Source notes keep their type so extraction history stays linked.
                 </p>
               </div>
@@ -479,7 +501,7 @@ export function LongTermMemoryNoteEditor({
         </div>
 
         <fieldset className={sectionCardClassName}>
-          <legend className="px-1 text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+          <legend className="px-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
             Use In
           </legend>
           <div className="grid gap-1 sm:grid-cols-2">
@@ -510,7 +532,7 @@ export function LongTermMemoryNoteEditor({
         <div className={sectionCardClassName}>
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0">
-              <div className="flex items-center gap-1 text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+              <div className="flex items-center gap-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
                 Where this applies
                 <HelpTooltip
                   text="Scope controls which chats this memory applies to. The AI only retrieves memories matching your active context."
@@ -525,7 +547,7 @@ export function LongTermMemoryNoteEditor({
               type="button"
               onClick={useCurrentChatScope}
               disabled={!activeChat}
-              className="rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50"
+              className="rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50"
             >
               Use this chat
             </button>
@@ -539,7 +561,7 @@ export function LongTermMemoryNoteEditor({
             onChange={setLinkedScope}
           />
           {draft.scope.groupId && (
-            <div className="text-[0.625rem] text-[var(--muted-foreground)]">
+            <div className="text-[0.6875rem] text-[var(--muted-foreground)]">
               Grouped chat: {groupScopeLabel(draft.scope.groupId, displayContext) ?? "Grouped chat"}
             </div>
           )}
@@ -561,7 +583,7 @@ export function LongTermMemoryNoteEditor({
         <div className="space-y-3">
           <div className="flex items-center justify-between gap-2">
             <div>
-              <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
                 Memory Details
               </h4>
               <p className={cn("mt-1", helperTextClassName)}>Edit each section, relevance score, and supporting evidence.</p>
@@ -595,7 +617,7 @@ export function LongTermMemoryNoteEditor({
                 </button>
               </div>
               <label className="block">
-                <span className="mb-1 inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                <span className="mb-1 inline-flex items-center gap-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
                   Memory Text
                 </span>
                 <textarea
@@ -612,7 +634,7 @@ export function LongTermMemoryNoteEditor({
               </label>
               <div className="mt-3 grid gap-2 sm:grid-cols-3">
                 <label className="block">
-                  <span className="mb-1 inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                  <span className="mb-1 inline-flex items-center gap-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
                     Relevance
                     <HelpTooltip
                       text="Higher values make this memory more likely to appear in the AI's context for the current chat."
@@ -633,7 +655,7 @@ export function LongTermMemoryNoteEditor({
                   />
                 </label>
                 <label className="block">
-                  <span className="mb-1 inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                  <span className="mb-1 inline-flex items-center gap-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
                     AI Certainty
                     <HelpTooltip
                       text="How confident the AI was when creating this memory. Lower values mean the AI treats this as less reliable. Edit to override."
@@ -654,7 +676,7 @@ export function LongTermMemoryNoteEditor({
                   />
                 </label>
                 <label className="block">
-                  <span className="mb-1 inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                  <span className="mb-1 inline-flex items-center gap-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
                     Importance
                   </span>
                   <select
@@ -689,7 +711,7 @@ export function LongTermMemoryNoteEditor({
                 </div>
               )}
               <label className="mt-3 block">
-                <span className="mb-1 inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                <span className="mb-1 inline-flex items-center gap-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
                   Supporting Evidence
                   <HelpTooltip
                     text="Reasons the AI created this memory. Each line is a source reference or justification."
@@ -739,7 +761,7 @@ export function LongTermMemoryNoteEditor({
                       <button
                         type="button"
                         onClick={() => addEvidenceEntry(key)}
-                        className="rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+                        className="rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
                       >
                         <Check size="0.75rem" className="inline-block align-[-0.12rem]" /> Save
                       </button>
@@ -749,7 +771,7 @@ export function LongTermMemoryNoteEditor({
                           setAdvancedEvidenceKey(null);
                           setAdvancedEvidenceValue("");
                         }}
-                        className="rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                        className="rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
                       >
                         Cancel
                       </button>
@@ -758,7 +780,7 @@ export function LongTermMemoryNoteEditor({
                     <button
                       type="button"
                       onClick={() => setAdvancedEvidenceKey(key)}
-                      className="justify-self-start rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                      className="justify-self-start rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
                     >
                       Add Advanced Evidence
                     </button>
@@ -771,7 +793,7 @@ export function LongTermMemoryNoteEditor({
 
         <div className={sectionCardClassName}>
           <div>
-            <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
               Related Memories
             </h4>
             <p className={cn("mt-1", helperTextClassName)}>
@@ -784,7 +806,7 @@ export function LongTermMemoryNoteEditor({
               className="grid grid-cols-[1fr_auto] items-center gap-2 rounded-lg bg-[var(--background)]/45 px-3 py-2 text-xs ring-1 ring-[var(--border)]/70"
             >
               <div className="min-w-0">
-                <div className="text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+                <div className="text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
                   {humanRelationLabel(link.relation)}
                 </div>
                 <div className="mt-0.5 truncate text-[var(--foreground)]">
@@ -836,7 +858,7 @@ export function LongTermMemoryNoteEditor({
             />
             <ToolButton onClick={addLink}>
               <Plus size="0.875rem" />
-              Add Relation
+              Add relation
             </ToolButton>
           </div>
         </div>
@@ -850,9 +872,9 @@ export function LongTermMemoryNoteEditor({
           </ToolButton>
           <ToolButton onClick={() => save({ rebuildAfter: true })} disabled={!dirty || busy}>
             {rebuild.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <RefreshCw size="0.875rem" />}
-            Save And Refresh Search
+            Save and refresh search
           </ToolButton>
-          <ToolButton onClick={cancel} disabled={busy}>
+          <ToolButton onClick={() => void cancel()} disabled={busy}>
             <X size="0.875rem" />
             Cancel
           </ToolButton>

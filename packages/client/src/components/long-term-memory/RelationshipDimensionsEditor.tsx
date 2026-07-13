@@ -4,7 +4,12 @@ import {
   type LtmRelationshipDimensionChanges,
   type LtmRelationshipDimensions,
 } from "@marinara-engine/shared";
-import { compactInputClassName, helperTextClassName, insetSectionCardClassName, microLabelClassName } from "./LtmFields";
+import {
+  compactInputClassName,
+  helperTextClassName,
+  insetSectionCardClassName,
+  microLabelClassName,
+} from "./LtmFields";
 import { friendlyIdentifier } from "./ltm-editor-utils";
 
 function clampDimension(value: number) {
@@ -42,14 +47,16 @@ export function RelationshipDimensionsEditor({
     <div className={insetSectionCardClassName}>
       <div className="mb-3">
         <div className={microLabelClassName}>Relationship Dimensions</div>
-        <p className={helperTextClassName}>50 is neutral baseline; deltas describe how this memory changed the relationship.</p>
+        <p className={helperTextClassName}>
+          50 is neutral baseline; deltas describe how this memory changed the relationship.
+        </p>
       </div>
-      <div className="grid gap-3">
+      <div className="divide-y divide-[var(--border)]/70">
         {RELATIONSHIP_DIMENSIONS.map((dimension) => {
           const value = dimensions?.[dimension] ?? DEFAULT_RELATIONSHIP_BASELINE;
           const delta = dimensionChanges?.[dimension] ?? 0;
           return (
-            <div key={dimension} className="grid gap-2 rounded-lg bg-[var(--background)]/55 p-2 ring-1 ring-[var(--border)]/70">
+            <div key={dimension} className="grid gap-2 py-3 first:pt-0 last:pb-0">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-semibold text-[var(--foreground)]">{friendlyIdentifier(dimension)}</span>
                 <button

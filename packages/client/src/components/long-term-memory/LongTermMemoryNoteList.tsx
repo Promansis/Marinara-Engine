@@ -10,11 +10,7 @@ import {
   sentenceCaseIdentifier,
 } from "./ltm-editor-utils";
 import { cn } from "../../lib/utils";
-import {
-  emptyStateClassName,
-  listRowClassName,
-  selectedListRowClassName,
-} from "./LtmFields";
+import { emptyStateClassName, listRowClassName, selectedListRowClassName } from "./LtmFields";
 import { ImportanceBadge } from "./ImportanceBadge";
 import { StatusPill } from "./LtmPills";
 import {
@@ -105,7 +101,9 @@ export function NoteRow({
               </div>
             )}
             <div className="mt-1 flex min-w-0 flex-wrap gap-1">
-              <StatusPill label={primaryLabel ?? (showSourceSummary ? "Source summary" : friendlyNoteType(note.type))} />
+              <StatusPill
+                label={primaryLabel ?? (showSourceSummary ? "Source summary" : friendlyNoteType(note.type))}
+              />
               {!showSourceSummary && (
                 <StatusPill label={friendlyStatus(note.status)} tone={note.status === "active" ? "good" : "neutral"} />
               )}
@@ -130,7 +128,10 @@ export function NoteRow({
             <button
               type="button"
               onClick={onRestore}
-              className={cn(rowActionButtonClassName, "hover:bg-emerald-500/10 hover:text-emerald-200")}
+              className={cn(
+                rowActionButtonClassName,
+                "hover:bg-emerald-500/10 hover:text-emerald-700 dark:hover:text-emerald-200",
+              )}
               aria-label={`Restore ${displayTitle}`}
               title="Restore memory"
             >
@@ -151,14 +152,13 @@ export function NoteRow({
         </div>
       </div>
       {!hideTags && note.tags.length > 0 && (
-        <div className="mt-2 truncate text-[0.625rem] text-[var(--muted-foreground)]" title={displayTitle}>
+        <div className="mt-2 truncate text-[0.6875rem] text-[var(--muted-foreground)]" title={displayTitle}>
           {note.tags.map(friendlyIdentifier).join(", ")}
         </div>
       )}
     </article>
   );
 }
-
 
 export function TypeMemoryGroups({
   groups,
@@ -196,11 +196,7 @@ export function TypeMemoryGroups({
   chatLookup?: Map<string, Chat>;
 }) {
   if (groups.length === 0) {
-    return (
-      <p className={emptyStateClassName}>
-        No memories match these filters.
-      </p>
-    );
+    return <p className={emptyStateClassName}>No memories match these filters.</p>;
   }
 
   return (
@@ -258,14 +254,14 @@ export function TypeMemoryGroups({
                       <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-2">
                         <div className="grid min-h-16 w-7 shrink-0 grid-rows-[auto_1fr] justify-items-center">
                           <button
-                          type="button"
-                          onClick={() => onToggleMemory(note.id)}
-                          className="mari-chrome-control mari-chrome-control--small h-7 min-h-7 w-7 shrink-0 rounded-md p-0 text-[var(--muted-foreground)] active:scale-90"
-                          aria-label={expanded ? "Hide source details" : "Show source details"}
-                          aria-expanded={expanded}
-                        >
-                          {expanded ? <ChevronDown size="0.75rem" /> : <ChevronRight size="0.75rem" />}
-                        </button>
+                            type="button"
+                            onClick={() => onToggleMemory(note.id)}
+                            className="mari-chrome-control mari-chrome-control--small h-7 min-h-7 w-7 shrink-0 rounded-md p-0 text-[var(--muted-foreground)] active:scale-90"
+                            aria-label={expanded ? "Hide source details" : "Show source details"}
+                            aria-expanded={expanded}
+                          >
+                            {expanded ? <ChevronDown size="0.75rem" /> : <ChevronRight size="0.75rem" />}
+                          </button>
                           <input
                             type="checkbox"
                             checked={selected}
@@ -345,7 +341,7 @@ export function TypeMemoryGroups({
                                 .map((conflict) => (
                                   <div
                                     key={`${conflict.field}:${conflict.policy}`}
-                                    className="rounded-md bg-amber-500/10 p-2 text-[0.6875rem] leading-relaxed text-amber-100 ring-1 ring-amber-400/30"
+                                    className="rounded-md bg-amber-500/10 p-2 text-[0.6875rem] leading-relaxed text-amber-700 ring-1 ring-amber-400/30 dark:text-amber-200"
                                   >
                                     Needs review: {sentenceCaseIdentifier(conflict.field)}
                                   </div>
@@ -384,10 +380,7 @@ export function TypeMemoryGroups({
                         <button
                           type="button"
                           onClick={() => onDelete(note)}
-                          className={cn(
-                            rowActionButtonClassName,
-                            "mari-chrome-control--danger",
-                          )}
+                          className={cn(rowActionButtonClassName, "mari-chrome-control--danger")}
                           aria-label={`Delete ${memoryRowTitle(note, chatLookup)}`}
                           title="Delete memory"
                         >
@@ -483,7 +476,10 @@ function _ArchivedSourceSummaryGroupRow({
         <button
           type="button"
           onClick={() => onRestore(group.source)}
-          className={cn(rowActionButtonClassName, "hover:bg-emerald-500/10 hover:text-emerald-200")}
+          className={cn(
+            rowActionButtonClassName,
+            "hover:bg-emerald-500/10 hover:text-emerald-700 dark:hover:text-emerald-200",
+          )}
           aria-label={`Restore ${sourceTitle}`}
           title="Restore source note"
         >
@@ -546,7 +542,10 @@ function _ArchivedSourceSummaryGroupRow({
                 <button
                   type="button"
                   onClick={() => onRestore(derivedNote)}
-                  className={cn(rowActionButtonClassName, "hover:bg-emerald-500/10 hover:text-emerald-200")}
+                  className={cn(
+                    rowActionButtonClassName,
+                    "hover:bg-emerald-500/10 hover:text-emerald-700 dark:hover:text-emerald-200",
+                  )}
                   aria-label={`Restore ${displayNoteTitle(derivedNote)}`}
                   title="Restore memory"
                 >
@@ -555,10 +554,7 @@ function _ArchivedSourceSummaryGroupRow({
                 <button
                   type="button"
                   onClick={() => onDelete(derivedNote)}
-                  className={cn(
-                    rowActionButtonClassName,
-                    "mari-chrome-control--danger",
-                  )}
+                  className={cn(rowActionButtonClassName, "mari-chrome-control--danger")}
                   aria-label={`Delete ${displayNoteTitle(derivedNote)}`}
                   title="Delete memory"
                 >

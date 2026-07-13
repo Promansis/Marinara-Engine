@@ -276,6 +276,12 @@ test("chat mode tabs and new-chat actions stay reachable", async ({ page }) => {
 test("LTM extraction prompt options work without crypto.randomUUID", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("desktop"), "LTM prompt option UUID fallback is covered on desktop.");
 
+  const nativeDialogs: string[] = [];
+  page.on("dialog", (dialog) => {
+    nativeDialogs.push(dialog.message());
+    void dialog.dismiss();
+  });
+
   await page.addInitScript(() => {
     const webCrypto = globalThis.crypto as (Crypto & { randomUUID?: unknown }) | undefined;
     if (!webCrypto) return;
@@ -312,6 +318,33 @@ test("LTM extraction prompt options work without crypto.randomUUID", async ({ pa
   await promptNameInput.fill("Smoke prompt");
   await renameDialog.getByRole("button", { name: "Rename" }).click();
   await expect(promptOptionSelect).toContainText("Smoke prompt");
+
+  const recallBudgetLabel = page.getByText("Recall context budget", { exact: true });
+  const recallBudgetHelp = recallBudgetLabel.locator("..").getByRole("button", { name: "Show help" });
+  await recallBudgetHelp.click();
+  await expect(recallBudgetHelp).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByText("How many tokens recalled memories can use in the next prompt.")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(recallBudgetHelp).toHaveAttribute("aria-expanded", "false");
+
+  const promptTextarea = extractionPromptPanel.getByPlaceholder("Write the extraction system prompt...");
+  await promptTextarea.fill(`${await promptTextarea.inputValue()}\nUnsaved smoke edit`);
+  await extractionPromptPanel.getByRole("button", { name: "Roleplay", exact: true }).click();
+
+  const discardDialog = page.getByRole("dialog", { name: "Discard prompt edits?" });
+  await expect(discardDialog).toBeVisible();
+  await discardDialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(extractionPromptPanel.getByRole("button", { name: "Conversation", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await extractionPromptPanel.getByRole("button", { name: "Roleplay", exact: true }).click();
+  await page.getByRole("dialog", { name: "Discard prompt edits?" }).getByRole("button", { name: "Discard" }).click();
+  await expect(extractionPromptPanel.getByRole("button", { name: "Roleplay", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  expect(nativeDialogs).toEqual([]);
   expect(errors).toEqual([]);
 });
 
@@ -514,7 +547,13 @@ test("LTM recall uses the selected chat runtime settings and refreshable source 
   await vaultDialog.getByRole("button", { name: "Open Shared UI Selection Memory" }).click();
 
   const noteDialog = page.getByRole("dialog", { name: "Shared UI Selection Memory" });
-  await noteDialog.getByRole("button", { name: "Recall", exact: true }).click();
+  const overviewTab = noteDialog.getByRole("tab", { name: "Overview" });
+  const contentsTab = noteDialog.getByRole("tab", { name: "Content" });
+  await expect(overviewTab).toHaveAttribute("aria-selected", "true");
+  await overviewTab.press("ArrowRight");
+  await expect(contentsTab).toHaveAttribute("aria-selected", "true");
+  await expect(contentsTab).toBeFocused();
+  await noteDialog.getByRole("tab", { name: "Recall", exact: true }).click();
   const recallInput = noteDialog.getByLabel("Test recall query for Selected LTM Recall Smoke");
   await expect(recallInput).toBeVisible();
   await expect(recallInput).toHaveAccessibleName("Test recall query for Selected LTM Recall Smoke");
@@ -1023,7 +1062,7 @@ test("LTM source suggestions select mode uses shared keep and skip bar", async (
   await vaultDialog.getByRole("button", { name: "Review" }).click();
   const memoryDialog = page.getByRole("dialog", { name: "Shared UI Review Source" });
   await expect(memoryDialog).toBeVisible();
-  await memoryDialog.getByRole("button", { name: "Suggestions", exact: true }).click();
+  await memoryDialog.getByRole("tab", { name: "Suggestions", exact: true }).click();
   await expect(memoryDialog.getByText("composite_character_subject")).toBeVisible();
   const targetDisclosure = memoryDialog.getByRole("button", { name: /Shared UI Suggestion/ });
   await targetDisclosure.focus();
@@ -1048,7 +1087,7 @@ test("LTM source suggestions select mode uses shared keep and skip bar", async (
   await reopenedVault.getByRole("tab", { name: "Review" }).click();
   await reopenedVault.getByRole("button", { name: "Review" }).click();
   const reopenedMemory = page.getByRole("dialog", { name: "Shared UI Review Source" });
-  await reopenedMemory.getByRole("button", { name: "Suggestions", exact: true }).click();
+  await reopenedMemory.getByRole("tab", { name: "Suggestions", exact: true }).click();
   await expect(reopenedMemory.getByText("composite_character_subject")).toBeVisible();
 });
 
@@ -1103,7 +1142,7 @@ test("LTM failed acceptance refreshes Review into a stale blocked state", async 
   await vaultDialog.getByRole("tab", { name: "Review" }).click();
   await vaultDialog.getByRole("button", { name: "Review" }).click();
   const memoryDialog = page.getByRole("dialog", { name: "Stale Review Source" });
-  await memoryDialog.getByRole("button", { name: "Suggestions", exact: true }).click();
+  await memoryDialog.getByRole("tab", { name: "Suggestions", exact: true }).click();
   await memoryDialog.getByRole("button", { name: /Shared UI Suggestion/ }).click();
   await memoryDialog.getByRole("button", { name: "Keep", exact: true }).click();
 
@@ -1233,7 +1272,7 @@ test("LTM diagnostic-only drafts remain reviewable and can be dismissed", async 
   await expect(vaultDialog.getByText("Diagnostics only")).toBeVisible();
   await vaultDialog.getByRole("button", { name: "Review" }).click();
   const memoryDialog = page.getByRole("dialog", { name: "Diagnostic Only Source" });
-  await memoryDialog.getByRole("button", { name: "Suggestions", exact: true }).click();
+  await memoryDialog.getByRole("tab", { name: "Suggestions", exact: true }).click();
   await expect(memoryDialog.getByText("candidate_parse_failed")).toBeVisible();
   await memoryDialog.getByRole("button", { name: "Dismiss", exact: true }).click();
   await page
@@ -1408,6 +1447,22 @@ test("mobile LTM overflow actions open modals and advertise pending review", asy
   await expect(vaultDialog).toBeVisible();
   await expect(vaultDialog.getByRole("tab", { name: "Import" })).toHaveAttribute("aria-selected", "true");
   await expect(vaultDialog.getByLabel("Source")).toBeVisible();
+
+  const memoriesTab = vaultDialog.getByRole("tab", { name: "Memories" });
+  await expect(memoriesTab).toHaveText("Memories");
+  expect(
+    await memoriesTab.evaluate((element) => ({
+      horizontallyClipped: element.scrollWidth > element.clientWidth,
+      verticallyClipped: element.scrollHeight > element.clientHeight,
+    })),
+  ).toEqual({ horizontallyClipped: false, verticallyClipped: false });
+
+  await memoriesTab.click();
+  await expect(vaultDialog.getByRole("textbox", { name: "Search memories" })).toBeVisible();
+  await expect(vaultDialog.getByRole("combobox", { name: "Memory type" })).toBeVisible();
+  await expect(vaultDialog.getByRole("combobox", { name: "Memory status" })).toBeVisible();
+  await expect(vaultDialog.getByRole("combobox", { name: "Memory mode" })).toBeVisible();
+
   await page.keyboard.press("Escape");
   await expect(vaultDialog).toBeHidden();
 

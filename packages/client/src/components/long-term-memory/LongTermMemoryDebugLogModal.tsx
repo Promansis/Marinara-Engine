@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import type { LtmDebugEvent, LtmDebugPhase, LtmDebugStatus } from "@marinara-engine/shared";
 import { toast } from "sonner";
+import { showConfirmDialog } from "../../lib/app-dialogs";
 import { cn, copyToClipboard } from "../../lib/utils";
 import {
   useClearLongTermMemoryDebugLog,
@@ -204,7 +205,9 @@ function getStringArray(value: unknown, key: string): string[] {
 }
 
 function getWarnings(event: LtmDebugEvent | undefined) {
-  const detailWarnings = getArray(event?.details, "warnings").filter((item): item is string => typeof item === "string");
+  const detailWarnings = getArray(event?.details, "warnings").filter(
+    (item): item is string => typeof item === "string",
+  );
   const decisionWarnings = getArray(getRecord(event?.details, "decision"), "warnings").filter(
     (item): item is string => typeof item === "string",
   );
@@ -212,7 +215,9 @@ function getWarnings(event: LtmDebugEvent | undefined) {
 }
 
 function latestInjectionEvent(events: LtmDebugEvent[]) {
-  return [...events].find((event) => event.phase === "injection" && event.action === "prompt_injection" && event.status !== "started");
+  return [...events].find(
+    (event) => event.phase === "injection" && event.action === "prompt_injection" && event.status !== "started",
+  );
 }
 
 function latestEvent(events: LtmDebugEvent[], phase: LtmDebugPhase, action?: string) {
@@ -318,7 +323,7 @@ function EventRow({ event }: { event: LtmDebugEvent }) {
               {[...ids, ...counts].map((item) => (
                 <span
                   key={item}
-                  className="rounded-md bg-[var(--secondary)] px-1.5 py-0.5 text-[0.625rem] text-[var(--muted-foreground)]"
+                  className="rounded-md bg-[var(--secondary)] px-1.5 py-0.5 text-[0.6875rem] text-[var(--muted-foreground)]"
                 >
                   {item}
                 </span>
@@ -339,7 +344,9 @@ function EventRow({ event }: { event: LtmDebugEvent }) {
 function Metric({ label, value }: { label: string; value: string | number | null | undefined }) {
   return (
     <div className="rounded-lg bg-[var(--secondary)]/45 px-3 py-2 ring-1 ring-[var(--border)]/70">
-      <div className="text-[0.625rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">{label}</div>
+      <div className="text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+        {label}
+      </div>
       <div className="mt-1 text-sm font-semibold text-[var(--foreground)]">{value ?? "None"}</div>
     </div>
   );
@@ -368,7 +375,12 @@ function CandidateRow({ item, rejected = false }: { item: unknown; rejected?: bo
           {labelLtmTier(getNumber(item, "tier"))}
         </span>
         {detailBits.length > 0 && (
-          <span className={cn("text-[0.6875rem]", rejected ? "text-amber-200" : "text-[var(--muted-foreground)]")}>
+          <span
+            className={cn(
+              "text-[0.6875rem]",
+              rejected ? "text-amber-700 dark:text-amber-200" : "text-[var(--muted-foreground)]",
+            )}
+          >
             {detailBits.join(" · ")}
           </span>
         )}
@@ -423,12 +435,15 @@ function InjectionDecisionSummary({ summary }: { summary: OperationSummary }) {
       <div className="grid gap-2 sm:grid-cols-4">
         <Metric label="Outcome" value={phaseLabel(outcome)} />
         <Metric label="Memories" value={legacyChunks.length} />
-        <Metric label="Token budget" value={usedTokens !== undefined && maxTokens !== undefined ? `${usedTokens}/${maxTokens}` : null} />
+        <Metric
+          label="Token budget"
+          value={usedTokens !== undefined && maxTokens !== undefined ? `${usedTokens}/${maxTokens}` : null}
+        />
         <Metric label="Prompt placement" value={insertedAt !== undefined ? `Message ${insertedAt}` : "Not inserted"} />
       </div>
 
       {warnings.length > 0 && (
-        <div className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-100 ring-1 ring-amber-400/30">
+        <div className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-700 ring-1 ring-amber-400/30 dark:text-amber-100">
           {warnings.join(" ")}
         </div>
       )}
@@ -440,7 +455,10 @@ function InjectionDecisionSummary({ summary }: { summary: OperationSummary }) {
         {legacyChunks.length > 0 ? (
           <div className="space-y-2">
             {legacyChunks.map((item, index) => (
-              <CandidateRow key={`${getString(item, "noteId") ?? getString(item, "chunkId") ?? index}-${index}`} item={item} />
+              <CandidateRow
+                key={`${getString(item, "noteId") ?? getString(item, "chunkId") ?? index}-${index}`}
+                item={item}
+              />
             ))}
           </div>
         ) : (
@@ -477,7 +495,7 @@ function DraftApplySummary({ summary }: { summary: OperationSummary }) {
       ? "Created"
       : draftEvent.action === "draft_deferred"
         ? "Deferred"
-      : "Skipped"
+        : "Skipped"
     : selectionEvent
       ? "Existing"
       : null;
@@ -500,8 +518,17 @@ function DraftApplySummary({ summary }: { summary: OperationSummary }) {
       <div className="flex flex-wrap gap-1.5">
         {draftEvent?.draftId && <StatusPill label={`Draft ${draftEvent.draftId.slice(0, 8)}`} />}
         {draftReason && <StatusPill label={phaseLabel(draftReason)} />}
-        {selectedMutationIds.length > 0 && <StatusPill label={`${selectedMutationIds.length} selected id${selectedMutationIds.length === 1 ? "" : "s"}`} />}
-        {skippedMutationIds.length > 0 && <StatusPill label={`${skippedMutationIds.length} skipped id${skippedMutationIds.length === 1 ? "" : "s"}`} tone="warn" />}
+        {selectedMutationIds.length > 0 && (
+          <StatusPill
+            label={`${selectedMutationIds.length} selected id${selectedMutationIds.length === 1 ? "" : "s"}`}
+          />
+        )}
+        {skippedMutationIds.length > 0 && (
+          <StatusPill
+            label={`${skippedMutationIds.length} skipped id${skippedMutationIds.length === 1 ? "" : "s"}`}
+            tone="warn"
+          />
+        )}
       </div>
 
       {skippedMutationIds.length > 0 && (
@@ -562,7 +589,9 @@ function OperationDrawer({ summary, defaultOpen }: { summary: OperationSummary; 
         </span>
         <span className="min-w-0 space-y-1.5">
           <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <span className="truncate text-sm font-semibold text-[var(--foreground)]">{operationHeadline(summary)}</span>
+            <span className="truncate text-sm font-semibold text-[var(--foreground)]">
+              {operationHeadline(summary)}
+            </span>
             <StatusPill label={phaseLabel(summary.finalStatus)} tone={STATUS_TONE[summary.finalStatus]} />
             {duration && <StatusPill label={duration} />}
           </span>
@@ -658,8 +687,14 @@ export function LongTermMemoryDebugLogPanel() {
     toast.success("Debug log copied");
   };
 
-  const clearVisible = () => {
-    if (!confirm("Clear the LTM debug log?")) return;
+  const clearVisible = async () => {
+    const confirmed = await showConfirmDialog({
+      title: "Clear debug log?",
+      message: "Clear the LTM debug log?",
+      confirmLabel: "Clear",
+      tone: "destructive",
+    });
+    if (!confirmed) return;
     clearLog
       .mutateAsync()
       .then(() => toast.success("Debug log cleared"))

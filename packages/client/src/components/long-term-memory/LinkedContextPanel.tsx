@@ -51,7 +51,7 @@ export function LinkedContextPanel({
                 {humanRelationLabel(link.relation)}
                 {link.aspect ? `, ${friendlyIdentifier(link.aspect)}` : ""}
               </span>
-              {preview && <span className="line-clamp-2 text-[0.75rem] text-[var(--foreground)]/80">{preview}</span>}
+              {preview && <span className="line-clamp-2 text-xs text-[var(--foreground)]/80">{preview}</span>}
             </button>
           );
         })}

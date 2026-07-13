@@ -243,7 +243,7 @@ export function CreateLongTermMemoryNoteForm({
       <div className={modalIntroCardClassName}>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-semibold text-[var(--foreground)]">Add a manual memory</span>
-          <span className="rounded-full border border-[var(--border)] bg-[var(--muted)]/55 px-2 py-1 text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+          <span className="rounded-full border border-[var(--border)] bg-[var(--muted)]/55 px-2 py-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
             Saved to Memory
           </span>
         </div>
@@ -292,7 +292,9 @@ export function CreateLongTermMemoryNoteForm({
             className="min-h-20 w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs text-[var(--foreground)]"
             placeholder="captain, silver pact, midnight market"
           />
-          <p className={helperTextClassName}>Optional recall terms. Use commas or new lines; multi-word phrases are preserved.</p>
+          <p className={helperTextClassName}>
+            Optional recall terms. Use commas or new lines; multi-word phrases are preserved.
+          </p>
         </SettingField>
 
         <SettingField label="Title">
@@ -315,7 +317,7 @@ export function CreateLongTermMemoryNoteForm({
           </SettingField>
         ) : type === "relationship" ? (
           <fieldset className={sectionCardClassName}>
-            <legend className="px-1 text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+            <legend className="px-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
               Participants
             </legend>
             <div className="grid gap-2 sm:grid-cols-2">
@@ -347,12 +349,12 @@ export function CreateLongTermMemoryNoteForm({
               placeholder="poppy_chapel_promise"
               className={compactInputClassName}
             />
-            <p className="text-[0.625rem] text-[var(--muted-foreground)]">{friendlyInternalIdHelp(prefixes)}</p>
+            <p className="text-[0.6875rem] text-[var(--muted-foreground)]">{friendlyInternalIdHelp(prefixes)}</p>
           </div>
         </SettingField>
 
         <fieldset className={sectionCardClassName}>
-          <legend className="px-1 text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+          <legend className="px-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
             Use In
           </legend>
           <div className="grid gap-1 sm:grid-cols-2">
@@ -391,7 +393,7 @@ export function CreateLongTermMemoryNoteForm({
         <div className={sectionCardClassName}>
           <div className="flex items-center justify-between gap-2">
             <div>
-              <div className="text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+              <div className="text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
                 Where this applies
               </div>
               <p className={cn("mt-1", helperTextClassName)}>
@@ -402,13 +404,17 @@ export function CreateLongTermMemoryNoteForm({
               type="button"
               onClick={useCurrentChatScope}
               disabled={!activeChat}
-              className="rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50"
+              className="rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50"
             >
               Use this chat
             </button>
           </div>
           <LtmScopePicker
-            value={{ chatIds: scopeDraft.chatIds, characterIds: scopeDraft.characterIds, groupId: scopeDraft.groupId || undefined }}
+            value={{
+              chatIds: scopeDraft.chatIds,
+              characterIds: scopeDraft.characterIds,
+              groupId: scopeDraft.groupId || undefined,
+            }}
             onChange={(next) =>
               setDraft((current) => ({
                 ...current,
@@ -422,7 +428,7 @@ export function CreateLongTermMemoryNoteForm({
             }
           />
           {scopeDraft.groupId ? (
-            <div className="text-[0.625rem] text-[var(--muted-foreground)]">
+            <div className="text-[0.6875rem] text-[var(--muted-foreground)]">
               Grouped chat: {groupScopeLabel(scopeDraft.groupId, displayContext) ?? "Grouped chat"}
             </div>
           ) : null}
@@ -439,7 +445,7 @@ export function CreateLongTermMemoryNoteForm({
           </SettingField>
           <p className={helperTextClassName}>Start with the clearest single section for this memory.</p>
           <label className="block">
-            <span className="mb-1 inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+            <span className="mb-1 inline-flex items-center gap-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
               Memory Text
             </span>
             <textarea

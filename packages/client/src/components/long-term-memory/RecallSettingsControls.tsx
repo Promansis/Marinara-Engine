@@ -1,18 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Info, RotateCcw } from "lucide-react";
+import { RotateCcw } from "lucide-react";
 import { LTM_RECALL_STYLE_WEIGHTS } from "@marinara-engine/shared";
 import { cn } from "../../lib/utils";
-import {
-  compactInputClassName,
-  SettingField,
-  SettingInfoLabel,
-} from "./LtmFields";
+import { compactInputClassName, SettingField, SettingInfoLabel } from "./LtmFields";
 import { ToolButton } from "./LtmPills";
-import {
-  LTM_RECALL_STYLES,
-  LTM_WEIGHT_MIN,
-  LTM_WEIGHT_STEP,
-} from "./ltm-panel-shared";
+import { LTM_RECALL_STYLES, LTM_WEIGHT_MIN, LTM_WEIGHT_STEP } from "./ltm-panel-shared";
 import { SettingsSwitch } from "../panels/settings/SettingControls";
 
 export type RecallSettingsValues = {
@@ -130,6 +122,7 @@ export function RecallStylePresets({
   onChange: (patch: Partial<RecallSettingsValues>) => void;
 }) {
   const recallStyle = values.longTermMemoryRecallStyle ?? "balanced";
+  const selectedStyle = LTM_RECALL_STYLES.find((style) => style.id === recallStyle) ?? LTM_RECALL_STYLES[0];
   return (
     <SettingGroup label="Recall style">
       <div className="mari-chrome-segmented grid-cols-2">
@@ -137,7 +130,6 @@ export function RecallStylePresets({
           <button
             key={style.id}
             type="button"
-            title={style.description}
             aria-label={`${style.label} recall style: ${style.description}`}
             aria-pressed={recallStyle === style.id}
             onClick={() =>
@@ -150,15 +142,17 @@ export function RecallStylePresets({
               })
             }
             className={cn(
-              "mari-chrome-segmented__button justify-between px-2.5 text-left text-xs",
+              "mari-chrome-segmented__button px-2.5 text-xs",
               recallStyle === style.id && "mari-chrome-segmented__button--selected",
             )}
           >
-            <span className="min-w-0 truncate">{style.label}</span>
-            <Info size="0.75rem" className="shrink-0 opacity-80" aria-hidden="true" />
+            <span>{style.label}</span>
           </button>
         ))}
       </div>
+      <p className="mt-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+        {selectedStyle.description}
+      </p>
     </SettingGroup>
   );
 }
@@ -290,28 +284,28 @@ export function RecallRankingWeights({
   const keywordWeight = values.longTermMemoryKeywordWeight ?? LTM_RECALL_STYLE_WEIGHTS[recallStyle].keywordWeight;
 
   const resetWeightOverrides = () => {
-      onChange({
-        longTermMemorySemanticWeight: null,
-        longTermMemoryLexicalWeight: null,
-        longTermMemoryGraphWeight: null,
-        longTermMemoryKeywordWeight: null,
-      });
+    onChange({
+      longTermMemorySemanticWeight: null,
+      longTermMemoryLexicalWeight: null,
+      longTermMemoryGraphWeight: null,
+      longTermMemoryKeywordWeight: null,
+    });
   };
 
   return (
-    <SettingGroup label="Ranking Weights">
-      <p className="text-[0.625rem] text-[var(--muted-foreground)] mb-2">Fine-tune how memories are found. Leave at default unless recall feels off.</p>
+    <SettingGroup label="Ranking weights">
+      <p className="mb-2 text-[0.6875rem] text-[var(--muted-foreground)]">
+        Fine-tune how memories are found. Leave at default unless recall feels off.
+      </p>
       <div className="space-y-2">
         {[
-        { label: "Meaning", key: "longTermMemorySemanticWeight" as const, value: semanticWeight, max: 1 },
-        { label: "Exact Words", key: "longTermMemoryLexicalWeight" as const, value: lexicalWeight, max: 1 },
-        { label: "Memory Links", key: "longTermMemoryGraphWeight" as const, value: graphWeight, max: 1 },
-        { label: "Keywords", key: "longTermMemoryKeywordWeight" as const, value: keywordWeight, max: 1 },
-      ].map((item) => (
+          { label: "Meaning", key: "longTermMemorySemanticWeight" as const, value: semanticWeight, max: 1 },
+          { label: "Exact words", key: "longTermMemoryLexicalWeight" as const, value: lexicalWeight, max: 1 },
+          { label: "Memory links", key: "longTermMemoryGraphWeight" as const, value: graphWeight, max: 1 },
+          { label: "Keywords", key: "longTermMemoryKeywordWeight" as const, value: keywordWeight, max: 1 },
+        ].map((item) => (
           <div key={item.key} className="grid grid-cols-[4.5rem_1fr_4.75rem] items-center gap-3">
-            <label className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-              {item.label}
-            </label>
+            <label className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">{item.label}</label>
             <input
               type="range"
               min={LTM_WEIGHT_MIN}
