@@ -25,6 +25,7 @@ export * from "./types/game.js";
 export * from "./types/sidecar.js";
 export * from "./types/image-generation-defaults.js";
 export * from "./types/image-style-profile.js";
+export * from "./features/agents/long-term-memory/types.js";
 
 // Schemas
 export * from "./schemas/chat.schema.js";
@@ -39,6 +40,8 @@ export * from "./schemas/regex.schema.js";
 export * from "./schemas/theme.schema.js";
 export * from "./schemas/extension.schema.js";
 export * from "./schemas/app-settings.schema.js";
+// Feature: Long-Term Memory (managed custom agent)
+export * from "./features/agents/long-term-memory/schema.js";
 
 // Constants
 export * from "./constants/providers.js";
@@ -52,6 +55,9 @@ export * from "./constants/image-generation-defaults.js";
 export * from "./constants/image-style-profiles.js";
 export * from "./constants/security.js";
 export * from "./constants/game-assets.js";
+export * from "./features/agents/long-term-memory/constants.js";
+export * from "./features/agents/long-term-memory/runtime-settings.js";
+export * from "./features/agents/long-term-memory/utils.js";
 
 // Utils
 export * from "./utils/macro-engine.js";
@@ -68,3 +74,4 @@ export * from "./utils/chat-summary-entries.js";
 export * from "./utils/quest-state.js";
 export * from "./utils/quote-format.js";
 export * from "./utils/image-prompt-compiler.js";
+export * from "./features/agents/long-term-memory/scope.js";

@@ -26,6 +26,7 @@
     "clean:stale-client": "node ./scripts/clean-stale-client-artifacts.mjs",
     "impeccable:check": "node ./scripts/check-impeccable-context.mjs",
     "lint": "pnpm -r run lint",
+    "ltm:migrate": "pnpm --filter @marinara-engine/server exec tsx src/services/long-term-memory/migration/migrate-remove-buckets.ts",
     "test": "node ./scripts/check-windows-installer-layout.mjs && pnpm -r run test",
     "version:sync": "node ./scripts/sync-version.mjs",
     "version:check": "node ./scripts/check-version-drift.mjs",
