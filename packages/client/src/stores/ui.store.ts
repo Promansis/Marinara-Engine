@@ -21,6 +21,13 @@ type Panel =
   | "personas"
   | "settings"
   | "bot-browser";
+const LEGACY_RIGHT_PANEL_REDIRECTS: Record<string, Panel> = {
+  "long-term-memory": "agents",
+};
+
+function normalizeRightPanel(panel: Panel): Panel {
+  return LEGACY_RIGHT_PANEL_REDIRECTS[String(panel)] ?? panel;
+}
 export type ChatModeShortcut = "conversation" | "roleplay" | "game";
 type FontSize = 12 | 14 | 16 | 17 | 19 | 22;
 export type VisualTheme = "default" | "sillytavern";
@@ -958,14 +965,18 @@ export const useUIStore = create<UIState>()(
           return { trackerPanelCollapsedSections: next };
         }),
 
-      openRightPanel: (panel) => set({ rightPanelOpen: true, rightPanel: panel }),
+      openRightPanel: (panel) => {
+        const normalizedPanel = normalizeRightPanel(panel);
+        set({ rightPanelOpen: true, rightPanel: normalizedPanel });
+      },
       closeRightPanel: () => set({ rightPanelOpen: false }),
       toggleRightPanel: (panel) =>
-        set((s) =>
-          s.rightPanelOpen && s.rightPanel === panel
+        set((s) => {
+          const normalizedPanel = normalizeRightPanel(panel);
+          return s.rightPanelOpen && s.rightPanel === normalizedPanel
             ? { rightPanelOpen: false }
-            : { rightPanelOpen: true, rightPanel: panel },
-        ),
+            : { rightPanelOpen: true, rightPanel: normalizedPanel };
+        }),
 
       setSettingsTab: (tab) => set({ settingsTab: tab }),
       openModal: (type, props) => set({ modal: { type, props } }),

@@ -1502,7 +1502,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
       promptMessages: Array<{
         role: "system" | "user" | "assistant";
         content: string;
-        contextKind?: "prompt" | "history" | "injection";
+        contextKind?: "prompt" | "history" | "injection" | "long_term_memory";
         images?: string[];
         providerMetadata?: Record<string, unknown>;
       }>,

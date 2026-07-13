@@ -54,6 +54,8 @@ import {
   Drama,
   RotateCcw,
   Music2,
+  BrainCircuit,
+  Loader2,
 } from "lucide-react";
 import { cn, getAvatarCropStyle, type AvatarCrop } from "../../lib/utils";
 import { showAlertDialog, showConfirmDialog, showPromptDialog } from "../../lib/app-dialogs";
@@ -69,6 +71,20 @@ import {
 } from "../ui/GenerationParametersEditor";
 import { ChoiceSelectionModal } from "../presets/ChoiceSelectionModal";
 import { SummariesEditorModal } from "./SummariesEditorModal";
+import { FieldGroup } from "../agents/AgentEditor";
+import {
+  useLastInjection,
+  useLongTermMemorySettings,
+  useLongTermMemoryExtractionSettings,
+} from "../../hooks/use-long-term-memory";
+import {
+  RecallStylePresets,
+  RecallBudgetControls,
+  RecallRankingWeights,
+  RecallThresholdControls,
+  RecallToggles,
+  useDebouncedRecallSettings,
+} from "../long-term-memory/RecallSettingsControls";
 import { useCharacters, usePersonas, useCharacterGroups, type SpriteInfo } from "../../hooks/use-characters";
 import { useLorebooks } from "../../hooks/use-lorebooks";
 import { usePresetFull, usePresets } from "../../hooks/use-presets";
@@ -140,6 +156,7 @@ import {
   AGENT_COST_HIGH_CALLS,
   AGENT_COST_HIGH_TOKENS,
   getDefaultBuiltInAgentSettings,
+  resolveLongTermMemoryRecallSettings,
 } from "@marinara-engine/shared";
 import type { Chat, CharacterGroup, Lorebook } from "@marinara-engine/shared";
 import {
@@ -358,6 +375,33 @@ export function ChatSettingsDrawer({
     () => (typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {})),
     [chat.metadata],
   );
+  const ltmGlobalSettings = useLongTermMemorySettings();
+  const ltmExtractionSettings = useLongTermMemoryExtractionSettings();
+  const ltmLastInjection = useLastInjection(chat.id);
+  const ltmResolvedSettings = useMemo(
+    () =>
+      resolveLongTermMemoryRecallSettings({
+        chatMode,
+        chatMetadata: metadata,
+        globalSettings: ltmGlobalSettings.data,
+      }),
+    [chatMode, ltmGlobalSettings.data, metadata],
+  );
+  const ltmRecallEnabled = ltmResolvedSettings.enabled;
+  const [chatRecallAdvancedOpen, setChatRecallAdvancedOpen] = useState(false);
+  const { flush: flushDebouncedRecallSettings, schedule: debouncedUpdatePerChat } = useDebouncedRecallSettings(
+    useCallback((patch) => updateMeta.mutate({ id: chat.id, ...patch }), [chat.id, updateMeta]),
+    400,
+    `${chat.id}:${open ? "open" : "closed"}`,
+  );
+  const closeWithPendingRecallSave = useCallback(() => {
+    flushDebouncedRecallSettings();
+    onClose();
+  }, [flushDebouncedRecallSettings, onClose]);
+  const toggleLtmEnabled = useCallback(() => {
+    updateMeta.mutate({ id: chat.id, enableLongTermMemory: !ltmRecallEnabled });
+  }, [chat.id, ltmRecallEnabled, updateMeta]);
+  const refinePassEnabled = metadata.refinePass === true || ltmExtractionSettings.data?.refinePass === true;
   const inactiveCharacterIds = useMemo<string[]>(
     () =>
       Array.isArray(metadata.inactiveCharacterIds)
@@ -1055,6 +1099,22 @@ export function ChatSettingsDrawer({
       }
     });
   }, [currentPromptPresetFull?.sections]);
+  const currentPromptPresetHasLongTermMemoryMarker = useMemo(() => {
+    const sections = currentPromptPresetFull?.sections ?? [];
+    return sections.some((section) => {
+      const enabled = (section as { enabled?: boolean | string }).enabled;
+      const isMarker = (section as { isMarker?: boolean | string }).isMarker;
+      if (enabled === false || enabled === "false") return false;
+      if (isMarker !== true && isMarker !== "true") return false;
+      try {
+        const config =
+          typeof section.markerConfig === "string" ? JSON.parse(section.markerConfig) : section.markerConfig;
+        return config?.type === "long_term_memory";
+      } catch {
+        return false;
+      }
+    });
+  }, [currentPromptPresetFull?.sections]);
   const hasScopedOrGlobalLorebooks = useMemo(() => {
     return (
       (lorebooks ?? []) as Array<{
@@ -1096,6 +1156,8 @@ export function ChatSettingsDrawer({
   ]);
   const showLorebookMarkerWarning =
     !!chat.promptPresetId && hasScopedOrGlobalLorebooks && !currentPromptPresetHasLorebookMarker;
+  const showLongTermMemoryPromptBlockWarning =
+    ltmRecallEnabled && !!chat.promptPresetId && !!currentPromptPresetFull && !currentPromptPresetHasLongTermMemoryMarker;
 
   const setPreset = (presetId: string | null) => {
     updateChat.mutate(
@@ -1594,7 +1656,7 @@ export function ChatSettingsDrawer({
   return (
     <>
       {/* Backdrop */}
-      <div className="absolute inset-0 z-40 bg-black/30 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="absolute inset-0 z-40 bg-black/30 backdrop-blur-[2px]" onClick={closeWithPendingRecallSave} />
 
       {/* Drawer */}
       <div className="absolute right-0 top-0 z-50 flex h-full w-80 max-md:w-full flex-col border-l border-[var(--border)] bg-[var(--background)] shadow-2xl animate-fade-in-up max-md:pt-[env(safe-area-inset-top)]">
@@ -1602,7 +1664,7 @@ export function ChatSettingsDrawer({
         <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
           <h3 className="text-sm font-bold">Chat Settings</h3>
           <button
-            onClick={onClose}
+            onClick={closeWithPendingRecallSave}
             className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)]"
           >
             <X size="1rem" />
@@ -5259,6 +5321,147 @@ export function ChatSettingsDrawer({
               {renderMemoryRecallControls(metadata.sceneStatus === "active")}
             </Section>
           )}
+
+          {/* Long-Term Memory */}
+          <Section
+            label="Long-Term Memory"
+            icon={<BrainCircuit size="0.875rem" />}
+            help="Recall durable memories from the Long-Term Memory vault and inject them into this chat's prompt."
+          >
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={toggleLtmEnabled}
+                className={cn(
+                  "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
+                  ltmRecallEnabled
+                    ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+                    : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
+                )}
+              >
+                <div className="min-w-0 flex-1">
+                  <span className="text-[0.6875rem] font-medium">Use Long-Term Memory in this chat</span>
+                  <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                    Inject relevant saved memories into the next generation prompt.
+                  </p>
+                </div>
+                <div
+                  className={cn(
+                    "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+                    ltmRecallEnabled ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
+                  )}
+                >
+                  <div
+                    className={cn(
+                      "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                      ltmRecallEnabled && "translate-x-3.5",
+                    )}
+                  />
+                </div>
+              </button>
+
+              <div
+                aria-live="polite"
+                className="rounded-lg bg-[var(--secondary)]/35 px-3 py-2 text-xs ring-1 ring-[var(--border)]"
+              >
+                <div className="font-medium text-[var(--foreground)]">Last Injection</div>
+                {ltmLastInjection.isLoading ? (
+                  <div className="mt-1 flex items-center gap-2 text-[var(--muted-foreground)]">
+                    <Loader2 size="0.75rem" className="animate-spin" aria-hidden="true" />
+                    Checking the last dispatched memory context...
+                  </div>
+                ) : ltmLastInjection.isError ? (
+                  <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[var(--destructive)]">
+                    <span>Could not load the last dispatched memory context.</span>
+                    <button
+                      type="button"
+                      onClick={() => void ltmLastInjection.refetch()}
+                      className="rounded-md px-1.5 py-0.5 text-[0.6875rem] font-medium underline underline-offset-2"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                ) : (ltmLastInjection.data?.memoryCount ?? 0) === 0 ? (
+                  <p className="mt-1 text-[var(--muted-foreground)]">
+                    No recalled memories have been dispatched for this chat yet.
+                  </p>
+                ) : (
+                  <div className="mt-1 flex flex-wrap gap-1.5 text-[var(--muted-foreground)]">
+                    <span>
+                      {ltmLastInjection.data!.memoryCount} memor
+                      {ltmLastInjection.data!.memoryCount === 1 ? "y" : "ies"}
+                    </span>
+                    <span aria-hidden="true">-</span>
+                    <span>~{ltmLastInjection.data!.tokenCount.toLocaleString()} tokens</span>
+                  </div>
+                )}
+              </div>
+
+              {showLongTermMemoryPromptBlockWarning && (
+                <div className="flex items-start gap-2 rounded-lg bg-amber-400/10 px-3 py-2 text-[0.6875rem] text-amber-200 ring-1 ring-amber-400/25">
+                  <AlertTriangle size="0.75rem" className="mt-[0.125rem] shrink-0" />
+                  <p className="leading-snug">
+                    This chat can recall long-term memories, but the selected prompt preset has no Long-Term Memory
+                    block.
+                  </p>
+                </div>
+              )}
+
+              <RecallStylePresets
+                values={{ longTermMemoryRecallStyle: ltmResolvedSettings.recallStyle }}
+                onChange={debouncedUpdatePerChat}
+              />
+              <RecallBudgetControls
+                values={{
+                  longTermMemoryBudgetTokens: ltmResolvedSettings.budgetTokens ?? 4096,
+                  longTermMemoryMaxChunks: ltmResolvedSettings.maxChunks ?? 20,
+                }}
+                onChange={debouncedUpdatePerChat}
+              />
+              <FieldGroup
+                label="Advanced Long-Term Memory settings"
+                collapsible
+                expanded={chatRecallAdvancedOpen}
+                onExpandedChange={setChatRecallAdvancedOpen}
+              >
+                <RecallThresholdControls
+                  values={{
+                    longTermMemoryScoreThreshold: ltmResolvedSettings.scoreThreshold ?? 0,
+                    longTermMemoryRecallContextMessages: ltmResolvedSettings.contextMessages,
+                  }}
+                  onChange={debouncedUpdatePerChat}
+                />
+                <RecallRankingWeights
+                  values={{
+                    longTermMemoryRecallStyle: ltmResolvedSettings.recallStyle,
+                    longTermMemorySemanticWeight: ltmResolvedSettings.weights.semanticWeight,
+                    longTermMemoryLexicalWeight: ltmResolvedSettings.weights.lexicalWeight,
+                    longTermMemoryGraphWeight: ltmResolvedSettings.weights.graphWeight,
+                    longTermMemoryKeywordWeight: ltmResolvedSettings.weights.keywordWeight,
+                  }}
+                  onChange={debouncedUpdatePerChat}
+                />
+                <RecallToggles
+                  values={{
+                    longTermMemoryIncludeResolved: ltmResolvedSettings.includeResolved,
+                    longTermMemoryDebug: ltmResolvedSettings.debugEnabled,
+                  }}
+                  onChange={debouncedUpdatePerChat}
+                />
+                {isGame && (
+                  <label className="flex items-center gap-2 rounded-lg px-1 py-1 text-xs text-[var(--foreground)]">
+                    <input
+                      type="checkbox"
+                      checked={refinePassEnabled}
+                      onChange={(event) => debouncedUpdatePerChat({ refinePass: event.target.checked } as any)}
+                      className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+                    />
+                    <span>Run a second refine pass over imported game summaries</span>
+                  </label>
+                )}
+              </FieldGroup>
+            </div>
+          </Section>
 
           {/* Translation */}
           <Section

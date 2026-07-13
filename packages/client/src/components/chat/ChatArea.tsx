@@ -56,6 +56,8 @@ import { useUIStore } from "../../stores/ui.store";
 import { useAgentStore } from "../../stores/agent.store";
 import { cn, parseAvatarCropJson } from "../../lib/utils";
 import { Modal } from "../ui/Modal";
+import { useAgentConfigs, type AgentConfigRow } from "../../hooks/use-agents";
+import { LtmVaultManagerSection } from "../long-term-memory/LtmVaultManagerSection";
 import { useEncounter } from "../../hooks/use-encounter";
 import { useScene } from "../../hooks/use-scene";
 import { useEncounterStore } from "../../stores/encounter.store";
@@ -207,6 +209,16 @@ export function ChatArea() {
   const [spriteArrangeMode, setSpriteArrangeMode] = useState(false);
   const [agentInjectionReview, setAgentInjectionReview] = useState<AgentInjectionReviewRequest | null>(null);
   const [agentInjectionDrafts, setAgentInjectionDrafts] = useState<Record<string, string>>({});
+  const [vaultOpen, setVaultOpen] = useState<{
+    initialTab?: "notes" | "import" | "review" | "suggestions";
+    sourceNoteId?: string;
+  } | null>(null);
+  const vaultOpenBool = vaultOpen !== null;
+  const { data: agentConfigs } = useAgentConfigs();
+  const ltmAgentConfig = useMemo(
+    () => (agentConfigs as AgentConfigRow[] | undefined)?.find((agent) => agent.type === "long-term-memory") ?? null,
+    [agentConfigs],
+  );
 
   // Delete dialog & multi-select state
   const [deleteDialogMessageId, setDeleteDialogMessageId] = useState<string | null>(null);
@@ -498,6 +510,13 @@ export function ChatArea() {
     return chatMeta.spriteExpressions ?? {};
   }, [messages, chatMeta.spriteExpressions]);
   const groupChatMode: string | undefined = chatCharIds.length > 1 ? (chatMeta.groupChatMode ?? "merged") : undefined;
+
+  const handleOpenVault = useCallback(
+    (payload?: { initialTab?: "notes" | "import" | "review" | "suggestions"; sourceNoteId?: string }) => {
+      setVaultOpen(payload ?? {});
+    },
+    [],
+  );
 
   const updateMeta = useUpdateChatMetadata();
   const summaryContextSize: number = (chatMeta.summaryContextSize as number) ?? 50;
@@ -1783,7 +1802,18 @@ export function ChatArea() {
           }
         : undefined;
   const surfaceFallback = <div className="flex flex-1 overflow-hidden" />;
-
+  const longTermMemoryOverlays = vaultOpenBool ? (
+    <Modal open={vaultOpenBool} onClose={() => setVaultOpen(null)} title="Long-Term Memory" width="max-w-5xl">
+      {vaultOpenBool && ltmAgentConfig && (
+        <LtmVaultManagerSection
+          agentConfig={ltmAgentConfig}
+          agentSettings={parseMessageExtraRecord(ltmAgentConfig.settings)}
+          initialTab={vaultOpen?.initialTab}
+          sourceNoteId={vaultOpen?.sourceNoteId}
+        />
+      )}
+    </Modal>
+  ) : null;
   // ═══════════════════════════════════════════════
   // Game mode — RPG surface with GM narration, map, party chat
   // ═══════════════════════════════════════════════
@@ -1876,6 +1906,7 @@ export function ChatArea() {
             onSelectAllAboveSelection={handleSelectAllAboveSelection}
             onSelectAllBelowSelection={handleSelectAllBelowSelection}
           />
+          {longTermMemoryOverlays}
         </>
       </Suspense>
     );
@@ -1959,6 +1990,7 @@ export function ChatArea() {
             onClose={() => useChatStore.getState().setPendingNewChatMode(null)}
           />
         )}
+        {longTermMemoryOverlays}
       </>
     );
   }
@@ -2046,6 +2078,7 @@ export function ChatArea() {
           onForkScene={forkScene}
           isForkingScene={isForking || isStreaming}
           onOpenSettings={() => setSettingsOpen(true)}
+          onOpenVault={handleOpenVault}
           onOpenFiles={() => setFilesOpen(true)}
           onOpenGallery={() => setGalleryOpen(true)}
           onCloseSettings={() => setSettingsOpen(false)}
@@ -2090,6 +2123,7 @@ export function ChatArea() {
           onClose={() => useChatStore.getState().setPendingNewChatMode(null)}
         />
       )}
+      {longTermMemoryOverlays}
     </>
   );
 }

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronRight, Globe, Loader2, PenLine, X } from "lucide-react";
 import { useUpdateChatMetadata } from "../../hooks/use-chats";
 import { type BudgetSkippedLorebookEntry, useActiveLorebookEntries } from "../../hooks/use-lorebooks";
+import { useLastInjection } from "../../hooks/use-long-term-memory";
+import { MemoryOverviewNotice } from "./MemoryOverviewNotice";
 
 function WorldInfoEntryRow({
   entry,
@@ -132,6 +134,7 @@ export function WorldInfoPanel({
   const { data, isLoading } = useActiveLorebookEntries(chatId, true);
   const entries = data?.entries ?? [];
   const skippedEntries = data?.budgetSkippedEntries ?? [];
+  const lastInjection = useLastInjection(chatId);
 
   return (
     <>
@@ -161,6 +164,9 @@ export function WorldInfoPanel({
         <>
           <p className="mb-2 text-[0.625rem] text-[var(--muted-foreground)]">
             {entries.length} active • ~{(data?.totalTokens ?? 0).toLocaleString()} tokens
+            {lastInjection.data?.memoryCount
+              ? ` · ${lastInjection.data.memoryCount} memor${lastInjection.data.memoryCount === 1 ? "y" : "ies"}`
+              : ""}
           </p>
           <BudgetSkippedEntriesNotice entries={skippedEntries} />
           <div className="space-y-1.5">
@@ -168,6 +174,7 @@ export function WorldInfoPanel({
               <WorldInfoEntryRow key={entry.id} entry={entry} />
             ))}
           </div>
+          <MemoryOverviewNotice chatId={chatId} />
         </>
       )}
     </>

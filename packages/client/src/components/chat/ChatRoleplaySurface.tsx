@@ -34,6 +34,9 @@ import {
   ArrowRightLeft,
   FlipHorizontal2,
   User,
+  BrainCircuit,
+  ChevronRight,
+  Plug,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { getConnectedChatDisplayName } from "../../lib/chat-display";
@@ -44,6 +47,7 @@ import { useChatStore } from "../../stores/chat.store";
 import { useGameStateStore } from "../../stores/game-state.store";
 import { useLorebooks } from "../../hooks/use-lorebooks";
 import { usePresets } from "../../hooks/use-presets";
+import { usePendingDraftsCount } from "../../hooks/use-long-term-memory";
 import { ChatMessage } from "./ChatMessage";
 import { ChatInput } from "./ChatInput";
 import { CyoaChoices } from "./CyoaChoices";
@@ -51,6 +55,7 @@ import { ChatBranchSelector } from "./ChatBranchSelector";
 import { TranscriptWindowControls } from "./TranscriptWindowControls";
 import { EndSceneBar } from "./SceneBanner";
 import { ChatCommonOverlays } from "./ChatCommonOverlays";
+import { MemoryOverviewNotice } from "./MemoryOverviewNotice";
 import { ActiveWorldInfoButton } from "./ActiveWorldInfoButton";
 import type { SpriteDisplayMode } from "./sprite-display-modes";
 import type {
@@ -380,17 +385,23 @@ function ActiveContextLinksButton({
   chatMeta,
   chatCharIds,
   characterMap,
+  onViewAll,
+  onOpenVault,
 }: {
   chat: ChatData | null | undefined;
   chatMeta: Record<string, any>;
   chatCharIds: string[];
   characterMap: CharacterMap;
+  onViewAll?: () => void;
+  onOpenVault?: (payload?: { initialTab?: "notes" | "import" | "review" | "suggestions"; sourceNoteId?: string }) => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const compact = useUIStore((s) => s.centerCompact);
   const { data: lorebooks } = useLorebooks();
   const { data: presets } = usePresets();
+  const { data: pendingDrafts } = usePendingDraftsCount({ chatId: chat?.id, enabled: !!chat?.id });
+  const pendingCount = pendingDrafts?.count ?? 0;
 
   useEffect(() => {
     if (!open) return;
@@ -416,7 +427,7 @@ function ActiveContextLinksButton({
   const characterIds = chatCharIds.filter((id) => !inactiveCharacterIds.includes(id));
   const activeLorebookIds = readStringArray(chatMeta.activeLorebookIds);
   const promptPresetId = typeof chat.promptPresetId === "string" ? chat.promptPresetId : null;
-  const hasLinks = characterIds.length > 0 || activeLorebookIds.length > 0 || !!promptPresetId;
+  const hasLinks = characterIds.length > 0 || activeLorebookIds.length > 0 || !!promptPresetId || pendingCount > 0;
 
   if (!hasLinks) return null;
 
@@ -433,6 +444,11 @@ function ActiveContextLinksButton({
   };
   const openPreset = (id: string) => {
     useUIStore.getState().openPresetDetail(id);
+    setOpen(false);
+  };
+  const handleOpenVault = (payload?: { initialTab?: "notes" | "import" | "review" | "suggestions" }) => {
+    if (onOpenVault) onOpenVault(payload);
+    else onViewAll?.();
     setOpen(false);
   };
 
@@ -499,6 +515,31 @@ function ActiveContextLinksButton({
                 <span className="shrink-0 text-[0.625rem] text-foreground/45">Preset</span>
               </button>
             )}
+            {pendingCount > 0 && (
+              <button
+                type="button"
+                role="menuitem"
+                className={itemClassName}
+                onClick={() => handleOpenVault({ initialTab: "review" })}
+              >
+                <BrainCircuit size="0.8125rem" className={iconClassName} />
+                <span className="min-w-0 flex-1 truncate">
+                  {pendingCount} suggestion{pendingCount === 1 ? "" : "s"} to review
+                </span>
+                <ChevronRight size="0.75rem" className={iconClassName} />
+              </button>
+            )}
+            <MemoryOverviewNotice chatId={chat.id} onViewAll={onViewAll} />
+            <button
+              type="button"
+              role="menuitem"
+              className={itemClassName}
+              onClick={() => handleOpenVault({ initialTab: "import" })}
+            >
+              <Plug size="0.8125rem" className={iconClassName} />
+              <span className="min-w-0 flex-1 truncate">Import memories</span>
+              <ChevronRight size="0.75rem" className={iconClassName} />
+            </button>
           </div>
         </div>
       )}
@@ -738,6 +779,7 @@ type RoleplaySurfaceProps = {
   onOpenSettings: () => void;
   onOpenFiles: () => void;
   onOpenGallery: () => void;
+  onOpenVault?: (payload?: { initialTab?: "notes" | "import" | "review" | "suggestions"; sourceNoteId?: string }) => void;
   onCloseSettings: () => void;
   onCloseFiles: () => void;
   onCloseGallery: () => void;
@@ -839,6 +881,7 @@ export function ChatRoleplaySurface({
   onOpenSettings,
   onOpenFiles,
   onOpenGallery,
+  onOpenVault,
   onCloseSettings,
   onCloseFiles,
   onCloseGallery,
@@ -1041,6 +1084,8 @@ export function ChatRoleplaySurface({
                       chatMeta={chatMeta}
                       chatCharIds={chatCharIds}
                       characterMap={characterMap}
+                      onViewAll={onOpenVault}
+                      onOpenVault={onOpenVault}
                     />
                     <ActiveWorldInfoButton chatId={chat?.id ?? null} />
                     <AuthorNotesButton chatId={chat?.id ?? null} chatMeta={chatMeta} />
@@ -1146,6 +1191,8 @@ export function ChatRoleplaySurface({
                           chatMeta={chatMeta}
                           chatCharIds={chatCharIds}
                           characterMap={characterMap}
+                          onViewAll={onOpenVault}
+                          onOpenVault={onOpenVault}
                         />
                         <ActiveWorldInfoButton chatId={chat?.id ?? null} />
                         <AuthorNotesButton chatId={chat?.id ?? null} chatMeta={chatMeta} />
@@ -1221,6 +1268,8 @@ export function ChatRoleplaySurface({
                         chatMeta={chatMeta}
                         chatCharIds={chatCharIds}
                         characterMap={characterMap}
+                        onViewAll={onOpenVault}
+                        onOpenVault={onOpenVault}
                       />
                       <ActiveWorldInfoButton chatId={chat?.id ?? null} />
                       <AuthorNotesButton chatId={chat?.id ?? null} chatMeta={chatMeta} />

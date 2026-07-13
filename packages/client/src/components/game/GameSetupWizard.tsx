@@ -19,6 +19,7 @@ import {
   Music2,
   Volume2,
   VolumeX,
+  BrainCircuit,
 } from "lucide-react";
 import type { GameSetupConfig, GameGmMode } from "@marinara-engine/shared";
 import { getCharacterTitle } from "../../lib/character-display";
@@ -299,6 +300,7 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
   const [gameSpotifyPlaylistName, setGameSpotifyPlaylistName] = useState("");
   const [gameSpotifyArtist, setGameSpotifyArtist] = useState("");
   const [enableLorebookKeeper, setEnableLorebookKeeper] = useState(false);
+  const [enableLongTermMemory, setEnableLongTermMemory] = useState(false);
   const [imageConnectionId, setImageConnectionId] = useState<string | null>(null);
   const [sceneConnectionId, setSceneConnectionId] = useState<string | null>(null);
   const [activeLorebookIds, setActiveLorebookIds] = useState<string[]>([]);
@@ -557,6 +559,7 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
         spotifyArtist:
           enableSpotifyDj && gameSpotifySourceType === "artist" ? gameSpotifyArtist.trim() || undefined : undefined,
         enableLorebookKeeper: enableLorebookKeeper || undefined,
+        enableLongTermMemory,
         language: normalizedLanguage || undefined,
         generationParameters: customizeParameters ? generationParameters : undefined,
       },
@@ -1403,6 +1406,46 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                       className={cn(
                         "h-4 w-4 rounded-full bg-white transition-transform",
                         enableLorebookKeeper && "translate-x-3.5",
+                      )}
+                    />
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setEnableLongTermMemory((prev) => !prev)}
+                  aria-pressed={enableLongTermMemory}
+                  className={cn(
+                    "flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left transition-all",
+                    enableLongTermMemory
+                      ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+                      : "bg-[var(--secondary)] ring-1 ring-transparent hover:ring-[var(--border)]",
+                  )}
+                >
+                  <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                    <BrainCircuit
+                      size={14}
+                      className={
+                        enableLongTermMemory ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]"
+                      }
+                    />
+                    <div className="min-w-0">
+                      <span className="block text-xs font-medium text-[var(--foreground)]">Long-Term Memory</span>
+                      <span className="block text-[0.575rem] text-[var(--muted-foreground)]">
+                        Recall saved memories from this game into the GM&apos;s context
+                      </span>
+                    </div>
+                  </div>
+                  <div
+                    className={cn(
+                      "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+                      enableLongTermMemory ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
+                    )}
+                  >
+                    <div
+                      className={cn(
+                        "h-4 w-4 rounded-full bg-white transition-transform",
+                        enableLongTermMemory && "translate-x-3.5",
                       )}
                     />
                   </div>

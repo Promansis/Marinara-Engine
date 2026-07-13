@@ -9,6 +9,7 @@ import { api } from "../lib/api-client";
 import { formatAgentFailuresToast, toAgentFailure, type AgentFailure } from "../lib/agent-failures";
 import { chatBackgroundMetadataToUrl } from "../lib/backgrounds";
 import { agentKeys } from "./use-agents";
+import { longTermMemoryKeys } from "./use-long-term-memory";
 import type { PendingCardUpdate } from "../stores/agent.store";
 import {
   applyQuestUpdatesToPlayerStats,
@@ -1545,6 +1546,7 @@ export function useGenerate() {
             }
 
             case "done": {
+              qc.invalidateQueries({ queryKey: longTermMemoryKeys.lastInjection(params.chatId) });
               if (isActiveChat()) setProcessing(false);
               clearMariPhaseForThisChat();
               break;

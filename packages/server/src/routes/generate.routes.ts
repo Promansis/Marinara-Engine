@@ -1,6 +1,7 @@
 // ──────────────────────────────────────────────
 // Routes: Generation (SSE Streaming with Tool Use + Agent Pipeline)
 // ──────────────────────────────────────────────
+import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import {
   generateRequestSchema,
@@ -151,6 +152,18 @@ import { eq } from "drizzle-orm";
 import { PROFESSOR_MARI_ID } from "@marinara-engine/shared";
 import { chunkAndEmbedMessages, embedMemoryRecallTexts, recallMemories } from "../services/memory-recall.js";
 import { resolveMemoryRecallEmbeddingSource } from "../services/memory-recall-embedding.js";
+import { recordLtmDebugEvent } from "../services/long-term-memory/debug-log.js";
+import { getLtmGlobalSettings } from "../services/long-term-memory/settings.js";
+import {
+  orchestrateGenerationLongTermMemoryRecall,
+  recordGenerationLongTermMemoryDispatch,
+} from "../services/long-term-memory/generation-injection.js";
+import {
+  injectLongTermMemoryPromptArtifact,
+  isLongTermMemoryPromptArtifactPresent,
+  type LtmPromptArtifact,
+  type LtmSerializedPromptArtifact,
+} from "../services/long-term-memory/prompt.js";
 import { postToDiscordWebhook } from "../services/discord-webhook.js";
 import {
   appendGenerationTailMessages,
@@ -458,7 +471,7 @@ type LorebookScanMessage = { role: "user" | "assistant" | "system"; content: str
 type GenerationPromptMessage = {
   role: "system" | "user" | "assistant";
   content: string;
-  contextKind?: "prompt" | "history" | "injection";
+  contextKind?: "prompt" | "history" | "injection" | "long_term_memory";
   characterId?: string | null;
   images?: string[];
   providerMetadata?: Record<string, unknown>;
@@ -1901,6 +1914,7 @@ export async function generateRoutes(app: FastifyInstance) {
     } catch (err) {
       logger.warn(err, "[memory-recall] Embedding source resolution failed; using default embedding path");
     }
+    const ltmGlobalSettings = await getLtmGlobalSettings();
 
     if (activeGenerations) {
       activeGenerations.set(input.chatId, { abortController, backendUrl: baseUrl });
@@ -2222,6 +2236,9 @@ export async function generateRoutes(app: FastifyInstance) {
         // doesn't burn an extra generation pass with no new context to read.
         let mariFetchSucceededThisIteration = false;
         let finalMessages: GenerationPromptMessage[] = [...runningMessagesForFollowUp];
+        let longTermMemoryArtifact: LtmPromptArtifact | null = null;
+        let serializedLongTermMemoryArtifact: LtmSerializedPromptArtifact | null = null;
+        let longTermMemoryDispatchAccountingAttempted = false;
         let conversationCommandsReminder: string | null = null;
         const conversationCommandsEnabled = chatMode === "conversation" && chatMeta.characterCommands !== false;
         let temperature = 1;
@@ -2416,6 +2433,68 @@ export async function generateRoutes(app: FastifyInstance) {
 
         sendProgress("assembling");
         const _tAssemble = Date.now();
+        try {
+          const activeCharacterNames = (
+            await Promise.all(
+              promptCharacterIds.map(async (characterId) => {
+                const row = await chars.getById(characterId);
+                if (!row) return "";
+                try {
+                  const data = JSON.parse(row.data as string) as { name?: unknown };
+                  return typeof data.name === "string" ? data.name.trim() : "";
+                } catch {
+                  return "";
+                }
+              }),
+            )
+          ).filter(Boolean);
+          const ltmRecall = await orchestrateGenerationLongTermMemoryRecall({
+            chatId: input.chatId,
+            chatMode,
+            groupId: typeof chat.groupId === "string" ? chat.groupId : null,
+            promptCharacterIds,
+            activeCharacterNames,
+            inputMessages: currentInputMessages().map((message) => ({
+              role: message.role,
+              content: message.content,
+            })),
+            chatMeta,
+            globalSettings: ltmGlobalSettings,
+            lorebookGenerationTriggers,
+            ...(activeChatSummary ? { generationGuide: activeChatSummary } : {}),
+            ...(chatMode === "game" ? { gameState: await selectedGameStateForPrompt() } : {}),
+            mentionedCharacterNames: input.mentionedCharacterNames,
+            embeddingSource: memoryRecallEmbeddingSource ?? undefined,
+            signal: abortController.signal,
+            requestDebug: isDebug || requestDebug,
+          });
+          longTermMemoryArtifact = ltmRecall.artifact;
+          if (ltmRecall.plan.debugEnabled && ltmRecall.retrieval?.debug) {
+            try {
+              await recordLtmDebugEvent({
+                operationId: randomUUID(),
+                phase: "retrieval",
+                action: "generate-route-ltm-retrieval",
+                status: "ok",
+                message: `Generate route retrieved ${ltmRecall.retrieval.chunks.length} chunks (${ltmRecall.retrieval.usedTokens} tokens)`,
+                durationMs: Date.now() - _tAssemble,
+                counts: { chunks: ltmRecall.retrieval.chunks.length, tokens: ltmRecall.retrieval.usedTokens },
+                diagnostics: [ltmRecall.retrieval.debug as unknown as Record<string, unknown>],
+                chatId: input.chatId,
+                uiSummary: JSON.stringify({
+                  memoryCount: new Set(ltmRecall.retrieval.chunks.map((chunk) => chunk.chunk.noteId).filter(Boolean))
+                    .size,
+                  tokenCount: ltmRecall.retrieval.usedTokens,
+                }),
+              });
+            } catch (err) {
+              logger.warn(err, "[generate] Failed to record LTM retrieval debug event");
+            }
+          }
+        } catch (err) {
+          if (abortController.signal.aborted || (err instanceof Error && err.name === "AbortError")) throw err;
+          logger.warn(err, "[generate] LTM retrieval failed; continuing without LTM block");
+        }
         if (presetId && resolvedPreset) {
           const preset = resolvedPreset;
           wrapFormat = (preset.wrapFormat as "xml" | "markdown" | "none") || "xml";
@@ -2460,6 +2539,7 @@ export async function generateRoutes(app: FastifyInstance) {
             groups: groups as any,
             choiceBlocks: choiceBlocks as any,
             chatChoices,
+            longTermMemoryArtifact,
             chatId: input.chatId,
             characterIds: promptCharacterIds,
             personaId,
@@ -2500,6 +2580,7 @@ export async function generateRoutes(app: FastifyInstance) {
           };
 
           const assembled = await assemblePrompt(assemblerInput);
+          serializedLongTermMemoryArtifact = assembled.longTermMemoryArtifact ?? null;
           presetHandledLorebooks =
             presetHasLorebookMarker(sections) ||
             assembled.lorebookDepthEntriesCount > 0 ||
@@ -2546,6 +2627,14 @@ export async function generateRoutes(app: FastifyInstance) {
             entryStateOverrides: assembled.updatedEntryStateOverrides,
             entryTimingStates: assembled.updatedEntryTimingStates,
           });
+        }
+
+        if (!serializedLongTermMemoryArtifact && longTermMemoryArtifact) {
+          const fallback = injectLongTermMemoryPromptArtifact(finalMessages, longTermMemoryArtifact, {
+            wrapFormat,
+            wrapperName: "Long Term Memory",
+          });
+          serializedLongTermMemoryArtifact = fallback.artifact;
         }
 
         // ── Conversation mode: inject built-in DM-style system prompt when no preset ──
@@ -6273,7 +6362,7 @@ export async function generateRoutes(app: FastifyInstance) {
         // Static-injection agents don't need LLM calls — they inject prompt text directly
         const STATIC_INJECTION_AGENTS = new Set(["html"]);
         const SEPARATE_INJECTION_AGENTS = new Set(["knowledge-retrieval", "knowledge-router"]);
-        const EXCLUDED_FROM_PIPELINE = new Set(["html", "knowledge-retrieval", "knowledge-router"]);
+        const EXCLUDED_FROM_PIPELINE = new Set(["html", "knowledge-retrieval", "knowledge-router", "long-term-memory"]);
         const hasPreGenAgents = resolvedAgents.some(
           (a) => a.phase === "pre_generation" && !EXCLUDED_FROM_PIPELINE.has(a.type) && !reviewedAgentTypes.has(a.type),
         );
@@ -6639,7 +6728,9 @@ export async function generateRoutes(app: FastifyInstance) {
           // caches may contain a mix of legacy strings and object-shaped entries.
           const cached = normalizeContextInjections(regenExtra.contextInjections);
           // Secret plot is applied from agent memory, not from message cache (legacy entries ignored)
-          const cachedSansSecret = cached.filter((i) => i.agentType !== "secret-plot-driver");
+          const cachedSansSecret = cached.filter(
+            (i) => i.agentType !== "secret-plot-driver" && i.agentType !== "long-term-memory",
+          );
 
           if (cachedSansSecret && cachedSansSecret.length > 0) {
             contextInjections = cachedSansSecret;
@@ -7288,6 +7379,7 @@ export async function generateRoutes(app: FastifyInstance) {
             // then preserves provider alternation rules for the actual request.
             let pastLeadingSystem = false;
             const converted = messages.map((m) => {
+              if (m.contextKind === "long_term_memory") return m;
               if (!pastLeadingSystem) {
                 if (m.role !== "system") pastLeadingSystem = true;
                 return m;
@@ -7315,6 +7407,17 @@ export async function generateRoutes(app: FastifyInstance) {
             fitPromptForSend(toProviderMessages(preparedMessagesForGen)),
           );
           finalPromptSent = initialProviderMessages;
+          let providerMessagesForDispatch: ChatMessage[] = initialProviderMessages;
+          const recordLongTermMemoryDispatchAfterProviderAccept = async (messages: ChatMessage[]) => {
+            if (longTermMemoryDispatchAccountingAttempted || !serializedLongTermMemoryArtifact) return;
+            if (!isLongTermMemoryPromptArtifactPresent(messages, serializedLongTermMemoryArtifact)) return;
+            longTermMemoryDispatchAccountingAttempted = true;
+            await recordGenerationLongTermMemoryDispatch({
+              chatId: input.chatId,
+              artifact: serializedLongTermMemoryArtifact,
+              finalMessages: messages,
+            });
+          };
 
           // Reset per-character accumulators
           fullResponse = "";
@@ -7480,6 +7583,9 @@ export async function generateRoutes(app: FastifyInstance) {
                       ? undefined
                       : (items) => encryptedReasoningCache.set(input.chatId, items),
                     onChatCompletionsReasoning: rememberChatCompletionsReasoning,
+                    onPromptFitted: (messages) => {
+                      providerMessagesForDispatch = messages;
+                    },
                   });
                 } catch (err: any) {
                   // If the error was caused by an abort, cancel silently and skip post-processing.
@@ -7493,6 +7599,8 @@ export async function generateRoutes(app: FastifyInstance) {
                 if (abortController.signal.aborted) {
                   return null;
                 }
+
+                await recordLongTermMemoryDispatchAfterProviderAccept(providerMessagesForDispatch);
 
                 // If provider doesn't support onToken (fell back to non-streaming),
                 // write the content conventionally
@@ -7627,7 +7735,11 @@ export async function generateRoutes(app: FastifyInstance) {
                       ? undefined
                       : (items) => encryptedReasoningCache.set(input.chatId, items),
                     onChatCompletionsReasoning: rememberChatCompletionsReasoning,
+                    onPromptFitted: (messages) => {
+                      providerMessagesForDispatch = messages;
+                    },
                   });
+                  await recordLongTermMemoryDispatchAfterProviderAccept(providerMessagesForDispatch);
                   if (finalResult.content && fullResponse.length === prevLen) {
                     writeContentChunked(finalResult.content);
                   }
@@ -7682,8 +7794,12 @@ export async function generateRoutes(app: FastifyInstance) {
                   ? undefined
                   : (items) => encryptedReasoningCache.set(input.chatId, items),
                 onChatCompletionsReasoning: rememberChatCompletionsReasoning,
+                onPromptFitted: (messages) => {
+                  providerMessagesForDispatch = messages;
+                },
               });
               let result = await gen.next();
+              await recordLongTermMemoryDispatchAfterProviderAccept(providerMessagesForDispatch);
               while (!result.done) {
                 fullResponse += result.value;
                 // Break large chunks (e.g. Gemini non-streaming) into small pieces

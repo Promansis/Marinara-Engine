@@ -116,6 +116,7 @@ const MARKER_LABELS: Record<MarkerType, string> = {
   world_info_after: "Lorebook Marker (After)",
   dialogue_examples: "Dialogue Examples",
   agent_data: "Agent Data",
+  long_term_memory: "Long-Term Memory",
 };
 
 function lorebookWarningDismissalKey(presetId: string) {

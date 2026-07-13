@@ -36,6 +36,7 @@ import { playNotificationPing } from "../../lib/notification-sound";
 import { getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
 import { getTranscriptRenderWindow, TRANSCRIPT_RENDER_WINDOW_STEP } from "../../lib/transcript-render-window";
 import { characterKeys } from "../../hooks/use-characters";
+import { usePendingDraftsCount } from "../../hooks/use-long-term-memory";
 import { api } from "../../lib/api-client";
 import type { CharacterMap, MessageSelectionToggle, PersonaInfo } from "./chat-area.types";
 import type { Message } from "@marinara-engine/shared";
@@ -254,9 +255,11 @@ const MOBILE_MENU_BTN =
 function ConversationToolbarMenu({
   desktopChildren,
   mobileChildren,
+  highlightOverflowButton = false,
 }: {
   desktopChildren: ReactNode;
   mobileChildren: ReactNode;
+  highlightOverflowButton?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLDivElement>(null);
@@ -288,7 +291,12 @@ function ConversationToolbarMenu({
     <>
       <div className="hidden items-center gap-1.5 md:flex">{desktopChildren}</div>
       <div className="relative shrink-0 md:hidden" ref={btnRef}>
-        <button onClick={() => setOpen(!open)} className={HEADER_BTN} title="More options" aria-label="More options">
+        <button
+          onClick={() => setOpen(!open)}
+          className={`${HEADER_BTN}${highlightOverflowButton ? " ring-2 ring-[var(--primary)]/60" : ""}`}
+          title="More options"
+          aria-label="More options"
+        >
           <MoreHorizontal size="0.875rem" />
         </button>
         {open &&
@@ -387,6 +395,8 @@ export function ConversationView({
   // a CSS variable so custom themes can override the conversation background.
   const convoGradient = useUIStore((s) => s.convoGradient);
   const theme = useUIStore((s) => s.theme);
+  const { data: pendingDrafts } = usePendingDraftsCount({ chatId });
+  const hasPendingLtmDrafts = (pendingDrafts?.count ?? 0) > 0;
   const gradientStyle = useMemo(() => {
     const g = convoGradient[theme];
     const isDefaultDark = convoGradient.dark.from === "#0a0a0e" && convoGradient.dark.to === "#1c2133";
@@ -923,6 +933,7 @@ export function ConversationView({
           <ConversationToolbarMenu
             desktopChildren={renderToolbarActions()}
             mobileChildren={renderToolbarActions(true)}
+            highlightOverflowButton={hasPendingLtmDrafts}
           />
           <ActiveWorldInfoModal
             chatId={chatId}

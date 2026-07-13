@@ -514,6 +514,7 @@ const gameSetupConfigSchema = z.object({
   spotifyPlaylistName: z.string().nullable().optional(),
   spotifyArtist: z.string().nullable().optional(),
   enableLorebookKeeper: z.boolean().optional(),
+  enableLongTermMemory: z.boolean().optional(),
   language: z.string().min(1).max(100).optional(),
   generationParameters: generationParametersSchema.partial().optional(),
 });
@@ -3067,7 +3068,10 @@ export async function gameRoutes(app: FastifyInstance) {
     if (!sessionChat) throw new Error("Failed to create game session chat");
 
     const sessionMeta = parseMeta(sessionChat.metadata);
-    const setupActiveAgentIds = [...(setupConfig.enableSpotifyDj ? ["spotify"] : [])];
+    const setupActiveAgentIds = [
+      ...(setupConfig.enableSpotifyDj ? ["spotify"] : []),
+      ...(setupConfig.enableLongTermMemory ? ["long-term-memory"] : []),
+    ];
     const spotifySourceType = setupConfig.spotifySourceType ?? "liked";
     const gameChatParameters = mergeStoredGenerationParameters(
       defaultGenerationParameters,
@@ -3123,6 +3127,7 @@ export async function gameRoutes(app: FastifyInstance) {
           ? setupConfig.spotifyArtist || null
           : null,
       gameLorebookKeeperEnabled: setupConfig.enableLorebookKeeper === true,
+      enableLongTermMemory: setupConfig.enableLongTermMemory === true,
       ...(gameChatParameters ? { chatParameters: gameChatParameters } : {}),
     });
 

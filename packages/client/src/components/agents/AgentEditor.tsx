@@ -4,6 +4,7 @@
 // ──────────────────────────────────────────────
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { useUIStore } from "../../stores/ui.store";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import {
@@ -47,6 +48,15 @@ import {
   Upload,
   Loader2,
   ImageIcon,
+  DatabaseZap,
+  Plug,
+  FileJson,
+  BrainCircuit,
+  RefreshCw,
+  Hammer,
+  AlertTriangle,
+  ShieldCheck,
+  Import,
 } from "lucide-react";
 import { useDeleteAgent } from "../../hooks/use-agents";
 import { useLorebooks, useEntriesAcrossLorebooks } from "../../hooks/use-lorebooks";
@@ -80,6 +90,47 @@ import {
   type AgentResultType,
   type ToolDefinition,
 } from "@marinara-engine/shared";
+import { isManagedAgentType } from "@marinara-engine/shared";
+import {
+  DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
+  DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
+  DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
+  DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
+  DEFAULT_LTM_EXTRACTION_TEMPERATURE,
+  DEFAULT_LTM_EXTRACTION_VERBOSITY,
+  DEFAULT_LTM_GLOBAL_SETTINGS,
+  type LtmGlobalSettings,
+  type LtmIndexHealth,
+  type LtmMode,
+  type LtmRepairResponse,
+} from "@marinara-engine/shared";
+import { Modal } from "../ui/Modal";
+import { LtmVaultManagerSection } from "../long-term-memory/LtmVaultManagerSection";
+import LtmInlineSettingsSections, {
+  LtmExtractionConnectionSection,
+  LtmExtractionPromptSection,
+} from "../long-term-memory/LtmInlineSettingsSections";
+import {
+  RecallStylePresets,
+  RecallBudgetControls,
+  RecallThresholdControls,
+  RecallRankingWeights,
+  RecallToggles,
+  useDebouncedRecallSettings,
+  type RecallSettingsValues,
+} from "../long-term-memory/RecallSettingsControls";
+import { StatusPill, ToolButton } from "../long-term-memory/LtmPills";
+import {
+  longTermMemoryKeys,
+  useLongTermMemoryStatus,
+  useLongTermMemoryExtractionSettings,
+  useUpdateLongTermMemoryExtractionSettings,
+  useLongTermMemorySettings,
+  useUpdateLongTermMemorySettings,
+  useRebuildLongTermMemory,
+  useRepairLongTermMemory,
+  useLongTermMemoryIntegrity,
+} from "../../hooks/use-long-term-memory";
 
 function parseActivationKeywordsText(value: string): string[] {
   const seen = new Set<string>();
@@ -177,6 +228,85 @@ function normalizeCustomResultType(value: unknown): CustomAgentResultType {
   return value === "text_rewrite" ? "text_rewrite" : "context_injection";
 }
 
+type LtmPromptTemplate = { id: string; name: string; prompt: string };
+type LtmActivePromptTemplateIdsByMode = Partial<Record<LtmMode, string | null>>;
+const LTM_EXTRACTION_MODES = ["roleplay", "conversation", "game"] as const satisfies readonly LtmMode[];
+
+function parseLtmAgentSettings(value: unknown): Record<string, unknown> {
+  if (typeof value === "string") {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch {
+      return {};
+    }
+  }
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function normalizeBoundedNumber(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+  options: { integer?: boolean } = {},
+) {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  const normalized = options.integer === false ? numeric : Math.trunc(numeric);
+  return Math.max(min, Math.min(max, normalized));
+}
+
+function normalizeNullableRecallWeight(value: number | null | undefined) {
+  if (value === null) return null;
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : null;
+}
+
+function createLtmRecallDraft(settings?: Partial<RecallSettingsValues> | null): RecallSettingsValues {
+  return {
+    longTermMemoryBudgetTokens: normalizeBoundedNumber(
+      settings?.longTermMemoryBudgetTokens,
+      DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryBudgetTokens,
+      128,
+      16_384,
+    ),
+    longTermMemoryMaxChunks: normalizeBoundedNumber(
+      settings?.longTermMemoryMaxChunks,
+      DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryMaxChunks,
+      1,
+      100,
+    ),
+    longTermMemoryScoreThreshold: normalizeBoundedNumber(
+      settings?.longTermMemoryScoreThreshold,
+      DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryScoreThreshold,
+      0,
+      1,
+      { integer: false },
+    ),
+    longTermMemoryRecallContextMessages: normalizeBoundedNumber(
+      settings?.longTermMemoryRecallContextMessages,
+      DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryRecallContextMessages,
+      1,
+      20,
+    ),
+    longTermMemoryRecallStyle:
+      settings?.longTermMemoryRecallStyle ?? DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryRecallStyle,
+    longTermMemorySemanticWeight: normalizeNullableRecallWeight(settings?.longTermMemorySemanticWeight),
+    longTermMemoryLexicalWeight: normalizeNullableRecallWeight(settings?.longTermMemoryLexicalWeight),
+    longTermMemoryGraphWeight: normalizeNullableRecallWeight(settings?.longTermMemoryGraphWeight),
+    longTermMemoryKeywordWeight: normalizeNullableRecallWeight(settings?.longTermMemoryKeywordWeight),
+    longTermMemoryIncludeResolved:
+      settings?.longTermMemoryIncludeResolved ?? DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryIncludeResolved,
+    longTermMemoryDebug: settings?.longTermMemoryDebug ?? DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryDebug,
+  };
+}
+
+function createLtmRecallSettingsPayload(values: RecallSettingsValues): LtmGlobalSettings {
+  return { version: 1, ...values };
+}
+
 // ═══════════════════════════════════════════════
 //  Main Editor
 // ═══════════════════════════════════════════════
@@ -202,13 +332,14 @@ export function AgentEditor() {
     return (agentConfigs as AgentConfigRow[]).find((c) => c.type === agentDetailId || c.id === agentDetailId) ?? null;
   }, [agentDetailId, agentConfigs]);
 
-  // Custom agent = DB entry with no matching built-in
-  const isCustomAgent = !builtIn && !!dbConfig;
+  // Managed agents have dedicated editors rather than generic custom-agent controls.
+  const isCustomAgent = !builtIn && !!dbConfig && !isManagedAgentType(dbConfig.type);
   const isNewCustomAgent = agentDetailId === "__new__";
   const customRunIntervalMeta =
     isCustomAgent || isNewCustomAgent
       ? getAgentRunIntervalMeta(isNewCustomAgent ? "__new__" : (dbConfig?.type ?? agentDetailId ?? ""), false)
       : null;
+  const isLtmAgent = dbConfig?.type === "long-term-memory";
 
   // Default prompt for this agent type
   const defaultPrompt = useMemo(() => (agentDetailId ? getDefaultAgentPrompt(agentDetailId) : ""), [agentDetailId]);
@@ -234,6 +365,161 @@ export function AgentEditor() {
   const [localIncludePreGenInjections, setLocalIncludePreGenInjections] = useState(false);
   const [localIncludeParallelResults, setLocalIncludeParallelResults] = useState(false);
   const [localEnabledTools, setLocalEnabledTools] = useState<string[]>([]);
+  const [vaultOpen, setVaultOpen] = useState<{
+    initialTab?: "notes" | "import" | "review" | "suggestions";
+    sourceNoteId?: string;
+  } | null>(null);
+  const memoriesModalOpen = vaultOpen !== null;
+  const [ltmAdvancedOpen, setLtmAdvancedOpen] = useState(false);
+  const ltmStatus = useLongTermMemoryStatus({ enabled: isLtmAgent });
+  const integrity = useLongTermMemoryIntegrity({ enabled: isLtmAgent });
+  const { data: ltmExtractionSettings } = useLongTermMemoryExtractionSettings({ enabled: isLtmAgent });
+  const updateExtractionSettings = useUpdateLongTermMemoryExtractionSettings();
+  const ltmGlobalSettingsResult = useLongTermMemorySettings({ enabled: isLtmAgent });
+  const ltmGlobalSettings = ltmGlobalSettingsResult.data;
+  const updateGlobalSettings = useUpdateLongTermMemorySettings();
+  const [ltmRecallDraft, setLtmRecallDraft] = useState<RecallSettingsValues | null>(null);
+  const ltmRecallHasLocalEditsRef = useRef(false);
+  const ltmRecallRevisionRef = useRef(0);
+  const ltmHasMemories = (ltmStatus.data?.notes.total ?? 0) > 0;
+  const ltmIndexHealth = integrity.data?.health ?? ltmStatus.data?.indexes.health;
+  const ltmSmartSearchAvailable = ltmStatus.data?.indexes.embeddingsAvailable === true;
+  const ltmSmartSearchReady =
+    ltmSmartSearchAvailable && (ltmIndexHealth === "healthy" || ltmIndexHealth === "degraded");
+  const ltmSearchStatusLabel = ltmSmartSearchReady
+    ? "Smart Search Ready"
+    : ltmSmartSearchAvailable
+      ? "Smart Search Stale"
+      : "Basic Search Only";
+  const ltmSearchStatusTitle = ltmSmartSearchReady
+    ? "Memory search can match related memories by meaning."
+    : ltmSmartSearchAvailable
+      ? "Smart matching exists, but the memory index needs maintenance before it is current."
+      : "Memory search is available, but smart matching has not been built yet.";
+  const ltmIndexStatus = ((health: LtmIndexHealth | undefined) => {
+    if (health === "healthy")
+      return { label: "Memory Index Healthy", tone: "good" as const, title: "The active memory index is current." };
+    if (health === "degraded")
+      return {
+        label: "Memory Index Degraded",
+        tone: "warn" as const,
+        title: "A recovered or rebuilding index is active. Check Maintenance for details.",
+      };
+    if (health === "stale")
+      return {
+        label: "Memory Index Stale",
+        tone: "warn" as const,
+        title: "Saved memories changed after the active index was built.",
+      };
+    if (health === "corrupt")
+      return {
+        label: "Memory Index Corrupt",
+        tone: "bad" as const,
+        title: "No valid current memory index is available. Open Maintenance to repair it.",
+      };
+    if (health === "not_built")
+      return {
+        label: "Memory Index Not Built",
+        tone: "neutral" as const,
+        title: "Build the memory index to enable indexed recall.",
+      };
+    return {
+      label: "Memory Index Unknown",
+      tone: "neutral" as const,
+      title: "Memory index status could not be determined.",
+    };
+  })(ltmIndexHealth);
+  const indexedMemoryChunkCount = ltmStatus.data?.indexes.chunkCount;
+  const indexedMemoryChunkLabel =
+    typeof indexedMemoryChunkCount === "number"
+      ? `${indexedMemoryChunkCount.toLocaleString()} indexed memory chunk${indexedMemoryChunkCount === 1 ? "" : "s"}`
+      : "Memory index not built";
+  useEffect(() => {
+    if (!isLtmAgent) {
+      ltmRecallHasLocalEditsRef.current = false;
+      setLtmRecallDraft(null);
+      return;
+    }
+    if (!ltmGlobalSettings || ltmRecallHasLocalEditsRef.current) return;
+    setLtmRecallDraft(createLtmRecallDraft(ltmGlobalSettings));
+  }, [isLtmAgent, ltmGlobalSettings]);
+  const patchGlobalSettings = useCallback(
+    (values: RecallSettingsValues) => {
+      const revision = ltmRecallRevisionRef.current;
+      updateGlobalSettings.mutate(createLtmRecallSettingsPayload(values), {
+        onSuccess: (settings) => {
+          if (revision !== ltmRecallRevisionRef.current) return;
+          ltmRecallHasLocalEditsRef.current = false;
+          setLtmRecallDraft(createLtmRecallDraft(settings));
+          qc.setQueryData(longTermMemoryKeys.settings(), settings);
+        },
+        onError: (err) => {
+          if (revision !== ltmRecallRevisionRef.current) return;
+          toast.error(err instanceof Error ? err.message : "Failed to save memory recall settings");
+        },
+      });
+    },
+    [qc, updateGlobalSettings],
+  );
+  const autosaveLtmRecallDraft = useCallback(
+    (values: Partial<RecallSettingsValues>) => patchGlobalSettings(createLtmRecallDraft(values)),
+    [patchGlobalSettings],
+  );
+  const { flush: flushLtmRecallDraft, schedule: debouncedPatchGlobal } = useDebouncedRecallSettings(
+    autosaveLtmRecallDraft,
+    400,
+  );
+  const [recallAdvancedOpen, setRecallAdvancedOpen] = useState(false);
+  const [maintenanceOpen, setMaintenanceOpen] = useState(false);
+  const rebuildMemories = useRebuildLongTermMemory();
+  const repairMemories = useRepairLongTermMemory();
+  const [lastRepairResult, setLastRepairResult] = useState<LtmRepairResponse | null>(null);
+
+  const [ltmDraft, setLtmDraft] = useState<{
+    connectionId: string;
+    model: string;
+    instruction: string;
+    importConcurrency: number;
+    autoApplyLowRisk: boolean;
+    reasoningEffort: string;
+    verbosity: string;
+    maxOutputTokens: number;
+    temperature: number;
+    maxSourceTokens: number;
+    maxExistingNoteTokens: number;
+    existingNoteMaxChunks: number;
+    existingNoteMaxTokens: number;
+    promptTemplates: LtmPromptTemplate[];
+    activePromptTemplateIdsByMode: LtmActivePromptTemplateIdsByMode;
+    aiKeywordExtraction: boolean;
+    refinePass: boolean;
+  } | null>(null);
+  const [ltmPromptDraftDirty, setLtmPromptDraftDirty] = useState(false);
+  const ltmSeededAgentRef = useRef<string | null>(null);
+
+  const runMemoryRepair = async () => {
+    const confirmed = await showConfirmDialog({
+      title: "Repair Memory Store?",
+      message:
+        "Malformed memory files will be moved into quarantine, missing imported-source titles will be restored, and the memory index will be rebuilt once.",
+      confirmLabel: "Repair",
+      tone: "destructive",
+    });
+    if (!confirmed) return;
+    try {
+      const result = await repairMemories.mutateAsync([
+        "quarantine_malformed_notes",
+        "backfill_imported_source_titles",
+        "rebuild_indexes",
+      ]);
+      setLastRepairResult(result);
+      const remaining = result.integrity.issues.filter((issue) => issue.severity !== "info").length;
+      if (result.integrity.ok) toast.success("Memory repair completed");
+      else toast.warning(`Memory repair completed with ${remaining} remaining issue${remaining === 1 ? "" : "s"}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Memory repair failed");
+    }
+  };
   const [localSpotifyClientId, setLocalSpotifyClientId] = useState("");
   const [localSourceLorebookIds, setLocalSourceLorebookIds] = useState<string[]>([]);
   const [localUseChatActiveLorebooks, setLocalUseChatActiveLorebooks] = useState(false);
@@ -396,6 +682,44 @@ export function AgentEditor() {
   // Background agent — can optionally generate missing roleplay backgrounds.
   const isBackgroundAgent = agentDetailId === "background" || dbConfig?.type === "background";
 
+  // Seed the managed LTM editor once per agent so refetches do not overwrite in-progress edits.
+  useEffect(() => {
+    if (!isLtmAgent) {
+      setLtmDraft(null);
+      setLtmPromptDraftDirty(false);
+      ltmSeededAgentRef.current = null;
+      return;
+    }
+    if (!dbConfig || !ltmExtractionSettings) return;
+    const agentKey = dbConfig.id || dbConfig.type || "";
+    if (ltmSeededAgentRef.current === agentKey) return;
+    ltmSeededAgentRef.current = agentKey;
+    const settings = parseLtmAgentSettings(dbConfig.settings);
+    setLtmDraft({
+      connectionId: typeof settings.connectionId === "string" ? settings.connectionId : "",
+      model: typeof settings.model === "string" ? settings.model : "",
+      instruction: typeof settings.instruction === "string" ? settings.instruction : "",
+      importConcurrency:
+        typeof settings.importConcurrency === "number"
+          ? Math.max(1, Math.min(10, Math.round(settings.importConcurrency)))
+          : 3,
+      autoApplyLowRisk: settings.autoApplyLowRisk === true,
+      reasoningEffort: ltmExtractionSettings.reasoningEffort,
+      verbosity: ltmExtractionSettings.verbosity,
+      maxOutputTokens: ltmExtractionSettings.maxOutputTokens,
+      temperature: ltmExtractionSettings.temperature,
+      maxSourceTokens: ltmExtractionSettings.maxSourceTokens,
+      maxExistingNoteTokens: ltmExtractionSettings.maxExistingNoteTokens,
+      existingNoteMaxChunks: ltmExtractionSettings.existingNoteMaxChunks,
+      existingNoteMaxTokens: ltmExtractionSettings.existingNoteMaxTokens,
+      promptTemplates: ltmExtractionSettings.promptTemplates,
+      activePromptTemplateIdsByMode: { ...ltmExtractionSettings.activePromptTemplateIdsByMode },
+      aiKeywordExtraction: ltmExtractionSettings.aiKeywordExtraction,
+      refinePass: ltmExtractionSettings.refinePass,
+    });
+    setLtmPromptDraftDirty(false);
+  }, [isLtmAgent, dbConfig, ltmExtractionSettings]);
+
   // Detect when both knowledge agents will actually run in parallel. Shows a
   // soft warning so users don't accidentally do overlapping work that bloats
   // the prompt with two injection blocks. Requires BOTH agents to have saved
@@ -494,9 +818,14 @@ export function AgentEditor() {
 
   const openAgentDetail = useUIStore((s) => s.openAgentDetail);
 
-  const handleSave = useCallback(async () => {
-    if (!agentDetailId) return;
+  const handleSave = useCallback(async (): Promise<boolean> => {
+    if (!agentDetailId) return false;
+    flushLtmRecallDraft();
     setSaveError(null);
+    if (isLtmAgent && ltmPromptDraftDirty) {
+      setSaveError("Save the prompt option in Extraction Prompt before saving the agent.");
+      return false;
+    }
     const isEditingCustomAgent = isCustomAgent || isNewCustomAgent;
     const savedPhase = isEditingCustomAgent && localResultType === "text_rewrite" ? "post_processing" : localPhase;
     const mayIncludeTurnData = isEditingCustomAgent && savedPhase === "post_processing";
@@ -512,56 +841,60 @@ export function AgentEditor() {
     // Preserve OAuth fields the form doesn't expose. The server replaces
     // `settings` wholesale, so anything we omit here would be wiped — and the
     // Spotify tokens live in settings rather than their own column.
-    const currentSettings: Record<string, unknown> = dbConfig?.settings
-      ? typeof dbConfig.settings === "string"
-        ? JSON.parse(dbConfig.settings as string)
-        : (dbConfig.settings as Record<string, unknown>)
-      : {};
+    const currentSettings = parseLtmAgentSettings(dbConfig?.settings);
     const preservedSpotifyFields: Record<string, unknown> = {};
     for (const key of ["spotifyAccessToken", "spotifyRefreshToken", "spotifyExpiresAt", "spotifyScope"]) {
       if (currentSettings[key] !== undefined) preservedSpotifyFields[key] = currentSettings[key];
     }
 
+    const settings = isLtmAgent
+      ? {
+          ...currentSettings,
+          author: "Promansis",
+          connectionId: ltmDraft?.connectionId ?? "",
+          model: ltmDraft?.model ?? "",
+          instruction: ltmDraft?.instruction ?? "",
+          importConcurrency: ltmDraft?.importConcurrency ?? 3,
+          autoApplyLowRisk: ltmDraft?.autoApplyLowRisk ?? false,
+        }
+      : {
+          ...preservedSpotifyFields,
+          ...(isEditingCustomAgent ? { resultType: localResultType } : {}),
+          ...(activationKeywords.length > 0
+            ? {
+                activationKeywords,
+                activationScanDepth,
+              }
+            : {}),
+          ...(mayIncludeTurnData && localIncludePreGenInjections ? { includePreGenInjections: true } : {}),
+          ...(mayIncludeTurnData && localIncludeParallelResults ? { includeParallelResults: true } : {}),
+          ...(localContextSize !== "" ? { contextSize: Number(localContextSize) } : {}),
+          ...(localMaxTokens !== "" ? { maxTokens: clampAgentMaxTokens(localMaxTokens) } : {}),
+          ...(localRunInterval !== "" ? { runInterval: Number(localRunInterval) } : {}),
+          ...(localInjectAsSection ? { injectAsSection: true } : {}),
+          enabledTools: localEnabledTools,
+          ...(localSpotifyClientId ? { spotifyClientId: localSpotifyClientId } : {}),
+          ...(isKnowledgeRetrievalAgent || isKnowledgeRouterAgent
+            ? { useChatActiveLorebooks: localUseChatActiveLorebooks }
+            : {}),
+          ...(localSourceLorebookIds.length > 0 ? { sourceLorebookIds: localSourceLorebookIds } : {}),
+          ...(isKnowledgeRetrievalAgent && localSourceFileIds.length > 0 ? { sourceFileIds: localSourceFileIds } : {}),
+          ...(localImageConnectionId ? { imageConnectionId: localImageConnectionId } : {}),
+          ...(localAutoGenerateAvatars ? { autoGenerateAvatars: true } : {}),
+          ...(localAutoGenerateBackgrounds ? { autoGenerateBackgrounds: true } : {}),
+          ...(localUseAvatarReferences ? { useAvatarReferences: true } : {}),
+          ...(localImagePositivePrompt.trim() ? { imagePositivePrompt: localImagePositivePrompt.trim() } : {}),
+          ...(localImageNegativePrompt.trim() ? { imageNegativePrompt: localImageNegativePrompt.trim() } : {}),
+        };
+
     const payload = {
       name: localName,
       description: localDescription,
       phase: savedPhase,
-      enabled: localAgentEnabled,
+      enabled: isLtmAgent ? true : localAgentEnabled,
       connectionId: localConnectionId || null,
       promptTemplate: localPrompt,
-      settings: {
-        ...preservedSpotifyFields,
-        ...(isEditingCustomAgent ? { resultType: localResultType } : {}),
-        ...(activationKeywords.length > 0
-          ? {
-              activationKeywords,
-              activationScanDepth,
-            }
-          : {}),
-        ...(mayIncludeTurnData && localIncludePreGenInjections ? { includePreGenInjections: true } : {}),
-        ...(mayIncludeTurnData && localIncludeParallelResults ? { includeParallelResults: true } : {}),
-        ...(localContextSize !== "" ? { contextSize: Number(localContextSize) } : {}),
-        ...(localMaxTokens !== "" ? { maxTokens: clampAgentMaxTokens(localMaxTokens) } : {}),
-        ...(localRunInterval !== "" ? { runInterval: Number(localRunInterval) } : {}),
-        ...(localInjectAsSection ? { injectAsSection: true } : {}),
-        enabledTools: localEnabledTools,
-        ...(localSpotifyClientId ? { spotifyClientId: localSpotifyClientId } : {}),
-        ...(isKnowledgeRetrievalAgent || isKnowledgeRouterAgent
-          ? { useChatActiveLorebooks: localUseChatActiveLorebooks }
-          : {}),
-        ...(localSourceLorebookIds.length > 0 ? { sourceLorebookIds: localSourceLorebookIds } : {}),
-        // Only persist sourceFileIds for the Knowledge Retrieval agent — the Router
-        // doesn't read this setting. Without this guard, switching an agent from
-        // Retrieval to Router would leave behind stale file IDs the user can no
-        // longer see or remove via the UI.
-        ...(isKnowledgeRetrievalAgent && localSourceFileIds.length > 0 ? { sourceFileIds: localSourceFileIds } : {}),
-        ...(localImageConnectionId ? { imageConnectionId: localImageConnectionId } : {}),
-        ...(localAutoGenerateAvatars ? { autoGenerateAvatars: true } : {}),
-        ...(localAutoGenerateBackgrounds ? { autoGenerateBackgrounds: true } : {}),
-        ...(localUseAvatarReferences ? { useAvatarReferences: true } : {}),
-        ...(localImagePositivePrompt.trim() ? { imagePositivePrompt: localImagePositivePrompt.trim() } : {}),
-        ...(localImageNegativePrompt.trim() ? { imageNegativePrompt: localImageNegativePrompt.trim() } : {}),
-      },
+      settings,
     };
 
     try {
@@ -580,11 +913,58 @@ export function AgentEditor() {
           openAgentDetail(created.id);
         }
       }
+      if (isLtmAgent && ltmDraft) {
+        const extractionPayload: Record<string, unknown> = { version: 1 };
+        const maxOutputTokens = normalizeBoundedNumber(
+          ltmDraft.maxOutputTokens,
+          DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
+          512,
+          32_768,
+        );
+        const temperature = normalizeBoundedNumber(
+          ltmDraft.temperature,
+          DEFAULT_LTM_EXTRACTION_TEMPERATURE,
+          0,
+          2,
+          { integer: false },
+        );
+        const maxExistingNoteTokens = normalizeBoundedNumber(
+          ltmDraft.maxExistingNoteTokens,
+          DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
+          128,
+          32_768,
+        );
+        const activePromptTemplateIdsByMode = Object.fromEntries(
+          LTM_EXTRACTION_MODES.flatMap((mode) => {
+            const id = ltmDraft.activePromptTemplateIdsByMode[mode];
+            return id ? [[mode, id]] : [];
+          }),
+        );
+        if (ltmDraft.reasoningEffort !== DEFAULT_LTM_EXTRACTION_REASONING_EFFORT)
+          extractionPayload.reasoningEffort = ltmDraft.reasoningEffort;
+        if (ltmDraft.verbosity !== DEFAULT_LTM_EXTRACTION_VERBOSITY) extractionPayload.verbosity = ltmDraft.verbosity;
+        if (maxOutputTokens !== DEFAULT_LTM_EXTRACTION_MAX_TOKENS) extractionPayload.maxOutputTokens = maxOutputTokens;
+        if (temperature !== DEFAULT_LTM_EXTRACTION_TEMPERATURE) extractionPayload.temperature = temperature;
+        if (maxExistingNoteTokens !== DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS)
+          extractionPayload.maxExistingNoteTokens = maxExistingNoteTokens;
+        if (ltmDraft.existingNoteMaxTokens !== DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS)
+          extractionPayload.existingNoteMaxTokens = ltmDraft.existingNoteMaxTokens;
+        if (ltmDraft.promptTemplates.length > 0) extractionPayload.promptTemplates = ltmDraft.promptTemplates;
+        if (Object.keys(activePromptTemplateIdsByMode).length > 0) {
+          extractionPayload.activePromptTemplateIdsByMode = activePromptTemplateIdsByMode;
+        }
+        if (ltmDraft.aiKeywordExtraction === true) extractionPayload.aiKeywordExtraction = true;
+        if (ltmDraft.refinePass === true) extractionPayload.refinePass = true;
+        const savedExtractionSettings = await updateExtractionSettings.mutateAsync(extractionPayload as any);
+        qc.setQueryData(longTermMemoryKeys.extractionSettings(), savedExtractionSettings);
+      }
       setDirty(false);
       setSavedFlash(true);
       setTimeout(() => setSavedFlash(false), 1500);
+      return true;
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Failed to save agent config");
+      return false;
     }
   }, [
     agentDetailId,
@@ -620,6 +1000,12 @@ export function AgentEditor() {
     isNewCustomAgent,
     isKnowledgeRetrievalAgent,
     isKnowledgeRouterAgent,
+    isLtmAgent,
+    flushLtmRecallDraft,
+    ltmPromptDraftDirty,
+    ltmDraft,
+    updateExtractionSettings,
+    qc,
     updateAgent,
     createAgent,
     openAgentDetail,
@@ -636,6 +1022,37 @@ export function AgentEditor() {
   }, [defaultPrompt]);
 
   const markDirty = useCallback(() => setDirty(true), []);
+
+  const updateLtmDraft = useCallback(
+    (patch: Record<string, unknown>) => {
+      setLtmDraft((prev) => (prev ? { ...prev, ...patch } : prev));
+      markDirty();
+    },
+    [markDirty],
+  );
+
+  const updateLtmRecallDraft = useCallback(
+    (patch: Partial<RecallSettingsValues>) => {
+      setLtmRecallDraft((current) => {
+        if (!current) return current;
+        const next = createLtmRecallDraft({ ...current, ...patch });
+        ltmRecallRevisionRef.current += 1;
+        ltmRecallHasLocalEditsRef.current = true;
+        debouncedPatchGlobal(next);
+        return next;
+      });
+      markDirty();
+    },
+    [debouncedPatchGlobal, markDirty],
+  );
+
+  const handleLtmPromptDraftDirtyChange = useCallback(
+    (nextDirty: boolean) => {
+      setLtmPromptDraftDirty(nextDirty);
+      if (nextDirty) markDirty();
+    },
+    [markDirty],
+  );
 
   const phaseMeta = PHASE_META[localPhase];
   const effectivePhase =
@@ -2088,6 +2505,8 @@ export function AgentEditor() {
             </FieldGroup>
           )}
 
+          {!isLtmAgent && (
+            <>
           {/* ── Prompt Template ── */}
           <FieldGroup
             label="Prompt Template"
@@ -2207,7 +2626,356 @@ export function AgentEditor() {
               Tool-use must also be enabled per chat via Chat Settings → "Enable Function Calling".
             </p>
           </FieldGroup>
+            </>
+          )}
 
+          {/* ── LTM Memories Section ── */}
+          {isLtmAgent && dbConfig && (
+            <>
+              <FieldGroup
+                label="Memories"
+                icon={<DatabaseZap size="0.875rem" className="text-[var(--primary)]" />}
+                help="Browse, search, and manage memories. Extraction and recall settings are configured per chat or in Long-Term Memory settings."
+              >
+                {(() => {
+                  const connArray = (connections ?? []) as Array<{ id: string }>;
+                  const draftConnId = ltmDraft?.connectionId ?? "";
+                  const hasConnection = !!draftConnId && connArray.some((c) => c.id === draftConnId);
+                  if (!hasConnection) {
+                    return (
+                      <div className="mb-3 rounded-xl border border-[var(--primary)]/20 bg-[var(--primary)]/8 p-4">
+                        <div className="flex items-center gap-2">
+                          <Plug size="1rem" className="text-[var(--primary)]" />
+                          <p className="text-sm font-medium text-[var(--foreground)]">
+                            Memory needs an AI connection to extract facts
+                          </p>
+                        </div>
+                        <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                          Pick one in the connection dropdown below.
+                        </p>
+                      </div>
+                    );
+                  }
+                  if (ltmStatus.isLoading) {
+                    return (
+                      <div className="mb-3 flex items-center gap-2 rounded-lg bg-[var(--secondary)]/45 p-3 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                        <Loader2 size="0.875rem" className="animate-spin" />
+                        Loading memory status...
+                      </div>
+                    );
+                  }
+                  if (ltmStatus.isError && !ltmStatus.data) {
+                    return (
+                      <div
+                        role="alert"
+                        className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--destructive)]/25 bg-[var(--destructive)]/5 p-3 text-xs"
+                      >
+                        <span className="flex items-center gap-2">
+                          <AlertCircle size="0.875rem" className="text-[var(--destructive)]" />
+                          Memory status could not load.
+                        </span>
+                        <ToolButton onClick={() => void ltmStatus.refetch()}>
+                          <RotateCcw size="0.75rem" />
+                          Retry
+                        </ToolButton>
+                      </div>
+                    );
+                  }
+                  if (!ltmHasMemories) {
+                    return (
+                      <div className="mb-3 rounded-xl border border-[var(--primary)]/20 bg-[var(--primary)]/8 p-4">
+                        <div className="flex items-center gap-2">
+                          <FileJson size="1rem" className="text-[var(--primary)]" />
+                          <p className="text-sm font-medium text-[var(--foreground)]">Ready to import</p>
+                        </div>
+                        <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                          Bring in characters, lorebooks, or chats to get started.
+                        </p>
+                        <ToolButton
+                          onClick={() => setVaultOpen({ initialTab: "import" })}
+                          tone="primary"
+                          size="default"
+                        >
+                          <Import size="0.875rem" />
+                          Import
+                        </ToolButton>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+                {ltmHasMemories && (
+                  <div className="mb-3 flex flex-wrap gap-1.5">
+                    {ltmStatus.data && (
+                      <StatusPill
+                        label={ltmSearchStatusLabel}
+                        tone={ltmSmartSearchReady ? "good" : ltmSmartSearchAvailable ? "warn" : "neutral"}
+                        title={ltmSearchStatusTitle}
+                      />
+                    )}
+                    {ltmIndexHealth && (
+                      <StatusPill
+                        label={ltmIndexStatus.label}
+                        tone={ltmIndexStatus.tone}
+                        title={ltmIndexStatus.title}
+                      />
+                    )}
+                  </div>
+                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  <ToolButton
+                    onClick={() => setVaultOpen({ initialTab: "notes" })}
+                    tone="primary"
+                    size="default"
+                  >
+                    <DatabaseZap size="0.875rem" />
+                    Manage Memories
+                  </ToolButton>
+                  <ToolButton
+                    onClick={() => setVaultOpen({ initialTab: "import" })}
+                    tone="primary"
+                    size="default"
+                  >
+                    <Import size="0.875rem" />
+                    Import
+                  </ToolButton>
+                </div>
+              </FieldGroup>
+              <LtmExtractionConnectionSection
+                connectionId={ltmDraft?.connectionId ?? ""}
+                onChangeConnectionId={(value) => updateLtmDraft({ connectionId: value })}
+              />
+              <LtmExtractionPromptSection
+                promptTemplates={ltmDraft?.promptTemplates ?? []}
+                activePromptTemplateIdsByMode={ltmDraft?.activePromptTemplateIdsByMode ?? {}}
+                aiKeywordExtraction={ltmDraft?.aiKeywordExtraction ?? false}
+                refinePass={ltmDraft?.refinePass ?? false}
+                onChangePromptTemplates={(templates) => updateLtmDraft({ promptTemplates: templates })}
+                onChangeActivePromptTemplateIdsByMode={(value) =>
+                  updateLtmDraft({ activePromptTemplateIdsByMode: value })
+                }
+                onChangeAiKeywordExtraction={(value) => updateLtmDraft({ aiKeywordExtraction: value })}
+                onChangeRefinePass={(value) => updateLtmDraft({ refinePass: value })}
+                onPromptDraftDirtyChange={handleLtmPromptDraftDirtyChange}
+              />
+              <FieldGroup
+                label="Long-Term Memory defaults"
+                icon={<BrainCircuit size="0.875rem" className="text-[var(--primary)]" />}
+              >
+                {ltmRecallDraft ? (
+                  <>
+                    <RecallStylePresets
+                      values={{ longTermMemoryRecallStyle: ltmRecallDraft.longTermMemoryRecallStyle }}
+                      onChange={updateLtmRecallDraft}
+                    />
+                    <RecallBudgetControls
+                      values={{
+                        longTermMemoryBudgetTokens: ltmRecallDraft.longTermMemoryBudgetTokens,
+                        longTermMemoryMaxChunks: ltmRecallDraft.longTermMemoryMaxChunks,
+                      }}
+                      onChange={updateLtmRecallDraft}
+                    />
+                    <FieldGroup
+                      label="Advanced Long-Term Memory"
+                      collapsible
+                      expanded={recallAdvancedOpen}
+                      onExpandedChange={setRecallAdvancedOpen}
+                    >
+                      <RecallThresholdControls
+                        values={{
+                          longTermMemoryScoreThreshold: ltmRecallDraft.longTermMemoryScoreThreshold,
+                          longTermMemoryRecallContextMessages: ltmRecallDraft.longTermMemoryRecallContextMessages,
+                        }}
+                        onChange={updateLtmRecallDraft}
+                      />
+                      <RecallRankingWeights
+                        values={{
+                          longTermMemoryRecallStyle: ltmRecallDraft.longTermMemoryRecallStyle,
+                          longTermMemorySemanticWeight: ltmRecallDraft.longTermMemorySemanticWeight,
+                          longTermMemoryLexicalWeight: ltmRecallDraft.longTermMemoryLexicalWeight,
+                          longTermMemoryGraphWeight: ltmRecallDraft.longTermMemoryGraphWeight,
+                          longTermMemoryKeywordWeight: ltmRecallDraft.longTermMemoryKeywordWeight,
+                        }}
+                        onChange={updateLtmRecallDraft}
+                      />
+                      <RecallToggles
+                        values={{
+                          longTermMemoryIncludeResolved: ltmRecallDraft.longTermMemoryIncludeResolved,
+                          longTermMemoryDebug: ltmRecallDraft.longTermMemoryDebug,
+                        }}
+                        onChange={updateLtmRecallDraft}
+                      />
+                    </FieldGroup>
+                  </>
+                ) : (
+                  <p className="rounded-xl bg-[var(--secondary)]/60 px-3 py-2 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                    Loading recall defaults...
+                  </p>
+                )}
+              </FieldGroup>
+              <FieldGroup
+                label="Advanced"
+                icon={<DatabaseZap size="0.875rem" className="text-[var(--primary)]" />}
+                collapsible
+                expanded={ltmAdvancedOpen}
+                onExpandedChange={setLtmAdvancedOpen}
+              >
+                <LtmInlineSettingsSections
+                  extractionSettings={{
+                    reasoningEffort: ltmDraft?.reasoningEffort ?? DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
+                    verbosity: ltmDraft?.verbosity ?? DEFAULT_LTM_EXTRACTION_VERBOSITY,
+                    maxOutputTokens: ltmDraft?.maxOutputTokens ?? DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
+                    temperature: ltmDraft?.temperature ?? DEFAULT_LTM_EXTRACTION_TEMPERATURE,
+                    maxExistingNoteTokens:
+                      ltmDraft?.maxExistingNoteTokens ?? DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
+                  }}
+                  autoApplyLowRisk={ltmDraft?.autoApplyLowRisk ?? false}
+                  onChangeExtraction={(patch) => updateLtmDraft(patch)}
+                  onChangeGlobal={(patch) => updateLtmDraft(patch)}
+                />
+              </FieldGroup>
+              <FieldGroup
+                label="Maintenance"
+                icon={<DatabaseZap size="0.875rem" className="text-[var(--primary)]" />}
+                collapsible
+                expanded={maintenanceOpen}
+                onExpandedChange={setMaintenanceOpen}
+              >
+                <div className="mb-3 flex flex-wrap gap-1.5">
+                  <StatusPill
+                    label={indexedMemoryChunkLabel}
+                    title="Technical maintenance count: memory search splits saved memories into chunks before indexing."
+                  />
+                  {ltmIndexHealth && (
+                    <StatusPill label={ltmIndexStatus.label} tone={ltmIndexStatus.tone} title={ltmIndexStatus.title} />
+                  )}
+                  {(ltmStatus.isLoading || integrity.isLoading) && <StatusPill label="Checking memory store" />}
+                </div>
+                {(ltmStatus.isError || integrity.isError) && (
+                  <div
+                    role="alert"
+                    className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--destructive)]/25 bg-[var(--destructive)]/5 p-3 text-xs"
+                  >
+                    <div className="flex min-w-0 items-center gap-2">
+                      <AlertCircle size="0.875rem" className="shrink-0 text-[var(--destructive)]" />
+                      <span>
+                        {ltmStatus.data || integrity.data
+                          ? "Memory maintenance status could not refresh. Showing the last known result."
+                          : "Memory maintenance status could not load."}
+                      </span>
+                    </div>
+                    <ToolButton
+                      onClick={() => {
+                        void ltmStatus.refetch();
+                        void integrity.refetch();
+                      }}
+                    >
+                      <RotateCcw size="0.75rem" />
+                      Retry
+                    </ToolButton>
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <ToolButton
+                    onClick={() =>
+                      rebuildMemories
+                        .mutateAsync()
+                        .then(() => {
+                          setLastRepairResult(null);
+                          toast.success("Memory search refreshed");
+                        })
+                        .catch((err: Error) => toast.error(err.message))
+                    }
+                    disabled={rebuildMemories.isPending}
+                    tone="primary"
+                  >
+                    <RefreshCw size="0.875rem" />
+                    Reindex Memories
+                  </ToolButton>
+                  <ToolButton onClick={() => void runMemoryRepair()} disabled={repairMemories.isPending} tone="danger">
+                    {repairMemories.isPending ? (
+                      <Loader2 size="0.875rem" className="animate-spin" />
+                    ) : (
+                      <Hammer size="0.875rem" />
+                    )}
+                    Repair Memory Store
+                  </ToolButton>
+                </div>
+                {lastRepairResult && (
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    className="mt-3 space-y-2 rounded-lg bg-[var(--secondary)]/45 p-3 text-xs ring-1 ring-[var(--border)]"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-semibold text-[var(--foreground)]">Latest repair</span>
+                      <StatusPill
+                        label={lastRepairResult.integrity.ok ? "Store healthy" : "Issues remain"}
+                        tone={lastRepairResult.integrity.ok ? "good" : "warn"}
+                      />
+                    </div>
+                    {lastRepairResult.actions.map((action) => (
+                      <div key={action.action} className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-[var(--muted-foreground)]">
+                          {action.action === "quarantine_malformed_notes"
+                            ? "Malformed files"
+                            : action.action === "backfill_imported_source_titles"
+                              ? "Imported-source titles"
+                              : "Memory index"}
+                        </span>
+                        <span className="font-medium text-[var(--foreground)]">
+                          {action.result.replaceAll("_", " ")}
+                          {typeof action.count === "number" ? ` (${action.count})` : ""}
+                        </span>
+                      </div>
+                    ))}
+                    <p className="text-[var(--muted-foreground)]">
+                      {lastRepairResult.integrity.issues.filter((issue) => issue.severity !== "info").length} remaining
+                      issue
+                      {lastRepairResult.integrity.issues.filter((issue) => issue.severity !== "info").length === 1
+                        ? ""
+                        : "s"}
+                    </p>
+                  </div>
+                )}
+                <div className="mt-3 space-y-2">
+                  {(integrity.data?.issues ?? [])
+                    .filter((issue: { severity: string }) => issue.severity !== "info")
+                    .slice(0, 8)
+                    .map(
+                      (issue: { code: string; path?: string; noteId?: string; message: string; severity: string }) => (
+                        <div
+                          key={`${issue.code}-${issue.path ?? issue.noteId ?? issue.message}`}
+                          className="rounded-lg bg-[var(--secondary)]/50 p-3 text-xs ring-1 ring-[var(--border)]"
+                        >
+                          <div className="flex items-center gap-2 font-medium">
+                            {issue.severity === "error" ? (
+                              <AlertTriangle size="0.875rem" className="text-rose-300" />
+                            ) : (
+                              <ShieldCheck size="0.875rem" />
+                            )}
+                            {issue.code}
+                          </div>
+                          <p className="mt-1 text-xs text-[var(--muted-foreground)]">{issue.message}</p>
+                        </div>
+                      ),
+                    )}
+                </div>
+              </FieldGroup>
+            </>
+          )}
+
+          {/* ── LTM Memories Modal ── */}
+          <Modal open={memoriesModalOpen} onClose={() => setVaultOpen(null)} title="Long-Term Memory" width="max-w-5xl">
+            {memoriesModalOpen && dbConfig && (
+              <LtmVaultManagerSection
+                agentConfig={dbConfig}
+                agentSettings={JSON.parse(dbConfig.settings ?? "{}") as Record<string, unknown>}
+                initialTab={vaultOpen?.initialTab}
+                sourceNoteId={vaultOpen?.sourceNoteId}
+              />
+            )}
+          </Modal>
           {/* ── Agent Info Card ── */}
           <div className="rounded-xl bg-[var(--card)] p-4 ring-1 ring-[var(--border)]">
             <h3 className="mb-2 text-xs font-semibold text-[var(--foreground)]">About this Agent</h3>
@@ -2242,17 +3010,54 @@ export function AgentEditor() {
 //  Shared Components
 // ═══════════════════════════════════════════════
 
-function FieldGroup({
+export function FieldGroup({
   label,
   icon,
   help,
+  collapsible = false,
+  expanded = true,
+  onExpandedChange,
+  summary,
   children,
 }: {
   label: string;
   icon?: React.ReactNode;
   help?: string;
+  collapsible?: boolean;
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
+  summary?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  if (collapsible) {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => onExpandedChange?.(!expanded)}
+            className="flex min-w-0 flex-1 items-center gap-1.5 rounded-lg py-1 text-left transition-colors hover:text-[var(--foreground)]"
+            aria-expanded={expanded}
+          >
+            {icon}
+            <h3 className="text-xs font-semibold text-[var(--foreground)]">{label}</h3>
+            {summary && (
+              <span className="ml-auto rounded-full bg-[var(--secondary)] px-2 py-0.5 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                {summary}
+              </span>
+            )}
+            {expanded ? (
+              <ChevronUp size="0.8125rem" className="shrink-0 text-[var(--muted-foreground)]" />
+            ) : (
+              <ChevronDown size="0.8125rem" className="shrink-0 text-[var(--muted-foreground)]" />
+            )}
+          </button>
+          {help && <HelpTooltip text={help} />}
+        </div>
+        {expanded && children}
+      </div>
+    );
+  }
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-1.5">

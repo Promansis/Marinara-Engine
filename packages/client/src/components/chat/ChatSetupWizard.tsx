@@ -19,6 +19,7 @@ import {
   Wand2,
   ArrowLeft,
   UserRound,
+  BrainCircuit,
 } from "lucide-react";
 import { cn, getAvatarCropStyle, type AvatarCrop } from "../../lib/utils";
 import { useConnections } from "../../hooks/use-connections";
@@ -344,6 +345,7 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
     const raw = (chat as unknown as { metadata?: string | Record<string, unknown> }).metadata;
     return typeof raw === "string" ? JSON.parse(raw) : (raw ?? {});
   }, [chat]);
+  const [enableLtm, setEnableLtm] = useState(() => metadata.enableLongTermMemory === true);
   const connectionOptions = useMemo(
     () => filterLanguageGenerationConnections((connections ?? []) as ConnectionSetupOption[]),
     [connections],
@@ -466,6 +468,7 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
       conversationSchedulesEnabled: autonomousEnabled && generateSchedule,
       chatParameters: customizeParameters ? generationParameters : null,
       ...(savedPrompt ? { customSystemPrompt: savedPrompt } : {}),
+      enableLongTermMemory: enableLtm,
     });
     if (autonomousEnabled && generateSchedule) {
       setScheduleState("generating");
@@ -495,6 +498,7 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
     updateMeta,
     customizeParameters,
     generationParameters,
+    enableLtm,
   ]);
 
   return (
@@ -590,6 +594,39 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
               </label>
               <PersonaPicker personas={personas} value={chat.personaId ?? null} onChange={setPersona} />
             </div>
+
+            <button
+              type="button"
+              onClick={() => setEnableLtm((value) => !value)}
+              aria-pressed={enableLtm}
+              className={cn(
+                "flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left transition-all",
+                enableLtm
+                  ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+                  : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
+              )}
+            >
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <BrainCircuit
+                  size="0.875rem"
+                  className={enableLtm ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]"}
+                />
+                <div>
+                  <span className="text-xs font-medium">Long-Term Memory</span>
+                  <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                    Recall saved memories from this conversation into the prompt.
+                  </p>
+                </div>
+              </div>
+              <div
+                className={cn(
+                  "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+                  enableLtm ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
+                )}
+              >
+                <div className={cn("h-4 w-4 rounded-full bg-white transition-transform", enableLtm && "translate-x-3.5")} />
+              </div>
+            </button>
 
             {/* Character picker — main area */}
             <div className="space-y-1.5">

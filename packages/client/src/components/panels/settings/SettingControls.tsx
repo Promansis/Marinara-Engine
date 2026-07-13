@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { Bell, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { useUIStore } from "../../../stores/ui.store";
@@ -8,6 +8,7 @@ import {
   type LocalNotificationPermission,
 } from "../../../lib/local-notifications";
 import { playNotificationPing } from "../../../lib/notification-sound";
+import { cn } from "../../../lib/utils";
 import { HelpTooltip } from "../../ui/HelpTooltip";
 
 export function ConversationSoundSetting() {
@@ -114,5 +115,197 @@ export function ToggleSetting({
         </span>
       )}
     </label>
+  );
+}
+
+export function SettingsCheckbox({
+  label,
+  checked,
+  onChange,
+  help,
+  description,
+  disabled = false,
+  tone = "default",
+  align = "start",
+  className,
+  labelClassName,
+}: {
+  label: ReactNode;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  help?: string;
+  description?: ReactNode;
+  disabled?: boolean;
+  tone?: "default" | "danger";
+  align?: "start" | "between";
+  className?: string;
+  labelClassName?: string;
+}) {
+  const input = (
+    <input
+      type="checkbox"
+      checked={checked}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.checked)}
+      className={cn(
+        "h-3.5 w-3.5 shrink-0 rounded border-[var(--border)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+        tone === "danger" ? "accent-[var(--destructive)]" : "accent-[var(--primary)]",
+        align === "start" && "mt-0.5",
+      )}
+    />
+  );
+  const text = (
+    <span className={cn("min-w-0 text-xs", labelClassName)}>
+      <span className="inline-flex min-w-0 items-center gap-1.5">
+        <span className="min-w-0">{label}</span>
+        {align !== "between" && help && (
+          <span onClick={(e) => e.preventDefault()}>
+            <HelpTooltip text={help} />
+          </span>
+        )}
+      </span>
+      {description && (
+        <span className="mt-0.5 block text-[0.625rem] leading-relaxed text-[var(--marinara-chat-chrome-panel-muted)]">
+          {description}
+        </span>
+      )}
+    </span>
+  );
+  const inputCluster = (
+    <span className="inline-flex shrink-0 items-center gap-1.5">
+      {align === "between" && help && (
+        <span onClick={(e) => e.preventDefault()}>
+          <HelpTooltip text={help} />
+        </span>
+      )}
+      {input}
+    </span>
+  );
+
+  return (
+    <label
+      className={cn(
+        "flex cursor-pointer rounded-lg transition-colors hover:bg-[var(--secondary)]/50",
+        align === "between" ? "items-center justify-between gap-3 p-1.5" : "items-start gap-2.5 p-1.5",
+        disabled && "cursor-not-allowed opacity-60 hover:bg-transparent",
+        className,
+      )}
+    >
+      {align === "between" ? (
+        <>
+          {text}
+          {inputCluster}
+        </>
+      ) : (
+        <>
+          {input}
+          {text}
+        </>
+      )}
+    </label>
+  );
+}
+
+type SettingsSwitchAccessibleLabel = { label: ReactNode; ariaLabel?: never } | { label?: undefined; ariaLabel: string };
+
+type SettingsSwitchProps = SettingsSwitchAccessibleLabel & {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  title?: string;
+  description?: ReactNode;
+  help?: string;
+  disabled?: boolean;
+  labelPosition?: "start" | "end";
+  className?: string;
+  labelClassName?: string;
+  switchClassName?: string;
+};
+
+export function SettingsSwitch({
+  label,
+  checked,
+  onChange,
+  ariaLabel,
+  title,
+  description,
+  help,
+  disabled = false,
+  labelPosition = "end",
+  className,
+  labelClassName,
+  switchClassName,
+}: SettingsSwitchProps) {
+  const inputId = useId();
+  const switchControl = (
+    <span className="relative inline-flex h-5 w-9 shrink-0">
+      <input
+        id={inputId}
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        aria-label={!label ? ariaLabel : undefined}
+        onChange={(e) => onChange(e.target.checked)}
+        className="peer sr-only"
+      />
+      <label
+        htmlFor={inputId}
+        title={title}
+        className={cn(
+          "relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--ring)]",
+          checked ? "bg-[var(--primary)]/70" : "bg-[var(--border)]",
+          checked && "mari-accent-animated",
+          disabled ? "cursor-not-allowed" : "cursor-pointer",
+          switchClassName,
+        )}
+      >
+        <span
+          className={cn(
+            "pointer-events-none absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-[var(--background)] shadow-sm ring-1 ring-[var(--border)] transition-transform",
+            checked && "translate-x-4",
+          )}
+        />
+      </label>
+    </span>
+  );
+  const switchCluster = (
+    <span className="inline-flex shrink-0 items-center gap-1.5">
+      {help && <HelpTooltip text={help} />}
+      {switchControl}
+    </span>
+  );
+  const text = label ? (
+    <span className={cn("min-w-0 text-sm", labelClassName)}>
+      <span className="inline-flex min-w-0 items-center gap-1.5">
+        <label htmlFor={inputId} className={cn("min-w-0", disabled ? "cursor-not-allowed" : "cursor-pointer")}>
+          {label}
+        </label>
+      </span>
+      {description && (
+        <label
+          htmlFor={inputId}
+          className={cn(
+            "mt-0.5 block text-[0.625rem] leading-relaxed text-[var(--marinara-chat-chrome-panel-muted)]",
+            disabled ? "cursor-not-allowed" : "cursor-pointer",
+          )}
+        >
+          {description}
+        </label>
+      )}
+    </span>
+  ) : null;
+
+  return (
+    <div
+      title={title}
+      className={cn(
+        "flex items-center gap-3 rounded-xl p-2 transition-colors hover:bg-[var(--secondary)]/50",
+        disabled && "cursor-not-allowed opacity-60 hover:bg-transparent",
+        className,
+      )}
+    >
+      {labelPosition === "start" && text}
+      {switchCluster}
+      {labelPosition === "end" && text}
+    </div>
   );
 }
