@@ -543,14 +543,9 @@ export function LongTermMemoryNoteEditor({
                 Scope this memory to the right chats, characters, or group so recall stays predictable.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={useCurrentChatScope}
-              disabled={!activeChat}
-              className="rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50"
-            >
+            <ToolButton onClick={useCurrentChatScope} disabled={!activeChat}>
               Use this chat
-            </button>
+            </ToolButton>
           </div>
           <LtmScopePicker
             value={{
@@ -610,7 +605,7 @@ export function LongTermMemoryNoteEditor({
                 <button
                   type="button"
                   onClick={() => removeSection(key)}
-                  className="rounded-lg px-2 text-[var(--destructive)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--destructive)]/10 active:scale-95"
+                  className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon mari-chrome-control--danger shrink-0"
                   aria-label={`Remove ${friendlySectionKey(key)}`}
                 >
                   <Trash2 size="0.875rem" />
@@ -758,32 +753,20 @@ export function LongTermMemoryNoteEditor({
                         placeholder="Advanced token, for example source_note:..."
                         className={compactInputClassName}
                       />
-                      <button
-                        type="button"
-                        onClick={() => addEvidenceEntry(key)}
-                        className="rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
-                      >
+                      <ToolButton onClick={() => addEvidenceEntry(key)}>
                         <Check size="0.75rem" className="inline-block align-[-0.12rem]" /> Save
-                      </button>
-                      <button
-                        type="button"
+                      </ToolButton>
+                      <ToolButton
                         onClick={() => {
                           setAdvancedEvidenceKey(null);
                           setAdvancedEvidenceValue("");
                         }}
-                        className="rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
                       >
                         Cancel
-                      </button>
+                      </ToolButton>
                     </div>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={() => setAdvancedEvidenceKey(key)}
-                      className="justify-self-start rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                    >
-                      Add Advanced Evidence
-                    </button>
+                    <ToolButton onClick={() => setAdvancedEvidenceKey(key)}>Add Advanced Evidence</ToolButton>
                   )}
                 </div>
               </label>
@@ -822,7 +805,7 @@ export function LongTermMemoryNoteEditor({
                     links: current.links.filter((_, linkIndex) => linkIndex !== index),
                   }))
                 }
-                className="rounded-lg p-1 text-[var(--destructive)] hover:bg-[var(--destructive)]/10"
+                className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon mari-chrome-control--danger shrink-0"
                 aria-label={`Remove relation ${friendlyIdentifier(link.relation)}`}
               >
                 <X size="0.875rem" />

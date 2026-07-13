@@ -380,9 +380,8 @@ test("memory recall modal accepts clicks from chat settings", async ({ page }, t
 });
 
 test("LTM notes selection uses shared action bar and opens delete confirmation", async ({ page }, testInfo) => {
-  test.skip(!testInfo.project.name.includes("desktop"), "LTM shared action bar notes coverage runs on desktop.");
-
   const notes = [ltmNote()];
+  const compactControlMax = testInfo.project.name.includes("mobile") ? 44 : 30;
 
   await page.route(/\/api\/long-term-memory\/notes(?:\?.*)?$/, async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(notes) });
@@ -391,15 +390,41 @@ test("LTM notes selection uses shared action bar and opens delete confirmation",
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({}) });
   });
 
-  await createActiveConversation(page, "LTM Notes Selection Shared UI");
+  const chat = await createActiveConversation(page, "LTM Notes Selection Shared UI");
+  notes[0] = ltmNote({ scope: { chatId: chat.id, chatIds: [chat.id] } });
   await page.goto("/");
   const vaultDialog = await openLtmVaultFromAgentEditor(page);
 
   await vaultDialog.getByRole("button", { name: "Scene 1 memory" }).click();
+  const disclosure = vaultDialog.getByRole("button", { name: "Show source details" });
+  const memoryRow = disclosure.locator("xpath=ancestor::article[1]");
+  const openMemory = memoryRow.getByRole("button", { name: "Open Shared UI Selection Memory" });
+  const removeMemory = memoryRow.getByRole("button", { name: "Remove Shared UI Selection Memory from chat" });
+  const deleteMemory = memoryRow.getByRole("button", { name: "Delete Shared UI Selection Memory" });
+  await expect(openMemory).toBeVisible();
+  await memoryRow.hover();
+  await expect(removeMemory).toBeVisible();
+  await expect(deleteMemory).toBeVisible();
+  const disclosureBounds = await disclosure.boundingBox();
+  expect(disclosureBounds).not.toBeNull();
+  expect(disclosureBounds!.width).toBeLessThanOrEqual(compactControlMax);
+  expect(disclosureBounds!.height).toBeLessThanOrEqual(compactControlMax);
+  const actionBounds = await Promise.all([removeMemory.boundingBox(), deleteMemory.boundingBox()]);
+  for (const bounds of actionBounds) {
+    expect(bounds).not.toBeNull();
+    expect(bounds!.width).toBeLessThanOrEqual(compactControlMax);
+    expect(bounds!.height).toBeLessThanOrEqual(compactControlMax);
+  }
+  expect(actionBounds[0]!.x + actionBounds[0]!.width).toBeLessThanOrEqual(actionBounds[1]!.x);
+  await disclosure.click();
+  await expect(vaultDialog.getByRole("button", { name: "Hide source details" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
   await vaultDialog.getByLabel("Select Shared UI Selection Memory").check();
   await expect(vaultDialog.getByRole("button", { name: "Copy" })).toBeVisible();
   await expect(vaultDialog.getByRole("button", { name: "Move", exact: true })).toBeVisible();
-  await expect(vaultDialog.getByRole("button", { name: "Remove from chat" })).toBeDisabled();
+  await expect(vaultDialog.getByRole("button", { name: "Remove from chat" })).toBeEnabled();
 
   await vaultDialog.getByRole("button", { name: "Clear" }).click();
   await expect(vaultDialog.getByRole("button", { name: "Copy" })).toHaveCount(0);
@@ -407,6 +432,79 @@ test("LTM notes selection uses shared action bar and opens delete confirmation",
   await vaultDialog.getByLabel("Select Shared UI Selection Memory").check();
   await vaultDialog.getByRole("button", { name: "Delete", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Permanently Delete" })).toBeVisible();
+});
+
+test("LTM desktop controls align with the shared agent and settings chrome", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "LTM desktop alignment coverage runs on desktop.");
+
+  const firstChatResponse = await page.request.post("/api/chats", {
+    data: {
+      name: "LTM Alignment Branch A",
+      mode: "conversation",
+      characterIds: [],
+      groupId: "ltm_alignment_group",
+    },
+  });
+  expect(firstChatResponse.ok()).toBeTruthy();
+  const firstChat = (await firstChatResponse.json()) as { id: string };
+  const secondChatResponse = await page.request.post("/api/chats", {
+    data: {
+      name: "LTM Alignment Branch B",
+      mode: "conversation",
+      characterIds: [],
+      groupId: "ltm_alignment_group",
+    },
+  });
+  expect(secondChatResponse.ok()).toBeTruthy();
+
+  await page.addInitScript((chatId) => {
+    localStorage.setItem("marinara-active-chat-id", chatId);
+  }, firstChat.id);
+  await page.goto("/");
+
+  await page.locator('[data-tour="panel-agents"]').click();
+  const ltmCard = page.locator('[data-agent-card][data-agent-name="Long-Term Memory"]');
+  const comparisonCard = page.locator('[data-agent-card]:not([data-agent-name="Long-Term Memory"])').first();
+  await expect(ltmCard).toBeVisible();
+  await expect(comparisonCard).toBeVisible();
+  const [ltmBounds, comparisonBounds] = await Promise.all([ltmCard.boundingBox(), comparisonCard.boundingBox()]);
+  expect(ltmBounds).not.toBeNull();
+  expect(comparisonBounds).not.toBeNull();
+  expect(Math.abs(ltmBounds!.width - comparisonBounds!.width)).toBeLessThanOrEqual(1);
+  expect(Math.abs(ltmBounds!.x - comparisonBounds!.x)).toBeLessThanOrEqual(1);
+  const [ltmImageBounds, comparisonImageBounds] = await Promise.all([
+    ltmCard.locator(':scope > button[aria-label*="agent picture"]').boundingBox(),
+    comparisonCard.locator(':scope > button[aria-label*="agent picture"]').boundingBox(),
+  ]);
+  expect(ltmImageBounds).not.toBeNull();
+  expect(comparisonImageBounds).not.toBeNull();
+  expect(Math.abs(ltmImageBounds!.x - comparisonImageBounds!.x)).toBeLessThanOrEqual(1);
+
+  await page.getByRole("button", { name: /Long-Term Memory/ }).click();
+  await expect(page.locator(".mari-editor-title-input")).toHaveValue("Long-Term Memory");
+  const recallStyleButtons = page.getByRole("button", { name: /recall style:/ });
+  await expect(recallStyleButtons).toHaveCount(4);
+  const recallStyleTops = await recallStyleButtons.evaluateAll((buttons) =>
+    buttons.map((button) => Math.round(button.getBoundingClientRect().top)),
+  );
+  expect(new Set(recallStyleTops).size).toBe(1);
+  const recallStyleRail = recallStyleButtons.first().locator("..");
+  expect(
+    await recallStyleRail.evaluate((rail) => ({ clientWidth: rail.clientWidth, scrollWidth: rail.scrollWidth })),
+  ).toEqual(expect.objectContaining({ clientWidth: expect.any(Number), scrollWidth: expect.any(Number) }));
+  expect(await recallStyleRail.evaluate((rail) => rail.scrollWidth <= rail.clientWidth)).toBe(true);
+
+  await page.getByRole("button", { name: "Manage Memories" }).click();
+  const vaultDialog = page.getByRole("dialog", { name: "Long-Term Memory" });
+  await vaultDialog.getByRole("tab", { name: "Review" }).click();
+  const chatField = vaultDialog.getByLabel("Chat or grouped chat", { exact: true }).locator("..");
+  const branchField = vaultDialog.getByLabel("Branch", { exact: true }).locator("..");
+  const [chatFieldBounds, branchFieldBounds] = await Promise.all([chatField.boundingBox(), branchField.boundingBox()]);
+  expect(chatFieldBounds).not.toBeNull();
+  expect(branchFieldBounds).not.toBeNull();
+  const chatFieldCenter = chatFieldBounds!.y + chatFieldBounds!.height / 2;
+  const branchFieldCenter = branchFieldBounds!.y + branchFieldBounds!.height / 2;
+  expect(Math.abs(chatFieldCenter - branchFieldCenter)).toBeLessThanOrEqual(2);
 });
 
 test("LTM recall uses the selected chat runtime settings and refreshable source freshness", async ({ page }) => {

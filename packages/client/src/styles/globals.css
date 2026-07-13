@@ -941,6 +941,10 @@
   color: var(--marinara-chat-chrome-button-text-active);
 }
 
+.mari-chrome-segmented--four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .mari-chrome-segmented__button {
   position: relative;
   display: inline-flex;

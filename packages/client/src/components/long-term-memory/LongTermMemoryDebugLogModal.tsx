@@ -1,16 +1,5 @@
 import { useMemo, useState } from "react";
-import {
-  Bug,
-  ChevronDown,
-  ChevronRight,
-  Check,
-  Clipboard,
-  Copy,
-  Download,
-  Loader2,
-  RefreshCw,
-  Trash2,
-} from "lucide-react";
+import { Bug, Check, Clipboard, Copy, Download, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import type { LtmDebugEvent, LtmDebugPhase, LtmDebugStatus } from "@marinara-engine/shared";
 import { toast } from "sonner";
 import { showConfirmDialog } from "../../lib/app-dialogs";
@@ -22,6 +11,7 @@ import {
 } from "../../hooks/use-long-term-memory";
 import { helperTextClassName, panelIntroCardClassName, sectionCardClassName } from "./LtmFields";
 import { StatusPill, ToolButton } from "./LtmPills";
+import { DisclosureChevron } from "./ltm-panel-shared";
 import { labelLtmTier, labelRejectionReason, summarizeLtmCandidateSignals } from "./ltm-debug-utils";
 
 const PHASE_FILTERS: Array<"all" | LtmDebugPhase | "errors"> = [
@@ -305,10 +295,11 @@ function EventRow({ event }: { event: LtmDebugEvent }) {
       <button
         type="button"
         onClick={() => setExpanded((current) => !current)}
-        className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2 px-3 py-2 text-left transition-colors hover:bg-[var(--secondary)]/35"
+        aria-expanded={expanded}
+        className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2 px-3 py-2 text-left transition-colors hover:bg-[var(--secondary)]/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)]"
       >
         <span className="mt-0.5 text-[var(--muted-foreground)]">
-          {expanded ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
+          <DisclosureChevron open={expanded} />
         </span>
         <span className="min-w-0 space-y-1">
           <span className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -582,10 +573,11 @@ function OperationDrawer({ summary, defaultOpen }: { summary: OperationSummary; 
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
-        className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2 px-3 py-3 text-left transition-colors hover:bg-[var(--secondary)]/35"
+        aria-expanded={open}
+        className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2 px-3 py-3 text-left transition-colors hover:bg-[var(--secondary)]/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)]"
       >
         <span className="mt-0.5 text-[var(--muted-foreground)]">
-          {open ? <ChevronDown size="1rem" /> : <ChevronRight size="1rem" />}
+          <DisclosureChevron open={open} size={16} />
         </span>
         <span className="min-w-0 space-y-1.5">
           <span className="flex min-w-0 flex-wrap items-center gap-1.5">

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ChevronDown, ChevronRight, Eye, RotateCcw, Trash2, Unlink2 } from "lucide-react";
+import { Eye, RotateCcw, Trash2, Unlink2 } from "lucide-react";
 import type { Chat, LtmNote } from "@marinara-engine/shared";
 import {
   displayNoteTitle,
@@ -15,6 +15,7 @@ import { ImportanceBadge } from "./ImportanceBadge";
 import { StatusPill } from "./LtmPills";
 import {
   DisclosureHeader,
+  DisclosureChevron,
   EvidencePills,
   isChatSummarySourceNote,
   isSourceSummaryNote,
@@ -118,7 +119,7 @@ export function NoteRow({
           <button
             type="button"
             onClick={onOpen}
-            className={cn(rowActionButtonClassName, open && "bg-[var(--accent)] text-[var(--foreground)]")}
+            className={cn(rowActionButtonClassName, open && "mari-chrome-control--selected")}
             aria-label={`Open ${displayTitle}`}
             title="Open memory"
           >
@@ -128,10 +129,7 @@ export function NoteRow({
             <button
               type="button"
               onClick={onRestore}
-              className={cn(
-                rowActionButtonClassName,
-                "hover:bg-emerald-500/10 hover:text-emerald-700 dark:hover:text-emerald-200",
-              )}
+              className={rowActionButtonClassName}
               aria-label={`Restore ${displayTitle}`}
               title="Restore memory"
             >
@@ -246,59 +244,67 @@ export function TypeMemoryGroups({
                     <article
                       key={note.id}
                       className={cn(
-                        "group relative pr-12",
+                        "group relative",
+                        canRemoveFromScope(note) ? "pr-16 max-md:pr-24" : "pr-10 max-md:pr-14",
                         listRowClassName,
                         (openNoteId === note.id || selected) && selectedListRowClassName,
                       )}
                     >
                       <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-2">
-                        <div className="grid min-h-16 w-7 shrink-0 grid-rows-[auto_1fr] justify-items-center">
+                        <div className="flex min-h-16 w-7 shrink-0 flex-col items-center gap-1 max-md:w-10">
                           <button
                             type="button"
                             onClick={() => onToggleMemory(note.id)}
-                            className="mari-chrome-control mari-chrome-control--small h-7 min-h-7 w-7 shrink-0 rounded-md p-0 text-[var(--muted-foreground)] active:scale-90"
+                            className="mari-chrome-accent-icon mari-accent-animated inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-90 max-md:h-10 max-md:w-10"
                             aria-label={expanded ? "Hide source details" : "Show source details"}
                             aria-expanded={expanded}
                           >
-                            {expanded ? <ChevronDown size="0.75rem" /> : <ChevronRight size="0.75rem" />}
+                            <DisclosureChevron open={expanded} size={12} />
                           </button>
-                          <input
-                            type="checkbox"
-                            checked={selected}
-                            onChange={(event) => onSelect(note.id, event.target.checked)}
-                            className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-                            aria-label={`Select ${memoryRowTitle(note, chatLookup)}`}
-                          />
+                          <label className="flex h-7 w-7 shrink-0 items-center justify-center max-md:h-10 max-md:w-10">
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={(event) => onSelect(note.id, event.target.checked)}
+                              className="h-4 w-4 rounded border-[var(--border)] accent-[var(--primary)]"
+                              aria-label={`Select ${memoryRowTitle(note, chatLookup)}`}
+                            />
+                          </label>
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="min-w-0">
+                          <button
+                            type="button"
+                            onClick={() => onOpen(note.id)}
+                            className="block w-full min-w-0 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                            aria-label={`Open ${memoryRowTitle(note, chatLookup)}`}
+                          >
                             <div
-                              className="truncate text-xs font-semibold text-[var(--foreground)]"
+                              className="truncate text-xs font-semibold text-[var(--foreground)] transition-colors hover:text-[var(--marinara-chat-chrome-button-text-hover)]"
                               title={memoryRowTitle(note, chatLookup)}
                             >
                               {memoryRowTitle(note, chatLookup)}
                             </div>
-                          </div>
-                          {note.type !== "source" && (
-                            <p className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-                              {noteTextPreview(note) || "No summary text."}
-                            </p>
-                          )}
-                          <div className="mt-1 flex flex-wrap gap-1.5">
-                            {note.type === "source" ? (
-                              <StatusPill label={sourceTypeLabel(note)} />
-                            ) : (
-                              <StatusPill
-                                label={friendlyStatus(note.status)}
-                                tone={note.status === "active" ? "good" : "neutral"}
-                              />
+                            {note.type !== "source" && (
+                              <span className="mt-1 line-clamp-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                                {noteTextPreview(note) || "No summary text."}
+                              </span>
                             )}
-                            {sourcesCount === 0 && note.type !== "source" && <StatusPill label="Manual" />}
-                            {importance && <ImportanceBadge importance={importance} />}
-                            {isSourceSummaryNote(note) && derivedCount > 0 && (
-                              <StatusPill label={`${derivedCount} memory stream${derivedCount === 1 ? "" : "s"}`} />
-                            )}
-                          </div>
+                            <span className="mt-1 flex flex-wrap gap-1.5">
+                              {note.type === "source" ? (
+                                <StatusPill label={sourceTypeLabel(note)} />
+                              ) : (
+                                <StatusPill
+                                  label={friendlyStatus(note.status)}
+                                  tone={note.status === "active" ? "good" : "neutral"}
+                                />
+                              )}
+                              {sourcesCount === 0 && note.type !== "source" && <StatusPill label="Manual" />}
+                              {importance && <ImportanceBadge importance={importance} />}
+                              {isSourceSummaryNote(note) && derivedCount > 0 && (
+                                <StatusPill label={`${derivedCount} memory stream${derivedCount === 1 ? "" : "s"}`} />
+                              )}
+                            </span>
+                          </button>
                           <EvidencePills
                             note={note}
                             noteLookup={noteLookup}
@@ -351,26 +357,11 @@ export function TypeMemoryGroups({
                         </div>
                       </div>
                       <div className={rowActionOverlayClassName}>
-                        <button
-                          type="button"
-                          onClick={() => onOpen(note.id)}
-                          className={cn(
-                            rowActionButtonClassName,
-                            openNoteId === note.id && "bg-[var(--accent)] text-[var(--foreground)]",
-                          )}
-                          aria-label={`Open ${memoryRowTitle(note, chatLookup)}`}
-                          title="Open memory"
-                        >
-                          <Eye size="0.75rem" />
-                        </button>
                         {canRemoveFromScope(note) && (
                           <button
                             type="button"
                             onClick={() => onRemoveFromScope(note)}
-                            className={cn(
-                              rowActionButtonClassName,
-                              "hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                            )}
+                            className={rowActionButtonClassName}
                             aria-label={`Remove ${memoryRowTitle(note, chatLookup)} from chat`}
                             title="Remove from chat"
                           >
@@ -464,10 +455,7 @@ function _ArchivedSourceSummaryGroupRow({
         <button
           type="button"
           onClick={() => onOpen(group.source.id)}
-          className={cn(
-            rowActionButtonClassName,
-            openNoteId === group.source.id && "bg-[var(--accent)] text-[var(--foreground)]",
-          )}
+          className={cn(rowActionButtonClassName, openNoteId === group.source.id && "mari-chrome-control--selected")}
           aria-label={`Open ${sourceTitle}`}
           title="Open source note"
         >
@@ -476,10 +464,7 @@ function _ArchivedSourceSummaryGroupRow({
         <button
           type="button"
           onClick={() => onRestore(group.source)}
-          className={cn(
-            rowActionButtonClassName,
-            "hover:bg-emerald-500/10 hover:text-emerald-700 dark:hover:text-emerald-200",
-          )}
+          className={rowActionButtonClassName}
           aria-label={`Restore ${sourceTitle}`}
           title="Restore source note"
         >
@@ -532,7 +517,7 @@ function _ArchivedSourceSummaryGroupRow({
                   onClick={() => onOpen(derivedNote.id)}
                   className={cn(
                     rowActionButtonClassName,
-                    openNoteId === derivedNote.id && "bg-[var(--accent)] text-[var(--foreground)]",
+                    openNoteId === derivedNote.id && "mari-chrome-control--selected",
                   )}
                   aria-label={`Open ${displayNoteTitle(derivedNote)}`}
                   title="Open memory"
@@ -542,10 +527,7 @@ function _ArchivedSourceSummaryGroupRow({
                 <button
                   type="button"
                   onClick={() => onRestore(derivedNote)}
-                  className={cn(
-                    rowActionButtonClassName,
-                    "hover:bg-emerald-500/10 hover:text-emerald-700 dark:hover:text-emerald-200",
-                  )}
+                  className={rowActionButtonClassName}
                   aria-label={`Restore ${displayNoteTitle(derivedNote)}`}
                   title="Restore memory"
                 >

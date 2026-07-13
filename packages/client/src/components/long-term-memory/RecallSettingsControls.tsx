@@ -125,7 +125,7 @@ export function RecallStylePresets({
   const selectedStyle = LTM_RECALL_STYLES.find((style) => style.id === recallStyle) ?? LTM_RECALL_STYLES[0];
   return (
     <SettingGroup label="Recall style">
-      <div className="mari-chrome-segmented grid-cols-2">
+      <div className="mari-chrome-segmented mari-chrome-segmented--four">
         {LTM_RECALL_STYLES.map((style) => (
           <button
             key={style.id}

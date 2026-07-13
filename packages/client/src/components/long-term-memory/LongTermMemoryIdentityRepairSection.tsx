@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Archive, ChevronDown, Loader2, RotateCcw, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Archive, ChevronRight, Loader2, RotateCcw, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import type { LtmIdentityRepairCandidate, LtmScope } from "@marinara-engine/shared";
 import {
@@ -254,9 +254,9 @@ export function LongTermMemoryIdentityRepairSection({
                       decision.canonicalNoteId}
                   </p>
                 </div>
-                <ChevronDown
+                <ChevronRight
                   size="0.9rem"
-                  className="shrink-0 text-[var(--muted-foreground)] transition-transform group-open:rotate-180"
+                  className="mari-chrome-accent-icon mari-accent-animated shrink-0 transition-transform duration-200 ease-out group-open:rotate-90"
                 />
               </summary>
 
@@ -381,11 +381,14 @@ export function LongTermMemoryIdentityRepairSection({
       </div>
 
       {preview.data && preview.data.unresolved.length > 0 ? (
-        <details className="rounded-lg bg-amber-500/10 ring-1 ring-amber-500/30">
+        <details className="group rounded-lg bg-amber-500/10 ring-1 ring-amber-500/30">
           <summary className="flex cursor-pointer list-none items-center gap-2 p-3 text-xs font-semibold text-amber-700 dark:text-amber-100">
             <AlertTriangle size="0.85rem" />
             {preview.data.unresolved.length} unresolved note{preview.data.unresolved.length === 1 ? "" : "s"}
-            <ChevronDown size="0.85rem" className="ml-auto" />
+            <ChevronRight
+              size="0.85rem"
+              className="ml-auto shrink-0 transition-transform duration-200 ease-out group-open:rotate-90"
+            />
           </summary>
           <div className="border-t border-amber-500/25 px-3 pb-3">
             {preview.data.unresolved.map((item) => (

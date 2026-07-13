@@ -261,8 +261,8 @@ export function LtmScopePicker({ value, onChange }: LtmScopePickerProps) {
           aria-expanded={picker === "character"}
           aria-controls={pickerPanelId}
           className={cn(
-            "inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] px-3 text-xs font-semibold text-[var(--foreground)] transition-colors hover:border-[var(--ring)]/40 hover:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-[0.98] sm:min-h-10 sm:w-auto",
-            picker === "character" && "bg-[var(--accent)] text-[var(--foreground)]",
+            "mari-chrome-control min-h-11 w-full px-3 text-xs sm:min-h-10 sm:w-auto",
+            picker === "character" && "mari-chrome-control--selected",
           )}
         >
           <Plus size="0.875rem" aria-hidden="true" />
@@ -274,8 +274,8 @@ export function LtmScopePicker({ value, onChange }: LtmScopePickerProps) {
           aria-expanded={picker === "chat"}
           aria-controls={pickerPanelId}
           className={cn(
-            "inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] px-3 text-xs font-semibold text-[var(--foreground)] transition-colors hover:border-[var(--ring)]/40 hover:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-[0.98] sm:min-h-10 sm:w-auto",
-            picker === "chat" && "bg-[var(--accent)] text-[var(--foreground)]",
+            "mari-chrome-control min-h-11 w-full px-3 text-xs sm:min-h-10 sm:w-auto",
+            picker === "chat" && "mari-chrome-control--selected",
           )}
         >
           <Plus size="0.875rem" aria-hidden="true" />

@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import { AlertTriangle, Check, ChevronDown, ChevronRight, Pencil, X } from "lucide-react";
+import { AlertTriangle, Check, Pencil, X } from "lucide-react";
 import type {
   LtmDraftMutation,
   LtmDraftReviewChange,
@@ -11,7 +11,7 @@ import type {
 import { cn } from "../../lib/utils";
 import { actionRowClassName, insetSectionCardClassName, selectedListRowClassName } from "./LtmFields";
 import { StatusPill, ToolButton } from "./LtmPills";
-import { compactMutationText, mutationTargetTitle, suggestionRowKey } from "./ltm-panel-shared";
+import { compactMutationText, DisclosureChevron, mutationTargetTitle, suggestionRowKey } from "./ltm-panel-shared";
 
 export type SuggestionRowModel = {
   draft: LtmExtractionDraft;
@@ -200,7 +200,7 @@ export function SuggestionRow({
                 onClick={() => setChangesOpen((current) => !current)}
                 className="inline-flex min-h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
               >
-                {changesOpen ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
+                <DisclosureChevron open={changesOpen} />
                 {changesOpen ? "Hide changes" : `View changes (${row.changes.length})`}
               </button>
               {changesOpen ? <SuggestionChanges id={changesId} changes={row.changes} /> : null}

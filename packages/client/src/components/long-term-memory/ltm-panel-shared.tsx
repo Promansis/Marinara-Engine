@@ -15,6 +15,7 @@ import type {
 import { isLtmSourceLikeNote } from "@marinara-engine/shared";
 import type { LtmInteropPreview, LtmInteropSource } from "../../hooks/use-long-term-memory";
 import type { LtmResolvedGlobalSettings } from "../../hooks/use-long-term-memory";
+import { cn } from "../../lib/utils";
 import {
   displayNoteTitle,
   friendlyIdentifier,
@@ -24,7 +25,7 @@ import {
   friendlyStatus,
 } from "../long-term-memory/ltm-editor-utils";
 import { resolveLongTermMemoryRecallSettings } from "@marinara-engine/shared";
-import { ChevronDown, ChevronRight, Info } from "lucide-react";
+import { ChevronRight, Info } from "lucide-react";
 import { StatusPill } from "./LtmPills";
 
 // ── Types ──────────────────────────────────────
@@ -149,7 +150,29 @@ export const rowActionOverlayClassName =
   "absolute right-2 top-1/2 flex shrink-0 -translate-y-1/2 items-center justify-end gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-[var(--border)] transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100";
 
 export const disclosureButtonClassName =
-  "flex min-h-11 w-full items-center justify-between gap-3 rounded-xl bg-[var(--secondary)]/35 px-3 py-2 text-left text-xs font-semibold text-[var(--foreground)] ring-1 ring-[var(--border)] transition-[background-color,box-shadow,color] hover:bg-[var(--accent)]/45 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60";
+  "flex min-h-10 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-semibold text-[var(--foreground)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60";
+
+export function DisclosureChevron({
+  open,
+  size = 14,
+  className,
+}: {
+  open: boolean;
+  size?: number;
+  className?: string;
+}) {
+  return (
+    <ChevronRight
+      size={size}
+      aria-hidden="true"
+      className={cn(
+        "mari-chrome-accent-icon mari-accent-animated shrink-0 transition-transform duration-200 ease-out",
+        open && "rotate-90",
+        className,
+      )}
+    />
+  );
+}
 
 // ── Utility functions ──────────────────────────
 
@@ -519,6 +542,7 @@ export function DisclosureHeader({
 }) {
   return (
     <button type="button" onClick={onToggle} className={disclosureButtonClassName} aria-expanded={open}>
+      <DisclosureChevron open={open} />
       <span className="min-w-0">
         <span className="block truncate">{title}</span>
         {description && (
@@ -527,9 +551,8 @@ export function DisclosureHeader({
           </span>
         )}
       </span>
-      <span className="flex min-w-0 shrink items-center justify-end gap-1 overflow-hidden">
+      <span className="ml-auto flex min-w-0 shrink items-center justify-end gap-1 overflow-hidden">
         {children}
-        <span className="shrink-0">{open ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}</span>
       </span>
     </button>
   );

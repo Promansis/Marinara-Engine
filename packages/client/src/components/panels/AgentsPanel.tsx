@@ -1235,6 +1235,7 @@ function renderAgentCard({
   touchSafeDragMode?: boolean;
   suppressClickRef?: { current: boolean };
 }) {
+  const actionCount = Number(Boolean(onDuplicate)) + Number(Boolean(onDelete));
   const iconContent = imagePath ? (
     <img src={imagePath} alt="" className="h-full w-full object-cover" draggable={false} />
   ) : (
@@ -1304,6 +1305,9 @@ function renderAgentCard({
           <GripVertical size="0.8125rem" />
         </button>
       )}
+      {!selectionMode && !nativeDragEnabled && (
+        <span aria-hidden="true" className="h-7 w-5 shrink-0 [@media(pointer:coarse)]:hidden" />
+      )}
       <button
         type="button"
         onClick={(event) => {
@@ -1330,7 +1334,11 @@ function renderAgentCard({
         )}
       </button>
       <button
-        className={cn("min-w-0 flex-1 text-left", !selectionMode && (onDelete || onDuplicate ? "pr-16" : "pr-10"))}
+        className={cn(
+          "min-w-0 flex-1 text-left",
+          !selectionMode && actionCount === 2 && "pr-16",
+          !selectionMode && actionCount === 1 && "pr-10",
+        )}
         onClick={(event) => {
           event.stopPropagation();
           if (suppressClickRef?.current) return;

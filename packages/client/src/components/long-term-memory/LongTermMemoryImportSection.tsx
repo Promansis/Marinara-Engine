@@ -25,21 +25,23 @@ export function ImportPreviewRowItem({
   return (
     <article
       className={cn(
-        "group relative grid grid-cols-[auto_minmax(0,1fr)] gap-3 pr-12",
+        "group relative grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 pr-12 max-md:pr-14",
         listRowClassName,
         selected && selectedListRowClassName,
-        imported && "bg-emerald-500/5 ring-emerald-500/20",
-        stale && "bg-amber-500/5 ring-amber-500/20",
+        imported && "bg-emerald-500/5 ring-1 ring-emerald-500/20",
+        stale && "bg-amber-500/5 ring-1 ring-amber-500/20",
       )}
     >
-      <input
-        type="checkbox"
-        checked={selected}
-        disabled={disabled || imported}
-        onChange={(event) => onSelect(event.target.checked)}
-        className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-        aria-label={`Select ${sample.title}`}
-      />
+      <label className="flex h-8 w-8 shrink-0 items-center justify-center max-md:h-10 max-md:w-10">
+        <input
+          type="checkbox"
+          checked={selected}
+          disabled={disabled || imported}
+          onChange={(event) => onSelect(event.target.checked)}
+          className="h-4 w-4 rounded border-[var(--border)] accent-[var(--primary)]"
+          aria-label={`Select ${sample.title}`}
+        />
+      </label>
       <div className="min-w-0 self-center">
         <div className="flex items-center gap-2">
           <div className="truncate text-xs font-medium text-[var(--foreground)]" title={sample.title}>

@@ -16,9 +16,10 @@ export const panelIntroCardClassName =
   "overflow-hidden rounded-xl bg-[var(--secondary)]/25 p-3 ring-1 ring-[var(--border)]";
 
 export const listRowClassName =
-  "rounded-lg border border-[var(--border)] bg-[var(--card)]/70 p-3 transition-[background-color,border-color] hover:border-[var(--ring)]/35 hover:bg-[var(--accent)]/25";
+  "rounded-lg p-2.5 transition-[background-color,box-shadow] hover:bg-[var(--marinara-chat-chrome-highlight-bg)]";
 
-export const selectedListRowClassName = "border-[var(--ring)]/40 bg-[var(--accent)]/45";
+export const selectedListRowClassName =
+  "bg-[var(--marinara-chat-chrome-highlight-bg)] ring-1 ring-[var(--marinara-chat-chrome-button-border-active)]";
 
 export const emptyStateClassName =
   "rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/20 p-4 text-center text-xs text-[var(--muted-foreground)]";

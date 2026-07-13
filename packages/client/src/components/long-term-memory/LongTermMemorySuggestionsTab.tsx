@@ -1,18 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import {
-  AlertCircle,
-  BrainCircuit,
-  Check,
-  ChevronDown,
-  ChevronRight,
-  ListChecks,
-  Loader2,
-  MoreHorizontal,
-  Trash2,
-  Wrench,
-  X,
-} from "lucide-react";
+import { AlertCircle, BrainCircuit, Check, ListChecks, Loader2, MoreHorizontal, Trash2, Wrench, X } from "lucide-react";
+import { DisclosureChevron } from "./ltm-panel-shared";
 import type {
   LtmDraftMutation,
   LtmDraftReviewDraft,
@@ -965,9 +954,10 @@ function ExtractionOutcomePanel({
             <button
               type="button"
               onClick={() => setShowAllDropped((current) => !current)}
-              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+              aria-expanded={showAllDropped}
+              className="inline-flex min-h-8 items-center gap-1 rounded-md px-2 py-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
             >
-              {showAllDropped ? <ChevronDown size="0.75rem" /> : <ChevronRight size="0.75rem" />}
+              <DisclosureChevron open={showAllDropped} size={12} />
               {showAllDropped ? "Show fewer dropped candidates" : `Show all dropped candidates (${hiddenCount} more)`}
             </button>
           ) : null}
@@ -1023,7 +1013,7 @@ function SuggestionTargetDrawer({
           className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left transition-colors hover:text-[var(--foreground)]"
         >
           <span className="flex min-w-0 flex-1 items-center gap-2 text-xs font-semibold text-[var(--foreground)]">
-            {open ? <ChevronDown size="0.875rem" /> : <ChevronRight size="0.875rem" />}
+            <DisclosureChevron open={open} />
             <span className="truncate">{title}</span>
             <StatusPill label={friendlyNoteType(target.noteType)} />
           </span>
@@ -1044,7 +1034,7 @@ function SuggestionTargetDrawer({
               type="button"
               onClick={() => onSelectRows(rowKeys, false)}
               disabled={selectedCount === 0 || busy}
-              className="rounded-lg px-2 py-1.5 text-[0.6875rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
+              className="mari-chrome-control mari-chrome-control--small text-[0.6875rem]"
             >
               Clear
             </button>

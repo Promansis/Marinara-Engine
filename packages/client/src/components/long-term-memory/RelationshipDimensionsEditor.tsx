@@ -62,7 +62,7 @@ export function RelationshipDimensionsEditor({
                 <button
                   type="button"
                   onClick={() => clearDimension(dimension)}
-                  className="rounded-md px-2 py-1 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                  className="mari-chrome-control mari-chrome-control--small text-[0.6875rem]"
                 >
                   Baseline
                 </button>

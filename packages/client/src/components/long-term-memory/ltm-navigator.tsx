@@ -204,7 +204,7 @@ export function LtmNavigatorSelector({
           Choose which chat or branch to scope memories to. Global memories are always included.
         </p>
       </div>
-      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)]">
+      <div className="space-y-3">
         <div className="space-y-1.5">
           <label htmlFor={searchId} className="block text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">
             Search chats
@@ -223,56 +223,63 @@ export function LtmNavigatorSelector({
               className={cn(compactInputClassName, "min-h-10 pl-9")}
             />
           </div>
-          <label htmlFor={chatSelectId} className="block text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">
-            Chat or grouped chat
-          </label>
-          <select
-            id={chatSelectId}
-            value={selectedThreadId}
-            onChange={(event) => {
-              const thread = threads.find((item) => item.id === event.target.value);
-              if (thread)
-                onSelect({ groupId: thread.groupId, chatId: thread.groupId ? null : thread.representative.id });
-            }}
-            className={cn(compactInputClassName, "min-h-10")}
-          >
-            {threads.length === 0 && <option value="">No chats available</option>}
-            {threads.length > 0 && filteredThreads.length === 0 && (
-              <option value={selectedThreadId}>No chats match your search</option>
-            )}
-            {filteredThreads.map((thread) => (
-              <option key={thread.id} value={thread.id}>
-                {thread.title} {thread.chats.length > 1 ? `(${thread.chats.length} branches)` : ""}
-              </option>
-            ))}
-          </select>
         </div>
-        <div className="space-y-1.5">
-          <label
-            htmlFor={branchSelectId}
-            className="flex min-h-10 items-center gap-2 text-[0.6875rem] font-semibold text-[var(--muted-foreground)] md:items-end md:pb-1.5"
-          >
-            <GitBranch size="0.875rem" className="shrink-0" aria-hidden="true" />
-            Branch
-          </label>
-          <select
-            id={branchSelectId}
-            value={selectedBranchId}
-            onChange={(event) => {
-              if (!selectedThread) return;
-              const chatId = event.target.value || null;
-              onSelect({ groupId: selectedThread.groupId, chatId });
-            }}
-            disabled={!selectedThread || selectedThread.chats.length <= 1}
-            className={cn(compactInputClassName, "min-h-10")}
-          >
-            {selectedThread?.groupId && <option value="">All branches</option>}
-            {selectedThread?.chats.map((chat) => (
-              <option key={chat.id} value={chat.id}>
-                {chat.name || "Untitled"} · {chat.id}
-              </option>
-            ))}
-          </select>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="space-y-1.5">
+            <label
+              htmlFor={chatSelectId}
+              className="block text-[0.6875rem] font-semibold text-[var(--muted-foreground)]"
+            >
+              Chat or grouped chat
+            </label>
+            <select
+              id={chatSelectId}
+              value={selectedThreadId}
+              onChange={(event) => {
+                const thread = threads.find((item) => item.id === event.target.value);
+                if (thread)
+                  onSelect({ groupId: thread.groupId, chatId: thread.groupId ? null : thread.representative.id });
+              }}
+              className={cn(compactInputClassName, "min-h-10")}
+            >
+              {threads.length === 0 && <option value="">No chats available</option>}
+              {threads.length > 0 && filteredThreads.length === 0 && (
+                <option value={selectedThreadId}>No chats match your search</option>
+              )}
+              {filteredThreads.map((thread) => (
+                <option key={thread.id} value={thread.id}>
+                  {thread.title} {thread.chats.length > 1 ? `(${thread.chats.length} branches)` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <label
+              htmlFor={branchSelectId}
+              className="flex items-center gap-2 text-[0.6875rem] font-semibold text-[var(--muted-foreground)]"
+            >
+              <GitBranch size="0.875rem" className="shrink-0" aria-hidden="true" />
+              Branch
+            </label>
+            <select
+              id={branchSelectId}
+              value={selectedBranchId}
+              onChange={(event) => {
+                if (!selectedThread) return;
+                const chatId = event.target.value || null;
+                onSelect({ groupId: selectedThread.groupId, chatId });
+              }}
+              disabled={!selectedThread || selectedThread.chats.length <= 1}
+              className={cn(compactInputClassName, "min-h-10")}
+            >
+              {selectedThread?.groupId && <option value="">All branches</option>}
+              {selectedThread?.chats.map((chat) => (
+                <option key={chat.id} value={chat.id}>
+                  {chat.name || "Untitled"} · {chat.id}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
     </div>

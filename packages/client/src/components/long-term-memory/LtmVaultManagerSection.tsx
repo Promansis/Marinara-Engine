@@ -122,6 +122,7 @@ import {
   sourceNoteTitle,
   uniqueNoteIds,
   ModeBadge,
+  DisclosureChevron,
   Section,
   type MemoryModalMode,
   type MemoryModalTab,
@@ -1925,7 +1926,8 @@ export function LtmVaultManagerSection({
                 <button
                   type="button"
                   onClick={() => setImportedRowsOpen((current) => !current)}
-                  className="flex w-full items-center justify-between gap-3 text-left"
+                  aria-expanded={importedRowsOpen}
+                  className="flex w-full items-center justify-between gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 >
                   <div>
                     <div className="text-xs font-semibold text-[var(--foreground)]">
@@ -1935,7 +1937,7 @@ export function LtmVaultManagerSection({
                       These source snapshots are current. They stay visible for reference and cannot be imported again.
                     </div>
                   </div>
-                  {importedRowsOpen ? <Check size="0.875rem" /> : <Import size="0.875rem" />}
+                  <DisclosureChevron open={importedRowsOpen} />
                 </button>
                 {importedRowsOpen && (
                   <div className="mt-3 space-y-2">
@@ -2076,14 +2078,10 @@ export function LtmVaultManagerSection({
                           </p>
                         </div>
                         {sourceNote ? (
-                          <button
-                            type="button"
-                            onClick={() => openMemory(sourceNoteId, { tab: "suggestions" })}
-                            className="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg bg-[var(--primary)] px-2.5 text-xs font-semibold text-[var(--primary-foreground)] transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
-                          >
+                          <ToolButton onClick={() => openMemory(sourceNoteId, { tab: "suggestions" })} tone="primary">
                             <Eye size="0.75rem" />
                             Review
-                          </button>
+                          </ToolButton>
                         ) : (
                           <ToolButton
                             onClick={() => void dismissBlockedReviewDrafts(reviewSource)}

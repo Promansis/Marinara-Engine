@@ -400,14 +400,9 @@ export function CreateLongTermMemoryNoteForm({
                 Limit this memory to specific chats, groups, or linked characters when needed.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={useCurrentChatScope}
-              disabled={!activeChat}
-              className="rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50"
-            >
+            <ToolButton onClick={useCurrentChatScope} disabled={!activeChat}>
               Use this chat
-            </button>
+            </ToolButton>
           </div>
           <LtmScopePicker
             value={{
