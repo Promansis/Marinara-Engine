@@ -86,7 +86,6 @@ export async function migrateLtmChatsForAgentPipeline(
           description: "Retrieves and injects relevant memories from the long-term memory vault.",
           phase: "pre_generation",
           enabled: true,
-          imagePath: null,
           connectionId: null,
           promptTemplate: "",
           settings: defaultSettings,

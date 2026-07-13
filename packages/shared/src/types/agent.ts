@@ -183,7 +183,29 @@ export const BUILT_IN_AGENT_IDS = {
   SECRET_PLOT_DRIVER: "secret-plot-driver",
 } as const;
 
-export type AgentCategory = "writer" | "tracker" | "misc";
+/**
+ * Managed agent types — reserved agents that are stored in agent_configs
+ * (like custom agents) but have special-cased lifecycle behavior and UI
+ * panels.
+ */
+export const MANAGED_AGENT_TYPES = ["long-term-memory"] as const;
+
+export type ManagedAgentType = (typeof MANAGED_AGENT_TYPES)[number];
+
+const MANAGED_AGENT_TYPE_SET = new Set<string>(MANAGED_AGENT_TYPES);
+
+export function isManagedAgentType(agentType: string): boolean {
+  return MANAGED_AGENT_TYPE_SET.has(agentType);
+}
+
+/** Managed type names and their suffixed variants are reserved lifecycle IDs. */
+export function isReservedManagedAgentType(agentType: string): boolean {
+  return MANAGED_AGENT_TYPES.some(
+    (managedAgentType) => agentType === managedAgentType || agentType.startsWith(`${managedAgentType}-`),
+  );
+}
+
+export type AgentCategory = "writer" | "tracker" | "memory" | "misc";
 
 export interface BuiltInAgentMeta {
   id: string;

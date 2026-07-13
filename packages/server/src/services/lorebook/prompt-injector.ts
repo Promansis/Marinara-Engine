@@ -11,7 +11,7 @@ import type { ActivatedEntry } from "./keyword-scanner.js";
 export interface PromptMessage {
   role: "system" | "user" | "assistant";
   content: string;
-  contextKind?: "prompt" | "history" | "injection";
+  contextKind?: "prompt" | "history" | "injection" | "long_term_memory";
   /** Optional name for multi-character */
   name?: string;
 }

@@ -17,6 +17,7 @@ export type ChatSummaryEntryInput = Partial<ChatSummaryEntry> & {
 
 export interface ChatSummaryEntryNormalizeOptions {
   legacySummary?: string | null;
+  legacyFallback?: boolean;
   createId?: () => string;
   now?: string;
 }
@@ -243,7 +244,7 @@ export function normalizeChatSummaryEntries(
       return { ...entry, id: replacementId };
     });
 
-  if (entries.length === 0) {
+  if (entries.length === 0 && options.legacyFallback !== false) {
     const legacy = createLegacyChatSummaryEntry(options.legacySummary, options);
     if (legacy) entries.push(legacy);
   }

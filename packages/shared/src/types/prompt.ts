@@ -22,6 +22,7 @@ export type MarkerType =
   | "persona"
   | "chat_history"
   | "chat_summary"
+  | "long_term_memory"
   | "world_info_before"
   | "world_info_after"
   | "dialogue_examples"
@@ -215,7 +216,7 @@ export interface ChatMLMessage {
   role: PromptRole;
   content: string;
   /** Internal context-fitting hint: prompt data is preserved before chat history. */
-  contextKind?: "prompt" | "history" | "injection";
+  contextKind?: "prompt" | "history" | "injection" | "long_term_memory";
   /** Optional: name of the speaker for multi-character */
   name?: string;
   /** Internal speaker identity for group chat history role scoping. */

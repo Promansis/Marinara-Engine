@@ -22,6 +22,11 @@ import { wrapContent, wrapGroup } from "./format-engine.js";
 import { expandMarker, type MarkerContext } from "./marker-expander.js";
 import { mergeAdjacentMessages, squashLeadingSystemMessages } from "./merger.js";
 import { injectAtDepth } from "../lorebook/prompt-injector.js";
+import {
+  serializeLongTermMemoryPromptArtifact,
+  type LtmPromptArtifact,
+  type LtmSerializedPromptArtifact,
+} from "../long-term-memory/prompt.js";
 import type { LorebookScanResult } from "../lorebook/index.js";
 import {
   buildPromptMacroContext,
@@ -148,6 +153,8 @@ export interface AssemblerInput {
   lorebookScanMessages?: ChatMLMessage[];
   /** Current chat summary text (if any) */
   chatSummary?: string | null;
+  /** Recalled memory remains structured until its final marker/fallback serialization. */
+  longTermMemoryArtifact?: LtmPromptArtifact | null;
   /** Whether agents are enabled for this chat */
   enableAgents?: boolean;
   /** Per-chat list of active agent type IDs (empty = use global enabled state) */
@@ -200,6 +207,8 @@ export interface AssemblerOutput {
   lorebookBudgetSkippedEntries?: LorebookScanResult["budgetSkippedEntries"];
   /** Agent types whose runtime data was consumed by enabled agent_data sections. */
   runtimeAgentTypesUsed?: string[];
+  /** Final serialized LTM artifact, when it survived its configured prompt budget. */
+  longTermMemoryArtifact?: LtmSerializedPromptArtifact;
 }
 
 // ═══════════════════════════════════════════════
@@ -287,6 +296,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
     chatMessages: input.chatMessages,
     lorebookScanMessages: input.lorebookScanMessages,
     chatSummary: input.chatSummary ?? null,
+    longTermMemoryArtifact: input.longTermMemoryArtifact ?? null,
     wrapFormat,
     enableAgents: input.enableAgents ?? true,
     activeAgentIds: input.activeAgentIds ?? [],
@@ -311,6 +321,8 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
   const depthSections: ResolvedSection[] = [];
   let lorebookDepthEntriesCount = 0;
   let hasChatSummaryMarker = false;
+  let hasLongTermMemoryMarker = false;
+  let serializedLongTermMemoryArtifact: LtmSerializedPromptArtifact | null = null;
   const runtimeAgentTypesUsed = new Set<string>();
 
   for (const sectionId of sectionOrder) {
@@ -329,6 +341,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
       try {
         const mc = JSON.parse(section.markerConfig) as MarkerConfig;
         if (mc.type === "chat_summary") hasChatSummaryMarker = true;
+        if (mc.type === "long_term_memory") hasLongTermMemoryMarker = true;
       } catch {
         /* ignore */
       }
@@ -363,6 +376,14 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
     const section = orderedSections[i]!;
     if (processedSections.has(section.id)) continue;
 
+    // Keep the LTM artifact separate so prompt grouping cannot merge it with unrelated text.
+    if (section.longTermMemoryArtifact) {
+      processedSections.add(section.id);
+      messages.push(...section.messages);
+      serializedLongTermMemoryArtifact ??= section.longTermMemoryArtifact;
+      continue;
+    }
+
     if (section.groupId) {
       // Collect all consecutive sections in the same group
       const groupSections: ResolvedSection[] = [section];
@@ -370,6 +391,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
 
       for (let j = i + 1; j < orderedSections.length; j++) {
         const next = orderedSections[j]!;
+        if (next.longTermMemoryArtifact) break;
         if (next.groupId === section.groupId) {
           groupSections.push(next);
           processedSections.add(next.id);
@@ -398,6 +420,29 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
     }
   }
 
+  // ── Phase 2b: Fallback long-term-memory injection ──
+  // Keep the serialized artifact as a dedicated message so context fitting can remove it whole.
+  if (!hasLongTermMemoryMarker) {
+    const fallbackArtifact = serializeLongTermMemoryPromptArtifact(markerCtx.longTermMemoryArtifact, {
+      wrapFormat,
+      wrapperName: "Long Term Memory",
+    });
+    if (fallbackArtifact) {
+      serializedLongTermMemoryArtifact = fallbackArtifact;
+      const fallbackMessage: ChatMLMessage = {
+        role: "system",
+        content: fallbackArtifact.content,
+        contextKind: "long_term_memory",
+      };
+      const firstSystemIdx = messages.findIndex((m) => m.role === "system");
+      if (firstSystemIdx >= 0) {
+        messages.splice(firstSystemIdx + 1, 0, fallbackMessage);
+      } else {
+        messages.unshift(fallbackMessage);
+      }
+    }
+  }
+
   // ── Phase 2b: Fallback chat summary injection ──
   // If the preset has no chat_summary marker but a summary exists, append it
   // to the bottom of the first system message so it's always included.
@@ -422,7 +467,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
   let finalMessages = mergeAdjacentMessages(messages);
 
   // ── Phase 4: Squash leading system messages if enabled ──
-  if (parameters.squashSystemMessages) {
+  if (parameters.squashSystemMessages && !finalMessages.some((message) => message.contextKind === "long_term_memory")) {
     finalMessages = squashLeadingSystemMessages(finalMessages);
   }
 
@@ -474,13 +519,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
   // ── Phase 7: Single user message mode ──
   // Collapses entire prompt into one user message.
   if (parameters.singleUserMessage) {
-    const combined = finalMessages
-      .map((m) => {
-        if (m.role !== "user") return `[${m.role.toUpperCase()}]\n${m.content}`;
-        return m.content;
-      })
-      .join("\n\n");
-    finalMessages = [{ role: "user", content: combined }];
+    finalMessages = collapseSingleUserMessages(finalMessages);
   }
 
   // ── Final: Drop any messages with empty/whitespace-only content ──
@@ -503,6 +542,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
         }
       : {}),
     ...(runtimeAgentTypesUsed.size > 0 ? { runtimeAgentTypesUsed: Array.from(runtimeAgentTypesUsed) } : {}),
+    ...(serializedLongTermMemoryArtifact ? { longTermMemoryArtifact: serializedLongTermMemoryArtifact } : {}),
   };
 }
 
@@ -517,6 +557,7 @@ interface ResolvedSection {
   messages: ChatMLMessage[];
   depth: number;
   isChatHistory?: boolean;
+  longTermMemoryArtifact?: LtmSerializedPromptArtifact;
 }
 
 interface ResolveSectionCtx {
@@ -548,6 +589,22 @@ async function resolveSection(
   // Handle marker sections
   if (section.isMarker === "true" && section.markerConfig) {
     const markerConfig = JSON.parse(section.markerConfig) as MarkerConfig;
+
+    if (markerConfig.type === "long_term_memory") {
+      const artifact = serializeLongTermMemoryPromptArtifact(ctx.markerCtx.longTermMemoryArtifact, {
+        wrapFormat: ctx.wrapFormat,
+        wrapperName: section.name,
+      });
+      if (!artifact) return null;
+      return {
+        id: section.id,
+        groupId: section.groupId,
+        role,
+        messages: [{ role, content: artifact.content, contextKind: "long_term_memory" }],
+        depth: section.injectionDepth,
+        longTermMemoryArtifact: artifact,
+      };
+    }
     const runtimeAgentType =
       markerConfig.type === "agent_data" && markerConfig.agentType ? markerConfig.agentType : null;
     const runtimeAgentData = runtimeAgentType !== null ? ctx.runtimeAgentData[runtimeAgentType] : undefined;
@@ -714,6 +771,37 @@ function findHistoryBounds(messages: ChatMLMessage[]): { start: number; end: num
   return start >= 0 ? { start, end } : null;
 }
 
+function collapseSingleUserMessages(messages: ChatMLMessage[]): ChatMLMessage[] {
+  if (!messages.some((message) => message.contextKind === "long_term_memory")) {
+    const combined = messages
+      .map((message) =>
+        message.role === "user" ? message.content : `[${message.role.toUpperCase()}]\n${message.content}`,
+      )
+      .join("\n\n");
+    return [{ role: "user", content: combined }];
+  }
+
+  const result: ChatMLMessage[] = [];
+  const buffered: string[] = [];
+  const flush = () => {
+    if (buffered.length > 0) {
+      result.push({ role: "user", content: buffered.join("\n\n") });
+      buffered.length = 0;
+    }
+  };
+
+  for (const message of messages) {
+    if (message.contextKind === "long_term_memory") {
+      flush();
+      result.push({ role: "user", content: message.content, contextKind: "long_term_memory" });
+      continue;
+    }
+    buffered.push(message.role === "user" ? message.content : `[${message.role.toUpperCase()}]\n${message.content}`);
+  }
+  flush();
+  return result;
+}
+
 function enforceStrictRoles(messages: ChatMLMessage[], chatHistoryEndIdx: number): ChatMLMessage[] {
   if (messages.length === 0) return messages;
   const resolvedChatHistoryEndIdx = findHistoryBounds(messages)?.end ?? chatHistoryEndIdx;
@@ -721,7 +809,7 @@ function enforceStrictRoles(messages: ChatMLMessage[], chatHistoryEndIdx: number
   // Step 1: Force post-chat-history non-user/assistant messages to user
   if (resolvedChatHistoryEndIdx > 0) {
     messages = messages.map((m, i) => {
-      if (i >= resolvedChatHistoryEndIdx && m.role === "system") {
+      if (i >= resolvedChatHistoryEndIdx && m.role === "system" && m.contextKind !== "long_term_memory") {
         return { ...m, role: "user" as const };
       }
       return m;
@@ -733,7 +821,16 @@ function enforceStrictRoles(messages: ChatMLMessage[], chatHistoryEndIdx: number
   let idx = 0;
   const systemParts: string[] = [];
   while (idx < messages.length && messages[idx]!.role === "system") {
-    systemParts.push(messages[idx]!.content);
+    const message = messages[idx]!;
+    if (message.contextKind === "long_term_memory") {
+      if (systemParts.length > 0) {
+        result.push({ role: "system", content: systemParts.join("\n\n") });
+        systemParts.length = 0;
+      }
+      result.push({ ...message });
+    } else {
+      systemParts.push(message.content);
+    }
     idx++;
   }
   if (systemParts.length > 0) {
@@ -745,6 +842,10 @@ function enforceStrictRoles(messages: ChatMLMessage[], chatHistoryEndIdx: number
   let expectedRole: "user" | "assistant" = "user";
   for (; idx < messages.length; idx++) {
     const msg = messages[idx]!;
+    if (msg.contextKind === "long_term_memory") {
+      result.push({ ...msg });
+      continue;
+    }
     const effectiveRole = msg.role === "system" ? "user" : msg.role;
 
     if (effectiveRole === expectedRole) {
@@ -755,7 +856,12 @@ function enforceStrictRoles(messages: ChatMLMessage[], chatHistoryEndIdx: number
       // if this would break alternation, force it to the expected role.
       const prev = result[result.length - 1];
       const sameCharacter = (prev?.characterId ?? null) === (msg.characterId ?? null);
-      if (prev && prev.role === effectiveRole && sameCharacter) {
+      if (
+        prev &&
+        prev.role === effectiveRole &&
+        sameCharacter &&
+        prev.contextKind !== "long_term_memory"
+      ) {
         // Merge into previous (same role back-to-back)
         prev.content += "\n\n" + msg.content;
         if (prev.contextKind !== msg.contextKind) {
