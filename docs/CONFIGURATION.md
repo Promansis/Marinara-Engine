@@ -256,6 +256,8 @@ Long-term memory extraction stores durable retrospective memories in seven bucke
 
 Compiled memory sections may include `importance` as `critical`, `major`, `moderate`, or `minor`. Retrieval gives critical and major memories a small ranking boost, and minor memories a small penalty, while keeping the normal semantic, lexical, keyword, metadata, and graph lanes intact.
 
+Custom extraction prompt templates control what the model emphasizes and how it phrases evidence units. Marinara always appends its structural link requirements at request time: every link target must resolve to the source note, an existing typed note, or another unit in the same response, and relationship changes must include a `caused_by` link to a same-response timeline event or an existing note. Saved custom templates are not rewritten. Candidates with missing or dangling targets are rejected with the exact target recorded in extraction diagnostics.
+
 ### Retrieval and Retention
 
 Recall uses bounded exact candidate catalogs for scope/status, direct note or tag matches, lexical and keyword matches, vectors, and graph expansion. It does not install or require an ANN service. A rebuilt index reuses vectors whose stable chunk source hash has not changed.

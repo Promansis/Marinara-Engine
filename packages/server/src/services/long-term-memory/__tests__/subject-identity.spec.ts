@@ -510,6 +510,52 @@ test("canonical identity remaps same-batch links to the resolved character note"
   assert.equal(result.units[0]?.links[0]?.target, "char_damo_korvak");
 });
 
+test("canonical identity does not guess when a disposable target resolves to different people", () => {
+  for (const subjectNames of [
+    ["Damo", "Lisa"],
+    ["Lisa", "Damo"],
+  ] as const) {
+    const result = resolveLtmSubjectIdentities({
+      catalog: damoLisaCatalog(),
+      existingNotes: [],
+      sourceBackedNpcSourceText: "Damo and Lisa returned to the archive.",
+      units: [
+        unit("timeline_event", "archive_return", {
+          sectionKey: "event",
+          links: [{ target: "char_reused", relation: "affects_character" }],
+        }),
+        ...subjectNames.map((subjectName) =>
+          unit("character_fact", "reused", { subjectNames: [subjectName] }),
+        ),
+      ],
+    });
+
+    assert.equal(result.units[0]?.links[0]?.target, "char_reused");
+    const diagnostic = result.diagnostics.find((candidate) => candidate.code === "ambiguous_subject_link_target");
+    assert.equal(diagnostic?.details?.linkTarget, "char_reused");
+    assert.equal(diagnostic?.details?.linkRelation, "affects_character");
+    assert.deepEqual(diagnostic?.details?.candidateTargetNoteIds, ["char_damo_korvak", "char_lisa_imai"]);
+  }
+});
+
+test("canonical identity still remaps a repeated disposable target with one canonical identity", () => {
+  const result = resolveLtmSubjectIdentities({
+    catalog: damoLisaCatalog(),
+    existingNotes: [],
+    units: [
+      unit("timeline_event", "archive_return", {
+        sectionKey: "event",
+        links: [{ target: "char_reused", relation: "affects_character" }],
+      }),
+      unit("character_fact", "reused", { subjectNames: ["Damo"] }),
+      unit("character_fact", "reused", { subjectNames: ["Damo"] }),
+    ],
+  });
+
+  assert.equal(result.units[0]?.links[0]?.target, "char_damo_korvak");
+  assert.equal(result.diagnostics.some((candidate) => candidate.code === "ambiguous_subject_link_target"), false);
+});
+
 test("exact full-name legacy note wins canonical targeting and receives a safe binding mutation", () => {
   const shorthand = note({
     id: "char_damo",

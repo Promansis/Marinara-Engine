@@ -3775,7 +3775,9 @@ test("source note extraction sends the resolved prompt for the source mode", asy
       operationId: randomUUID(),
     });
 
-    assert.equal(systemPrompt, "Conversation source prompt.");
+    assert.match(systemPrompt, /^Conversation source prompt\./);
+    assert.match(systemPrompt, /SERVER-ENFORCED LINK REQUIREMENTS/);
+    assert.doesNotMatch(systemPrompt, /relationship_state.*caused_by/i);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -3926,10 +3928,10 @@ test("source note extraction applies saved extraction config to llm request", as
     });
 
     const userPayload = JSON.parse(messages.find((message) => message.role === "user")!.content);
-    assert.equal(
-      messages.find((message) => message.role === "system")!.content,
-      "Return JSON with compact test units only.",
-    );
+    const systemPrompt = messages.find((message) => message.role === "system")!.content;
+    assert.match(systemPrompt, /^Return JSON with compact test units only\./);
+    assert.match(systemPrompt, /SERVER-ENFORCED LINK REQUIREMENTS/);
+    assert.match(systemPrompt, /relationship_state.*caused_by/i);
     assert.equal(Object.prototype.hasOwnProperty.call(userPayload, "extraInstruction"), false);
     assert.equal(userPayload.sourceText, sourceText.trim());
     assert.equal(chatOptions.maxTokens, 1024);
@@ -4185,7 +4187,7 @@ test("evidence unit extraction prompt uses a non-copyable response contract", as
     units: "array of evidence unit objects, bounded by the completion token budget",
   });
   assert.equal(userPayload.unitFields.bucket, "one allowed stream value from allowedStreams");
-  assert.equal(userPayload.unitFields.links, "real links only, otherwise []");
+  assert.match(userPayload.unitFields.links, /same response.*existingTypedNotes/);
   assert.equal(userPayload.unitFields.sourceHash, sourceHash);
   assert.deepEqual(userPayload.streamScanOrder.slice(0, 4), [
     "timeline_event",
@@ -4861,6 +4863,12 @@ test("relationship state support ignores same-pass events dropped during validat
     "missing_source_evidence",
     "unsupported_bucket",
   ]);
+  assert.match(compiled.outcome.droppedCandidates[1]?.message ?? "", /timeline_archive_key_returned/);
+  const relationshipDiagnostic = compiled.diagnostics.find(
+    (diagnostic) => diagnostic.details?.validatorCode === "relationship_state_missing_caused_by",
+  );
+  assert.equal(relationshipDiagnostic?.details?.validationStage, "closure");
+  assert.deepEqual(relationshipDiagnostic?.details?.invalidCausedByTargets, ["timeline_archive_key_returned"]);
 });
 
 test("source-summary thread validation accepts explicit resolver phrasing", () => {

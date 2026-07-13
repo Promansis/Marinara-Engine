@@ -29,7 +29,7 @@ import { retrieveLongTermMemory, type RetrieveLongTermMemoryInput } from "./retr
 import { canUpdateLtmScopedTarget, resolveScopedEvidenceUnitTargets, scopedVariantNoteId } from "./scoped-targets.js";
 import { LongTermMemoryStorage } from "./storage.js";
 import { normalizeStructuredSummaryEvidenceUnits } from "./structured-summary-normalizer.js";
-import { resolveLtmSubjectIdentities, subjectsEqual, type TrustedLtmSubjectCatalog } from "./subject-identity.js";
+import { prepareLtmSubjectIdentityContext, subjectsEqual, type TrustedLtmSubjectCatalog } from "./subject-identity.js";
 import { noteIdForLtmDraftMutation, projectLtmDraftOntoNotes } from "./draft-projector.js";
 import { stableJsonHash } from "./chunking.js";
 import { extractionFingerprintForLtmSourceNote, isLtmSourceExtractionFingerprintCurrent } from "./source-hash.js";
@@ -444,6 +444,12 @@ async function extractLongTermMemoryFromSourceNoteInner(
   };
 
   const extractionPayload = await runLongTermMemoryEvidenceUnitExtraction(baseExtractionOptions);
+  const identityContext = prepareLtmSubjectIdentityContext({
+    units: extractionPayload.response.units,
+    catalog: options.trustedSubjectCatalog ?? { entries: [], notes: [] },
+    sourceBackedNpcSourceText: sourceText,
+    sourceBackedNpcSourceTitle: sourceNote.title,
+  });
   const normalizedExtraction = normalizeStructuredSummaryEvidenceUnits({
     units: extractionPayload.response.units,
     sourceText,
@@ -453,18 +459,16 @@ async function extractLongTermMemoryFromSourceNoteInner(
     allowedBuckets,
     mode: resolvedMode,
     modes,
+    relationshipIdentityKey: identityContext.identityKeyForUnit,
   });
   const unitResponse = {
     ...extractionPayload.response,
     units: normalizedExtraction.units,
   };
-  const identityResolution = resolveLtmSubjectIdentities({
+  const identityResolution = identityContext.resolve({
     units: unitResponse.units,
-    catalog: options.trustedSubjectCatalog ?? { entries: [], notes: [] },
     existingNotes,
     enforceTrustedSubjects: Boolean(options.trustedSubjectCatalog),
-    sourceBackedNpcSourceText: sourceText,
-    sourceBackedNpcSourceTitle: sourceNote.title,
   });
   const targetResolution = await resolveScopedEvidenceUnitTargets({
     storage,

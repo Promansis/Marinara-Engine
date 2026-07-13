@@ -34,6 +34,7 @@ import { extractLongTermMemoryFromSourceNote } from "../source-extraction.js";
 import { LongTermMemoryDraftStore } from "../draft-store.js";
 import { LongTermMemoryStorage } from "../storage.js";
 import { buildTrustedLtmSubjectCatalog } from "../subject-identity.js";
+import { updateLtmExtractionConfig } from "../extraction-config.js";
 
 const timestamp = "2024-01-01T00:00:00.000Z";
 const sourceHash = "a".repeat(64);
@@ -290,9 +291,18 @@ test("validation closes links after their target candidate is dropped", () => {
     text: "The archive records every confession.",
     links: [{ target: "timeline_map_confession", relation: "triggered_by" }],
   });
+  const dependentAnchor = unit("anchor", {
+    subjectId: "confession_ledger",
+    sectionKey: "motif",
+    text: "The confession ledger recurs as an archive motif.",
+    links: [{ target: "world_archive_records", relation: "planted_in" }],
+  });
 
   const result = compileEvidenceUnitExtraction({
-    unitResponse: { summary: "Dependent candidate", units: [droppedTimeline, dependentWorldFact] },
+    unitResponse: {
+      summary: "Dependent candidate",
+      units: [droppedTimeline, dependentWorldFact, dependentAnchor],
+    },
     sourceText: sourceNote.sections.source!.text,
     sourceNote,
     existingNotes: [],
@@ -305,7 +315,50 @@ test("validation closes links after their target candidate is dropped", () => {
   assert.deepEqual(result.outcome.droppedCandidates.map((candidate) => candidate.reason), [
     "missing_source_evidence",
     "unsupported_bucket",
+    "unsupported_bucket",
   ]);
+  const closureDiagnostics = result.diagnostics.filter(
+    (diagnostic) => diagnostic.details?.validatorCode === "unknown_link_target",
+  );
+  assert.deepEqual(
+    closureDiagnostics.map((diagnostic) => diagnostic.details?.linkTarget),
+    ["timeline_map_confession", "world_archive_records"],
+  );
+  assert(closureDiagnostics.every((diagnostic) => diagnostic.details?.validationStage === "closure"));
+  assert.deepEqual(
+    closureDiagnostics.map((diagnostic) => diagnostic.details?.linkRelation),
+    ["triggered_by", "planted_in"],
+  );
+});
+
+test("validation reports an exact invalid caused_by target", () => {
+  const sourceNote = note("source_test", {
+    source: {
+      text: "Alice and Bob's trust changed after the missing confession event.",
+      updatedAt: timestamp,
+    },
+  });
+  const result = validateLtmEvidenceUnits({
+    units: [
+      unit("relationship_state", {
+        text: "Alice and Bob's trust changed after the missing confession event.",
+        dimensionChanges: { trust: -10 },
+        links: [{ target: "timeline_missing_confession", relation: "caused_by" }],
+      }),
+    ],
+    sourceText: sourceNote.sections.source!.text,
+    sourceNote,
+    existingNotes: [],
+    expectedSourceHash: sourceHash,
+  });
+
+  assert.match(result.droppedCandidates[0]?.message ?? "", /timeline_missing_confession/);
+  const diagnostic = result.diagnostics.find(
+    (candidate) => candidate.details?.validatorCode === "relationship_state_missing_caused_by",
+  );
+  assert.deepEqual(diagnostic?.details?.causedByTargets, ["timeline_missing_confession"]);
+  assert.deepEqual(diagnostic?.details?.invalidCausedByTargets, ["timeline_missing_confession"]);
+  assert.equal(diagnostic?.details?.validationStage, "initial");
 });
 
 test("source hashes ignore refresh timestamps but change with source text", () => {
@@ -591,6 +644,7 @@ test("prompt contract advertises schema-critical relationship and target rules",
     unitFields: Record<string, unknown>;
     allowedRelationshipDimensions: string[];
     targetNoteRules: string[];
+    validationRules: string[];
   };
 
   assert.equal(parsed.unitFields.importance, "one of critical, major, moderate, minor");
@@ -601,6 +655,9 @@ test("prompt contract advertises schema-critical relationship and target rules",
   assert.ok(parsed.allowedRelationshipDimensions.includes("protectiveness"));
   assert.ok(parsed.targetNoteRules.some((rule) => rule.includes("timeline_<subjectId>")));
   assert.ok(parsed.targetNoteRules.some((rule) => rule.includes("specific event or beat")));
+  assert.ok(parsed.validationRules.some((rule) => rule.includes("relationship_state") && rule.includes("caused_by")));
+  assert.ok(parsed.validationRules.some((rule) => rule.includes("Every link target")));
+  assert.match(String(parsed.unitFields.links), /same response|existingTypedNotes/i);
 });
 
 test("evidence unit response format constrains target shape and relationship dimensions", () => {
@@ -635,6 +692,8 @@ test("evidence unit response format constrains target shape and relationship dim
   assert.ok(unitSchema.properties.dimensionChanges.properties.tension);
   assert.ok(unitSchema.properties.dimensionChanges.properties.respect);
   assert.ok(unitSchema.properties.dimensionChanges.properties.loyalty);
+  assert.match(unitSchema.properties.links.description, /same response|existing note/i);
+  assert.match(unitSchema.properties.links.items.properties.target.description, /same response|existing note/i);
   assert.equal("maxItems" in jsonSchema.schema.properties.units, false);
 });
 
@@ -678,9 +737,14 @@ test("game refine prompt preserves structural subjects without requesting subjec
   assert.match(messages[0]!.content, /Preserve character_fact and relationship_state subjectId values/);
   assert.match(messages[0]!.content, /Never add subjectNames or choose database subject keys/);
   assert.match(messages[0]!.content, /Custom game guidance/);
+  assert.match(messages[0]!.content, /SERVER-ENFORCED LINK REQUIREMENTS/);
   assert(
     messages[0]!.content.lastIndexOf("Preserve character_fact") >
       messages[0]!.content.indexOf("Copy source-visible character names"),
+  );
+  assert(
+    messages[0]!.content.lastIndexOf("SERVER-ENFORCED LINK REQUIREMENTS") >
+      messages[0]!.content.lastIndexOf("Preserve character_fact"),
   );
   assert.equal("subjectNames" in payload.unitFields, false);
   assert(payload.targetNoteRules.some((rule) => rule.includes("Preserve the character_fact")));
@@ -1727,6 +1791,168 @@ test("LLM source extraction creates a review-required single-name character memo
     assert.equal(create.note.title, "Roselia");
     assert.equal(create.risk, "medium");
     assert.deepEqual(create.note.subjects, [{ key: "npc:roselia" }]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source extraction joins structured relationship support through canonical subject names", async () => {
+  const root = await mkdtemp(join(tmpdir(), "marinara-ltm-identity-aware-structured-"));
+  try {
+    const storage = new LongTermMemoryStorage(root);
+    const sourceText = [
+      "### timeline_event",
+      "event_id: bracelet_reveal",
+      "event: Damo and Lisa revealed the matching friendship bracelets.",
+      "### relationship_state",
+      "relationship_id: damo_lisa_imai",
+      "state: Damo and Lisa trusted each other more after the bracelet reveal.",
+      "dimensions: trust 78",
+      "dimension_changes: trust +12",
+      "caused_by: bracelet_reveal",
+      "### world_fact",
+      "The friendship bracelets link Damo, Lisa, and Yukina's shared history.",
+    ].join("\n");
+    await storage.createNote(
+      {
+        id: "source_identity_aware_structured",
+        type: "source",
+        status: "active",
+        modes: ["roleplay"],
+        scope: { chatId: "chat_a" },
+        tags: ["source_summary"],
+        links: [],
+        sections: {
+          source: { text: sourceText, updatedAt: timestamp, evidence: ["chat:chat_a"] },
+        },
+      },
+      { suppressEvent: true },
+    );
+    await updateLtmExtractionConfig(
+      {
+        promptTemplates: [
+          {
+            id: "legacy_roleplay",
+            name: "Legacy roleplay",
+            prompt: "Extract durable memories as compact JSON.",
+          },
+        ],
+        activePromptTemplateIdsByMode: { roleplay: "legacy_roleplay" },
+      },
+      root,
+    );
+    const sourceNote = await storage.getNote("source_identity_aware_structured");
+    assert(sourceNote);
+    const unitSourceHash = sourceHashForEvidenceUnitExtraction(sourceNote);
+    let systemPrompt = "";
+    const provider = {
+      maxTokensOverrideValue: undefined,
+      chatComplete: async (messages: Array<{ role: string; content: string }>) => {
+        systemPrompt = messages.find((message) => message.role === "system")?.content ?? "";
+        const common = {
+          importance: "major",
+          keywords: [],
+          evidence: ["source_note:source_identity_aware_structured"],
+          confidence: 0.94,
+          salience: 0.82,
+          status: "active",
+          sourceHash: unitSourceHash,
+        };
+        return {
+          content: JSON.stringify({
+            summary: "Bracelet relationships",
+            units: [
+              {
+                ...common,
+                id: randomUUID(),
+                bucket: "timeline_event",
+                subjectId: "bracelet_reveal",
+                subjectNames: [],
+                sectionKey: "event",
+                text: "Damo and Lisa revealed the matching friendship bracelets.",
+                links: [],
+              },
+              {
+                ...common,
+                id: randomUUID(),
+                bucket: "relationship_state",
+                subjectId: "provider_primary",
+                subjectNames: ["Damo", "Lisa Imai"],
+                sectionKey: "state",
+                text: "Damo and Lisa trusted each other more after the bracelet reveal.",
+                dimensions: { trust: 78 },
+                dimensionChanges: { trust: 12 },
+                links: [],
+              },
+              {
+                ...common,
+                id: randomUUID(),
+                bucket: "relationship_state",
+                subjectId: "provider_secondary",
+                subjectNames: ["Lisa Imai", "Yukina"],
+                sectionKey: "state",
+                text: "Lisa and Yukina understood each other better after the bracelet reveal.",
+                dimensionChanges: { trust: 5 },
+                links: [
+                  { target: "timeline_bracelet_reveal", relation: "caused_by" },
+                  { target: "rel_provider_primary", relation: "affects_relationship" },
+                ],
+              },
+              {
+                ...common,
+                id: randomUUID(),
+                bucket: "world_fact",
+                subjectId: "friendship_bracelets",
+                subjectNames: [],
+                sectionKey: "facts",
+                text: "The friendship bracelets link Damo, Lisa, and Yukina's shared history.",
+                links: [{ target: "rel_provider_secondary", relation: "evidenced_by" }],
+              },
+            ],
+          }),
+        };
+      },
+    } as any;
+    const catalog = buildTrustedLtmSubjectCatalog({
+      roster: [
+        { kind: "character", id: "damo-id", name: "Damo Korvak", aliases: ["Damo"] },
+        { kind: "character", id: "lisa-id", name: "Lisa Imai", aliases: ["Lisa"] },
+        { kind: "character", id: "yukina-id", name: "Yukina" },
+      ],
+      notes: [],
+    });
+
+    const result = await extractLongTermMemoryFromSourceNote({
+      noteId: sourceNote.id,
+      provider,
+      model: "test-model",
+      root,
+      trustedSubjectCatalog: catalog,
+      persistDraft: false,
+    });
+
+    assert.match(systemPrompt, /Extract durable memories as compact JSON/);
+    assert.match(systemPrompt, /SERVER-ENFORCED LINK REQUIREMENTS/);
+    assert.deepEqual(
+      result.response.mutations
+        .filter((mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> =>
+          mutation.kind === "create_note",
+        )
+        .map((mutation) => mutation.note.id)
+        .sort(),
+      [
+        "rel_damo_korvak_lisa_imai",
+        "rel_lisa_imai_yukina",
+        "timeline_bracelet_reveal",
+        "world_friendship_bracelets",
+      ],
+    );
+    const primary = result.response.mutations.find(
+      (mutation): mutation is Extract<LtmDraftMutation, { kind: "create_note" }> =>
+        mutation.kind === "create_note" && mutation.note.id === "rel_damo_korvak_lisa_imai",
+    );
+    assert(primary?.note.links.some((link) => link.target === "timeline_bracelet_reveal" && link.relation === "caused_by"));
+    assert.equal(result.outcome.droppedUnits, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

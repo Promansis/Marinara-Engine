@@ -24,6 +24,11 @@ type RelationshipHints = {
 };
 
 type EvidenceUnitLink = LtmEvidenceUnit["links"][number];
+type RelationshipIdentityCandidate = Pick<
+  LtmEvidenceUnit,
+  "bucket" | "subjectId" | "sectionKey" | "subjectNames" | "subjectKeys"
+>;
+export type LtmRelationshipIdentityKey = (unit: RelationshipIdentityCandidate) => string;
 type RelationshipStructuredLine = {
   unit: LtmEvidenceUnit;
   causedBy?: string;
@@ -192,6 +197,7 @@ export function normalizeStructuredSummaryEvidenceUnits({
   mode,
   modes,
   addStructuredUnits = true,
+  relationshipIdentityKey,
 }: {
   units: LtmEvidenceUnit[];
   sourceText: string;
@@ -202,6 +208,7 @@ export function normalizeStructuredSummaryEvidenceUnits({
   mode?: LtmMode;
   modes?: readonly LtmMode[];
   addStructuredUnits?: boolean;
+  relationshipIdentityKey?: LtmRelationshipIdentityKey;
 }): StructuredSummaryNormalizationResult {
   const sections = parseStructuredSections(sourceText);
   if (sections.length === 0) {
@@ -213,8 +220,11 @@ export function normalizeStructuredSummaryEvidenceUnits({
   }
 
   const allowed = new Set(allowedBuckets ?? DEFAULT_LTM_ALLOWED_STREAMS_BY_MODE[mode ?? modes?.[0] ?? "roleplay"]);
-  const hints = structuredSummaryHints(sections);
-  const normalized = normalizeCanonicalTargetLinks(units, units.map((unit) => normalizeUnit(unit, hints)));
+  const hints = structuredSummaryHints(sections, relationshipIdentityKey);
+  const normalized = normalizeCanonicalTargetLinks(
+    units,
+    units.map((unit) => normalizeUnit(unit, hints, relationshipIdentityKey)),
+  );
   if (!addStructuredUnits) {
     return {
       units: normalized,
@@ -231,6 +241,7 @@ export function normalizeStructuredSummaryEvidenceUnits({
     existingNotes,
     mode,
     modes,
+    relationshipIdentityKey,
   });
   const withStructuredCharacters = maybeAddStructuredCharacterUnits({
     units: withStructuredRelationships,
@@ -374,7 +385,10 @@ function parseFieldLine(line: string) {
   };
 }
 
-function structuredSummaryHints(sections: StructuredSection[]): StructuredSummaryHints {
+function structuredSummaryHints(
+  sections: StructuredSection[],
+  relationshipIdentityKey?: LtmRelationshipIdentityKey,
+): StructuredSummaryHints {
   const eventIds = new Set<string>();
   const relationships = new Map<string, RelationshipHints>();
   const threadIds = new Set<string>();
@@ -397,14 +411,16 @@ function structuredSummaryHints(sections: StructuredSection[]): StructuredSummar
     if (section.bucket === "relationship_state") {
       const subject = relationshipSubject(section);
       if (!subject) continue;
-      relationships.set(subject, {
+      const relationship = {
         dimensions: parseDimensionMap(fieldValues(section, ["dimensions", "dimension"]), { min: 0, max: 100 }),
         dimensionChanges: parseDimensionMap(
           fieldValues(section, ["dimension_changes", "dimensionchanges", "changes", "change", "deltas", "delta"]),
           { min: -100, max: 100 },
         ),
         links: structuredLinks(section, ["caused_by"]),
-      });
+      };
+      relationships.set(subject, relationship);
+      relationships.set(relationshipIdentityKeyForSubject(subject, relationshipIdentityKey), relationship);
       continue;
     }
 
@@ -438,7 +454,11 @@ function structuredSummaryHints(sections: StructuredSection[]): StructuredSummar
   };
 }
 
-function normalizeUnit(unit: LtmEvidenceUnit, hints: StructuredSummaryHints): LtmEvidenceUnit {
+function normalizeUnit(
+  unit: LtmEvidenceUnit,
+  hints: StructuredSummaryHints,
+  relationshipIdentityKey?: LtmRelationshipIdentityKey,
+): LtmEvidenceUnit {
   const links = normalizeLinks(unit.links, hints);
 
   if (unit.bucket === "timeline_event") {
@@ -452,7 +472,7 @@ function normalizeUnit(unit: LtmEvidenceUnit, hints: StructuredSummaryHints): Lt
 
   if (unit.bucket === "relationship_state") {
     const subjectId = stripUnitSubjectPrefix(unit.bucket, unit.subjectId);
-    const relationship = relationshipHintsFor(subjectId, hints);
+    const relationship = relationshipHintsFor({ ...unit, subjectId }, hints, relationshipIdentityKey);
     return {
       ...unit,
       subjectId,
@@ -560,6 +580,7 @@ function maybeAddStructuredRelationshipUnits({
   existingNotes,
   mode,
   modes,
+  relationshipIdentityKey,
 }: {
   units: LtmEvidenceUnit[];
   sections: StructuredSection[];
@@ -569,6 +590,7 @@ function maybeAddStructuredRelationshipUnits({
   existingNotes: LtmNote[];
   mode?: LtmMode;
   modes?: readonly LtmMode[];
+  relationshipIdentityKey?: LtmRelationshipIdentityKey;
 }) {
   if (!sourceNote || !isRoleplayMode(mode, modes) || !allowed.has("relationship_state")) return units;
 
@@ -586,8 +608,11 @@ function maybeAddStructuredRelationshipUnits({
   const canCreateTimeline = allowed.has("timeline_event");
   const generatedTimelineTargets = new Map<string, string>();
   const relationshipMatches = new Set<number>();
-  const existingRelationshipCounts = countRelationshipSubjects(next);
-  const structuredRelationshipCounts = countStructuredRelationshipSubjects(structuredRelationships);
+  const existingRelationshipCounts = countRelationshipSubjects(next, relationshipIdentityKey);
+  const structuredRelationshipCounts = countStructuredRelationshipSubjects(
+    structuredRelationships,
+    relationshipIdentityKey,
+  );
 
   for (const structured of structuredRelationships) {
     const links = [...structured.unit.links];
@@ -617,6 +642,7 @@ function maybeAddStructuredRelationshipUnits({
       usedIndexes: relationshipMatches,
       existingRelationshipCounts,
       structuredRelationshipCounts,
+      relationshipIdentityKey,
     });
     if (existingIndex >= 0) {
       relationshipMatches.add(existingIndex);
@@ -626,8 +652,14 @@ function maybeAddStructuredRelationshipUnits({
       continue;
     }
 
-    const identity = relationshipUnitIdentity(unit);
-    if (next.some((candidate) => candidate.bucket === "relationship_state" && relationshipUnitIdentity(candidate) === identity)) {
+    const identity = relationshipUnitIdentity(unit, relationshipIdentityKey);
+    if (
+      next.some(
+        (candidate) =>
+          candidate.bucket === "relationship_state" &&
+          relationshipUnitIdentity(candidate, relationshipIdentityKey) === identity,
+      )
+    ) {
       continue;
     }
     next.push(unit);
@@ -905,19 +937,24 @@ function compactCauseIdentifier(value: string, fallback: string) {
   return normalizeIdentifier(tokens.slice(0, 10).join("_"), fallback);
 }
 
-function countRelationshipSubjects(units: LtmEvidenceUnit[]) {
+function countRelationshipSubjects(units: LtmEvidenceUnit[], identityKey?: LtmRelationshipIdentityKey) {
   const counts = new Map<string, number>();
   for (const unit of units) {
     if (unit.bucket !== "relationship_state") continue;
-    counts.set(unit.subjectId, (counts.get(unit.subjectId) ?? 0) + 1);
+    const key = relationshipIdentityKeyForUnit(unit, identityKey);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   return counts;
 }
 
-function countStructuredRelationshipSubjects(units: RelationshipStructuredLine[]) {
+function countStructuredRelationshipSubjects(
+  units: RelationshipStructuredLine[],
+  identityKey?: LtmRelationshipIdentityKey,
+) {
   const counts = new Map<string, number>();
   for (const structured of units) {
-    counts.set(structured.unit.subjectId, (counts.get(structured.unit.subjectId) ?? 0) + 1);
+    const key = relationshipIdentityKeyForUnit(structured.unit, identityKey);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   return counts;
 }
@@ -928,23 +965,28 @@ function matchingRelationshipUnitIndex({
   usedIndexes,
   existingRelationshipCounts,
   structuredRelationshipCounts,
+  relationshipIdentityKey,
 }: {
   units: LtmEvidenceUnit[];
   structured: LtmEvidenceUnit;
   usedIndexes: Set<number>;
   existingRelationshipCounts: Map<string, number>;
   structuredRelationshipCounts: Map<string, number>;
+  relationshipIdentityKey?: LtmRelationshipIdentityKey;
 }) {
+  const structuredKey = relationshipIdentityKeyForUnit(structured, relationshipIdentityKey);
   const candidates = units
     .map((unit, index) => ({ unit, index }))
     .filter(
       ({ unit, index }) =>
         unit.bucket === "relationship_state" &&
-        unit.subjectId === structured.subjectId &&
+        relationshipIdentityKeyForUnit(unit, relationshipIdentityKey) === structuredKey &&
         !usedIndexes.has(index),
     );
   if (candidates.length === 0) return -1;
-  const exact = candidates.find(({ unit }) => normalizeComparableText(unit.text) === normalizeComparableText(structured.text));
+  const exact = candidates.find(
+    ({ unit }) => normalizeComparableText(unit.text) === normalizeComparableText(structured.text),
+  );
   if (exact) return exact.index;
   const overlapping = candidates
     .map(({ unit, index }) => ({
@@ -955,8 +997,8 @@ function matchingRelationshipUnitIndex({
     .sort((a, b) => b.overlap - a.overlap);
   if (overlapping[0]) return overlapping[0].index;
   if (
-    (existingRelationshipCounts.get(structured.subjectId) ?? 0) === 1 &&
-    (structuredRelationshipCounts.get(structured.subjectId) ?? 0) === 1
+    (existingRelationshipCounts.get(structuredKey) ?? 0) === 1 &&
+    (structuredRelationshipCounts.get(structuredKey) ?? 0) === 1
   ) {
     return candidates[0]!.index;
   }
@@ -984,11 +1026,8 @@ function mergeStructuredRelationshipUnit(unit: LtmEvidenceUnit, structured: LtmE
   };
 }
 
-function relationshipUnitIdentity(unit: LtmEvidenceUnit) {
-  return [
-    stripUnitSubjectPrefix("relationship_state", unit.subjectId),
-    normalizeComparableText(unit.text),
-  ].join("|");
+function relationshipUnitIdentity(unit: LtmEvidenceUnit, identityKey?: LtmRelationshipIdentityKey) {
+  return [relationshipIdentityKeyForUnit(unit, identityKey), normalizeComparableText(unit.text)].join("|");
 }
 
 function maybeAddStructuredCharacterUnits({
@@ -1311,8 +1350,30 @@ function characterSubject(section: StructuredSection) {
   return raw ? stripUnitSubjectPrefix("character_fact", normalizeIdentifier(raw, "")) : null;
 }
 
-function relationshipHintsFor(subjectId: string, hints: StructuredSummaryHints) {
-  return hints.relationships.get(subjectId) ?? hints.relationships.get(stripUnitSubjectPrefix("relationship_state", subjectId));
+function relationshipIdentityKeyForSubject(subjectId: string, identityKey?: LtmRelationshipIdentityKey) {
+  return relationshipIdentityKeyForUnit(
+    {
+      bucket: "relationship_state",
+      subjectId: stripUnitSubjectPrefix("relationship_state", subjectId),
+      sectionKey: "state",
+    },
+    identityKey,
+  );
+}
+
+function relationshipIdentityKeyForUnit(unit: RelationshipIdentityCandidate, identityKey?: LtmRelationshipIdentityKey) {
+  return identityKey?.(unit) ?? stripUnitSubjectPrefix("relationship_state", unit.subjectId);
+}
+
+function relationshipHintsFor(
+  unit: RelationshipIdentityCandidate,
+  hints: StructuredSummaryHints,
+  identityKey?: LtmRelationshipIdentityKey,
+) {
+  return (
+    hints.relationships.get(relationshipIdentityKeyForUnit(unit, identityKey)) ??
+    hints.relationships.get(stripUnitSubjectPrefix("relationship_state", unit.subjectId))
+  );
 }
 
 function normalizeTimelineSubject(subjectId: string, hints: StructuredSummaryHints) {

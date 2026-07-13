@@ -100,6 +100,21 @@ const LTM_EXTRACTION_TIMELINE_LINK_RELATIONS = new Set<string>([
   "paid_off_in",
 ]);
 
+function serverEnforcedLinkRules(allowedBuckets: readonly LtmEvidenceUnit["bucket"][]) {
+  return [
+    "Every link target must resolve to sourceNote.id, an exact existingTypedNotes id, or a target note derived from a unit in the same response.",
+    ...(allowedBuckets.includes("relationship_state")
+      ? [
+          "A relationship_state that describes a change or includes dimensionChanges must include a caused_by link to a timeline_event in the same response or an exact existingTypedNotes id. Same-response event targets use timeline_<subjectId>.",
+        ]
+      : []),
+  ];
+}
+
+function serverEnforcedLinkPrompt(rules: readonly string[]) {
+  return ["SERVER-ENFORCED LINK REQUIREMENTS", ...rules.map((rule) => `- ${rule}`)].join("\n");
+}
+
 export interface RunLongTermMemoryEvidenceUnitExtractionOptions {
   sourceNote: LtmNote;
   sourceText: string;
@@ -346,13 +361,21 @@ export function evidenceUnitResponseFormat(options: {
                 status: { type: "string", enum: ["active", "resolved"] },
                 links: {
                   type: "array",
+                  description:
+                    "Every link target must resolve to the source note, an existing note, or a target note derived from a unit in the same response.",
                   maxItems: 50,
                   items: {
                     type: "object",
                     additionalProperties: false,
                     required: ["target", "relation"],
                     properties: {
-                      target: { type: "string", pattern: "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$", maxLength: 120 },
+                      target: {
+                        type: "string",
+                        pattern: "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+                        maxLength: 120,
+                        description:
+                          "Exact existing note id or target note id derived from a unit in the same response.",
+                      },
                       relation: { type: "string", enum: LTM_EXTRACTION_LINK_RELATIONS },
                       aspect: { type: "string", maxLength: 50 },
                     },
@@ -831,12 +854,14 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
   const filteredBucketDescriptions: Record<string, string> = {};
   const resolveSubjectNames = options.resolveSubjectNames !== false;
   const configuredSystemPrompt = options.systemPrompt?.trim();
-  const systemPrompt =
+  const baseSystemPrompt =
     options.refinePass && options.mode === "game"
       ? [configuredSystemPrompt, DEFAULT_LTM_EXTRACTION_PROMPT_GAME_REFINE]
           .filter((prompt, index, prompts): prompt is string => Boolean(prompt) && prompts.indexOf(prompt) === index)
           .join("\n\n")
       : configuredSystemPrompt || DEFAULT_LTM_EXTRACTION_PROMPT;
+  const validationRules = serverEnforcedLinkRules(allowedBuckets);
+  const systemPrompt = [baseSystemPrompt, serverEnforcedLinkPrompt(validationRules)].join("\n\n");
   for (const bucket of allowedBuckets) {
     const desc = allBucketDescriptions[bucket];
     if (desc) {
@@ -876,7 +901,8 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
           confidence: "0..1",
           salience: "0..1",
           status: "one allowedStatuses value",
-          links: "real links only, otherwise []",
+          links:
+            "real links only, otherwise []; targets must be derived from units in the same response or copied exactly from sourceNote.id or existingTypedNotes",
           dimensions:
             "relationship_state only: optional object with allowedRelationshipDimensions keys and 0..100 integer values",
           dimensionChanges:
@@ -901,6 +927,7 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
           "affects_character",
         ],
         streamDescriptions: filteredBucketDescriptions,
+        validationRules,
         sourceNote: {
           id: options.sourceNote.id,
           title: options.sourceNote.title,
@@ -920,6 +947,7 @@ export function evidenceUnitMessages(options: RunLongTermMemoryEvidenceUnitExtra
           "For other streams, the compiler derives the target note id from bucket + subjectId: timeline_event -> timeline_<subjectId>, world_fact or anchor -> world_<subjectId> unless anchor sectionKey starts with tone, thread -> thread_<subjectId>, tone -> tone_<subjectId>.",
           "For timeline_event, subjectId must name the specific event or beat, not just a person, character, place, or broad entity. Use damo_arrival or lisa_minimizing_damo instead of damo_korvak.",
           "Do not intentionally target an existing note id unless that exact note appears in existingTypedNotes. If a broad note is not listed, use a source-specific subjectId for a new in-scope note.",
+          ...validationRules,
           "relationship_state dimension keys must come only from allowedRelationshipDimensions. Put professional curiosity, reputation, gossip, or attention as text/thread/world/timeline facts, not dimensions.",
           ...(resolveSubjectNames
             ? [

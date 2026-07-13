@@ -91,6 +91,7 @@ type DroppedCandidateInput = {
   code?: string;
   unit?: LtmEvidenceUnit;
   snippet?: string;
+  details?: Record<string, unknown>;
 };
 
 export function validateLtmEvidenceUnits({
@@ -133,10 +134,8 @@ export function validateLtmEvidenceUnits({
     const noteId = noteIdForEvidenceUnit(unit);
     const unitDiagnostics: LtmExtractionDiagnostic[] = [];
     const drop = (input: DroppedCandidateInput) => {
-      const message = input.code ? userFacingDropMessageForCode(input.code, input.reason) : input.message;
       const dropped = droppedCandidate({
         ...input,
-        message,
         unit,
       });
       droppedCandidates.push(dropped);
@@ -147,7 +146,7 @@ export function validateLtmEvidenceUnits({
         mutationId: unit.id,
         noteId,
         message: dropped.message,
-        ...(input.code ? { details: { validatorCode: input.code } } : {}),
+        ...(input.code ? { details: { validatorCode: input.code, validationStage: "initial", ...input.details } } : {}),
       });
     };
 
@@ -310,8 +309,9 @@ export function validateLtmEvidenceUnits({
         drop({
           candidateIndex,
           reason,
-          message: userFacingDropMessage(reason),
+          message: userFacingDropMessageForDiagnostic(dropDiagnostic, reason),
           code: dropDiagnostic.code,
+          details: dropDiagnostic.details,
         });
       } else {
         diagnostics.push(...unitDiagnostics);
@@ -324,7 +324,12 @@ export function validateLtmEvidenceUnits({
     keptCandidateIndexes.set(unit, candidateIndex);
   }
 
-  const dropKeptUnit = (unit: LtmEvidenceUnit, code: string, message: string) => {
+  const dropKeptUnit = (
+    unit: LtmEvidenceUnit,
+    code: string,
+    message: string,
+    details: Record<string, unknown> = {},
+  ) => {
     const candidateIndex = keptCandidateIndexes.get(unit) ?? 0;
     const noteId = noteIdForEvidenceUnit(unit);
     const dropped = droppedCandidate({
@@ -341,7 +346,7 @@ export function validateLtmEvidenceUnits({
       mutationId: unit.id,
       noteId,
       message: dropped.message,
-      details: { validatorCode: code },
+      details: { validatorCode: code, validationStage: "closure", ...details },
     });
   };
 
@@ -351,10 +356,17 @@ export function validateLtmEvidenceUnits({
     changed = false;
     const relationshipSupported = finalKeptUnits.filter((unit) => {
       if (hasRelationshipSupport(unit, finalKeptUnits, existingNotes)) return true;
+      const causedByTargets = unit.links.filter((link) => link.relation === "caused_by").map((link) => link.target);
       dropKeptUnit(
         unit,
         "relationship_state_missing_caused_by",
-        userFacingDropMessageForCode("relationship_state_missing_caused_by", "unsupported_bucket"),
+        causedByTargets.length > 0
+          ? `Dropped a relationship_state change whose caused_by target '${causedByTargets.join("', '")}' was removed during validation.`
+          : userFacingDropMessageForCode("relationship_state_missing_caused_by", "unsupported_bucket"),
+        {
+          causedByTargets,
+          invalidCausedByTargets: causedByTargets,
+        },
       );
       changed = true;
       return false;
@@ -371,6 +383,7 @@ export function validateLtmEvidenceUnits({
         unit,
         "unknown_link_target",
         `Dropped a candidate whose link target '${missingLink.target}' was removed during validation.`,
+        { linkTarget: missingLink.target, linkRelation: missingLink.relation },
       );
       changed = true;
       return false;
@@ -519,8 +532,13 @@ function relationshipCausedByDiagnostics(
   if (unit.bucket !== "relationship_state") return [];
   const describesChange = relationshipDescribesChange(unit);
   if (!describesChange) return [];
-  const hasCausedBy = unit.links.some((link) => link.relation === "caused_by" && validLinkTargets.has(link.target));
+  const causedByTargets = unit.links.filter((link) => link.relation === "caused_by").map((link) => link.target);
+  const invalidCausedByTargets = causedByTargets.filter((target) => !validLinkTargets.has(target));
+  const hasCausedBy = causedByTargets.some((target) => validLinkTargets.has(target));
   if (hasCausedBy) return [];
+  const invalidTargetMessage = invalidCausedByTargets.length
+    ? `Dropped a relationship_state change whose caused_by target '${invalidCausedByTargets.join("', '")}' does not exist in the extraction batch or existing notes.`
+    : "Dropped a relationship_state change missing a caused_by link to a timeline event or existing note.";
   return [
     {
       severity: "error",
@@ -528,7 +546,8 @@ function relationshipCausedByDiagnostics(
       candidateIndex,
       mutationId: unit.id,
       noteId,
-      message: "Relationship changes must link to a timeline event or existing note with relation caused_by.",
+      message: invalidTargetMessage,
+      details: { causedByTargets, invalidCausedByTargets },
     },
   ];
 }
@@ -550,6 +569,7 @@ function linkTargetDiagnostics(
             mutationId: unit.id,
             noteId,
             message: `Link target '${link.target}' does not exist in the extraction batch or existing notes.`,
+            details: { linkTarget: link.target, linkRelation: link.relation },
           },
         ],
   );
@@ -744,6 +764,13 @@ function userFacingDropMessageForCode(code: string, reason: LtmExtractionDropRea
     return "Dropped a thread that did not state what future event or condition would resolve it.";
   }
   return userFacingDropMessage(reason);
+}
+
+function userFacingDropMessageForDiagnostic(diagnostic: LtmExtractionDiagnostic, reason: LtmExtractionDropReason) {
+  if (diagnostic.code === "unknown_link_target" || diagnostic.code === "relationship_state_missing_caused_by") {
+    return diagnostic.message;
+  }
+  return userFacingDropMessageForCode(diagnostic.code, reason);
 }
 
 function userFacingDropMessage(reason: LtmExtractionDropReason) {

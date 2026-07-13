@@ -46,6 +46,20 @@ export type LtmSubjectIdentityResolution = {
   legacyBindings: Map<string, LtmSubject[]>;
 };
 
+export type LtmSubjectIdentityCandidate = Pick<
+  LtmEvidenceUnit,
+  "bucket" | "subjectId" | "sectionKey" | "subjectNames" | "subjectKeys"
+>;
+
+export type LtmSubjectIdentityContext = {
+  identityKeyForUnit(unit: LtmSubjectIdentityCandidate): string;
+  resolve(input: {
+    units: LtmEvidenceUnit[];
+    existingNotes: LtmNote[];
+    enforceTrustedSubjects?: boolean;
+  }): LtmSubjectIdentityResolution;
+};
+
 export type TrustedLtmNoteSubjectMatch = {
   note: LtmNote;
   subjects: LtmSubject[];
@@ -272,6 +286,16 @@ type ResolvedUnit = {
   unit: LtmEvidenceUnit;
   originalNoteId: string;
   targetNoteId: string;
+  candidateIndex: number;
+};
+
+type PreparedLtmSubjectIdentityContext = {
+  catalog: TrustedLtmSubjectCatalog;
+  index: CatalogIndex;
+  legacyBindings: Map<string, LtmSubject[]>;
+  batchNames: BatchSubjectNameResolution;
+  sourceBackedNpcSourceText?: string;
+  sourceBackedNpcSourceTitle?: string;
 };
 
 export async function loadTrustedLtmSubjectCatalog(
@@ -525,6 +549,55 @@ export function analyzeTrustedLtmNoteSubjects(catalog: TrustedLtmSubjectCatalog)
   return { matches, unresolved };
 }
 
+export function prepareLtmSubjectIdentityContext({
+  units,
+  catalog,
+  sourceBackedNpcSourceText,
+  sourceBackedNpcSourceTitle,
+}: {
+  units: LtmEvidenceUnit[];
+  catalog: TrustedLtmSubjectCatalog;
+  sourceBackedNpcSourceText?: string;
+  sourceBackedNpcSourceTitle?: string;
+}): LtmSubjectIdentityContext {
+  const index = buildCatalogIndex(catalog);
+  const legacyBindings = inferLegacyBindings(catalog, index);
+  const batchNames = preResolveBatchSubjectNames({
+    units,
+    index,
+    sourceText: sourceBackedNpcSourceText,
+    sourceTitle: sourceBackedNpcSourceTitle,
+  });
+  const context: PreparedLtmSubjectIdentityContext = {
+    catalog,
+    index,
+    legacyBindings,
+    batchNames,
+    sourceBackedNpcSourceText,
+    sourceBackedNpcSourceTitle,
+  };
+  return {
+    identityKeyForUnit(unit) {
+      const hasSubjectNames = unit.subjectNames !== undefined;
+      const match = hasSubjectNames ? resolveNamedUnitSubjects(unit, batchNames) : resolveUnitSubjects(unit, index);
+      if (match.status !== "matched") return noteIdForEvidenceUnit(unit);
+      const entries = sortSubjectEntries(match.entries);
+      return (
+        chooseIdentityTarget(catalog.notes, legacyBindings, entries, unit.bucket)?.id ??
+        canonicalNoteIdForEntries(entries, unit.bucket)
+      );
+    },
+    resolve({ units: nextUnits, existingNotes, enforceTrustedSubjects = true }) {
+      return resolveLtmSubjectIdentitiesWithContext({
+        units: nextUnits,
+        existingNotes,
+        enforceTrustedSubjects,
+        context,
+      });
+    },
+  };
+}
+
 export function resolveLtmSubjectIdentities({
   units,
   catalog,
@@ -540,14 +613,26 @@ export function resolveLtmSubjectIdentities({
   sourceBackedNpcSourceText?: string;
   sourceBackedNpcSourceTitle?: string;
 }): LtmSubjectIdentityResolution {
-  const index = buildCatalogIndex(catalog);
-  const legacyBindings = inferLegacyBindings(catalog, index);
-  const batchNames = preResolveBatchSubjectNames({
+  return prepareLtmSubjectIdentityContext({
     units,
-    index,
-    sourceText: sourceBackedNpcSourceText,
-    sourceTitle: sourceBackedNpcSourceTitle,
-  });
+    catalog,
+    sourceBackedNpcSourceText,
+    sourceBackedNpcSourceTitle,
+  }).resolve({ units, existingNotes, enforceTrustedSubjects });
+}
+
+function resolveLtmSubjectIdentitiesWithContext({
+  units,
+  existingNotes,
+  enforceTrustedSubjects,
+  context,
+}: {
+  units: LtmEvidenceUnit[];
+  existingNotes: LtmNote[];
+  enforceTrustedSubjects: boolean;
+  context: PreparedLtmSubjectIdentityContext;
+}): LtmSubjectIdentityResolution {
+  const { catalog, index, legacyBindings, batchNames, sourceBackedNpcSourceText, sourceBackedNpcSourceTitle } = context;
   const diagnostics: LtmExtractionDiagnostic[] = [];
   const droppedCandidates: LtmExtractionDroppedCandidate[] = [];
   const resolved: ResolvedUnit[] = [];
@@ -560,6 +645,7 @@ export function resolveLtmSubjectIdentities({
         unit: nextUnit,
         originalNoteId: noteIdForEvidenceUnit(nextUnit),
         targetNoteId: noteIdForEvidenceUnit(nextUnit),
+        candidateIndex,
       });
       continue;
     }
@@ -582,7 +668,7 @@ export function resolveLtmSubjectIdentities({
           subjectKeys: subjects.map((subject) => subject.key),
           subjects,
         };
-        resolved.push({ unit: nextUnit, originalNoteId, targetNoteId: canonicalNoteId });
+        resolved.push({ unit: nextUnit, originalNoteId, targetNoteId: canonicalNoteId, candidateIndex });
         diagnostics.push({
           severity: "warning",
           code: "source_backed_npc_identity",
@@ -605,6 +691,7 @@ export function resolveLtmSubjectIdentities({
           unit: { ...unit, subjectKeys: fallbackSubjects.map((subject) => subject.key), subjects: fallbackSubjects },
           originalNoteId: targetNoteId,
           targetNoteId,
+          candidateIndex,
         });
         continue;
       }
@@ -630,7 +717,7 @@ export function resolveLtmSubjectIdentities({
       subjectKeys,
       subjects,
     };
-    resolved.push({ unit: nextUnit, originalNoteId, targetNoteId: canonicalNoteId });
+    resolved.push({ unit: nextUnit, originalNoteId, targetNoteId: canonicalNoteId, candidateIndex });
 
     if (hasSubjectNames && legacySubjectKeysDisagree(unit.subjectKeys, subjectKeys)) {
       diagnostics.push({
@@ -680,15 +767,37 @@ export function resolveLtmSubjectIdentities({
     }
   }
 
-  const remaps = new Map(resolved.map((item) => [item.originalNoteId, item.targetNoteId]));
+  const remapTargets = new Map<string, Set<string>>();
+  for (const item of resolved) {
+    const targets = remapTargets.get(item.originalNoteId) ?? new Set<string>();
+    targets.add(item.targetNoteId);
+    remapTargets.set(item.originalNoteId, targets);
+  }
   const normalizedUnits = resolved.map((item) => ({
     ...item.unit,
     links: item.unit.links.map((link) => {
-      const remapped = remaps.get(link.target);
-      if (remapped) return { ...link, target: remapped };
+      const candidates = remapTargets.get(link.target);
+      if (candidates?.size === 1) return { ...link, target: [...candidates][0]! };
       const target = resolveIdentityLinkTarget(link.target, link.relation, index, catalog, legacyBindings);
       if (target?.note) targetNotes.set(target.note.id, target.note);
-      return target ? { ...link, target: target.noteId } : link;
+      if (target) return { ...link, target: target.noteId };
+      if (candidates && candidates.size > 1) {
+        const candidateTargetNoteIds = [...candidates].sort();
+        diagnostics.push({
+          severity: "warning",
+          code: "ambiguous_subject_link_target",
+          candidateIndex: item.candidateIndex,
+          mutationId: item.unit.id,
+          noteId: noteIdForEvidenceUnit(item.unit),
+          message: `Link target '${link.target}' resolves to multiple canonical subject notes and was not remapped.`,
+          details: {
+            linkTarget: link.target,
+            linkRelation: link.relation,
+            candidateTargetNoteIds,
+          },
+        });
+      }
+      return link;
     }),
   }));
 
@@ -821,7 +930,7 @@ function preResolveBatchSubjectNames({
   return { matches, provisionalKeys };
 }
 
-function resolveNamedUnitSubjects(unit: LtmEvidenceUnit, batch: BatchSubjectNameResolution): SubjectMatch {
+function resolveNamedUnitSubjects(unit: LtmSubjectIdentityCandidate, batch: BatchSubjectNameResolution): SubjectMatch {
   const expected = unit.bucket === "character_fact" ? 1 : 2;
   const subjectNames = unit.subjectNames ?? [];
   if (subjectNames.length !== expected) {
@@ -1020,7 +1129,7 @@ function addIndexEntry(
   map.set(token, current);
 }
 
-function resolveUnitSubjects(unit: LtmEvidenceUnit, index: CatalogIndex): SubjectMatch {
+function resolveUnitSubjects(unit: LtmSubjectIdentityCandidate, index: CatalogIndex): SubjectMatch {
   const expected = unit.bucket === "character_fact" ? 1 : 2;
   const subjectKeys = unit.subjectKeys ?? [];
   if (subjectKeys.length > 0) {
