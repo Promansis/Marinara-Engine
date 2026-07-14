@@ -104,8 +104,8 @@ function isAbortError(error: unknown): boolean {
 function normalizeReasoningEffort(args: {
   provider: string;
   model: string;
-  reasoningEffort: "low" | "medium" | "high" | "xhigh" | "maximum" | null;
-}): "low" | "medium" | "high" | "xhigh" | "max" | null {
+  reasoningEffort: "none" | "low" | "medium" | "high" | "xhigh" | "maximum" | null;
+}): "none" | "low" | "medium" | "high" | "xhigh" | "max" | null {
   return resolveProviderReasoningEffort(args);
 }
 

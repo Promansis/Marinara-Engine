@@ -47,8 +47,8 @@ export function resolveOpenAIGpt56ModelForRequest(model: string): string {
   return isOpenAIGpt56SolProAlias(model) ? "gpt-5.6-sol" : model;
 }
 
-export type StoredReasoningEffort = "low" | "medium" | "high" | "xhigh" | "maximum" | "max" | null;
-export type ProviderReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max" | null;
+export type StoredReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "maximum" | "max" | null;
+export type ProviderReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max" | null;
 
 export function resolveProviderReasoningEffort(args: {
   provider: string;

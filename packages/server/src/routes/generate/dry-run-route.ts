@@ -95,7 +95,7 @@ type DryRunPromptMessage = {
   content: string;
   images?: string[];
   files?: Array<{ type: string; data: string; filename?: string }>;
-  contextKind?: "prompt" | "history" | "injection";
+  contextKind?: "prompt" | "history" | "injection" | "long_term_memory";
   characterId?: string | null;
   providerMetadata?: Record<string, unknown>;
 };

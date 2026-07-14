@@ -69,7 +69,7 @@ type GenerationProviderRuntimeArgs = {
 export type GenerationProviderRuntime = GenerationProviderRuntimeArgs["initial"] & {
   connectionParams: ReturnType<typeof parseStoredGenerationParameters>;
   chatParams: ReturnType<typeof parseStoredGenerationParameters>;
-  resolvedEffort: "low" | "medium" | "high" | "xhigh" | "max" | null;
+  resolvedEffort: "none" | "low" | "medium" | "high" | "xhigh" | "max" | null;
   enableThinking: boolean;
   isClaudeNoSampling: boolean;
   providerTopK: number | undefined;

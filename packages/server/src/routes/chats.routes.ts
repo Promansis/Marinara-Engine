@@ -328,7 +328,7 @@ function toPeekPromptMessages(
   messages: Array<{
     role: "system" | "user" | "assistant";
     content: string;
-    contextKind?: "prompt" | "history" | "injection";
+    contextKind?: "prompt" | "history" | "injection" | "long_term_memory";
   }>,
 ): Array<{ role: string; content: string }> {
   return appendNonLeadingSystemMessagesToLastUser(messages).map((message) => ({

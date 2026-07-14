@@ -87,6 +87,7 @@ export async function migrateLtmChatsForAgentPipeline(
           phase: "pre_generation",
           enabled: true,
           connectionId: null,
+          imagePath: null,
           promptTemplate: "",
           settings: defaultSettings,
         });

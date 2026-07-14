@@ -6,7 +6,7 @@ type WrapFormat = "xml" | "markdown" | "none";
 type PromptMessage = {
   role: "system" | "user" | "assistant";
   content: string;
-  contextKind?: "prompt" | "history" | "injection";
+  contextKind?: "prompt" | "history" | "injection" | "long_term_memory";
 };
 
 type GameStateSnapshotLike = {

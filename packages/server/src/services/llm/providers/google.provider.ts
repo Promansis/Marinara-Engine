@@ -500,13 +500,13 @@ export class GoogleProvider extends BaseLLMProvider {
       (options.enableThinking || options.reasoningEffort)
     ) {
       if (isGemini3) {
-        const levelMap = { low: "low", medium: "medium", high: "high", xhigh: "high", max: "high" } as const;
+        const levelMap = { none: "none", low: "low", medium: "medium", high: "high", xhigh: "high", max: "high" } as const;
         thinkingConfig = {
           thinkingLevel: options.reasoningEffort ? levelMap[options.reasoningEffort] : "high",
           includeThoughts: true,
         };
       } else {
-        const budgetMap = { low: 1024, medium: 8192, high: 24576, xhigh: 24576, max: 24576 } as const;
+        const budgetMap = { none: 0, low: 1024, medium: 8192, high: 24576, xhigh: 24576, max: 24576 } as const;
         const requestedBudget = options.reasoningEffort ? budgetMap[options.reasoningEffort] : 8192;
         const outputMaxTokens = maxTokens ?? 4096;
         thinkingConfig = {
@@ -626,13 +626,13 @@ export class GoogleProvider extends BaseLLMProvider {
       (options.enableThinking || options.reasoningEffort)
     ) {
       if (isGemini3) {
-        const levelMap = { low: "low", medium: "medium", high: "high", xhigh: "high", max: "high" } as const;
+        const levelMap = { none: "none", low: "low", medium: "medium", high: "high", xhigh: "high", max: "high" } as const;
         thinkingConfig = {
           thinkingLevel: options.reasoningEffort ? levelMap[options.reasoningEffort] : "high",
           includeThoughts: true,
         };
       } else {
-        const budgetMap = { low: 1024, medium: 8192, high: 24576, xhigh: 24576, max: 24576 } as const;
+        const budgetMap = { none: 0, low: 1024, medium: 8192, high: 24576, xhigh: 24576, max: 24576 } as const;
         const requestedBudget = options.reasoningEffort ? budgetMap[options.reasoningEffort] : 8192;
         const outputMaxTokens = maxTokens ?? 4096;
         thinkingConfig = {
