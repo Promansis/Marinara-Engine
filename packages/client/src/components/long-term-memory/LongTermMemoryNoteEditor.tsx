@@ -605,7 +605,7 @@ export function LongTermMemoryNoteEditor({
                 <button
                   type="button"
                   onClick={() => removeSection(key)}
-                  className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon mari-chrome-control--danger shrink-0"
+                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[var(--destructive)]/30 text-[var(--destructive)] transition-[background-color,transform] hover:bg-[var(--destructive)]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-90"
                   aria-label={`Remove ${friendlySectionKey(key)}`}
                 >
                   <Trash2 size="0.875rem" />
@@ -805,7 +805,7 @@ export function LongTermMemoryNoteEditor({
                     links: current.links.filter((_, linkIndex) => linkIndex !== index),
                   }))
                 }
-                className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon mari-chrome-control--danger shrink-0"
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[var(--destructive)]/30 text-[var(--destructive)] transition-[background-color,transform] hover:bg-[var(--destructive)]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-90"
                 aria-label={`Remove relation ${friendlyIdentifier(link.relation)}`}
               >
                 <X size="0.875rem" />

@@ -125,7 +125,7 @@ export function RecallStylePresets({
   const selectedStyle = LTM_RECALL_STYLES.find((style) => style.id === recallStyle) ?? LTM_RECALL_STYLES[0];
   return (
     <SettingGroup label="Recall style">
-      <div className="mari-chrome-segmented mari-chrome-segmented--four">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {LTM_RECALL_STYLES.map((style) => (
           <button
             key={style.id}
@@ -142,8 +142,9 @@ export function RecallStylePresets({
               })
             }
             className={cn(
-              "mari-chrome-segmented__button px-2.5 text-xs",
-              recallStyle === style.id && "mari-chrome-segmented__button--selected",
+              "min-h-10 rounded-lg border border-[var(--border)] bg-[var(--card)] px-2.5 py-2 text-xs font-semibold text-[var(--muted-foreground)] shadow-sm transition-[background-color,color,border-color,box-shadow,transform] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-[0.98]",
+              recallStyle === style.id &&
+                "border-[var(--primary)]/60 bg-[var(--primary)]/10 text-[var(--foreground)] ring-1 ring-[var(--primary)]/50",
             )}
           >
             <span>{style.label}</span>

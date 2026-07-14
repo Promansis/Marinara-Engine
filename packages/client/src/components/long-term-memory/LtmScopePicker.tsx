@@ -261,8 +261,9 @@ export function LtmScopePicker({ value, onChange }: LtmScopePickerProps) {
           aria-expanded={picker === "character"}
           aria-controls={pickerPanelId}
           className={cn(
-            "mari-chrome-control min-h-11 w-full px-3 text-xs sm:min-h-10 sm:w-auto",
-            picker === "character" && "mari-chrome-control--selected",
+            "inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 text-xs font-semibold text-[var(--secondary-foreground)] shadow-sm transition-[background-color,color,border-color,box-shadow,transform] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-[0.97] sm:min-h-10 sm:w-auto",
+            picker === "character" &&
+              "border-[var(--primary)]/60 bg-[var(--primary)]/10 text-[var(--foreground)] ring-1 ring-[var(--primary)]/50",
           )}
         >
           <Plus size="0.875rem" aria-hidden="true" />
@@ -274,8 +275,9 @@ export function LtmScopePicker({ value, onChange }: LtmScopePickerProps) {
           aria-expanded={picker === "chat"}
           aria-controls={pickerPanelId}
           className={cn(
-            "mari-chrome-control min-h-11 w-full px-3 text-xs sm:min-h-10 sm:w-auto",
-            picker === "chat" && "mari-chrome-control--selected",
+            "inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 text-xs font-semibold text-[var(--secondary-foreground)] shadow-sm transition-[background-color,color,border-color,box-shadow,transform] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-[0.97] sm:min-h-10 sm:w-auto",
+            picker === "chat" &&
+              "border-[var(--primary)]/60 bg-[var(--primary)]/10 text-[var(--foreground)] ring-1 ring-[var(--primary)]/50",
           )}
         >
           <Plus size="0.875rem" aria-hidden="true" />
@@ -294,7 +296,7 @@ export function LtmScopePicker({ value, onChange }: LtmScopePickerProps) {
           <div className="relative">
             <Search
               size="0.875rem"
-              className="mari-chrome-field-icon pointer-events-none absolute left-3 top-1/2 -translate-y-1/2"
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
               aria-hidden="true"
             />
             <input

@@ -74,7 +74,10 @@ export function ImportPreviewRowItem({
           type="button"
           onClick={onImport}
           disabled={disabled || importing || imported}
-          className={cn(rowActionButtonClassName, "mari-chrome-control--primary")}
+          className={cn(
+            rowActionButtonClassName,
+            "bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--primary)] hover:opacity-90",
+          )}
           aria-label={importLabel}
           title={stale ? "Refresh memory" : "Import"}
         >

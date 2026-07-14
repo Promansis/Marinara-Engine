@@ -47,10 +47,14 @@ export function ToolButton({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "mari-chrome-control max-w-full overflow-hidden whitespace-nowrap text-xs",
-        size === "small" ? "mari-chrome-control--small max-md:min-h-10 max-md:px-3" : tone !== "primary" && "px-3 py-2",
-        tone === "primary" && "mari-chrome-control--primary",
-        tone === "danger" && "mari-chrome-control--danger",
+        "inline-flex max-w-full items-center justify-center gap-1.5 overflow-hidden whitespace-nowrap rounded-lg border px-3 py-2 text-xs font-semibold shadow-sm transition-[background-color,color,box-shadow,transform] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-45",
+        size === "small" ? "min-h-8 py-1.5 max-md:min-h-10" : "min-h-10",
+        tone === "secondary" &&
+          "border-[var(--border)] bg-[var(--secondary)] text-[var(--secondary-foreground)] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]",
+        tone === "primary" &&
+          "border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 hover:shadow-md",
+        tone === "danger" &&
+          "border-[var(--destructive)]/30 bg-transparent text-[var(--destructive)] hover:bg-[var(--destructive)]/10",
       )}
     >
       {children}

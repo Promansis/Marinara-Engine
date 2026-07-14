@@ -1034,7 +1034,7 @@ function SuggestionTargetDrawer({
               type="button"
               onClick={() => onSelectRows(rowKeys, false)}
               disabled={selectedCount === 0 || busy}
-              className="mari-chrome-control mari-chrome-control--small text-[0.6875rem]"
+              className="inline-flex min-h-8 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-2.5 py-1.5 text-[0.6875rem] font-semibold text-[var(--secondary-foreground)] shadow-sm transition-[background-color,color,transform] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-45 max-md:min-h-10"
             >
               Clear
             </button>

@@ -43,7 +43,7 @@ export function LtmTabRail<T extends string>({
     <div
       role="tablist"
       aria-label={ariaLabel}
-      className={cn("mari-chrome-segmented !flex w-full overflow-x-auto", className)}
+      className={cn("flex w-full overflow-x-auto border-b border-[var(--border)] [scrollbar-width:thin]", className)}
     >
       {tabs.map((tab) => {
         const selected = tab.id === activeId;
@@ -79,11 +79,14 @@ export function LtmTabRail<T extends string>({
               }
             }}
             className={cn(
-              "mari-chrome-segmented__button min-w-[5.5rem] flex-1 whitespace-nowrap px-3 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--marinara-chat-chrome-focus-ring)] disabled:cursor-not-allowed disabled:opacity-45",
-              selected && "mari-chrome-segmented__button--selected",
+              "relative min-h-10 min-w-[5.5rem] shrink-0 whitespace-nowrap px-3 py-2.5 text-xs font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-45",
+              selected && "text-[var(--foreground)]",
             )}
           >
             {tab.label}
+            {selected && (
+              <span aria-hidden="true" className="absolute inset-x-1 bottom-0 h-0.5 rounded-full bg-[var(--primary)]" />
+            )}
           </button>
         );
       })}

@@ -256,7 +256,7 @@ export function LongTermMemoryIdentityRepairSection({
                 </div>
                 <ChevronRight
                   size="0.9rem"
-                  className="mari-chrome-accent-icon mari-accent-animated shrink-0 transition-transform duration-200 ease-out group-open:rotate-90"
+                  className="shrink-0 text-[var(--primary)] transition-transform duration-200 ease-out group-open:rotate-90"
                 />
               </summary>
 

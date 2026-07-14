@@ -16,10 +16,10 @@ export const panelIntroCardClassName =
   "overflow-hidden rounded-xl bg-[var(--secondary)]/25 p-3 ring-1 ring-[var(--border)]";
 
 export const listRowClassName =
-  "rounded-lg p-2.5 transition-[background-color,box-shadow] hover:bg-[var(--marinara-chat-chrome-highlight-bg)]";
+  "rounded-lg p-2.5 transition-[background-color,box-shadow] hover:bg-[var(--accent)] focus-within:bg-[var(--accent)]";
 
 export const selectedListRowClassName =
-  "bg-[var(--marinara-chat-chrome-highlight-bg)] ring-1 ring-[var(--marinara-chat-chrome-button-border-active)]";
+  "bg-[var(--primary)]/10 text-[var(--foreground)] ring-1 ring-[var(--primary)]/50";
 
 export const emptyStateClassName =
   "rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/20 p-4 text-center text-xs text-[var(--muted-foreground)]";
@@ -53,8 +53,11 @@ export function SettingField({ label, children }: { label: ReactNode; children: 
   );
 }
 
-export const inputClassName = "mari-chrome-field w-full px-3 py-2 text-sm";
+const fieldClassName =
+  "w-full rounded-lg border border-[var(--border)] bg-[var(--secondary)] text-[var(--foreground)] shadow-sm outline-none transition-[border-color,box-shadow,background-color] placeholder:text-[var(--muted-foreground)]/70 hover:border-[var(--primary)]/50 focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--ring)]/40 disabled:cursor-not-allowed disabled:opacity-50";
 
-export const compactInputClassName = "mari-chrome-field w-full px-3 py-2 text-sm";
+export const inputClassName = `${fieldClassName} px-3 py-2 text-sm`;
 
-export const textareaClassName = "mari-chrome-field min-h-24 w-full resize-y px-3 py-2 text-sm";
+export const compactInputClassName = `${fieldClassName} min-h-10 px-3 py-2 text-sm`;
+
+export const textareaClassName = `${fieldClassName} min-h-24 resize-y px-3 py-2 text-sm`;

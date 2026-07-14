@@ -377,7 +377,7 @@ export function LtmExtractionPromptSection({
       icon={<FileText size="0.875rem" className="text-[var(--primary)]" />}
       help="The system prompt used for the extraction process."
     >
-      <div className="mari-chrome-segmented mb-3">
+      <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
         {(["roleplay", "conversation", "game"] as LtmMode[]).map((mode) => (
           <button
             key={mode}
@@ -385,8 +385,9 @@ export function LtmExtractionPromptSection({
             onClick={() => handleModeChange(mode)}
             aria-pressed={selectedMode === mode}
             className={cn(
-              "mari-chrome-segmented__button px-3 text-[0.6875rem]",
-              selectedMode === mode && "mari-chrome-segmented__button--selected",
+              "min-h-10 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-[0.6875rem] font-semibold text-[var(--muted-foreground)] shadow-sm transition-[background-color,color,border-color,box-shadow,transform] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-[0.98]",
+              selectedMode === mode &&
+                "border-[var(--primary)]/60 bg-[var(--primary)]/10 text-[var(--foreground)] ring-1 ring-[var(--primary)]/50",
             )}
           >
             {MODE_LABELS[mode]}
@@ -416,7 +417,7 @@ export function LtmExtractionPromptSection({
           <button
             type="button"
             onClick={handleAddTemplate}
-            className="mari-chrome-control mari-chrome-control--small h-10 text-[0.6875rem]"
+            className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 text-[0.6875rem] font-semibold text-[var(--secondary-foreground)] shadow-sm transition-[background-color,color,transform] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-[0.97]"
           >
             <Plus size="0.6875rem" />
             Add
@@ -425,7 +426,7 @@ export function LtmExtractionPromptSection({
             type="button"
             onClick={handleSavePrompt}
             disabled={!hasPromptDraftEdits || !canSavePrompt}
-            className="mari-chrome-control mari-chrome-control--small mari-chrome-control--primary h-10 text-[0.6875rem]"
+            className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-[var(--primary)] bg-[var(--primary)] px-3 text-[0.6875rem] font-semibold text-[var(--primary-foreground)] shadow-sm transition-[opacity,box-shadow,transform] hover:opacity-90 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-45"
           >
             <Save size="0.6875rem" />
             Save Prompt
@@ -434,7 +435,7 @@ export function LtmExtractionPromptSection({
             type="button"
             onClick={() => void handleRenameTemplate()}
             disabled={!selectedTemplate}
-            className="mari-chrome-control mari-chrome-control--small h-10 text-[0.6875rem]"
+            className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 text-[0.6875rem] font-semibold text-[var(--secondary-foreground)] shadow-sm transition-[background-color,color,transform] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-45"
             title={selectedTemplate ? "Rename prompt" : "Default prompts cannot be renamed"}
           >
             <Pencil size="0.6875rem" />
@@ -444,7 +445,7 @@ export function LtmExtractionPromptSection({
             type="button"
             onClick={() => handleRemoveTemplate(selectedTemplate?.id ?? null)}
             disabled={!selectedTemplate}
-            className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger h-10 text-[0.6875rem]"
+            className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-[var(--destructive)]/30 bg-transparent px-3 text-[0.6875rem] font-semibold text-[var(--destructive)] transition-[background-color,transform] hover:bg-[var(--destructive)]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-45"
           >
             <Trash2 size="0.6875rem" />
             Remove

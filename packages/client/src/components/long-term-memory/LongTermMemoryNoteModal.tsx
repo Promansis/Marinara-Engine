@@ -29,7 +29,7 @@ import { LongTermMemoryNoteEditor } from "./LongTermMemoryNoteEditor";
 import { LongTermMemorySuggestionsTab } from "./LongTermMemorySuggestionsTab";
 import { LtmTabRail } from "./LtmTabRail";
 import { type LtmManagedExtractionPrefs } from "./ltm-managed-extraction-prefs";
-import { Modal } from "../ui/Modal";
+import { LtmModal } from "./LtmModal";
 import { cn } from "../../lib/utils";
 import type { LtmSearchResponse } from "../../hooks/use-long-term-memory";
 import type { LongTermMemoryLatestExtractionResult } from "../../stores/ltm-extraction-results.store";
@@ -704,7 +704,7 @@ export function MemoryNoteModal({
   const safeActiveTab = tabs.some((tab) => tab.id === activeTab) ? activeTab : (tabs[0]?.id ?? "overview");
 
   return (
-    <Modal
+    <LtmModal
       open={open}
       onClose={onClose}
       title={note ? humanMemoryTitle(note, chatLookup) : "Long-Term Memory"}
@@ -813,6 +813,6 @@ export function MemoryNoteModal({
           )}
         </div>
       )}
-    </Modal>
+    </LtmModal>
   );
 }

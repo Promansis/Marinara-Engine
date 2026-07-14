@@ -119,7 +119,10 @@ export function NoteRow({
           <button
             type="button"
             onClick={onOpen}
-            className={cn(rowActionButtonClassName, open && "mari-chrome-control--selected")}
+            className={cn(
+              rowActionButtonClassName,
+              open && "bg-[var(--primary)]/10 text-[var(--primary)] ring-1 ring-[var(--primary)]/50",
+            )}
             aria-label={`Open ${displayTitle}`}
             title="Open memory"
           >
@@ -140,7 +143,10 @@ export function NoteRow({
             <button
               type="button"
               onClick={onDelete}
-              className={cn(rowActionButtonClassName, "mari-chrome-control--danger")}
+              className={cn(
+                rowActionButtonClassName,
+                "text-[var(--destructive)] hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]",
+              )}
               aria-label={`Delete ${displayTitle}`}
               title="Delete memory"
             >
@@ -255,7 +261,7 @@ export function TypeMemoryGroups({
                           <button
                             type="button"
                             onClick={() => onToggleMemory(note.id)}
-                            className="mari-chrome-accent-icon mari-accent-animated inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-90 max-md:h-10 max-md:w-10"
+                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-[background-color,color,transform] hover:bg-[var(--accent)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-90 max-md:h-10 max-md:w-10"
                             aria-label={expanded ? "Hide source details" : "Show source details"}
                             aria-expanded={expanded}
                           >
@@ -279,7 +285,7 @@ export function TypeMemoryGroups({
                             aria-label={`Open ${memoryRowTitle(note, chatLookup)}`}
                           >
                             <div
-                              className="truncate text-xs font-semibold text-[var(--foreground)] transition-colors hover:text-[var(--marinara-chat-chrome-button-text-hover)]"
+                              className="truncate text-xs font-semibold text-[var(--foreground)] transition-colors hover:text-[var(--primary)]"
                               title={memoryRowTitle(note, chatLookup)}
                             >
                               {memoryRowTitle(note, chatLookup)}
@@ -371,7 +377,10 @@ export function TypeMemoryGroups({
                         <button
                           type="button"
                           onClick={() => onDelete(note)}
-                          className={cn(rowActionButtonClassName, "mari-chrome-control--danger")}
+                          className={cn(
+                            rowActionButtonClassName,
+                            "text-[var(--destructive)] hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]",
+                          )}
                           aria-label={`Delete ${memoryRowTitle(note, chatLookup)}`}
                           title="Delete memory"
                         >
@@ -455,7 +464,11 @@ function _ArchivedSourceSummaryGroupRow({
         <button
           type="button"
           onClick={() => onOpen(group.source.id)}
-          className={cn(rowActionButtonClassName, openNoteId === group.source.id && "mari-chrome-control--selected")}
+          className={cn(
+            rowActionButtonClassName,
+            openNoteId === group.source.id &&
+              "bg-[var(--primary)]/10 text-[var(--primary)] ring-1 ring-[var(--primary)]/50",
+          )}
           aria-label={`Open ${sourceTitle}`}
           title="Open source note"
         >
@@ -473,7 +486,10 @@ function _ArchivedSourceSummaryGroupRow({
         <button
           type="button"
           onClick={() => onDelete(group.source)}
-          className={cn(rowActionButtonClassName, "mari-chrome-control--danger")}
+          className={cn(
+            rowActionButtonClassName,
+            "text-[var(--destructive)] hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]",
+          )}
           aria-label={`Delete ${sourceTitle}`}
           title="Delete source note"
         >
@@ -517,7 +533,8 @@ function _ArchivedSourceSummaryGroupRow({
                   onClick={() => onOpen(derivedNote.id)}
                   className={cn(
                     rowActionButtonClassName,
-                    openNoteId === derivedNote.id && "mari-chrome-control--selected",
+                    openNoteId === derivedNote.id &&
+                      "bg-[var(--primary)]/10 text-[var(--primary)] ring-1 ring-[var(--primary)]/50",
                   )}
                   aria-label={`Open ${displayNoteTitle(derivedNote)}`}
                   title="Open memory"
@@ -536,7 +553,10 @@ function _ArchivedSourceSummaryGroupRow({
                 <button
                   type="button"
                   onClick={() => onDelete(derivedNote)}
-                  className={cn(rowActionButtonClassName, "mari-chrome-control--danger")}
+                  className={cn(
+                    rowActionButtonClassName,
+                    "text-[var(--destructive)] hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]",
+                  )}
                   aria-label={`Delete ${displayNoteTitle(derivedNote)}`}
                   title="Delete memory"
                 >

@@ -104,7 +104,7 @@ import {
   type LtmMode,
   type LtmRepairResponse,
 } from "@marinara-engine/shared";
-import { Modal } from "../ui/Modal";
+import { LtmModal } from "../long-term-memory/LtmModal";
 import { LtmVaultManagerSection } from "../long-term-memory/LtmVaultManagerSection";
 import LtmInlineSettingsSections, {
   LtmExtractionConnectionSection,
@@ -2631,7 +2631,18 @@ export function AgentEditor() {
 
           {/* ── LTM Memories Section ── */}
           {isLtmAgent && dbConfig && (
-            <>
+            <section className="space-y-5 rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 shadow-sm sm:p-4">
+              <div className="flex items-start gap-3 border-b border-[var(--border)]/70 pb-4">
+                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--primary)]/10 text-[var(--primary)] ring-1 ring-[var(--primary)]/25">
+                  <BrainCircuit size="1.125rem" />
+                </span>
+                <div className="min-w-0">
+                  <h2 className="text-sm font-semibold text-[var(--foreground)]">Long-Term Memory</h2>
+                  <p className="mt-1 max-w-[70ch] text-xs leading-relaxed text-[var(--muted-foreground)]">
+                    Manage the memory vault, extraction prompts, recall defaults, and store maintenance.
+                  </p>
+                </div>
+              </div>
               <FieldGroup
                 label="Memories"
                 icon={<DatabaseZap size="0.875rem" className="text-[var(--primary)]" />}
@@ -2722,20 +2733,12 @@ export function AgentEditor() {
                     )}
                   </div>
                 )}
-                <div className="flex flex-wrap items-center gap-2">
-                  <ToolButton
-                    onClick={() => setVaultOpen({ initialTab: "notes" })}
-                    tone="primary"
-                    size="default"
-                  >
+                <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
+                  <ToolButton onClick={() => setVaultOpen({ initialTab: "notes" })} tone="primary" size="default">
                     <DatabaseZap size="0.875rem" />
                     Manage Memories
                   </ToolButton>
-                  <ToolButton
-                    onClick={() => setVaultOpen({ initialTab: "import" })}
-                    tone="primary"
-                    size="default"
-                  >
+                  <ToolButton onClick={() => setVaultOpen({ initialTab: "import" })} size="default">
                     <Import size="0.875rem" />
                     Import
                   </ToolButton>
@@ -2763,7 +2766,7 @@ export function AgentEditor() {
                 icon={<BrainCircuit size="0.875rem" className="text-[var(--primary)]" />}
               >
                 {ltmRecallDraft ? (
-                  <>
+                  <div className="space-y-4">
                     <RecallStylePresets
                       values={{ longTermMemoryRecallStyle: ltmRecallDraft.longTermMemoryRecallStyle }}
                       onChange={updateLtmRecallDraft}
@@ -2806,7 +2809,7 @@ export function AgentEditor() {
                         onChange={updateLtmRecallDraft}
                       />
                     </FieldGroup>
-                  </>
+                  </div>
                 ) : (
                   <p className="rounded-xl bg-[var(--secondary)]/60 px-3 py-2 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
                     Loading recall defaults...
@@ -2875,7 +2878,7 @@ export function AgentEditor() {
                     </ToolButton>
                   </div>
                 )}
-                <div className="flex flex-wrap gap-2">
+                <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
                   <ToolButton
                     onClick={() =>
                       rebuildMemories
@@ -2962,11 +2965,16 @@ export function AgentEditor() {
                     )}
                 </div>
               </FieldGroup>
-            </>
+            </section>
           )}
 
           {/* ── LTM Memories Modal ── */}
-          <Modal open={memoriesModalOpen} onClose={() => setVaultOpen(null)} title="Long-Term Memory" width="max-w-5xl">
+          <LtmModal
+            open={memoriesModalOpen}
+            onClose={() => setVaultOpen(null)}
+            title="Long-Term Memory"
+            width="max-w-5xl"
+          >
             {memoriesModalOpen && dbConfig && (
               <LtmVaultManagerSection
                 agentConfig={dbConfig}
@@ -2975,7 +2983,7 @@ export function AgentEditor() {
                 sourceNoteId={vaultOpen?.sourceNoteId}
               />
             )}
-          </Modal>
+          </LtmModal>
           {/* ── Agent Info Card ── */}
           <div className="rounded-xl bg-[var(--card)] p-4 ring-1 ring-[var(--border)]">
             <h3 className="mb-2 text-xs font-semibold text-[var(--foreground)]">About this Agent</h3>

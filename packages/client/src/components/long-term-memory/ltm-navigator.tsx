@@ -212,7 +212,7 @@ export function LtmNavigatorSelector({
           <div className="relative">
             <Search
               size="0.875rem"
-              className="mari-chrome-field-icon pointer-events-none absolute left-3 top-1/2 -translate-y-1/2"
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
               aria-hidden="true"
             />
             <input

@@ -56,6 +56,7 @@ import { useUIStore } from "../../stores/ui.store";
 import { useAgentStore } from "../../stores/agent.store";
 import { cn, parseAvatarCropJson } from "../../lib/utils";
 import { Modal } from "../ui/Modal";
+import { LtmModal } from "../long-term-memory/LtmModal";
 import { useAgentConfigs, type AgentConfigRow } from "../../hooks/use-agents";
 import { LtmVaultManagerSection } from "../long-term-memory/LtmVaultManagerSection";
 import { useEncounter } from "../../hooks/use-encounter";
@@ -1803,7 +1804,7 @@ export function ChatArea() {
         : undefined;
   const surfaceFallback = <div className="flex flex-1 overflow-hidden" />;
   const longTermMemoryOverlays = vaultOpenBool ? (
-    <Modal open={vaultOpenBool} onClose={() => setVaultOpen(null)} title="Long-Term Memory" width="max-w-5xl">
+    <LtmModal open={vaultOpenBool} onClose={() => setVaultOpen(null)} title="Long-Term Memory" width="max-w-5xl">
       {vaultOpenBool && ltmAgentConfig && (
         <LtmVaultManagerSection
           agentConfig={ltmAgentConfig}
@@ -1812,7 +1813,7 @@ export function ChatArea() {
           sourceNoteId={vaultOpen?.sourceNoteId}
         />
       )}
-    </Modal>
+    </LtmModal>
   ) : null;
   // ═══════════════════════════════════════════════
   // Game mode — RPG surface with GM narration, map, party chat

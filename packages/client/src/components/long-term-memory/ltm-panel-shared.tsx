@@ -132,16 +132,10 @@ export const MODE_LABELS: Record<LtmMode, string> = {
   game: "Game",
 };
 
-export const MODE_BADGE_COLORS: Record<LtmMode, string> = {
-  roleplay: "mari-chat-logo-mode--roleplay",
-  conversation: "mari-chat-logo-mode--conversation",
-  game: "mari-chat-logo-mode--game",
-};
-
 // ── CSS class constants ────────────────────────
 
 export const rowActionButtonClassName =
-  "mari-chrome-control mari-chrome-control--small mari-chrome-control--icon shrink-0 text-[var(--muted-foreground)] active:scale-90 disabled:cursor-not-allowed disabled:opacity-45 max-md:!h-10 max-md:!min-h-10 max-md:!w-10 max-md:!min-w-10";
+  "inline-flex h-8 min-h-8 w-8 min-w-8 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-[background-color,color,transform] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-90 disabled:cursor-not-allowed disabled:opacity-45 max-md:h-10 max-md:min-h-10 max-md:w-10 max-md:min-w-10";
 
 export const rowActionGroupClassName =
   "absolute right-2 top-1/2 flex shrink-0 -translate-y-1/2 items-center justify-end gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-[var(--border)] transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100";
@@ -150,7 +144,7 @@ export const rowActionOverlayClassName =
   "absolute right-2 top-1/2 flex shrink-0 -translate-y-1/2 items-center justify-end gap-0.5 rounded-lg bg-[var(--sidebar)] px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-[var(--border)] transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100";
 
 export const disclosureButtonClassName =
-  "flex min-h-10 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-semibold text-[var(--foreground)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60";
+  "flex min-h-10 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-semibold text-[var(--foreground)] transition-colors hover:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60";
 
 export function DisclosureChevron({
   open,
@@ -166,7 +160,7 @@ export function DisclosureChevron({
       size={size}
       aria-hidden="true"
       className={cn(
-        "mari-chrome-accent-icon mari-accent-animated shrink-0 transition-transform duration-200 ease-out",
+        "shrink-0 text-[var(--primary)] transition-transform duration-200 ease-out",
         open && "rotate-90",
         className,
       )}
@@ -494,9 +488,7 @@ export function mutationText(mutation: LtmDraftMutation) {
 
 export function ModeBadge({ mode }: { mode: LtmMode }) {
   return (
-    <span
-      className={`mari-chat-mode-badge inline-flex items-center rounded-full px-2 py-0.5 text-[0.6875rem] font-semibold ${MODE_BADGE_COLORS[mode]}`}
-    >
+    <span className="inline-flex items-center rounded-full border border-[var(--border)] bg-[var(--secondary)] px-2 py-0.5 text-[0.6875rem] font-semibold text-[var(--secondary-foreground)]">
       {MODE_LABELS[mode]}
     </span>
   );

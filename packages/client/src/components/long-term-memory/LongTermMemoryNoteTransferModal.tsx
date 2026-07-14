@@ -7,7 +7,7 @@ import {
   usePreviewLongTermMemoryNoteTransfer,
 } from "../../hooks/use-long-term-memory";
 import { cn } from "../../lib/utils";
-import { Modal } from "../ui/Modal";
+import { LtmModal } from "./LtmModal";
 import {
   actionRowClassName,
   helperTextClassName,
@@ -223,7 +223,7 @@ export function LongTermMemoryNoteTransferModal({
   const ActionIcon = mode === "copy" ? Copy : ArrowRightLeft;
 
   return (
-    <Modal open={open} onClose={onClose} title={mode === "copy" ? "Copy Selected Memories" : "Move Selected Memories"} width="max-w-5xl">
+    <LtmModal open={open} onClose={onClose} title={mode === "copy" ? "Copy Selected Memories" : "Move Selected Memories"} width="max-w-5xl">
       <div className="space-y-4">
         <div className={modalIntroCardClassName}>
           <div className="flex flex-wrap items-center gap-1.5">
@@ -382,6 +382,6 @@ export function LongTermMemoryNoteTransferModal({
           </div>
         </div>
       </div>
-    </Modal>
+    </LtmModal>
   );
 }

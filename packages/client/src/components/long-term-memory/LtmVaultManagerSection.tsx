@@ -99,7 +99,7 @@ import {
   type LtmNavigatorSelection,
 } from "../long-term-memory/ltm-navigator";
 import { StatusPill, ToolButton } from "../long-term-memory/LtmPills";
-import { Modal } from "../ui/Modal";
+import { LtmModal } from "./LtmModal";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import {
   IMPORT_SOURCES,
@@ -1587,7 +1587,7 @@ export function LtmVaultManagerSection({
           )}
           <section className="space-y-3">
             <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-              <label className="mari-chrome-field flex min-h-10 items-center gap-2 px-3">
+              <label className="flex min-h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 shadow-sm transition-[border-color,box-shadow] hover:border-[var(--primary)]/50 focus-within:border-[var(--primary)] focus-within:ring-2 focus-within:ring-[var(--ring)]/40">
                 <Search size="0.875rem" className="text-[var(--muted-foreground)]" />
                 <input
                   value={query}
@@ -1752,7 +1752,7 @@ export function LtmVaultManagerSection({
                   disabled={importPreview.isFetching}
                   aria-label="Refresh available imports"
                   title="Refresh available imports"
-                  className="mari-chrome-control mari-chrome-control--small mari-chrome-control--icon text-[var(--muted-foreground)] active:scale-90 disabled:cursor-not-allowed disabled:opacity-45"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-[background-color,color,transform] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-90 disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   <RefreshCw size="0.75rem" aria-hidden="true" />
                 </button>
@@ -2112,7 +2112,7 @@ export function LtmVaultManagerSection({
         </Section>
       )}
 
-      <Modal
+      <LtmModal
         open={creatingNote}
         onClose={() => {
           void confirmDiscardCreate().then((ok) => {
@@ -2138,7 +2138,7 @@ export function LtmVaultManagerSection({
             openMemory(note.id, { mode: "edit", tab: "overview" });
           }}
         />
-      </Modal>
+      </LtmModal>
 
       <MemoryNoteModal
         note={openNote}
