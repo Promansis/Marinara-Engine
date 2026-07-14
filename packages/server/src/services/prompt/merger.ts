@@ -31,6 +31,7 @@ export function mergeAdjacentMessages(messages: ChatMLMessage[]): ChatMLMessage[
   const canMerge = (a: ChatMLMessage, b: ChatMLMessage) => {
     if (a.role !== b.role) return false;
     if ((a.characterId ?? null) !== (b.characterId ?? null)) return false;
+    if (a.contextKind === "long_term_memory" || b.contextKind === "long_term_memory") return false;
     if (!a.contextKind || !b.contextKind) return true;
     return a.contextKind === b.contextKind;
   };
@@ -76,6 +77,7 @@ export function mergeAdjacentMessages(messages: ChatMLMessage[]): ChatMLMessage[
  */
 export function squashLeadingSystemMessages(messages: ChatMLMessage[]): ChatMLMessage[] {
   if (messages.length === 0) return [];
+  if (messages.some((message) => message.contextKind === "long_term_memory")) return messages;
 
   // Find the end of leading system messages
   let systemEnd = 0;

@@ -32,6 +32,7 @@ export * from "./types/achievement.js";
 export * from "./types/conversation-call.js";
 export * from "./types/noodle.js";
 export * from "./types/spatial-context.js";
+export * from "./features/agents/long-term-memory/types.js";
 
 // Schemas
 export * from "./schemas/chat.schema.js";
@@ -51,6 +52,8 @@ export * from "./schemas/app-settings.schema.js";
 export * from "./schemas/conversation-call.schema.js";
 export * from "./schemas/noodle.schema.js";
 export * from "./schemas/spatial-context.schema.js";
+// Feature: Long-Term Memory (managed custom agent)
+export * from "./features/agents/long-term-memory/schema.js";
 
 // Constants
 export * from "./constants/providers.js";
@@ -74,6 +77,9 @@ export * from "./constants/conversation-prompt.js";
 export * from "./constants/game-prompt.js";
 export * from "./constants/achievements.js";
 export * from "./constants/tracker-custom-field-icons.js";
+export * from "./features/agents/long-term-memory/constants.js";
+export * from "./features/agents/long-term-memory/runtime-settings.js";
+export * from "./features/agents/long-term-memory/utils.js";
 
 // Feature registries
 export * from "./features/agents/agent-manifest.types.js";
@@ -123,6 +129,7 @@ export * from "./utils/chat-summary-entries.js";
 export * from "./utils/quest-state.js";
 export * from "./utils/quote-format.js";
 export * from "./utils/image-prompt-compiler.js";
+export * from "./features/agents/long-term-memory/scope.js";
 export * from "./utils/game-art-style.js";
 export * from "./utils/thinking-tags.js";
 export * from "./utils/rpg-stats.js";

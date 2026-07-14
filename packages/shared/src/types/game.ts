@@ -238,6 +238,8 @@ export interface GameSetupConfig {
   spotifyArtist?: string | null;
   /** Enable Lorebook Keeper for this game. */
   enableLorebookKeeper?: boolean;
+  /** Enable Long-Term Memory retrieval for this game (recalls vault notes into the GM prompt). */
+  enableLongTermMemory?: boolean;
   /** Language for all narration and dialogue (e.g. "English", "Japanese", "Spanish") */
   language?: string;
   /** Optional generation parameter overrides applied from the moment the game is created. */
