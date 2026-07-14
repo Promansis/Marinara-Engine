@@ -303,7 +303,12 @@ export const api = {
       body: body !== undefined ? JSON.stringify(body) : undefined,
     }),
 
-  delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+  delete: <T>(path: string, body?: unknown, init?: RequestInit) =>
+    request<T>(path, {
+      ...init,
+      method: "DELETE",
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    }),
 
   /** Download a JSON endpoint as a file (triggers browser save-as). */
   download: async (path: string, fallbackFilename = "export.json", init?: RequestInit) => {

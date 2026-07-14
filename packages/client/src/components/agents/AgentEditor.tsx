@@ -52,6 +52,14 @@ import {
   Shield,
   ShieldCheck,
   Shuffle,
+  BrainCircuit,
+  DatabaseZap,
+  Import,
+  FileJson,
+  Plug,
+  RefreshCw,
+  Hammer,
+  AlertTriangle,
 } from "lucide-react";
 import { useDeleteAgent } from "../../hooks/use-agents";
 import { useLorebooks, useEntriesAcrossLorebooks } from "../../hooks/use-lorebooks";
@@ -90,12 +98,27 @@ import {
   normalizeCustomAgentCapabilities,
   normalizeAgentPromptTemplateOptions,
   parseAgentSettingsRecord,
+  isManagedAgentType,
+  DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS,
+  DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
+  DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
+  DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
+  DEFAULT_LTM_EXTRACTION_TEMPERATURE,
+  DEFAULT_LTM_EXTRACTION_VERBOSITY,
+  DEFAULT_LTM_GLOBAL_SETTINGS,
   type AgentPhase,
   type AgentPromptTemplateOption,
   type AgentResultType,
   type CustomAgentCapability,
   type CustomAgentCapabilityMap,
   type ToolDefinition,
+  type LtmGlobalSettings,
+  type LtmExtractionSettings,
+  type LtmExtractionReasoningEffort,
+  type LtmExtractionVerbosity,
+  type LtmIndexHealth,
+  type LtmMode,
+  type LtmRepairResponse,
 } from "@marinara-engine/shared";
 import {
   createAgentFolderPackageFilename,
@@ -104,6 +127,33 @@ import {
 } from "../../lib/agent-transfer";
 import { serializeCustomToolForTransfer } from "../../lib/custom-tool-transfer";
 import { downloadZipFile } from "../../lib/download-zip";
+import { LtmModal } from "../long-term-memory/LtmModal";
+import { LtmVaultManagerSection } from "../long-term-memory/LtmVaultManagerSection";
+import LtmInlineSettingsSections, {
+  LtmExtractionConnectionSection,
+  LtmExtractionPromptSection,
+} from "../long-term-memory/LtmInlineSettingsSections";
+import {
+  RecallStylePresets,
+  RecallBudgetControls,
+  RecallThresholdControls,
+  RecallRankingWeights,
+  RecallToggles,
+  useDebouncedRecallSettings,
+  type RecallSettingsValues,
+} from "../long-term-memory/RecallSettingsControls";
+import { StatusPill, ToolButton } from "../long-term-memory/LtmPills";
+import {
+  longTermMemoryKeys,
+  useLongTermMemoryStatus,
+  useLongTermMemoryExtractionSettings,
+  useUpdateLongTermMemoryExtractionSettings,
+  useLongTermMemorySettings,
+  useUpdateLongTermMemorySettings,
+  useRebuildLongTermMemory,
+  useRepairLongTermMemory,
+  useLongTermMemoryIntegrity,
+} from "../../hooks/use-long-term-memory";
 
 function parseActivationKeywordsText(value: string): string[] {
   const seen = new Set<string>();
@@ -347,6 +397,71 @@ function normalizeCustomResultType(value: unknown): CustomAgentResultType {
     : "context_injection";
 }
 
+type LtmPromptTemplate = { id: string; name: string; prompt: string };
+type LtmActivePromptTemplateIdsByMode = Partial<Record<LtmMode, string | null>>;
+const LTM_EXTRACTION_MODES = ["roleplay", "conversation", "game"] as const satisfies readonly LtmMode[];
+
+function normalizeBoundedNumber(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+  options: { integer?: boolean } = {},
+) {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  const normalized = options.integer === false ? numeric : Math.trunc(numeric);
+  return Math.max(min, Math.min(max, normalized));
+}
+
+function normalizeNullableRecallWeight(value: number | null | undefined) {
+  if (value === null) return null;
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : null;
+}
+
+function createLtmRecallDraft(settings?: Partial<RecallSettingsValues> | null): RecallSettingsValues {
+  return {
+    longTermMemoryBudgetTokens: normalizeBoundedNumber(
+      settings?.longTermMemoryBudgetTokens,
+      DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryBudgetTokens,
+      128,
+      16_384,
+    ),
+    longTermMemoryMaxChunks: normalizeBoundedNumber(
+      settings?.longTermMemoryMaxChunks,
+      DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryMaxChunks,
+      1,
+      100,
+    ),
+    longTermMemoryScoreThreshold: normalizeBoundedNumber(
+      settings?.longTermMemoryScoreThreshold,
+      DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryScoreThreshold,
+      0,
+      1,
+      { integer: false },
+    ),
+    longTermMemoryRecallContextMessages: normalizeBoundedNumber(
+      settings?.longTermMemoryRecallContextMessages,
+      DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryRecallContextMessages,
+      1,
+      20,
+    ),
+    longTermMemoryRecallStyle:
+      settings?.longTermMemoryRecallStyle ?? DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryRecallStyle,
+    longTermMemorySemanticWeight: normalizeNullableRecallWeight(settings?.longTermMemorySemanticWeight),
+    longTermMemoryLexicalWeight: normalizeNullableRecallWeight(settings?.longTermMemoryLexicalWeight),
+    longTermMemoryGraphWeight: normalizeNullableRecallWeight(settings?.longTermMemoryGraphWeight),
+    longTermMemoryKeywordWeight: normalizeNullableRecallWeight(settings?.longTermMemoryKeywordWeight),
+    longTermMemoryIncludeResolved:
+      settings?.longTermMemoryIncludeResolved ?? DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryIncludeResolved,
+    longTermMemoryDebug: settings?.longTermMemoryDebug ?? DEFAULT_LTM_GLOBAL_SETTINGS.longTermMemoryDebug,
+  };
+}
+
+function createLtmRecallSettingsPayload(values: RecallSettingsValues): LtmGlobalSettings {
+  return { version: 1, ...values };
+}
+
 function customCapabilityMapFromLocal(capabilities: CustomAgentCapabilityMap): CustomAgentCapabilityMap {
   const enabled: CustomAgentCapabilityMap = {};
   for (const capability of CUSTOM_AGENT_CAPABILITY_IDS) {
@@ -449,7 +564,9 @@ export function AgentEditor() {
       loaded: Array.isArray(connections),
       llmIds: new Set(
         rows
-          .filter((connection) => connection.provider !== "image_generation" && connection.provider !== "video_generation")
+          .filter(
+            (connection) => connection.provider !== "image_generation" && connection.provider !== "video_generation",
+          )
           .map((connection) => connection.id),
       ),
       imageIds: new Set(
@@ -484,13 +601,14 @@ export function AgentEditor() {
     return (agentConfigs as AgentConfigRow[]).find((c) => c.type === agentDetailId || c.id === agentDetailId) ?? null;
   }, [agentDetailId, agentConfigs]);
 
-  // Custom agent = DB entry with no matching built-in
-  const isCustomAgent = !builtIn && !!dbConfig;
+  // Managed agents use dedicated editors rather than generic custom-agent controls.
+  const isCustomAgent = !builtIn && !!dbConfig && !isManagedAgentType(dbConfig.type);
   const isNewCustomAgent = agentDetailId === "__new__";
   const customRunIntervalMeta =
     isCustomAgent || isNewCustomAgent
       ? getAgentRunIntervalMeta(isNewCustomAgent ? "__new__" : (dbConfig?.type ?? agentDetailId ?? ""), false)
       : null;
+  const isLtmAgent = dbConfig?.type === "long-term-memory";
 
   // ── Local editable state ──
   const [localName, setLocalName] = useState("");
@@ -516,6 +634,47 @@ export function AgentEditor() {
   const [localIncludeParallelResults, setLocalIncludeParallelResults] = useState(false);
   const [localEnabledTools, setLocalEnabledTools] = useState<string[]>([]);
   const [toolsSectionOpen, setToolsSectionOpen] = useState(false);
+  const [vaultOpen, setVaultOpen] = useState<{
+    initialTab?: "notes" | "import" | "review" | "suggestions";
+    sourceNoteId?: string;
+  } | null>(null);
+  const memoriesModalOpen = vaultOpen !== null;
+  const [ltmAdvancedOpen, setLtmAdvancedOpen] = useState(false);
+  const [recallAdvancedOpen, setRecallAdvancedOpen] = useState(false);
+  const [maintenanceOpen, setMaintenanceOpen] = useState(false);
+  const ltmStatus = useLongTermMemoryStatus({ enabled: isLtmAgent });
+  const integrity = useLongTermMemoryIntegrity({ enabled: isLtmAgent });
+  const { data: ltmExtractionSettings } = useLongTermMemoryExtractionSettings({ enabled: isLtmAgent });
+  const updateExtractionSettings = useUpdateLongTermMemoryExtractionSettings();
+  const ltmGlobalSettingsResult = useLongTermMemorySettings({ enabled: isLtmAgent });
+  const updateGlobalSettings = useUpdateLongTermMemorySettings();
+  const [ltmRecallDraft, setLtmRecallDraft] = useState<RecallSettingsValues | null>(null);
+  const ltmRecallHasLocalEditsRef = useRef(false);
+  const ltmRecallRevisionRef = useRef(0);
+  const rebuildMemories = useRebuildLongTermMemory();
+  const repairMemories = useRepairLongTermMemory();
+  const [lastRepairResult, setLastRepairResult] = useState<LtmRepairResponse | null>(null);
+  const [ltmDraft, setLtmDraft] = useState<{
+    connectionId: string;
+    model: string;
+    instruction: string;
+    importConcurrency: number;
+    autoApplyLowRisk: boolean;
+    reasoningEffort: LtmExtractionReasoningEffort;
+    verbosity: LtmExtractionVerbosity;
+    maxOutputTokens: number;
+    temperature: number;
+    maxSourceTokens: number;
+    maxExistingNoteTokens: number;
+    existingNoteMaxChunks: number;
+    existingNoteMaxTokens: number;
+    promptTemplates: LtmPromptTemplate[];
+    activePromptTemplateIdsByMode: LtmActivePromptTemplateIdsByMode;
+    aiKeywordExtraction: boolean;
+    refinePass: boolean;
+  } | null>(null);
+  const [ltmPromptDraftDirty, setLtmPromptDraftDirty] = useState(false);
+  const ltmSeededAgentRef = useRef<string | null>(null);
   const [localLorebookWriteEnabled, setLocalLorebookWriteEnabled] = useState(false);
   const [localWritableLorebookId, setLocalWritableLorebookId] = useState("");
   const [localMusicProvider, setLocalMusicProvider] = useState<MusicProvider>("spotify");
@@ -795,6 +954,158 @@ export function AgentEditor() {
     normalizeImageConnectionOverride,
   ]);
 
+  const ltmHasMemories = (ltmStatus.data?.notes.total ?? 0) > 0;
+  const ltmIndexHealth = integrity.data?.health ?? ltmStatus.data?.indexes.health;
+  const ltmSmartSearchAvailable = ltmStatus.data?.indexes.embeddingsAvailable === true;
+  const ltmSmartSearchReady =
+    ltmSmartSearchAvailable && (ltmIndexHealth === "healthy" || ltmIndexHealth === "degraded");
+  const ltmSearchStatusLabel = ltmSmartSearchReady
+    ? "Smart Search Ready"
+    : ltmSmartSearchAvailable
+      ? "Smart Search Stale"
+      : "Basic Search Only";
+  const ltmSearchStatusTitle = ltmSmartSearchReady
+    ? "Memory search can match related memories by meaning."
+    : ltmSmartSearchAvailable
+      ? "Smart matching exists, but the memory index needs maintenance before it is current."
+      : "Memory search is available, but smart matching has not been built yet.";
+  const ltmIndexStatus = ((health: LtmIndexHealth | undefined) => {
+    if (health === "healthy")
+      return { label: "Memory Index Healthy", tone: "good" as const, title: "The active memory index is current." };
+    if (health === "degraded")
+      return {
+        label: "Memory Index Degraded",
+        tone: "warn" as const,
+        title: "A recovered or rebuilding index is active. Check Maintenance for details.",
+      };
+    if (health === "stale")
+      return {
+        label: "Memory Index Stale",
+        tone: "warn" as const,
+        title: "Saved memories changed after the active index was built.",
+      };
+    if (health === "corrupt")
+      return {
+        label: "Memory Index Corrupt",
+        tone: "bad" as const,
+        title: "No valid current memory index is available. Open Maintenance to repair it.",
+      };
+    if (health === "not_built")
+      return {
+        label: "Memory Index Not Built",
+        tone: "neutral" as const,
+        title: "Build the memory index to enable indexed recall.",
+      };
+    return {
+      label: "Memory Index Unknown",
+      tone: "neutral" as const,
+      title: "Memory index status could not be determined.",
+    };
+  })(ltmIndexHealth);
+  const indexedMemoryChunkCount = ltmStatus.data?.indexes.chunkCount;
+  const indexedMemoryChunkLabel =
+    typeof indexedMemoryChunkCount === "number"
+      ? `${indexedMemoryChunkCount.toLocaleString()} indexed memory chunk${indexedMemoryChunkCount === 1 ? "" : "s"}`
+      : "Memory index not built";
+
+  useEffect(() => {
+    if (!isLtmAgent) {
+      ltmRecallHasLocalEditsRef.current = false;
+      setLtmRecallDraft(null);
+      return;
+    }
+    if (!ltmGlobalSettingsResult.data || ltmRecallHasLocalEditsRef.current) return;
+    setLtmRecallDraft(createLtmRecallDraft(ltmGlobalSettingsResult.data));
+  }, [isLtmAgent, ltmGlobalSettingsResult.data]);
+
+  const patchGlobalSettings = useCallback(
+    (values: RecallSettingsValues) => {
+      const revision = ltmRecallRevisionRef.current;
+      updateGlobalSettings.mutate(createLtmRecallSettingsPayload(values), {
+        onSuccess: (settings) => {
+          if (revision !== ltmRecallRevisionRef.current) return;
+          ltmRecallHasLocalEditsRef.current = false;
+          setLtmRecallDraft(createLtmRecallDraft(settings));
+          qc.setQueryData(longTermMemoryKeys.settings(), settings);
+        },
+        onError: (err) => {
+          if (revision !== ltmRecallRevisionRef.current) return;
+          toast.error(err instanceof Error ? err.message : "Failed to save memory recall settings");
+        },
+      });
+    },
+    [qc, updateGlobalSettings],
+  );
+  const autosaveLtmRecallDraft = useCallback(
+    (values: Partial<RecallSettingsValues>) => patchGlobalSettings(createLtmRecallDraft(values)),
+    [patchGlobalSettings],
+  );
+  const { flush: flushLtmRecallDraft, schedule: debouncedPatchGlobal } = useDebouncedRecallSettings(
+    autosaveLtmRecallDraft,
+    400,
+  );
+
+  useEffect(() => {
+    if (!isLtmAgent) {
+      setLtmDraft(null);
+      setLtmPromptDraftDirty(false);
+      ltmSeededAgentRef.current = null;
+      return;
+    }
+    if (!dbConfig || !ltmExtractionSettings) return;
+    const agentKey = dbConfig.id || dbConfig.type;
+    if (ltmSeededAgentRef.current === agentKey) return;
+    ltmSeededAgentRef.current = agentKey;
+    const settings = parseAgentSettingsRecord(dbConfig.settings);
+    setLtmDraft({
+      connectionId: typeof settings.connectionId === "string" ? settings.connectionId : "",
+      model: typeof settings.model === "string" ? settings.model : "",
+      instruction: typeof settings.instruction === "string" ? settings.instruction : "",
+      importConcurrency:
+        typeof settings.importConcurrency === "number"
+          ? Math.max(1, Math.min(10, Math.round(settings.importConcurrency)))
+          : 3,
+      autoApplyLowRisk: settings.autoApplyLowRisk === true,
+      reasoningEffort: ltmExtractionSettings.reasoningEffort,
+      verbosity: ltmExtractionSettings.verbosity,
+      maxOutputTokens: ltmExtractionSettings.maxOutputTokens,
+      temperature: ltmExtractionSettings.temperature,
+      maxSourceTokens: ltmExtractionSettings.maxSourceTokens,
+      maxExistingNoteTokens: ltmExtractionSettings.maxExistingNoteTokens,
+      existingNoteMaxChunks: ltmExtractionSettings.existingNoteMaxChunks,
+      existingNoteMaxTokens: ltmExtractionSettings.existingNoteMaxTokens,
+      promptTemplates: ltmExtractionSettings.promptTemplates,
+      activePromptTemplateIdsByMode: { ...ltmExtractionSettings.activePromptTemplateIdsByMode },
+      aiKeywordExtraction: ltmExtractionSettings.aiKeywordExtraction,
+      refinePass: ltmExtractionSettings.refinePass,
+    });
+    setLtmPromptDraftDirty(false);
+  }, [isLtmAgent, dbConfig, ltmExtractionSettings]);
+
+  const runMemoryRepair = async () => {
+    const confirmed = await showConfirmDialog({
+      title: "Repair Memory Store?",
+      message:
+        "Malformed memory files will be moved into quarantine, missing imported-source titles will be restored, and the memory index will be rebuilt once.",
+      confirmLabel: "Repair",
+      tone: "destructive",
+    });
+    if (!confirmed) return;
+    try {
+      const result = await repairMemories.mutateAsync([
+        "quarantine_malformed_notes",
+        "backfill_imported_source_titles",
+        "rebuild_indexes",
+      ]);
+      setLastRepairResult(result);
+      const remaining = result.integrity.issues.filter((issue) => issue.severity !== "info").length;
+      if (result.integrity.ok) toast.success("Memory repair completed");
+      else toast.warning(`Memory repair completed with ${remaining} remaining issue${remaining === 1 ? "" : "s"}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Memory repair failed");
+    }
+  };
+
   // Fetch music connection status when viewing Music DJ.
   const isSpotifyAgent = agentDetailId === "spotify" || dbConfig?.type === "spotify";
   const isMusicAgent = isSpotifyAgent;
@@ -963,7 +1274,12 @@ export function AgentEditor() {
 
   const handleSave = useCallback(async () => {
     if (!agentDetailId) return;
+    flushLtmRecallDraft();
     setSaveError(null);
+    if (isLtmAgent && ltmPromptDraftDirty) {
+      setSaveError("Save the prompt option in Extraction Prompt before saving the agent.");
+      return;
+    }
     const isEditingCustomAgent = isCustomAgent || isNewCustomAgent;
     const agentType = dbConfig?.type ?? builtIn?.id ?? agentDetailId;
     const selectedPhase = isEditingCustomAgent && localResultType === "text_rewrite" ? "post_processing" : localPhase;
@@ -1025,76 +1341,88 @@ export function AgentEditor() {
       enabled: true,
       connectionId: savedConnectionId || null,
       promptTemplate: localPrompt,
-      settings: {
-        ...preservedSpotifyFields,
-        author: savedAuthor,
-        promptTemplates: savedPromptTemplates,
-        ...(isEditingCustomAgent ? { customCapabilities } : {}),
-        ...(isEditingCustomAgent ? { resultType: localResultType } : {}),
-        ...(activationKeywords.length > 0
-          ? {
-              activationKeywords,
-              activationScanDepth,
-            }
-          : {}),
-        ...(mayIncludeTurnData && localIncludePreGenInjections ? { includePreGenInjections: true } : {}),
-        ...(mayIncludeTurnData && localIncludeParallelResults ? { includeParallelResults: true } : {}),
-        ...(localContextSize !== "" ? { contextSize: Number(localContextSize) } : {}),
-        ...(localMaxTokens !== "" ? { maxTokens: clampAgentMaxTokens(localMaxTokens) } : {}),
-        ...(!isDirectorAgent && localRunInterval !== "" ? { runInterval: Number(localRunInterval) } : {}),
-        ...(!isDirectorAgent && localInjectAsSection ? { injectAsSection: true } : {}),
-        ...(isMusicAgent
-          ? {
-              musicProvider: localMusicProvider,
-              customMusicSource: localCustomMusicSource,
-              customMusicFolder: normalizeCustomMusicFolderInput(localCustomMusicFolder),
-              ...(localCustomMusicExternalFolder.trim()
-                ? { customMusicExternalFolder: localCustomMusicExternalFolder.trim() }
-                : {}),
-            }
-          : {}),
-        enabledTools: isMusicAgent && localMusicProvider !== "spotify" ? [] : effectiveEnabledTools,
-        ...(lorebookWriterEnabled
-          ? { lorebookWriteEnabled: true, writableLorebookId, writableLorebookIds: [writableLorebookId] }
-          : {}),
-        ...(localSpotifyClientId ? { spotifyClientId: localSpotifyClientId } : {}),
-        ...(isKnowledgeRetrievalAgent || isKnowledgeRouterAgent
-          ? { useChatActiveLorebooks: localUseChatActiveLorebooks }
-          : {}),
-        ...(localSourceLorebookIds.length > 0 ? { sourceLorebookIds: localSourceLorebookIds } : {}),
-        // Only persist sourceFileIds for the Knowledge Retrieval agent — the Router
-        // doesn't read this setting. Without this guard, switching an agent from
-        // Retrieval to Router would leave behind stale file IDs the user can no
-        // longer see or remove via the UI.
-        ...(isKnowledgeRetrievalAgent && localSourceFileIds.length > 0 ? { sourceFileIds: localSourceFileIds } : {}),
-        ...(savedImageConnectionId ? { imageConnectionId: savedImageConnectionId } : {}),
-        ...(localAutoGenerateAvatars ? { autoGenerateAvatars: true } : {}),
-        ...(localAutoGenerateBackgrounds ? { autoGenerateBackgrounds: true } : {}),
-        ...(isIllustratorAgent
-          ? {
-              useAvatarReferences: localUseAvatarReferences,
-              includeCharacterAppearance: localIncludeCharacterAppearance,
-            }
-          : {}),
-        ...(isProseGuardianAgent
-          ? {
-              banned: localProseGuardianBanned.trim() || DEFAULT_PROSE_GUARDIAN_BANNED_WORDS,
-              avoid: localProseGuardianAvoid.trim() || DEFAULT_PROSE_GUARDIAN_AVOID,
-              prefer: localProseGuardianPrefer.trim(),
-              holdForRewrite: localProseGuardianHoldForRewrite,
-            }
-          : {}),
-        ...(isContinuityAgent || isHtmlAgent ? { holdForRewrite: localProseGuardianHoldForRewrite } : {}),
-        ...(isDirectorAgent
-          ? {
-              directorMode: localDirectorMode,
-              secretPlotEnabled: localSecretPlotEnabled,
-              secretPlotRunInterval: localSecretPlotRunInterval,
-            }
-          : {}),
-        ...(localImagePositivePrompt.trim() ? { imagePositivePrompt: localImagePositivePrompt.trim() } : {}),
-        ...(localImageNegativePrompt.trim() ? { imageNegativePrompt: localImageNegativePrompt.trim() } : {}),
-      },
+      settings: isLtmAgent
+        ? {
+            ...currentSettings,
+            author: "Promansis",
+            connectionId: ltmDraft?.connectionId ?? "",
+            model: ltmDraft?.model ?? "",
+            instruction: ltmDraft?.instruction ?? "",
+            importConcurrency: ltmDraft?.importConcurrency ?? 3,
+            autoApplyLowRisk: ltmDraft?.autoApplyLowRisk ?? false,
+          }
+        : {
+            ...preservedSpotifyFields,
+            author: savedAuthor,
+            promptTemplates: savedPromptTemplates,
+            ...(isEditingCustomAgent ? { customCapabilities } : {}),
+            ...(isEditingCustomAgent ? { resultType: localResultType } : {}),
+            ...(activationKeywords.length > 0
+              ? {
+                  activationKeywords,
+                  activationScanDepth,
+                }
+              : {}),
+            ...(mayIncludeTurnData && localIncludePreGenInjections ? { includePreGenInjections: true } : {}),
+            ...(mayIncludeTurnData && localIncludeParallelResults ? { includeParallelResults: true } : {}),
+            ...(localContextSize !== "" ? { contextSize: Number(localContextSize) } : {}),
+            ...(localMaxTokens !== "" ? { maxTokens: clampAgentMaxTokens(localMaxTokens) } : {}),
+            ...(!isDirectorAgent && localRunInterval !== "" ? { runInterval: Number(localRunInterval) } : {}),
+            ...(!isDirectorAgent && localInjectAsSection ? { injectAsSection: true } : {}),
+            ...(isMusicAgent
+              ? {
+                  musicProvider: localMusicProvider,
+                  customMusicSource: localCustomMusicSource,
+                  customMusicFolder: normalizeCustomMusicFolderInput(localCustomMusicFolder),
+                  ...(localCustomMusicExternalFolder.trim()
+                    ? { customMusicExternalFolder: localCustomMusicExternalFolder.trim() }
+                    : {}),
+                }
+              : {}),
+            enabledTools: isMusicAgent && localMusicProvider !== "spotify" ? [] : effectiveEnabledTools,
+            ...(lorebookWriterEnabled
+              ? { lorebookWriteEnabled: true, writableLorebookId, writableLorebookIds: [writableLorebookId] }
+              : {}),
+            ...(localSpotifyClientId ? { spotifyClientId: localSpotifyClientId } : {}),
+            ...(isKnowledgeRetrievalAgent || isKnowledgeRouterAgent
+              ? { useChatActiveLorebooks: localUseChatActiveLorebooks }
+              : {}),
+            ...(localSourceLorebookIds.length > 0 ? { sourceLorebookIds: localSourceLorebookIds } : {}),
+            // Only persist sourceFileIds for the Knowledge Retrieval agent — the Router
+            // doesn't read this setting. Without this guard, switching an agent from
+            // Retrieval to Router would leave behind stale file IDs the user can no
+            // longer see or remove via the UI.
+            ...(isKnowledgeRetrievalAgent && localSourceFileIds.length > 0
+              ? { sourceFileIds: localSourceFileIds }
+              : {}),
+            ...(savedImageConnectionId ? { imageConnectionId: savedImageConnectionId } : {}),
+            ...(localAutoGenerateAvatars ? { autoGenerateAvatars: true } : {}),
+            ...(localAutoGenerateBackgrounds ? { autoGenerateBackgrounds: true } : {}),
+            ...(isIllustratorAgent
+              ? {
+                  useAvatarReferences: localUseAvatarReferences,
+                  includeCharacterAppearance: localIncludeCharacterAppearance,
+                }
+              : {}),
+            ...(isProseGuardianAgent
+              ? {
+                  banned: localProseGuardianBanned.trim() || DEFAULT_PROSE_GUARDIAN_BANNED_WORDS,
+                  avoid: localProseGuardianAvoid.trim() || DEFAULT_PROSE_GUARDIAN_AVOID,
+                  prefer: localProseGuardianPrefer.trim(),
+                  holdForRewrite: localProseGuardianHoldForRewrite,
+                }
+              : {}),
+            ...(isContinuityAgent || isHtmlAgent ? { holdForRewrite: localProseGuardianHoldForRewrite } : {}),
+            ...(isDirectorAgent
+              ? {
+                  directorMode: localDirectorMode,
+                  secretPlotEnabled: localSecretPlotEnabled,
+                  secretPlotRunInterval: localSecretPlotRunInterval,
+                }
+              : {}),
+            ...(localImagePositivePrompt.trim() ? { imagePositivePrompt: localImagePositivePrompt.trim() } : {}),
+            ...(localImageNegativePrompt.trim() ? { imageNegativePrompt: localImageNegativePrompt.trim() } : {}),
+          },
     };
 
     try {
@@ -1112,6 +1440,46 @@ export function AgentEditor() {
         if (!builtIn && created?.id) {
           openAgentDetail(created.id);
         }
+      }
+      if (isLtmAgent && ltmDraft) {
+        const extractionPayload: LtmExtractionSettings = { version: 1 };
+        const maxOutputTokens = normalizeBoundedNumber(
+          ltmDraft.maxOutputTokens,
+          DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
+          512,
+          32_768,
+        );
+        const temperature = normalizeBoundedNumber(ltmDraft.temperature, DEFAULT_LTM_EXTRACTION_TEMPERATURE, 0, 2, {
+          integer: false,
+        });
+        const maxExistingNoteTokens = normalizeBoundedNumber(
+          ltmDraft.maxExistingNoteTokens,
+          DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
+          128,
+          32_768,
+        );
+        const activePromptTemplateIdsByMode = Object.fromEntries(
+          LTM_EXTRACTION_MODES.flatMap((mode) => {
+            const id = ltmDraft.activePromptTemplateIdsByMode[mode];
+            return id ? [[mode, id]] : [];
+          }),
+        );
+        if (ltmDraft.reasoningEffort !== DEFAULT_LTM_EXTRACTION_REASONING_EFFORT)
+          extractionPayload.reasoningEffort = ltmDraft.reasoningEffort;
+        if (ltmDraft.verbosity !== DEFAULT_LTM_EXTRACTION_VERBOSITY) extractionPayload.verbosity = ltmDraft.verbosity;
+        if (maxOutputTokens !== DEFAULT_LTM_EXTRACTION_MAX_TOKENS) extractionPayload.maxOutputTokens = maxOutputTokens;
+        if (temperature !== DEFAULT_LTM_EXTRACTION_TEMPERATURE) extractionPayload.temperature = temperature;
+        if (maxExistingNoteTokens !== DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS)
+          extractionPayload.maxExistingNoteTokens = maxExistingNoteTokens;
+        if (ltmDraft.existingNoteMaxTokens !== DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS)
+          extractionPayload.existingNoteMaxTokens = ltmDraft.existingNoteMaxTokens;
+        if (ltmDraft.promptTemplates.length > 0) extractionPayload.promptTemplates = ltmDraft.promptTemplates;
+        if (Object.keys(activePromptTemplateIdsByMode).length > 0)
+          extractionPayload.activePromptTemplateIdsByMode = activePromptTemplateIdsByMode;
+        if (ltmDraft.aiKeywordExtraction) extractionPayload.aiKeywordExtraction = true;
+        if (ltmDraft.refinePass) extractionPayload.refinePass = true;
+        const savedExtractionSettings = await updateExtractionSettings.mutateAsync(extractionPayload);
+        qc.setQueryData(longTermMemoryKeys.extractionSettings(), savedExtractionSettings);
       }
       setDirty(false);
       setSavedFlash(true);
@@ -1175,6 +1543,12 @@ export function AgentEditor() {
     isMusicAgent,
     isKnowledgeRetrievalAgent,
     isKnowledgeRouterAgent,
+    isLtmAgent,
+    flushLtmRecallDraft,
+    ltmPromptDraftDirty,
+    ltmDraft,
+    updateExtractionSettings,
+    qc,
     updateAgent,
     createAgent,
     openAgentDetail,
@@ -1276,7 +1650,9 @@ export function AgentEditor() {
       ...(localImageNegativePrompt.trim() ? { imageNegativePrompt: localImageNegativePrompt.trim() } : {}),
     });
     const bundledCustomTools = getReferencedCustomTools(
-      Array.isArray(settings.enabledTools) ? settings.enabledTools.filter((tool): tool is string => typeof tool === "string") : [],
+      Array.isArray(settings.enabledTools)
+        ? settings.enabledTools.filter((tool): tool is string => typeof tool === "string")
+        : [],
       (customToolsRaw as CustomToolRow[] | undefined) ?? [],
     ).map(serializeCustomToolForTransfer);
     downloadZipFile(
@@ -1313,6 +1689,37 @@ export function AgentEditor() {
   }, [defaultPrompt]);
 
   const markDirty = useCallback(() => setDirty(true), []);
+
+  const updateLtmDraft = useCallback(
+    (patch: Record<string, unknown>) => {
+      setLtmDraft((current) => (current ? { ...current, ...patch } : current));
+      markDirty();
+    },
+    [markDirty],
+  );
+
+  const updateLtmRecallDraft = useCallback(
+    (patch: Partial<RecallSettingsValues>) => {
+      setLtmRecallDraft((current) => {
+        if (!current) return current;
+        const next = createLtmRecallDraft({ ...current, ...patch });
+        ltmRecallRevisionRef.current += 1;
+        ltmRecallHasLocalEditsRef.current = true;
+        debouncedPatchGlobal(next);
+        return next;
+      });
+      markDirty();
+    },
+    [debouncedPatchGlobal, markDirty],
+  );
+
+  const handleLtmPromptDraftDirtyChange = useCallback(
+    (nextDirty: boolean) => {
+      setLtmPromptDraftDirty(nextDirty);
+      if (nextDirty) markDirty();
+    },
+    [markDirty],
+  );
 
   const handleMusicProviderChange = useCallback(
     (provider: MusicProvider) => {
@@ -1452,9 +1859,7 @@ export function AgentEditor() {
   if (!agentDetailId || (!builtIn && !dbConfig && agentDetailId !== "__new__")) {
     return (
       <div className="mari-editor-shell flex flex-1 items-center justify-center">
-        <p className="mari-editor-empty px-4 py-3 text-sm">
-          Agent not found.
-        </p>
+        <p className="mari-editor-empty px-4 py-3 text-sm">Agent not found.</p>
       </div>
     );
   }
@@ -1591,8 +1996,8 @@ export function AgentEditor() {
           <AlertCircle size="0.8125rem" />
           <span className="flex-1">
             {isKnowledgeRouterAgent ? "Knowledge Retrieval" : "Knowledge Router"} is also configured. Both agents can
-            run in parallel if a chat enables both, injecting overlapping context. Consider enabling only one for cleaner
-            prompts.
+            run in parallel if a chat enables both, injecting overlapping context. Consider enabling only one for
+            cleaner prompts.
           </span>
         </div>
       )}
@@ -3348,227 +3753,592 @@ export function AgentEditor() {
             </FieldGroup>
           )}
 
-          {/* ── Prompt Template ── */}
-          <FieldGroup
-            label="Prompt Template"
-            icon={<FileText size="0.875rem" className="text-[var(--primary)]" />}
-            help="The system instructions this agent receives. Built-in agents have sensible defaults. You can override to customize behavior."
-          >
-            {/* Toolbar — only show default/override status for built-in agents */}
-            {builtIn && (
-              <div className="flex items-center gap-2 mb-2">
-                {isUsingDefaultPrompt ? (
-                  <span className="flex items-center gap-1 rounded-lg bg-emerald-400/10 px-2.5 py-1 text-[0.625rem] font-medium text-emerald-400">
-                    <Check size="0.625rem" /> Using built-in default
-                  </span>
+          {!isLtmAgent && (
+            <>
+              {/* ── Prompt Template ── */}
+              <FieldGroup
+                label="Prompt Template"
+                icon={<FileText size="0.875rem" className="text-[var(--primary)]" />}
+                help="The system instructions this agent receives. Built-in agents have sensible defaults. You can override to customize behavior."
+              >
+                {/* Toolbar — only show default/override status for built-in agents */}
+                {builtIn && (
+                  <div className="flex items-center gap-2 mb-2">
+                    {isUsingDefaultPrompt ? (
+                      <span className="flex items-center gap-1 rounded-lg bg-emerald-400/10 px-2.5 py-1 text-[0.625rem] font-medium text-emerald-400">
+                        <Check size="0.625rem" /> Using built-in default
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1 rounded-lg bg-amber-400/10 px-2.5 py-1 text-[0.625rem] font-medium text-amber-400">
+                        <FileText size="0.625rem" /> Custom override
+                      </span>
+                    )}
+                    <div className="flex-1" />
+                    {!isUsingDefaultPrompt && (
+                      <button
+                        onClick={handleResetPrompt}
+                        className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                      >
+                        <RotateCcw size="0.625rem" /> Reset to default
+                      </button>
+                    )}
+                    {isUsingDefaultPrompt && defaultPrompt && (
+                      <button
+                        onClick={handleLoadDefault}
+                        className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                      >
+                        <FileText size="0.625rem" /> Copy default to edit
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {builtIn && isUsingDefaultPrompt ? (
+                  <div className="relative">
+                    <pre className="w-full max-h-[50vh] overflow-y-auto resize-y rounded-xl bg-[var(--secondary)] px-4 py-3 font-mono text-xs leading-relaxed ring-1 ring-[var(--border)] text-[var(--muted-foreground)] whitespace-pre-wrap">
+                      {defaultPrompt || "No default prompt."}
+                    </pre>
+                    <span className="absolute right-3 top-2 rounded-md bg-[var(--card)] px-1.5 py-0.5 text-[0.5625rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                      Default — click "Copy default to edit" to customize
+                    </span>
+                  </div>
                 ) : (
-                  <span className="flex items-center gap-1 rounded-lg bg-amber-400/10 px-2.5 py-1 text-[0.625rem] font-medium text-amber-400">
-                    <FileText size="0.625rem" /> Custom override
-                  </span>
+                  <MacroTextarea
+                    value={localPrompt}
+                    onChange={(value) => {
+                      setLocalPrompt(value);
+                      markDirty();
+                    }}
+                    rows={16}
+                    title="Prompt Template"
+                    placeholder="Write the system prompt for this agent…"
+                    className="w-full resize-y rounded-xl bg-[var(--secondary)] px-4 py-3 font-mono text-xs leading-relaxed ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)] max-h-[60vh] overflow-y-auto"
+                  />
                 )}
-                <div className="flex-1" />
-                {!isUsingDefaultPrompt && (
-                  <button
-                    onClick={handleResetPrompt}
-                    className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                  >
-                    <RotateCcw size="0.625rem" /> Reset to default
-                  </button>
-                )}
-                {isUsingDefaultPrompt && defaultPrompt && (
-                  <button
-                    onClick={handleLoadDefault}
-                    className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                  >
-                    <FileText size="0.625rem" /> Copy default to edit
-                  </button>
-                )}
-              </div>
-            )}
+                <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
+                  {builtIn
+                    ? "Leave empty to use the built-in default prompt. Edit to override with your own instructions."
+                    : localResultType === "text_rewrite"
+                      ? 'Write the full system prompt for this custom editor. It must return JSON with "editedText" and "changes".'
+                      : "Write the full system prompt for this custom agent."}
+                </p>
 
-            {builtIn && isUsingDefaultPrompt ? (
-              <div className="relative">
-                <pre className="w-full max-h-[50vh] overflow-y-auto resize-y rounded-xl bg-[var(--secondary)] px-4 py-3 font-mono text-xs leading-relaxed ring-1 ring-[var(--border)] text-[var(--muted-foreground)] whitespace-pre-wrap">
-                  {defaultPrompt || "No default prompt."}
-                </pre>
-                <span className="absolute right-3 top-2 rounded-md bg-[var(--card)] px-1.5 py-0.5 text-[0.5625rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-                  Default — click "Copy default to edit" to customize
+                <div className="mt-4 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-semibold text-[var(--foreground)]">Named prompt options</p>
+                      <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                        Chats can pick one of these without changing the agent globally.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleAddPromptTemplate}
+                      className="flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.6875rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+                    >
+                      <Plus size="0.6875rem" />
+                      Add option
+                    </button>
+                  </div>
+
+                  {localPromptTemplates.length === 0 ? (
+                    <p className="rounded-xl bg-[var(--secondary)]/60 px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                      No named options yet. The chat menu will show only the default prompt.
+                    </p>
+                  ) : (
+                    <div className="space-y-3">
+                      {localPromptTemplates.map((option, index) => {
+                        const defaultPromptTemplate = defaultPromptTemplateById.get(option.id);
+                        const matchesDefaultPrompt =
+                          !!defaultPromptTemplate && option.promptTemplate === defaultPromptTemplate.promptTemplate;
+                        return (
+                          <div
+                            key={option.id}
+                            className="rounded-xl bg-[var(--secondary)]/70 p-3 ring-1 ring-[var(--border)]"
+                          >
+                            <div className="mb-2 flex items-center gap-2">
+                              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-[var(--background)] text-[0.6875rem] font-semibold text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                                {index + 1}
+                              </span>
+                              <input
+                                value={option.name}
+                                onChange={(e) => handleUpdatePromptTemplate(option.id, { name: e.target.value })}
+                                className="min-w-0 flex-1 rounded-lg bg-[var(--background)] px-2.5 py-1.5 text-sm ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                                placeholder="Option name"
+                              />
+                              {defaultPromptTemplate && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleResetPromptTemplate(option.id)}
+                                  disabled={matchesDefaultPrompt}
+                                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-[var(--muted-foreground)]"
+                                  title={
+                                    matchesDefaultPrompt
+                                      ? "Prompt already matches the default"
+                                      : "Restore default prompt"
+                                  }
+                                >
+                                  <RotateCcw size="0.75rem" />
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleRemovePromptTemplate(option.id)}
+                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                                title="Remove prompt option"
+                              >
+                                <Trash2 size="0.75rem" />
+                              </button>
+                            </div>
+                            <input
+                              value={option.description ?? ""}
+                              onChange={(e) => handleUpdatePromptTemplate(option.id, { description: e.target.value })}
+                              className="mb-2 w-full rounded-lg bg-[var(--background)] px-2.5 py-1.5 text-xs ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                              placeholder="Short description shown in Chat Settings"
+                            />
+                            <MacroTextarea
+                              value={option.promptTemplate}
+                              onChange={(value) => handleUpdatePromptTemplate(option.id, { promptTemplate: value })}
+                              rows={7}
+                              title={option.name ? `${option.name} Prompt` : `Prompt Option ${index + 1}`}
+                              className="w-full resize-y rounded-lg bg-[var(--background)] px-3 py-2 font-mono text-xs leading-relaxed ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                              placeholder="Write the prompt template for this option…"
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Default prompt preview removed — now shown inline above */}
+              </FieldGroup>
+            </>
+          )}
+
+          {isLtmAgent && dbConfig && (
+            <section className="space-y-5 rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 shadow-sm sm:p-4">
+              <div className="flex items-start gap-3 border-b border-[var(--border)]/70 pb-4">
+                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--primary)]/10 text-[var(--primary)] ring-1 ring-[var(--primary)]/25">
+                  <BrainCircuit size="1.125rem" />
                 </span>
-              </div>
-            ) : (
-              <MacroTextarea
-                value={localPrompt}
-                onChange={(value) => {
-                  setLocalPrompt(value);
-                  markDirty();
-                }}
-                rows={16}
-                title="Prompt Template"
-                placeholder="Write the system prompt for this agent…"
-                className="w-full resize-y rounded-xl bg-[var(--secondary)] px-4 py-3 font-mono text-xs leading-relaxed ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)] max-h-[60vh] overflow-y-auto"
-              />
-            )}
-            <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-              {builtIn
-                ? "Leave empty to use the built-in default prompt. Edit to override with your own instructions."
-                : localResultType === "text_rewrite"
-                  ? 'Write the full system prompt for this custom editor. It must return JSON with "editedText" and "changes".'
-                  : "Write the full system prompt for this custom agent."}
-            </p>
-
-            <div className="mt-4 space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p className="text-xs font-semibold text-[var(--foreground)]">Named prompt options</p>
-                  <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                    Chats can pick one of these without changing the agent globally.
+                <div className="min-w-0">
+                  <h2 className="text-sm font-semibold text-[var(--foreground)]">Long-Term Memory</h2>
+                  <p className="mt-1 max-w-[70ch] text-xs leading-relaxed text-[var(--muted-foreground)]">
+                    Manage the memory vault, extraction prompts, recall defaults, and store maintenance.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleAddPromptTemplate}
-                  className="flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.6875rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
-                >
-                  <Plus size="0.6875rem" />
-                  Add option
-                </button>
               </div>
 
-              {localPromptTemplates.length === 0 ? (
-                <p className="rounded-xl bg-[var(--secondary)]/60 px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-                  No named options yet. The chat menu will show only the default prompt.
-                </p>
-              ) : (
-                <div className="space-y-3">
-                  {localPromptTemplates.map((option, index) => {
-                    const defaultPromptTemplate = defaultPromptTemplateById.get(option.id);
-                    const matchesDefaultPrompt =
-                      !!defaultPromptTemplate && option.promptTemplate === defaultPromptTemplate.promptTemplate;
+              <FieldGroup
+                label="Memories"
+                icon={<DatabaseZap size="0.875rem" className="text-[var(--primary)]" />}
+                help="Browse, search, import, and manage long-term memories."
+              >
+                {(() => {
+                  const connectionId = ltmDraft?.connectionId ?? "";
+                  const hasConnection =
+                    !!connectionId &&
+                    ((connections ?? []) as Array<{ id: string }>).some((item) => item.id === connectionId);
+                  if (!hasConnection) {
                     return (
-                      <div
-                        key={option.id}
-                        className="rounded-xl bg-[var(--secondary)]/70 p-3 ring-1 ring-[var(--border)]"
-                      >
-                        <div className="mb-2 flex items-center gap-2">
-                          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-[var(--background)] text-[0.6875rem] font-semibold text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-                            {index + 1}
-                          </span>
-                          <input
-                            value={option.name}
-                            onChange={(e) => handleUpdatePromptTemplate(option.id, { name: e.target.value })}
-                            className="min-w-0 flex-1 rounded-lg bg-[var(--background)] px-2.5 py-1.5 text-sm ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                            placeholder="Option name"
-                          />
-                          {defaultPromptTemplate && (
-                            <button
-                              type="button"
-                              onClick={() => handleResetPromptTemplate(option.id)}
-                              disabled={matchesDefaultPrompt}
-                              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-[var(--muted-foreground)]"
-                              title={
-                                matchesDefaultPrompt ? "Prompt already matches the default" : "Restore default prompt"
-                              }
-                            >
-                              <RotateCcw size="0.75rem" />
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => handleRemovePromptTemplate(option.id)}
-	                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                            title="Remove prompt option"
-                          >
-                            <Trash2 size="0.75rem" />
-                          </button>
+                      <div className="mb-3 rounded-xl border border-[var(--primary)]/20 bg-[var(--primary)]/8 p-4">
+                        <div className="flex items-center gap-2">
+                          <Plug size="1rem" className="text-[var(--primary)]" />
+                          <p className="text-sm font-medium text-[var(--foreground)]">
+                            Memory needs an AI connection to extract facts
+                          </p>
                         </div>
-                        <input
-                          value={option.description ?? ""}
-                          onChange={(e) => handleUpdatePromptTemplate(option.id, { description: e.target.value })}
-                          className="mb-2 w-full rounded-lg bg-[var(--background)] px-2.5 py-1.5 text-xs ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                          placeholder="Short description shown in Chat Settings"
-                        />
-                        <MacroTextarea
-                          value={option.promptTemplate}
-                          onChange={(value) => handleUpdatePromptTemplate(option.id, { promptTemplate: value })}
-                          rows={7}
-                          title={option.name ? `${option.name} Prompt` : `Prompt Option ${index + 1}`}
-                          className="w-full resize-y rounded-lg bg-[var(--background)] px-3 py-2 font-mono text-xs leading-relaxed ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                          placeholder="Write the prompt template for this option…"
-                        />
+                        <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                          Pick one in the extraction connection control below.
+                        </p>
                       </div>
                     );
-                  })}
+                  }
+                  if (ltmStatus.isLoading) {
+                    return (
+                      <div className="mb-3 flex items-center gap-2 rounded-lg bg-[var(--secondary)]/45 p-3 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                        <Loader2 size="0.875rem" className="animate-spin" />
+                        Loading memory status...
+                      </div>
+                    );
+                  }
+                  if (ltmStatus.isError && !ltmStatus.data) {
+                    return (
+                      <div
+                        role="alert"
+                        className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--destructive)]/25 bg-[var(--destructive)]/5 p-3 text-xs"
+                      >
+                        <span className="flex items-center gap-2">
+                          <AlertCircle size="0.875rem" className="text-[var(--destructive)]" />
+                          Memory status could not load.
+                        </span>
+                        <ToolButton onClick={() => void ltmStatus.refetch()}>
+                          <RotateCcw size="0.75rem" />
+                          Retry
+                        </ToolButton>
+                      </div>
+                    );
+                  }
+                  if (!ltmHasMemories) {
+                    return (
+                      <div className="mb-3 rounded-xl border border-[var(--primary)]/20 bg-[var(--primary)]/8 p-4">
+                        <div className="flex items-center gap-2">
+                          <FileJson size="1rem" className="text-[var(--primary)]" />
+                          <p className="text-sm font-medium text-[var(--foreground)]">Ready to import</p>
+                        </div>
+                        <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                          Bring in characters, lorebooks, or chats to get started.
+                        </p>
+                        <div className="mt-3">
+                          <ToolButton
+                            onClick={() => setVaultOpen({ initialTab: "import" })}
+                            tone="primary"
+                            size="default"
+                          >
+                            <Import size="0.875rem" />
+                            Import
+                          </ToolButton>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+                {ltmHasMemories && (
+                  <div className="mb-3 flex flex-wrap gap-1.5">
+                    {ltmStatus.data && (
+                      <StatusPill
+                        label={ltmSearchStatusLabel}
+                        tone={ltmSmartSearchReady ? "good" : ltmSmartSearchAvailable ? "warn" : "neutral"}
+                        title={ltmSearchStatusTitle}
+                      />
+                    )}
+                    {ltmIndexHealth && (
+                      <StatusPill
+                        label={ltmIndexStatus.label}
+                        tone={ltmIndexStatus.tone}
+                        title={ltmIndexStatus.title}
+                      />
+                    )}
+                  </div>
+                )}
+                <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
+                  <ToolButton onClick={() => setVaultOpen({ initialTab: "notes" })} tone="primary" size="default">
+                    <DatabaseZap size="0.875rem" />
+                    Manage Memories
+                  </ToolButton>
+                  <ToolButton onClick={() => setVaultOpen({ initialTab: "import" })} size="default">
+                    <Import size="0.875rem" />
+                    Import
+                  </ToolButton>
                 </div>
-              )}
-            </div>
+              </FieldGroup>
 
-            {/* Default prompt preview removed — now shown inline above */}
-          </FieldGroup>
+              <LtmExtractionConnectionSection
+                connectionId={ltmDraft?.connectionId ?? ""}
+                onChangeConnectionId={(value) => updateLtmDraft({ connectionId: value })}
+              />
+              <LtmExtractionPromptSection
+                promptTemplates={ltmDraft?.promptTemplates ?? []}
+                activePromptTemplateIdsByMode={ltmDraft?.activePromptTemplateIdsByMode ?? {}}
+                aiKeywordExtraction={ltmDraft?.aiKeywordExtraction ?? false}
+                refinePass={ltmDraft?.refinePass ?? false}
+                onChangePromptTemplates={(promptTemplates) => updateLtmDraft({ promptTemplates })}
+                onChangeActivePromptTemplateIdsByMode={(activePromptTemplateIdsByMode) =>
+                  updateLtmDraft({ activePromptTemplateIdsByMode })
+                }
+                onChangeAiKeywordExtraction={(aiKeywordExtraction) => updateLtmDraft({ aiKeywordExtraction })}
+                onChangeRefinePass={(refinePass) => updateLtmDraft({ refinePass })}
+                onPromptDraftDirtyChange={handleLtmPromptDraftDirtyChange}
+              />
 
-          {/* ── Available Tools (Function Calling) ── */}
-          <FieldGroup
-            label="Tools / Function Calling"
-            icon={<Wrench size="0.875rem" className="text-[var(--primary)]" />}
-            help="Select which tools this agent can use during generation. The AI can call these functions and receive results back for multi-step interactions."
-            collapsible
-            expanded={toolsSectionOpen}
-            onExpandedChange={setToolsSectionOpen}
-            summary={
-              musicDjYoutubeMode
-                ? "Not used in YouTube mode"
-                : `${selectedVisibleToolCount}/${availableVisibleToolCount} enabled`
-            }
+              <FieldGroup
+                label="Long-Term Memory defaults"
+                icon={<BrainCircuit size="0.875rem" className="text-[var(--primary)]" />}
+              >
+                {ltmRecallDraft ? (
+                  <div className="space-y-4">
+                    <RecallStylePresets
+                      values={{ longTermMemoryRecallStyle: ltmRecallDraft.longTermMemoryRecallStyle }}
+                      onChange={updateLtmRecallDraft}
+                    />
+                    <RecallBudgetControls
+                      values={{
+                        longTermMemoryBudgetTokens: ltmRecallDraft.longTermMemoryBudgetTokens,
+                        longTermMemoryMaxChunks: ltmRecallDraft.longTermMemoryMaxChunks,
+                      }}
+                      onChange={updateLtmRecallDraft}
+                    />
+                    <FieldGroup
+                      label="Advanced Long-Term Memory"
+                      collapsible
+                      expanded={recallAdvancedOpen}
+                      onExpandedChange={setRecallAdvancedOpen}
+                    >
+                      <RecallThresholdControls
+                        values={{
+                          longTermMemoryScoreThreshold: ltmRecallDraft.longTermMemoryScoreThreshold,
+                          longTermMemoryRecallContextMessages: ltmRecallDraft.longTermMemoryRecallContextMessages,
+                        }}
+                        onChange={updateLtmRecallDraft}
+                      />
+                      <RecallRankingWeights
+                        values={{
+                          longTermMemoryRecallStyle: ltmRecallDraft.longTermMemoryRecallStyle,
+                          longTermMemorySemanticWeight: ltmRecallDraft.longTermMemorySemanticWeight,
+                          longTermMemoryLexicalWeight: ltmRecallDraft.longTermMemoryLexicalWeight,
+                          longTermMemoryGraphWeight: ltmRecallDraft.longTermMemoryGraphWeight,
+                          longTermMemoryKeywordWeight: ltmRecallDraft.longTermMemoryKeywordWeight,
+                        }}
+                        onChange={updateLtmRecallDraft}
+                      />
+                      <RecallToggles
+                        values={{
+                          longTermMemoryIncludeResolved: ltmRecallDraft.longTermMemoryIncludeResolved,
+                          longTermMemoryDebug: ltmRecallDraft.longTermMemoryDebug,
+                        }}
+                        onChange={updateLtmRecallDraft}
+                      />
+                    </FieldGroup>
+                  </div>
+                ) : (
+                  <p className="rounded-xl bg-[var(--secondary)]/60 px-3 py-2 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                    Loading recall defaults...
+                  </p>
+                )}
+              </FieldGroup>
+
+              <FieldGroup
+                label="Advanced"
+                icon={<DatabaseZap size="0.875rem" className="text-[var(--primary)]" />}
+                collapsible
+                expanded={ltmAdvancedOpen}
+                onExpandedChange={setLtmAdvancedOpen}
+              >
+                <LtmInlineSettingsSections
+                  extractionSettings={{
+                    reasoningEffort: ltmDraft?.reasoningEffort ?? DEFAULT_LTM_EXTRACTION_REASONING_EFFORT,
+                    verbosity: ltmDraft?.verbosity ?? DEFAULT_LTM_EXTRACTION_VERBOSITY,
+                    maxOutputTokens: ltmDraft?.maxOutputTokens ?? DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
+                    temperature: ltmDraft?.temperature ?? DEFAULT_LTM_EXTRACTION_TEMPERATURE,
+                    maxExistingNoteTokens:
+                      ltmDraft?.maxExistingNoteTokens ?? DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
+                  }}
+                  autoApplyLowRisk={ltmDraft?.autoApplyLowRisk ?? false}
+                  onChangeExtraction={updateLtmDraft}
+                  onChangeGlobal={updateLtmDraft}
+                />
+              </FieldGroup>
+
+              <FieldGroup
+                label="Maintenance"
+                icon={<DatabaseZap size="0.875rem" className="text-[var(--primary)]" />}
+                collapsible
+                expanded={maintenanceOpen}
+                onExpandedChange={setMaintenanceOpen}
+              >
+                <div className="mb-3 flex flex-wrap gap-1.5">
+                  <StatusPill
+                    label={indexedMemoryChunkLabel}
+                    title="Memory search splits saved memories into chunks before indexing."
+                  />
+                  {ltmIndexHealth && (
+                    <StatusPill label={ltmIndexStatus.label} tone={ltmIndexStatus.tone} title={ltmIndexStatus.title} />
+                  )}
+                  {(ltmStatus.isLoading || integrity.isLoading) && <StatusPill label="Checking memory store" />}
+                </div>
+                {(ltmStatus.isError || integrity.isError) && (
+                  <div
+                    role="alert"
+                    className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--destructive)]/25 bg-[var(--destructive)]/5 p-3 text-xs"
+                  >
+                    <div className="flex min-w-0 items-center gap-2">
+                      <AlertCircle size="0.875rem" className="shrink-0 text-[var(--destructive)]" />
+                      <span>
+                        {ltmStatus.data || integrity.data
+                          ? "Memory maintenance status could not refresh. Showing the last known result."
+                          : "Memory maintenance status could not load."}
+                      </span>
+                    </div>
+                    <ToolButton
+                      onClick={() => {
+                        void ltmStatus.refetch();
+                        void integrity.refetch();
+                      }}
+                    >
+                      <RotateCcw size="0.75rem" />
+                      Retry
+                    </ToolButton>
+                  </div>
+                )}
+                <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
+                  <ToolButton
+                    onClick={() =>
+                      rebuildMemories
+                        .mutateAsync()
+                        .then(() => {
+                          setLastRepairResult(null);
+                          toast.success("Memory search refreshed");
+                        })
+                        .catch((error: Error) => toast.error(error.message))
+                    }
+                    disabled={rebuildMemories.isPending}
+                    tone="primary"
+                  >
+                    <RefreshCw size="0.875rem" />
+                    Reindex Memories
+                  </ToolButton>
+                  <ToolButton onClick={() => void runMemoryRepair()} disabled={repairMemories.isPending} tone="danger">
+                    {repairMemories.isPending ? (
+                      <Loader2 size="0.875rem" className="animate-spin" />
+                    ) : (
+                      <Hammer size="0.875rem" />
+                    )}
+                    Repair Memory Store
+                  </ToolButton>
+                </div>
+                {lastRepairResult && (
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    className="mt-3 space-y-2 rounded-lg bg-[var(--secondary)]/45 p-3 text-xs ring-1 ring-[var(--border)]"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-semibold text-[var(--foreground)]">Latest repair</span>
+                      <StatusPill
+                        label={lastRepairResult.integrity.ok ? "Store healthy" : "Issues remain"}
+                        tone={lastRepairResult.integrity.ok ? "good" : "warn"}
+                      />
+                    </div>
+                    {lastRepairResult.actions.map((action) => (
+                      <div key={action.action} className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-[var(--muted-foreground)]">
+                          {action.action === "quarantine_malformed_notes"
+                            ? "Malformed files"
+                            : action.action === "backfill_imported_source_titles"
+                              ? "Imported-source titles"
+                              : "Memory index"}
+                        </span>
+                        <span className="font-medium text-[var(--foreground)]">
+                          {action.result.replaceAll("_", " ")}
+                          {typeof action.count === "number" ? ` (${action.count})` : ""}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="mt-3 space-y-2">
+                  {(integrity.data?.issues ?? [])
+                    .filter((issue: { severity: string }) => issue.severity !== "info")
+                    .slice(0, 8)
+                    .map(
+                      (issue: { code: string; path?: string; noteId?: string; message: string; severity: string }) => (
+                        <div
+                          key={`${issue.code}-${issue.path ?? issue.noteId ?? issue.message}`}
+                          className="rounded-lg bg-[var(--secondary)]/50 p-3 text-xs ring-1 ring-[var(--border)]"
+                        >
+                          <div className="flex items-center gap-2 font-medium">
+                            {issue.severity === "error" ? (
+                              <AlertTriangle size="0.875rem" className="text-rose-300" />
+                            ) : (
+                              <ShieldCheck size="0.875rem" />
+                            )}
+                            {issue.code}
+                          </div>
+                          <p className="mt-1 text-xs text-[var(--muted-foreground)]">{issue.message}</p>
+                        </div>
+                      ),
+                    )}
+                </div>
+              </FieldGroup>
+            </section>
+          )}
+
+          <LtmModal
+            open={memoriesModalOpen}
+            onClose={() => setVaultOpen(null)}
+            title="Long-Term Memory"
+            width="max-w-5xl"
           >
-            {musicDjYoutubeMode ? (
-              <p className="rounded-xl bg-[var(--secondary)]/60 px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-                In YouTube mode, Music DJ doesn't use function tools. It returns its pick as JSON and the app plays the
-                top YouTube search result directly. Switch the Music Player to Spotify to enable playback tools.
-              </p>
-            ) : (
-              <>
-                <p className="text-[0.625rem] text-[var(--muted-foreground)] mb-3">
-                  Toggle tools on or off for this agent. When enabled for a chat, only selected tools will be available
-                  during generation.
-                </p>
-                <div className="space-y-2">
-                  {visibleBuiltInTools.map((tool: ToolDefinition) => (
-                    <ToolCard
-                      key={tool.name}
-                      tool={tool}
-                      enabled={localEnabledTools.includes(tool.name)}
-                      onToggle={(name) => {
-                        setLocalEnabledTools((prev) =>
-                          prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
-                        );
-                        markDirty();
-                      }}
-                    />
-                  ))}
-                  {selectableCustomTools.map((tool) => (
-                    <ToolCard
-                      key={tool.name}
-                      tool={{
-                        name: tool.name,
-                        description: tool.description,
-                        parameters: JSON.parse(tool.parametersSchema || "{}"),
-                      }}
-                      enabled={localEnabledTools.includes(tool.name)}
-                      onToggle={(name) => {
-                        setLocalEnabledTools((prev) =>
-                          prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
-                        );
-                        markDirty();
-                      }}
-                      isCustom
-                    />
-                  ))}
-                </div>
-                <p className="mt-2 text-[0.625rem] text-[var(--muted-foreground)]">
-                  Tool-use must also be enabled per chat via Chat Settings → Function Calling → "Enable Tool Use".
-                </p>
-              </>
+            {memoriesModalOpen && dbConfig && (
+              <LtmVaultManagerSection
+                agentConfig={dbConfig}
+                agentSettings={parseAgentSettingsRecord(dbConfig.settings)}
+                initialTab={vaultOpen?.initialTab}
+                sourceNoteId={vaultOpen?.sourceNoteId}
+              />
             )}
-          </FieldGroup>
+          </LtmModal>
+
+          {!isLtmAgent && (
+            <>
+              {/* ── Available Tools (Function Calling) ── */}
+              <FieldGroup
+                label="Tools / Function Calling"
+                icon={<Wrench size="0.875rem" className="text-[var(--primary)]" />}
+                help="Select which tools this agent can use during generation. The AI can call these functions and receive results back for multi-step interactions."
+                collapsible
+                expanded={toolsSectionOpen}
+                onExpandedChange={setToolsSectionOpen}
+                summary={
+                  musicDjYoutubeMode
+                    ? "Not used in YouTube mode"
+                    : `${selectedVisibleToolCount}/${availableVisibleToolCount} enabled`
+                }
+              >
+                {musicDjYoutubeMode ? (
+                  <p className="rounded-xl bg-[var(--secondary)]/60 px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                    In YouTube mode, Music DJ doesn't use function tools. It returns its pick as JSON and the app plays
+                    the top YouTube search result directly. Switch the Music Player to Spotify to enable playback tools.
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-[0.625rem] text-[var(--muted-foreground)] mb-3">
+                      Toggle tools on or off for this agent. When enabled for a chat, only selected tools will be
+                      available during generation.
+                    </p>
+                    <div className="space-y-2">
+                      {visibleBuiltInTools.map((tool: ToolDefinition) => (
+                        <ToolCard
+                          key={tool.name}
+                          tool={tool}
+                          enabled={localEnabledTools.includes(tool.name)}
+                          onToggle={(name) => {
+                            setLocalEnabledTools((prev) =>
+                              prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
+                            );
+                            markDirty();
+                          }}
+                        />
+                      ))}
+                      {selectableCustomTools.map((tool) => (
+                        <ToolCard
+                          key={tool.name}
+                          tool={{
+                            name: tool.name,
+                            description: tool.description,
+                            parameters: JSON.parse(tool.parametersSchema || "{}"),
+                          }}
+                          enabled={localEnabledTools.includes(tool.name)}
+                          onToggle={(name) => {
+                            setLocalEnabledTools((prev) =>
+                              prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
+                            );
+                            markDirty();
+                          }}
+                          isCustom
+                        />
+                      ))}
+                    </div>
+                    <p className="mt-2 text-[0.625rem] text-[var(--muted-foreground)]">
+                      Tool-use must also be enabled per chat via Chat Settings → Function Calling → "Enable Tool Use".
+                    </p>
+                  </>
+                )}
+              </FieldGroup>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -3579,7 +4349,7 @@ export function AgentEditor() {
 //  Shared Components
 // ═══════════════════════════════════════════════
 
-function FieldGroup({
+export function FieldGroup({
   label,
   icon,
   help,

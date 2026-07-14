@@ -179,6 +179,7 @@ import type {
 import { useAgentConfigs, useCreateAgent, useUpdateAgent, type AgentConfigRow } from "../../hooks/use-agents";
 import { useAgentStore } from "../../stores/agent.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
+import { getAgentUiCategory } from "../../lib/agent-display";
 import {
   BUILT_IN_AGENTS,
   BUILT_IN_TOOLS,
@@ -219,6 +220,7 @@ import {
   isAgentConfigDeleted,
   isAgentHiddenFromChatSettingsPicker,
   isBuiltInAgentRuntimeDisabled,
+  isManagedAgentType,
   isRetiredBuiltInAgentId,
   mergeBuiltInAgentSettings,
   normalizeManualTrackerAgentTypes,
@@ -770,6 +772,7 @@ type AvailableAgent = {
   category: string;
   phase: AgentPhase;
   builtIn: boolean;
+  managed?: boolean;
   runtimeDisabled?: boolean;
 };
 
@@ -1490,13 +1493,15 @@ export function ChatSettingsDrawer({
         if (isAgentConfigDeleted(c.settings)) continue;
         if (isRetiredBuiltInAgentId(c.type)) continue;
         if (!BUILT_IN_AGENTS.some((b) => b.id === c.type)) {
+          const managed = isManagedAgentType(c.type);
           agents.push({
             id: c.type,
             name: c.name,
             description: c.description,
-            category: "custom",
+            category: getAgentUiCategory(c.type),
             phase: normalizeAgentPhaseForType(c.type, c.phase),
             builtIn: false,
+            managed,
             runtimeDisabled: false,
           });
         }
@@ -2861,6 +2866,7 @@ export function ChatSettingsDrawer({
         {
           id: chat.id,
           activeAgentIds: current,
+          ...(agentId === "long-term-memory" ? { enableLongTermMemory: !isRemoving } : {}),
           ...(nextPromptTemplateSelections ? { agentPromptTemplateIds: nextPromptTemplateSelections } : {}),
         },
         {
@@ -3156,7 +3162,7 @@ export function ChatSettingsDrawer({
     () =>
       availableAgents.filter(
         (agent) =>
-          agent.builtIn &&
+          (agent.builtIn || agent.managed) &&
           agent.id !== "spotify" &&
           agent.id !== "youtube" &&
           agent.id !== "lorebook-keeper" &&
@@ -3306,18 +3312,16 @@ export function ChatSettingsDrawer({
     const { agent, config, contextSize, maxTokens, runInterval, setup } = agentAddPreview;
     const normalizedMaxTokens = normalizeAgentMaxTokens(maxTokens);
     const builtInMeta = BUILT_IN_AGENTS.find((entry) => entry.id === agent.id) ?? null;
-    let nextSettings: Record<string, unknown> = {
-      ...mergeBuiltInAgentSettings(agent.id, config?.settings),
-      contextSize,
-      maxTokens: normalizedMaxTokens,
-    };
-    const intervalMeta = getAgentRunIntervalMeta(agent.id, !!builtInMeta);
-    if (intervalMeta && runInterval != null) {
-      nextSettings.runInterval = runInterval;
+    const isManaged = agent.managed === true || isManagedAgentType(agent.id);
+    let nextSettings: Record<string, unknown> = mergeBuiltInAgentSettings(agent.id, config?.settings);
+    if (!isManaged) {
+      nextSettings = { ...nextSettings, contextSize, maxTokens: normalizedMaxTokens };
+      const intervalMeta = getAgentRunIntervalMeta(agent.id, !!builtInMeta);
+      if (intervalMeta && runInterval != null) nextSettings.runInterval = runInterval;
+      nextSettings = applyAgentAddSetupToAgentSettings(agent.id, setup, nextSettings, {
+        allowSecretPlot: supportsNarrativeDirectorSecretPlot,
+      });
     }
-    nextSettings = applyAgentAddSetupToAgentSettings(agent.id, setup, nextSettings, {
-      allowSecretPlot: supportsNarrativeDirectorSecretPlot,
-    });
     const nextEnabledTools = nextSettings.enabledTools;
     if (
       builtInMeta &&
@@ -3329,7 +3333,7 @@ export function ChatSettingsDrawer({
 
     setAddingAgentToChat(true);
     try {
-      if (config) {
+      if (config && !isManaged) {
         await updateAgentConfig.mutateAsync({ id: config.id, settings: nextSettings });
       } else if (builtInMeta) {
         await createAgent.mutateAsync({
@@ -3347,6 +3351,7 @@ export function ChatSettingsDrawer({
         id: chat.id,
         enableAgents: true,
         activeAgentIds: Array.from(new Set([...readLatestActiveAgentIds(), agent.id])),
+        ...(agent.id === "long-term-memory" ? { enableLongTermMemory: true } : {}),
         ...buildAgentAddMetadataPatch(agent.id, setup, metadata, {
           allowSecretPlot: supportsNarrativeDirectorSecretPlot,
           defaultPromptTemplateId: resolveDefaultAgentPromptTemplateId(nextSettings),
@@ -8414,6 +8419,10 @@ export function ChatSettingsDrawer({
                                 <div key={agent.id} className="space-y-1.5">
                                   <button
                                     onClick={() => {
+                                      if (agent.id === "long-term-memory") {
+                                        void toggleAgent(agent.id);
+                                        return;
+                                      }
                                       const latestActiveAgentIds = readLatestActiveAgentIds();
                                       if (active) {
                                         updateMeta.mutate({
@@ -8930,7 +8939,9 @@ export function ChatSettingsDrawer({
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-semibold text-[var(--foreground)]">{agentAddPreview.agent.name}</p>
                     <span className="rounded-full bg-[var(--accent)] px-2 py-0.5 text-[0.5625rem] uppercase tracking-wide text-[var(--muted-foreground)]">
-                      {agentAddPreview.agent.builtIn ? agentAddPreview.agent.category : "custom"}
+                      {agentAddPreview.agent.builtIn || agentAddPreview.agent.managed
+                        ? agentAddPreview.agent.category
+                        : "custom"}
                     </span>
                   </div>
                   <p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-[var(--muted-foreground)]">
@@ -8940,7 +8951,11 @@ export function ChatSettingsDrawer({
               </div>
             </div>
 
-            {agentAddIsRuntimeDisabled ? (
+            {agentAddPreview.agent.managed ? (
+              <div className="rounded-xl bg-[var(--secondary)]/70 px-3 py-2.5 text-[0.6875rem] leading-5 text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                Configure extraction, recall, imports, and the memory vault from the Long-Term Memory agent settings.
+              </div>
+            ) : agentAddIsRuntimeDisabled ? (
               <div className="rounded-xl bg-[var(--secondary)]/70 px-3 py-2.5 text-[0.6875rem] leading-5 text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
                 This adds its instructions to the next Roleplay prompt. It does not make a separate model call or use an
                 agent connection.
@@ -9151,20 +9166,22 @@ export function ChatSettingsDrawer({
               </div>
             )}
 
-            <AgentAddSetupFields
-              agentId={agentAddPreview.agent.id}
-              value={agentAddPreview.setup}
-              disabled={addingAgentToChat}
-              lorebooks={(lorebooks ?? []) as Lorebook[]}
-              promptOptions={getPromptOptionsForAgent(agentAddPreview.agent.id)}
-              spriteSubjects={agentAddSpriteSubjects}
-              allowSecretPlotControls={supportsNarrativeDirectorSecretPlot}
-              onChange={(patch) =>
-                setAgentAddPreview((current) =>
-                  current ? { ...current, setup: { ...current.setup, ...patch } } : current,
-                )
-              }
-            />
+            {!agentAddPreview.agent.managed && (
+              <AgentAddSetupFields
+                agentId={agentAddPreview.agent.id}
+                value={agentAddPreview.setup}
+                disabled={addingAgentToChat}
+                lorebooks={(lorebooks ?? []) as Lorebook[]}
+                promptOptions={getPromptOptionsForAgent(agentAddPreview.agent.id)}
+                spriteSubjects={agentAddSpriteSubjects}
+                allowSecretPlotControls={supportsNarrativeDirectorSecretPlot}
+                onChange={(patch) =>
+                  setAgentAddPreview((current) =>
+                    current ? { ...current, setup: { ...current.setup, ...patch } } : current,
+                  )
+                }
+              />
+            )}
 
             <div className="flex items-center justify-end gap-2 pt-1">
               <button

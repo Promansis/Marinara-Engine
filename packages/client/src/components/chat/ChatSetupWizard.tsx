@@ -37,6 +37,7 @@ import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
 import { api } from "../../lib/api-client";
+import { getAgentUiCategory } from "../../lib/agent-display";
 import { appendLocalSidecarConnectionOption } from "../../lib/connection-filters";
 import { getAgentRunIntervalMeta } from "../../lib/agent-cadence";
 import {
@@ -61,6 +62,7 @@ import {
   isAgentConfigDeleted,
   isAgentHiddenFromChatSettingsPicker,
   isBuiltInAgentRuntimeDisabled,
+  isManagedAgentType,
   isRetiredBuiltInAgentId,
   mergeBuiltInAgentSettings,
   normalizeAgentPhaseForType,
@@ -238,6 +240,7 @@ type AvailableAgent = {
   category: string;
   phase: AgentPhase;
   builtIn: boolean;
+  managed?: boolean;
   runtimeDisabled?: boolean;
 };
 
@@ -1793,13 +1796,15 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
       if (isAgentConfigDeleted(config.settings)) continue;
       if (isRetiredBuiltInAgentId(config.type)) continue;
       if (BUILT_IN_AGENTS.some((agent) => agent.id === config.type)) continue;
+      const managed = isManagedAgentType(config.type);
       agents.push({
         id: config.type,
         name: config.name,
         description: config.description,
-        category: "custom",
+        category: getAgentUiCategory(config.type),
         phase: normalizeAgentPhaseForType(config.type, config.phase),
         builtIn: false,
+        managed,
         runtimeDisabled: false,
       });
     }
@@ -2135,6 +2140,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
       updateMeta.mutate({
         id: chat.id,
         activeAgentIds: latestActiveAgentIds.filter((id) => id !== agentId),
+        ...(agentId === "long-term-memory" ? { enableLongTermMemory: false } : {}),
       });
       if (agentAddPreview?.agent.id === agentId) setAgentAddPreview(null);
     },
@@ -2145,16 +2151,16 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
     if (!agentAddPreview) return;
     const { agent, config, contextSize, maxTokens, runInterval, setup } = agentAddPreview;
     const builtInMeta = BUILT_IN_AGENTS.find((entry) => entry.id === agent.id) ?? null;
-    let nextSettings: Record<string, unknown> = {
-      ...mergeBuiltInAgentSettings(agent.id, config?.settings),
-      contextSize,
-      maxTokens: normalizeAgentMaxTokens(maxTokens),
-    };
-    const intervalMeta = getAgentRunIntervalMeta(agent.id, !!builtInMeta);
-    if (intervalMeta && runInterval != null) nextSettings.runInterval = runInterval;
-    nextSettings = applyAgentAddSetupToAgentSettings(agent.id, setup, nextSettings, {
-      allowSecretPlot: supportsNarrativeDirectorSecretPlot,
-    });
+    const isManaged = agent.managed === true || isManagedAgentType(agent.id);
+    let nextSettings: Record<string, unknown> = mergeBuiltInAgentSettings(agent.id, config?.settings);
+    if (!isManaged) {
+      nextSettings = { ...nextSettings, contextSize, maxTokens: normalizeAgentMaxTokens(maxTokens) };
+      const intervalMeta = getAgentRunIntervalMeta(agent.id, !!builtInMeta);
+      if (intervalMeta && runInterval != null) nextSettings.runInterval = runInterval;
+      nextSettings = applyAgentAddSetupToAgentSettings(agent.id, setup, nextSettings, {
+        allowSecretPlot: supportsNarrativeDirectorSecretPlot,
+      });
+    }
     const nextEnabledTools = nextSettings.enabledTools;
     if (
       builtInMeta &&
@@ -2166,7 +2172,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
 
     setAddingAgentToChat(true);
     try {
-      if (config) {
+      if (config && !isManaged) {
         await updateAgentConfig.mutateAsync({ id: config.id, settings: nextSettings });
       } else if (builtInMeta) {
         await createAgent.mutateAsync({
@@ -2184,6 +2190,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
         id: chat.id,
         enableAgents: true,
         activeAgentIds: Array.from(new Set([...readLatestActiveAgentIds(), agent.id])),
+        ...(agent.id === "long-term-memory" ? { enableLongTermMemory: true } : {}),
         ...buildAgentAddMetadataPatch(agent.id, setup, metadata, {
           allowSecretPlot: supportsNarrativeDirectorSecretPlot,
           defaultPromptTemplateId: resolveDefaultAgentPromptTemplateId(nextSettings),
@@ -2644,7 +2651,9 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
                     <div className="flex items-center gap-2">
                       <p className="text-sm font-semibold text-[var(--foreground)]">{agentAddPreview.agent.name}</p>
                       <span className="rounded-full bg-[var(--accent)] px-2 py-0.5 text-[0.5625rem] uppercase tracking-wide text-[var(--muted-foreground)]">
-                        {agentAddPreview.agent.builtIn ? agentAddPreview.agent.category : "custom"}
+                        {agentAddPreview.agent.builtIn || agentAddPreview.agent.managed
+                          ? agentAddPreview.agent.category
+                          : "custom"}
                       </span>
                     </div>
                     <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">
@@ -2653,7 +2662,11 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
                   </div>
                 </div>
 
-                {agentAddPreview.agent.runtimeDisabled ? (
+                {agentAddPreview.agent.managed ? (
+                  <p className="rounded-lg bg-[var(--accent)] px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                    Configure extraction, recall, imports, and the memory vault from the Long-Term Memory agent settings.
+                  </p>
+                ) : agentAddPreview.agent.runtimeDisabled ? (
                   <p className="rounded-lg bg-[var(--accent)] px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
                     This adds instructions to the Roleplay prompt without making a separate model call.
                   </p>
@@ -2736,20 +2749,22 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
                   </label>
                 )}
 
-                <AgentAddSetupFields
-                  agentId={agentAddPreview.agent.id}
-                  value={agentAddPreview.setup}
-                  disabled={addingAgentToChat}
-                  lorebooks={(lorebooks ?? []) as Lorebook[]}
-                  promptOptions={getPromptOptionsForAgent(agentAddPreview.agent.id)}
-                  spriteSubjects={agentAddSpriteSubjects}
-                  allowSecretPlotControls={supportsNarrativeDirectorSecretPlot}
-                  onChange={(patch) =>
-                    setAgentAddPreview((current) =>
-                      current ? { ...current, setup: { ...current.setup, ...patch } } : current,
-                    )
-                  }
-                />
+                {!agentAddPreview.agent.managed && (
+                  <AgentAddSetupFields
+                    agentId={agentAddPreview.agent.id}
+                    value={agentAddPreview.setup}
+                    disabled={addingAgentToChat}
+                    lorebooks={(lorebooks ?? []) as Lorebook[]}
+                    promptOptions={getPromptOptionsForAgent(agentAddPreview.agent.id)}
+                    spriteSubjects={agentAddSpriteSubjects}
+                    allowSecretPlotControls={supportsNarrativeDirectorSecretPlot}
+                    onChange={(patch) =>
+                      setAgentAddPreview((current) =>
+                        current ? { ...current, setup: { ...current.setup, ...patch } } : current,
+                      )
+                    }
+                  />
+                )}
 
                 <div className="flex justify-end gap-2">
                   <button
