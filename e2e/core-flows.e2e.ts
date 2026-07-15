@@ -2228,6 +2228,48 @@ test("memory recall modal accepts clicks from chat settings", async ({ page }, t
   await expect(drawer.getByRole("heading", { name: "Chat Settings" })).toBeVisible();
 });
 
+test("long-term memory settings stay reachable from the chat drawer", async ({ page }, testInfo) => {
+  const response = await page.request.post("/api/chats", {
+    data: {
+      name: "Long-Term Memory Settings Smoke",
+      mode: "conversation",
+      characterIds: [],
+    },
+  });
+  expect(response.ok()).toBeTruthy();
+  const chat = (await response.json()) as { id: string };
+
+  await page.addInitScript((chatId) => {
+    localStorage.setItem("marinara-active-chat-id", chatId);
+  }, chat.id);
+  await page.goto("/");
+
+  if (testInfo.project.name.includes("mobile")) {
+    await page.getByRole("button", { name: "More options" }).click();
+  }
+  await page.getByRole("button", { name: "Chat Settings" }).click();
+  const drawer = page.locator(".mari-chat-settings-drawer");
+  await expect(drawer.getByRole("heading", { name: "Chat Settings" })).toBeVisible();
+  await drawer.getByText("Long-Term Memory", { exact: true }).click();
+
+  const enableLtm = drawer.getByRole("button", { name: /Use Long-Term Memory in this chat/ });
+  await expect(enableLtm).toHaveAttribute("aria-pressed", "false");
+  const metadataUpdate = page.waitForResponse(
+    (candidate) =>
+      candidate.request().method() === "PATCH" && candidate.url().endsWith(`/api/chats/${chat.id}/metadata`),
+  );
+  await enableLtm.click();
+  expect((await metadataUpdate).ok()).toBeTruthy();
+  await expect(enableLtm).toHaveAttribute("aria-pressed", "true");
+
+  await expect(drawer.getByText("Recall style", { exact: true })).toBeVisible();
+  await drawer.getByText("Advanced recall settings", { exact: true }).click();
+  await expect(drawer.getByText("Context messages", { exact: true })).toBeVisible();
+
+  await drawer.getByRole("button", { name: /Manage memory vault and defaults/ }).click();
+  await expect(page.getByRole("heading", { name: "Long-Term Memory", exact: true })).toBeVisible();
+});
+
 test("mobile topbar remains reachable while sidebars switch", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("mobile"), "Mobile shell smoke only runs in the mobile project.");
 

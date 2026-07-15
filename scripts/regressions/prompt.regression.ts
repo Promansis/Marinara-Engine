@@ -15,6 +15,7 @@ import {
   createRegexScriptSchema,
   createDefaultImageStyleProfileSettings,
   getDefaultBuiltInAgentSettings,
+  isAgentAvailableInChatMode,
   isPatternSafe,
   normalizeChatSummaryEntries,
   normalizeWorldCustomFields,
@@ -322,10 +323,7 @@ const cases: RegressionCase[] = [
         "utf8",
       );
       const gamePromptRuntimeSource = readFileSync(
-        new URL(
-          "../../packages/server/src/services/generation/game-gm-prompt-runtime.ts",
-          import.meta.url,
-        ),
+        new URL("../../packages/server/src/services/generation/game-gm-prompt-runtime.ts", import.meta.url),
         "utf8",
       );
 
@@ -1090,10 +1088,7 @@ const cases: RegressionCase[] = [
       assert.notEqual(storyboardHandlerStart, -1);
       assert.notEqual(storyboardHandlerEnd, -1);
       const storyboardHandlerSource = gameSurfaceSource.slice(storyboardHandlerStart, storyboardHandlerEnd);
-      assert.match(
-        storyboardHandlerSource,
-        /latestTurnStoryboardRendering \|\| manualStoryboardReviewActive/,
-      );
+      assert.match(storyboardHandlerSource, /latestTurnStoryboardRendering \|\| manualStoryboardReviewActive/);
       assert.match(
         storyboardHandlerSource,
         /withTimeout\(\s*\(\) => previewTurnStoryboardPrompts\.mutateAsync\(payload\),\s*GAME_ASSET_PREVIEW_TIMEOUT_MS/,
@@ -1109,6 +1104,42 @@ const cases: RegressionCase[] = [
       assert.match(gameRouteSource, /return \{ items, plannedStoryboard: plan \}/);
       assert.match(gameRouteSource, /storyboardPromptOverrideById\.get\(`storyboard:\$\{frame\.index\}`\)/);
       assert.match(gameRouteSource, /\[debug\/game\/storyboard-image-preview\]/);
+    },
+  },
+  {
+    name: "long-term memory remains reachable and wired into generation",
+    run() {
+      const drawerSource = readFileSync(
+        new URL("../../packages/client/src/components/chat/ChatSettingsDrawer.tsx", import.meta.url),
+        "utf8",
+      );
+      const generateRouteSource = readFileSync(
+        new URL("../../packages/server/src/routes/generate.routes.ts", import.meta.url),
+        "utf8",
+      );
+      const migrationSource = readFileSync(
+        new URL("../../packages/server/src/services/long-term-memory/agent-migration.ts", import.meta.url),
+        "utf8",
+      );
+
+      assert.match(drawerSource, /label="Long-Term Memory"/);
+      assert.match(drawerSource, /useLongTermMemorySettings/);
+      assert.match(drawerSource, /RecallStylePresets/);
+      assert.match(drawerSource, /openAgentDetail\("long-term-memory"\)/);
+      assert.match(generateRouteSource, /orchestrateGenerationLongTermMemoryRecall\(\{/);
+      assert.match(generateRouteSource, /longTermMemoryArtifact,/);
+      assert.match(generateRouteSource, /injectLongTermMemoryPromptArtifact\(finalMessages/);
+      assert.match(generateRouteSource, /"knowledge-router", "long-term-memory"/);
+      assert.match(generateRouteSource, /cachedSansSecret\.filter\(\(i\) => i\.agentType !== "long-term-memory"\)/);
+      assert.match(generateRouteSource, /recordGenerationLongTermMemoryDispatch\(\{/);
+      for (const mode of ["conversation", "roleplay", "visual_novel", "game"] as const) {
+        assert.equal(isAgentAvailableInChatMode(mode, "long-term-memory"), true, `${mode} must allow LTM recall`);
+      }
+      assert.match(migrationSource, /enabled && \(!agentAlreadyActive \|\| !agentsAlreadyEnabled\)/);
+      assert.match(
+        migrationSource,
+        /patchMetadata\(chat\.id, \{[\s\S]{0,240}activeAgentIds: patchedActiveAgentIds,[\s\S]{0,120}enableAgents: true/,
+      );
     },
   },
   {
@@ -1221,7 +1252,10 @@ const cases: RegressionCase[] = [
         GAME_STORYBOARD_STILL_ANIMATION_PROMPT_TEMPLATE_ID,
         GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE_ID,
       );
-      assert.deepEqual([...illustrationIds].filter((id) => animationIds.has(id)), []);
+      assert.deepEqual(
+        [...illustrationIds].filter((id) => animationIds.has(id)),
+        [],
+      );
       assert.ok(
         GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES.every(
           (template) => !template.promptTemplate.includes("${durationSeconds}"),
@@ -1283,7 +1317,10 @@ const cases: RegressionCase[] = [
       assert.match(drawerSource, /builtInTemplates\.map\(\(template\) =>/);
       assert.match(gameRouteSource, /getGameStoryboardPromptTemplateKind\(template, selectedAnimationTemplateId\)/);
       assert.match(gameRouteSource, /const builtInTemplates = args\.generateVideos/);
-      assert.match(gameRouteSource, /storyboardImagePromptTemplateId: readTrimmedString\(meta\.gameStoryboardImagePromptTemplateId\)/);
+      assert.match(
+        gameRouteSource,
+        /storyboardImagePromptTemplateId: readTrimmedString\(meta\.gameStoryboardImagePromptTemplateId\)/,
+      );
       assert.match(drawerSource, /title="Edit Illustration Prompt Presets"/);
       assert.match(drawerSource, /title="Edit Video Prompt Presets"/);
       const backgroundViewerStart = gameSurfaceSource.indexOf("const renderStoryboardBackgroundVisual");
@@ -1658,7 +1695,10 @@ const cases: RegressionCase[] = [
       for (const memory of [cutsHeadPair, cutsTailPair]) {
         const truncated = truncateRecalledMemory(memory, tokenBudget);
         assert.match(truncated, /\[recalled memory truncated]/);
-        assert.doesNotMatch(JSON.stringify(truncated), /\\u(?:d[89ab][0-9a-f]{2}(?!\\ud[c-f][0-9a-f]{2})|d[c-f][0-9a-f]{2})/i);
+        assert.doesNotMatch(
+          JSON.stringify(truncated),
+          /\\u(?:d[89ab][0-9a-f]{2}(?!\\ud[c-f][0-9a-f]{2})|d[c-f][0-9a-f]{2})/i,
+        );
       }
     },
   },
@@ -1773,11 +1813,7 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
   {
     name: "agent current game state hides quest progress from non-quest agents",
     run() {
-      const hiddenMoodKey = characterTrackerLockKey(
-        { characterId: "mira", name: "Mira" },
-        0,
-        "mood",
-      );
+      const hiddenMoodKey = characterTrackerLockKey({ characterId: "mira", name: "Mira" }, 0, "mood");
       const gameState = {
         date: "Day 1",
         presentCharacters: [
@@ -2001,7 +2037,8 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       const shortDescription = await buildNpcPortraitProviderPrompt({
         ...request,
         appearance: "man",
-        dynamicPromptGenerator: async () => "Centered portrait of a woman with clean lighting and a readable expression.",
+        dynamicPromptGenerator: async () =>
+          "Centered portrait of a woman with clean lighting and a readable expression.",
       });
       assert.match(shortDescription.prompt, /^Required canonical NPC visual profile: man\./);
 
@@ -2019,10 +2056,7 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
         ...request,
         appearance: narrationAppearance,
       });
-      assert.equal(
-        narrationPrompt.prompt.toLowerCase().split(narrationDescription.toLowerCase()).length - 1,
-        1,
-      );
+      assert.equal(narrationPrompt.prompt.toLowerCase().split(narrationDescription.toLowerCase()).length - 1, 1);
       assert.doesNotMatch(narrationPrompt.prompt, /Canonical NPC profile:/);
     },
   },

@@ -32,6 +32,7 @@ import {
   ArrowRightLeft,
   Unlink,
   Brain,
+  BrainCircuit,
   Maximize2,
   Vibrate,
   Feather,
@@ -133,11 +134,7 @@ import {
   parseCadenceInputValue,
   stepCadenceValue,
 } from "../../lib/agent-cadence";
-import {
-  characterMatchesSearch,
-  getCharacterTitle,
-  parseCharacterDisplayData,
-} from "../../lib/character-display";
+import { characterMatchesSearch, getCharacterTitle, parseCharacterDisplayData } from "../../lib/character-display";
 import { extractCreatorNotesCss } from "../../lib/creator-notes-css";
 import { isLorebookScopeActiveForChat } from "../../lib/lorebook-scope";
 import { addSilentGreetingSwipes } from "../../lib/message-swipes";
@@ -177,6 +174,15 @@ import type {
   TTSConversationCallAudioInputMode,
 } from "@marinara-engine/shared";
 import { useAgentConfigs, useCreateAgent, useUpdateAgent, type AgentConfigRow } from "../../hooks/use-agents";
+import { useLastInjection, useLongTermMemorySettings } from "../../hooks/use-long-term-memory";
+import {
+  RecallBudgetControls,
+  RecallRankingWeights,
+  RecallStylePresets,
+  RecallThresholdControls,
+  RecallToggles,
+  useDebouncedRecallSettings,
+} from "../long-term-memory/RecallSettingsControls";
 import { useAgentStore } from "../../stores/agent.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
 import { getAgentUiCategory } from "../../lib/agent-display";
@@ -229,6 +235,7 @@ import {
   normalizeAgentPromptTemplateSelectionMap,
   resolveDefaultAgentPromptTemplateId,
   resolveAgentPromptTemplate,
+  resolveLongTermMemoryRecallSettings,
 } from "@marinara-engine/shared";
 import type { Chat, CharacterGroup, Lorebook, GameCombatStyle } from "@marinara-engine/shared";
 import {
@@ -408,9 +415,7 @@ function getGameStoryboardPromptTemplateOptions(
   selectedAnimationTemplateId?: string | null,
 ): AgentPromptTemplateOption[] {
   const builtInTemplates =
-    kind === "animation"
-      ? GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES
-      : GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES;
+    kind === "animation" ? GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES : GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES;
   return [
     ...builtInTemplates,
     ...customTemplates.filter(
@@ -498,10 +503,7 @@ function getGameVideoPromptTemplateOptions(customTemplates: AgentPromptTemplateO
   return [...GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES, ...customTemplates];
 }
 
-function resolveSelectedGameVideoPromptTemplateId(
-  value: unknown,
-  options: AgentPromptTemplateOption[],
-): string {
+function resolveSelectedGameVideoPromptTemplateId(value: unknown, options: AgentPromptTemplateOption[]): string {
   const selected = typeof value === "string" ? value.trim() : "";
   if (selected && options.some((option) => option.id === selected)) return selected;
   return GAME_VIDEO_PROMPT_TEMPLATE_ID;
@@ -758,6 +760,7 @@ const CHAT_SETTINGS_ORDER = {
   widgets: -450,
   impersonate: -400,
   memoryRecall: -300,
+  longTermMemory: -250,
   functionCalling: -200,
   translation: -100,
   gamePrompt: 0,
@@ -1030,6 +1033,7 @@ export function ChatSettingsDrawer({
   const shouldApplyModePromptDefault = (isConversation || isGame) && promptPresetOptionsLoaded && !hasModeCustomPrompt;
   const effectiveModePromptPresetId =
     chat.promptPresetId ?? (shouldApplyModePromptDefault ? (fallbackPromptPreset?.id ?? null) : null);
+  const { data: effectivePromptPresetFull } = usePresetFull(effectiveModePromptPresetId);
   const selectedModePromptPreset = useMemo(() => {
     if (!effectiveModePromptPresetId) return null;
     return (
@@ -1737,9 +1741,7 @@ export function ChatSettingsDrawer({
   const gameStoryboardUseNovelAiCharacterPrompts = metadata.gameStoryboardUseNovelAiCharacterPrompts !== false;
   const selectedGameGmPromptTemplateId = useMemo(() => {
     const selected = typeof metadata.gameGmPromptTemplateId === "string" ? metadata.gameGmPromptTemplateId.trim() : "";
-    return selected && GAME_GM_BUILT_IN_PROMPT_TEMPLATES.some((template) => template.id === selected)
-      ? selected
-      : null;
+    return selected && GAME_GM_BUILT_IN_PROMPT_TEMPLATES.some((template) => template.id === selected) ? selected : null;
   }, [metadata.gameGmPromptTemplateId]);
   const updateGameGmPromptTemplateSelection = useCallback(
     (templateId: string | null) => {
@@ -1896,7 +1898,10 @@ export function ChatSettingsDrawer({
     ],
   );
   const patchGameStoryboardPromptTemplate = useCallback(
-    (templateId: string, patch: Partial<Pick<AgentPromptTemplateOption, "name" | "description" | "promptTemplate">>) => {
+    (
+      templateId: string,
+      patch: Partial<Pick<AgentPromptTemplateOption, "name" | "description" | "promptTemplate">>,
+    ) => {
       updateGameStoryboardPromptTemplates(
         gameStoryboardPromptTemplates.map((template) =>
           template.id === templateId ? { ...template, ...patch } : template,
@@ -1973,14 +1978,13 @@ export function ChatSettingsDrawer({
         createGameStoryboardImageCustomPromptTemplate(gameStoryboardImagePromptTemplates, source),
       ]);
     },
-    [
-      gameStoryboardImagePromptOptions,
-      gameStoryboardImagePromptTemplates,
-      updateGameStoryboardImagePromptTemplates,
-    ],
+    [gameStoryboardImagePromptOptions, gameStoryboardImagePromptTemplates, updateGameStoryboardImagePromptTemplates],
   );
   const patchGameStoryboardImagePromptTemplate = useCallback(
-    (templateId: string, patch: Partial<Pick<AgentPromptTemplateOption, "name" | "description" | "promptTemplate">>) => {
+    (
+      templateId: string,
+      patch: Partial<Pick<AgentPromptTemplateOption, "name" | "description" | "promptTemplate">>,
+    ) => {
       updateGameStoryboardImagePromptTemplates(
         gameStoryboardImagePromptTemplates.map((template) =>
           template.id === templateId ? { ...template, ...patch } : template,
@@ -2066,7 +2070,8 @@ export function ChatSettingsDrawer({
   const addGameVideoPromptTemplate = useCallback(
     (sourceTemplateId: string) => {
       const source =
-        gameVideoPromptOptions.find((option) => option.id === sourceTemplateId) ?? GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES[0];
+        gameVideoPromptOptions.find((option) => option.id === sourceTemplateId) ??
+        GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES[0];
       updateGameVideoPromptTemplates([
         ...gameVideoPromptTemplates,
         createGameVideoCustomPromptTemplate(gameVideoPromptTemplates, source),
@@ -2075,11 +2080,12 @@ export function ChatSettingsDrawer({
     [gameVideoPromptOptions, gameVideoPromptTemplates, updateGameVideoPromptTemplates],
   );
   const patchGameVideoPromptTemplate = useCallback(
-    (templateId: string, patch: Partial<Pick<AgentPromptTemplateOption, "name" | "description" | "promptTemplate">>) => {
+    (
+      templateId: string,
+      patch: Partial<Pick<AgentPromptTemplateOption, "name" | "description" | "promptTemplate">>,
+    ) => {
       updateGameVideoPromptTemplates(
-        gameVideoPromptTemplates.map((template) =>
-          template.id === templateId ? { ...template, ...patch } : template,
-        ),
+        gameVideoPromptTemplates.map((template) => (template.id === templateId ? { ...template, ...patch } : template)),
       );
     },
     [gameVideoPromptTemplates, updateGameVideoPromptTemplates],
@@ -2189,6 +2195,43 @@ export function ChatSettingsDrawer({
     },
     [chat.id, updateMeta],
   );
+  const ltmAgentActive = activeAgentIds.includes("long-term-memory");
+  const ltmGlobalSettings = useLongTermMemorySettings({ enabled: open });
+  const ltmLastInjection = useLastInjection(chat.id, { enabled: open && ltmAgentActive });
+  const ltmResolvedSettings = useMemo(
+    () =>
+      resolveLongTermMemoryRecallSettings({
+        chatMode: chat.mode,
+        chatMetadata: metadata,
+        globalSettings: ltmGlobalSettings.data,
+      }),
+    [chat.mode, ltmGlobalSettings.data, metadata],
+  );
+  const ltmRecallEnabled = metadata.enableAgents === true && ltmAgentActive && ltmResolvedSettings.enabled;
+  const { flush: flushDebouncedRecallSettings, schedule: debouncedUpdatePerChat } = useDebouncedRecallSettings(
+    useCallback((patch) => updateMeta.mutate({ id: chat.id, ...patch }), [chat.id, updateMeta]),
+    400,
+    `${chat.id}:${open ? "open" : "closed"}`,
+  );
+  const setLtmAgentEnabled = useCallback(
+    (enabled: boolean) => {
+      const activeAgentIds = readLatestActiveAgentIds();
+      updateMeta.mutate({
+        id: chat.id,
+        enableAgents: enabled ? true : metadata.enableAgents,
+        enableLongTermMemory: enabled,
+        activeAgentIds: enabled
+          ? Array.from(new Set([...activeAgentIds, "long-term-memory"]))
+          : activeAgentIds.filter((agentId) => agentId !== "long-term-memory"),
+      });
+    },
+    [chat.id, metadata.enableAgents, readLatestActiveAgentIds, updateMeta],
+  );
+  const openLtmSettings = useCallback(() => {
+    flushDebouncedRecallSettings();
+    onClose();
+    useUIStore.getState().openAgentDetail("long-term-memory");
+  }, [flushDebouncedRecallSettings, onClose]);
   const getKnowledgeAgentSourceSettings = useCallback(
     (agentType: KnowledgeAgentType) => {
       const config = agentConfigsByType.get(agentType);
@@ -2962,6 +3005,22 @@ export function ChatSettingsDrawer({
       }
     });
   }, [currentPromptPresetFull?.sections]);
+  const currentPromptPresetHasLongTermMemoryMarker = useMemo(() => {
+    const sections = effectivePromptPresetFull?.sections ?? [];
+    return sections.some((section) => {
+      const enabled = (section as { enabled?: boolean | string }).enabled;
+      const isMarker = (section as { isMarker?: boolean | string }).isMarker;
+      if (enabled === false || enabled === "false") return false;
+      if (isMarker !== true && isMarker !== "true") return false;
+      try {
+        const config =
+          typeof section.markerConfig === "string" ? JSON.parse(section.markerConfig) : section.markerConfig;
+        return config?.type === "long_term_memory";
+      } catch {
+        return false;
+      }
+    });
+  }, [effectivePromptPresetFull?.sections]);
   const hasScopedOrGlobalLorebooks = useMemo(() => {
     return ((lorebooks ?? []) as Lorebook[]).some(
       (lorebook) =>
@@ -2996,6 +3055,11 @@ export function ChatSettingsDrawer({
     !isGame &&
     hasScopedOrGlobalLorebooks &&
     !currentPromptPresetHasLorebookMarker;
+  const showLongTermMemoryPromptBlockWarning =
+    ltmRecallEnabled &&
+    !!effectiveModePromptPresetId &&
+    !!effectivePromptPresetFull &&
+    !currentPromptPresetHasLongTermMemoryMarker;
 
   const [choiceModalPresetId, setChoiceModalPresetId] = useState<string | null>(null);
   const setPreset = useCallback(
@@ -3808,9 +3872,7 @@ export function ChatSettingsDrawer({
                 </div>
                 <AgentPromptTemplateSelect
                   options={promptOptions}
-                  selectedId={
-                    agentPromptTemplateSelections[agent.id] ?? getDefaultPromptTemplateIdForAgent(agent.id)
-                  }
+                  selectedId={agentPromptTemplateSelections[agent.id] ?? getDefaultPromptTemplateIdForAgent(agent.id)}
                   onChange={(promptTemplateId) => updateAgentPromptTemplateSelection(agent.id, promptTemplateId)}
                 />
               </div>
@@ -4373,9 +4435,7 @@ export function ChatSettingsDrawer({
                 >
                   {selectableCharacters
                     .filter((c) => !chatCharIds.includes(c.id))
-                    .filter(
-                      (c) => characterMatchesSearch(getCharacterInfo(c), charSearch),
-                    )
+                    .filter((c) => characterMatchesSearch(getCharacterInfo(c), charSearch))
                     .map((c) => {
                       const name = charName(c);
                       const title = charTitle(c);
@@ -4698,9 +4758,7 @@ export function ChatSettingsDrawer({
                 >
                   {selectableCharacters
                     .filter((c) => !chatCharIds.includes(c.id))
-                    .filter(
-                      (c) => characterMatchesSearch(getCharacterInfo(c), charSearch),
-                    )
+                    .filter((c) => characterMatchesSearch(getCharacterInfo(c), charSearch))
                     .map((c) => {
                       const name = charName(c);
                       const title = charTitle(c);
@@ -4742,9 +4800,7 @@ export function ChatSettingsDrawer({
                     })}
                   {selectableCharacters
                     .filter((c) => !chatCharIds.includes(c.id))
-                    .filter(
-                      (c) => characterMatchesSearch(getCharacterInfo(c), charSearch),
-                    ).length === 0 && (
+                    .filter((c) => characterMatchesSearch(getCharacterInfo(c), charSearch)).length === 0 && (
                     <p className="px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)]">
                       {selectableCharacters.filter((c) => !chatCharIds.includes(c.id)).length === 0
                         ? "All characters already added."
@@ -5433,9 +5489,12 @@ export function ChatSettingsDrawer({
                     <div className="mt-2 space-y-1.5">
                       <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Edit schedules</span>
                       {chatCharIds.map((charId) => {
-                        const schedule = (metadata.characterSchedules as Record<string, WeekSchedule> | undefined)?.[charId];
+                        const schedule = (metadata.characterSchedules as Record<string, WeekSchedule> | undefined)?.[
+                          charId
+                        ];
                         const scheduledDayCount = schedule?.days
-                          ? Object.values(schedule.days).filter((blocks) => Array.isArray(blocks) && blocks.length > 0).length
+                          ? Object.values(schedule.days).filter((blocks) => Array.isArray(blocks) && blocks.length > 0)
+                              .length
                           : 0;
                         return (
                           <button
@@ -7962,24 +8021,25 @@ export function ChatSettingsDrawer({
                         <label className="flex flex-col gap-1">
                           <span className="flex items-center justify-between gap-2 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
                             <span>Campaign art style</span>
-                            {generatedCampaignArtStyle && generatedCampaignArtStyle !== campaignArtStyleDraft.trim() && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setCampaignArtStyleDraft(generatedCampaignArtStyle);
-                                  updateMeta.mutate({
-                                    id: chat.id,
-                                    gameSetupConfig: {
-                                      ...gameSetupConfig,
-                                      artStylePrompt: generatedCampaignArtStyle,
-                                    },
-                                  });
-                                }}
-                                className="rounded px-1.5 py-0.5 text-[0.5625rem] text-[var(--primary)] transition-colors hover:bg-[var(--primary)]/10"
-                              >
-                                Restore setup style
-                              </button>
-                            )}
+                            {generatedCampaignArtStyle &&
+                              generatedCampaignArtStyle !== campaignArtStyleDraft.trim() && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setCampaignArtStyleDraft(generatedCampaignArtStyle);
+                                    updateMeta.mutate({
+                                      id: chat.id,
+                                      gameSetupConfig: {
+                                        ...gameSetupConfig,
+                                        artStylePrompt: generatedCampaignArtStyle,
+                                      },
+                                    });
+                                  }}
+                                  className="rounded px-1.5 py-0.5 text-[0.5625rem] text-[var(--primary)] transition-colors hover:bg-[var(--primary)]/10"
+                                >
+                                  Restore setup style
+                                </button>
+                              )}
                           </span>
                           <textarea
                             value={campaignArtStyleDraft}
@@ -8003,7 +8063,8 @@ export function ChatSettingsDrawer({
                             className="min-h-[4.75rem] w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs leading-relaxed text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/50 disabled:cursor-not-allowed disabled:opacity-50"
                           />
                           <span className="text-[0.5625rem] leading-snug text-[var(--muted-foreground)]">
-                            Generated during game setup. Edit or clear it here; the Image Style profile remains independent.
+                            Generated during game setup. Edit or clear it here; the Image Style profile remains
+                            independent.
                           </span>
                         </label>
                         <AgentSettingsToggle
@@ -8105,8 +8166,8 @@ export function ChatSettingsDrawer({
                       onRemoveTemplate={removeGameVideoPromptTemplate}
                     />
                     <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                      Scene videos use the latest generated scene illustration as the first frame and the editable
-                      game video prompt. Storyboard animations first use the Storyboards prompt to plan/render keyframe
+                      Scene videos use the latest generated scene illustration as the first frame and the editable game
+                      video prompt. Storyboard animations first use the Storyboards prompt to plan/render keyframe
                       images, then use this Game Video Prompt to animate each saved keyframe.
                     </p>
                   </AgentSettingsCard>
@@ -8613,15 +8674,30 @@ export function ChatSettingsDrawer({
                                               {agent.description}
                                             </span>
                                           </div>
-                                          <button
-                                            onClick={() => {
-                                              void toggleAgent(agent.id);
-                                            }}
-                                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
-                                            title="Remove from chat"
-                                          >
-                                            <Trash2 size="0.6875rem" />
-                                          </button>
+                                          <div className="flex shrink-0 items-center gap-0.5">
+                                            {agent.id === "long-term-memory" && (
+                                              <button
+                                                type="button"
+                                                onClick={openLtmSettings}
+                                                className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-90"
+                                                title="Open Long-Term Memory settings"
+                                                aria-label="Open Long-Term Memory settings"
+                                              >
+                                                <Settings2 size="0.6875rem" />
+                                              </button>
+                                            )}
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                void toggleAgent(agent.id);
+                                              }}
+                                              className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--destructive)] active:scale-90"
+                                              title="Remove from chat"
+                                              aria-label={`Remove ${agent.name} from chat`}
+                                            >
+                                              <Trash2 size="0.6875rem" />
+                                            </button>
+                                          </div>
                                         </div>
                                       </div>
                                     );
@@ -8847,6 +8923,173 @@ export function ChatSettingsDrawer({
               {renderMemoryRecallControls(metadata.sceneStatus === "active")}
             </Section>
           )}
+
+          <Section
+            style={{ order: CHAT_SETTINGS_ORDER.longTermMemory }}
+            label="Long-Term Memory"
+            icon={<BrainCircuit size="0.875rem" />}
+            count={ltmRecallEnabled ? 1 : undefined}
+            help="Recall durable facts and events from the memory vault. These settings apply only to this chat."
+          >
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={() => setLtmAgentEnabled(!ltmRecallEnabled)}
+                aria-pressed={ltmRecallEnabled}
+                className={cn(
+                  "flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+                  ltmRecallEnabled
+                    ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+                    : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
+                )}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">
+                    Use Long-Term Memory in this chat
+                  </span>
+                  <span className="mt-0.5 block text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+                    Retrieve relevant vault memories and add them to generation context.
+                  </span>
+                </span>
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+                    ltmRecallEnabled ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "block h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                      ltmRecallEnabled && "translate-x-3.5",
+                    )}
+                  />
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={openLtmSettings}
+                className="flex w-full items-center justify-between gap-3 rounded-lg bg-[var(--secondary)] px-3 py-2.5 text-left ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+              >
+                <span className="min-w-0">
+                  <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">
+                    Manage memory vault and defaults
+                  </span>
+                  <span className="mt-0.5 block text-[0.625rem] text-[var(--muted-foreground)]">
+                    Review memories, imports, extraction, and maintenance.
+                  </span>
+                </span>
+                <Settings2 size="0.8125rem" className="shrink-0 text-[var(--muted-foreground)]" />
+              </button>
+
+              {!ltmRecallEnabled ? (
+                <p className="rounded-lg bg-[var(--secondary)]/55 px-3 py-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                  Long-Term Memory is off for this chat. Saved memories remain available in the vault.
+                </p>
+              ) : (
+                <>
+                  <div
+                    aria-live="polite"
+                    className="rounded-lg bg-[var(--secondary)]/55 px-3 py-2 text-[0.6875rem] ring-1 ring-[var(--border)]"
+                  >
+                    <div className="font-medium text-[var(--foreground)]">Last recall</div>
+                    {ltmLastInjection.isLoading ? (
+                      <div className="mt-1 flex items-center gap-2 text-[var(--muted-foreground)]">
+                        <Loader2 size="0.75rem" className="animate-spin" aria-hidden="true" />
+                        Checking recent memory activity...
+                      </div>
+                    ) : ltmLastInjection.isError ? (
+                      <div
+                        role="alert"
+                        className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[var(--destructive)]"
+                      >
+                        <span>Recent memory activity could not be loaded.</span>
+                        <button
+                          type="button"
+                          onClick={() => void ltmLastInjection.refetch()}
+                          className="rounded-md px-1.5 py-0.5 font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    ) : (ltmLastInjection.data?.memoryCount ?? 0) === 0 ? (
+                      <p className="mt-1 text-[var(--muted-foreground)]">
+                        No vault memories have been recalled for this chat yet.
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-[var(--muted-foreground)]">
+                        {ltmLastInjection.data!.memoryCount} memor
+                        {ltmLastInjection.data!.memoryCount === 1 ? "y" : "ies"}, approximately{" "}
+                        {ltmLastInjection.data!.tokenCount.toLocaleString()} tokens.
+                      </p>
+                    )}
+                  </div>
+
+                  {showLongTermMemoryPromptBlockWarning && (
+                    <div className="flex items-start gap-2 rounded-lg bg-amber-400/10 px-3 py-2 text-[0.6875rem] text-amber-200 ring-1 ring-amber-400/25">
+                      <AlertTriangle size="0.75rem" className="mt-[0.125rem] shrink-0" aria-hidden="true" />
+                      <p className="leading-relaxed">
+                        The selected prompt preset has no Long-Term Memory block. Recalled memories will use the default
+                        prompt placement.
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="space-y-3">
+                    <RecallStylePresets
+                      values={{ longTermMemoryRecallStyle: ltmResolvedSettings.recallStyle }}
+                      onChange={debouncedUpdatePerChat}
+                    />
+                    <RecallBudgetControls
+                      values={{
+                        longTermMemoryBudgetTokens: ltmResolvedSettings.budgetTokens ?? 4096,
+                        longTermMemoryMaxChunks: ltmResolvedSettings.maxChunks ?? 20,
+                      }}
+                      onChange={debouncedUpdatePerChat}
+                    />
+                  </div>
+
+                  <details className="group rounded-lg border border-[var(--border)] bg-[var(--secondary)]/35">
+                    <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 px-3 py-2 text-[0.6875rem] font-medium text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)]">
+                      <ChevronRight
+                        size="0.75rem"
+                        className="shrink-0 text-[var(--muted-foreground)] transition-transform group-open:rotate-90"
+                        aria-hidden="true"
+                      />
+                      Advanced recall settings
+                    </summary>
+                    <div className="space-y-3 border-t border-[var(--border)] px-3 py-3">
+                      <RecallThresholdControls
+                        values={{
+                          longTermMemoryScoreThreshold: ltmResolvedSettings.scoreThreshold ?? 0,
+                          longTermMemoryRecallContextMessages: ltmResolvedSettings.contextMessages,
+                        }}
+                        onChange={debouncedUpdatePerChat}
+                      />
+                      <RecallRankingWeights
+                        values={{
+                          longTermMemoryRecallStyle: ltmResolvedSettings.recallStyle,
+                          longTermMemorySemanticWeight: ltmResolvedSettings.weights.semanticWeight,
+                          longTermMemoryLexicalWeight: ltmResolvedSettings.weights.lexicalWeight,
+                          longTermMemoryGraphWeight: ltmResolvedSettings.weights.graphWeight,
+                          longTermMemoryKeywordWeight: ltmResolvedSettings.weights.keywordWeight,
+                        }}
+                        onChange={debouncedUpdatePerChat}
+                      />
+                      <RecallToggles
+                        values={{
+                          longTermMemoryIncludeResolved: ltmResolvedSettings.includeResolved,
+                          longTermMemoryDebug: ltmResolvedSettings.debugEnabled,
+                        }}
+                        onChange={debouncedUpdatePerChat}
+                      />
+                    </div>
+                  </details>
+                </>
+              )}
+            </div>
+          </Section>
 
           <div style={{ order: CHAT_SETTINGS_ORDER.translation }}>
             <TranslationSection
@@ -10181,9 +10424,7 @@ function GameProviderPromptLibrary({
       </button>
       {open && (
         <div className="space-y-2 border-t border-[var(--border)] px-2.5 py-2.5">
-          <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-            {description}
-          </p>
+          <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">{description}</p>
           <div className="flex flex-wrap gap-1.5">
             {builtInTemplates.map((template) => (
               <button

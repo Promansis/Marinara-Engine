@@ -63,10 +63,7 @@ export async function migrateLtmChatsForAgentPipeline(
   try {
     if (!(await agentsStore.getByType(LTM_AGENT_TYPE))) {
       if (isDryRun) {
-        logger.info(
-          "[ltm-migration] Dry-run: would create agent_config for type=%s",
-          LTM_AGENT_TYPE,
-        );
+        logger.info("[ltm-migration] Dry-run: would create agent_config for type=%s", LTM_AGENT_TYPE);
       } else {
         const defaultSettings: Record<string, unknown> = {
           author: "Promansis",
@@ -75,7 +72,8 @@ export async function migrateLtmChatsForAgentPipeline(
           defaultSettings.longTermMemoryBudgetTokens = ltmGlobalSettings.longTermMemoryBudgetTokens ?? 4096;
           defaultSettings.longTermMemoryMaxChunks = ltmGlobalSettings.longTermMemoryMaxChunks ?? 20;
           defaultSettings.longTermMemoryScoreThreshold = ltmGlobalSettings.longTermMemoryScoreThreshold ?? 0;
-          defaultSettings.longTermMemoryRecallContextMessages = ltmGlobalSettings.longTermMemoryRecallContextMessages ?? 4;
+          defaultSettings.longTermMemoryRecallContextMessages =
+            ltmGlobalSettings.longTermMemoryRecallContextMessages ?? 4;
           defaultSettings.longTermMemoryRecallStyle = ltmGlobalSettings.longTermMemoryRecallStyle ?? "balanced";
           defaultSettings.longTermMemoryIncludeResolved = ltmGlobalSettings.longTermMemoryIncludeResolved ?? false;
           defaultSettings.longTermMemoryDebug = ltmGlobalSettings.longTermMemoryDebug ?? false;
@@ -112,26 +110,31 @@ export async function migrateLtmChatsForAgentPipeline(
         const metadata = parseMetadata(chat.metadata);
         const enabled = metadata.enableLongTermMemory === true;
         const activeAgentIds = normalizeActiveAgentIds(metadata.activeAgentIds);
+        const agentAlreadyActive = activeAgentIds.includes(LTM_AGENT_TYPE);
+        const agentsAlreadyEnabled = metadata.enableAgents === true;
 
-        if (enabled && !activeAgentIds.includes(LTM_AGENT_TYPE)) {
-          const patchedActiveAgentIds = [...activeAgentIds, LTM_AGENT_TYPE];
+        if (enabled && (!agentAlreadyActive || !agentsAlreadyEnabled)) {
+          const patchedActiveAgentIds = agentAlreadyActive ? activeAgentIds : [...activeAgentIds, LTM_AGENT_TYPE];
 
           if (isDryRun) {
             logger.info(
-              "[ltm-migration] Dry-run: would patch chat=%s — current activeAgentIds=%j → patched=%j, enableLongTermMemory=true",
+              "[ltm-migration] Dry-run: would patch chat=%s — activeAgentIds=%j → %j, enableAgents=%s → true",
               chat.id,
               activeAgentIds,
               patchedActiveAgentIds,
+              agentsAlreadyEnabled,
             );
             summary.migrated += 1;
           } else {
             await chatsStore.patchMetadata(chat.id, {
               activeAgentIds: patchedActiveAgentIds,
+              enableAgents: true,
             } as Record<string, unknown>);
             summary.migrated += 1;
             logger.debug(
-              "[ltm-migration] Patched chat=%s — added long-term-memory to activeAgentIds",
+              "[ltm-migration] Patched chat=%s — activeAgentIds=%j enableAgents=true",
               chat.id,
+              patchedActiveAgentIds,
             );
           }
         } else {
