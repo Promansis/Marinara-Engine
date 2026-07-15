@@ -411,18 +411,6 @@ export function useUpdateLongTermMemoryNote() {
   });
 }
 
-export function useDeleteLongTermMemoryNote() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.delete<{ deleted: true; id: string }>(`/long-term-memory/notes/${id}/permanent`),
-    onSuccess: (_, id) => {
-      qc.removeQueries({ queryKey: longTermMemoryKeys.note(id) });
-      pruneNotesFromListCaches(qc, [id]);
-      qc.invalidateQueries({ queryKey: longTermMemoryKeys.all });
-    },
-  });
-}
-
 export function useDeleteLongTermMemoryNotes() {
   const qc = useQueryClient();
   return useMutation({
@@ -767,9 +755,9 @@ export function useDeleteLongTermMemoryDraftMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, mutationId }: { id: string; mutationId: string }) =>
-      api.delete<{ deleted: true; draftId: string; mutationId: string; draft: LtmExtractionDraft | null }>(
-        `/long-term-memory/drafts/${id}/mutations/${mutationId}`,
-      ),
+      api.post<SkipLongTermMemoryDraftResponse>(`/long-term-memory/drafts/${id}/skip`, {
+        mutationIds: [mutationId],
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
   });
 }

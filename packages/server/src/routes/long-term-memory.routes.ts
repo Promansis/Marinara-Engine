@@ -255,7 +255,6 @@ const updateNoteBodySchema = z.preprocess(
 const rebuildBodySchema = z.object({}).strict().default({});
 
 const draftIdParamSchema = z.object({ id: z.string().uuid() }).strict();
-const draftMutationParamSchema = z.object({ id: z.string().uuid(), mutationId: z.string().uuid() }).strict();
 const noteIdParamSchema = z.object({ id: ltmNoteIdSchema }).strict();
 const permanentDeleteNotesBodySchema = z
   .object({
@@ -923,21 +922,6 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     },
   );
 
-  app.delete<{ Params: { id: string } }>("/notes/:id/permanent", async (req, reply) => {
-    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory note deletion" })) return;
-    const id = ltmNoteIdSchema.parse(req.params.id);
-    const existing = await storage.getNote(id);
-    if (!existing) return reply.status(404).send({ error: "Long-term memory note not found" });
-
-    const note = await storage.deleteNote(id, {
-      actor: "maintenance_api",
-      cause: "api.delete",
-      summary: "Deleted via long-term memory maintenance API",
-    });
-    await rebuildLongTermMemoryIndexes({ scope: rebuildScopeForNote(note) });
-    return { deleted: true, id: note.id };
-  });
-
   app.delete<{ Params: { id: string }; Body: unknown }>(
     "/notes/:id/scope",
     { bodyLimit: REBUILD_BODY_LIMIT_BYTES },
@@ -1427,14 +1411,6 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     );
   });
 
-  app.get<{ Params: { id: string } }>("/drafts/:id", async (req, reply) => {
-    if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft detail" })) return;
-    const { id } = draftIdParamSchema.parse(req.params);
-    const draft = await draftStore.getDraft(id);
-    if (!draft) return reply.status(404).send({ error: "Long-term memory draft not found" });
-    return draft;
-  });
-
   app.post<{ Params: { id: string }; Body: unknown }>("/drafts/:id/accept", async (req, reply) => {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft acceptance" })) return;
     const { id } = draftIdParamSchema.parse(req.params);
@@ -1484,24 +1460,6 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
     }
     return { deleted: true, draftId: id, mutationIds: body.mutationIds, draft: result.draft };
   });
-
-  app.delete<{ Params: { id: string; mutationId: string } }>(
-    "/drafts/:id/mutations/:mutationId",
-    async (req, reply) => {
-      if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft mutation deletion" })) return;
-      const { id, mutationId } = draftMutationParamSchema.parse(req.params);
-      const result = await draftStore.withDraftLock(id, () => draftStore.deleteDraftMutation(id, mutationId));
-      if (!result.deleted) {
-        const status = result.reason === "not_pending" ? 409 : 404;
-        const error =
-          result.reason === "not_pending"
-            ? "Long-term memory draft mutation can only be removed from pending drafts"
-            : "Long-term memory draft mutation not found";
-        return reply.status(status).send({ error });
-      }
-      return { deleted: true, draftId: id, mutationId, draft: result.draft };
-    },
-  );
 
   app.delete<{ Params: { id: string } }>("/drafts/:id", async (req, reply) => {
     if (!requirePrivilegedAccess(req, reply, { feature: "Long-term memory draft deletion" })) return;
