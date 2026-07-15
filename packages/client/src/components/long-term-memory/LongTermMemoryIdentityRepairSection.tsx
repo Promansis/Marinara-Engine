@@ -176,7 +176,7 @@ export function LongTermMemoryIdentityRepairSection({
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--border)]/70 pb-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-1.5">
-            <h3 className="text-sm font-semibold text-[var(--foreground)]">Identity repair</h3>
+            <h3 className="text-sm font-semibold text-[var(--foreground)]">Repair candidates</h3>
             <StatusPill label={scopeLabel} />
             {preview.data ? (
               <StatusPill

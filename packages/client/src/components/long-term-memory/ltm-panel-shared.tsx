@@ -1,6 +1,6 @@
 // Shared types, constants, and helpers for the Long-Term Memory panel and its sub-components.
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type {
   Chat,
@@ -30,7 +30,7 @@ import { StatusPill } from "./LtmPills";
 
 // ── Types ──────────────────────────────────────
 
-export type TabId = "notes" | "import" | "review" | "debug";
+export type TabId = "notes" | "import" | "review" | "identity" | "debug";
 export type MemoryModalMode = "view" | "edit";
 export type MemoryModalTab = "overview" | "content" | "links" | "recall" | "suggestions";
 export type LtmRecallStyle = "balanced" | "exact" | "broad" | "story";
@@ -80,8 +80,9 @@ export const IMPORT_SOURCES: Array<{ id: LtmInteropSource; label: string }> = [
 export const TAB_LABELS: Record<TabId, string> = {
   notes: "Memories",
   import: "Import",
-  review: "Review",
-  debug: "Debug",
+  review: "Suggestions",
+  identity: "Identity repair",
+  debug: "Diagnostics",
 };
 
 export const LTM_GLOBAL_SETTINGS_MIGRATION_KEY = "ltm:global-settings-migrated:v1";
@@ -511,7 +512,7 @@ export function Section({
       role={labelledBy ? "tabpanel" : undefined}
       aria-labelledby={labelledBy}
       tabIndex={labelledBy ? 0 : undefined}
-      className="space-y-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
+      className="scroll-mt-24 space-y-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
     >
       <h3 className="px-1 text-sm font-semibold text-[var(--foreground)]">{title}</h3>
       {children}
@@ -543,9 +544,7 @@ export function DisclosureHeader({
           </span>
         )}
       </span>
-      <span className="ml-auto flex min-w-0 shrink items-center justify-end gap-1 overflow-hidden">
-        {children}
-      </span>
+      <span className="ml-auto flex min-w-0 shrink items-center justify-end gap-1 overflow-hidden">{children}</span>
     </button>
   );
 }
@@ -634,30 +633,17 @@ export function SourceInfoPopover({
   onOpenSource?: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLSpanElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
-  const closeTimerRef = useRef<number | null>(null);
   const [pos, setPos] = useState<{ top: number; left: number; ready: boolean }>({ top: 0, left: 0, ready: false });
   const uniqueSourceIds = [...new Set(sourceIds)];
 
-  const cancelClose = () => {
-    if (closeTimerRef.current !== null) {
-      window.clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
-    }
-  };
+  const closePopover = useCallback((restoreFocus = false) => {
+    setOpen(false);
+    if (restoreFocus) requestAnimationFrame(() => triggerRef.current?.focus());
+  }, []);
 
-  const scheduleClose = () => {
-    cancelClose();
-    closeTimerRef.current = window.setTimeout(() => {
-      setOpen(false);
-      closeTimerRef.current = null;
-    }, 120);
-  };
-
-  useEffect(() => () => cancelClose(), []);
-
-  useLayoutEffect(() => {
+  const updatePosition = useCallback(() => {
     if (!open || !triggerRef.current || !popoverRef.current) {
       setPos({ top: 0, left: 0, ready: false });
       return;
@@ -675,7 +661,9 @@ export function SourceInfoPopover({
     top = Math.max(pad, Math.min(top, window.innerHeight - pad - popover.height));
 
     setPos({ top, left, ready: true });
-  }, [open, uniqueSourceIds.length]);
+  }, [open]);
+
+  useLayoutEffect(updatePosition, [updatePosition, uniqueSourceIds.length]);
 
   useEffect(() => {
     if (!open) return;
@@ -687,28 +675,30 @@ export function SourceInfoPopover({
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        closePopover(true);
+      }
     };
 
     document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("keydown", handleKeyDown, true);
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("keydown", handleKeyDown, true);
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
     };
-  }, [open]);
+  }, [closePopover, open, updatePosition]);
 
   return (
-    <span
-      ref={triggerRef}
-      className="relative inline-flex"
-      onMouseEnter={() => {
-        cancelClose();
-        setOpen(true);
-      }}
-      onMouseLeave={scheduleClose}
-    >
+    <span className="relative inline-flex">
       <button
+        ref={triggerRef}
         type="button"
         onPointerDown={(event) => {
           event.stopPropagation();
@@ -730,8 +720,6 @@ export function SourceInfoPopover({
         createPortal(
           <div
             ref={popoverRef}
-            onMouseEnter={cancelClose}
-            onMouseLeave={scheduleClose}
             role="dialog"
             aria-label="Source notes"
             className="fixed z-[10020] w-[min(20rem,calc(100vw-1rem))] rounded-lg bg-[var(--popover)] p-2 text-[0.6875rem] text-[var(--popover-foreground)] shadow-xl ring-1 ring-[var(--border)]"

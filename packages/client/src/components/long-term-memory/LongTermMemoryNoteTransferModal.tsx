@@ -9,7 +9,6 @@ import {
 import { cn } from "../../lib/utils";
 import { LtmModal } from "./LtmModal";
 import {
-  actionRowClassName,
   helperTextClassName,
   insetSectionCardClassName,
   modalIntroCardClassName,
@@ -74,7 +73,8 @@ function itemTone(item: LtmNoteTransferPreviewItem) {
 }
 
 function itemStatusLabel(item: LtmNoteTransferPreviewItem) {
-  if (item.classification === "conflict") return item.conflicts[0]?.severity === "hard" ? "Hard conflict" : "Soft conflict";
+  if (item.classification === "conflict")
+    return item.conflicts[0]?.severity === "hard" ? "Hard conflict" : "Soft conflict";
   if (item.classification === "ready") return "Ready";
   return "No change";
 }
@@ -119,6 +119,7 @@ export function LongTermMemoryNoteTransferModal({
   const [navigatorSelection, setNavigatorSelection] = useState<LtmNavigatorSelection>({ groupId: null, chatId: null });
   const [navigatorQuery, setNavigatorQuery] = useState("");
   const [includeDerived, setIncludeDerived] = useState(true);
+  const [step, setStep] = useState<"destination" | "preview">("destination");
   const [preview, setPreview] = useState<Awaited<ReturnType<typeof previewTransferAsync>> | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -146,6 +147,7 @@ export function LongTermMemoryNoteTransferModal({
     setNavigatorSelection({ groupId: null, chatId: null });
     setNavigatorQuery("");
     setIncludeDerived(true);
+    setStep("destination");
     setPreview(null);
     setPreviewError(null);
     setPreviewing(false);
@@ -154,7 +156,7 @@ export function LongTermMemoryNoteTransferModal({
   }, [open, resetPreviewTransfer]);
 
   useEffect(() => {
-    if (!open || !destinationChatId || selectedNoteIds.length === 0) return;
+    if (!open || step !== "preview" || !destinationChatId || selectedNoteIds.length === 0) return;
     const currentVersion = ++previewVersionRef.current;
     setPreviewing(true);
     setPreviewError(null);
@@ -179,15 +181,7 @@ export function LongTermMemoryNoteTransferModal({
       .finally(() => {
         if (previewVersionRef.current === currentVersion) setPreviewing(false);
       });
-  }, [
-    destinationChatId,
-    hasDerivedChildren,
-    includeDerived,
-    mode,
-    open,
-    previewTransferAsync,
-    selectedNoteIds,
-  ]);
+  }, [destinationChatId, hasDerivedChildren, includeDerived, mode, open, previewTransferAsync, selectedNoteIds, step]);
 
   const toggleIncluded = (noteId: string, checked: boolean) => {
     setIncludedNoteIds((current) => {
@@ -223,7 +217,12 @@ export function LongTermMemoryNoteTransferModal({
   const ActionIcon = mode === "copy" ? Copy : ArrowRightLeft;
 
   return (
-    <LtmModal open={open} onClose={onClose} title={mode === "copy" ? "Copy Selected Memories" : "Move Selected Memories"} width="max-w-5xl">
+    <LtmModal
+      open={open}
+      onClose={onClose}
+      title={mode === "copy" ? "Copy Selected Memories" : "Move Selected Memories"}
+      width="max-w-5xl"
+    >
       <div className="space-y-4">
         <div className={modalIntroCardClassName}>
           <div className="flex flex-wrap items-center gap-1.5">
@@ -238,20 +237,29 @@ export function LongTermMemoryNoteTransferModal({
           </p>
         </div>
 
-        <LtmNavigatorSelector
-          threads={navigatorThreads}
-          selection={navigatorSelection}
-          activeChatId={activeChatId}
-          scopeLabel={destinationLabel}
-          query={navigatorQuery}
-          contextLabel="Destination"
-          onQueryChange={setNavigatorQuery}
-          onSelect={setNavigatorSelection}
-        />
+        <div className="flex items-center gap-2">
+          <StatusPill label="1 Destination" tone={step === "destination" ? "good" : "neutral"} />
+          <StatusPill label="2 Preview" tone={step === "preview" ? "good" : "neutral"} />
+        </div>
 
-        {!destinationChatId && <p className={helperTextClassName}>Choose one specific branch before reviewing the transfer.</p>}
+        {step === "destination" && (
+          <LtmNavigatorSelector
+            threads={navigatorThreads}
+            selection={navigatorSelection}
+            activeChatId={activeChatId}
+            scopeLabel={destinationLabel}
+            query={navigatorQuery}
+            contextLabel="Destination"
+            onQueryChange={setNavigatorQuery}
+            onSelect={setNavigatorSelection}
+          />
+        )}
 
-        {hasDerivedChildren && (
+        {step === "destination" && !destinationChatId && (
+          <p className={helperTextClassName}>Choose one specific branch before reviewing the transfer.</p>
+        )}
+
+        {step === "destination" && hasDerivedChildren && (
           <label className={cn(sectionCardClassName, "flex items-center gap-2.5")}>
             <input
               type="checkbox"
@@ -269,7 +277,12 @@ export function LongTermMemoryNoteTransferModal({
         )}
 
         {destinationChatId && previewing && (
-          <div className={cn(sectionCardClassName, "flex items-center justify-center gap-2 py-8 text-xs text-[var(--muted-foreground)]")}>
+          <div
+            className={cn(
+              sectionCardClassName,
+              "flex items-center justify-center gap-2 py-8 text-xs text-[var(--muted-foreground)]",
+            )}
+          >
             <Loader2 size="0.875rem" className="animate-spin" />
             Reviewing destination conflicts...
           </div>
@@ -290,14 +303,21 @@ export function LongTermMemoryNoteTransferModal({
             <div className={cn(sectionCardClassName, "space-y-2")}>
               <div className="flex flex-wrap items-center gap-1.5">
                 <StatusPill label={`${preview.selection.totalNoteCount} reviewed`} />
-                <StatusPill label={`${preview.buckets.ready.length} ready`} tone={preview.buckets.ready.length > 0 ? "good" : "neutral"} />
-                <StatusPill label={`${preview.buckets.conflict.length} conflicts`} tone={preview.buckets.conflict.length > 0 ? "warn" : "neutral"} />
+                <StatusPill
+                  label={`${preview.buckets.ready.length} ready`}
+                  tone={preview.buckets.ready.length > 0 ? "good" : "neutral"}
+                />
+                <StatusPill
+                  label={`${preview.buckets.conflict.length} conflicts`}
+                  tone={preview.buckets.conflict.length > 0 ? "warn" : "neutral"}
+                />
                 <StatusPill label={`${preview.buckets.noOp.length} unchanged`} />
                 <StatusPill label={`${includedCount} included`} tone={includedCount > 0 ? "good" : "neutral"} />
               </div>
               {preview.selection.availableDerivedCount > 0 && (
                 <div className={helperTextClassName}>
-                  {preview.selection.includedDerivedCount} of {preview.selection.availableDerivedCount} extracted memories are in this review.
+                  {preview.selection.includedDerivedCount} of {preview.selection.availableDerivedCount} extracted
+                  memories are in this review.
                 </div>
               )}
             </div>
@@ -310,7 +330,10 @@ export function LongTermMemoryNoteTransferModal({
                 const locked = item.classification === "no_op";
 
                 return (
-                  <div key={item.noteId} className={cn(sectionCardClassName, selected && !locked && "ring-[var(--ring)]/35")}>
+                  <div
+                    key={item.noteId}
+                    className={cn(sectionCardClassName, selected && !locked && "ring-[var(--ring)]/35")}
+                  >
                     <div className="flex flex-wrap items-start gap-3">
                       <label className={cn("flex min-w-0 flex-1 items-start gap-3", locked && "opacity-70")}>
                         <input
@@ -321,7 +344,10 @@ export function LongTermMemoryNoteTransferModal({
                           className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded border-[var(--border)] accent-[var(--primary)] disabled:cursor-not-allowed"
                         />
                         <div className="min-w-0 space-y-1">
-                          <div className="truncate text-sm font-semibold text-[var(--foreground)]" title={item.title}>
+                          <div
+                            className="break-words text-sm font-semibold text-[var(--foreground)]"
+                            title={item.title}
+                          >
                             {item.title}
                           </div>
                           <div className="flex flex-wrap items-center gap-1.5">
@@ -331,21 +357,29 @@ export function LongTermMemoryNoteTransferModal({
                           </div>
                         </div>
                       </label>
-                      <div className="shrink-0 text-right text-[0.6875rem] text-[var(--muted-foreground)]">
+                      <div className="w-full pl-6 text-left text-[0.6875rem] text-[var(--muted-foreground)] sm:w-auto sm:shrink-0 sm:pl-0 sm:text-right">
                         <div>{currentScopeLabel}</div>
                         <div>{nextScopeLabel}</div>
                       </div>
                     </div>
 
                     <div className={cn(insetSectionCardClassName, "mt-3 space-y-2")}>
-                      <p className="text-xs leading-relaxed text-[var(--foreground)]">{item.previewText || "No preview text available."}</p>
+                      <p className="text-xs leading-relaxed text-[var(--foreground)]">
+                        {item.previewText || "No preview text available."}
+                      </p>
                       {item.reason && <p className={helperTextClassName}>{item.reason}</p>}
                       {item.conflicts.length > 0 && (
                         <div className="space-y-2">
                           {item.conflicts.map((conflict) => (
-                            <div key={`${item.noteId}:${conflict.targetNoteId}:${conflict.reason}`} className="space-y-1 rounded-lg bg-[var(--background)]/65 p-2 ring-1 ring-[var(--border)]/70">
+                            <div
+                              key={`${item.noteId}:${conflict.targetNoteId}:${conflict.reason}`}
+                              className="space-y-1 rounded-lg bg-[var(--background)]/65 p-2 ring-1 ring-[var(--border)]/70"
+                            >
                               <div className="flex flex-wrap items-center gap-1.5">
-                                <StatusPill label={conflict.severity === "hard" ? "Hard" : "Soft"} tone={conflict.severity === "hard" ? "warn" : "neutral"} />
+                                <StatusPill
+                                  label={conflict.severity === "hard" ? "Hard" : "Soft"}
+                                  tone={conflict.severity === "hard" ? "warn" : "neutral"}
+                                />
                                 <StatusPill label={conflictReasonLabel(conflict.reason)} />
                                 <StatusPill label={friendlyNoteType(conflict.targetType)} />
                                 {typeof conflict.score === "number" && conflict.score < 1 && (
@@ -353,7 +387,9 @@ export function LongTermMemoryNoteTransferModal({
                                 )}
                               </div>
                               <div className="text-xs font-medium text-[var(--foreground)]">{conflict.targetTitle}</div>
-                              {conflict.targetPreview && <p className={helperTextClassName}>{conflict.targetPreview}</p>}
+                              {conflict.targetPreview && (
+                                <p className={helperTextClassName}>{conflict.targetPreview}</p>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -366,19 +402,35 @@ export function LongTermMemoryNoteTransferModal({
           </>
         )}
 
-        <div className={actionRowClassName}>
-          <ToolButton onClick={onClose} disabled={applyTransfer.isPending}>
-            Close
-          </ToolButton>
-          <div className="ml-auto">
-            <ToolButton
-              onClick={() => void apply()}
-              disabled={!destinationChatId || !preview || previewing || includedCount === 0 || applyTransfer.isPending}
-              tone="primary"
-            >
-              {applyTransfer.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <ActionIcon size="0.875rem" />}
-              {actionLabel}
+        <div className="sticky bottom-0 z-10 -mx-5 flex flex-wrap items-center gap-2 border-t border-[var(--border)] bg-[var(--background)]/95 px-5 py-3 backdrop-blur-sm">
+          {step === "preview" ? (
+            <ToolButton onClick={() => setStep("destination")} disabled={applyTransfer.isPending}>
+              Back
             </ToolButton>
+          ) : (
+            <ToolButton onClick={onClose} disabled={applyTransfer.isPending}>
+              Close
+            </ToolButton>
+          )}
+          <div className="ml-auto">
+            {step === "destination" ? (
+              <ToolButton onClick={() => setStep("preview")} disabled={!destinationChatId} tone="primary">
+                Review transfer
+              </ToolButton>
+            ) : (
+              <ToolButton
+                onClick={() => void apply()}
+                disabled={!preview || previewing || includedCount === 0 || applyTransfer.isPending}
+                tone="primary"
+              >
+                {applyTransfer.isPending ? (
+                  <Loader2 size="0.875rem" className="animate-spin" />
+                ) : (
+                  <ActionIcon size="0.875rem" />
+                )}
+                {actionLabel}
+              </ToolButton>
+            )}
           </div>
         </div>
       </div>

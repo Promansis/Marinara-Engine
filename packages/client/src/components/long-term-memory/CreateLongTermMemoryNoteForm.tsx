@@ -1,16 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Loader2, Plus } from "lucide-react";
+import { ChevronRight, Loader2, Plus } from "lucide-react";
 import type { Chat, LtmLink, LtmMode, LtmNote, LtmNoteType } from "@marinara-engine/shared";
 import { useChat } from "../../hooks/use-chats";
 import { useCreateLongTermMemoryNote } from "../../hooks/use-long-term-memory";
 import { useChatStore } from "../../stores/chat.store";
 import { cn } from "../../lib/utils";
 import {
-  actionRowClassName,
   compactInputClassName,
   helperTextClassName,
-  modalIntroCardClassName,
   sectionCardClassName,
   SettingField,
   textareaClassName,
@@ -92,13 +90,15 @@ function readChatCharacterIds(chat: Chat | null | undefined) {
 function createDefaultDraft({
   activeChat,
   defaultMode,
+  idSuffix,
 }: {
   activeChat: Chat | null | undefined;
   defaultMode: LtmMode;
+  idSuffix: string;
 }): CreateLongTermMemoryNoteDraft {
   return {
     type: "scene",
-    id: "scene_",
+    id: `scene_memory_${idSuffix}`,
     title: "",
     status: "active",
     modes: [defaultMode],
@@ -113,6 +113,12 @@ function createDefaultDraft({
     sectionText: "",
     subjectLabels: [],
   };
+}
+
+function generatedNoteId(type: LtmNoteType, title: string, suffix: string) {
+  const prefix = allowedIdPrefixesByType[type][0];
+  const base = normalizeIdentifier(title, "memory") || "memory";
+  return `${prefix}${base}_${suffix}`;
 }
 
 function serializedCreateDraft(draft: CreateLongTermMemoryNoteDraft) {
@@ -134,12 +140,15 @@ export function CreateLongTermMemoryNoteForm({
   const activeChat = activeChatQuery.data ?? cachedActiveChat;
   const createNote = useCreateLongTermMemoryNote();
   const defaultMode = defaultModeFromChatMode(activeChat?.mode);
+  const [idSuffix] = useState(() => Math.random().toString(36).slice(2, 7));
+  const [autoId, setAutoId] = useState(!initialDraft);
+  const [scopeOpen, setScopeOpen] = useState(false);
   const defaultDraft = useMemo(
     () => ({
-      ...createDefaultDraft({ activeChat, defaultMode }),
+      ...createDefaultDraft({ activeChat, defaultMode, idSuffix }),
       ...(defaultScopeDraft ? { scopeDraft: defaultScopeDraft } : {}),
     }),
-    [activeChat, defaultMode, defaultScopeDraft],
+    [activeChat, defaultMode, defaultScopeDraft, idSuffix],
   );
   const [draft, setDraft] = useState<CreateLongTermMemoryNoteDraft>(initialDraft ?? defaultDraft);
   const dirty = useMemo(
@@ -162,6 +171,11 @@ export function CreateLongTermMemoryNoteForm({
   }, [defaultDraft.scopeDraft, initialDraft]);
 
   useEffect(() => {
+    if (!autoId) return;
+    setDraft((current) => ({ ...current, id: generatedNoteId(current.type, current.title, idSuffix) }));
+  }, [autoId, idSuffix, title, type]);
+
+  useEffect(() => {
     onDirtyChange?.(dirty);
     onDraftChange?.(draft);
   }, [dirty, draft, onDirtyChange, onDraftChange]);
@@ -172,7 +186,6 @@ export function CreateLongTermMemoryNoteForm({
     setDraft((current) => ({
       ...current,
       type: nextType,
-      id: allowedIdPrefixesByType[nextType][0],
       sectionKey: defaultSectionKeyForType(nextType),
       subjectLabels: nextType === "character" ? [""] : nextType === "relationship" ? ["", ""] : [],
     }));
@@ -240,63 +253,7 @@ export function CreateLongTermMemoryNoteForm({
 
   return (
     <div className="grid gap-4">
-      <div className={modalIntroCardClassName}>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-semibold text-[var(--foreground)]">Add a manual memory</span>
-          <span className="rounded-full border border-[var(--border)] bg-[var(--muted)]/55 px-2 py-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
-            Saved to Memory
-          </span>
-        </div>
-        <p className={cn("mt-2", helperTextClassName)}>
-          Create a memory with the same scope, tags, and section structure used across the rest of Marinara.
-        </p>
-      </div>
-
       <div className="grid gap-4">
-        <div className="grid gap-2 sm:grid-cols-2">
-          <SettingField label="Type">
-            <select
-              value={type}
-              onChange={(event) => changeType(event.target.value as LtmNoteType)}
-              className={compactInputClassName}
-            >
-              {noteTypeOptions.map((option) => (
-                <option key={option} value={option}>
-                  {friendlyNoteType(option)}
-                </option>
-              ))}
-            </select>
-          </SettingField>
-          <SettingField label="Status">
-            <select
-              value={status}
-              onChange={(event) =>
-                setDraft((current) => ({ ...current, status: event.target.value as LtmNote["status"] }))
-              }
-              className={compactInputClassName}
-            >
-              {statusOptions.map((option) => (
-                <option key={option} value={option}>
-                  {friendlyStatus(option)}
-                </option>
-              ))}
-            </select>
-          </SettingField>
-        </div>
-
-        <SettingField label="Keywords">
-          <textarea
-            value={keywordsText}
-            onChange={(event) => setDraft((current) => ({ ...current, keywordsText: event.target.value }))}
-            rows={2}
-            className="min-h-20 w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs text-[var(--foreground)]"
-            placeholder="captain, silver pact, midnight market"
-          />
-          <p className={helperTextClassName}>
-            Optional recall terms. Use commas or new lines; multi-word phrases are preserved.
-          </p>
-        </SettingField>
-
         <SettingField label="Title">
           <input
             value={title}
@@ -304,6 +261,29 @@ export function CreateLongTermMemoryNoteForm({
             placeholder="Poppy chapel promise"
             className={compactInputClassName}
           />
+        </SettingField>
+
+        <SettingField label="Memory Text">
+          <textarea
+            value={sectionText}
+            onChange={(event) => setDraft((current) => ({ ...current, sectionText: event.target.value }))}
+            placeholder="What should Marinara remember?"
+            className={cn(textareaClassName, "min-h-36")}
+          />
+        </SettingField>
+
+        <SettingField label="Type">
+          <select
+            value={type}
+            onChange={(event) => changeType(event.target.value as LtmNoteType)}
+            className={compactInputClassName}
+          >
+            {noteTypeOptions.map((option) => (
+              <option key={option} value={option}>
+                {friendlyNoteType(option)}
+              </option>
+            ))}
+          </select>
         </SettingField>
 
         {type === "character" ? (
@@ -341,118 +321,146 @@ export function CreateLongTermMemoryNoteForm({
           </fieldset>
         ) : null}
 
-        <SettingField label="Internal ID">
-          <div className="space-y-1">
-            <input
-              value={id}
-              onChange={(event) => setDraft((current) => ({ ...current, id: event.target.value }))}
-              placeholder="poppy_chapel_promise"
-              className={compactInputClassName}
-            />
-            <p className="text-[0.6875rem] text-[var(--muted-foreground)]">{friendlyInternalIdHelp(prefixes)}</p>
-          </div>
-        </SettingField>
-
-        <fieldset className={sectionCardClassName}>
-          <legend className="px-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
-            Use In
-          </legend>
-          <div className="grid gap-1 sm:grid-cols-2">
-            {modeOptions.map((mode) => (
-              <label
-                key={mode}
-                className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs transition-colors hover:bg-[var(--accent)]/60"
-              >
-                <input
-                  type="checkbox"
-                  checked={modes.includes(mode)}
-                  onChange={(event) =>
-                    setDraft((current) => ({
-                      ...current,
-                      modes: event.target.checked
-                        ? [...current.modes, mode]
-                        : current.modes.filter((item) => item !== mode),
-                    }))
-                  }
-                  className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-                />
-                {friendlyMode(mode)}
-              </label>
-            ))}
-          </div>
-        </fieldset>
-
-        <SettingField label="Tags">
-          <input
-            value={tagsText}
-            onChange={(event) => setDraft((current) => ({ ...current, tagsText: event.target.value }))}
-            className={compactInputClassName}
-          />
-        </SettingField>
-
         <div className={sectionCardClassName}>
           <div className="flex items-center justify-between gap-2">
-            <div>
+            <div className="min-w-0">
               <div className="text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
-                Where this applies
+                Scope
               </div>
-              <p className={cn("mt-1", helperTextClassName)}>
-                Limit this memory to specific chats, groups, or linked characters when needed.
+              <p className={cn("mt-1 truncate", helperTextClassName)}>
+                {scopeDraft.chatIds.length > 0 || scopeDraft.groupId || scopeDraft.characterIds.length > 0
+                  ? `${scopeDraft.chatIds.length} chat link${scopeDraft.chatIds.length === 1 ? "" : "s"}, ${scopeDraft.characterIds.length} character link${scopeDraft.characterIds.length === 1 ? "" : "s"}${scopeDraft.groupId ? ", grouped chat" : ""}`
+                  : "Available everywhere"}
               </p>
             </div>
-            <ToolButton onClick={useCurrentChatScope} disabled={!activeChat}>
-              Use this chat
+            <ToolButton onClick={() => setScopeOpen((current) => !current)}>
+              {scopeOpen ? "Done" : "Change scope"}
             </ToolButton>
           </div>
-          <LtmScopePicker
-            value={{
-              chatIds: scopeDraft.chatIds,
-              characterIds: scopeDraft.characterIds,
-              groupId: scopeDraft.groupId || undefined,
-            }}
-            onChange={(next) =>
-              setDraft((current) => ({
-                ...current,
-                scopeDraft: {
-                  ...current.scopeDraft,
-                  chatIds: next.chatIds,
-                  characterIds: next.characterIds,
-                  groupId: next.groupId ?? "",
-                },
-              }))
-            }
-          />
-          {scopeDraft.groupId ? (
-            <div className="text-[0.6875rem] text-[var(--muted-foreground)]">
-              Grouped chat: {groupScopeLabel(scopeDraft.groupId, displayContext) ?? "Grouped chat"}
+          {scopeOpen && (
+            <div className="mt-3 border-t border-[var(--border)] pt-3">
+              <div className="mb-2 flex justify-end">
+                <ToolButton onClick={useCurrentChatScope} disabled={!activeChat}>
+                  Use this chat
+                </ToolButton>
+              </div>
+              <LtmScopePicker
+                value={{
+                  chatIds: scopeDraft.chatIds,
+                  characterIds: scopeDraft.characterIds,
+                  groupId: scopeDraft.groupId || undefined,
+                }}
+                onChange={(next) =>
+                  setDraft((current) => ({
+                    ...current,
+                    scopeDraft: {
+                      ...current.scopeDraft,
+                      chatIds: next.chatIds,
+                      characterIds: next.characterIds,
+                      groupId: next.groupId ?? "",
+                    },
+                  }))
+                }
+              />
+              {scopeDraft.groupId ? (
+                <div className="text-[0.6875rem] text-[var(--muted-foreground)]">
+                  Grouped chat: {groupScopeLabel(scopeDraft.groupId, displayContext) ?? "Grouped chat"}
+                </div>
+              ) : null}
             </div>
-          ) : null}
+          )}
         </div>
 
-        <div className={sectionCardClassName}>
-          <SettingField label="Detail label">
-            <input
-              value={sectionKey}
-              onChange={(event) => setDraft((current) => ({ ...current, sectionKey: event.target.value }))}
-              placeholder={friendlySectionKey(sectionKey)}
-              className={compactInputClassName}
-            />
-          </SettingField>
-          <p className={helperTextClassName}>Start with the clearest single section for this memory.</p>
-          <label className="block">
-            <span className="mb-1 inline-flex items-center gap-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-              Memory Text
-            </span>
-            <textarea
-              value={sectionText}
-              onChange={(event) => setDraft((current) => ({ ...current, sectionText: event.target.value }))}
-              placeholder="No memory text yet."
-              className={cn(textareaClassName, "min-h-28")}
-            />
-          </label>
-        </div>
+        <details className={cn(sectionCardClassName, "group")}>
+          <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 text-xs font-semibold text-[var(--foreground)]">
+            <ChevronRight size="0.875rem" className="text-[var(--primary)] transition-transform group-open:rotate-90" />
+            Advanced options
+          </summary>
+          <div className="mt-3 grid gap-4 border-t border-[var(--border)] pt-3">
+            <SettingField label="Status">
+              <select
+                value={status}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, status: event.target.value as LtmNote["status"] }))
+                }
+                className={compactInputClassName}
+              >
+                {statusOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {friendlyStatus(option)}
+                  </option>
+                ))}
+              </select>
+            </SettingField>
+            <fieldset>
+              <legend className="mb-1.5 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+                Use In
+              </legend>
+              <div className="grid gap-1 sm:grid-cols-3">
+                {modeOptions.map((mode) => (
+                  <label
+                    key={mode}
+                    className="flex min-h-10 items-center gap-2 rounded-lg px-2.5 text-xs hover:bg-[var(--accent)]/60"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={modes.includes(mode)}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          modes: event.target.checked
+                            ? [...current.modes, mode]
+                            : current.modes.filter((item) => item !== mode),
+                        }))
+                      }
+                      className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+                    />
+                    {friendlyMode(mode)}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <SettingField label="Keywords">
+              <textarea
+                value={keywordsText}
+                onChange={(event) => setDraft((current) => ({ ...current, keywordsText: event.target.value }))}
+                rows={2}
+                className={cn(textareaClassName, "min-h-20")}
+                placeholder="captain, silver pact, midnight market"
+              />
+            </SettingField>
+            <SettingField label="Tags">
+              <input
+                value={tagsText}
+                onChange={(event) => setDraft((current) => ({ ...current, tagsText: event.target.value }))}
+                className={compactInputClassName}
+              />
+            </SettingField>
+            <SettingField label="Section key">
+              <input
+                value={sectionKey}
+                onChange={(event) => setDraft((current) => ({ ...current, sectionKey: event.target.value }))}
+                placeholder={friendlySectionKey(sectionKey)}
+                className={compactInputClassName}
+              />
+            </SettingField>
+            <SettingField label="Internal ID">
+              <input
+                value={id}
+                onChange={(event) => {
+                  setAutoId(false);
+                  setDraft((current) => ({ ...current, id: event.target.value }));
+                }}
+                className={compactInputClassName}
+              />
+              <p className={helperTextClassName}>
+                {autoId ? "Generated from the type and title." : friendlyInternalIdHelp(prefixes)}
+              </p>
+            </SettingField>
+          </div>
+        </details>
 
-        <div className={actionRowClassName}>
+        <div className="sticky bottom-0 z-10 -mx-5 flex flex-wrap items-center gap-2 border-t border-[var(--border)] bg-[var(--background)]/95 px-5 py-3 backdrop-blur-sm">
           <ToolButton onClick={submit} disabled={createNote.isPending || modes.length === 0} tone="primary">
             {createNote.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Plus size="0.875rem" />}
             Save Memory

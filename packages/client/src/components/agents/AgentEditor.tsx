@@ -4261,6 +4261,7 @@ export function AgentEditor() {
             onClose={() => setVaultOpen(null)}
             title="Long-Term Memory"
             width="max-w-5xl"
+            contentClassName="!p-0"
           >
             {memoriesModalOpen && dbConfig && (
               <LtmVaultManagerSection

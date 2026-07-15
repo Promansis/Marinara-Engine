@@ -327,13 +327,6 @@ function MemoryOverviewPanel({
         </div>
       </div>
 
-      <div className="rounded-lg bg-[var(--secondary)]/25 p-3 ring-1 ring-[var(--border)]">
-        <div className="text-xs font-semibold text-[var(--foreground)]">What this memory is about</div>
-        <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-[var(--foreground)]">
-          {noteTextPreview(note, 600) || "No memory text has been written yet."}
-        </p>
-      </div>
-
       <section className="space-y-2">
         <h3 className="px-1 text-xs font-semibold text-[var(--foreground)]">Where it comes from</h3>
         {sourceIds.length > 0 ? (
@@ -381,28 +374,32 @@ function MemoryOverviewPanel({
   );
 }
 
-function MemoryContentsPanel({ note, displayContext }: { note: LtmNote; displayContext: LtmDisplayLookupContext }) {
+function MemoryContentsPanel({
+  note,
+  displayContext,
+  variant = "content",
+}: {
+  note: LtmNote;
+  displayContext: LtmDisplayLookupContext;
+  variant?: "content" | "metadata";
+}) {
   return (
     <div className="space-y-2">
       {Object.entries(note.sections).map(([key, section]) => (
-        <details
-          key={key}
-          open={Object.keys(note.sections).length <= 3}
-          className="rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]"
-        >
-          <summary className="cursor-pointer list-none">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs font-semibold text-[var(--foreground)]">{friendlySectionKey(key)}</span>
-              {typeof section.salience === "number" && (
-                <StatusPill label={`Importance: ${humanScoreLabel(section.salience)}`} />
-              )}
-              {typeof section.confidence === "number" && (
-                <StatusPill label={`Confidence: ${humanScoreLabel(section.confidence)}`} />
-              )}
-            </div>
-          </summary>
-          <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-[var(--foreground)]">{section.text}</p>
-          {(section.evidence ?? []).length > 0 && (
+        <section key={key} className="rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs font-semibold text-[var(--foreground)]">{friendlySectionKey(key)}</span>
+            {variant === "metadata" && typeof section.salience === "number" && (
+              <StatusPill label={`Importance: ${humanScoreLabel(section.salience)}`} />
+            )}
+            {variant === "metadata" && typeof section.confidence === "number" && (
+              <StatusPill label={`Confidence: ${humanScoreLabel(section.confidence)}`} />
+            )}
+          </div>
+          {variant === "content" && (
+            <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-[var(--foreground)]">{section.text}</p>
+          )}
+          {variant === "metadata" && (section.evidence ?? []).length > 0 && (
             <div className="mt-2 rounded-md bg-[var(--background)]/55 p-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
               <div className="mb-1 font-medium text-[var(--foreground)]">Evidence</div>
               <div className="flex flex-wrap gap-1.5">
@@ -419,7 +416,10 @@ function MemoryContentsPanel({ note, displayContext }: { note: LtmNote; displayC
               </div>
             </div>
           )}
-        </details>
+          {variant === "metadata" && (section.evidence ?? []).length === 0 && (
+            <p className="mt-2 text-[0.6875rem] text-[var(--muted-foreground)]">No section evidence.</p>
+          )}
+        </section>
       ))}
     </div>
   );
@@ -628,8 +628,8 @@ function _MemorySuggestionsPanel({
   );
 }
 
-export function defaultMemoryModalTab(note: LtmNote): MemoryModalTab {
-  return isSourceSummaryNote(note) ? "suggestions" : "overview";
+export function defaultMemoryModalTab(_note: LtmNote): MemoryModalTab {
+  return "overview";
 }
 
 export function MemoryNoteModal({
@@ -692,15 +692,13 @@ export function MemoryNoteModal({
   const isSourceNote = note ? isSourceSummaryNote(note) : false;
   const tabs = useMemo(() => {
     if (!note) return [] as Array<{ id: MemoryModalTab; label: string }>;
-    const hasLinks = note.links.length > 0 || sourceLinkIds(note).length > 0 || isSourceNote;
-    return [
-      { id: "overview" as const, label: "Overview" },
-      { id: "content" as const, label: "Content" },
-      ...(hasLinks || mode === "edit" ? [{ id: "links" as const, label: "Links" }] : []),
-      ...(!isSourceNote ? [{ id: "recall" as const, label: "Recall" }] : []),
-      ...(isSourceNote ? [{ id: "suggestions" as const, label: "Suggestions" }] : []),
-    ];
-  }, [isSourceNote, mode, note]);
+    return isSourceNote
+      ? [
+          { id: "overview" as const, label: "Overview" },
+          { id: "suggestions" as const, label: "Suggestions" },
+        ]
+      : [{ id: "overview" as const, label: "Overview" }];
+  }, [isSourceNote, note]);
   const safeActiveTab = tabs.some((tab) => tab.id === activeTab) ? activeTab : (tabs[0]?.id ?? "overview");
 
   return (
@@ -712,20 +710,8 @@ export function MemoryNoteModal({
     >
       {note && (
         <div className="grid gap-4">
-          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--border)]/70 pb-3">
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap gap-1.5">
-                <StatusPill label={isSourceNote ? sourceTypeLabel(note) : friendlyNoteType(note.type)} />
-                <StatusPill label={friendlyStatus(note.status)} tone={note.status === "active" ? "good" : "neutral"} />
-                {note.modes.map((item) => (
-                  <StatusPill key={item} label={friendlyMode(item)} />
-                ))}
-                {note.links.length > 0 && (
-                  <StatusPill label={`${note.links.length} linked memor${note.links.length === 1 ? "y" : "ies"}`} />
-                )}
-                {editorDirty && <StatusPill label="Unsaved changes" tone="warn" />}
-              </div>
-            </div>
+          <div className="flex flex-wrap items-start justify-end gap-3 border-b border-[var(--border)]/70 pb-3">
+            {editorDirty && <StatusPill label="Unsaved changes" tone="warn" />}
             <div className="flex shrink-0 flex-wrap justify-end gap-2">
               {mode === "view" ? (
                 <ToolButton onClick={() => onModeChange("edit")}>
@@ -740,13 +726,16 @@ export function MemoryNoteModal({
 
           {mode === "view" && (
             <>
-              <LtmTabRail
-                tabs={tabs}
-                activeId={safeActiveTab}
-                onChange={onTabChange}
-                ariaLabel="Memory detail views"
-                idPrefix="ltm-note"
-              />
+              {isSourceNote && (
+                <LtmTabRail
+                  tabs={tabs}
+                  activeId={safeActiveTab}
+                  onChange={onTabChange}
+                  ariaLabel="Memory detail views"
+                  idPrefix="ltm-note"
+                  equalWidth
+                />
+              )}
 
               <div
                 id={`ltm-note-panel-${safeActiveTab}`}
@@ -756,35 +745,51 @@ export function MemoryNoteModal({
                 className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
               >
                 {safeActiveTab === "overview" && (
-                  <MemoryOverviewPanel
-                    note={note}
-                    activeNotes={activeNotes}
-                    noteLookup={noteLookup}
-                    chatLookup={chatLookup}
-                    displayContext={displayContext}
-                    activeNotesLoading={activeNotesLoading}
-                    pendingSuggestionCount={pendingDrafts.length}
-                    onOpenNote={onOpenNote}
-                  />
-                )}
-                {safeActiveTab === "content" && <MemoryContentsPanel note={note} displayContext={displayContext} />}
-                {safeActiveTab === "links" && (
-                  <GraphLinks
-                    links={note.links}
-                    noteLookup={noteLookup}
-                    chatLookup={chatLookup}
-                    onOpenNote={onOpenNote}
-                  />
-                )}
-                {safeActiveTab === "recall" && !isSourceNote && (
-                  <MemoryRecallPanel
-                    result={recallResult}
-                    pending={recallPending}
-                    query={recallQuery}
-                    context={recallContext}
-                    onQueryChange={onRecallQueryChange}
-                    onRun={onRunRecall}
-                  />
+                  <div className="space-y-3">
+                    <MemoryOverviewPanel
+                      note={note}
+                      activeNotes={activeNotes}
+                      noteLookup={noteLookup}
+                      chatLookup={chatLookup}
+                      displayContext={displayContext}
+                      activeNotesLoading={activeNotesLoading}
+                      pendingSuggestionCount={pendingDrafts.length}
+                      onOpenNote={onOpenNote}
+                    />
+                    <section className="space-y-2">
+                      <h3 className="px-1 text-xs font-semibold text-[var(--foreground)]">Memory text</h3>
+                      <MemoryContentsPanel note={note} displayContext={displayContext} />
+                    </section>
+                    {note.links.length > 0 && (
+                      <section className="space-y-2">
+                        <h3 className="px-1 text-xs font-semibold text-[var(--foreground)]">Relationships</h3>
+                        <GraphLinks
+                          links={note.links}
+                          noteLookup={noteLookup}
+                          chatLookup={chatLookup}
+                          onOpenNote={onOpenNote}
+                        />
+                      </section>
+                    )}
+                    <details className="rounded-lg bg-[var(--secondary)]/25 p-3 ring-1 ring-[var(--border)]">
+                      <summary className="cursor-pointer text-xs font-semibold text-[var(--foreground)]">
+                        Advanced details
+                      </summary>
+                      <div className="mt-3 space-y-3 border-t border-[var(--border)] pt-3">
+                        <MemoryContentsPanel note={note} displayContext={displayContext} variant="metadata" />
+                        {!isSourceNote && (
+                          <MemoryRecallPanel
+                            result={recallResult}
+                            pending={recallPending}
+                            query={recallQuery}
+                            context={recallContext}
+                            onQueryChange={onRecallQueryChange}
+                            onRun={onRunRecall}
+                          />
+                        )}
+                      </div>
+                    </details>
+                  </div>
                 )}
                 {safeActiveTab === "suggestions" && isSourceNote && (
                   <LongTermMemorySuggestionsTab

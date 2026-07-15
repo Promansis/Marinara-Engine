@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Check, Loader2, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
+import { Check, ChevronRight, Loader2, MoreVertical, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
 import {
   getLtmScopeChatIds,
   isLtmSourceLikeNote,
@@ -24,7 +24,6 @@ import { showConfirmDialog } from "../../lib/app-dialogs";
 import { useChatStore } from "../../stores/chat.store";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import {
-  actionRowClassName,
   compactInputClassName,
   helperTextClassName,
   insetSectionCardClassName,
@@ -409,460 +408,518 @@ export function LongTermMemoryNoteEditor({
           aria-labelledby="ltm-editor-tab-suggestions"
           tabIndex={0}
         >
-        <LongTermMemorySuggestionsTab
-          note={savedBaseline}
-          extractionPrefs={extractionPrefs}
-          latestExtractionResult={latestExtractionResult}
-          onLatestExtractionResultChange={setLatestExtractionResult}
-          onRecoverDroppedCandidate={onRecoverDroppedCandidate}
-        />
+          <LongTermMemorySuggestionsTab
+            note={savedBaseline}
+            extractionPrefs={extractionPrefs}
+            latestExtractionResult={latestExtractionResult}
+            onLatestExtractionResultChange={setLatestExtractionResult}
+            onRecoverDroppedCandidate={onRecoverDroppedCandidate}
+          />
         </div>
       ) : null}
 
       {(embedded || activeTab === "details") && (
-      <div
-        id={embedded ? undefined : "ltm-editor-panel-details"}
-        role={embedded ? undefined : "tabpanel"}
-        aria-labelledby={embedded ? undefined : "ltm-editor-tab-details"}
-        tabIndex={embedded ? undefined : 0}
-        className="grid gap-4"
-      >
-        <SettingField label="Title">
-          <input
-            value={titleText}
-            onChange={(event) => {
-              const nextTitle = event.target.value;
-              setTitleText(nextTitle);
-              setDraft((current) => ({ ...current, title: nextTitle.trim() ? nextTitle : undefined }));
-            }}
-            placeholder={friendlyIdentifier(draft.id)}
-            className={compactInputClassName}
-          />
-        </SettingField>
-
-        <div className="grid gap-2 sm:grid-cols-2">
-          <SettingField label="Type">
-            {sourceMemory ? (
-              <div className="grid gap-1">
-                <div className={cn(compactInputClassName, "flex items-center")}>
-                  {draft.type === "source" ? "Source" : friendlyNoteType(draft.type)}
-                </div>
-                <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
-                  Source notes keep their type so extraction history stays linked.
-                </p>
-              </div>
-            ) : (
-              <select
-                value={draft.type}
-                onChange={(event) =>
-                  setDraft((current) => ({ ...current, type: event.target.value as LtmNoteType }))
-                }
+        <div
+          id={embedded ? undefined : "ltm-editor-panel-details"}
+          role={embedded ? undefined : "tabpanel"}
+          aria-labelledby={embedded ? undefined : "ltm-editor-tab-details"}
+          tabIndex={embedded ? undefined : 0}
+          className="grid gap-4"
+        >
+          <div className="order-1">
+            <SettingField label="Title">
+              <input
+                value={titleText}
+                onChange={(event) => {
+                  const nextTitle = event.target.value;
+                  setTitleText(nextTitle);
+                  setDraft((current) => ({ ...current, title: nextTitle.trim() ? nextTitle : undefined }));
+                }}
+                placeholder={friendlyIdentifier(draft.id)}
                 className={compactInputClassName}
-              >
-                {typedNoteTypeOptions.map((type) => (
-                  <option key={type} value={type}>
-                    {friendlyNoteType(type)}
-                  </option>
-                ))}
-              </select>
-            )}
-          </SettingField>
-          <SettingField label="Status">
-            <select
-              value={draft.status}
-              onChange={(event) =>
-                setDraft((current) => ({ ...current, status: event.target.value as LtmNote["status"] }))
-              }
-              className={compactInputClassName}
-            >
-              {statusOptions.map((status) => (
-                <option key={status} value={status}>
-                  {friendlyStatus(status)}
-                </option>
-              ))}
-            </select>
-          </SettingField>
-          <SettingField label="Tags">
-            <input
-              value={tagsText}
-              onChange={(event) => setTagsText(event.target.value)}
-              onBlur={() => setDraft((current) => ({ ...current, tags: normalizeTagsInput(tagsText) }))}
-              className={compactInputClassName}
-            />
-          </SettingField>
-          <SettingField label="Keywords">
-            <input
-              value={keywordsText}
-              onChange={(event) => setKeywordsText(event.target.value)}
-              onBlur={() => setDraft((current) => ({ ...current, keywords: normalizeKeywordsInput(keywordsText) }))}
-              className={compactInputClassName}
-            />
-          </SettingField>
-        </div>
-
-        <fieldset className={sectionCardClassName}>
-          <legend className="px-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
-            Use In
-          </legend>
-          <div className="grid gap-1 sm:grid-cols-2">
-            {modeOptions.map((mode) => (
-              <label
-                key={mode}
-                className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs transition-colors hover:bg-[var(--accent)]/60"
-              >
-                <input
-                  type="checkbox"
-                  checked={draft.modes.includes(mode)}
-                  onChange={(event) =>
-                    setDraft((current) => ({
-                      ...current,
-                      modes: event.target.checked
-                        ? [...current.modes, mode]
-                        : current.modes.filter((item: LtmMode) => item !== mode),
-                    }))
-                  }
-                  className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-                />
-                {friendlyMode(mode)}
-              </label>
-            ))}
+              />
+            </SettingField>
           </div>
-        </fieldset>
 
-        <div className={sectionCardClassName}>
-          <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              <div className="flex items-center gap-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
-                Where this applies
-                <HelpTooltip
-                  text="Scope controls which chats this memory applies to. The AI only retrieves memories matching your active context."
-                  size="0.6875rem"
-                />
-              </div>
-              <p className={cn("mt-1", helperTextClassName)}>
-                Scope this memory to the right chats, characters, or group so recall stays predictable.
-              </p>
-            </div>
-            <ToolButton onClick={useCurrentChatScope} disabled={!activeChat}>
-              Use this chat
-            </ToolButton>
-          </div>
-          <LtmScopePicker
-            value={{
-              chatIds: getLtmScopeChatIds(draft.scope),
-              characterIds: draft.scope.characterIds ?? [],
-              groupId: draft.scope.groupId,
-            }}
-            onChange={setLinkedScope}
-          />
-          {draft.scope.groupId && (
-            <div className="text-[0.6875rem] text-[var(--muted-foreground)]">
-              Grouped chat: {groupScopeLabel(draft.scope.groupId, displayContext) ?? "Grouped chat"}
-            </div>
-          )}
-          {sourceMemory && (
-            <div className={cn(insetSectionCardClassName, "flex flex-wrap items-center justify-between gap-2")}>
-              <span className={helperTextClassName}>Push these chat and character links to extracted memories.</span>
-              <ToolButton onClick={applyToDerived} disabled={busy}>
-                {applyScopeToDerived.isPending ? (
-                  <Loader2 size="0.875rem" className="animate-spin" />
-                ) : (
-                  <RefreshCw size="0.875rem" />
-                )}
-                Apply To Extracted Memories
-              </ToolButton>
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
-                Memory Details
-              </h4>
-              <p className={cn("mt-1", helperTextClassName)}>Edit each section, relevance score, and supporting evidence.</p>
-            </div>
-            <ToolButton onClick={addSection}>
-              <Plus size="0.875rem" />
-              Add
-            </ToolButton>
-          </div>
-          {Object.entries(draft.sections).map(([key, section]) => (
-            <section key={key} className={sectionCardClassName}>
-              {section.importance && (
-                <div className="mb-2 flex justify-end">
-                  <ImportanceBadge importance={section.importance} />
-                </div>
-              )}
-              <div className="mb-2 grid grid-cols-[1fr_auto] gap-2">
-                <input
-                  defaultValue={key}
-                  onBlur={(event) => renameSection(key, event.target.value)}
-                  className={compactInputClassName}
-                  aria-label={`Rename ${friendlySectionKey(key)}`}
-                />
-                <button
-                  type="button"
-                  onClick={() => removeSection(key)}
-                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[var(--destructive)]/30 text-[var(--destructive)] transition-[background-color,transform] hover:bg-[var(--destructive)]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-90"
-                  aria-label={`Remove ${friendlySectionKey(key)}`}
-                >
-                  <Trash2 size="0.875rem" />
-                </button>
-              </div>
-              <label className="block">
-                <span className="mb-1 inline-flex items-center gap-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-                  Memory Text
-                </span>
-                <textarea
-                  value={section.text}
-                  onChange={(event) =>
-                    setSection(key, (current) => ({
-                      ...current,
-                      text: event.target.value,
-                    }))
-                  }
-                  placeholder="No memory text yet."
-                  className={cn(textareaClassName, "min-h-28")}
-                />
-              </label>
-              <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                <label className="block">
-                  <span className="mb-1 inline-flex items-center gap-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-                    Relevance
-                    <HelpTooltip
-                      text="Higher values make this memory more likely to appear in the AI's context for the current chat."
-                      size="0.625rem"
-                    />
-                  </span>
-                  <input
-                    type="number"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={section.salience ?? ""}
-                    onChange={(event) =>
-                      setSection(key, (current) => ({ ...current, salience: numberOrUndefined(event.target.value) }))
-                    }
-                    placeholder="0-1"
-                    className={compactInputClassName}
-                  />
-                </label>
-                <label className="block">
-                  <span className="mb-1 inline-flex items-center gap-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-                    AI Certainty
-                    <HelpTooltip
-                      text="How confident the AI was when creating this memory. Lower values mean the AI treats this as less reliable. Edit to override."
-                      size="0.625rem"
-                    />
-                  </span>
-                  <input
-                    type="number"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={section.confidence ?? ""}
-                    onChange={(event) =>
-                      setSection(key, (current) => ({ ...current, confidence: numberOrUndefined(event.target.value) }))
-                    }
-                    placeholder="0-1"
-                    className={compactInputClassName}
-                  />
-                </label>
-                <label className="block">
-                  <span className="mb-1 inline-flex items-center gap-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-                    Importance
-                  </span>
+          <details className={cn(sectionCardClassName, "group order-3")}>
+            <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 text-xs font-semibold text-[var(--foreground)]">
+              <ChevronRight
+                size="0.875rem"
+                className="text-[var(--primary)] transition-transform group-open:rotate-90"
+              />
+              Advanced options
+            </summary>
+            <div className="mt-3 grid gap-4 border-t border-[var(--border)] pt-3">
+              <div className="grid gap-2 sm:grid-cols-2">
+                <SettingField label="Type">
+                  {sourceMemory ? (
+                    <div className="grid gap-1">
+                      <div className={cn(compactInputClassName, "flex items-center")}>
+                        {draft.type === "source" ? "Source" : friendlyNoteType(draft.type)}
+                      </div>
+                      <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
+                        Source notes keep their type so extraction history stays linked.
+                      </p>
+                    </div>
+                  ) : (
+                    <select
+                      value={draft.type}
+                      onChange={(event) =>
+                        setDraft((current) => ({ ...current, type: event.target.value as LtmNoteType }))
+                      }
+                      className={compactInputClassName}
+                    >
+                      {typedNoteTypeOptions.map((type) => (
+                        <option key={type} value={type}>
+                          {friendlyNoteType(type)}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </SettingField>
+                <SettingField label="Status">
                   <select
-                    value={section.importance ?? ""}
+                    value={draft.status}
                     onChange={(event) =>
-                      setSection(key, (current) => ({
-                        ...current,
-                        importance: event.target.value ? (event.target.value as LtmImportance) : undefined,
-                      }))
+                      setDraft((current) => ({ ...current, status: event.target.value as LtmNote["status"] }))
                     }
                     className={compactInputClassName}
                   >
-                    <option value="">Unspecified</option>
-                    {importanceOptions.map((importance) => (
-                      <option key={importance} value={importance}>
-                        {friendlyIdentifier(importance)}
+                    {statusOptions.map((status) => (
+                      <option key={status} value={status}>
+                        {friendlyStatus(status)}
                       </option>
                     ))}
                   </select>
-                </label>
-              </div>
-              {draft.type === "relationship" && (
-                <div className="mt-3">
-                  <RelationshipDimensionsEditor
-                    dimensions={section.dimensions}
-                    dimensionChanges={section.dimensionChanges}
-                    onDimensionsChange={(dimensions) => setSection(key, (current) => ({ ...current, dimensions }))}
-                    onDimensionChangesChange={(dimensionChanges) =>
-                      setSection(key, (current) => ({ ...current, dimensionChanges }))
+                </SettingField>
+                <SettingField label="Tags">
+                  <input
+                    value={tagsText}
+                    onChange={(event) => setTagsText(event.target.value)}
+                    onBlur={() => setDraft((current) => ({ ...current, tags: normalizeTagsInput(tagsText) }))}
+                    className={compactInputClassName}
+                  />
+                </SettingField>
+                <SettingField label="Keywords">
+                  <input
+                    value={keywordsText}
+                    onChange={(event) => setKeywordsText(event.target.value)}
+                    onBlur={() =>
+                      setDraft((current) => ({ ...current, keywords: normalizeKeywordsInput(keywordsText) }))
                     }
+                    className={compactInputClassName}
                   />
-                </div>
-              )}
-              <label className="mt-3 block">
-                <span className="mb-1 inline-flex items-center gap-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-                  Supporting Evidence
-                  <HelpTooltip
-                    text="Reasons the AI created this memory. Each line is a source reference or justification."
-                    size="0.625rem"
-                  />
-                </span>
-                <div className="grid gap-2 rounded-xl bg-[var(--background)]/45 p-2 ring-1 ring-[var(--border)]/70">
-                  {(section.evidence?.length ?? 0) > 0 ? (
-                    <div className="flex flex-wrap gap-1.5">
-                      {dedupeEvidenceEntries(section.evidence ?? [], displayContext).map((entry) => {
-                        const resolved = resolveEvidenceDisplay(entry, displayContext);
-                        return (
-                          <span
-                            key={`${key}-${entry}`}
-                            title={resolved.tooltip}
-                            className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-[var(--secondary)]/60 px-2 py-1 text-[0.6875rem] text-[var(--foreground)] ring-1 ring-[var(--border)]"
-                          >
-                            <span className="truncate">{resolved.label}</span>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setSection(key, (current) => ({
-                                  ...current,
-                                  evidence: (current.evidence ?? []).filter((candidate) => candidate !== entry),
-                                }))
-                              }
-                              className="rounded p-0.5 hover:bg-[var(--accent)]"
-                              aria-label={`Remove ${resolved.label}`}
-                            >
-                              <X size="0.7rem" />
-                            </button>
-                          </span>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p className="text-[0.6875rem] text-[var(--muted-foreground)]">No supporting evidence yet.</p>
-                  )}
-                  {advancedEvidenceKey === key ? (
-                    <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
-                      <input
-                        value={advancedEvidenceValue}
-                        onChange={(event) => setAdvancedEvidenceValue(event.target.value)}
-                        placeholder="Advanced token, for example source_note:..."
-                        className={compactInputClassName}
-                      />
-                      <ToolButton onClick={() => addEvidenceEntry(key)}>
-                        <Check size="0.75rem" className="inline-block align-[-0.12rem]" /> Save
-                      </ToolButton>
-                      <ToolButton
-                        onClick={() => {
-                          setAdvancedEvidenceKey(null);
-                          setAdvancedEvidenceValue("");
-                        }}
-                      >
-                        Cancel
-                      </ToolButton>
-                    </div>
-                  ) : (
-                    <ToolButton onClick={() => setAdvancedEvidenceKey(key)}>Add Advanced Evidence</ToolButton>
-                  )}
-                </div>
-              </label>
-            </section>
-          ))}
-        </div>
-
-        <div className={sectionCardClassName}>
-          <div>
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
-              Related Memories
-            </h4>
-            <p className={cn("mt-1", helperTextClassName)}>
-              Link this note to source notes, timeline events, or other memories.
-            </p>
-          </div>
-          {draft.links.map((link, index) => (
-            <div
-              key={`${link.target}-${link.relation}-${index}`}
-              className="grid grid-cols-[1fr_auto] items-center gap-2 rounded-lg bg-[var(--background)]/45 px-3 py-2 text-xs ring-1 ring-[var(--border)]/70"
-            >
-              <div className="min-w-0">
-                <div className="text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
-                  {humanRelationLabel(link.relation)}
-                </div>
-                <div className="mt-0.5 truncate text-[var(--foreground)]">
-                  {friendlyIdentifier(link.target)}
-                  {link.aspect ? `, ${friendlyIdentifier(link.aspect)}` : ""}
-                </div>
+                </SettingField>
               </div>
-              <button
-                type="button"
-                onClick={() =>
-                  setDraft((current) => ({
-                    ...current,
-                    links: current.links.filter((_, linkIndex) => linkIndex !== index),
-                  }))
-                }
-                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[var(--destructive)]/30 text-[var(--destructive)] transition-[background-color,transform] hover:bg-[var(--destructive)]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-90"
-                aria-label={`Remove relation ${friendlyIdentifier(link.relation)}`}
-              >
-                <X size="0.875rem" />
-              </button>
+
+              <fieldset className={sectionCardClassName}>
+                <legend className="px-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+                  Use In
+                </legend>
+                <div className="grid gap-1 sm:grid-cols-2">
+                  {modeOptions.map((mode) => (
+                    <label
+                      key={mode}
+                      className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs transition-colors hover:bg-[var(--accent)]/60"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={draft.modes.includes(mode)}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            modes: event.target.checked
+                              ? [...current.modes, mode]
+                              : current.modes.filter((item: LtmMode) => item !== mode),
+                          }))
+                        }
+                        className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+                      />
+                      {friendlyMode(mode)}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+
+              <div className={sectionCardClassName}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+                      Where this applies
+                      <HelpTooltip
+                        text="Scope controls which chats this memory applies to. The AI only retrieves memories matching your active context."
+                        size="0.6875rem"
+                      />
+                    </div>
+                    <p className={cn("mt-1", helperTextClassName)}>
+                      Scope this memory to the right chats, characters, or group so recall stays predictable.
+                    </p>
+                  </div>
+                  <ToolButton onClick={useCurrentChatScope} disabled={!activeChat}>
+                    Use this chat
+                  </ToolButton>
+                </div>
+                <LtmScopePicker
+                  value={{
+                    chatIds: getLtmScopeChatIds(draft.scope),
+                    characterIds: draft.scope.characterIds ?? [],
+                    groupId: draft.scope.groupId,
+                  }}
+                  onChange={setLinkedScope}
+                />
+                {draft.scope.groupId && (
+                  <div className="text-[0.6875rem] text-[var(--muted-foreground)]">
+                    Grouped chat: {groupScopeLabel(draft.scope.groupId, displayContext) ?? "Grouped chat"}
+                  </div>
+                )}
+                {sourceMemory && (
+                  <div className={cn(insetSectionCardClassName, "flex flex-wrap items-center justify-between gap-2")}>
+                    <span className={helperTextClassName}>
+                      Push these chat and character links to extracted memories.
+                    </span>
+                    <ToolButton onClick={applyToDerived} disabled={busy}>
+                      {applyScopeToDerived.isPending ? (
+                        <Loader2 size="0.875rem" className="animate-spin" />
+                      ) : (
+                        <RefreshCw size="0.875rem" />
+                      )}
+                      Apply To Extracted Memories
+                    </ToolButton>
+                  </div>
+                )}
+              </div>
             </div>
-          ))}
-          <div className="grid gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]">
-            <input
-              value={linkDraft.target}
-              onChange={(event) => setLinkDraft((current) => ({ ...current, target: event.target.value }))}
-              placeholder="related memory"
-              className={compactInputClassName}
-            />
-            <select
-              value={linkDraft.relation}
-              onChange={(event) =>
-                setLinkDraft((current) => ({ ...current, relation: event.target.value as LtmLink["relation"] }))
-              }
-              className={compactInputClassName}
-            >
-              <option value="">Relation</option>
-              {linkRelationOptions.map((relation) => (
-                <option key={relation} value={relation}>
-                  {humanRelationLabel(relation)}
-                </option>
+          </details>
+
+          <div className="order-2 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+                  Memory Text
+                </h4>
+                <p className={cn("mt-1", helperTextClassName)}>
+                  Keep the wording clear and specific enough to recall later.
+                </p>
+              </div>
+              <ToolButton onClick={addSection}>
+                <Plus size="0.875rem" />
+                Add
+              </ToolButton>
+            </div>
+            {Object.entries(draft.sections).map(([key, section]) => (
+              <section key={key} className={sectionCardClassName}>
+                {section.importance && (
+                  <div className="mb-2 flex justify-end">
+                    <ImportanceBadge importance={section.importance} />
+                  </div>
+                )}
+                <div className="mb-2 grid grid-cols-[1fr_auto] gap-2">
+                  <input
+                    defaultValue={key}
+                    onBlur={(event) => renameSection(key, event.target.value)}
+                    className={compactInputClassName}
+                    aria-label={`Rename ${friendlySectionKey(key)}`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeSection(key)}
+                    className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[var(--destructive)]/30 text-[var(--destructive)] transition-[background-color,transform] hover:bg-[var(--destructive)]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-90"
+                    aria-label={`Remove ${friendlySectionKey(key)}`}
+                  >
+                    <Trash2 size="0.875rem" />
+                  </button>
+                </div>
+                <label className="block">
+                  <span className="mb-1 inline-flex items-center gap-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+                    Memory Text
+                  </span>
+                  <textarea
+                    value={section.text}
+                    onChange={(event) =>
+                      setSection(key, (current) => ({
+                        ...current,
+                        text: event.target.value,
+                      }))
+                    }
+                    placeholder="No memory text yet."
+                    className={cn(textareaClassName, "min-h-28")}
+                  />
+                </label>
+                <details className="group mt-3 rounded-lg bg-[var(--background)]/35 p-2 ring-1 ring-[var(--border)]/70">
+                  <summary className="flex min-h-9 cursor-pointer list-none items-center gap-2 text-xs font-semibold text-[var(--foreground)]">
+                    <ChevronRight
+                      size="0.75rem"
+                      className="text-[var(--primary)] transition-transform group-open:rotate-90"
+                    />
+                    Section details
+                  </summary>
+                  <div className="mt-3 border-t border-[var(--border)] pt-3">
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      <label className="block">
+                        <span className="mb-1 inline-flex items-center gap-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+                          Relevance
+                          <HelpTooltip
+                            text="Higher values make this memory more likely to appear in the AI's context for the current chat."
+                            size="0.625rem"
+                          />
+                        </span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={section.salience ?? ""}
+                          onChange={(event) =>
+                            setSection(key, (current) => ({
+                              ...current,
+                              salience: numberOrUndefined(event.target.value),
+                            }))
+                          }
+                          placeholder="0-1"
+                          className={compactInputClassName}
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 inline-flex items-center gap-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+                          AI Certainty
+                          <HelpTooltip
+                            text="How confident the AI was when creating this memory. Lower values mean the AI treats this as less reliable. Edit to override."
+                            size="0.625rem"
+                          />
+                        </span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={section.confidence ?? ""}
+                          onChange={(event) =>
+                            setSection(key, (current) => ({
+                              ...current,
+                              confidence: numberOrUndefined(event.target.value),
+                            }))
+                          }
+                          placeholder="0-1"
+                          className={compactInputClassName}
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 inline-flex items-center gap-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+                          Importance
+                        </span>
+                        <select
+                          value={section.importance ?? ""}
+                          onChange={(event) =>
+                            setSection(key, (current) => ({
+                              ...current,
+                              importance: event.target.value ? (event.target.value as LtmImportance) : undefined,
+                            }))
+                          }
+                          className={compactInputClassName}
+                        >
+                          <option value="">Unspecified</option>
+                          {importanceOptions.map((importance) => (
+                            <option key={importance} value={importance}>
+                              {friendlyIdentifier(importance)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    {draft.type === "relationship" && (
+                      <div className="mt-3">
+                        <RelationshipDimensionsEditor
+                          dimensions={section.dimensions}
+                          dimensionChanges={section.dimensionChanges}
+                          onDimensionsChange={(dimensions) =>
+                            setSection(key, (current) => ({ ...current, dimensions }))
+                          }
+                          onDimensionChangesChange={(dimensionChanges) =>
+                            setSection(key, (current) => ({ ...current, dimensionChanges }))
+                          }
+                        />
+                      </div>
+                    )}
+                    <label className="mt-3 block">
+                      <span className="mb-1 inline-flex items-center gap-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+                        Supporting Evidence
+                        <HelpTooltip
+                          text="Reasons the AI created this memory. Each line is a source reference or justification."
+                          size="0.625rem"
+                        />
+                      </span>
+                      <div className="grid gap-2 rounded-xl bg-[var(--background)]/45 p-2 ring-1 ring-[var(--border)]/70">
+                        {(section.evidence?.length ?? 0) > 0 ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {dedupeEvidenceEntries(section.evidence ?? [], displayContext).map((entry) => {
+                              const resolved = resolveEvidenceDisplay(entry, displayContext);
+                              return (
+                                <span
+                                  key={`${key}-${entry}`}
+                                  title={resolved.tooltip}
+                                  className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-[var(--secondary)]/60 px-2 py-1 text-[0.6875rem] text-[var(--foreground)] ring-1 ring-[var(--border)]"
+                                >
+                                  <span className="truncate">{resolved.label}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setSection(key, (current) => ({
+                                        ...current,
+                                        evidence: (current.evidence ?? []).filter((candidate) => candidate !== entry),
+                                      }))
+                                    }
+                                    className="rounded p-0.5 hover:bg-[var(--accent)]"
+                                    aria-label={`Remove ${resolved.label}`}
+                                  >
+                                    <X size="0.7rem" />
+                                  </button>
+                                </span>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="text-[0.6875rem] text-[var(--muted-foreground)]">No supporting evidence yet.</p>
+                        )}
+                        {advancedEvidenceKey === key ? (
+                          <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+                            <input
+                              value={advancedEvidenceValue}
+                              onChange={(event) => setAdvancedEvidenceValue(event.target.value)}
+                              placeholder="Advanced token, for example source_note:..."
+                              className={compactInputClassName}
+                            />
+                            <ToolButton onClick={() => addEvidenceEntry(key)}>
+                              <Check size="0.75rem" className="inline-block align-[-0.12rem]" /> Save
+                            </ToolButton>
+                            <ToolButton
+                              onClick={() => {
+                                setAdvancedEvidenceKey(null);
+                                setAdvancedEvidenceValue("");
+                              }}
+                            >
+                              Cancel
+                            </ToolButton>
+                          </div>
+                        ) : (
+                          <ToolButton onClick={() => setAdvancedEvidenceKey(key)}>Add Advanced Evidence</ToolButton>
+                        )}
+                      </div>
+                    </label>
+                  </div>
+                </details>
+              </section>
+            ))}
+          </div>
+
+          <details className={cn(sectionCardClassName, "group order-4")}>
+            <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 text-xs font-semibold text-[var(--foreground)]">
+              <ChevronRight
+                size="0.875rem"
+                className="text-[var(--primary)] transition-transform group-open:rotate-90"
+              />
+              Relationships and linked context
+            </summary>
+            <div className="mt-3 grid gap-3 border-t border-[var(--border)] pt-3">
+              <p className={helperTextClassName}>Link this memory to sources, timeline events, or related memories.</p>
+              {draft.links.map((link, index) => (
+                <div
+                  key={`${link.target}-${link.relation}-${index}`}
+                  className="grid grid-cols-[1fr_auto] items-center gap-2 rounded-lg bg-[var(--background)]/45 px-3 py-2 text-xs ring-1 ring-[var(--border)]/70"
+                >
+                  <div className="min-w-0">
+                    <div className="text-[0.6875rem] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+                      {humanRelationLabel(link.relation)}
+                    </div>
+                    <div className="mt-0.5 truncate text-[var(--foreground)]">
+                      {friendlyIdentifier(link.target)}
+                      {link.aspect ? `, ${friendlyIdentifier(link.aspect)}` : ""}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setDraft((current) => ({
+                        ...current,
+                        links: current.links.filter((_, linkIndex) => linkIndex !== index),
+                      }))
+                    }
+                    className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[var(--destructive)]/30 text-[var(--destructive)] transition-[background-color,transform] hover:bg-[var(--destructive)]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-90"
+                    aria-label={`Remove relation ${friendlyIdentifier(link.relation)}`}
+                  >
+                    <X size="0.875rem" />
+                  </button>
+                </div>
               ))}
-            </select>
-            <input
-              value={linkDraft.aspect}
-              onChange={(event) => setLinkDraft((current) => ({ ...current, aspect: event.target.value }))}
-              placeholder="aspect"
-              className={compactInputClassName}
-            />
-            <ToolButton onClick={addLink}>
-              <Plus size="0.875rem" />
-              Add relation
+              <div className="grid gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]">
+                <input
+                  value={linkDraft.target}
+                  onChange={(event) => setLinkDraft((current) => ({ ...current, target: event.target.value }))}
+                  placeholder="related memory"
+                  className={compactInputClassName}
+                />
+                <select
+                  value={linkDraft.relation}
+                  onChange={(event) =>
+                    setLinkDraft((current) => ({ ...current, relation: event.target.value as LtmLink["relation"] }))
+                  }
+                  className={compactInputClassName}
+                >
+                  <option value="">Relation</option>
+                  {linkRelationOptions.map((relation) => (
+                    <option key={relation} value={relation}>
+                      {humanRelationLabel(relation)}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  value={linkDraft.aspect}
+                  onChange={(event) => setLinkDraft((current) => ({ ...current, aspect: event.target.value }))}
+                  placeholder="aspect"
+                  className={compactInputClassName}
+                />
+                <ToolButton onClick={addLink}>
+                  <Plus size="0.875rem" />
+                  Add relation
+                </ToolButton>
+              </div>
+              <LinkedContextPanel note={draft} notes={displayContext?.notes} />
+            </div>
+          </details>
+
+          <div className="sticky bottom-0 z-10 order-5 -mx-5 flex flex-wrap items-center gap-2 border-t border-[var(--border)] bg-[var(--background)]/95 px-5 py-3 backdrop-blur-sm">
+            <ToolButton onClick={() => save()} disabled={!dirty || busy} tone="primary">
+              {updateNote.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Save size="0.875rem" />}
+              Save
+            </ToolButton>
+            <details className="relative">
+              <summary
+                className="inline-flex h-10 w-10 cursor-pointer list-none items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--secondary)] text-[var(--secondary-foreground)] hover:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                aria-label="More save options"
+              >
+                <MoreVertical size="0.875rem" />
+              </summary>
+              <div className="absolute bottom-[calc(100%+0.375rem)] left-0 z-20 w-52 rounded-lg bg-[var(--popover)] p-1 shadow-xl ring-1 ring-[var(--border)]">
+                <button
+                  type="button"
+                  onClick={() => void save({ rebuildAfter: true })}
+                  disabled={!dirty || busy}
+                  className="flex min-h-10 w-full items-center gap-2 rounded-md px-3 text-left text-xs font-medium text-[var(--popover-foreground)] hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  {rebuild.isPending ? (
+                    <Loader2 size="0.875rem" className="animate-spin" />
+                  ) : (
+                    <RefreshCw size="0.875rem" />
+                  )}
+                  Save and refresh search
+                </button>
+              </div>
+            </details>
+            <ToolButton onClick={() => void cancel()} disabled={busy}>
+              <X size="0.875rem" />
+              Cancel
             </ToolButton>
           </div>
         </div>
-
-        <LinkedContextPanel note={draft} notes={displayContext?.notes} />
-
-        <div className={actionRowClassName}>
-          <ToolButton onClick={() => save()} disabled={!dirty || busy} tone="primary">
-            {updateNote.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Save size="0.875rem" />}
-            Save
-          </ToolButton>
-          <ToolButton onClick={() => save({ rebuildAfter: true })} disabled={!dirty || busy}>
-            {rebuild.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <RefreshCw size="0.875rem" />}
-            Save and refresh search
-          </ToolButton>
-          <ToolButton onClick={() => void cancel()} disabled={busy}>
-            <X size="0.875rem" />
-            Cancel
-          </ToolButton>
-        </div>
-      </div>
       )}
     </div>
   );

@@ -28,6 +28,8 @@ interface ModalProps {
   panelClassName?: string;
   /** Optional feature-local style variables applied to the full panel. */
   panelStyle?: CSSProperties;
+  /** Optional feature-local classes applied to the scrollable content area. */
+  contentClassName?: string;
 }
 
 export function Modal({
@@ -41,6 +43,7 @@ export function Modal({
   mobileFullscreen = false,
   panelClassName,
   panelStyle,
+  contentClassName,
 }: ModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
   // Track mounted state separately so we can play the exit animation
@@ -159,6 +162,7 @@ export function Modal({
           <button
             type="button"
             onClick={onClose}
+            aria-label={`Close ${title}`}
             className="rounded-lg p-1.5 text-[var(--marinara-chat-chrome-panel-muted)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg-hover)] hover:text-[var(--marinara-chat-chrome-highlight-text)]"
           >
             <X size="1rem" />
@@ -168,7 +172,7 @@ export function Modal({
         {/* Content */}
         <div
           ref={contentRef}
-          className={`min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 ${NEUTRAL_PANEL_SCROLL_AREA}`}
+          className={`min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 ${NEUTRAL_PANEL_SCROLL_AREA} ${contentClassName ?? ""}`}
         >
           {children}
         </div>

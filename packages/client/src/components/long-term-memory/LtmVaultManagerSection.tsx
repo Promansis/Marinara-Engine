@@ -4,6 +4,7 @@ import {
   AlertCircle,
   ArrowRightLeft,
   Check,
+  ChevronDown,
   Copy,
   Eye,
   FileJson,
@@ -13,8 +14,10 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  SlidersHorizontal,
   Trash2,
   Unlink2,
+  Wrench,
   X,
 } from "lucide-react";
 import type {
@@ -131,7 +134,7 @@ import {
 import { useUpdateAgentByType, type AgentConfigRow } from "../../hooks/use-agents";
 
 type LtmImportSource = "characters" | "lorebooks" | "chats";
-const LTM_TAB_IDS: TabId[] = ["notes", "import", "review", "debug"];
+const LTM_TAB_IDS = ["notes", "import", "review"] as const satisfies readonly TabId[];
 
 type RemovableLtmScope = {
   chatIds?: string[];
@@ -248,31 +251,31 @@ function ReviewSourceDiagnostics({ source }: { source: LtmDraftReviewSource }) {
   const diagnostics = source.drafts.flatMap((draftReview) => draftReview.diagnostics);
   const candidateRejections = source.drafts.flatMap((draftReview) => draftReview.candidateRejections);
   const deduplications = source.drafts.flatMap((draftReview) => draftReview.deduplications);
-  const detailCount = diagnostics.length + candidateRejections.length + deduplications.length;
+  const detailCount = blockReasons.length + diagnostics.length + candidateRejections.length + deduplications.length;
 
   return (
     <>
-      {blockReasons.map((reason, index) => (
-        <div
-          key={`${reason.code}-${index}`}
-          role="alert"
-          className="mt-2 flex gap-2 rounded-lg bg-[var(--destructive)]/5 px-2.5 py-2 text-xs ring-1 ring-[var(--destructive)]/20"
-        >
-          <AlertCircle size="0.875rem" className="mt-0.5 shrink-0 text-[var(--destructive)]" />
-          <div className="min-w-0">
-            <p className="break-words text-[var(--foreground)]">{reason.message}</p>
-            <code className="mt-0.5 block break-all text-[0.6875rem] text-[var(--muted-foreground)]">
-              {reason.code}
-            </code>
-          </div>
-        </div>
-      ))}
       {detailCount > 0 ? (
         <details className="mt-2 rounded-lg bg-[var(--background)]/35 px-2.5 py-2 ring-1 ring-[var(--border)]/60">
           <summary className="cursor-pointer text-xs font-medium text-[var(--foreground)]">
             Extraction details ({detailCount})
           </summary>
           <div className="mt-2 space-y-2">
+            {blockReasons.map((reason, index) => (
+              <div
+                key={`${reason.code}-${index}`}
+                role="alert"
+                className="flex gap-2 rounded-lg bg-[var(--destructive)]/5 px-2.5 py-2 text-xs ring-1 ring-[var(--destructive)]/20"
+              >
+                <AlertCircle size="0.875rem" className="mt-0.5 shrink-0 text-[var(--destructive)]" />
+                <div className="min-w-0">
+                  <p className="break-words text-[var(--foreground)]">{reason.message}</p>
+                  <code className="mt-0.5 block break-all text-[0.6875rem] text-[var(--muted-foreground)]">
+                    {reason.code}
+                  </code>
+                </div>
+              </div>
+            ))}
             {diagnostics.map((diagnostic, index) => (
               <p key={`${diagnostic.code}-${index}`} className="break-words text-xs text-[var(--muted-foreground)]">
                 {diagnostic.message} <code className="break-all">{diagnostic.code}</code>
@@ -387,7 +390,7 @@ export function LtmVaultManagerSection({
   );
 
   const initialTabId: TabId =
-    initialTab === "review"
+    initialTab === "review" || initialTab === "suggestions"
       ? "review"
       : initialTab === "import"
         ? "import"
@@ -416,12 +419,16 @@ export function LtmVaultManagerSection({
   const [editedNoteDirty, setEditedNoteDirty] = useState(false);
   const [expandedTypeIds, setExpandedTypeIds] = useState<Set<string>>(() => new Set());
   const [expandedMemoryIds, setExpandedMemoryIds] = useState<Set<string>>(() => new Set());
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [scopePickerOpen, setScopePickerOpen] = useState(false);
   const [navigatorSelection, setNavigatorSelection] = useState<LtmNavigatorSelection>({ groupId: null, chatId: null });
   const [navigatorQuery, setNavigatorQuery] = useState("");
   const [importMode, setImportMode] = useState<LtmMode>("roleplay");
   const [reviewBatchAction, setReviewBatchAction] = useState<"keep-low" | "skip-all" | null>(null);
   const reviewBatchLockRef = useRef(false);
   const importAbortControllerRef = useRef<AbortController | null>(null);
+  const initializedTypeIdsRef = useRef(new Set<string>());
+  const advancedMenuRef = useRef<HTMLDetailsElement>(null);
 
   const { data: chats } = useChats();
   const { data: characters } = useCharacters();
@@ -581,6 +588,15 @@ export function LtmVaultManagerSection({
   useEffect(() => () => importAbortControllerRef.current?.abort(), []);
 
   useEffect(() => {
+    const closeAdvancedMenu = (event: PointerEvent) => {
+      const menu = advancedMenuRef.current;
+      if (menu?.open && !menu.contains(event.target as Node)) menu.removeAttribute("open");
+    };
+    document.addEventListener("pointerdown", closeAdvancedMenu);
+    return () => document.removeEventListener("pointerdown", closeAdvancedMenu);
+  }, []);
+
+  useEffect(() => {
     if (!activeChatId) return;
     setNavigatorSelection({ groupId: activeChat?.groupId ?? null, chatId: activeChatId });
   }, [activeChat?.groupId, activeChatId]);
@@ -604,6 +620,14 @@ export function LtmVaultManagerSection({
     );
   }, [noteStatus, noteType, noteMode, notes.data, query]);
   const groupedBucketNotes = useMemo(() => groupNotesByType(filteredNotes), [filteredNotes]);
+  useEffect(() => {
+    const newTypes = groupedBucketNotes
+      .map((group) => group.type)
+      .filter((type) => !initializedTypeIdsRef.current.has(type));
+    if (newTypes.length === 0) return;
+    for (const type of newTypes) initializedTypeIdsRef.current.add(type);
+    setExpandedTypeIds((current) => new Set([...current, ...newTypes]));
+  }, [groupedBucketNotes]);
   const visibleNoteIds = useMemo(() => filteredNotes.map((note) => note.id), [filteredNotes]);
   const selectedVisibleNoteIds = useMemo(
     () => visibleNoteIds.filter((id) => selectedNoteIds.has(id)),
@@ -938,6 +962,9 @@ export function LtmVaultManagerSection({
     if (creatingNote) closeCreateForm();
     if (openNoteId) closeMemoryModal();
     setTab(nextTab);
+    requestAnimationFrame(() => {
+      document.getElementById(`ltm-panel-${nextTab}`)?.scrollIntoView({ block: "start" });
+    });
     return true;
   };
 
@@ -1536,44 +1563,101 @@ export function LtmVaultManagerSection({
 
   return (
     <div className="flex min-h-full flex-col gap-3 p-3 text-[var(--foreground)]">
-      <div className="sticky top-0 z-10 -mx-3 bg-[var(--background)]/95 px-3 py-2 backdrop-blur-sm">
-        <LtmTabRail
-          tabs={LTM_TAB_IDS.map((id) => ({ id, label: TAB_LABELS[id] }))}
-          activeId={tab}
-          onChange={setTabWithGuards}
-          ariaLabel="Long-term memory views"
-          idPrefix="ltm"
-        />
+      <div className="sticky top-0 z-10 -mx-3 bg-[var(--background)]/95 px-3 pb-2 pt-1 backdrop-blur-sm">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-stretch border-b border-[var(--border)]">
+          <LtmTabRail
+            tabs={LTM_TAB_IDS.map((id) => ({ id, label: TAB_LABELS[id] }))}
+            activeId={
+              LTM_TAB_IDS.includes(tab as (typeof LTM_TAB_IDS)[number]) ? (tab as (typeof LTM_TAB_IDS)[number]) : null
+            }
+            onChange={setTabWithGuards}
+            ariaLabel="Long-term memory views"
+            idPrefix="ltm"
+            equalWidth
+            className="border-b-0"
+          />
+          <details
+            ref={advancedMenuRef}
+            className="group relative"
+            onKeyDown={(event) => {
+              if (event.key !== "Escape") return;
+              event.preventDefault();
+              event.stopPropagation();
+              advancedMenuRef.current?.removeAttribute("open");
+              advancedMenuRef.current?.querySelector("summary")?.focus();
+            }}
+          >
+            <summary
+              className={cn(
+                "flex min-h-10 cursor-pointer list-none items-center justify-center gap-1.5 px-2 text-xs font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)] sm:px-3",
+                (tab === "identity" || tab === "debug") && "text-[var(--foreground)]",
+              )}
+              aria-label="Advanced tools"
+              title="Advanced tools"
+            >
+              <Wrench size="0.875rem" aria-hidden="true" />
+              <span className="hidden sm:inline">Advanced tools</span>
+              <ChevronDown size="0.75rem" aria-hidden="true" className="transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="absolute right-0 top-[calc(100%+0.375rem)] z-20 w-48 overflow-hidden rounded-lg bg-[var(--popover)] p-1 shadow-xl ring-1 ring-[var(--border)]">
+              {(["identity", "debug"] as const).map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => {
+                    advancedMenuRef.current?.removeAttribute("open");
+                    void setTabWithGuards(id);
+                  }}
+                  className={cn(
+                    "flex min-h-10 w-full items-center rounded-md px-3 text-left text-xs font-medium text-[var(--popover-foreground)] transition-colors hover:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)]",
+                    tab === id && "bg-[var(--accent)]",
+                  )}
+                >
+                  {TAB_LABELS[id]}
+                </button>
+              ))}
+            </div>
+          </details>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--secondary)]/25 px-3 py-2">
+        <div className="flex min-w-0 items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">Current scope</div>
+            <div className="truncate text-xs font-medium text-[var(--foreground)]" title={navigatorScopeLabel}>
+              {navigatorScopeLabel}
+            </div>
+          </div>
+          <ToolButton onClick={() => setScopePickerOpen((current) => !current)}>
+            {scopePickerOpen ? "Done" : "Change scope"}
+          </ToolButton>
+        </div>
+        {scopePickerOpen && (
+          <div className="mt-3 border-t border-[var(--border)] pt-3">
+            <LtmNavigatorSelector
+              threads={tab === "notes" ? scopedNavigatorThreads : navigatorThreads}
+              selection={navigatorSelection}
+              activeChatId={activeChatId}
+              scopeLabel={navigatorScopeLabel}
+              query={navigatorQuery}
+              hideContextPill
+              onQueryChange={setNavigatorQuery}
+              onSelect={setNavigatorSelection}
+            />
+          </div>
+        )}
       </div>
 
       {tab === "notes" && (
         <Section title="Memories" id="ltm-panel-notes" labelledBy="ltm-tab-notes">
-          <div className={panelIntroCardClassName}>
-            <div className="flex flex-wrap gap-1.5">
-              <StatusPill
-                label={followsActive ? "Following selected chat" : "Panel scope"}
-                tone={followsActive ? "good" : "warn"}
-              />
-              <StatusPill
-                label={`${(notes.data ?? []).length} memor${(notes.data ?? []).length === 1 ? "y" : "ies"} in this scope`}
-                title={`Memories linked to ${navigatorScopeLabel}, plus global memories.`}
-              />
-            </div>
-            <p className={cn("mt-2", helperTextClassName)}>
-              Includes global memories plus memories linked to {navigatorScopeLabel}.
-            </p>
+          <div className="flex flex-wrap gap-1.5">
+            <StatusPill
+              label={followsActive ? "Following selected chat" : "Custom scope"}
+              tone={followsActive ? "good" : "warn"}
+            />
+            <StatusPill label={`${(notes.data ?? []).length} memor${(notes.data ?? []).length === 1 ? "y" : "ies"}`} />
           </div>
-
-          <LtmNavigatorSelector
-            threads={scopedNavigatorThreads}
-            selection={navigatorSelection}
-            activeChatId={activeChatId}
-            scopeLabel={navigatorScopeLabel}
-            query={navigatorQuery}
-            hideContextPill
-            onQueryChange={setNavigatorQuery}
-            onSelect={setNavigatorSelection}
-          />
 
           {editingNoteHiddenByFilters && (
             <div className="mb-3 rounded-xl bg-amber-500/10 p-3 ring-1 ring-amber-500/30">
@@ -1586,7 +1670,7 @@ export function LtmVaultManagerSection({
             </div>
           )}
           <section className="space-y-3">
-            <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
               <label className="flex min-h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 shadow-sm transition-[border-color,box-shadow] hover:border-[var(--primary)]/50 focus-within:border-[var(--primary)] focus-within:ring-2 focus-within:ring-[var(--ring)]/40">
                 <Search size="0.875rem" className="text-[var(--muted-foreground)]" />
                 <input
@@ -1597,50 +1681,61 @@ export function LtmVaultManagerSection({
                   className="min-w-0 flex-1 bg-transparent text-sm text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]/60"
                 />
               </label>
-              <ToolButton onClick={requestCreateNote} disabled={creatingNote}>
+              <ToolButton onClick={() => setFiltersOpen((current) => !current)} aria-expanded={filtersOpen}>
+                <SlidersHorizontal size="0.875rem" />
+                Filters
+                {[noteType !== "all", noteStatus !== "all", noteMode !== "all"].filter(Boolean).length > 0 && (
+                  <span className="rounded-full bg-[var(--primary)]/15 px-1.5 py-0.5 text-[0.625rem] text-[var(--primary)]">
+                    {[noteType !== "all", noteStatus !== "all", noteMode !== "all"].filter(Boolean).length}
+                  </span>
+                )}
+              </ToolButton>
+              <ToolButton onClick={requestCreateNote} disabled={creatingNote} tone="primary">
                 <Plus size="0.875rem" />
                 New
               </ToolButton>
             </div>
-            <div className="grid gap-2 sm:grid-cols-3">
-              <select
-                value={noteType}
-                onChange={(event) => setNoteType(event.target.value as "all" | LtmNoteType)}
-                className={compactInputClassName}
-                aria-label="Memory type"
-              >
-                {NOTE_TYPES.map((type) => (
-                  <option key={type} value={type}>
-                    {type === "all" ? "All types" : friendlyNoteType(type)}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={noteStatus}
-                onChange={(event) => setNoteStatus(event.target.value as "all" | LtmStatus)}
-                className={compactInputClassName}
-                aria-label="Memory status"
-              >
-                {NOTE_STATUSES.map((statusId) => (
-                  <option key={statusId} value={statusId}>
-                    {statusId === "all" ? "Any status" : friendlyStatus(statusId)}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={noteMode}
-                onChange={(event) => setNoteMode(event.target.value as "all" | LtmMode)}
-                className={compactInputClassName}
-                aria-label="Memory mode"
-              >
-                <option value="all">Any mode</option>
-                {(["roleplay", "conversation", "game"] as const).map((mode) => (
-                  <option key={mode} value={mode}>
-                    {MODE_LABELS[mode]}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {filtersOpen && (
+              <div className={cn(sectionCardClassName, "grid gap-2 sm:grid-cols-3")}>
+                <select
+                  value={noteType}
+                  onChange={(event) => setNoteType(event.target.value as "all" | LtmNoteType)}
+                  className={compactInputClassName}
+                  aria-label="Memory type"
+                >
+                  {NOTE_TYPES.map((type) => (
+                    <option key={type} value={type}>
+                      {type === "all" ? "All types" : friendlyNoteType(type)}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={noteStatus}
+                  onChange={(event) => setNoteStatus(event.target.value as "all" | LtmStatus)}
+                  className={compactInputClassName}
+                  aria-label="Memory status"
+                >
+                  {NOTE_STATUSES.map((statusId) => (
+                    <option key={statusId} value={statusId}>
+                      {statusId === "all" ? "Any status" : friendlyStatus(statusId)}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={noteMode}
+                  onChange={(event) => setNoteMode(event.target.value as "all" | LtmMode)}
+                  className={compactInputClassName}
+                  aria-label="Memory mode"
+                >
+                  <option value="all">Any mode</option>
+                  {(["roleplay", "conversation", "game"] as const).map((mode) => (
+                    <option key={mode} value={mode}>
+                      {MODE_LABELS[mode]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             {filteredNotes.length > 0 && (
               <div className={cn(sectionCardClassName, "flex flex-wrap items-center gap-2")}>
                 <label className="flex min-h-8 items-center gap-2 rounded-lg px-2 text-xs text-[var(--foreground)]">
@@ -1671,7 +1766,11 @@ export function LtmVaultManagerSection({
               {notes.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
               {!notes.isLoading && !notes.isError && filteredNotes.length === 0 && (
                 <div className={cn(emptyStateClassName, "space-y-3")}>
-                  <p>No matching memories.</p>
+                  <p>
+                    {(notes.data ?? []).length === 0
+                      ? "No memories yet in this scope. Create one or import a source to get started."
+                      : "No memories match the current search and filters."}
+                  </p>
                   <div className="flex flex-wrap justify-center gap-2">
                     {(query || noteType !== "all" || noteStatus !== "all" || noteMode !== "all") && (
                       <ToolButton
@@ -1760,19 +1859,28 @@ export function LtmVaultManagerSection({
             </div>
           </div>
 
-          {importSource === "chats" && (
-            <LtmNavigatorSelector
-              threads={navigatorThreads}
-              selection={navigatorSelection}
-              activeChatId={activeChatId}
-              scopeLabel={navigatorScopeLabel}
-              query={navigatorQuery}
-              onQueryChange={setNavigatorQuery}
-              onSelect={setNavigatorSelection}
-            />
-          )}
-
-          <div className={cn("grid gap-2", importSource === "chats" ? "sm:grid-cols-[1fr_1fr]" : "sm:grid-cols-[1fr]")}>
+          <div className="flex items-center gap-2 pt-1">
+            <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[var(--primary)] text-[0.6875rem] font-bold text-[var(--primary-foreground)]">
+              1
+            </span>
+            <h3 className="text-xs font-semibold text-[var(--foreground)]">Choose a source</h3>
+          </div>
+          <div className={cn("grid gap-2", importSource === "chats" ? "sm:grid-cols-2" : "sm:grid-cols-1")}>
+            <label className="space-y-1">
+              <span className="block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Source</span>
+              <select
+                value={importSource}
+                disabled={importSourceNotes.isPending}
+                onChange={(event) => handlePrefsChange({ importSource: event.target.value as LtmInteropSource })}
+                className={compactInputClassName}
+              >
+                {IMPORT_SOURCES.map((source) => (
+                  <option key={source.id} value={source.id}>
+                    {source.id === "chats" ? "Chat summaries" : source.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             {importSource === "chats" && (
               <label className="space-y-1">
                 <span className="block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Chat mode</span>
@@ -1790,31 +1898,6 @@ export function LtmVaultManagerSection({
                 </select>
               </label>
             )}
-            <label className="space-y-1">
-              <span className="block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Source</span>
-              <select
-                value={importSource}
-                disabled={importSourceNotes.isPending}
-                onChange={(event) => handlePrefsChange({ importSource: event.target.value as LtmInteropSource })}
-                className={compactInputClassName}
-              >
-                {IMPORT_SOURCES.map((source) => (
-                  <option key={source.id} value={source.id}>
-                    {source.id === "chats" ? "Chat summaries" : source.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <div className={cn(sectionCardClassName, "mt-2")}>
-            <div className="flex flex-wrap gap-1.5">
-              <StatusPill label={`${clampImportConcurrency(importConcurrencySetting)} at once`} />
-              {importApplyLowRisk ? <StatusPill label="Low-risk auto-apply" tone="warn" /> : null}
-            </div>
-            <p className={cn("mt-2", helperTextClassName)}>
-              Import uses the shared extraction defaults, including connection, model, instruction, and low-risk
-              auto-apply.
-            </p>
           </div>
           {lastImportResult && (
             <div
@@ -1843,7 +1926,7 @@ export function LtmVaultManagerSection({
                 {lastImportHasReview && (
                   <ToolButton onClick={() => void setTabWithGuards("review")}>
                     <Eye size="0.75rem" />
-                    Open Review
+                    Review suggestions
                   </ToolButton>
                 )}
               </div>
@@ -1875,7 +1958,13 @@ export function LtmVaultManagerSection({
               ))}
             </div>
           )}
-          <div className={cn(sectionCardClassName, "mt-3")}>
+          <div className="flex items-center gap-2 pt-1">
+            <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[var(--secondary)] text-[0.6875rem] font-bold text-[var(--foreground)] ring-1 ring-[var(--border)]">
+              2
+            </span>
+            <h3 className="text-xs font-semibold text-[var(--foreground)]">Preview available items</h3>
+          </div>
+          <div className={cn(sectionCardClassName, "mt-1")}>
             <div className="flex flex-wrap items-center gap-2">
               <label className="flex min-h-8 items-center gap-2 rounded-lg px-2 text-xs text-[var(--foreground)]">
                 <input
@@ -1957,6 +2046,12 @@ export function LtmVaultManagerSection({
               </div>
             )}
           </div>
+          <div className="flex items-center gap-2 pt-1">
+            <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[var(--secondary)] text-[0.6875rem] font-bold text-[var(--foreground)] ring-1 ring-[var(--border)]">
+              3
+            </span>
+            <h3 className="text-xs font-semibold text-[var(--foreground)]">Import selected items</h3>
+          </div>
           {(selectedVisibleImportRows.length > 0 || importSourceNotes.isPending) && (
             <SelectionActionBar
               selectedCount={importSourceNotes.isPending ? activeImportIds.size : selectedVisibleImportRows.length}
@@ -1968,26 +2063,11 @@ export function LtmVaultManagerSection({
       )}
 
       {tab === "review" && (
-        <Section title="Review and Repair" id="ltm-panel-review" labelledBy="ltm-tab-review">
-          <LtmNavigatorSelector
-            threads={navigatorThreads}
-            selection={navigatorSelection}
-            activeChatId={activeChatId}
-            scopeLabel={navigatorScopeLabel}
-            query={navigatorQuery}
-            onQueryChange={setNavigatorQuery}
-            onSelect={setNavigatorSelection}
-          />
-
-          <LongTermMemoryIdentityRepairSection
-            scope={navigatorScope}
-            scopeLabel={navigatorScopeLabel}
-            enabled={Boolean(selectedNavigatorThread)}
-          />
-
-          <div className="border-t border-[var(--border)]/70 pt-3">
-            <h3 className="text-sm font-semibold text-[var(--foreground)]">Draft suggestions</h3>
-          </div>
+        <Section title="Suggestions" id="ltm-panel-review" labelledBy="ltm-tab-review">
+          <p className={helperTextClassName}>
+            Review pending memory changes. Low-risk suggestions can be kept together; every source remains available for
+            individual review.
+          </p>
           {reviewError && (
             <QueryFailure
               label="Suggestions"
@@ -2106,8 +2186,21 @@ export function LtmVaultManagerSection({
         </Section>
       )}
 
+      {tab === "identity" && (
+        <Section title="Identity repair" id="ltm-panel-identity">
+          <p className={helperTextClassName}>
+            Repair character identity links for the current scope when imported or renamed subjects no longer match.
+          </p>
+          <LongTermMemoryIdentityRepairSection
+            scope={navigatorScope}
+            scopeLabel={navigatorScopeLabel}
+            enabled={Boolean(selectedNavigatorThread)}
+          />
+        </Section>
+      )}
+
       {tab === "debug" && (
-        <Section title="Debug" id="ltm-panel-debug" labelledBy="ltm-tab-debug">
+        <Section title="Diagnostics" id="ltm-panel-debug">
           <LongTermMemoryDebugLogPanel />
         </Section>
       )}

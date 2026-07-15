@@ -266,9 +266,7 @@ test("Roleplay rewrite streaming follows the rendered message height", async ({ 
       element.scrollTop = element.scrollHeight;
     });
     await expect
-      .poll(() =>
-        scroller.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight),
-      )
+      .poll(() => scroller.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight))
       .toBeLessThan(12);
 
     await page.locator("textarea.mari-chat-input-textarea").fill("Rewrite and stream this response");
@@ -280,9 +278,7 @@ test("Roleplay rewrite streaming follows the rendered message height", async ({ 
       .poll(() => scroller.evaluate((element) => element.scrollTop), { timeout: 15_000 })
       .toBeGreaterThan(initialScrollTop + 80);
     await expect
-      .poll(() =>
-        scroller.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight),
-      )
+      .poll(() => scroller.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight))
       .toBeLessThan(40);
 
     await page.locator("button.mari-chat-send-btn").click();
@@ -292,7 +288,10 @@ test("Roleplay rewrite streaming follows the rendered message height", async ({ 
 });
 
 test("editing the preceding Roleplay message keeps one live stream row", async ({ page }, testInfo) => {
-  test.skip(!testInfo.project.name.includes("desktop"), "Roleplay edit-during-stream regression is covered on desktop.");
+  test.skip(
+    !testInfo.project.name.includes("desktop"),
+    "Roleplay edit-during-stream regression is covered on desktop.",
+  );
 
   const chatResponse = await page.request.post("/api/chats", {
     data: {
@@ -440,7 +439,9 @@ test("Roleplay side panels use compositor-only desktop transitions", async ({ pa
   }
 });
 
-test("rewrite shield switches repeatedly between original and rewritten message versions", async ({ page }, testInfo) => {
+test("rewrite shield switches repeatedly between original and rewritten message versions", async ({
+  page,
+}, testInfo) => {
   test.skip(!testInfo.project.name.includes("desktop"), "Rewrite version toolbar regression is covered on desktop.");
 
   const chatResponse = await page.request.post("/api/chats", {
@@ -666,7 +667,9 @@ test("Game history above the dialogue box opens a historical Peek Prompt", async
     await expect(peekButton).toBeVisible();
     await peekButton.click();
     await expect(page.getByRole("heading", { name: "Assembled Prompt" })).toBeVisible();
-    await expect(page.getByText("This is the exact cached text prompt sent for the selected Game Mode turn.")).toBeVisible();
+    await expect(
+      page.getByText("This is the exact cached text prompt sent for the selected Game Mode turn."),
+    ).toBeVisible();
     await page.getByRole("button", { name: /System/ }).click();
     await expect(page.getByText("Exact historical Game Master prompt")).toBeVisible();
   } finally {
@@ -701,7 +704,9 @@ test("home shell and primary topbar panels open without client errors", async ({
   expect(errors).toEqual([]);
 });
 
-test("Professor Mari chat fills the mobile home viewport and keeps its composer visible", async ({ page }, testInfo) => {
+test("Professor Mari chat fills the mobile home viewport and keeps its composer visible", async ({
+  page,
+}, testInfo) => {
   test.skip(!testInfo.project.name.includes("mobile"), "Professor Mari mobile viewport regression.");
   await page.goto("/");
 
@@ -1052,7 +1057,8 @@ test("Noodle settings persist through refetch and reload", async ({ page }, test
       .locator('input[type="number"]');
     await expect(imageLimitInput).toBeVisible();
     const imageSaveResponse = page.waitForResponse(
-      (response) => response.request().method() === "PUT" && new URL(response.url()).pathname === "/api/noodle/settings",
+      (response) =>
+        response.request().method() === "PUT" && new URL(response.url()).pathname === "/api/noodle/settings",
     );
     await imageLimitInput.fill(String(nextImageLimit));
     await imageLimitInput.blur();
@@ -1061,7 +1067,8 @@ test("Noodle settings persist through refetch and reload", async ({ page }, test
 
     const randomUsersButton = noodle.getByRole("button", { name: /Random users/ });
     const randomUsersSaveResponse = page.waitForResponse(
-      (response) => response.request().method() === "PUT" && new URL(response.url()).pathname === "/api/noodle/settings",
+      (response) =>
+        response.request().method() === "PUT" && new URL(response.url()).pathname === "/api/noodle/settings",
     );
     await randomUsersButton.click();
     expect((await randomUsersSaveResponse).ok()).toBe(true);
@@ -1163,8 +1170,10 @@ test("Noodle restores the last selected persona after reload", async ({ page }, 
         page.evaluate(() => {
           const raw = localStorage.getItem("marinara-engine-ui");
           if (!raw) return null;
-          return (JSON.parse(raw) as { state?: { noodleSelectedPersonaId?: string | null } }).state
-            ?.noodleSelectedPersonaId ?? null;
+          return (
+            (JSON.parse(raw) as { state?: { noodleSelectedPersonaId?: string | null } }).state
+              ?.noodleSelectedPersonaId ?? null
+          );
         }),
       )
       .toBe(selectedPersonaId);
@@ -1708,9 +1717,7 @@ test("Noodle post and reply composers autocomplete character handles", async ({ 
 
     const postMentionList = page.locator("#noodle-inline-mention-list");
     await expect(postMentionList).toBeVisible();
-    const postMentionOption = postMentionList
-      .getByRole("option")
-      .filter({ hasText: `@${mentionAccount!.handle}` });
+    const postMentionOption = postMentionList.getByRole("option").filter({ hasText: `@${mentionAccount!.handle}` });
     await expect(postMentionOption).toBeVisible();
     await postMentionOption.click();
     await expect(postTextarea).toHaveValue(`Hello @${mentionAccount!.handle} `);
@@ -1726,9 +1733,7 @@ test("Noodle post and reply composers autocomplete character handles", async ({ 
 
     const replyMentionList = page.locator("#noodle-reply-mention-list");
     await expect(replyMentionList).toBeVisible();
-    const replyMentionOption = replyMentionList
-      .getByRole("option")
-      .filter({ hasText: `@${mentionAccount!.handle}` });
+    const replyMentionOption = replyMentionList.getByRole("option").filter({ hasText: `@${mentionAccount!.handle}` });
     await expect(replyMentionOption).toBeVisible();
     await replyTextarea.press("Tab");
     await expect(replyTextarea).toHaveValue(`Replying @${mentionAccount!.handle} `);
@@ -1774,9 +1779,7 @@ test("Noodle desktop composers insert emojis at the active cursor", async ({ pag
     const bootstrap = (await bootstrapResponse.json()) as {
       accounts: Array<{ entityId: string; kind: string; invited: boolean }>;
     };
-    const characterAccount = bootstrap.accounts.find(
-      (account) => account.kind === "character" && account.invited,
-    );
+    const characterAccount = bootstrap.accounts.find((account) => account.kind === "character" && account.invited);
     expect(characterAccount).toBeDefined();
 
     const postResponse = await page.request.post("/api/noodle/posts", {
@@ -1805,12 +1808,8 @@ test("Noodle desktop composers insert emojis at the active cursor", async ({ pag
     await page.getByRole("textbox", { name: "Search emojis" }).fill("test tube");
     await page.getByRole("button", { name: /test tube/i }).click();
     await expect(postTextarea).toHaveValue("Alpha 🧪Omega");
-    await expect
-      .poll(() => postTextarea.evaluate((element: HTMLTextAreaElement) => element.selectionStart))
-      .toBe(8);
-    await expect
-      .poll(() => postTextarea.evaluate((element: HTMLTextAreaElement) => element.selectionEnd))
-      .toBe(8);
+    await expect.poll(() => postTextarea.evaluate((element: HTMLTextAreaElement) => element.selectionStart)).toBe(8);
+    await expect.poll(() => postTextarea.evaluate((element: HTMLTextAreaElement) => element.selectionEnd)).toBe(8);
     await inlineComposer.getByTitle("Emoji, GIFs and stickers").click();
 
     const activePost = noodle.locator(`[data-noodle-post-id="${post.id}"]`);
@@ -1826,12 +1825,8 @@ test("Noodle desktop composers insert emojis at the active cursor", async ({ pag
     await page.getByRole("textbox", { name: "Search emojis" }).fill("test tube");
     await page.getByRole("button", { name: /test tube/i }).click();
     await expect(replyTextarea).toHaveValue("Reply 🧪");
-    await expect
-      .poll(() => replyTextarea.evaluate((element: HTMLTextAreaElement) => element.selectionStart))
-      .toBe(8);
-    await expect
-      .poll(() => replyTextarea.evaluate((element: HTMLTextAreaElement) => element.selectionEnd))
-      .toBe(8);
+    await expect.poll(() => replyTextarea.evaluate((element: HTMLTextAreaElement) => element.selectionStart)).toBe(8);
+    await expect.poll(() => replyTextarea.evaluate((element: HTMLTextAreaElement) => element.selectionEnd)).toBe(8);
 
     expect(errors).toEqual([]);
   } finally {
@@ -2000,13 +1995,15 @@ test("Noodle only bumps posts when another account replies to the persona's comm
     const personaReply = (await personaReplyResponse.json()) as { id: string };
 
     const readRegressionOrder = async () =>
-      page.locator("[data-noodle-post-id]").evaluateAll(
-        (elements, postIds) =>
-          elements
-            .map((element) => element.getAttribute("data-noodle-post-id"))
-            .filter((postId): postId is string => Boolean(postId) && postIds.includes(postId)),
-        [olderPost.id, newerPost.id],
-      );
+      page
+        .locator("[data-noodle-post-id]")
+        .evaluateAll(
+          (elements, postIds) =>
+            elements
+              .map((element) => element.getAttribute("data-noodle-post-id"))
+              .filter((postId): postId is string => Boolean(postId) && postIds.includes(postId)),
+          [olderPost.id, newerPost.id],
+        );
 
     await page.goto("/");
     await page.locator('[data-tour="noodle-tab"]').click();
@@ -2238,6 +2235,47 @@ test("long-term memory settings stay reachable from the chat drawer", async ({ p
   });
   expect(response.ok()).toBeTruthy();
   const chat = (await response.json()) as { id: string };
+  const destinationName = `Memory Transfer Destination ${testInfo.project.name}`;
+  const destinationResponse = await page.request.post("/api/chats", {
+    data: { name: destinationName, mode: "conversation", characterIds: [] },
+  });
+  expect(destinationResponse.ok()).toBeTruthy();
+  const idSuffix = `${testInfo.project.name.replace(/[^a-z0-9]+/gi, "_").toLowerCase()}_${Date.now().toString(36)}`;
+  const sourceId = `source_playwright_${idSuffix}`;
+  const derivedId = `scene_playwright_${idSuffix}`;
+  const sourceTitle = `Source memory ${testInfo.project.name}`;
+  const derivedTitle = `Derived memory ${testInfo.project.name}`;
+  const now = new Date().toISOString();
+  const sourceResponse = await page.request.post("/api/long-term-memory/notes", {
+    data: {
+      id: sourceId,
+      title: sourceTitle,
+      type: "source",
+      status: "active",
+      modes: ["conversation"],
+      scope: { chatId: chat.id, chatIds: [chat.id] },
+      tags: ["playwright"],
+      keywords: [],
+      links: [],
+      sections: { source: { text: "A source note used to verify the popover.", updatedAt: now } },
+    },
+  });
+  expect(sourceResponse.ok()).toBeTruthy();
+  const derivedResponse = await page.request.post("/api/long-term-memory/notes", {
+    data: {
+      id: derivedId,
+      title: derivedTitle,
+      type: "scene",
+      status: "active",
+      modes: ["conversation"],
+      scope: { chatId: chat.id, chatIds: [chat.id] },
+      tags: ["playwright"],
+      keywords: [],
+      links: [{ target: sourceId, relation: "extracted_from" }],
+      sections: { core: { text: "A derived memory used to verify source navigation.", updatedAt: now } },
+    },
+  });
+  expect(derivedResponse.ok()).toBeTruthy();
 
   await page.addInitScript((chatId) => {
     localStorage.setItem("marinara-active-chat-id", chatId);
@@ -2268,6 +2306,96 @@ test("long-term memory settings stay reachable from the chat drawer", async ({ p
 
   await drawer.getByRole("button", { name: /Manage memory vault and defaults/ }).click();
   await expect(page.getByRole("heading", { name: "Long-Term Memory", exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Manage Memories", exact: true }).click();
+  const vault = page.getByRole("dialog", { name: "Long-Term Memory" });
+  await expect(vault).toBeVisible();
+  await expect(vault.getByRole("tab", { name: "Memories" })).toBeVisible();
+  await expect(vault.getByRole("tab", { name: "Import" })).toBeVisible();
+  await expect(vault.getByRole("tab", { name: "Suggestions" })).toBeVisible();
+
+  await vault.getByRole("button", { name: "Change scope" }).click();
+  await expect(vault.getByLabel("Search chats")).toBeVisible();
+  await vault.getByRole("button", { name: "Done" }).click();
+
+  await vault.getByRole("button", { name: "Filters" }).click();
+  await expect(vault.getByLabel("Memory type")).toBeVisible();
+  await expect(vault.getByLabel("Memory status")).toBeVisible();
+  await expect(vault.getByLabel("Memory mode")).toBeVisible();
+
+  await vault.getByRole("tab", { name: "Import" }).click();
+  await expect(vault.getByRole("heading", { name: "Choose a source" })).toBeVisible();
+  await expect(vault.getByRole("heading", { name: "Preview available items" })).toBeVisible();
+
+  await vault.getByRole("tab", { name: "Suggestions" }).click();
+  await expect(vault.getByRole("heading", { name: "Suggestions", exact: true })).toBeVisible();
+
+  await vault.getByLabel("Advanced tools").click();
+  await vault.getByRole("button", { name: "Identity repair" }).click();
+  await expect(vault.getByRole("heading", { name: "Identity repair", exact: true })).toBeVisible();
+  await vault.getByLabel("Advanced tools").click();
+  await vault.getByRole("button", { name: "Diagnostics" }).click();
+  await expect(vault.getByRole("heading", { name: "Diagnostics", exact: true })).toBeVisible();
+
+  await vault.getByRole("tab", { name: "Memories" }).click();
+  const derivedRow = vault.locator("article").filter({ hasText: derivedTitle });
+  const sourceTrigger = derivedRow.getByRole("button", { name: "Show 1 source note" });
+  await sourceTrigger.click();
+  const sourcePopover = page.getByRole("dialog", { name: "Source notes" });
+  await expect(sourcePopover.getByText(sourceTitle, { exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(sourcePopover).toBeHidden();
+  await expect(sourceTrigger).toBeFocused();
+
+  await vault.getByRole("button", { name: "New", exact: true }).click();
+  const newMemory = page.getByRole("dialog", { name: "New Memory" });
+  const createdTitle = `Created memory ${testInfo.project.name}`;
+  await newMemory.getByLabel("Title", { exact: true }).fill(createdTitle);
+  await newMemory.getByLabel("Memory Text", { exact: true }).fill("The silver key stays beneath the chapel bell.");
+  await expect(newMemory.getByLabel("Internal ID", { exact: true })).toBeHidden();
+  await newMemory.getByText("Advanced options", { exact: true }).click();
+  await expect(newMemory.getByLabel("Internal ID", { exact: true })).toHaveValue(
+    /^scene_created_memory_.+_[a-z0-9]{5}$/,
+  );
+  await newMemory.getByRole("button", { name: "Save Memory" }).click();
+
+  const memoryDetail = page.getByRole("dialog", { name: createdTitle });
+  await expect(memoryDetail.getByLabel("Title", { exact: true })).toBeVisible();
+  await expect(memoryDetail.getByText("Advanced options", { exact: true })).toBeVisible();
+  await memoryDetail.getByRole("button", { name: "Cancel" }).click();
+  await expect(memoryDetail.getByRole("tab")).toHaveCount(0);
+  await memoryDetail.getByRole("button", { name: "Edit" }).click();
+  await memoryDetail
+    .getByLabel("Memory Text", { exact: true })
+    .fill("The silver key now hangs beside the chapel bell.");
+  await memoryDetail.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(memoryDetail.getByText("The silver key now hangs beside the chapel bell.")).toBeVisible();
+  await memoryDetail.getByRole("button", { name: `Close ${createdTitle}` }).click();
+
+  await vault.getByLabel(`Select ${createdTitle}`).check();
+  await vault.getByRole("button", { name: "Copy", exact: true }).click();
+  const transfer = page.getByRole("dialog", { name: "Copy Selected Memories" });
+  await transfer.getByLabel("Chat or grouped chat").selectOption({ label: destinationName });
+  await transfer.getByRole("button", { name: "Review transfer" }).click();
+  await expect(transfer.getByText(/1 reviewed/)).toBeVisible();
+  await expect(transfer.getByRole("button", { name: "Copy selected" })).toBeVisible();
+  await transfer.getByRole("button", { name: "Close Copy Selected Memories" }).click();
+
+  await vault.getByRole("button", { name: "Delete", exact: true }).click();
+  const deleteConfirm = page.getByRole("dialog", { name: "Permanently Delete" });
+  await expect(deleteConfirm.getByText(/cannot be undone/i)).toBeVisible();
+  await deleteConfirm.getByRole("button", { name: "Cancel" }).click();
+  await expect(vault.getByText(createdTitle, { exact: true })).toBeVisible();
+
+  await expect(vault.getByRole("button", { name: "Close Long-Term Memory" })).toBeVisible();
+  await expect
+    .poll(() =>
+      vault.evaluate((element) => {
+        const panel = element.querySelector<HTMLElement>(".mari-modal-panel");
+        return panel ? panel.scrollWidth <= panel.clientWidth + 1 : false;
+      }),
+    )
+    .toBe(true);
 });
 
 test("mobile topbar remains reachable while sidebars switch", async ({ page }, testInfo) => {
@@ -2340,15 +2468,17 @@ test("Roleplay displays a selected background when its file route is GET-only", 
 
     await expect
       .poll(async () =>
-        page.locator(".mari-background").evaluateAll(
-          (layers, expectedUrl) =>
-            layers.some(
-              (layer) =>
-                (layer as HTMLElement).style.backgroundImage.includes(expectedUrl) &&
-                (layer as HTMLElement).style.opacity === "1",
-            ),
-          backgroundUrl,
-        ),
+        page
+          .locator(".mari-background")
+          .evaluateAll(
+            (layers, expectedUrl) =>
+              layers.some(
+                (layer) =>
+                  (layer as HTMLElement).style.backgroundImage.includes(expectedUrl) &&
+                  (layer as HTMLElement).style.opacity === "1",
+              ),
+            backgroundUrl,
+          ),
       )
       .toBe(true);
     expect(requestedMethods).toContain("GET");
@@ -2429,8 +2559,7 @@ test("hierarchical map editor creates and saves an oriented location tree", asyn
     await page.getByLabel("Disabled", { exact: true }).check();
     const saveResponse = page.waitForResponse(
       (candidate) =>
-        candidate.request().method() === "PUT" &&
-        candidate.url().endsWith(`/api/chats/${chat.id}/spatial-context`),
+        candidate.request().method() === "PUT" && candidate.url().endsWith(`/api/chats/${chat.id}/spatial-context`),
     );
     await page.getByRole("button", { name: "Save", exact: true }).click();
     expect((await saveResponse).ok()).toBeTruthy();

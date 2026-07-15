@@ -681,15 +681,15 @@ export function LongTermMemoryDebugLogPanel() {
 
   const clearVisible = async () => {
     const confirmed = await showConfirmDialog({
-      title: "Clear debug log?",
-      message: "Clear the LTM debug log?",
-      confirmLabel: "Clear",
+      title: "Clear memory diagnostics?",
+      message: "Delete all recorded memory diagnostic events? Your memories and settings will not be changed.",
+      confirmLabel: "Clear diagnostics",
       tone: "destructive",
     });
     if (!confirmed) return;
     clearLog
       .mutateAsync()
-      .then(() => toast.success("Debug log cleared"))
+      .then(() => toast.success("Memory diagnostics cleared"))
       .catch((err: Error) => toast.error(err.message));
   };
 
@@ -710,7 +710,7 @@ export function LongTermMemoryDebugLogPanel() {
           value={phase}
           onChange={(event) => setPhase(event.target.value as (typeof PHASE_FILTERS)[number])}
           className="min-h-8 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] focus:ring-[var(--primary)]"
-          aria-label="Filter debug log phase"
+          aria-label="Filter memory diagnostics"
         >
           {PHASE_FILTERS.map((item) => (
             <option key={item} value={item}>
@@ -751,9 +751,13 @@ export function LongTermMemoryDebugLogPanel() {
         ) : events.length === 0 ? (
           <div className="flex min-h-44 flex-col items-center justify-center gap-2 text-center text-[var(--muted-foreground)]">
             <Bug size="1.25rem" />
-            <div className="text-sm font-medium text-[var(--foreground)]">No LTM debug events yet.</div>
+            <div className="text-sm font-medium text-[var(--foreground)]">
+              {phase === "all" ? "No memory diagnostics yet." : "No diagnostic events match this filter."}
+            </div>
             <div className="max-w-md text-xs leading-relaxed">
-              Import a source, run extraction, accept a suggestion, or rebuild indexes to populate this timeline.
+              {phase === "all"
+                ? "Import a source, review a suggestion, or refresh memory search to populate this timeline."
+                : "Choose another event filter or refresh after running a memory workflow."}
             </div>
           </div>
         ) : (

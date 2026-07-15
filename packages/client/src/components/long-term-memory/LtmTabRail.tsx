@@ -15,13 +15,15 @@ export function LtmTabRail<T extends string>({
   ariaLabel,
   idPrefix,
   className,
+  equalWidth = false,
 }: {
   tabs: readonly LtmTabItem<T>[];
-  activeId: T;
+  activeId: T | null;
   onChange: (id: T) => void | boolean | Promise<void | boolean>;
   ariaLabel: string;
   idPrefix: string;
   className?: string;
+  equalWidth?: boolean;
 }) {
   const buttonRefs = useRef(new Map<T, HTMLButtonElement>());
   const enabledTabs = tabs.filter((tab) => !tab.disabled);
@@ -43,7 +45,11 @@ export function LtmTabRail<T extends string>({
     <div
       role="tablist"
       aria-label={ariaLabel}
-      className={cn("flex w-full overflow-x-auto border-b border-[var(--border)] [scrollbar-width:thin]", className)}
+      className={cn(
+        "flex w-full border-b border-[var(--border)]",
+        equalWidth ? "overflow-hidden" : "overflow-x-auto [scrollbar-width:thin]",
+        className,
+      )}
     >
       {tabs.map((tab) => {
         const selected = tab.id === activeId;
@@ -79,7 +85,8 @@ export function LtmTabRail<T extends string>({
               }
             }}
             className={cn(
-              "relative min-h-10 min-w-[5.5rem] shrink-0 whitespace-nowrap px-3 py-2.5 text-xs font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-45",
+              "relative min-h-10 whitespace-nowrap px-2 py-2.5 text-xs font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-45",
+              equalWidth ? "min-w-0 flex-1" : "min-w-[5.5rem] shrink-0 px-3",
               selected && "text-[var(--foreground)]",
             )}
           >

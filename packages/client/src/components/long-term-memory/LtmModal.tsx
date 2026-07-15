@@ -12,9 +12,10 @@ interface LtmModalProps {
   children: ReactNode;
   width?: string;
   contentRef?: Ref<HTMLDivElement>;
+  contentClassName?: string;
 }
 
-export function LtmModal({ open, onClose, title, children, width, contentRef }: LtmModalProps) {
+export function LtmModal({ open, onClose, title, children, width, contentRef, contentClassName }: LtmModalProps) {
   const modalId = useRef(Symbol(title));
 
   useEffect(() => {
@@ -36,7 +37,15 @@ export function LtmModal({ open, onClose, title, children, width, contentRef }: 
   if (typeof document === "undefined") return null;
 
   return createPortal(
-    <Modal open={open} onClose={closeIfTopmost} title={title} width={width} contentRef={contentRef}>
+    <Modal
+      open={open}
+      onClose={closeIfTopmost}
+      title={title}
+      width={width}
+      contentRef={contentRef}
+      contentClassName={contentClassName}
+      mobileFullscreen
+    >
       {children}
     </Modal>,
     document.body,
