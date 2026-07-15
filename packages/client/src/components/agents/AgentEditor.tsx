@@ -2039,38 +2039,39 @@ export function AgentEditor() {
             </div>
           </FieldGroup>
 
-          {/* Agent Pipeline Phase */}
-          <FieldGroup
-            label="Pipeline Phase"
-            icon={<Zap size="0.875rem" className="text-[var(--primary)]" />}
-            help="When this agent runs during generation. Pre-Generation runs before the AI replies, Parallel runs alongside, Post-Processing runs after the reply is complete."
-          >
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-              {(Object.entries(PHASE_META) as [AgentPhase, typeof phaseMeta][]).map(([phase, meta]) => {
-                const isActive = normalizedLocalPhase === phase;
-                const Icon = meta.icon;
-                return (
-                  <button
-                    key={phase}
-                    onClick={() => {
-                      setLocalPhase(normalizeAgentPhaseForType(currentAgentType, phase));
-                      markDirty();
-                    }}
-                    className={cn(
-                      "flex flex-col items-center gap-1.5 rounded-xl p-3 text-xs ring-1 transition-all",
-                      isActive
-                        ? "bg-[var(--primary)]/10 ring-[var(--primary)] " + meta.color
-                        : "ring-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
-                    )}
-                  >
-                    <Icon size="1rem" />
-                    <span className="font-medium">{meta.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-            <p className="mt-1.5 text-[0.625rem] text-[var(--muted-foreground)]">{phaseMeta.description}</p>
-          </FieldGroup>
+          {!isLtmAgent && (
+            <FieldGroup
+              label="Pipeline Phase"
+              icon={<Zap size="0.875rem" className="text-[var(--primary)]" />}
+              help="When this agent runs during generation. Pre-Generation runs before the AI replies, Parallel runs alongside, Post-Processing runs after the reply is complete."
+            >
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                {(Object.entries(PHASE_META) as [AgentPhase, typeof phaseMeta][]).map(([phase, meta]) => {
+                  const isActive = normalizedLocalPhase === phase;
+                  const Icon = meta.icon;
+                  return (
+                    <button
+                      key={phase}
+                      onClick={() => {
+                        setLocalPhase(normalizeAgentPhaseForType(currentAgentType, phase));
+                        markDirty();
+                      }}
+                      className={cn(
+                        "flex flex-col items-center gap-1.5 rounded-xl p-3 text-xs ring-1 transition-all",
+                        isActive
+                          ? "bg-[var(--primary)]/10 ring-[var(--primary)] " + meta.color
+                          : "ring-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
+                      )}
+                    >
+                      <Icon size="1rem" />
+                      <span className="font-medium">{meta.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-1.5 text-[0.625rem] text-[var(--muted-foreground)]">{phaseMeta.description}</p>
+            </FieldGroup>
+          )}
 
           {(isCustomAgent || isNewCustomAgent) && (
             <FieldGroup
@@ -2916,7 +2917,7 @@ export function AgentEditor() {
           )}
 
           {/* ── Inject as Prompt Section ── */}
-          {!isDirectorAgent && (
+          {!isDirectorAgent && !isLtmAgent && (
             <FieldGroup
               label="Add as Prompt Section"
               icon={<Layers size="0.875rem" className="text-[var(--primary)]" />}
