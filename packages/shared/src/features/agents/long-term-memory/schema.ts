@@ -2158,8 +2158,14 @@ export type LtmPendingDraftsCountResponse = z.infer<typeof ltmPendingDraftsCount
 
 /**
  * Settings stored in agent_configs.settings when type === "long-term-memory".
- * Subset of LtmGlobalSettings that are user-configurable per agent.
+ * Recall defaults live in the file-backed global settings (config/settings.json)
+ * and per-chat metadata; they are never read from agent settings at runtime.
+ * Legacy agent records may still contain recall keys — the preprocessor strips
+ * them so existing rows load without a destructive migration.
  */
+const LTM_AGENT_LEGACY_RECALL_KEYS =
+  /^(longTermMemoryBudgetTokens|longTermMemoryMaxChunks|longTermMemoryScoreThreshold|longTermMemoryRecallContextMessages|longTermMemoryRecallStyle|longTermMemorySemanticWeight|longTermMemoryLexicalWeight|longTermMemoryGraphWeight|longTermMemoryKeywordWeight|longTermMemoryIncludeResolved|longTermMemoryRecallPreamble|longTermMemoryDebug)$/;
+
 const ltmAgentSettingsShape = z
   .object({
     author: z.string().optional(),
@@ -2169,18 +2175,6 @@ const ltmAgentSettingsShape = z
     importConcurrency: z.number().int().min(1).max(10).optional(),
     importSource: ltmInteropSourceSchema.optional(),
     autoApplyLowRisk: z.boolean().optional(),
-    longTermMemoryBudgetTokens: z.number().int().min(128).max(16_384).optional(),
-    longTermMemoryMaxChunks: z.number().int().min(1).max(100).optional(),
-    longTermMemoryScoreThreshold: z.number().finite().min(0).max(1).optional(),
-    longTermMemoryRecallContextMessages: z.number().int().min(1).max(20).optional(),
-    longTermMemoryRecallStyle: z.enum(["balanced", "exact", "broad", "story"]).optional(),
-    longTermMemorySemanticWeight: z.number().finite().min(0).max(1).nullable().optional(),
-    longTermMemoryLexicalWeight: z.number().finite().min(0).max(1).nullable().optional(),
-    longTermMemoryGraphWeight: z.number().finite().min(0).max(1).nullable().optional(),
-    longTermMemoryKeywordWeight: z.number().finite().min(0).max(1).nullable().optional(),
-    longTermMemoryIncludeResolved: z.boolean().optional(),
-    longTermMemoryRecallPreamble: z.string().max(500).optional(),
-    longTermMemoryDebug: z.boolean().optional(),
   })
   .strict();
 
@@ -2189,6 +2183,9 @@ export const ltmAgentSettingsSchema = z.preprocess((value) => {
   const input = { ...(value as Record<string, unknown>) };
   delete input.extractionMode;
   delete input.importLimit;
+  for (const key of Object.keys(input)) {
+    if (LTM_AGENT_LEGACY_RECALL_KEYS.test(key)) delete input[key];
+  }
   return input;
 }, ltmAgentSettingsShape);
 

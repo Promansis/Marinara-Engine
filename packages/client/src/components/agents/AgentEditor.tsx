@@ -144,7 +144,6 @@ import {
 } from "../long-term-memory/RecallSettingsControls";
 import { StatusPill, ToolButton } from "../long-term-memory/LtmPills";
 import {
-  longTermMemoryKeys,
   useLongTermMemoryStatus,
   useLongTermMemoryExtractionSettings,
   useUpdateLongTermMemoryExtractionSettings,
@@ -1026,7 +1025,6 @@ export function AgentEditor() {
           if (revision !== ltmRecallRevisionRef.current) return;
           ltmRecallHasLocalEditsRef.current = false;
           setLtmRecallDraft(createLtmRecallDraft(settings));
-          qc.setQueryData(longTermMemoryKeys.settings(), settings);
         },
         onError: (err) => {
           if (revision !== ltmRecallRevisionRef.current) return;
@@ -1034,7 +1032,7 @@ export function AgentEditor() {
         },
       });
     },
-    [qc, updateGlobalSettings],
+    [updateGlobalSettings],
   );
   const autosaveLtmRecallDraft = useCallback(
     (values: Partial<RecallSettingsValues>) => patchGlobalSettings(createLtmRecallDraft(values)),
@@ -1479,7 +1477,6 @@ export function AgentEditor() {
         if (ltmDraft.aiKeywordExtraction) extractionPayload.aiKeywordExtraction = true;
         if (ltmDraft.refinePass) extractionPayload.refinePass = true;
         const savedExtractionSettings = await updateExtractionSettings.mutateAsync(extractionPayload);
-        qc.setQueryData(longTermMemoryKeys.extractionSettings(), savedExtractionSettings);
       }
       setDirty(false);
       setSavedFlash(true);
@@ -4127,8 +4124,7 @@ export function AgentEditor() {
                       ltmDraft?.maxExistingNoteTokens ?? DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
                   }}
                   autoApplyLowRisk={ltmDraft?.autoApplyLowRisk ?? false}
-                  onChangeExtraction={updateLtmDraft}
-                  onChangeGlobal={updateLtmDraft}
+                  onChange={updateLtmDraft}
                 />
               </FieldGroup>
 

@@ -500,8 +500,7 @@ export function LtmExtractionPromptSection({
 export default function LtmInlineSettingsSections({
   extractionSettings,
   autoApplyLowRisk,
-  onChangeExtraction,
-  onChangeGlobal,
+  onChange,
 }: {
   extractionSettings: {
     reasoningEffort: string;
@@ -511,8 +510,7 @@ export default function LtmInlineSettingsSections({
     maxExistingNoteTokens: number;
   };
   autoApplyLowRisk: boolean;
-  onChangeExtraction: (patch: Record<string, unknown>) => void;
-  onChangeGlobal: (patch: Record<string, unknown>) => void;
+  onChange: (patch: Record<string, unknown>) => void;
 }) {
   return (
     <>
@@ -534,7 +532,7 @@ export default function LtmInlineSettingsSections({
               max={32768}
               integer
               value={extractionSettings.maxOutputTokens}
-              onChange={(value) => onChangeExtraction({ maxOutputTokens: value })}
+              onChange={(value) => onChange({ maxOutputTokens: value })}
               placeholder={String(DEFAULT_LTM_EXTRACTION_MAX_TOKENS)}
               ariaLabel="Extraction output budget"
             />
@@ -552,7 +550,7 @@ export default function LtmInlineSettingsSections({
               integer
               value={extractionSettings.maxExistingNoteTokens}
               onChange={(value) =>
-                onChangeExtraction({
+                onChange({
                   maxExistingNoteTokens: value,
                   existingNoteMaxTokens: value,
                 })
@@ -574,7 +572,7 @@ export default function LtmInlineSettingsSections({
             <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Reasoning effort</span>
             <select
               value={extractionSettings.reasoningEffort}
-              onChange={(e) => onChangeExtraction({ reasoningEffort: e.target.value as LtmExtractionReasoningEffort })}
+              onChange={(e) => onChange({ reasoningEffort: e.target.value as LtmExtractionReasoningEffort })}
               className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
             >
               <option value="none">None</option>
@@ -587,7 +585,7 @@ export default function LtmInlineSettingsSections({
             <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Verbosity</span>
             <select
               value={extractionSettings.verbosity}
-              onChange={(e) => onChangeExtraction({ verbosity: e.target.value as LtmExtractionVerbosity })}
+              onChange={(e) => onChange({ verbosity: e.target.value as LtmExtractionVerbosity })}
               className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
             >
               <option value="low">Low</option>
@@ -602,7 +600,7 @@ export default function LtmInlineSettingsSections({
               max={2}
               step={0.1}
               value={extractionSettings.temperature}
-              onChange={(value) => onChangeExtraction({ temperature: value })}
+              onChange={(value) => onChange({ temperature: value })}
               placeholder={String(DEFAULT_LTM_EXTRACTION_TEMPERATURE)}
             />
           </label>
@@ -613,7 +611,7 @@ export default function LtmInlineSettingsSections({
             label="Auto-accept safe changes"
             description="Lets the AI accept obvious (low-risk) facts without asking. Medium/high-risk changes still need review."
             checked={autoApplyLowRisk}
-            onChange={(checked) => onChangeGlobal({ autoApplyLowRisk: checked })}
+            onChange={(checked) => onChange({ autoApplyLowRisk: checked })}
           />
         </div>
       </FieldGroup>

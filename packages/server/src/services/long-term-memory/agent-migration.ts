@@ -1,4 +1,4 @@
-import { isManagedAgentType, type LtmResolvedGlobalSettings } from "@marinara-engine/shared";
+import { isManagedAgentType } from "@marinara-engine/shared";
 import { logger } from "../../lib/logger.js";
 import { createChatsStorage } from "../storage/chats.storage.js";
 import { createAgentsStorage } from "../storage/agents.storage.js";
@@ -45,7 +45,6 @@ function normalizeActiveAgentIds(value: unknown): string[] {
  */
 export async function migrateLtmChatsForAgentPipeline(
   db: DB,
-  ltmGlobalSettings?: LtmResolvedGlobalSettings | null,
 ): Promise<MigrationSummary> {
   const summary: MigrationSummary = {
     scanned: 0,
@@ -65,19 +64,6 @@ export async function migrateLtmChatsForAgentPipeline(
       if (isDryRun) {
         logger.info("[ltm-migration] Dry-run: would create agent_config for type=%s", LTM_AGENT_TYPE);
       } else {
-        const defaultSettings: Record<string, unknown> = {
-          author: "Promansis",
-        };
-        if (ltmGlobalSettings) {
-          defaultSettings.longTermMemoryBudgetTokens = ltmGlobalSettings.longTermMemoryBudgetTokens ?? 4096;
-          defaultSettings.longTermMemoryMaxChunks = ltmGlobalSettings.longTermMemoryMaxChunks ?? 20;
-          defaultSettings.longTermMemoryScoreThreshold = ltmGlobalSettings.longTermMemoryScoreThreshold ?? 0;
-          defaultSettings.longTermMemoryRecallContextMessages =
-            ltmGlobalSettings.longTermMemoryRecallContextMessages ?? 4;
-          defaultSettings.longTermMemoryRecallStyle = ltmGlobalSettings.longTermMemoryRecallStyle ?? "balanced";
-          defaultSettings.longTermMemoryIncludeResolved = ltmGlobalSettings.longTermMemoryIncludeResolved ?? false;
-          defaultSettings.longTermMemoryDebug = ltmGlobalSettings.longTermMemoryDebug ?? false;
-        }
         const created = await agentsStore.create({
           type: LTM_AGENT_TYPE,
           name: "Long-Term Memory",
@@ -87,7 +73,7 @@ export async function migrateLtmChatsForAgentPipeline(
           connectionId: null,
           imagePath: null,
           promptTemplate: "",
-          settings: defaultSettings,
+          settings: { author: "Promansis" },
         });
         if (created) {
           summary.agentConfigSeeded = true;

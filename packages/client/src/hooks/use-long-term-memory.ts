@@ -595,9 +595,13 @@ export function useLongTermMemoryExtractionSettings(options: { enabled?: boolean
 }
 
 export function useUpdateLongTermMemoryExtractionSettings() {
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: LtmExtractionSettings) =>
       api.put<LtmResolvedExtractionSettings>("/long-term-memory/extraction-settings", data),
+    onSuccess: (settings) => {
+      qc.setQueryData(longTermMemoryKeys.extractionSettings(), settings);
+    },
   });
 }
 
@@ -611,8 +615,12 @@ export function useLongTermMemorySettings(options: { enabled?: boolean } = {}) {
 }
 
 export function useUpdateLongTermMemorySettings() {
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: LtmGlobalSettings) => api.put<LtmResolvedGlobalSettings>("/long-term-memory/settings", data),
+    onSuccess: (settings) => {
+      qc.setQueryData(longTermMemoryKeys.settings(), settings);
+    },
   });
 }
 

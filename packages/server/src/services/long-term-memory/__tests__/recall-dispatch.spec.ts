@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { resolveLongTermMemoryRecallSettings } from "@marinara-engine/shared";
+import { ltmAgentSettingsSchema } from "@marinara-engine/shared";
 import type { AssemblerInput } from "../../prompt/assembler.js";
 import { assemblePrompt } from "../../prompt/assembler.js";
 import { fitMessagesToContext } from "../../llm/base-provider.js";
@@ -523,4 +524,177 @@ await test("record dispatch with artifact present persists receipt", async () =>
     });
     assert.equal(result, true);
   });
+});
+
+// ──────────────────────────────────────────────
+//  Settings authority contracts
+// ──────────────────────────────────────────────
+// Recall precedence: per-chat metadata > global settings > mode defaults.
+// Agent-config recall fields are legacy and must be stripped on read.
+test("settings authority: disabled by default when no global or chat settings", () => {
+  const resolved = resolveLongTermMemoryRecallSettings({
+    chatMode: "roleplay",
+    chatMetadata: {},
+    globalSettings: undefined,
+  });
+  assert.equal(resolved.enabled, false);
+  assert.equal(resolved.recallStyle, "story");
+});
+
+test("settings authority: global settings provide defaults", () => {
+  const resolved = resolveLongTermMemoryRecallSettings({
+    chatMode: "roleplay",
+    chatMetadata: {},
+    globalSettings: {
+      version: 1,
+      enableLongTermMemory: true,
+      longTermMemoryBudgetTokens: 2048,
+      longTermMemoryMaxChunks: 10,
+      longTermMemoryScoreThreshold: 0.2,
+      longTermMemoryRecallContextMessages: 6,
+      longTermMemoryRecallStyle: "story",
+      longTermMemorySemanticWeight: 0.4,
+      longTermMemoryLexicalWeight: 0.3,
+      longTermMemoryGraphWeight: 0.2,
+      longTermMemoryKeywordWeight: 0.1,
+      longTermMemoryIncludeResolved: true,
+      longTermMemoryRecallPreamble: "Custom preamble",
+      longTermMemoryDebug: true,
+    },
+  });
+  assert.equal(resolved.enabled, true);
+  assert.equal(resolved.budgetTokens, 2048);
+  assert.equal(resolved.maxChunks, 10);
+  assert.equal(resolved.recallStyle, "story");
+  assert.equal(resolved.includeResolved, true);
+  assert.equal(resolved.recallPreamble, "Custom preamble");
+  assert.equal(resolved.debugEnabled, true);
+});
+
+test("settings authority: chat metadata overrides global", () => {
+  const resolved = resolveLongTermMemoryRecallSettings({
+    chatMode: "roleplay",
+    chatMetadata: {
+      enableLongTermMemory: true,
+      longTermMemoryBudgetTokens: 1024,
+      longTermMemoryRecallStyle: "exact",
+    },
+    globalSettings: {
+      version: 1,
+      enableLongTermMemory: true,
+      longTermMemoryBudgetTokens: 2048,
+      longTermMemoryMaxChunks: 10,
+      longTermMemoryScoreThreshold: 0.2,
+      longTermMemoryRecallContextMessages: 6,
+      longTermMemoryRecallStyle: "story",
+      longTermMemorySemanticWeight: 0.4,
+      longTermMemoryLexicalWeight: 0.3,
+      longTermMemoryGraphWeight: 0.2,
+      longTermMemoryKeywordWeight: 0.1,
+      longTermMemoryIncludeResolved: true,
+      longTermMemoryRecallPreamble: "Global preamble",
+      longTermMemoryDebug: false,
+    },
+  });
+  assert.equal(resolved.enabled, true);
+  assert.equal(resolved.budgetTokens, 1024);
+  assert.equal(resolved.recallStyle, "exact");
+  assert.equal(resolved.recallPreamble, "Global preamble");
+});
+
+test("settings authority: invalid chat metadata values fall back to global", () => {
+  const resolved = resolveLongTermMemoryRecallSettings({
+    chatMode: "roleplay",
+    chatMetadata: {
+      enableLongTermMemory: true,
+      longTermMemoryBudgetTokens: "not a number",
+      longTermMemoryRecallStyle: "invalid_style",
+      longTermMemoryMaxChunks: -5,
+    },
+    globalSettings: {
+      version: 1,
+      enableLongTermMemory: true,
+      longTermMemoryBudgetTokens: 2048,
+      longTermMemoryMaxChunks: 10,
+      longTermMemoryScoreThreshold: 0,
+      longTermMemoryRecallContextMessages: 4,
+      longTermMemoryRecallStyle: "story",
+      longTermMemorySemanticWeight: 0.4,
+      longTermMemoryLexicalWeight: 0.3,
+      longTermMemoryGraphWeight: 0.2,
+      longTermMemoryKeywordWeight: 0.1,
+      longTermMemoryIncludeResolved: false,
+      longTermMemoryRecallPreamble: "",
+      longTermMemoryDebug: false,
+    },
+  });
+  assert.equal(resolved.budgetTokens, 2048);
+  assert.equal(resolved.maxChunks, 10);
+  assert.equal(resolved.recallStyle, "story");
+});
+
+test("settings authority: legacy agent recall fields are stripped on parse", () => {
+  const legacy = {
+    author: "Promansis",
+    connectionId: "conn-1",
+    model: "gpt-4",
+    instruction: "Extract carefully",
+    importConcurrency: 3,
+    autoApplyLowRisk: true,
+    longTermMemoryBudgetTokens: 8192,
+    longTermMemoryMaxChunks: 50,
+    longTermMemoryRecallStyle: "broad",
+    longTermMemoryDebug: true,
+    longTermMemoryIncludeResolved: true,
+    longTermMemoryRecallPreamble: "Legacy preamble",
+  };
+  const parsed = ltmAgentSettingsSchema.parse(legacy);
+  assert.equal(parsed.connectionId, "conn-1");
+  assert.equal(parsed.model, "gpt-4");
+  assert.equal(parsed.autoApplyLowRisk, true);
+  assert.equal("longTermMemoryBudgetTokens" in parsed, false);
+  assert.equal("longTermMemoryMaxChunks" in parsed, false);
+  assert.equal("longTermMemoryRecallStyle" in parsed, false);
+  assert.equal("longTermMemoryDebug" in parsed, false);
+  assert.equal("longTermMemoryIncludeResolved" in parsed, false);
+  assert.equal("longTermMemoryRecallPreamble" in parsed, false);
+});
+
+test("settings authority: unknown keys in agent settings are rejected", () => {
+  assert.throws(
+    () => ltmAgentSettingsSchema.parse({ unknownKey: "value" }),
+    /Unrecognized key/,
+  );
+});
+
+test("settings authority: conversation mode defaults to balanced", () => {
+  const resolved = resolveLongTermMemoryRecallSettings({
+    chatMode: "conversation",
+    chatMetadata: {},
+    globalSettings: undefined,
+  });
+  assert.equal(resolved.recallStyle, "balanced");
+});
+
+test("settings authority: game mode defaults to exact", () => {
+  const resolved = resolveLongTermMemoryRecallSettings({
+    chatMode: "game",
+    chatMetadata: {},
+    globalSettings: undefined,
+  });
+  assert.equal(resolved.recallStyle, "exact");
+});
+
+test("settings authority: visual_novel maps to roleplay mode defaults", () => {
+  const resolvedRoleplay = resolveLongTermMemoryRecallSettings({
+    chatMode: "roleplay",
+    chatMetadata: {},
+    globalSettings: undefined,
+  });
+  const resolvedVn = resolveLongTermMemoryRecallSettings({
+    chatMode: "visual_novel",
+    chatMetadata: {},
+    globalSettings: undefined,
+  });
+  assert.equal(resolvedVn.recallStyle, resolvedRoleplay.recallStyle);
 });
