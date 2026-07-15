@@ -85,12 +85,16 @@ export function ActiveContextLtmSection({
       )}
 
       {onOpenVault && (
-        <div className={cn(ITEM_BASE, "justify-center hover:bg-white/5")} onClick={onOpenVault}>
+        <button
+          type="button"
+          className={cn(ITEM_BASE, "w-full justify-center hover:bg-white/5")}
+          onClick={onOpenVault}
+        >
           <span className="font-medium text-[var(--foreground)]/80">
             Open memory vault
           </span>
           <ArrowUpRight size="0.625rem" className="text-[var(--muted-foreground)]" />
-        </div>
+        </button>
       )}
     </div>
   );
