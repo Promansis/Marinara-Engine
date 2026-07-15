@@ -13,6 +13,7 @@ import {
   isAgentAvailableInChatMode,
   isAgentConfigDeleted,
   isBuiltInAgentRuntimeDisabled,
+  isNonLlmAgentType,
   isRetiredBuiltInAgentId,
   normalizeWorldCustomFields,
   normalizeAgentPhaseValue,
@@ -1258,7 +1259,7 @@ async function resolveRetryAgents(args: {
       );
       continue;
     }
-    if (defaultAgentConn && effectiveConnectionId === defaultAgentConn.id) {
+    if (defaultAgentConn && effectiveConnectionId === defaultAgentConn.id && !isNonLlmAgentType(cfg.type)) {
       defaultAgentConnectionAgents.push(cfg.name ?? cfg.type);
     }
 
@@ -1334,7 +1335,7 @@ async function resolveRetryAgents(args: {
       );
       continue;
     }
-    if (defaultAgentConn && builtInConnectionId === defaultAgentConn.id)
+    if (defaultAgentConn && builtInConnectionId === defaultAgentConn.id && !isNonLlmAgentType(builtIn.id))
       defaultAgentConnectionAgents.push(builtIn.name);
 
     let settings = applyDefaultBuiltInAgentTools(builtIn.id, getDefaultBuiltInAgentSettings(builtIn.id));

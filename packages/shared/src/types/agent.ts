@@ -460,6 +460,14 @@ export function isReservedManagedAgentType(agentType: string): boolean {
   );
 }
 
+export const NON_LLM_AGENT_TYPES = ["long-term-memory"] as const;
+
+const NON_LLM_AGENT_TYPE_SET = new Set<string>(NON_LLM_AGENT_TYPES);
+
+export function isNonLlmAgentType(agentType: string): boolean {
+  return NON_LLM_AGENT_TYPE_SET.has(agentType);
+}
+
 export type AgentCategory = "writer" | "tracker" | "memory" | "misc";
 
 export interface BuiltInAgentMeta {

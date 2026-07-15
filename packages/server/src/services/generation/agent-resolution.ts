@@ -5,6 +5,7 @@ import {
   getDefaultBuiltInAgentSettings,
   isBuiltInAgentRuntimeDisabled,
   isAgentConfigDeleted,
+  isNonLlmAgentType,
   isRetiredBuiltInAgentId,
   LOCAL_SIDECAR_CONNECTION_ID,
   mergeBuiltInAgentSettings,
@@ -423,7 +424,7 @@ export async function resolveAgentPipelineAgents({
       continue;
     }
 
-    if (defaultAgentConn && effectiveConnectionId === defaultAgentConn.id) {
+    if (defaultAgentConn && effectiveConnectionId === defaultAgentConn.id && !isNonLlmAgentType(cfg.type as string)) {
       defaultAgentConnectionAgents.push(cfg.name ?? cfg.type);
     }
 
@@ -503,7 +504,7 @@ export async function resolveAgentPipelineAgents({
       );
       continue;
     }
-    if (defaultAgentConn && builtInConnectionId === defaultAgentConn.id)
+    if (defaultAgentConn && builtInConnectionId === defaultAgentConn.id && !isNonLlmAgentType(builtIn.id))
       defaultAgentConnectionAgents.push(builtIn.name);
     let builtInSettings = getDefaultBuiltInAgentSettings(builtIn.id);
     if (builtIn.id === "spotify") {
