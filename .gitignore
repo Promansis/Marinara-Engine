@@ -53,6 +53,10 @@ pr-evidence/
 # Temporary tests
 *.test.ts
 *.spec.ts
+!packages/server/src/services/long-term-memory/__tests__/
+!packages/server/src/services/long-term-memory/__tests__/*.spec.ts
+!packages/server/src/services/long-term-memory/__tests__/fixtures/
+!packages/server/src/services/long-term-memory/__tests__/fixtures/*
 
 # Custom agents (personal)
 .github/agents/qa.agent.md
