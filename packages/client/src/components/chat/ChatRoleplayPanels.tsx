@@ -10,6 +10,7 @@ import {
   ROLEPLAY_POPOVER_SUBTITLE,
   ROLEPLAY_POPOVER_TITLE,
 } from "./roleplay-popover-styles";
+import { ActiveContextLtmSection } from "./ActiveContextLtmSection";
 
 type LorebookEntryStatus = "normal" | "constant" | "selective";
 
@@ -249,9 +250,11 @@ function BudgetSkippedEntriesNotice({ entries }: { entries: BudgetSkippedLoreboo
 export function ActiveLorebookEntriesPanel({
   chatId,
   onClose,
+  onOpenLtmVault,
 }: {
   chatId: string;
   onClose: () => void;
+  onOpenLtmVault?: () => void;
 }) {
   const { data, isLoading } = useActiveLorebookEntries(chatId, true);
   const entries = data?.entries ?? [];
@@ -317,6 +320,7 @@ export function ActiveLorebookEntriesPanel({
           )}
         </>
       )}
+      <ActiveContextLtmSection chatId={chatId} onOpenVault={onOpenLtmVault} />
     </>
   );
 }

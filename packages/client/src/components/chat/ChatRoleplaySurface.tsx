@@ -74,6 +74,7 @@ import {
   ROLEPLAY_POPOVER_SHELL,
   ROLEPLAY_POPOVER_TITLE,
 } from "./roleplay-popover-styles";
+import { ActiveContextLtmSection, useActiveContextLtmBadge } from "./ActiveContextLtmSection";
 import type { SpriteDisplayMode } from "./sprite-display-modes";
 import type {
   CharacterMap,
@@ -471,6 +472,11 @@ function ActiveContextLinksButton({
     chat?.id ?? null,
     open && !!chat?.id,
   );
+  const { hasPending: hasLtmPending, pendingCount: ltmPendingCount } = useActiveContextLtmBadge(chat?.id ?? null);
+  const openLtmVault = useCallback(() => {
+    setOpen(false);
+    useUIStore.getState().openAgentDetail("long-term-memory");
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -670,6 +676,7 @@ function ActiveContextLinksButton({
           </button>
         )}
       </div>
+      <ActiveContextLtmSection chatId={chat?.id ?? null} onOpenVault={openLtmVault} />
     </>
   );
 
@@ -691,6 +698,11 @@ function ActiveContextLinksButton({
         aria-expanded={open}
       >
         <BookOpen size="0.875rem" />
+        {hasLtmPending && (
+          <span className="pointer-events-none absolute -right-0.5 -top-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-amber-500 text-[0.5rem] font-bold leading-none text-amber-950 shadow-[0_0_6px_2px_rgba(245,158,11,0.5)] animate-pulse">
+            {ltmPendingCount > 9 ? "!" : ltmPendingCount}
+          </span>
+        )}
       </button>
       {open &&
         (isMobile ? (

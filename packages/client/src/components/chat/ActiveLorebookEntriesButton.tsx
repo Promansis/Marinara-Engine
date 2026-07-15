@@ -12,6 +12,11 @@ import {
   readChatToolbarFloatingPanelAnchor,
   type ChatToolbarFloatingPanelAnchor,
 } from "./ChatToolbarControls";
+import { useActiveContextLtmBadge } from "./ActiveContextLtmSection";
+
+function openLtmAgentDetail() {
+  useUIStore.getState().openAgentDetail("long-term-memory");
+}
 
 const ActiveLorebookEntriesPanel = lazy(async () => {
   const module = await import("./ChatRoleplayPanels");
@@ -83,7 +88,11 @@ export function ActiveLorebookEntriesModal({
         onTouchStart={(e) => e.stopPropagation()}
       >
         <Suspense fallback={<ActiveLorebookEntriesLoadingFallback />}>
-          <ActiveLorebookEntriesPanel chatId={chatId} onClose={onClose} />
+          <ActiveLorebookEntriesPanel
+            chatId={chatId}
+            onClose={onClose}
+            onOpenLtmVault={openLtmAgentDetail}
+          />
         </Suspense>
       </div>,
       document.body,
@@ -100,7 +109,11 @@ export function ActiveLorebookEntriesModal({
       <div className="absolute inset-0 bg-black/30" onClick={onClose} />
       <div className={PANEL_CONTAINER} onClick={(e) => e.stopPropagation()}>
         <Suspense fallback={<ActiveLorebookEntriesLoadingFallback />}>
-          <ActiveLorebookEntriesPanel chatId={chatId} onClose={onClose} />
+          <ActiveLorebookEntriesPanel
+            chatId={chatId}
+            onClose={onClose}
+            onOpenLtmVault={openLtmAgentDetail}
+          />
         </Suspense>
       </div>
     </div>,
@@ -118,6 +131,7 @@ export function ActiveLorebookEntriesButton({
   const [open, setOpen] = useState(false);
   const [mobileAnchor, setMobileAnchor] = useState<ChatToolbarFloatingPanelAnchor>(null);
   const { data, isLoading } = useActiveLorebookEntries(chatId, true);
+  const { hasPending: hasLtmPending, pendingCount: ltmPendingCount } = useActiveContextLtmBadge(chatId);
   const ref = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
@@ -193,11 +207,16 @@ export function ActiveLorebookEntriesButton({
           setMobileAnchor(nextOpen && isMobile ? readChatToolbarFloatingPanelAnchor(buttonRef.current) : null);
           setOpen(nextOpen);
         }}
-        className={resolvedButtonClassName}
+        className={cn(resolvedButtonClassName, "relative")}
         title={title}
         aria-label={title}
       >
         <BookOpen size={iconSize} />
+        {hasLtmPending && (
+          <span className="pointer-events-none absolute -right-0.5 -top-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-amber-500 text-[0.5rem] font-bold leading-none text-amber-950 shadow-[0_0_6px_2px_rgba(245,158,11,0.5)] animate-pulse">
+            {ltmPendingCount > 9 ? "!" : ltmPendingCount}
+          </span>
+        )}
       </button>
       {open &&
         (isMobile ? (
@@ -217,7 +236,11 @@ export function ActiveLorebookEntriesButton({
             )}
           >
             <Suspense fallback={<ActiveLorebookEntriesLoadingFallback />}>
-              <ActiveLorebookEntriesPanel chatId={chatId} onClose={() => setOpen(false)} />
+              <ActiveLorebookEntriesPanel
+                chatId={chatId}
+                onClose={() => setOpen(false)}
+                onOpenLtmVault={openLtmAgentDetail}
+              />
             </Suspense>
           </div>
         ))}
