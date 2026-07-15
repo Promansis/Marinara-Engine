@@ -962,8 +962,4 @@ async function writeJsonIfChanged(path: string, value: unknown) {
   await writeJsonAtomic(path, value);
 }
 
-export async function initializeLtmStore(root?: string) {
-  const storage = new LongTermMemoryStorage(root);
-  await storage.initializeLtmStore();
-  return storage;
-}
+

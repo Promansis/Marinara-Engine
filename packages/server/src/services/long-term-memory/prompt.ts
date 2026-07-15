@@ -141,11 +141,6 @@ export function serializeLongTermMemoryPromptArtifact(
   };
 }
 
-export function formatLongTermMemoryBlock(chunks: LtmBudgetedChunk[], options?: FormatLongTermMemoryBlockOptions) {
-  const artifact = createLongTermMemoryPromptArtifact(chunks, options);
-  return serializeLongTermMemoryPromptArtifact(artifact, options)?.content ?? "";
-}
-
 export function isLongTermMemoryPromptArtifactPresent(
   messages: ReadonlyArray<Pick<ChatMessage, "content">>,
   artifact: LtmSerializedPromptArtifact | null | undefined,

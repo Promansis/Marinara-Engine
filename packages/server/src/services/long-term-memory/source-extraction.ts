@@ -22,7 +22,7 @@ import {
 } from "./evidence-unit-extraction.js";
 import { getLtmExtractionConfig } from "./extraction-config.js";
 import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
-import type { LtmExtractionDiagnostic } from "./diagnostics.js";
+import type { LtmExtractionDiagnostic } from "@marinara-engine/shared";
 import { LongTermMemoryDraftStore } from "./draft-store.js";
 import { uniqueStrings } from "./ltm-utils.js";
 import { retrieveLongTermMemory, type RetrieveLongTermMemoryInput } from "./retrieval.js";

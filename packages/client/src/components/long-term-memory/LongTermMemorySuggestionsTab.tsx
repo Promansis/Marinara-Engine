@@ -24,7 +24,7 @@ import {
   type AcceptLongTermMemoryDraftResponse,
   type ExtractLongTermMemorySourceResponse,
 } from "../../hooks/use-long-term-memory";
-import type { LongTermMemoryLatestExtractionResult } from "../../stores/ltm-extraction-results.store";
+import type { LongTermMemoryLatestExtractionResult } from "../../hooks/use-long-term-memory";
 import { cn } from "../../lib/utils";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { helperTextClassName, insetSectionCardClassName, sectionCardClassName } from "./LtmFields";

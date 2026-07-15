@@ -5,7 +5,6 @@ import {
   getLtmScopeChatIds,
   isLtmSourceLikeNote,
   withMergedLtmScopeLinks,
-  type LtmExtractionDroppedCandidate,
   type LtmImportance,
   type LtmLink,
   type LtmMode,
@@ -32,9 +31,6 @@ import {
   textareaClassName,
 } from "./LtmFields";
 import { LtmScopePicker } from "./LtmScopePicker";
-import { LongTermMemorySuggestionsTab } from "./LongTermMemorySuggestionsTab";
-import { type LtmManagedExtractionPrefs } from "./ltm-managed-extraction-prefs";
-import type { LongTermMemoryLatestExtractionResult } from "../../stores/ltm-extraction-results.store";
 import { ToolButton } from "./LtmPills";
 import {
   dedupeEvidenceEntries,
@@ -59,15 +55,12 @@ import {
 import { ImportanceBadge } from "./ImportanceBadge";
 import { LinkedContextPanel } from "./LinkedContextPanel";
 import { RelationshipDimensionsEditor } from "./RelationshipDimensionsEditor";
-import { LtmTabRail } from "./LtmTabRail";
 
 type LongTermMemoryNoteEditorProps = {
   note: LtmNote;
   onCancel: () => void;
   onDirtyChange?: (dirty: boolean) => void;
   onSaved?: (note: LtmNote) => void;
-  onRecoverDroppedCandidate?: (candidate: LtmExtractionDroppedCandidate, note: LtmNote) => void;
-  extractionPrefs?: LtmManagedExtractionPrefs;
   embedded?: boolean;
   displayContext?: LtmDisplayLookupContext;
 };
@@ -128,8 +121,6 @@ export function LongTermMemoryNoteEditor({
   onCancel,
   onDirtyChange,
   onSaved,
-  onRecoverDroppedCandidate,
-  extractionPrefs,
   embedded = false,
   displayContext,
 }: LongTermMemoryNoteEditorProps) {
@@ -143,10 +134,6 @@ export function LongTermMemoryNoteEditor({
   const [tagsText, setTagsText] = useState(note.tags.join(", "));
   const [keywordsText, setKeywordsText] = useState(note.keywords.join(", "));
   const [linkDraft, setLinkDraft] = useState<LinkDraft>({ target: "", relation: "", aspect: "" });
-  const [activeTab, setActiveTab] = useState<"details" | "suggestions">("details");
-  const [latestExtractionResult, setLatestExtractionResult] = useState<LongTermMemoryLatestExtractionResult | null>(
-    null,
-  );
   const updateNote = useUpdateLongTermMemoryNote();
   const applyScopeToDerived = useApplyLongTermMemoryScopeToDerived();
   const rebuild = useRebuildLongTermMemory();
@@ -157,8 +144,6 @@ export function LongTermMemoryNoteEditor({
     setTitleText(note.title ?? "");
     setTagsText(note.tags.join(", "));
     setKeywordsText(note.keywords.join(", "));
-    setActiveTab("details");
-    setLatestExtractionResult(null);
   }, [note]);
 
   const dirty = useMemo(() => serializedEditable(draft) !== serializedEditable(savedBaseline), [draft, savedBaseline]);
@@ -367,64 +352,12 @@ export function LongTermMemoryNoteEditor({
 
   return (
     <div className="grid gap-4">
-      {!embedded && (
-        <div className="rounded-lg bg-[var(--secondary)]/35 p-3 ring-1 ring-[var(--border)]">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-sm font-semibold text-[var(--foreground)]">{friendlyIdentifier(draft.id)}</div>
-              <div className="mt-2 text-[0.6875rem] text-[var(--muted-foreground)]">
-                {friendlyStatus(draft.status)} · updated {new Date(draft.updatedAt).toLocaleString()}
-              </div>
-            </div>
-            {dirty ? (
-              <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[0.6875rem] font-semibold text-amber-700 dark:text-amber-200">
-                Unsaved
-              </span>
-            ) : null}
-          </div>
-          <p className={cn("mt-2", helperTextClassName)}>
-            Keep the note structure, scope, and supporting evidence aligned with the rest of the memory library.
-          </p>
-        </div>
-      )}
-
-      {!embedded && (
-        <LtmTabRail
-          tabs={[
-            { id: "details" as const, label: "Details" },
-            { id: "suggestions" as const, label: "Suggestions", disabled: !sourceMemory },
-          ]}
-          activeId={activeTab}
-          onChange={setActiveTab}
-          ariaLabel="Memory editor views"
-          idPrefix="ltm-editor"
-        />
-      )}
-
-      {!embedded && activeTab === "suggestions" && onRecoverDroppedCandidate ? (
-        <div
-          id="ltm-editor-panel-suggestions"
-          role="tabpanel"
-          aria-labelledby="ltm-editor-tab-suggestions"
-          tabIndex={0}
-        >
-          <LongTermMemorySuggestionsTab
-            note={savedBaseline}
-            extractionPrefs={extractionPrefs}
-            latestExtractionResult={latestExtractionResult}
-            onLatestExtractionResultChange={setLatestExtractionResult}
-            onRecoverDroppedCandidate={onRecoverDroppedCandidate}
-          />
-        </div>
-      ) : null}
-
-      {(embedded || activeTab === "details") && (
-        <div
-          id={embedded ? undefined : "ltm-editor-panel-details"}
-          role={embedded ? undefined : "tabpanel"}
-          aria-labelledby={embedded ? undefined : "ltm-editor-tab-details"}
-          tabIndex={embedded ? undefined : 0}
-          className="grid gap-4"
+      <div
+        id={embedded ? undefined : "ltm-editor-panel-details"}
+        role={embedded ? undefined : "tabpanel"}
+        aria-labelledby={embedded ? undefined : "ltm-editor-tab-details"}
+        tabIndex={embedded ? undefined : 0}
+        className="grid gap-4"
         >
           <div className="order-1">
             <SettingField label="Title">
@@ -920,7 +853,6 @@ export function LongTermMemoryNoteEditor({
             </ToolButton>
           </div>
         </div>
-      )}
     </div>
   );
 }

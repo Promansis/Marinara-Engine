@@ -9,7 +9,7 @@ import {
   type LtmNote,
   type LtmScope,
 } from "@marinara-engine/shared";
-import type { LtmExtractionDiagnostic } from "./diagnostics.js";
+import type { LtmExtractionDiagnostic } from "@marinara-engine/shared";
 import { noteIdForEvidenceUnit } from "./evidence-unit-validation.js";
 import { uniqueStrings } from "./ltm-utils.js";
 import { subjectsEqual } from "./subject-identity.js";

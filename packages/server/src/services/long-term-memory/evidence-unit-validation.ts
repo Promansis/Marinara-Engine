@@ -6,7 +6,7 @@ import type {
   LtmNote,
 } from "@marinara-engine/shared";
 import { isLtmSourceLikeNote, RELATIONSHIP_DIMENSIONS, tokenize } from "@marinara-engine/shared";
-import type { LtmExtractionDiagnostic } from "./diagnostics.js";
+import type { LtmExtractionDiagnostic } from "@marinara-engine/shared";
 import { safeSnippet } from "./ltm-utils.js";
 
 const DIALOGUE_BUCKETS = new Set<LtmEvidenceUnit["bucket"]>(["tone"]);

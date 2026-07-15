@@ -222,8 +222,6 @@ export function isLowRiskSourceExtractionMutation(mutation: LtmDraftMutation) {
   return true;
 }
 
-export const isLowRiskAutoApplyMutation = isLowRiskSourceExtractionMutation;
-
 async function filterAutoApplyMutationsWithDependencies(storage: LongTermMemoryStorage, mutations: LtmDraftMutation[]) {
   const selectedCreateIds = new Set(
     mutations.flatMap((mutation) => (mutation.kind === "create_note" ? [mutation.note.id] : [])),

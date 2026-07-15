@@ -32,7 +32,7 @@ import { StatusPill } from "./LtmPills";
 
 export type TabId = "notes" | "import" | "review" | "identity" | "debug";
 export type MemoryModalMode = "view" | "edit";
-export type MemoryModalTab = "overview" | "content" | "links" | "recall" | "suggestions";
+export type MemoryModalTab = "overview" | "suggestions";
 export type LtmRecallStyle = "balanced" | "exact" | "broad" | "story";
 export type ImportPreviewRow = LtmInteropPreview["samples"][number];
 

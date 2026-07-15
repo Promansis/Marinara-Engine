@@ -30,7 +30,7 @@ import { recordLtmDebugEvent, withLtmDebugOperation } from "./debug-log.js";
 import { applyLongTermMemoryDraft } from "./reconciliation.js";
 import { resolveScopedEvidenceUnitTargets } from "./scoped-targets.js";
 import { LongTermMemoryStorage } from "./storage.js";
-import type { LtmExtractionDiagnostic } from "./diagnostics.js";
+import type { LtmExtractionDiagnostic } from "@marinara-engine/shared";
 import { nowIso } from "./ltm-utils.js";
 import { stableJsonHash } from "./chunking.js";
 import { extractionFingerprintForLtmSourceNote, sourceHashForLtmSourceNote } from "./source-hash.js";

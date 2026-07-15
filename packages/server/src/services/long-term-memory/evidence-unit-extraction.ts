@@ -33,7 +33,7 @@ import { DEFAULT_LTM_EXTRACTION_PROMPT } from "@marinara-engine/shared";
 import { stableJsonHash } from "./chunking.js";
 import { extractionFingerprintForLtmSourceNote, sourceHashForLtmSourceNote } from "./source-hash.js";
 import { recordLtmDebugEvent } from "./debug-log.js";
-import type { LtmExtractionDiagnostic } from "./diagnostics.js";
+import type { LtmExtractionDiagnostic } from "@marinara-engine/shared";
 import { deduplicateUnits } from "./dedup.js";
 import { compileLtmEvidenceUnits } from "./evidence-unit-compiler.js";
 import type { LtmSuggestionMetadata } from "./evidence-unit-compiler.js";

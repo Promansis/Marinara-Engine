@@ -207,6 +207,13 @@ export type SkipLongTermMemoryDraftResponse = {
 
 export type ImportLongTermMemorySourceNotesResponse = SharedLtmImportSourceNotesResponse;
 
+export type LongTermMemoryLatestExtractionResult = Pick<
+  ExtractLongTermMemorySourceResponse,
+  "accounting" | "diagnostics" | "operationId" | "outcome"
+> & {
+  mutationCount?: number;
+};
+
 export const longTermMemoryKeys = {
   all: ["long-term-memory"] as const,
   status: () => [...longTermMemoryKeys.all, "status"] as const,

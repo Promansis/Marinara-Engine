@@ -50,6 +50,7 @@ import {
   type ImportLongTermMemorySourceNotesResponse,
   type LtmSearchResponse,
   type LtmInteropSource,
+  type LongTermMemoryLatestExtractionResult,
 } from "../../hooks/use-long-term-memory";
 import { useChatStore } from "../../stores/chat.store";
 import { useChat, useChatMessages, useChats } from "../../hooks/use-chats";
@@ -64,10 +65,6 @@ import { MemoryNoteModal, defaultMemoryModalTab } from "../long-term-memory/Long
 import { TypeMemoryGroups } from "../long-term-memory/LongTermMemoryNoteList";
 import { ImportPreviewRowItem } from "../long-term-memory/LongTermMemoryImportSection";
 import { SelectionActionBar, type SelectionActionBarAction } from "../ui/SelectionActionBar";
-import {
-  type LongTermMemoryLatestExtractionResult,
-  useLtmExtractionResultsStore,
-} from "../../stores/ltm-extraction-results.store";
 import { LongTermMemoryNoteTransferModal } from "../long-term-memory/LongTermMemoryNoteTransferModal";
 import { LongTermMemoryIdentityRepairSection } from "../long-term-memory/LongTermMemoryIdentityRepairSection";
 import { LtmTabRail } from "../long-term-memory/LtmTabRail";
@@ -410,8 +407,23 @@ export function LtmVaultManagerSection({
   const [creatingNote, setCreatingNote] = useState(false);
   const [createNoteDraft, setCreateNoteDraft] = useState<CreateLongTermMemoryNoteDraft | null>(null);
   const [createNoteDirty, setCreateNoteDirty] = useState(false);
-  const resultsBySourceNoteId = useLtmExtractionResultsStore((s) => s.resultsBySourceNoteId);
-  const setExtractionResult = useLtmExtractionResultsStore((s) => s.setResult);
+  const [resultsBySourceNoteId, setResultsBySourceNoteId] = useState<
+    Record<string, LongTermMemoryLatestExtractionResult>
+  >({});
+  const setExtractionResult = useCallback(
+    (sourceNoteId: string, result: LongTermMemoryLatestExtractionResult | null) => {
+      setResultsBySourceNoteId((current) => {
+        if (result === null) {
+          if (!(sourceNoteId in current)) return current;
+          const next = { ...current };
+          delete next[sourceNoteId];
+          return next;
+        }
+        return { ...current, [sourceNoteId]: result };
+      });
+    },
+    [],
+  );
   const [openNoteId, setOpenNoteId] = useState<string | null>(null);
   const [memoryModalMode, setMemoryModalMode] = useState<MemoryModalMode>("view");
   const [memoryModalTab, setMemoryModalTab] = useState<MemoryModalTab>("overview");

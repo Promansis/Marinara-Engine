@@ -1,5 +1,5 @@
 import { jaccardSimilarity, tokenize, type LtmEvidenceUnit, type LtmNote } from "@marinara-engine/shared";
-import type { LtmExtractionDiagnostic } from "./diagnostics.js";
+import type { LtmExtractionDiagnostic } from "@marinara-engine/shared";
 import { noteIdForEvidenceUnit } from "./evidence-unit-validation.js";
 
 export interface DedupOptions {

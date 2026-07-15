@@ -2,7 +2,6 @@ import { useMemo } from "react";
 import { Loader2, Pencil, Search } from "lucide-react";
 import type {
   Chat,
-  LtmDraftMutation,
   LtmExtractionDraft,
   LtmExtractionDroppedCandidate,
   LtmLink,
@@ -12,7 +11,6 @@ import type {
 import {
   dedupeEvidenceEntries,
   displayNoteTitle,
-  friendlyEvidence,
   friendlyIdentifier,
   friendlyMode,
   friendlyNoteType,
@@ -30,25 +28,18 @@ import { LongTermMemorySuggestionsTab } from "./LongTermMemorySuggestionsTab";
 import { LtmTabRail } from "./LtmTabRail";
 import { type LtmManagedExtractionPrefs } from "./ltm-managed-extraction-prefs";
 import { LtmModal } from "./LtmModal";
-import { cn } from "../../lib/utils";
 import type { LtmSearchResponse } from "../../hooks/use-long-term-memory";
-import type { LongTermMemoryLatestExtractionResult } from "../../stores/ltm-extraction-results.store";
-import { emptyStateClassName, inputClassName, listRowClassName } from "./LtmFields";
+import type { LongTermMemoryLatestExtractionResult } from "../../hooks/use-long-term-memory";
+import { emptyStateClassName, inputClassName } from "./LtmFields";
 import { StatusPill, ToolButton } from "./LtmPills";
 import {
   compactLtmText,
-  draftRiskSummary,
   derivedSourceGroups,
   EvidencePills,
   isDerivedFromSource,
   isSourceSummaryNote,
   MemoryModalMode,
   MemoryModalTab,
-  mutationKindLabel,
-  mutationRiskLabel,
-  mutationRiskTone,
-  mutationTarget,
-  mutationText,
   noteReferenceLabel,
   noteTextPreview,
   pendingConflictCount,
@@ -56,88 +47,6 @@ import {
   sourceReferenceLabel,
   sourceTypeLabel,
 } from "./ltm-panel-shared";
-
-export function MutationPreview({ mutation }: { mutation: LtmDraftMutation }) {
-  return (
-    <article className="rounded-lg bg-[var(--secondary)]/45 p-3 ring-1 ring-[var(--border)]">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <StatusPill label={mutationKindLabel(mutation.kind)} />
-        <StatusPill label={mutationRiskLabel(mutation.risk)} tone={mutationRiskTone(mutation.risk)} />
-        <span className="text-[0.6875rem] text-[var(--muted-foreground)]">
-          {Math.round(mutation.confidence * 100)}% confidence, {mutation.evidence.length} evidence
-        </span>
-      </div>
-      <div className="mt-2 text-xs font-medium text-[var(--foreground)]">{mutation.summary}</div>
-      <div className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">Applies to: {mutationTarget(mutation)}</div>
-      <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-[var(--background)] p-2 text-[0.6875rem] leading-relaxed text-[var(--foreground)] ring-1 ring-[var(--border)]">
-        {mutationText(mutation)}
-      </pre>
-      {mutation.evidence.length > 0 && (
-        <div className="mt-2 rounded-md bg-[var(--background)]/70 p-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-          <span className="font-medium text-[var(--foreground)]">Evidence:</span>{" "}
-          {mutation.evidence.map(friendlyEvidence).join(", ")}
-        </div>
-      )}
-    </article>
-  );
-}
-
-export function SourceNoteReference({
-  sourceNoteId,
-  noteLookup,
-  chatLookup,
-  onOpenSourceNote,
-}: {
-  sourceNoteId?: string;
-  noteLookup?: Map<string, LtmNote>;
-  chatLookup?: Map<string, Chat>;
-  onOpenSourceNote?: (noteId: string) => void;
-}) {
-  if (!sourceNoteId) return null;
-  const label = noteLookup
-    ? sourceReferenceLabel(sourceNoteId, noteLookup, chatLookup)
-    : friendlyIdentifier(sourceNoteId);
-  if (onOpenSourceNote) {
-    return (
-      <button
-        type="button"
-        onClick={() => onOpenSourceNote(sourceNoteId)}
-        className="min-w-0 truncate rounded-md bg-[var(--muted)]/40 px-1.5 py-0.5 text-left text-[0.6875rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-        title={`Open source note ${sourceNoteId}`}
-      >
-        From: {label}
-      </button>
-    );
-  }
-  return <StatusPill label={`From: ${label}`} />;
-}
-
-function DraftMetadataPills({
-  draft,
-  noteLookup,
-  chatLookup,
-  onOpenSourceNote,
-}: {
-  draft: LtmExtractionDraft;
-  noteLookup?: Map<string, LtmNote>;
-  chatLookup?: Map<string, Chat>;
-  onOpenSourceNote?: (noteId: string) => void;
-}) {
-  const { highestRisk, averageConfidence, evidenceCount } = draftRiskSummary(draft);
-  return (
-    <div className="mt-1 flex flex-wrap gap-1.5">
-      <StatusPill label={`Mutation risk ${mutationRiskLabel(highestRisk)}`} tone={mutationRiskTone(highestRisk)} />
-      <StatusPill label={`Confidence ${Math.round(averageConfidence * 100)}%`} />
-      <StatusPill label={`${evidenceCount} evidence`} />
-      <SourceNoteReference
-        sourceNoteId={draft.source.sourceNoteId}
-        noteLookup={noteLookup}
-        chatLookup={chatLookup}
-        onOpenSourceNote={onOpenSourceNote}
-      />
-    </div>
-  );
-}
 
 function GraphLinks({
   links,
@@ -577,57 +486,6 @@ function MemoryRecallPanel({
   );
 }
 
-function _MemorySuggestionsPanel({
-  note,
-  drafts,
-  noteLookup,
-  chatLookup,
-  _onViewDraft,
-  onOpenSourceNote,
-}: {
-  note: LtmNote;
-  drafts: LtmExtractionDraft[];
-  noteLookup: Map<string, LtmNote>;
-  chatLookup?: Map<string, Chat>;
-  _onViewDraft: (draftId: string) => void;
-  onOpenSourceNote: (noteId: string) => void;
-}) {
-  if (!isSourceSummaryNote(note)) {
-    return (
-      <p className={emptyStateClassName}>
-        Suggestions live on source notes. Open a source note to review extracted memory drafts.
-      </p>
-    );
-  }
-
-  if (drafts.length === 0) {
-    return <p className={emptyStateClassName}>No pending suggestions for this source.</p>;
-  }
-
-  return (
-    <div className="space-y-2">
-      {drafts.map((draft) => (
-        <button
-          key={draft.id}
-          type="button"
-          onClick={() => _onViewDraft(draft.id)}
-          className={cn("w-full text-left", listRowClassName)}
-        >
-          <div className="truncate text-xs font-semibold text-[var(--foreground)]">
-            {draft.summary || "Untitled suggestion"}
-          </div>
-          <DraftMetadataPills
-            draft={draft}
-            noteLookup={noteLookup}
-            chatLookup={chatLookup}
-            onOpenSourceNote={onOpenSourceNote}
-          />
-        </button>
-      ))}
-    </div>
-  );
-}
-
 export function defaultMemoryModalTab(_note: LtmNote): MemoryModalTab {
   return "overview";
 }
@@ -810,8 +668,6 @@ export function MemoryNoteModal({
               onCancel={() => onModeChange("view")}
               onDirtyChange={onEditorDirtyChange}
               onSaved={onSaved}
-              onRecoverDroppedCandidate={onRecoverDroppedCandidate}
-              extractionPrefs={extractionPrefs}
               embedded
               displayContext={displayContext}
             />

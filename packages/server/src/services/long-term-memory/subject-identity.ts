@@ -14,7 +14,7 @@ import type { DB } from "../../db/connection.js";
 import { createCharactersStorage } from "../storage/characters.storage.js";
 import { createChatsStorage } from "../storage/chats.storage.js";
 import { normalizeLtmChatCharacterIds } from "./chat-scope.js";
-import type { LtmExtractionDiagnostic } from "./diagnostics.js";
+import type { LtmExtractionDiagnostic } from "@marinara-engine/shared";
 import { noteIdForEvidenceUnit } from "./evidence-unit-validation.js";
 import { safeSnippet, uniqueStrings } from "./ltm-utils.js";
 import { LongTermMemoryStorage } from "./storage.js";
