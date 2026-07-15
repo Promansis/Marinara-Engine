@@ -17,6 +17,7 @@ import {
   type LtmNoteType,
   type LtmScope,
   type LtmMode,
+  type LtmExtractionResponse,
 } from "@marinara-engine/shared";
 import { LongTermMemoryStorage } from "../../storage.js";
 import { LongTermMemoryDraftStore } from "../../draft-store.js";
@@ -295,7 +296,6 @@ export function characterNote(
   return makeNote({
     id,
     type: "character",
-    subjects: [{ kind: "unknown", name: id }],
     sections: { facts: { text: facts, updatedAt: REFERENCE_TS } },
     ...overrides,
   });
@@ -334,7 +334,7 @@ export async function seedDraft(
     response: {
       summary: draftInput.summary ?? "Test draft",
       mutations:
-        (draftInput.mutations as Array<{ id: string }>) ??
+        (draftInput.mutations as LtmExtractionResponse["mutations"]) ??
         ([
           {
             id: "550e8400-e29b-41d4-a716-446655440001",

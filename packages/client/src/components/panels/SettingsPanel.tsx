@@ -6348,6 +6348,7 @@ type ProfileImportStreamEvent =
         success?: boolean;
         imported?: ProfileImportStats;
         warnings?: ProfileImportWarning[];
+        longTermMemory?: { restored?: boolean; noteCount?: number; chunkCount?: number };
         error?: string;
         message?: string;
       };
@@ -6360,6 +6361,8 @@ type ProfileImportPreviewResult = {
   imported?: ProfileImportStats;
   warnings?: ProfileImportWarning[];
   fileFingerprint?: string;
+  totalItems?: number;
+  longTermMemoryAvailable?: boolean;
   error?: string;
   message?: string;
 };
@@ -6464,7 +6467,7 @@ function formatProfileImportWarningDetails(warnings: ProfileImportWarning[]) {
   return `Missing: ${visible}${extra}`;
 }
 
-function formatProfileImportConfirmationMessage(preview: ProfileImportPreviewResult) {
+function formatProfileImportConfirmationMessage(preview: ProfileImportPreviewResult, restoreLongTermMemory: boolean) {
   const warnings = normalizeProfileImportWarnings(preview.warnings);
   const found = formatProfileImportStats(preview.imported) || "no counted records";
   const warningDetail =
@@ -6474,6 +6477,9 @@ function formatProfileImportConfirmationMessage(preview: ProfileImportPreviewRes
   return [
     `Found: ${found}.`,
     warningDetail,
+    restoreLongTermMemory
+      ? "Long-Term Memory will replace the current vault, then rebuild and verify local indexes."
+      : "",
     "Importing writes profile data from this file and cannot be undone. Continue?",
   ]
     .filter(Boolean)
@@ -6553,6 +6559,7 @@ function ImportSettings() {
   const qc = useQueryClient();
   const setActiveChatId = useChatStore((s) => s.setActiveChatId);
   const [profileImportProgress, setProfileImportProgress] = useState<ProfileImportProgressState | null>(null);
+  const [restoreLongTermMemory, setRestoreLongTermMemory] = useState(false);
   const profileImportBusy =
     profileImportProgress?.status === "reading" ||
     profileImportProgress?.status === "preview" ||
@@ -6585,6 +6592,9 @@ function ImportSettings() {
       form.append("file", file, file.name);
       return form;
     };
+    const importPath = restoreLongTermMemory
+      ? "/backup/import-profile?restoreLongTermMemory=true"
+      : "/backup/import-profile";
     setProfileImportProgress({
       status: "reading",
       label: "Reading profile file",
@@ -6625,7 +6635,7 @@ function ImportSettings() {
             }
           : current,
       );
-      const previewRes = await api.raw("/backup/import-profile?preview=true", {
+      const previewRes = await api.raw(`${importPath}${importPath.includes("?") ? "&" : "?"}preview=true`, {
         method: "POST",
         headers: { Accept: "application/json" },
         body: makeImportBody(isZip, profileText),
@@ -6638,8 +6648,11 @@ function ImportSettings() {
       if (preview.success === false) {
         throw new Error(preview.message ?? preview.error ?? "Unknown error");
       }
+      if (restoreLongTermMemory && !preview.longTermMemoryAvailable) {
+        throw new Error("This archive does not contain a restorable Long-Term Memory vault.");
+      }
       const previewWarnings = normalizeProfileImportWarnings(preview.warnings);
-      const previewTotalItems = Math.max(1, getProfileImportItemCount(preview.imported));
+      const previewTotalItems = Math.max(1, preview.totalItems ?? getProfileImportItemCount(preview.imported));
       setProfileImportProgress({
         status: "preview",
         label: "Review profile import",
@@ -6653,7 +6666,7 @@ function ImportSettings() {
 
       const confirmed = await showConfirmDialog({
         title: "Import Profile",
-        message: formatProfileImportConfirmationMessage(preview),
+        message: formatProfileImportConfirmationMessage(preview, restoreLongTermMemory),
         confirmLabel: "Import",
         cancelLabel: "Cancel",
         tone: "destructive",
@@ -6693,7 +6706,7 @@ function ImportSettings() {
             }
           : current,
       );
-      const res = await api.raw("/backup/import-profile", {
+      const res = await api.raw(importPath, {
         method: "POST",
         headers: {
           Accept: "text/event-stream",
@@ -6740,6 +6753,7 @@ function ImportSettings() {
           const imported = event.data?.imported;
           const warnings = normalizeProfileImportWarnings(event.data?.warnings);
           const summary = formatProfileImportStats(imported);
+          const memoryRestored = event.data?.longTermMemory?.restored === true;
           setProfileImportProgress((current) => {
             const totalItems = Math.max(1, current?.totalItems ?? 1);
             return {
@@ -6755,9 +6769,19 @@ function ImportSettings() {
           });
           if (warnings.length > 0) {
             const warningSummary = formatProfileImportWarningSummary(warnings);
-            toast.warning(summary ? `Imported: ${summary}. ${warningSummary}` : warningSummary);
+            toast.warning(
+              summary
+                ? `Imported: ${summary}. ${memoryRestored ? "Long-Term Memory restored. " : ""}${warningSummary}`
+                : `${memoryRestored ? "Long-Term Memory restored. " : ""}${warningSummary}`,
+            );
           } else {
-            toast.success(summary ? `Imported: ${summary}` : "Profile imported.");
+            toast.success(
+              summary
+                ? `Imported: ${summary}${memoryRestored ? ". Long-Term Memory restored." : ""}`
+                : memoryRestored
+                  ? "Profile and Long-Term Memory imported."
+                  : "Profile imported.",
+            );
           }
         }
       }
@@ -6817,6 +6841,18 @@ function ImportSettings() {
               disabled={profileImportBusy}
               className="hidden"
             />
+          </label>
+
+          <label className="flex items-center gap-2 px-1 text-xs text-[var(--foreground)]">
+            <input
+              type="checkbox"
+              checked={restoreLongTermMemory}
+              onChange={(event) => setRestoreLongTermMemory(event.target.checked)}
+              disabled={profileImportBusy}
+              className="size-3.5 accent-[var(--primary)]"
+            />
+            <span>Restore Long-Term Memory from full backup</span>
+            <HelpTooltip text="Replaces the current memory vault only when the selected full backup contains one. Marinara validates it, rebuilds derived indexes locally, and restores the prior vault if verification fails." />
           </label>
 
           {profileImportProgress && (

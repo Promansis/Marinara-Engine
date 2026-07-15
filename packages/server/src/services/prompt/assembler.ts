@@ -846,6 +846,7 @@ function appendFallbackChatSummaryToSystemPrompt(
   for (let i = 0; i < next.length; i++) {
     const message = next[i]!;
     if (message.role !== "system" || message.contextKind === "history") break;
+    if (message.contextKind === "long_term_memory") continue;
     lastLeadingSystemIdx = i;
   }
 
@@ -880,6 +881,8 @@ function enforceStrictRoles(messages: ChatMLMessage[]): ChatMLMessage[] {
       target.providerMetadata = source.providerMetadata;
     }
   };
+  const canMerge = (target: ChatMLMessage | undefined, source: ChatMLMessage) =>
+    Boolean(target && target.contextKind !== "long_term_memory" && source.contextKind !== "long_term_memory");
 
   // Step 1: Collect leading system block.
   const result: ChatMLMessage[] = [];
@@ -887,7 +890,7 @@ function enforceStrictRoles(messages: ChatMLMessage[]): ChatMLMessage[] {
   while (idx < messages.length && messages[idx]!.role === "system") {
     const msg = messages[idx]!;
     const leadingSystem = result[0];
-    if (leadingSystem?.role === "system") {
+    if (leadingSystem?.role === "system" && canMerge(leadingSystem, msg)) {
       mergeInto(leadingSystem, msg);
     } else {
       result.push({ ...msg });
@@ -900,14 +903,14 @@ function enforceStrictRoles(messages: ChatMLMessage[]): ChatMLMessage[] {
 
     if (msg.role === "system") {
       const prev = result[result.length - 1];
-      if (prev?.role === "system") mergeInto(prev, msg);
+      if (prev?.role === "system" && canMerge(prev, msg)) mergeInto(prev, msg);
       else result.push({ ...msg });
       continue;
     }
 
     const prev = result[result.length - 1];
     const sameCharacter = (prev?.characterId ?? null) === (msg.characterId ?? null);
-    if (prev && prev.role === msg.role && sameCharacter) {
+    if (prev && prev.role === msg.role && sameCharacter && canMerge(prev, msg)) {
       mergeInto(prev, msg);
     } else {
       result.push({ ...msg });

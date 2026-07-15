@@ -4,6 +4,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { resolveLongTermMemoryRecallSettings } from "@marinara-engine/shared";
+import type { AssemblerInput } from "../../prompt/assembler.js";
+import { assemblePrompt } from "../../prompt/assembler.js";
+import { fitMessagesToContext } from "../../llm/base-provider.js";
+import type { LtmBudgetedChunk } from "../budget.js";
 import {
   buildGenerationLongTermMemoryPlan,
   recordGenerationLongTermMemoryDispatch,
@@ -21,6 +25,96 @@ import {
   worldNote,
   REFERENCE_TS,
 } from "./fixtures/ltm-test-harness.js";
+
+function promptChunk(id: string, text: string): LtmBudgetedChunk {
+  return {
+    chunk: {
+      id,
+      noteId: id.split("::", 1)[0] ?? id,
+      sectionKey: "facts",
+      text,
+      sourceHash: "a".repeat(64),
+      noteType: "world" as const,
+      status: "active" as const,
+      tags: [],
+      keywords: [],
+      scope: {},
+      updatedAt: REFERENCE_TS,
+    },
+    score: 1,
+    reasons: ["direct"],
+    lanes: ["direct"],
+    tier: 1,
+    estimatedTokens: Math.ceil(text.length / 4),
+  };
+}
+
+function promptAssemblerInput(
+  artifact: NonNullable<ReturnType<typeof createLongTermMemoryPromptArtifact>>,
+  parameters: Record<string, unknown>,
+): AssemblerInput {
+  const sections: AssemblerInput["sections"] = [
+    {
+      id: "base_prompt",
+      presetId: "preset_test",
+      identifier: "base_prompt",
+      name: "Base Prompt",
+      content: "Base system prompt",
+      role: "system",
+      enabled: "true",
+      isMarker: "false",
+      groupId: null,
+      markerConfig: null,
+      injectionPosition: "ordered",
+      injectionDepth: 0,
+      injectionOrder: 10,
+      forbidOverrides: "false",
+    },
+    {
+      id: "ltm_marker",
+      presetId: "preset_test",
+      identifier: "long_term_memory",
+      name: "Long-Term Memory",
+      content: "",
+      role: "system",
+      enabled: "true",
+      isMarker: "true",
+      groupId: null,
+      markerConfig: JSON.stringify({ type: "long_term_memory" }),
+      injectionPosition: "ordered",
+      injectionDepth: 0,
+      injectionOrder: 20,
+      forbidOverrides: "false",
+    },
+  ];
+  return {
+    db: {} as AssemblerInput["db"],
+    preset: {
+      id: "preset_test",
+      name: "Test Preset",
+      sectionOrder: JSON.stringify(sections.map((section) => section.id)),
+      groupOrder: "[]",
+      variableGroups: "[]",
+      variableValues: "{}",
+      parameters: JSON.stringify(parameters),
+      wrapFormat: "xml",
+    },
+    sections,
+    groups: [],
+    choiceBlocks: [],
+    chatChoices: {},
+    chatId: "chat_test",
+    characterIds: [],
+    personaName: "User",
+    personaDescription: "",
+    chatMessages: [{ role: "user", content: "Where is the key?", contextKind: "history" }],
+    chatSummary: "The prior chapter ended at the archive.",
+    longTermMemoryArtifact: artifact,
+    enableAgents: false,
+    activeAgentIds: [],
+    activeLorebookIds: [],
+  };
+}
 
 // ═══════════════════════════════════════════════
 //  Settings resolution (pure functions)
@@ -171,7 +265,7 @@ test("create artifact returns null for empty chunks", () => {
 });
 
 test("create artifact with one chunk returns artifact", () => {
-  const chunk = {
+  const chunk: LtmBudgetedChunk = {
     chunk: {
       id: "world_test::facts",
       noteId: "world_test",
@@ -208,7 +302,7 @@ test("serialize returns null for null artifact", () => {
 });
 
 test("serialize with chunk produces content", () => {
-  const chunk = {
+  const chunk: LtmBudgetedChunk = {
     chunk: {
       id: "world_ser::facts",
       noteId: "world_ser",
@@ -240,7 +334,7 @@ test("serialize with chunk produces content", () => {
 });
 
 test("is artifact present detects artifact in messages", () => {
-  const chunk = {
+  const chunk: LtmBudgetedChunk = {
     chunk: {
       id: "world_pres::facts",
       noteId: "world_pres",
@@ -268,14 +362,14 @@ test("is artifact present detects artifact in messages", () => {
   assert.ok(serialized);
   assert.equal(
     isLongTermMemoryPromptArtifactPresent(
-      [{ role: "system" as const, content: serialized!.content }],
+      [{ content: serialized!.content }],
       serialized,
     ),
     true,
   );
   assert.equal(
     isLongTermMemoryPromptArtifactPresent(
-      [{ role: "user" as const, content: "Unrelated." }],
+      [{ content: "Unrelated." }],
       serialized,
     ),
     false,
@@ -283,7 +377,7 @@ test("is artifact present detects artifact in messages", () => {
 });
 
 test("inject artifact inserts message before user content", () => {
-  const chunk = {
+  const chunk: LtmBudgetedChunk = {
     chunk: {
       id: "world_inj::facts",
       noteId: "world_inj",
@@ -325,6 +419,54 @@ test("estimate tokens > 0 for content", () => {
   assert.ok(tokens > 0);
 });
 
+for (const parameters of [
+  { strictRoleFormatting: true },
+  { strictRoleFormatting: true, singleUserMessage: true },
+]) {
+  test(`prompt formatting preserves a dedicated LTM artifact (${JSON.stringify(parameters)})`, async () => {
+    const artifact = createLongTermMemoryPromptArtifact(
+      [promptChunk("world_format::facts", "The cobalt key opens the archive.")],
+      { maxTokens: 4096 },
+    );
+    assert.ok(artifact);
+
+    const assembled = await assemblePrompt(promptAssemblerInput(artifact, parameters));
+    const memoryMessages = assembled.messages.filter((message) => message.contextKind === "long_term_memory");
+    assert.equal(memoryMessages.length, 1);
+    assert.ok(assembled.longTermMemoryArtifact);
+    assert.equal(memoryMessages[0]!.content, assembled.longTermMemoryArtifact.content);
+    assert.doesNotMatch(memoryMessages[0]!.content, /Base system prompt|prior chapter/);
+    assert.equal(
+      isLongTermMemoryPromptArtifactPresent(assembled.messages, assembled.longTermMemoryArtifact),
+      true,
+    );
+  });
+}
+
+test("context fitting removes the whole LTM artifact before unrelated system content", () => {
+  const artifact = serializeLongTermMemoryPromptArtifact(
+    createLongTermMemoryPromptArtifact(
+      [promptChunk("world_large::facts", `ltm-unique-${"x".repeat(1_800)}`)],
+      { maxTokens: 4096 },
+    ),
+    { wrapFormat: "xml", wrapperName: "Long-Term Memory" },
+  );
+  assert.ok(artifact);
+
+  const fitted = fitMessagesToContext(
+    [
+      { role: "system", content: "Base system prompt", contextKind: "prompt" },
+      { role: "system", content: artifact.content, contextKind: "long_term_memory" },
+      { role: "user", content: `recent-${"y".repeat(800)}`, contextKind: "history" },
+    ],
+    { maxContext: 1_200, maxTokens: 128 },
+  );
+
+  assert.equal(fitted.messages.some((message) => message.contextKind === "long_term_memory"), false);
+  assert.equal(fitted.messages.some((message) => message.content.includes("ltm-unique-")), false);
+  assert.equal(fitted.messages.some((message) => message.content.includes("Base system prompt")), true);
+});
+
 // ═══════════════════════════════════════════════
 //  Dispatch accounting (storage-backed)
 // ═══════════════════════════════════════════════
@@ -343,7 +485,7 @@ await test("record dispatch with artifact present persists receipt", async () =>
     const s = new LongTermMemoryStorage(root);
     await s.createNote(worldNote("world_receipt", "Receipt world fact."));
 
-    const chunk = {
+    const chunk: LtmBudgetedChunk = {
       chunk: {
         id: "world_receipt::facts",
         noteId: "world_receipt",
@@ -377,7 +519,7 @@ await test("record dispatch with artifact present persists receipt", async () =>
     const result = await recordGenerationLongTermMemoryDispatch({
       chatId: "chat_receipt",
       artifact: serialized,
-      finalMessages: [{ role: "system", content: serialized!.content }],
+      finalMessages: [{ content: serialized!.content }],
     });
     assert.equal(result, true);
   });
