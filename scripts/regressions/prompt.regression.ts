@@ -1121,17 +1121,23 @@ const cases: RegressionCase[] = [
         new URL("../../packages/server/src/services/long-term-memory/agent-migration.ts", import.meta.url),
         "utf8",
       );
+      const generationLtmSource = readFileSync(
+        new URL("../../packages/server/src/services/long-term-memory/generation-injection.ts", import.meta.url),
+        "utf8",
+      );
 
       assert.match(drawerSource, /label="Long-Term Memory"/);
       assert.match(drawerSource, /useLongTermMemorySettings/);
       assert.match(drawerSource, /RecallStylePresets/);
       assert.match(drawerSource, /openAgentDetail\("long-term-memory"\)/);
-      assert.match(generateRouteSource, /orchestrateGenerationLongTermMemoryRecall\(\{/);
-      assert.match(generateRouteSource, /longTermMemoryArtifact,/);
-      assert.match(generateRouteSource, /injectLongTermMemoryPromptArtifact\(finalMessages/);
+      assert.match(generateRouteSource, /prepareGenerationLongTermMemory\(\{/);
+      assert.match(generateRouteSource, /longTermMemoryArtifact: generationLongTermMemory\?\.artifact/);
+      assert.match(generateRouteSource, /generationLongTermMemory\.ensurePlaced\(finalMessages/);
       assert.match(generateRouteSource, /"knowledge-router", "long-term-memory"/);
       assert.match(generateRouteSource, /cachedSansSecret\.filter\(\(i\) => i\.agentType !== "long-term-memory"\)/);
-      assert.match(generateRouteSource, /recordGenerationLongTermMemoryDispatch\(\{/);
+      assert.match(generateRouteSource, /generationLongTermMemory\?\.recordAccepted\(/);
+      assert.match(generationLtmSource, /injectLongTermMemoryPromptArtifact\(messages, input\.artifact, options\)/);
+      assert.match(generationLtmSource, /recordGenerationLongTermMemoryDispatch\(\{/);
       for (const mode of ["conversation", "roleplay", "visual_novel", "game"] as const) {
         assert.equal(isAgentAvailableInChatMode(mode, "long-term-memory"), true, `${mode} must allow LTM recall`);
       }

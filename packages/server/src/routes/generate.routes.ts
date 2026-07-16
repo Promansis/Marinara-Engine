@@ -171,17 +171,11 @@ import {
   resolveMemoryRecallEmbeddingSource,
 } from "../services/memory-recall-embedding.js";
 import { recordLtmDebugEvent } from "../services/long-term-memory/debug-log.js";
-import { getLtmGlobalSettings } from "../services/long-term-memory/settings.js";
 import {
-  orchestrateGenerationLongTermMemoryRecall,
-  recordGenerationLongTermMemoryDispatch,
+  loadGenerationLongTermMemorySettings,
+  prepareGenerationLongTermMemory,
+  type GenerationLongTermMemory,
 } from "../services/long-term-memory/generation-injection.js";
-import {
-  injectLongTermMemoryPromptArtifact,
-  isLongTermMemoryPromptArtifactPresent,
-  type LtmPromptArtifact,
-  type LtmSerializedPromptArtifact,
-} from "../services/long-term-memory/prompt.js";
 import { postToDiscordWebhook } from "../services/discord-webhook.js";
 import { newId } from "../utils/id-generator.js";
 import {
@@ -741,6 +735,7 @@ export async function generateRoutes(app: FastifyInstance) {
       releaseActiveGeneration();
       throw err;
     };
+    const ltmGlobalSettings = await loadGenerationLongTermMemorySettings().catch(releaseActiveGenerationAndRethrow);
 
     if (input.regenerateMessageId) {
       const regenCandidate = await chats.getMessage(input.regenerateMessageId).catch(releaseActiveGenerationAndRethrow);
@@ -970,8 +965,6 @@ export async function generateRoutes(app: FastifyInstance) {
         logger.warn(err, "[memory-recall] Embedding availability check failed; memory recall will stay disabled");
       }
     }
-    const ltmGlobalSettings = await getLtmGlobalSettings();
-
     if (activeGenerations) {
       activeGenerations.set(input.chatId, { abortController, backendUrl: baseUrl });
     }
@@ -1423,9 +1416,7 @@ export async function generateRoutes(app: FastifyInstance) {
         let mariFetchSucceededThisIteration = false;
         let finalMessages: GenerationPromptMessage[] = [...runningMessagesForFollowUp];
         const ownerSpatialProjection = await ownerSpatialProjectionPromise;
-        let longTermMemoryArtifact: LtmPromptArtifact | null = null;
-        let serializedLongTermMemoryArtifact: LtmSerializedPromptArtifact | null = null;
-        let longTermMemoryDispatchAccountingAttempted = false;
+        let generationLongTermMemory: GenerationLongTermMemory | null = null;
         let conversationCommandsReminder: string | null = null;
         let conversationContextMacroSlots: ConversationContextMacroSlots = {
           ...EMPTY_CONVERSATION_CONTEXT_MACRO_SLOTS,
@@ -1775,11 +1766,7 @@ export async function generateRoutes(app: FastifyInstance) {
             .map((id) => characterNamesById.get(id))
             .filter((name): name is string => !!name);
           const ltmGameState = chatMode === "game" ? await selectedGameStateForPrompt() : null;
-          const ltmEnabledForGeneration =
-            chatEnableAgents &&
-            chatActiveAgentIds.includes("long-term-memory") &&
-            chatMeta.enableLongTermMemory !== false;
-          const ltmRecall = await orchestrateGenerationLongTermMemoryRecall({
+          generationLongTermMemory = await prepareGenerationLongTermMemory({
             chatId: input.chatId,
             chatMode,
             groupId: typeof chat.groupId === "string" ? chat.groupId : null,
@@ -1789,8 +1776,10 @@ export async function generateRoutes(app: FastifyInstance) {
               role: message.role as "system" | "user" | "assistant" | "tool",
               content: typeof message.content === "string" ? message.content : "",
             })),
-            chatMeta: { ...chatMeta, enableLongTermMemory: ltmEnabledForGeneration },
+            chatMeta,
             globalSettings: ltmGlobalSettings,
+            agentsEnabled: chatEnableAgents,
+            activeAgentIds: chatActiveAgentIds,
             lorebookGenerationTriggers,
             ...(activeChatSummary ? { generationGuide: activeChatSummary } : {}),
             ...(ltmGameState ? { gameState: ltmGameState } : {}),
@@ -1799,24 +1788,27 @@ export async function generateRoutes(app: FastifyInstance) {
             signal: abortController.signal,
             requestDebug: isDebug,
           });
-          longTermMemoryArtifact = ltmRecall.artifact;
 
-          if (ltmRecall.plan.debugEnabled && ltmRecall.retrieval?.debug) {
+          if (generationLongTermMemory.plan.debugEnabled && generationLongTermMemory.retrieval?.debug) {
             try {
               await recordLtmDebugEvent({
                 operationId: crypto.randomUUID(),
                 phase: "retrieval",
                 action: "generate-route-ltm-retrieval",
                 status: "ok",
-                message: `Generate route retrieved ${ltmRecall.retrieval.chunks.length} chunks (${ltmRecall.retrieval.usedTokens} tokens)`,
+                message: `Generate route retrieved ${generationLongTermMemory.retrieval.chunks.length} chunks (${generationLongTermMemory.retrieval.usedTokens} tokens)`,
                 durationMs: Date.now() - _tAssemble,
-                counts: { chunks: ltmRecall.retrieval.chunks.length, tokens: ltmRecall.retrieval.usedTokens },
-                diagnostics: [ltmRecall.retrieval.debug as unknown as Record<string, unknown>],
+                counts: {
+                  chunks: generationLongTermMemory.retrieval.chunks.length,
+                  tokens: generationLongTermMemory.retrieval.usedTokens,
+                },
+                diagnostics: [generationLongTermMemory.retrieval.debug as unknown as Record<string, unknown>],
                 chatId: input.chatId,
                 uiSummary: JSON.stringify({
-                  memoryCount: new Set(ltmRecall.retrieval.chunks.map((chunk) => chunk.chunk.noteId).filter(Boolean))
-                    .size,
-                  tokenCount: ltmRecall.retrieval.usedTokens,
+                  memoryCount: new Set(
+                    generationLongTermMemory.retrieval.chunks.map((chunk) => chunk.chunk.noteId).filter(Boolean),
+                  ).size,
+                  tokenCount: generationLongTermMemory.retrieval.usedTokens,
                 }),
               });
             } catch (err) {
@@ -1872,7 +1864,7 @@ export async function generateRoutes(app: FastifyInstance) {
             groups: groups as any,
             choiceBlocks: choiceBlocks as any,
             chatChoices,
-            longTermMemoryArtifact,
+            longTermMemoryArtifact: generationLongTermMemory?.artifact,
             chatId: input.chatId,
             characterIds: promptCharacterIds,
             personaId,
@@ -1921,7 +1913,7 @@ export async function generateRoutes(app: FastifyInstance) {
           };
 
           const assembled = await assemblePrompt(assemblerInput);
-          serializedLongTermMemoryArtifact = assembled.longTermMemoryArtifact ?? null;
+          generationLongTermMemory?.acceptAssembledArtifact(assembled.longTermMemoryArtifact);
           if (assembled.lorebookActivatedEntries || assembled.lorebookBudgetSkippedEntries) {
             lorebookScanSnapshot = {
               activatedEntries: assembled.lorebookActivatedEntries ?? [],
@@ -4422,12 +4414,11 @@ export async function generateRoutes(app: FastifyInstance) {
           }
         }
 
-        if (!serializedLongTermMemoryArtifact && longTermMemoryArtifact) {
-          const fallback = injectLongTermMemoryPromptArtifact(finalMessages, longTermMemoryArtifact, {
+        if (generationLongTermMemory) {
+          generationLongTermMemory.ensurePlaced(finalMessages, {
             wrapFormat,
             wrapperName: "Long Term Memory",
           });
-          serializedLongTermMemoryArtifact = fallback.artifact;
         }
 
         // ── Early exit if client disconnected during knowledge retrieval / injection ──
@@ -4955,17 +4946,6 @@ export async function generateRoutes(app: FastifyInstance) {
           finalPromptSent = initialProviderMessages;
           rememberMainPromptPreviewForAgents(initialProviderMessages);
 
-          const recordLongTermMemoryDispatchAfterProviderAccept = async (messages: ChatMessage[]) => {
-            if (longTermMemoryDispatchAccountingAttempted || !serializedLongTermMemoryArtifact) return;
-            if (!isLongTermMemoryPromptArtifactPresent(messages, serializedLongTermMemoryArtifact)) return;
-            longTermMemoryDispatchAccountingAttempted = true;
-            await recordGenerationLongTermMemoryDispatch({
-              chatId: input.chatId,
-              artifact: serializedLongTermMemoryArtifact,
-              finalMessages: messages,
-            });
-          };
-
           // Reset per-character accumulators
           fullResponse = "";
           fullThinking = "";
@@ -5137,7 +5117,7 @@ export async function generateRoutes(app: FastifyInstance) {
               if (abortController.signal.aborted) {
                 return null;
               }
-              await recordLongTermMemoryDispatchAfterProviderAccept(providerMessagesForDispatch);
+              await generationLongTermMemory?.recordAccepted(providerMessagesForDispatch);
 
               // If provider doesn't support onToken (fell back to non-streaming),
               // write the content conventionally
@@ -5348,7 +5328,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   },
                 });
                 if (!abortController.signal.aborted) {
-                  await recordLongTermMemoryDispatchAfterProviderAccept(finalProviderMessagesForDispatch);
+                  await generationLongTermMemory?.recordAccepted(finalProviderMessagesForDispatch);
                 }
                 if (finalResult.content && fullResponse.length === prevLen) {
                   await writeContentChunked(finalResult.content);
@@ -5419,7 +5399,7 @@ export async function generateRoutes(app: FastifyInstance) {
               if (abortController.signal.aborted) {
                 return null;
               }
-              await recordLongTermMemoryDispatchAfterProviderAccept(providerMessagesForDispatch);
+              await generationLongTermMemory?.recordAccepted(providerMessagesForDispatch);
               while (!result.done) {
                 if (abortController.signal.aborted) {
                   return null;

@@ -5,6 +5,7 @@ import {
   type LongTermMemoryRecallStyle,
   type LtmRecallWeights,
   type LtmScope,
+  type WrapFormat,
 } from "@marinara-engine/shared";
 import { logger } from "../../lib/logger.js";
 import type { ChatMessage } from "../llm/base-provider.js";
@@ -15,8 +16,10 @@ import {
   type RetrieveLongTermMemoryInput,
   type RetrieveLongTermMemoryResult,
 } from "./retrieval.js";
+import { getLtmGlobalSettings } from "./settings.js";
 import {
   createLongTermMemoryPromptArtifact,
+  injectLongTermMemoryPromptArtifact,
   isLongTermMemoryPromptArtifactPresent,
   type LtmPromptArtifact,
   type LtmSerializedPromptArtifact,
@@ -65,14 +68,25 @@ export interface GenerationLongTermMemoryPlan {
   hasGameState: boolean;
 }
 
-export interface OrchestrateGenerationLongTermMemoryRecallInput extends BuildGenerationLongTermMemoryPlanInput {
+export interface PrepareGenerationLongTermMemoryInput extends BuildGenerationLongTermMemoryPlanInput {
+  agentsEnabled: boolean;
+  activeAgentIds: string[];
   retrieveLongTermMemoryFn?: (input: RetrieveLongTermMemoryInput) => Promise<RetrieveLongTermMemoryResult>;
+  recordInjection?: RecordGenerationLongTermMemoryDispatchInput["recordInjection"];
 }
 
-export interface OrchestrateGenerationLongTermMemoryRecallResult {
-  plan: GenerationLongTermMemoryPlan;
-  retrieval: RetrieveLongTermMemoryResult | null;
-  artifact: LtmPromptArtifact | null;
+export interface GenerationLongTermMemoryPlacementOptions {
+  wrapFormat?: WrapFormat;
+  wrapperName?: string;
+}
+
+export interface GenerationLongTermMemory {
+  readonly plan: GenerationLongTermMemoryPlan;
+  readonly retrieval: RetrieveLongTermMemoryResult | null;
+  readonly artifact: LtmPromptArtifact | null;
+  acceptAssembledArtifact(artifact?: LtmSerializedPromptArtifact | null): void;
+  ensurePlaced(messages: ChatMessage[], options?: GenerationLongTermMemoryPlacementOptions): ChatMessage[];
+  recordAccepted(messages: ReadonlyArray<Pick<ChatMessage, "content">>): Promise<boolean>;
 }
 
 export interface RecordGenerationLongTermMemoryDispatchInput {
@@ -109,6 +123,63 @@ function longTermMemoryRecallAbortError() {
 
 function throwIfLongTermMemoryRecallAborted(signal?: AbortSignal) {
   if (signal?.aborted) throw longTermMemoryRecallAbortError();
+}
+
+function resolveGenerationLongTermMemoryChatMeta(input: PrepareGenerationLongTermMemoryInput) {
+  return {
+    ...input.chatMeta,
+    enableLongTermMemory:
+      input.agentsEnabled &&
+      input.activeAgentIds.includes("long-term-memory") &&
+      input.chatMeta.enableLongTermMemory !== false,
+  };
+}
+
+function createGenerationLongTermMemory(input: {
+  chatId: string;
+  plan: GenerationLongTermMemoryPlan;
+  retrieval: RetrieveLongTermMemoryResult | null;
+  artifact: LtmPromptArtifact | null;
+  recordInjection?: RecordGenerationLongTermMemoryDispatchInput["recordInjection"];
+}): GenerationLongTermMemory {
+  let serializedArtifact: LtmSerializedPromptArtifact | null = null;
+  let dispatchAccountingAttempted = false;
+
+  return {
+    plan: input.plan,
+    retrieval: input.retrieval,
+    artifact: input.artifact,
+    acceptAssembledArtifact(artifact) {
+      serializedArtifact = artifact ?? null;
+    },
+    ensurePlaced(messages, options) {
+      if (!serializedArtifact && input.artifact) {
+        serializedArtifact = injectLongTermMemoryPromptArtifact(messages, input.artifact, options).artifact;
+      }
+      return messages;
+    },
+    async recordAccepted(messages) {
+      if (
+        dispatchAccountingAttempted ||
+        !serializedArtifact ||
+        !isLongTermMemoryPromptArtifactPresent(messages, serializedArtifact)
+      ) {
+        return false;
+      }
+
+      dispatchAccountingAttempted = true;
+      return recordGenerationLongTermMemoryDispatch({
+        chatId: input.chatId,
+        artifact: serializedArtifact,
+        finalMessages: messages,
+        recordInjection: input.recordInjection,
+      });
+    },
+  };
+}
+
+export function loadGenerationLongTermMemorySettings() {
+  return getLtmGlobalSettings();
 }
 
 export function buildGenerationLongTermMemoryPlan(
@@ -195,14 +266,23 @@ export function buildGenerationLongTermMemoryPlan(
   };
 }
 
-export async function orchestrateGenerationLongTermMemoryRecall(
-  input: OrchestrateGenerationLongTermMemoryRecallInput,
-): Promise<OrchestrateGenerationLongTermMemoryRecallResult> {
+export async function prepareGenerationLongTermMemory(
+  input: PrepareGenerationLongTermMemoryInput,
+): Promise<GenerationLongTermMemory> {
   throwIfLongTermMemoryRecallAborted(input.signal);
 
-  const plan = buildGenerationLongTermMemoryPlan(input);
+  const plan = buildGenerationLongTermMemoryPlan({
+    ...input,
+    chatMeta: resolveGenerationLongTermMemoryChatMeta(input),
+  });
   if (!plan.enabled) {
-    return { plan, retrieval: null, artifact: null };
+    return createGenerationLongTermMemory({
+      chatId: input.chatId,
+      plan,
+      retrieval: null,
+      artifact: null,
+      recordInjection: input.recordInjection,
+    });
   }
 
   const retrieval = await (input.retrieveLongTermMemoryFn ?? retrieveLongTermMemory)(plan.retrievalInput);
@@ -212,7 +292,13 @@ export async function orchestrateGenerationLongTermMemoryRecall(
   });
   throwIfLongTermMemoryRecallAborted(input.signal);
 
-  return { plan, retrieval, artifact };
+  return createGenerationLongTermMemory({
+    chatId: input.chatId,
+    plan,
+    retrieval,
+    artifact,
+    recordInjection: input.recordInjection,
+  });
 }
 
 /**

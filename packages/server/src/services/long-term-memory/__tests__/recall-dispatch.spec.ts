@@ -7,10 +7,11 @@ import { resolveLongTermMemoryRecallSettings } from "@marinara-engine/shared";
 import { ltmAgentSettingsSchema } from "@marinara-engine/shared";
 import type { AssemblerInput } from "../../prompt/assembler.js";
 import { assemblePrompt } from "../../prompt/assembler.js";
-import { fitMessagesToContext } from "../../llm/base-provider.js";
+import { fitMessagesToContext, type ChatMessage } from "../../llm/base-provider.js";
 import type { LtmBudgetedChunk } from "../budget.js";
 import {
   buildGenerationLongTermMemoryPlan,
+  prepareGenerationLongTermMemory,
   recordGenerationLongTermMemoryDispatch,
 } from "../generation-injection.js";
 import {
@@ -251,6 +252,123 @@ test("build plan includes scope and query in retrieval input", () => {
   assert.ok(plan.queryText.includes("Tell me about the cobalt key"));
   assert.ok(plan.queryText.includes("Alice"));
   assert.equal(plan.retrievalInput.characterIds?.[0], "char_a");
+});
+
+test("generation preparation requires the LTM agent to be active", async () => {
+  let retrievalCalls = 0;
+  const memory = await prepareGenerationLongTermMemory({
+    chatId: "chat_inactive",
+    chatMode: "roleplay",
+    promptCharacterIds: [],
+    activeCharacterNames: [],
+    inputMessages: [{ role: "user", content: "Where is the key?" }],
+    chatMeta: { enableLongTermMemory: true },
+    globalSettings: {
+      version: 1,
+      enableLongTermMemory: true,
+      longTermMemoryBudgetTokens: 2048,
+      longTermMemoryMaxChunks: 10,
+      longTermMemoryScoreThreshold: 0,
+      longTermMemoryRecallContextMessages: 4,
+      longTermMemoryRecallStyle: "balanced",
+      longTermMemorySemanticWeight: 0.35,
+      longTermMemoryLexicalWeight: 0.35,
+      longTermMemoryGraphWeight: 0.15,
+      longTermMemoryKeywordWeight: 0.15,
+      longTermMemoryIncludeResolved: false,
+      longTermMemoryRecallPreamble: "",
+      longTermMemoryDebug: false,
+    },
+    agentsEnabled: true,
+    activeAgentIds: [],
+    lorebookGenerationTriggers: [],
+    retrieveLongTermMemoryFn: async () => {
+      retrievalCalls += 1;
+      return { chunks: [], usedTokens: 0, maxTokens: 2048, embeddingsAvailable: false, warnings: [] };
+    },
+  });
+
+  assert.equal(memory.plan.enabled, false);
+  assert.equal(memory.artifact, null);
+  assert.equal(retrievalCalls, 0);
+});
+
+test("generation memory preserves assembled placement and accounts once", async () => {
+  const chunk = promptChunk("world_generation::facts", "The cobalt key opens the archive.");
+  const accountingInputs: Array<{ chatId: string; serializedTokenCount: number }> = [];
+  const memory = await prepareGenerationLongTermMemory({
+    chatId: "chat_generation",
+    chatMode: "roleplay",
+    promptCharacterIds: [],
+    activeCharacterNames: [],
+    inputMessages: [{ role: "user", content: "Where is the key?" }],
+    chatMeta: { enableLongTermMemory: true },
+    agentsEnabled: true,
+    activeAgentIds: ["long-term-memory"],
+    lorebookGenerationTriggers: [],
+    retrieveLongTermMemoryFn: async () => ({
+      chunks: [chunk],
+      usedTokens: chunk.estimatedTokens,
+      maxTokens: 4096,
+      embeddingsAvailable: false,
+      warnings: [],
+    }),
+    recordInjection: async (input) => {
+      accountingInputs.push({ chatId: input.chatId, serializedTokenCount: input.serializedTokenCount });
+    },
+  });
+  assert.ok(memory.artifact);
+  const assembledArtifact = serializeLongTermMemoryPromptArtifact(memory.artifact, {
+    wrapFormat: "xml",
+    wrapperName: "Custom Memory Marker",
+  });
+  assert.ok(assembledArtifact);
+  const messages = [
+    { role: "system" as const, content: assembledArtifact.content, contextKind: "long_term_memory" as const },
+    { role: "user" as const, content: "Where is the key?" },
+  ];
+
+  memory.acceptAssembledArtifact(assembledArtifact);
+  assert.equal(memory.ensurePlaced(messages, { wrapFormat: "xml", wrapperName: "Fallback Memory" }), messages);
+  assert.equal(messages.length, 2);
+  assert.equal(await memory.recordAccepted([{ content: "Artifact was removed by context fitting." }]), false);
+  assert.equal(accountingInputs.length, 0);
+  assert.equal(await memory.recordAccepted(messages), true);
+  assert.equal(await memory.recordAccepted(messages), false);
+  assert.deepEqual(accountingInputs, [
+    { chatId: "chat_generation", serializedTokenCount: assembledArtifact.estimatedTokens },
+  ]);
+});
+
+test("generation memory injects a fallback artifact when assembly did not place one", async () => {
+  const chunk = promptChunk("world_fallback::facts", "The fallback key opens the archive.");
+  const memory = await prepareGenerationLongTermMemory({
+    chatId: "chat_fallback",
+    chatMode: "conversation",
+    promptCharacterIds: [],
+    activeCharacterNames: [],
+    inputMessages: [{ role: "user", content: "Where is the key?" }],
+    chatMeta: { enableLongTermMemory: true },
+    agentsEnabled: true,
+    activeAgentIds: ["long-term-memory"],
+    lorebookGenerationTriggers: [],
+    retrieveLongTermMemoryFn: async () => ({
+      chunks: [chunk],
+      usedTokens: chunk.estimatedTokens,
+      maxTokens: 4096,
+      embeddingsAvailable: false,
+      warnings: [],
+    }),
+  });
+  const messages: ChatMessage[] = [{ role: "user", content: "Where is the key?" }];
+
+  memory.ensurePlaced(messages, { wrapFormat: "xml", wrapperName: "Long Term Memory" });
+  memory.ensurePlaced(messages, { wrapFormat: "xml", wrapperName: "Long Term Memory" });
+
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0]?.role, "system");
+  assert.equal(messages[0]?.contextKind, "long_term_memory");
+  assert.match(messages[0]?.content ?? "", /fallback key opens the archive/);
 });
 
 // ═══════════════════════════════════════════════
