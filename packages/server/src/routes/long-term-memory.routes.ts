@@ -54,7 +54,6 @@ import { getLocalSidecarProvider, LOCAL_SIDECAR_MODEL } from "../services/llm/lo
 import { createChatsStorage } from "../services/storage/chats.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { resolveBaseUrl } from "./generate/generate-route-utils.js";
-import type { BaseLLMProvider } from "../services/llm/base-provider.js";
 import {
   getLongTermMemoryDirectories,
   getLongTermMemoryRoot,
@@ -87,25 +86,23 @@ import {
 } from "../services/long-term-memory/reconciliation.js";
 import { LtmDraftProjectionError } from "../services/long-term-memory/draft-projector.js";
 import { retrieveLongTermMemory } from "../services/long-term-memory/retrieval.js";
+import { isLtmSourceNote } from "../services/long-term-memory/source-extraction.js";
 import {
-  extractLongTermMemoryFromSourceNote,
-  finalizeLongTermMemoryExtractionDraft,
-  isLtmSourceNote,
-} from "../services/long-term-memory/source-extraction.js";
-import { directIngestGameJournal } from "../services/long-term-memory/direct-ingest.js";
+  processLongTermMemorySource,
+  processLongTermMemorySourceBatch,
+} from "../services/long-term-memory/source-processing.js";
 import { getLtmExtractionConfig, updateLtmExtractionConfig } from "../services/long-term-memory/extraction-config.js";
 import { getLtmGlobalSettings, updateLtmGlobalSettings } from "../services/long-term-memory/settings.js";
 import { LongTermMemoryStorage } from "../services/long-term-memory/storage.js";
 import { applyLtmScopeLinksToDerivedNotes } from "../services/long-term-memory/scope-links.js";
 import { countBy } from "../services/long-term-memory/ltm-utils.js";
 import { ltmModeForChatMode, resolveChatLtmScope } from "../services/long-term-memory/chat-scope.js";
+import { loadTrustedLtmSubjectCatalog } from "../services/long-term-memory/subject-identity.js";
 import {
   applyLtmNoteTransfer,
   LtmNoteTransferError,
   previewLtmNoteTransfer,
 } from "../services/long-term-memory/note-transfer.js";
-import { withConcurrency } from "../lib/concurrency.js";
-import { loadTrustedLtmSubjectCatalog } from "../services/long-term-memory/subject-identity.js";
 import { readLongTermMemoryInjectionReceipt } from "../services/long-term-memory/usage.js";
 import {
   applyLtmIdentityRepairs,
@@ -119,33 +116,6 @@ const SEARCH_BODY_LIMIT_BYTES = 128 * 1024;
 const REBUILD_BODY_LIMIT_BYTES = 8 * 1024;
 const MAINTENANCE_BODY_LIMIT_BYTES = 32 * 1024;
 const IDENTITY_REPAIR_BODY_LIMIT_BYTES = 512 * 1024;
-
-function extractionCanMarkSourceCurrent(input: {
-  response: { mutations: unknown[] };
-  diagnostics: Array<{ severity: "warning" | "error" }>;
-  outcome: { state: string; droppedUnits: number };
-}) {
-  if (input.response.mutations.length > 0) return true;
-  return input.outcome.state === "no_suggestions_created" && input.outcome.droppedUnits === 0 && input.diagnostics.length === 0;
-}
-
-async function markSourceExtractionCurrent(
-  storage: LongTermMemoryStorage,
-  note: LtmNote,
-  fingerprint: NonNullable<LtmNote["extractionFingerprint"]> | undefined,
-  summary: string,
-) {
-  if (!fingerprint) return note;
-  return storage.updateNote(
-    note.id,
-    { extractionFingerprint: fingerprint },
-    {
-      actor: "maintenance_api",
-      cause: "source_extraction.completed",
-      summary,
-    },
-  );
-}
 
 const ltmIdentifierSchema = z
   .string()
@@ -438,10 +408,6 @@ function throwIfImportAborted(signal: AbortSignal) {
   if (signal.aborted) throw importAbortError();
 }
 
-function isImportAbortError(error: unknown) {
-  return error instanceof Error && error.name === "AbortError";
-}
-
 async function withImportAbortSignal<T>(request: FastifyRequest, operation: (signal: AbortSignal) => Promise<T>) {
   const controller = new AbortController();
   const abort = () => controller.abort();
@@ -715,99 +681,34 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
 
       const operationId = randomUUID();
 
-      // Game journal source notes are ingested directly without LLM extraction
-      if (sourceNote.tags.includes("imported_game_journal")) {
-        try {
-          const directResult = await directIngestGameJournal(app.db, sourceNote, undefined, operationId, {
-            applyLowRisk: body.applyLowRisk,
-          });
-          if (extractionCanMarkSourceCurrent(directResult)) {
-            await markSourceExtractionCurrent(
-              storage,
-              directResult.sourceNote,
-              directResult.draft?.source.extractionFingerprint,
-              `Completed extraction for ${directResult.sourceNote.title ?? directResult.sourceNote.id}`,
-            );
-          }
-          await rebuildLongTermMemoryIndexes({
-            scope: directResult.appliedMutationIds.length > 0 ? "all" : "source",
-          });
-          return ltmExtractSourceNoteResponseSchema.parse({
-            operationId: directResult.operationId,
-            draft: directResult.draft,
-            diagnostics: directResult.diagnostics,
-            outcome: directResult.outcome,
-            accounting: directResult.accounting,
-            response: directResult.response,
-            appliedMutationIds: directResult.appliedMutationIds,
-            skippedMutationIds: directResult.skippedMutationIds,
-          });
-        } catch (err) {
+      try {
+        const isGameJournal = sourceNote.tags.includes("imported_game_journal");
+        const extractionScope = isGameJournal ? sourceNote.scope : chat ? resolveChatLtmScope(chat) : sourceNote.scope;
+        const resolved = isGameJournal ? null : await resolveExtractionProvider(body, chat?.connectionId ?? null);
+        if (resolved) {
           await recordLtmDebugEvent({
             operationId,
             phase: "extraction",
-            action: "extract_source_note_route",
-            status: "error",
+            action: "provider_resolved",
+            status: "ok",
             sourceNoteId: id,
-            error: err,
+            provider: resolved.provider.constructor.name,
+            model: resolved.model,
           });
-          const message = err instanceof Error ? err.message : "Failed to extract long-term memory from source note";
-          return reply.status(502).send({ error: message });
         }
-      }
-
-      try {
-        const { provider, model } = await resolveExtractionProvider(body, chat?.connectionId ?? null);
-        const extractionScope = chat ? resolveChatLtmScope(chat) : sourceNote.scope;
-        const trustedSubjectCatalog = await loadTrustedLtmSubjectCatalog(app.db, extractionScope);
-        await recordLtmDebugEvent({
-          operationId,
-          phase: "extraction",
-          action: "provider_resolved",
-          status: "ok",
-          sourceNoteId: id,
-          provider: provider.constructor.name,
-          model,
-        });
-        const result = await extractLongTermMemoryFromSourceNote({
-          noteId: id,
-          provider,
-          model,
+        const result = await processLongTermMemorySource({
+          db: app.db,
+          sourceNote,
+          provider: resolved?.provider,
+          model: resolved?.model,
           scope: extractionScope,
           modes: chat ? [ltmModeForChatMode(chat.mode)] : sourceNote.modes,
           mode: body.mode,
           instruction: body.instruction,
           operationId,
-          trustedSubjectCatalog,
+          applyLowRisk: body.applyLowRisk,
         });
-        const applyResult =
-          body.applyLowRisk && result.draft && result.draft.mutations.length > 0
-            ? await applyLongTermMemoryDraft(result.draft.id, {
-                actor: "maintenance_api",
-                autoApplyLowRiskOnly: true,
-                operationId,
-              })
-            : null;
-        if (extractionCanMarkSourceCurrent(result)) {
-          await markSourceExtractionCurrent(
-            storage,
-            result.sourceNote,
-            (applyResult?.draft ?? result.draft)?.source.extractionFingerprint,
-            `Completed extraction for ${result.sourceNote.title ?? result.sourceNote.id}`,
-          );
-        }
-        await rebuildLongTermMemoryIndexes({ scope: "source" });
-
-        return ltmExtractSourceNoteResponseSchema.parse({
-          operationId: result.operationId,
-          draft: applyResult?.draft ?? result.draft,
-          diagnostics: result.diagnostics,
-          outcome: result.outcome,
-          accounting: result.accounting,
-          response: result.response,
-          appliedMutationIds: applyResult?.appliedMutationIds ?? [],
-          skippedMutationIds: applyResult?.skippedMutationIds ?? [],
-        });
+        return ltmExtractSourceNoteResponseSchema.parse(result);
       } catch (err) {
         await recordLtmDebugEvent({
           operationId,
@@ -819,13 +720,15 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
         });
         const message = err instanceof Error ? err.message : "Failed to extract long-term memory from source note";
         const status =
-          err instanceof LtmExtractionRouteError
-            ? err.statusCode
-            : message.includes("not found")
-              ? 404
-              : message.includes("configured")
-                ? 400
-                : 502;
+          sourceNote.tags.includes("imported_game_journal")
+            ? 502
+            : err instanceof LtmExtractionRouteError
+              ? err.statusCode
+              : message.includes("not found")
+                ? 404
+                : message.includes("configured")
+                  ? 400
+                  : 502;
         return reply.status(status).send({ error: message });
       }
     },
@@ -1055,20 +958,16 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
         operationId,
       };
       const plan = await planLongTermMemoryInteropSourceNotes(app.db, body.source, importOptions);
-      let provider: BaseLLMProvider | null = null;
-      let model = "";
-      if (plan.requiresExtraction) {
-        const resolved = await resolveExtractionProvider(body);
-        provider = resolved.provider;
-        model = resolved.model;
+      const resolved = plan.requiresExtraction ? await resolveExtractionProvider(body) : null;
+      if (resolved) {
         await recordLtmDebugEvent({
           operationId,
           phase: "extraction",
           action: "provider_resolved",
           status: "ok",
           source: plan.source,
-          provider: provider.constructor.name,
-          model,
+          provider: resolved.provider.constructor.name,
+          model: resolved.model,
         });
       }
       return withImportAbortSignal(req, async (signal) => {
@@ -1078,267 +977,19 @@ export async function longTermMemoryRoutes(app: FastifyInstance) {
           plan,
         });
         const importedSourceNoteCount = imported.imported.length;
-        const results = [];
-
-        const importConcurrency = Math.max(body.importConcurrency ?? 3, 1);
-
-        const tasks = imported.imported.map((item) => async () => {
-          try {
-            throwIfImportAborted(signal);
-            const isGameJournal = item.note.tags.includes("imported_game_journal");
-
-            if (isGameJournal) {
-              const directResult = await directIngestGameJournal(app.db, item.note, undefined, operationId, {
-                applyLowRisk: false,
-                persistDraft: false,
-                signal,
-              });
-              throwIfImportAborted(signal);
-              return {
-                state: "prepared" as const,
-                item,
-                extractionMethod: "direct_ingest" as const,
-                sourceNote: directResult.sourceNote,
-                extractionMode: directResult.extractionMode,
-                diagnostics: directResult.diagnostics,
-                outcome: directResult.outcome,
-                accounting: directResult.accounting,
-                response: directResult.response,
-              };
-            }
-
-            if (!provider) {
-              throw new Error("No LLM provider available for non-game source note extraction");
-            }
-            const trustedSubjectCatalog = await loadTrustedLtmSubjectCatalog(app.db, item.note.scope);
-            const result = await extractLongTermMemoryFromSourceNote({
-              noteId: item.note.id,
-              provider,
-              model,
-              scope: item.note.scope,
-              modes: item.note.modes,
-              mode: body.mode,
-              instruction: body.instruction,
-              operationId,
-              signal,
-              trustedSubjectCatalog,
-              persistDraft: false,
-            });
-            throwIfImportAborted(signal);
-            return {
-              state: "prepared" as const,
-              item,
-              extractionMethod: "llm" as const,
-              sourceNote: result.sourceNote,
-              extractionMode: result.extractionMode,
-              diagnostics: result.diagnostics,
-              outcome: result.outcome,
-              accounting: result.accounting,
-              response: result.response,
-            };
-          } catch (err) {
-            const cancelled = signal.aborted || isImportAbortError(err);
-            const message = err instanceof Error ? err.message : "Failed to extract imported source";
-            await recordLtmDebugEvent({
-              operationId,
-              phase: "extraction",
-              action: "imported_source_extract",
-              status: cancelled ? "warning" : "error",
-              source: imported.source,
-              sourceId: item.sourceId,
-              sourceNoteId: item.note.id,
-              error: err,
-            });
-            return {
-              state: "failed" as const,
-              item,
-              extractionMethod: item.note.tags.includes("imported_game_journal")
-                ? ("direct_ingest" as const)
-                : ("llm" as const),
-              cancelled,
-              message,
-            };
-          }
+        const results = await processLongTermMemorySourceBatch({
+          db: app.db,
+          source: imported.source,
+          items: imported.imported,
+          provider: resolved?.provider,
+          model: resolved?.model,
+          mode: body.mode,
+          instruction: body.instruction,
+          operationId,
+          signal,
+          applyLowRisk: body.applyLowRisk,
+          concurrency: body.importConcurrency ?? 3,
         });
-
-        const preparedResults = await withConcurrency(tasks, importConcurrency);
-        const overlay = new Map<string, LtmNote>();
-        for (const prepared of preparedResults) {
-          const { item } = prepared;
-          if (prepared.state === "failed") {
-            results.push({
-              sourceId: item.sourceId,
-              title: item.title,
-              note: item.note,
-              created: item.created,
-              sourceWriteStatus: item.created ? ("created" as const) : ("refreshed" as const),
-              extractionStatus: prepared.cancelled ? ("cancelled" as const) : ("failed" as const),
-              extractionMethod: prepared.extractionMethod,
-              retryable: true,
-              error: {
-                code: prepared.cancelled ? "cancelled" : "extract_failed",
-                message: prepared.message,
-              },
-              draft: null,
-              diagnostics: [
-                {
-                  severity: prepared.cancelled ? ("warning" as const) : ("error" as const),
-                  code: prepared.cancelled ? "cancelled" : "extract_failed",
-                  message: prepared.message,
-                },
-              ],
-              outcome: {
-                state: "no_suggestions_created" as const,
-                totalCandidates: 0,
-                keptUnits: 0,
-                droppedUnits: 0,
-                droppedCandidates: [],
-              },
-              accounting: {
-                providerCandidates: 0,
-                normalizedAdditions: 0,
-                parserRejections: 0,
-                validationRejections: 0,
-                deduplications: 0,
-                keptUnits: 0,
-              },
-              appliedMutationIds: [],
-              skippedMutationIds: [],
-            });
-            continue;
-          }
-
-          try {
-            throwIfImportAborted(signal);
-            const draft = await finalizeLongTermMemoryExtractionDraft(
-              {
-                sourceNote: prepared.sourceNote,
-                response: prepared.response,
-                scope: prepared.sourceNote.scope,
-                modes: prepared.sourceNote.modes,
-                extractionMode: prepared.extractionMode,
-                operationId,
-                diagnostics: prepared.diagnostics,
-                outcome: prepared.outcome,
-                accounting: prepared.accounting,
-              },
-              { overlay },
-            );
-            await recordLtmDebugEvent({
-              operationId,
-              phase: "draft",
-              action: "draft_created",
-              status: "ok",
-              source: imported.source,
-              sourceId: item.sourceId,
-              sourceNoteId: prepared.sourceNote.id,
-              draftId: draft.id,
-              counts: {
-                mutations: draft.mutations.length,
-                diagnostics: prepared.diagnostics.length,
-                droppedUnits: prepared.outcome.droppedUnits,
-                generatedMutations: draft.mutations.length,
-                returnedMutations: draft.mutations.length,
-              },
-              diagnostics: prepared.diagnostics.map((diagnostic) => ({ ...diagnostic })),
-              details: {
-                reason: "created_for_batch_overlay",
-                extractionOutcome: prepared.outcome,
-              },
-            });
-            const applyResult =
-              body.applyLowRisk && draft.mutations.length > 0
-                ? await applyLongTermMemoryDraft(draft.id, {
-                    actor: "maintenance_api",
-                    autoApplyLowRiskOnly: true,
-                    rebuildIndexes: false,
-                    operationId,
-                  })
-                : null;
-            const extractedNote = extractionCanMarkSourceCurrent(prepared)
-              ? await markSourceExtractionCurrent(
-                  storage,
-                  prepared.sourceNote,
-                  (applyResult?.draft ?? draft).source.extractionFingerprint,
-                  `Completed extraction for ${item.title}`,
-                )
-              : prepared.sourceNote;
-            results.push({
-              sourceId: item.sourceId,
-              title: item.title,
-              note: extractedNote,
-              created: item.created,
-              sourceWriteStatus: item.created ? ("created" as const) : ("refreshed" as const),
-              extractionStatus: "succeeded" as const,
-              extractionMethod: prepared.extractionMethod,
-              retryable: false,
-              draft: applyResult?.draft ?? draft,
-              diagnostics: prepared.diagnostics,
-              outcome: prepared.outcome,
-              accounting: prepared.accounting,
-              appliedMutationIds: applyResult?.appliedMutationIds ?? [],
-              skippedMutationIds: applyResult?.skippedMutationIds ?? [],
-            });
-          } catch (err) {
-            const cancelled = signal.aborted || isImportAbortError(err);
-            const message = err instanceof Error ? err.message : "Failed to finalize imported source";
-            await recordLtmDebugEvent({
-              operationId,
-              phase: "draft",
-              action: "imported_source_finalize",
-              status: cancelled ? "warning" : "error",
-              source: imported.source,
-              sourceId: item.sourceId,
-              sourceNoteId: item.note.id,
-              error: err,
-            });
-            results.push({
-              sourceId: item.sourceId,
-              title: item.title,
-              note: item.note,
-              created: item.created,
-              sourceWriteStatus: item.created ? ("created" as const) : ("refreshed" as const),
-              extractionStatus: cancelled ? ("cancelled" as const) : ("failed" as const),
-              extractionMethod: prepared.extractionMethod,
-              retryable: true,
-              error: { code: cancelled ? "cancelled" : "finalize_failed", message },
-              draft: null,
-              diagnostics: [
-                ...prepared.diagnostics,
-                {
-                  severity: cancelled ? ("warning" as const) : ("error" as const),
-                  code: cancelled ? "cancelled" : "finalize_failed",
-                  message,
-                },
-              ],
-              outcome: prepared.outcome,
-              accounting: prepared.accounting,
-              appliedMutationIds: [],
-              skippedMutationIds: [],
-            });
-          }
-        }
-
-        const totalApplied = results.reduce((sum, result) => sum + result.appliedMutationIds.length, 0);
-        if (importedSourceNoteCount > 0) {
-          const rebuildScope = totalApplied > 0 ? "all" : "source";
-          const rebuildResult = await rebuildLongTermMemoryIndexes({ scope: rebuildScope });
-          await recordLtmDebugEvent({
-            root: undefined,
-            operationId,
-            phase: "rebuild",
-            action: "import_batch_rebuild",
-            status: "ok",
-            counts: {
-              sourceNotes: importedSourceNoteCount,
-              appliedMutations: totalApplied,
-              notes: rebuildResult.noteCount,
-              chunks: rebuildResult.chunkCount,
-              sourceChunks: rebuildResult.sourceChunkCount,
-            },
-            details: { scope: rebuildScope },
-          });
-        }
 
         const succeeded = results.filter((result) => result.extractionStatus === "succeeded").length;
         const failed = results.filter((result) => result.extractionStatus === "failed").length;
