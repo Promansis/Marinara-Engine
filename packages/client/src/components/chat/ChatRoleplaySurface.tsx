@@ -475,8 +475,8 @@ function ActiveContextLinksButton({
   const { hasPending: hasLtmPending, pendingCount: ltmPendingCount } = useActiveContextLtmBadge(chat?.id ?? null);
   const openLtmVault = useCallback(() => {
     setOpen(false);
-    useUIStore.getState().openAgentDetail("long-term-memory");
-  }, []);
+    useUIStore.getState().openLongTermMemoryVault({ tab: "notes", chatId: chat?.id ?? undefined });
+  }, [chat?.id]);
 
   useEffect(() => {
     if (!open) return;
@@ -556,7 +556,8 @@ function ActiveContextLinksButton({
     visibleLorebookIds.length > 0 ||
     triggeredEntries.length > 0 ||
     skippedLorebookEntries.length > 0 ||
-    !!promptPresetId;
+    !!promptPresetId ||
+    hasLtmPending;
 
   if (!hasLinks) return null;
 

@@ -476,6 +476,8 @@ interface UIState {
   spatialMapDetailChatId: string | null;
   /** One-shot generated map preview handed from Game setup into the spatial editor. Never persisted. */
   pendingSpatialMapDraftReview: PendingSpatialMapDraftReview | null;
+  /** One-shot launch intent for the LTM vault workspace. Never persisted. */
+  ltmVaultLaunch: { tab: "notes" | "import" | "review" | "debug"; chatId?: string; sourceNoteId?: string } | null;
   /** Pre-selected target characters for a NEW regex script opened via openRegexDetail("__new__") */
   regexDetailDefaultCharacterIds: string[] | null;
   /** Where to return when the regex editor closes — e.g. back to a character's Advanced tab */
@@ -839,6 +841,10 @@ interface UIState {
   openSpatialMapDraftReview: (review: PendingSpatialMapDraftReview) => void;
   clearPendingSpatialMapDraftReview: () => void;
   closeSpatialMapDetail: () => void;
+  /** Launch the LTM vault workspace on a specific tab. Navigates to the agent editor. */
+  openLongTermMemoryVault: (launch: { tab: "notes" | "import" | "review" | "debug"; chatId?: string; sourceNoteId?: string }) => void;
+  /** Read and clear the one-shot LTM vault launch intent. */
+  consumeLongTermMemoryVaultLaunch: () => { tab: "notes" | "import" | "review" | "debug"; chatId?: string; sourceNoteId?: string } | null;
   openCharacterLibrary: () => void;
   closeCharacterLibrary: () => void;
   openBotBrowser: () => void;
@@ -1214,6 +1220,7 @@ export const useUIStore = create<UIState>()(
       regexDetailId: null,
       spatialMapDetailChatId: null,
       pendingSpatialMapDraftReview: null,
+      ltmVaultLaunch: null,
       regexDetailDefaultCharacterIds: null,
       regexDetailReturn: null,
       characterDetailInitialTab: null,
@@ -1738,6 +1745,30 @@ export const useUIStore = create<UIState>()(
           editorDirty: false,
           ...restoreMobileDetailReturnPanel(s.detailReturnRightPanel),
         })),
+      openLongTermMemoryVault: (launch) =>
+        set((s) => ({
+          ...s,
+          ltmVaultLaunch: launch,
+          characterLibraryOpen: false,
+          botBrowserOpen: false,
+          gameAssetsBrowserOpen: false,
+          noodleOpen: false,
+          characterDetailId: null,
+          lorebookDetailId: null,
+          presetDetailId: null,
+          connectionDetailId: null,
+          agentDetailId: "long-term-memory",
+          toolDetailId: null,
+          personaDetailId: null,
+          regexDetailId: null,
+          spatialMapDetailChatId: null,
+          ...getMobileDetailReturnState(s),
+        })),
+      consumeLongTermMemoryVaultLaunch: () => {
+        const launch = get().ltmVaultLaunch;
+        if (launch) set({ ltmVaultLaunch: null });
+        return launch;
+      },
       openCharacterLibrary: () =>
         set({
           characterLibraryOpen: true,
@@ -1847,6 +1878,7 @@ export const useUIStore = create<UIState>()(
           personaDetailId: null,
           regexDetailId: null,
           spatialMapDetailChatId: null,
+          ltmVaultLaunch: null,
           characterLibraryOpen: false,
           botBrowserOpen: false,
           gameAssetsBrowserOpen: false,

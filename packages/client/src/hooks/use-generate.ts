@@ -16,6 +16,7 @@ import {
 import { requestChatScrollToBottom } from "../lib/chat-scroll-events";
 import { startSceneWithPromptPreferences } from "../lib/scene-generation";
 import { agentKeys } from "./use-agents";
+import { longTermMemoryKeys } from "./use-long-term-memory";
 import { discardPendingGameStatePatch } from "./use-game-state-patcher";
 import { turnGameKeys } from "./turn-game-keys";
 import { spatialContextKeys } from "./use-spatial-context";
@@ -2865,6 +2866,10 @@ export function useGenerate() {
           console.warn("[use-generate] dispatching generation-complete for chat:", params.chatId);
         }
         window.dispatchEvent(new CustomEvent("marinara:generation-complete", { detail: { chatId: params.chatId } }));
+
+        // Invalidate LTM last-injection so the active-context popover and chat
+        // settings drawer show the latest recall receipt after generation.
+        void qc.invalidateQueries({ queryKey: longTermMemoryKeys.lastInjection(params.chatId) });
 
         // Auto-translate newly generated assistant messages if enabled
         if (receivedContent) {

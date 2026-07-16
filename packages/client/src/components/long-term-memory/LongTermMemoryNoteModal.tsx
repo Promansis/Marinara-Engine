@@ -668,7 +668,6 @@ export function MemoryNoteModal({
               onCancel={() => onModeChange("view")}
               onDirtyChange={onEditorDirtyChange}
               onSaved={onSaved}
-              embedded
               displayContext={displayContext}
             />
           )}

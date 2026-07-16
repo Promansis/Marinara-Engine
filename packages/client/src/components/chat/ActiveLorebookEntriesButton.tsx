@@ -14,8 +14,8 @@ import {
 } from "./ChatToolbarControls";
 import { useActiveContextLtmBadge } from "./ActiveContextLtmSection";
 
-function openLtmAgentDetail() {
-  useUIStore.getState().openAgentDetail("long-term-memory");
+function openLtmAgentDetail(chatId?: string) {
+  useUIStore.getState().openLongTermMemoryVault({ tab: chatId ? "review" : "notes", chatId });
 }
 
 const ActiveLorebookEntriesPanel = lazy(async () => {
@@ -91,7 +91,7 @@ export function ActiveLorebookEntriesModal({
           <ActiveLorebookEntriesPanel
             chatId={chatId}
             onClose={onClose}
-            onOpenLtmVault={openLtmAgentDetail}
+            onOpenLtmVault={() => openLtmAgentDetail(chatId)}
           />
         </Suspense>
       </div>,
@@ -112,7 +112,7 @@ export function ActiveLorebookEntriesModal({
           <ActiveLorebookEntriesPanel
             chatId={chatId}
             onClose={onClose}
-            onOpenLtmVault={openLtmAgentDetail}
+                onOpenLtmVault={() => openLtmAgentDetail(chatId)}
           />
         </Suspense>
       </div>
@@ -239,7 +239,7 @@ export function ActiveLorebookEntriesButton({
               <ActiveLorebookEntriesPanel
                 chatId={chatId}
                 onClose={() => setOpen(false)}
-                onOpenLtmVault={openLtmAgentDetail}
+            onOpenLtmVault={() => openLtmAgentDetail(chatId)}
               />
             </Suspense>
           </div>

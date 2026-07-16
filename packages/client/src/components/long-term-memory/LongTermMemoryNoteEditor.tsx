@@ -61,7 +61,6 @@ type LongTermMemoryNoteEditorProps = {
   onCancel: () => void;
   onDirtyChange?: (dirty: boolean) => void;
   onSaved?: (note: LtmNote) => void;
-  embedded?: boolean;
   displayContext?: LtmDisplayLookupContext;
 };
 
@@ -121,7 +120,6 @@ export function LongTermMemoryNoteEditor({
   onCancel,
   onDirtyChange,
   onSaved,
-  embedded = false,
   displayContext,
 }: LongTermMemoryNoteEditorProps) {
   const activeChatId = useChatStore((state) => state.activeChatId);
@@ -353,12 +351,8 @@ export function LongTermMemoryNoteEditor({
   return (
     <div className="grid gap-4">
       <div
-        id={embedded ? undefined : "ltm-editor-panel-details"}
-        role={embedded ? undefined : "tabpanel"}
-        aria-labelledby={embedded ? undefined : "ltm-editor-tab-details"}
-        tabIndex={embedded ? undefined : 0}
         className="grid gap-4"
-        >
+      >
           <div className="order-1">
             <SettingField label="Title">
               <input
