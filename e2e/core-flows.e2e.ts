@@ -2311,7 +2311,7 @@ test("long-term memory settings stay reachable from the chat drawer", async ({ p
   const vault = page.getByRole("dialog", { name: "Long-Term Memory" });
   await expect(vault).toBeVisible();
   await expect(vault.getByRole("tab", { name: "Memories" })).toBeVisible();
-  await expect(vault.getByRole("tab", { name: "Import" })).toBeVisible();
+  await expect(vault.getByRole("tab", { name: "Add memory" })).toBeVisible();
   await expect(vault.getByRole("tab", { name: "Suggestions" })).toBeVisible();
 
   await vault.getByRole("button", { name: "Change scope" }).click();
@@ -2323,7 +2323,10 @@ test("long-term memory settings stay reachable from the chat drawer", async ({ p
   await expect(vault.getByLabel("Memory status")).toBeVisible();
   await expect(vault.getByLabel("Memory mode")).toBeVisible();
 
-  await vault.getByRole("tab", { name: "Import" }).click();
+  await vault.getByRole("tab", { name: "Add memory" }).click();
+  await expect(vault.getByRole("button", { name: /Write memory/ })).toBeVisible();
+  await expect(vault.getByRole("button", { name: /From sources/ })).toBeVisible();
+  await vault.getByRole("button", { name: /From sources/ }).click();
   await expect(vault.getByRole("heading", { name: "Choose a source" })).toBeVisible();
   await expect(vault.getByRole("heading", { name: "Preview available items" })).toBeVisible();
 
@@ -2347,8 +2350,9 @@ test("long-term memory settings stay reachable from the chat drawer", async ({ p
   await expect(sourcePopover).toBeHidden();
   await expect(sourceTrigger).toBeFocused();
 
-  await vault.getByRole("button", { name: "New", exact: true }).click();
-  const newMemory = page.getByRole("dialog", { name: "New Memory" });
+  await vault.getByRole("button", { name: "Add memory", exact: true }).click();
+  await vault.getByRole("button", { name: /Write memory/ }).click();
+  const newMemory = vault;
   const createdTitle = `Created memory ${testInfo.project.name}`;
   await newMemory.getByLabel("Title", { exact: true }).fill(createdTitle);
   await newMemory.getByLabel("Memory Text", { exact: true }).fill("The silver key stays beneath the chapel bell.");
@@ -2357,7 +2361,10 @@ test("long-term memory settings stay reachable from the chat drawer", async ({ p
   await newMemory.getByText("Advanced options", { exact: true }).click();
   await expect(internalId).toHaveValue(/^scene_created_memory_.+_[a-z0-9]{5}$/);
   await newMemory.getByRole("button", { name: "Save Memory" }).click();
-
+  await expect(vault.getByRole("tab", { name: "Memories" })).toBeVisible();
+  const createdRow = vault.locator("article").filter({ hasText: createdTitle });
+  await expect(createdRow).toBeVisible();
+  await createdRow.getByRole("button", { name: `Open ${createdTitle}` }).click();
   const memoryDetail = page.getByRole("dialog", { name: createdTitle });
   await expect(memoryDetail.getByLabel("Title", { exact: true })).toBeVisible();
   await expect(memoryDetail.getByText("Advanced options", { exact: true })).toBeVisible();

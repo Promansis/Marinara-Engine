@@ -1,7 +1,23 @@
-import { Loader2, BrainCircuit, DatabaseZap, Import, FileJson, Plug, RefreshCw, Hammer, AlertCircle, RotateCcw, AlertTriangle, ShieldCheck } from "lucide-react";
+import {
+  Loader2,
+  BrainCircuit,
+  DatabaseZap,
+  FileJson,
+  Plug,
+  RefreshCw,
+  Hammer,
+  AlertCircle,
+  RotateCcw,
+  AlertTriangle,
+  ShieldCheck,
+  Plus,
+} from "lucide-react";
 import { toast } from "sonner";
 import { StatusPill, ToolButton } from "./LtmPills";
-import LtmInlineSettingsSections, { LtmExtractionConnectionSection, LtmExtractionPromptSection } from "./LtmInlineSettingsSections";
+import LtmInlineSettingsSections, {
+  LtmExtractionConnectionSection,
+  LtmExtractionPromptSection,
+} from "./LtmInlineSettingsSections";
 import {
   RecallStylePresets,
   RecallBudgetControls,
@@ -123,9 +139,7 @@ export function LongTermMemoryAgentSection({
       >
         {(() => {
           const connectionId = ltmDraft?.connectionId ?? "";
-          const hasConnection =
-            !!connectionId &&
-            (connections ?? []).some((item) => item.id === connectionId);
+          const hasConnection = !!connectionId && (connections ?? []).some((item) => item.id === connectionId);
           if (!hasConnection) {
             return (
               <div className="mb-3 rounded-xl border border-[var(--primary)]/20 bg-[var(--primary)]/8 p-4">
@@ -171,19 +185,19 @@ export function LongTermMemoryAgentSection({
               <div className="mb-3 rounded-xl border border-[var(--primary)]/20 bg-[var(--primary)]/8 p-4">
                 <div className="flex items-center gap-2">
                   <FileJson size="1rem" className="text-[var(--primary)]" />
-                  <p className="text-sm font-medium text-[var(--foreground)]">Ready to import</p>
+                  <p className="text-sm font-medium text-[var(--foreground)]">Ready to add memories</p>
                 </div>
                 <p className="mt-1 text-xs text-[var(--muted-foreground)]">
                   Bring in characters, lorebooks, or chats to get started.
                 </p>
                 <div className="mt-3">
                   <ToolButton
-                    onClick={() => setVaultOpen({ initialTab: "import" })}
+                    onClick={() => setVaultOpen({ initialTab: "import", initialAddMemoryView: "choose" })}
                     tone="primary"
                     size="default"
                   >
-                    <Import size="0.875rem" />
-                    Import
+                    <Plus size="0.875rem" />
+                    Add memory
                   </ToolButton>
                 </div>
               </div>
@@ -201,11 +215,7 @@ export function LongTermMemoryAgentSection({
               />
             )}
             {ltmIndexHealth && (
-              <StatusPill
-                label={ltmIndexStatus.label}
-                tone={ltmIndexStatus.tone}
-                title={ltmIndexStatus.title}
-              />
+              <StatusPill label={ltmIndexStatus.label} tone={ltmIndexStatus.tone} title={ltmIndexStatus.title} />
             )}
           </div>
         )}
@@ -214,9 +224,12 @@ export function LongTermMemoryAgentSection({
             <DatabaseZap size="0.875rem" />
             Manage Memories
           </ToolButton>
-          <ToolButton onClick={() => setVaultOpen({ initialTab: "import" })} size="default">
-            <Import size="0.875rem" />
-            Import
+          <ToolButton
+            onClick={() => setVaultOpen({ initialTab: "import", initialAddMemoryView: "choose" })}
+            size="default"
+          >
+            <Plus size="0.875rem" />
+            Add memory
           </ToolButton>
         </div>
       </FieldGroup>
@@ -308,8 +321,7 @@ export function LongTermMemoryAgentSection({
             verbosity: ltmDraft?.verbosity ?? DEFAULT_LTM_EXTRACTION_VERBOSITY,
             maxOutputTokens: ltmDraft?.maxOutputTokens ?? DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
             temperature: ltmDraft?.temperature ?? DEFAULT_LTM_EXTRACTION_TEMPERATURE,
-            maxExistingNoteTokens:
-              ltmDraft?.maxExistingNoteTokens ?? DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
+            maxExistingNoteTokens: ltmDraft?.maxExistingNoteTokens ?? DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
           }}
           autoApplyLowRisk={ltmDraft?.autoApplyLowRisk ?? false}
           onChange={updateLtmDraft}
@@ -416,24 +428,22 @@ export function LongTermMemoryAgentSection({
           {(integrity.data?.issues ?? [])
             .filter((issue: { severity: string }) => issue.severity !== "info")
             .slice(0, 8)
-            .map(
-              (issue: { code: string; path?: string; noteId?: string; message: string; severity: string }) => (
-                <div
-                  key={`${issue.code}-${issue.path ?? issue.noteId ?? issue.message}`}
-                  className="rounded-lg bg-[var(--secondary)]/50 p-3 text-xs ring-1 ring-[var(--border)]"
-                >
-                  <div className="flex items-center gap-2 font-medium">
-                    {issue.severity === "error" ? (
-                      <AlertTriangle size="0.875rem" className="text-rose-300" />
-                    ) : (
-                      <ShieldCheck size="0.875rem" />
-                    )}
-                    {issue.code}
-                  </div>
-                  <p className="mt-1 text-xs text-[var(--muted-foreground)]">{issue.message}</p>
+            .map((issue: { code: string; path?: string; noteId?: string; message: string; severity: string }) => (
+              <div
+                key={`${issue.code}-${issue.path ?? issue.noteId ?? issue.message}`}
+                className="rounded-lg bg-[var(--secondary)]/50 p-3 text-xs ring-1 ring-[var(--border)]"
+              >
+                <div className="flex items-center gap-2 font-medium">
+                  {issue.severity === "error" ? (
+                    <AlertTriangle size="0.875rem" className="text-rose-300" />
+                  ) : (
+                    <ShieldCheck size="0.875rem" />
+                  )}
+                  {issue.code}
                 </div>
-              ),
-            )}
+                <p className="mt-1 text-xs text-[var(--muted-foreground)]">{issue.message}</p>
+              </div>
+            ))}
         </div>
       </FieldGroup>
     </section>

@@ -45,6 +45,7 @@ type CreateLongTermMemoryNoteFormProps = {
   onDirtyChange?: (dirty: boolean) => void;
   onDraftChange?: (draft: CreateLongTermMemoryNoteDraft) => void;
   displayContext?: LtmDisplayLookupContext;
+  embedded?: boolean;
 };
 
 export type CreateLongTermMemoryNoteDraft = {
@@ -133,6 +134,7 @@ export function CreateLongTermMemoryNoteForm({
   onDirtyChange,
   onDraftChange,
   displayContext,
+  embedded = false,
 }: CreateLongTermMemoryNoteFormProps) {
   const activeChatId = useChatStore((state) => state.activeChatId);
   const cachedActiveChat = useChatStore((state) => state.activeChat);
@@ -460,13 +462,18 @@ export function CreateLongTermMemoryNoteForm({
           </div>
         </details>
 
-        <div className="sticky bottom-0 z-10 -mx-5 flex flex-wrap items-center gap-2 border-t border-[var(--border)] bg-[var(--background)]/95 px-5 py-3 backdrop-blur-sm">
+        <div
+          className={cn(
+            "sticky bottom-0 z-10 flex flex-wrap items-center gap-2 border-t border-[var(--border)] bg-[var(--background)]/95 py-3 backdrop-blur-sm",
+            embedded ? "-mx-3 px-3" : "-mx-5 px-5",
+          )}
+        >
           <ToolButton onClick={submit} disabled={createNote.isPending || modes.length === 0} tone="primary">
             {createNote.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Plus size="0.875rem" />}
             Save Memory
           </ToolButton>
           <ToolButton onClick={onCancel} disabled={createNote.isPending}>
-            Cancel
+            {embedded ? "Back" : "Cancel"}
           </ToolButton>
         </div>
       </div>

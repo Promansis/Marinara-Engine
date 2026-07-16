@@ -526,6 +526,7 @@ export function AgentEditor() {
   const [toolsSectionOpen, setToolsSectionOpen] = useState(false);
   const markDirty = useCallback(() => setDirty(true), []);
   const ltm = useLtmAgentSection(isLtmAgent, dbConfig, markDirty, connections);
+  const [ltmVaultDirty, setLtmVaultDirty] = useState(false);
   const consumeLongTermMemoryVaultLaunch = useUIStore((s) => s.consumeLongTermMemoryVaultLaunch);
   useEffect(() => {
     if (!isLtmAgent || !dbConfig) return;
@@ -537,7 +538,11 @@ export function AgentEditor() {
         : launch.tab === "debug"
           ? ("review" as const)
           : (launch.tab as "notes" | "import" | "review" | "suggestions");
-    ltm.setVaultOpen({ initialTab, sourceNoteId: launch.sourceNoteId });
+    ltm.setVaultOpen({
+      initialTab,
+      initialAddMemoryView: launch.tab === "import" ? "sources" : undefined,
+      sourceNoteId: launch.sourceNoteId,
+    });
   }, [isLtmAgent, dbConfig, consumeLongTermMemoryVaultLaunch, ltm]);
   const [localLorebookWriteEnabled, setLocalLorebookWriteEnabled] = useState(false);
   const [localWritableLorebookId, setLocalWritableLorebookId] = useState("");
@@ -3556,15 +3561,28 @@ export function AgentEditor() {
           )}
 
           {isLtmAgent && dbConfig && (
-            <LongTermMemoryAgentSection
-              ltm={ltm}
-              connections={(connections ?? []) as Array<{ id: string }>}
-            />
+            <LongTermMemoryAgentSection ltm={ltm} connections={(connections ?? []) as Array<{ id: string }>} />
           )}
 
           <LtmModal
             open={ltm.memoriesModalOpen}
-            onClose={() => ltm.setVaultOpen(null)}
+            onClose={() => {
+              void (async () => {
+                if (
+                  ltmVaultDirty &&
+                  !(await showConfirmDialog({
+                    title: "Discard Draft",
+                    message: "Discard unsaved memory draft?",
+                    confirmLabel: "Discard",
+                    tone: "destructive",
+                  }))
+                ) {
+                  return;
+                }
+                setLtmVaultDirty(false);
+                ltm.setVaultOpen(null);
+              })();
+            }}
             title="Long-Term Memory"
             width="max-w-5xl"
             contentClassName="!p-0"
@@ -3574,7 +3592,9 @@ export function AgentEditor() {
                 agentConfig={dbConfig}
                 agentSettings={parseAgentSettingsRecord(dbConfig.settings)}
                 initialTab={ltm.vaultOpen?.initialTab}
+                initialAddMemoryView={ltm.vaultOpen?.initialAddMemoryView}
                 sourceNoteId={ltm.vaultOpen?.sourceNoteId}
+                onDirtyChange={setLtmVaultDirty}
               />
             )}
           </LtmModal>

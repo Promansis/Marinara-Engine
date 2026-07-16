@@ -29,7 +29,10 @@ import {
   useRepairLongTermMemory,
   useLongTermMemoryIntegrity,
 } from "./use-long-term-memory";
-import { useDebouncedRecallSettings, type RecallSettingsValues } from "../components/long-term-memory/RecallSettingsControls";
+import {
+  useDebouncedRecallSettings,
+  type RecallSettingsValues,
+} from "../components/long-term-memory/RecallSettingsControls";
 import { parseAgentSettingsRecord } from "@marinara-engine/shared";
 
 export type LtmPromptTemplate = { id: string; name: string; prompt: string };
@@ -119,8 +122,18 @@ export interface LtmAgentDraft {
 }
 
 export interface UseLtmAgentSectionResult {
-  vaultOpen: { initialTab?: "notes" | "import" | "review" | "suggestions"; sourceNoteId?: string } | null;
-  setVaultOpen: (value: { initialTab?: "notes" | "import" | "review" | "suggestions"; sourceNoteId?: string } | null) => void;
+  vaultOpen: {
+    initialTab?: "notes" | "import" | "review" | "suggestions";
+    initialAddMemoryView?: "choose" | "write" | "sources";
+    sourceNoteId?: string;
+  } | null;
+  setVaultOpen: (
+    value: {
+      initialTab?: "notes" | "import" | "review" | "suggestions";
+      initialAddMemoryView?: "choose" | "write" | "sources";
+      sourceNoteId?: string;
+    } | null,
+  ) => void;
   memoriesModalOpen: boolean;
   ltmAdvancedOpen: boolean;
   setLtmAdvancedOpen: (open: boolean) => void;
@@ -161,6 +174,7 @@ export function useLtmAgentSection(
 ): UseLtmAgentSectionResult {
   const [vaultOpen, setVaultOpen] = useState<{
     initialTab?: "notes" | "import" | "review" | "suggestions";
+    initialAddMemoryView?: "choose" | "write" | "sources";
     sourceNoteId?: string;
   } | null>(null);
   const memoriesModalOpen = vaultOpen !== null;
@@ -365,49 +379,46 @@ export function useLtmAgentSection(
     [markDirty],
   );
 
-  const saveLtm = useCallback(
-    async () => {
-      if (!ltmDraft) return;
-      const extractionPayload: LtmExtractionSettings = { version: 1 };
-      const maxOutputTokens = normalizeBoundedNumber(
-        ltmDraft.maxOutputTokens,
-        DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
-        512,
-        32_768,
-      );
-      const temperature = normalizeBoundedNumber(ltmDraft.temperature, DEFAULT_LTM_EXTRACTION_TEMPERATURE, 0, 2, {
-        integer: false,
-      });
-      const maxExistingNoteTokens = normalizeBoundedNumber(
-        ltmDraft.maxExistingNoteTokens,
-        DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
-        128,
-        32_768,
-      );
-      const activePromptTemplateIdsByMode = Object.fromEntries(
-        LTM_EXTRACTION_MODES.flatMap((mode) => {
-          const id = ltmDraft.activePromptTemplateIdsByMode[mode];
-          return id ? [[mode, id]] : [];
-        }),
-      );
-      if (ltmDraft.reasoningEffort !== DEFAULT_LTM_EXTRACTION_REASONING_EFFORT)
-        extractionPayload.reasoningEffort = ltmDraft.reasoningEffort;
-      if (ltmDraft.verbosity !== DEFAULT_LTM_EXTRACTION_VERBOSITY) extractionPayload.verbosity = ltmDraft.verbosity;
-      if (maxOutputTokens !== DEFAULT_LTM_EXTRACTION_MAX_TOKENS) extractionPayload.maxOutputTokens = maxOutputTokens;
-      if (temperature !== DEFAULT_LTM_EXTRACTION_TEMPERATURE) extractionPayload.temperature = temperature;
-      if (maxExistingNoteTokens !== DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS)
-        extractionPayload.maxExistingNoteTokens = maxExistingNoteTokens;
-      if (ltmDraft.existingNoteMaxTokens !== DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS)
-        extractionPayload.existingNoteMaxTokens = ltmDraft.existingNoteMaxTokens;
-      if (ltmDraft.promptTemplates.length > 0) extractionPayload.promptTemplates = ltmDraft.promptTemplates;
-      if (Object.keys(activePromptTemplateIdsByMode).length > 0)
-        extractionPayload.activePromptTemplateIdsByMode = activePromptTemplateIdsByMode;
-      if (ltmDraft.aiKeywordExtraction) extractionPayload.aiKeywordExtraction = true;
-      if (ltmDraft.refinePass) extractionPayload.refinePass = true;
-      await updateExtractionSettings.mutateAsync(extractionPayload);
-    },
-    [ltmDraft, updateExtractionSettings],
-  );
+  const saveLtm = useCallback(async () => {
+    if (!ltmDraft) return;
+    const extractionPayload: LtmExtractionSettings = { version: 1 };
+    const maxOutputTokens = normalizeBoundedNumber(
+      ltmDraft.maxOutputTokens,
+      DEFAULT_LTM_EXTRACTION_MAX_TOKENS,
+      512,
+      32_768,
+    );
+    const temperature = normalizeBoundedNumber(ltmDraft.temperature, DEFAULT_LTM_EXTRACTION_TEMPERATURE, 0, 2, {
+      integer: false,
+    });
+    const maxExistingNoteTokens = normalizeBoundedNumber(
+      ltmDraft.maxExistingNoteTokens,
+      DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS,
+      128,
+      32_768,
+    );
+    const activePromptTemplateIdsByMode = Object.fromEntries(
+      LTM_EXTRACTION_MODES.flatMap((mode) => {
+        const id = ltmDraft.activePromptTemplateIdsByMode[mode];
+        return id ? [[mode, id]] : [];
+      }),
+    );
+    if (ltmDraft.reasoningEffort !== DEFAULT_LTM_EXTRACTION_REASONING_EFFORT)
+      extractionPayload.reasoningEffort = ltmDraft.reasoningEffort;
+    if (ltmDraft.verbosity !== DEFAULT_LTM_EXTRACTION_VERBOSITY) extractionPayload.verbosity = ltmDraft.verbosity;
+    if (maxOutputTokens !== DEFAULT_LTM_EXTRACTION_MAX_TOKENS) extractionPayload.maxOutputTokens = maxOutputTokens;
+    if (temperature !== DEFAULT_LTM_EXTRACTION_TEMPERATURE) extractionPayload.temperature = temperature;
+    if (maxExistingNoteTokens !== DEFAULT_LTM_EXTRACTION_MAX_EXISTING_NOTE_TOKENS)
+      extractionPayload.maxExistingNoteTokens = maxExistingNoteTokens;
+    if (ltmDraft.existingNoteMaxTokens !== DEFAULT_LTM_EXTRACTION_EXISTING_NOTE_MAX_TOKENS)
+      extractionPayload.existingNoteMaxTokens = ltmDraft.existingNoteMaxTokens;
+    if (ltmDraft.promptTemplates.length > 0) extractionPayload.promptTemplates = ltmDraft.promptTemplates;
+    if (Object.keys(activePromptTemplateIdsByMode).length > 0)
+      extractionPayload.activePromptTemplateIdsByMode = activePromptTemplateIdsByMode;
+    if (ltmDraft.aiKeywordExtraction) extractionPayload.aiKeywordExtraction = true;
+    if (ltmDraft.refinePass) extractionPayload.refinePass = true;
+    await updateExtractionSettings.mutateAsync(extractionPayload);
+  }, [ltmDraft, updateExtractionSettings]);
 
   const consumeLaunchIntent = useCallback(() => {
     // Consume is handled by the component via useUIStore directly

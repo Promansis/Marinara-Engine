@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import {
   AlertCircle,
   ArrowRightLeft,
+  BookOpen,
   Check,
   ChevronDown,
   ChevronRight,
@@ -15,6 +16,7 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  PenLine,
   SlidersHorizontal,
   Trash2,
   Unlink2,
@@ -101,7 +103,6 @@ import {
   type LtmNavigatorSelection,
 } from "../long-term-memory/ltm-navigator";
 import { StatusPill, ToolButton } from "../long-term-memory/LtmPills";
-import { LtmModal } from "./LtmModal";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import {
   IMPORT_SOURCES,
@@ -135,6 +136,7 @@ import { useUpdateAgentByType, type AgentConfigRow } from "../../hooks/use-agent
 
 type LtmImportSource = "characters" | "lorebooks" | "chats";
 const LTM_TAB_IDS = ["notes", "import", "review"] as const satisfies readonly TabId[];
+export type AddMemoryView = "choose" | "write" | "sources";
 
 type RemovableLtmScope = {
   chatIds?: string[];
@@ -146,7 +148,9 @@ interface LtmVaultManagerSectionProps {
   agentConfig: AgentConfigRow;
   agentSettings: Record<string, unknown>;
   initialTab?: TabId | "suggestions";
+  initialAddMemoryView?: AddMemoryView;
   sourceNoteId?: string;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 function extractPanelPrefs(settings: Record<string, unknown>) {
@@ -302,7 +306,9 @@ export function LtmVaultManagerSection({
   agentConfig: _agentConfig,
   agentSettings,
   initialTab,
+  initialAddMemoryView = "choose",
   sourceNoteId,
+  onDirtyChange,
 }: LtmVaultManagerSectionProps) {
   const panelPrefs = useMemo(() => extractPanelPrefs(agentSettings ?? {}), [agentSettings]);
   const importLimit = panelPrefs.importLimit;
@@ -361,6 +367,9 @@ export function LtmVaultManagerSection({
           ? "debug"
           : "notes";
   const [tab, setTab] = useState<TabId>(initialTabId);
+  const [addMemoryView, setAddMemoryView] = useState<AddMemoryView>(() =>
+    initialTabId === "import" ? initialAddMemoryView : "choose",
+  );
   const [noteType, setNoteType] = useState<"all" | LtmNoteType>("all");
   const [noteStatus, setNoteStatus] = useState<"all" | LtmStatus>("all");
   const [noteMode, setNoteMode] = useState<"all" | LtmMode>("all");
@@ -379,9 +388,13 @@ export function LtmVaultManagerSection({
     [lastImportResult],
   );
   const [importedRowsOpen, setImportedRowsOpen] = useState(false);
-  const [creatingNote, setCreatingNote] = useState(false);
+  const creatingNote = tab === "import" && addMemoryView === "write";
   const [createNoteDraft, setCreateNoteDraft] = useState<CreateLongTermMemoryNoteDraft | null>(null);
   const [createNoteDirty, setCreateNoteDirty] = useState(false);
+  useEffect(() => {
+    onDirtyChange?.(createNoteDirty);
+  }, [createNoteDirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const [resultsBySourceNoteId, setResultsBySourceNoteId] = useState<
     Record<string, LongTermMemoryLatestExtractionResult>
   >({});
@@ -556,7 +569,7 @@ export function LtmVaultManagerSection({
     importLimit,
     importSource === "chats" ? navigatorScope : undefined,
     importSource === "chats" ? importMode : undefined,
-    { enabled: tab === "import" },
+    { enabled: tab === "import" && addMemoryView === "sources" },
   );
   const deleteNotes = useDeleteLongTermMemoryNotes();
   const removeNotesFromScope = useRemoveLongTermMemoryNotesFromScope();
@@ -676,9 +689,7 @@ export function LtmVaultManagerSection({
   }, [lastImportResult]);
   const lastImportHasReview = Boolean(
     lastImportDraftIds.size > 0 &&
-      draftReview.data?.sources.some((source) =>
-        source.drafts.some((review) => lastImportDraftIds.has(review.draft.id)),
-      ),
+    draftReview.data?.sources.some((source) => source.drafts.some((review) => lastImportDraftIds.has(review.draft.id))),
   );
   const selectedVisibleImportRows = useMemo(
     () => pendingImportRows.filter((sample) => selectedImportRows.has(importRowKey(importSource, sample.sourceId))),
@@ -826,9 +837,10 @@ export function LtmVaultManagerSection({
   };
 
   const closeCreateForm = () => {
-    setCreatingNote(false);
+    setAddMemoryView("choose");
     setCreateNoteDirty(false);
     setCreateNoteDraft(null);
+    onDirtyChange?.(false);
   };
 
   const confirmDiscardCreate = async () =>
@@ -989,6 +1001,7 @@ export function LtmVaultManagerSection({
     if (creatingNote) closeCreateForm();
     if (openNoteId) closeMemoryModal();
     setTab(nextTab);
+    if (nextTab === "import" && tab !== "import") setAddMemoryView("choose");
     requestAnimationFrame(() => {
       document.getElementById(`ltm-panel-${nextTab}`)?.scrollIntoView({ block: "start" });
     });
@@ -1046,7 +1059,16 @@ export function LtmVaultManagerSection({
     if (!(await confirmDiscardEditor())) return;
     closeMemoryModal();
     setEditedNoteDirty(false);
-    setCreatingNote(true);
+    setTab("import");
+    setAddMemoryView("choose");
+  };
+
+  const setAddMemoryViewWithGuard = async (nextView: AddMemoryView) => {
+    if (nextView === addMemoryView) return true;
+    if (addMemoryView === "write" && !(await confirmDiscardCreate())) return false;
+    if (addMemoryView === "write") closeCreateForm();
+    setAddMemoryView(nextView);
+    return true;
   };
 
   const runViewingNoteRecall = async () => {
@@ -1134,7 +1156,8 @@ export function LtmVaultManagerSection({
       links: [{ target: sourceNote.id, relation: "extracted_from" }],
       evidence: nextEvidence,
     });
-    setCreatingNote(true);
+    setTab("import");
+    setAddMemoryView("write");
   };
 
   const setLatestExtractionResultForSourceNote = useCallback(
@@ -1720,7 +1743,7 @@ export function LtmVaultManagerSection({
               </ToolButton>
               <ToolButton onClick={requestCreateNote} disabled={creatingNote} tone="primary">
                 <Plus size="0.875rem" />
-                New
+                Add memory
               </ToolButton>
             </div>
             {filtersOpen && (
@@ -1796,7 +1819,7 @@ export function LtmVaultManagerSection({
                 <div className={cn(emptyStateClassName, "space-y-3")}>
                   <p>
                     {(notes.data ?? []).length === 0
-                      ? "No memories yet in this scope. Create one or import a source to get started."
+                      ? "No memories yet in this scope. Write one or extract candidates from a source to get started."
                       : "No memories match the current search and filters."}
                   </p>
                   <div className="flex flex-wrap justify-center gap-2">
@@ -1815,7 +1838,7 @@ export function LtmVaultManagerSection({
                     )}
                     <ToolButton onClick={requestCreateNote} disabled={creatingNote} tone="primary">
                       <Plus size="0.875rem" />
-                      New memory
+                      Add memory
                     </ToolButton>
                   </div>
                 </div>
@@ -1853,239 +1876,314 @@ export function LtmVaultManagerSection({
       )}
 
       {tab === "import" && (
-        <Section title="Import" id="ltm-panel-import" labelledBy="ltm-tab-import">
-          <div className={panelIntroCardClassName}>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold text-[var(--foreground)]">
-                  {importPreview.data?.draftable ?? 0} pending source{importPreview.data?.draftable === 1 ? "" : "s"}{" "}
-                  ready
-                </div>
-                <div className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">
-                  {importPreview.data?.importedCount ?? 0} source{importPreview.data?.importedCount === 1 ? "" : "s"}{" "}
-                  current in Memory
-                </div>
-                {staleImportRows.length > 0 && (
-                  <div className="mt-1 text-[0.6875rem] text-amber-700 dark:text-amber-200">
-                    {staleImportRows.length} source{staleImportRows.length === 1 ? "" : "s"} changed since import
-                  </div>
+        <Section title="Add memory" id="ltm-panel-import" labelledBy="ltm-tab-import">
+          {addMemoryView === "choose" ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => void setAddMemoryViewWithGuard("write")}
+                className={cn(
+                  sectionCardClassName,
+                  "group text-left transition-[border-color,background-color,box-shadow] hover:border-[var(--primary)]/60 hover:bg-[var(--accent)]/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
                 )}
-              </div>
-              <div className="flex items-center gap-1">
-                {importPreview.isFetching ? <Loader2 className="animate-spin" size="1rem" /> : <FileJson size="1rem" />}
-                <button
-                  type="button"
-                  onClick={() => void importPreview.refetch()}
-                  disabled={importPreview.isFetching}
-                  aria-label="Refresh available imports"
-                  title="Refresh available imports"
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-[background-color,color,transform] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-90 disabled:cursor-not-allowed disabled:opacity-45"
-                >
-                  <RefreshCw size="0.75rem" aria-hidden="true" />
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 pt-1">
-            <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[var(--primary)] text-[0.6875rem] font-bold text-[var(--primary-foreground)]">
-              1
-            </span>
-            <h3 className="text-xs font-semibold text-[var(--foreground)]">Choose a source</h3>
-          </div>
-          <div className={cn("grid gap-2", importSource === "chats" ? "sm:grid-cols-2" : "sm:grid-cols-1")}>
-            <label className="space-y-1">
-              <span className="block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Source</span>
-              <select
-                value={importSource}
-                disabled={importSourceNotes.isPending}
-                onChange={(event) => handlePrefsChange({ importSource: event.target.value as LtmInteropSource })}
-                className={compactInputClassName}
               >
-                {IMPORT_SOURCES.map((source) => (
-                  <option key={source.id} value={source.id}>
-                    {source.id === "chats" ? "Chat summaries" : source.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {importSource === "chats" && (
-              <label className="space-y-1">
-                <span className="block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Chat mode</span>
-                <select
-                  value={importMode}
-                  disabled={importSourceNotes.isPending}
-                  onChange={(event) => setImportMode(event.target.value as LtmMode)}
-                  className={compactInputClassName}
-                >
-                  {(["roleplay", "conversation", "game"] as const).map((mode) => (
-                    <option key={mode} value={mode}>
-                      {MODE_LABELS[mode]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-          </div>
-          {lastImportResult && (
-            <div
-              role={lastImportResult.batchStatus === "failed" ? "alert" : "status"}
-              aria-live="polite"
-              className={cn(
-                sectionCardClassName,
-                "mt-3 space-y-2",
-                lastImportResult.batchStatus === "success"
-                  ? "border-emerald-500/25 bg-emerald-500/5"
-                  : lastImportResult.batchStatus === "failed"
-                    ? "border-[var(--destructive)]/25 bg-[var(--destructive)]/5"
-                    : "border-amber-500/25 bg-amber-500/5",
-              )}
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-xs font-semibold text-[var(--foreground)]">
-                  {lastImportResult.batchStatus === "success"
-                    ? "Import complete"
-                    : lastImportResult.batchStatus === "partial_success"
-                      ? "Import partly complete"
-                      : lastImportResult.batchStatus === "cancelled"
-                        ? "Import cancelled"
-                        : "Import failed"}
-                </div>
-                {lastImportHasReview && (
-                  <ToolButton onClick={() => void setTabWithGuards("review")}>
-                    <Eye size="0.75rem" />
-                    Review suggestions
-                  </ToolButton>
+                <span className="flex items-center gap-2 text-sm font-semibold text-[var(--foreground)]">
+                  <PenLine size="1rem" className="text-[var(--primary)]" />
+                  Write memory
+                </span>
+                <span className="mt-2 block text-xs leading-relaxed text-[var(--muted-foreground)]">
+                  Add a fact, event, relationship, or note yourself.
+                </span>
+                <span className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-[var(--primary)]">
+                  Open editor <ChevronRight size="0.875rem" />
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => void setAddMemoryViewWithGuard("sources")}
+                className={cn(
+                  sectionCardClassName,
+                  "group text-left transition-[border-color,background-color,box-shadow] hover:border-[var(--primary)]/60 hover:bg-[var(--accent)]/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
                 )}
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                <StatusPill
-                  label={`${lastImportResult.counts.succeeded} extracted`}
-                  tone={lastImportResult.counts.succeeded > 0 ? "good" : "neutral"}
-                />
-                {lastImportResult.counts.failed > 0 && (
-                  <StatusPill label={`${lastImportResult.counts.failed} failed`} tone="bad" />
-                )}
-                {lastImportResult.counts.cancelled > 0 && (
-                  <StatusPill label={`${lastImportResult.counts.cancelled} cancelled`} tone="warn" />
-                )}
-                {lastImportResult.counts.sourceWriteFailed > 0 && (
-                  <StatusPill label={`${lastImportResult.counts.sourceWriteFailed} not saved`} tone="bad" />
-                )}
-                {lastImportResult.counts.missing > 0 && (
-                  <StatusPill label={`${lastImportResult.counts.missing} missing`} tone="warn" />
-                )}
-              </div>
-              {lastImportFailures.slice(0, 5).map((failure) => (
-                <p
-                  key={`${failure.sourceId}-${failure.message}`}
-                  className="text-[0.6875rem] text-[var(--muted-foreground)]"
-                >
-                  <span className="font-medium text-[var(--foreground)]">{failure.title}:</span> {failure.message}
-                </p>
-              ))}
+              >
+                <span className="flex items-center gap-2 text-sm font-semibold text-[var(--foreground)]">
+                  <BookOpen size="1rem" className="text-[var(--primary)]" />
+                  From sources
+                </span>
+                <span className="mt-2 block text-xs leading-relaxed text-[var(--muted-foreground)]">
+                  Extract candidate memories from chats, characters, or lorebooks.
+                </span>
+                <span className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-[var(--primary)]">
+                  Choose sources <ChevronRight size="0.875rem" />
+                </span>
+              </button>
             </div>
-          )}
-          <div className="flex items-center gap-2 pt-1">
-            <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[var(--secondary)] text-[0.6875rem] font-bold text-[var(--foreground)] ring-1 ring-[var(--border)]">
-              2
-            </span>
-            <h3 className="text-xs font-semibold text-[var(--foreground)]">Preview available items</h3>
-          </div>
-          <div className={cn(sectionCardClassName, "mt-1")}>
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="flex min-h-8 items-center gap-2 rounded-lg px-2 text-xs text-[var(--foreground)]">
-                <input
-                  type="checkbox"
-                  checked={allVisibleImportRowsSelected}
-                  disabled={pendingImportRows.length === 0}
-                  onChange={(event) => setAllVisibleImportRowsSelected(event.target.checked)}
-                  className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
-                />
-                Select visible
-              </label>
-              <StatusPill
-                label={`${selectedVisibleImportRows.length} selected`}
-                tone={selectedVisibleImportRows.length > 0 ? "warn" : "neutral"}
+          ) : addMemoryView === "write" ? (
+            <div className="space-y-3">
+              <ToolButton onClick={() => void setAddMemoryViewWithGuard("choose")}>
+                <ChevronRight size="0.75rem" className="rotate-180" />
+                Back to add-memory options
+              </ToolButton>
+              <CreateLongTermMemoryNoteForm
+                initialDraft={createNoteDraft}
+                defaultScopeDraft={scopeDraftFromLtmScope(navigatorScope)}
+                displayContext={displayContext}
+                embedded
+                onCancel={() => void setAddMemoryViewWithGuard("choose")}
+                onDirtyChange={setCreateNoteDirty}
+                onDraftChange={setCreateNoteDraft}
+                onCreated={() => {
+                  closeCreateForm();
+                  setTab("notes");
+                  setCreateNoteDirty(false);
+                }}
               />
             </div>
-          </div>
-
-          <div className="mt-3 space-y-2">
-            {importPreview.isError && (
-              <QueryFailure
-                label="Import sources"
-                error={importPreview.error}
-                stale={Boolean(importPreview.data)}
-                onRetry={() => void importPreview.refetch()}
-              />
-            )}
-            {importPreview.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
-            {!importPreview.isLoading &&
-              !importPreview.isError &&
-              pendingImportRows.length === 0 &&
-              importedImportRows.length === 0 && (
-                <p className={emptyStateClassName}>No sources are ready to bring in.</p>
-              )}
-            {pendingImportRows.map((sample) => (
-              <ImportPreviewRowItem
-                key={sample.sourceId}
-                sample={sample}
-                selected={selectedImportRows.has(importRowKey(importSource, sample.sourceId))}
-                disabled={importSourceNotes.isPending}
-                importing={activeImportIds.has(importRowKey(importSource, sample.sourceId))}
-                onSelect={(selected) => setImportRowSelected(sample.sourceId, selected)}
-                onImport={() => importRowsToVault([sample.sourceId])}
-              />
-            ))}
-            {importedImportRows.length > 0 && (
-              <div className={cn(sectionCardClassName, "border-amber-500/20 bg-amber-500/5")}>
-                <button
-                  type="button"
-                  onClick={() => setImportedRowsOpen((current) => !current)}
-                  aria-expanded={importedRowsOpen}
-                  className="flex w-full items-center justify-between gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
-                >
+          ) : (
+            <>
+              <ToolButton onClick={() => void setAddMemoryViewWithGuard("choose")}>
+                <ChevronRight size="0.75rem" className="rotate-180" />
+                Back to add-memory options
+              </ToolButton>
+              <div className={panelIntroCardClassName}>
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <div className="text-xs font-semibold text-[var(--foreground)]">
-                      Imported source{importedImportRows.length === 1 ? "" : "s"} ({importedImportRows.length})
+                    <div className="text-sm font-semibold text-[var(--foreground)]">
+                      {importPreview.data?.draftable ?? 0} pending source
+                      {importPreview.data?.draftable === 1 ? "" : "s"} ready
                     </div>
                     <div className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">
-                      These source snapshots are current. They stay visible for reference and cannot be imported again.
+                      {importPreview.data?.importedCount ?? 0} source
+                      {importPreview.data?.importedCount === 1 ? "" : "s"} current in Memory
                     </div>
+                    {staleImportRows.length > 0 && (
+                      <div className="mt-1 text-[0.6875rem] text-amber-700 dark:text-amber-200">
+                        {staleImportRows.length} source{staleImportRows.length === 1 ? "" : "s"} changed since import
+                      </div>
+                    )}
                   </div>
-                  <DisclosureChevron open={importedRowsOpen} />
-                </button>
-                {importedRowsOpen && (
-                  <div className="mt-3 space-y-2">
-                    {importedImportRows.map((sample) => (
-                      <ImportPreviewRowItem
-                        key={sample.sourceId}
-                        sample={sample}
-                        selected={false}
-                        disabled
-                        importing={false}
-                        onSelect={() => {}}
-                        onImport={() => {}}
-                      />
+                  <div className="flex items-center gap-1">
+                    {importPreview.isFetching ? (
+                      <Loader2 className="animate-spin" size="1rem" />
+                    ) : (
+                      <FileJson size="1rem" />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void importPreview.refetch()}
+                      disabled={importPreview.isFetching}
+                      aria-label="Refresh available imports"
+                      title="Refresh available imports"
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-[background-color,color,transform] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-90 disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      <RefreshCw size="0.75rem" aria-hidden="true" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[var(--primary)] text-[0.6875rem] font-bold text-[var(--primary-foreground)]">
+                  1
+                </span>
+                <h3 className="text-xs font-semibold text-[var(--foreground)]">Choose a source</h3>
+              </div>
+              <div className={cn("grid gap-2", importSource === "chats" ? "sm:grid-cols-2" : "sm:grid-cols-1")}>
+                <label className="space-y-1">
+                  <span className="block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Source</span>
+                  <select
+                    value={importSource}
+                    disabled={importSourceNotes.isPending}
+                    onChange={(event) => handlePrefsChange({ importSource: event.target.value as LtmInteropSource })}
+                    className={compactInputClassName}
+                  >
+                    {IMPORT_SOURCES.map((source) => (
+                      <option key={source.id} value={source.id}>
+                        {source.id === "chats" ? "Chat summaries" : source.label}
+                      </option>
                     ))}
+                  </select>
+                </label>
+                {importSource === "chats" && (
+                  <label className="space-y-1">
+                    <span className="block text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Chat mode</span>
+                    <select
+                      value={importMode}
+                      disabled={importSourceNotes.isPending}
+                      onChange={(event) => setImportMode(event.target.value as LtmMode)}
+                      className={compactInputClassName}
+                    >
+                      {(["roleplay", "conversation", "game"] as const).map((mode) => (
+                        <option key={mode} value={mode}>
+                          {MODE_LABELS[mode]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
+              {lastImportResult && (
+                <div
+                  role={lastImportResult.batchStatus === "failed" ? "alert" : "status"}
+                  aria-live="polite"
+                  className={cn(
+                    sectionCardClassName,
+                    "mt-3 space-y-2",
+                    lastImportResult.batchStatus === "success"
+                      ? "border-emerald-500/25 bg-emerald-500/5"
+                      : lastImportResult.batchStatus === "failed"
+                        ? "border-[var(--destructive)]/25 bg-[var(--destructive)]/5"
+                        : "border-amber-500/25 bg-amber-500/5",
+                  )}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs font-semibold text-[var(--foreground)]">
+                      {lastImportResult.batchStatus === "success"
+                        ? "Import complete"
+                        : lastImportResult.batchStatus === "partial_success"
+                          ? "Import partly complete"
+                          : lastImportResult.batchStatus === "cancelled"
+                            ? "Import cancelled"
+                            : "Import failed"}
+                    </div>
+                    {lastImportHasReview && (
+                      <ToolButton onClick={() => void setTabWithGuards("review")}>
+                        <Eye size="0.75rem" />
+                        Review suggestions
+                      </ToolButton>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    <StatusPill
+                      label={`${lastImportResult.counts.succeeded} extracted`}
+                      tone={lastImportResult.counts.succeeded > 0 ? "good" : "neutral"}
+                    />
+                    {lastImportResult.counts.failed > 0 && (
+                      <StatusPill label={`${lastImportResult.counts.failed} failed`} tone="bad" />
+                    )}
+                    {lastImportResult.counts.cancelled > 0 && (
+                      <StatusPill label={`${lastImportResult.counts.cancelled} cancelled`} tone="warn" />
+                    )}
+                    {lastImportResult.counts.sourceWriteFailed > 0 && (
+                      <StatusPill label={`${lastImportResult.counts.sourceWriteFailed} not saved`} tone="bad" />
+                    )}
+                    {lastImportResult.counts.missing > 0 && (
+                      <StatusPill label={`${lastImportResult.counts.missing} missing`} tone="warn" />
+                    )}
+                  </div>
+                  {lastImportFailures.slice(0, 5).map((failure) => (
+                    <p
+                      key={`${failure.sourceId}-${failure.message}`}
+                      className="text-[0.6875rem] text-[var(--muted-foreground)]"
+                    >
+                      <span className="font-medium text-[var(--foreground)]">{failure.title}:</span> {failure.message}
+                    </p>
+                  ))}
+                </div>
+              )}
+              <div className="flex items-center gap-2 pt-1">
+                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[var(--secondary)] text-[0.6875rem] font-bold text-[var(--foreground)] ring-1 ring-[var(--border)]">
+                  2
+                </span>
+                <h3 className="text-xs font-semibold text-[var(--foreground)]">Preview available items</h3>
+              </div>
+              <div className={cn(sectionCardClassName, "mt-1")}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="flex min-h-8 items-center gap-2 rounded-lg px-2 text-xs text-[var(--foreground)]">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleImportRowsSelected}
+                      disabled={pendingImportRows.length === 0}
+                      onChange={(event) => setAllVisibleImportRowsSelected(event.target.checked)}
+                      className="h-3.5 w-3.5 rounded border-[var(--border)] accent-[var(--primary)]"
+                    />
+                    Select visible
+                  </label>
+                  <StatusPill
+                    label={`${selectedVisibleImportRows.length} selected`}
+                    tone={selectedVisibleImportRows.length > 0 ? "warn" : "neutral"}
+                  />
+                </div>
+              </div>
+
+              <div className="mt-3 space-y-2">
+                {importPreview.isError && (
+                  <QueryFailure
+                    label="Import sources"
+                    error={importPreview.error}
+                    stale={Boolean(importPreview.data)}
+                    onRetry={() => void importPreview.refetch()}
+                  />
+                )}
+                {importPreview.isLoading && <Loader2 className="mx-auto animate-spin text-[var(--muted-foreground)]" />}
+                {!importPreview.isLoading &&
+                  !importPreview.isError &&
+                  pendingImportRows.length === 0 &&
+                  importedImportRows.length === 0 && (
+                    <p className={emptyStateClassName}>No sources are ready to bring in.</p>
+                  )}
+                {pendingImportRows.map((sample) => (
+                  <ImportPreviewRowItem
+                    key={sample.sourceId}
+                    sample={sample}
+                    selected={selectedImportRows.has(importRowKey(importSource, sample.sourceId))}
+                    disabled={importSourceNotes.isPending}
+                    importing={activeImportIds.has(importRowKey(importSource, sample.sourceId))}
+                    onSelect={(selected) => setImportRowSelected(sample.sourceId, selected)}
+                    onImport={() => importRowsToVault([sample.sourceId])}
+                  />
+                ))}
+                {importedImportRows.length > 0 && (
+                  <div className={cn(sectionCardClassName, "border-amber-500/20 bg-amber-500/5")}>
+                    <button
+                      type="button"
+                      onClick={() => setImportedRowsOpen((current) => !current)}
+                      aria-expanded={importedRowsOpen}
+                      className="flex w-full items-center justify-between gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                    >
+                      <div>
+                        <div className="text-xs font-semibold text-[var(--foreground)]">
+                          Imported source{importedImportRows.length === 1 ? "" : "s"} ({importedImportRows.length})
+                        </div>
+                        <div className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">
+                          These source snapshots are current. They stay visible for reference and cannot be imported
+                          again.
+                        </div>
+                      </div>
+                      <DisclosureChevron open={importedRowsOpen} />
+                    </button>
+                    {importedRowsOpen && (
+                      <div className="mt-3 space-y-2">
+                        {importedImportRows.map((sample) => (
+                          <ImportPreviewRowItem
+                            key={sample.sourceId}
+                            sample={sample}
+                            selected={false}
+                            disabled
+                            importing={false}
+                            onSelect={() => {}}
+                            onImport={() => {}}
+                          />
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-            )}
-          </div>
-          <div className="flex items-center gap-2 pt-1">
-            <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[var(--secondary)] text-[0.6875rem] font-bold text-[var(--foreground)] ring-1 ring-[var(--border)]">
-              3
-            </span>
-            <h3 className="text-xs font-semibold text-[var(--foreground)]">Import selected items</h3>
-          </div>
-          {(selectedVisibleImportRows.length > 0 || importSourceNotes.isPending) && (
-            <SelectionActionBar
-              selectedCount={importSourceNotes.isPending ? activeImportIds.size : selectedVisibleImportRows.length}
-              actions={importSelectionActions}
-              placement="sticky"
-            />
+              <div className="flex items-center gap-2 pt-1">
+                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[var(--secondary)] text-[0.6875rem] font-bold text-[var(--foreground)] ring-1 ring-[var(--border)]">
+                  3
+                </span>
+                <h3 className="text-xs font-semibold text-[var(--foreground)]">Import selected items</h3>
+              </div>
+              {(selectedVisibleImportRows.length > 0 || importSourceNotes.isPending) && (
+                <SelectionActionBar
+                  selectedCount={importSourceNotes.isPending ? activeImportIds.size : selectedVisibleImportRows.length}
+                  actions={importSelectionActions}
+                  placement="sticky"
+                />
+              )}
+            </>
           )}
         </Section>
       )}
@@ -2293,37 +2391,6 @@ export function LtmVaultManagerSection({
           <LongTermMemoryDebugLogPanel />
         </Section>
       )}
-
-      <LtmModal
-        open={creatingNote}
-        onClose={() => {
-          void confirmDiscardCreate().then((ok) => {
-            if (ok) closeCreateForm();
-          });
-        }}
-        title="New Memory"
-        width="max-w-3xl"
-      >
-        <CreateLongTermMemoryNoteForm
-          initialDraft={createNoteDraft}
-          defaultScopeDraft={scopeDraftFromLtmScope(navigatorScope)}
-          displayContext={displayContext}
-          onCancel={() => {
-            void confirmDiscardCreate().then((ok) => {
-              if (ok) closeCreateForm();
-            });
-          }}
-          onDirtyChange={setCreateNoteDirty}
-          onDraftChange={setCreateNoteDraft}
-          onCreated={(note) => {
-            closeCreateForm();
-            setOpenNoteId(note.id);
-            setMemoryModalMode("edit");
-            setMemoryModalTab("overview");
-            setEditedNoteDirty(false);
-          }}
-        />
-      </LtmModal>
 
       <MemoryNoteModal
         note={openNote}

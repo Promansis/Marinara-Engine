@@ -79,7 +79,7 @@ export const IMPORT_SOURCES: Array<{ id: LtmInteropSource; label: string }> = [
 
 export const TAB_LABELS: Record<TabId, string> = {
   notes: "Memories",
-  import: "Import",
+  import: "Add memory",
   review: "Suggestions",
   identity: "Identity repair",
   debug: "Diagnostics",
