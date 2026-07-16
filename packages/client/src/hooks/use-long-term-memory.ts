@@ -692,7 +692,7 @@ export function useImportLongTermMemorySourceNotes() {
         await api.post<unknown>("/long-term-memory/import/source-notes", body, { signal }),
       );
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
+    onSettled: () => qc.invalidateQueries({ queryKey: longTermMemoryKeys.all }),
   });
 }
 

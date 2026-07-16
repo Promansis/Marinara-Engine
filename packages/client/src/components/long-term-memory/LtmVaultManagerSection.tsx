@@ -369,6 +369,15 @@ export function LtmVaultManagerSection({
   const [selectedImportRows, setSelectedImportRows] = useState<Set<string>>(() => new Set());
   const [activeImportIds, setActiveImportIds] = useState<Set<string>>(() => new Set());
   const [lastImportResult, setLastImportResult] = useState<ImportLongTermMemorySourceNotesResponse | null>(null);
+  const lastImportDraftIds = useMemo(
+    () =>
+      new Set(
+        lastImportResult?.imported.flatMap((item) =>
+          item.draft && item.draft.mutations.length > 0 ? [item.draft.id] : [],
+        ) ?? [],
+      ),
+    [lastImportResult],
+  );
   const [importedRowsOpen, setImportedRowsOpen] = useState(false);
   const [creatingNote, setCreatingNote] = useState(false);
   const [createNoteDraft, setCreateNoteDraft] = useState<CreateLongTermMemoryNoteDraft | null>(null);
@@ -534,7 +543,10 @@ export function LtmVaultManagerSection({
       enabled: Boolean(openNoteId),
     },
   );
-  const draftReview = useLongTermMemoryDraftReview({ status: "pending" }, { enabled: tab === "review" });
+  const draftReview = useLongTermMemoryDraftReview(
+    { status: "pending" },
+    { enabled: tab === "review" || lastImportDraftIds.size > 0 },
+  );
   const acceptDraft = useAcceptLongTermMemoryDraft();
   const deleteDraft = useDeleteLongTermMemoryDraft();
   const skipDraftMutations = useSkipLongTermMemoryDraftMutations();
@@ -663,7 +675,10 @@ export function LtmVaultManagerSection({
     ];
   }, [lastImportResult]);
   const lastImportHasReview = Boolean(
-    lastImportResult?.imported.some((item) => (item.draft?.mutations.length ?? 0) > 0),
+    lastImportDraftIds.size > 0 &&
+      draftReview.data?.sources.some((source) =>
+        source.drafts.some((review) => lastImportDraftIds.has(review.draft.id)),
+      ),
   );
   const selectedVisibleImportRows = useMemo(
     () => pendingImportRows.filter((sample) => selectedImportRows.has(importRowKey(importSource, sample.sourceId))),
@@ -1420,6 +1435,7 @@ export function LtmVaultManagerSection({
     if (sourceIds.length === 0 || importSourceNotes.isPending) return;
     const controller = new AbortController();
     importAbortControllerRef.current = controller;
+    setLastImportResult(null);
     setActiveImportIds((current) => {
       const next = new Set(current);
       for (const sourceId of sourceIds) next.add(importRowKey(importSource, sourceId));
