@@ -173,23 +173,32 @@ export function SuggestionRow({
             </div>
           </div>
           {row.diagnostics.length > 0 ? (
-            <div className="mt-3 space-y-1.5" aria-label="Suggestion warnings">
-              {row.diagnostics.map((diagnostic, index) => (
-                <div
-                  key={`${diagnostic.code}-${diagnostic.candidateIndex ?? "mutation"}-${index}`}
-                  role={diagnostic.severity === "error" ? "alert" : "status"}
-                  className="flex gap-2 rounded-lg bg-[var(--destructive)]/5 px-2.5 py-2 text-xs ring-1 ring-[var(--destructive)]/20"
-                >
-                  <AlertTriangle size="0.875rem" className="mt-0.5 shrink-0 text-[var(--destructive)]" />
-                  <div className="min-w-0">
-                    <p className="break-words text-[var(--foreground)]">{diagnostic.message}</p>
-                    <code className="mt-0.5 block break-all text-[0.6875rem] text-[var(--muted-foreground)]">
-                      {diagnostic.code}
-                    </code>
+            <details className="mt-3 rounded-lg bg-[var(--destructive)]/5 px-2.5 py-2 ring-1 ring-[var(--destructive)]/20">
+              <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-medium text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60">
+                <AlertTriangle size="0.875rem" className="shrink-0 text-[var(--destructive)]" />
+                {row.diagnostics.length} warning{row.diagnostics.length === 1 ? "" : "s"}
+              </summary>
+              <div
+                className="mt-2 space-y-2 border-t border-[var(--destructive)]/15 pt-2"
+                aria-label="Suggestion warnings"
+              >
+                {row.diagnostics.map((diagnostic, index) => (
+                  <div
+                    key={`${diagnostic.code}-${diagnostic.candidateIndex ?? "mutation"}-${index}`}
+                    role={diagnostic.severity === "error" ? "alert" : "status"}
+                    className="flex gap-2 text-xs"
+                  >
+                    <AlertTriangle size="0.875rem" className="mt-0.5 shrink-0 text-[var(--destructive)]" />
+                    <div className="min-w-0">
+                      <p className="break-words text-[var(--foreground)]">{diagnostic.message}</p>
+                      <code className="mt-0.5 block break-all text-[0.6875rem] text-[var(--muted-foreground)]">
+                        {diagnostic.code}
+                      </code>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            </details>
           ) : null}
           {row.changes.length > 0 ? (
             <div className="mt-3 border-t border-[var(--border)]/55 pt-2">

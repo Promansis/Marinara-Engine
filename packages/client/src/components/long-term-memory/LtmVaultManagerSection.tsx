@@ -5,6 +5,7 @@ import {
   ArrowRightLeft,
   Check,
   ChevronDown,
+  ChevronRight,
   Copy,
   Eye,
   FileJson,
@@ -67,6 +68,7 @@ import { ImportPreviewRowItem } from "../long-term-memory/LongTermMemoryImportSe
 import { SelectionActionBar, type SelectionActionBarAction } from "../ui/SelectionActionBar";
 import { LongTermMemoryNoteTransferModal } from "../long-term-memory/LongTermMemoryNoteTransferModal";
 import { LongTermMemoryIdentityRepairSection } from "../long-term-memory/LongTermMemoryIdentityRepairSection";
+import { LongTermMemorySuggestionsTab } from "../long-term-memory/LongTermMemorySuggestionsTab";
 import { LtmTabRail } from "../long-term-memory/LtmTabRail";
 import {
   readLtmManagedExtractionPrefs,
@@ -123,6 +125,7 @@ import {
   uniqueNoteIds,
   ModeBadge,
   DisclosureChevron,
+  suggestionRowKey,
   Section,
   type MemoryModalMode,
   type MemoryModalTab,
@@ -237,12 +240,6 @@ function QueryFailure({
   );
 }
 
-function reviewDispositionLabel(disposition: "new" | "merge" | "rewrite") {
-  if (disposition === "new") return "New";
-  if (disposition === "merge") return "Merge";
-  return "Rewrite";
-}
-
 function ReviewSourceDiagnostics({ source }: { source: LtmDraftReviewSource }) {
   const blockReasons = source.drafts.flatMap((draftReview) => draftReview.blockReasons);
   const diagnostics = source.drafts.flatMap((draftReview) => draftReview.diagnostics);
@@ -298,37 +295,6 @@ function ReviewSourceDiagnostics({ source }: { source: LtmDraftReviewSource }) {
         </details>
       ) : null}
     </>
-  );
-}
-
-function ReviewTargetSummary({ target }: { target: LtmDraftReviewSource["targets"][number] }) {
-  const dispositions = (["new", "merge", "rewrite"] as const)
-    .map((disposition) => ({
-      disposition,
-      count: target.rows.filter((row) => row.disposition === disposition).length,
-    }))
-    .filter((item) => item.count > 0);
-  const warningCount = target.rows.reduce((sum, row) => sum + row.diagnostics.length, 0);
-
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border)]/45 px-3 py-2.5">
-      <div className="min-w-0">
-        <p className="truncate text-xs font-medium text-[var(--foreground)]">
-          {target.title ?? friendlyIdentifier(target.noteId)}
-        </p>
-        <p className="mt-0.5 text-[0.6875rem] text-[var(--muted-foreground)]">
-          {friendlyNoteType(target.noteType)}: {target.rows.length} change{target.rows.length === 1 ? "" : "s"}
-        </p>
-      </div>
-      <div className="flex flex-wrap items-center gap-1.5">
-        {dispositions.map(({ disposition, count }) => (
-          <StatusPill key={disposition} label={`${count} ${reviewDispositionLabel(disposition)}`} />
-        ))}
-        {warningCount > 0 ? (
-          <StatusPill label={`${warningCount} warning${warningCount === 1 ? "" : "s"}`} tone="warn" />
-        ) : null}
-      </div>
-    </div>
   );
 }
 
@@ -437,6 +403,8 @@ export function LtmVaultManagerSection({
   const [navigatorQuery, setNavigatorQuery] = useState("");
   const [importMode, setImportMode] = useState<LtmMode>("roleplay");
   const [reviewBatchAction, setReviewBatchAction] = useState<"keep-low" | "skip-all" | null>(null);
+  const [expandedReviewSourceIds, setExpandedReviewSourceIds] = useState<Set<string>>(() => new Set());
+  const [editedReviewMutations, setEditedReviewMutations] = useState<Record<string, LtmDraftMutation>>({});
   const reviewBatchLockRef = useRef(false);
   const importAbortControllerRef = useRef<AbortController | null>(null);
   const initializedTypeIdsRef = useRef(new Set<string>());
@@ -786,6 +754,27 @@ export function LtmVaultManagerSection({
   const reviewError = draftReview.error ?? reviewNotes.error;
 
   useEffect(() => {
+    const availableSourceIds = new Set(reviewGroups.map((group) => group.sourceNoteId));
+    setExpandedReviewSourceIds((current) => {
+      const next = new Set([...current].filter((id) => availableSourceIds.has(id)));
+      return next.size === current.size && [...current].every((id) => next.has(id)) ? current : next;
+    });
+  }, [reviewGroups]);
+
+  useEffect(() => {
+    const availableRowKeys = new Set(
+      reviewMutations.map(({ draft, mutation }) => suggestionRowKey(draft.id, mutation.id)),
+    );
+    setEditedReviewMutations((current) => {
+      const currentEntries = Object.entries(current);
+      const next = Object.fromEntries(currentEntries.filter(([key]) => availableRowKeys.has(key)));
+      return Object.keys(next).length === currentEntries.length && currentEntries.every(([key]) => key in next)
+        ? current
+        : next;
+    });
+  }, [reviewMutations]);
+
+  useEffect(() => {
     const availableIds = new Set((notes.data ?? []).map((note) => note.id));
     setSelectedNoteIds((current) => {
       const next = new Set([...current].filter((id) => availableIds.has(id)));
@@ -795,6 +784,14 @@ export function LtmVaultManagerSection({
 
   useEffect(() => {
     if (!sourceNoteId || sourceNoteOpenedRef.current === sourceNoteId) return;
+    if (initialTab === "review" || initialTab === "suggestions") {
+      if (!draftReview.isLoading && draftReview.data?.sources.some((source) => source.sourceNoteId === sourceNoteId)) {
+        sourceNoteOpenedRef.current = sourceNoteId;
+        setTab("review");
+        setExpandedReviewSourceIds((current) => new Set(current).add(sourceNoteId));
+      }
+      return;
+    }
     if (notes.data && !notes.isLoading) {
       const sourceNote = notes.data.find((n) => n.id === sourceNoteId);
       if (sourceNote) {
@@ -804,7 +801,7 @@ export function LtmVaultManagerSection({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sourceNoteId, notes.data, notes.isLoading]);
+  }, [draftReview.data?.sources, draftReview.isLoading, initialTab, sourceNoteId, notes.data, notes.isLoading]);
 
   const closeMemoryModal = () => {
     setOpenNoteId(null);
@@ -895,6 +892,9 @@ export function LtmVaultManagerSection({
               id: draftId,
               mutationIds: mutations.map((mutation) => mutation.id),
               lowRiskOnly: true,
+              editedMutations: mutations
+                .map((mutation) => editedReviewMutations[suggestionRowKey(draftId, mutation.id)])
+                .filter((mutation): mutation is LtmDraftMutation => Boolean(mutation)),
             });
             keptCount += mutations.length;
             autoIncludedCount += result.autoIncludedMutationIds.length;
@@ -2145,6 +2145,18 @@ export function LtmVaultManagerSection({
               {reviewGroups.map(({ sourceNoteId, sourceNote, totalMutations, mode, reviewSource }) => {
                 const blocked = reviewSource.drafts.some((draftReview) => draftReview.blockReasons.length > 0);
                 const diagnosticOnly = totalMutations === 0;
+                const expanded = expandedReviewSourceIds.has(sourceNoteId);
+                const warningCount =
+                  reviewSource.drafts.reduce(
+                    (count, draft) =>
+                      count + draft.diagnostics.length + draft.candidateRejections.length + draft.deduplications.length,
+                    0,
+                  ) +
+                  reviewSource.targets.reduce(
+                    (count, target) =>
+                      count + target.rows.reduce((rowCount, row) => rowCount + row.diagnostics.length, 0),
+                    0,
+                  );
                 return (
                   <section
                     key={sourceNoteId}
@@ -2152,27 +2164,56 @@ export function LtmVaultManagerSection({
                   >
                     <div className="p-3">
                       <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            {!sourceNote ? (
-                              <AlertCircle size="0.75rem" className="shrink-0 text-[var(--destructive)]" />
-                            ) : null}
-                            <p className="truncate text-xs font-semibold text-[var(--foreground)]">
-                              {sourceNote ? memoryRowTitle(sourceNote, chatLookup) : friendlyIdentifier(sourceNoteId)}
-                            </p>
-                            {mode ? <ModeBadge mode={mode} /> : null}
-                            {blocked ? <StatusPill label="Blocked" tone="bad" /> : null}
-                            {diagnosticOnly ? <StatusPill label="Diagnostics only" tone="warn" /> : null}
-                          </div>
-                          <p className="mt-0.5 text-[0.6875rem] text-[var(--muted-foreground)]">
-                            {totalMutations} pending suggestion{totalMutations === 1 ? "" : "s"} across{" "}
-                            {reviewSource.targets.length} target{reviewSource.targets.length === 1 ? "" : "s"}
-                          </p>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedReviewSourceIds((current) => {
+                              const next = new Set(current);
+                              if (next.has(sourceNoteId)) next.delete(sourceNoteId);
+                              else next.add(sourceNoteId);
+                              return next;
+                            })
+                          }
+                          aria-expanded={expanded}
+                          aria-controls={`ltm-review-source-${sourceNoteId}`}
+                          className="flex min-h-11 min-w-0 flex-1 items-start gap-2 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                        >
+                          <ChevronRight
+                            size="0.875rem"
+                            aria-hidden="true"
+                            className={cn(
+                              "mt-0.5 shrink-0 text-[var(--muted-foreground)] transition-transform",
+                              expanded && "rotate-90",
+                            )}
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="flex flex-wrap items-center gap-1.5">
+                              {!sourceNote ? (
+                                <AlertCircle size="0.75rem" className="shrink-0 text-[var(--destructive)]" />
+                              ) : null}
+                              <span className="truncate text-xs font-semibold text-[var(--foreground)]">
+                                {sourceNote ? memoryRowTitle(sourceNote, chatLookup) : friendlyIdentifier(sourceNoteId)}
+                              </span>
+                              {mode ? <ModeBadge mode={mode} /> : null}
+                              {blocked ? <StatusPill label="Blocked" tone="bad" /> : null}
+                              {diagnosticOnly ? <StatusPill label="Diagnostics only" tone="warn" /> : null}
+                              {warningCount > 0 ? (
+                                <StatusPill
+                                  label={`${warningCount} detail${warningCount === 1 ? "" : "s"}`}
+                                  tone="warn"
+                                />
+                              ) : null}
+                            </span>
+                            <span className="mt-0.5 block text-[0.6875rem] text-[var(--muted-foreground)]">
+                              {totalMutations} pending suggestion{totalMutations === 1 ? "" : "s"} across{" "}
+                              {reviewSource.targets.length} target{reviewSource.targets.length === 1 ? "" : "s"}
+                            </span>
+                          </span>
+                        </button>
                         {sourceNote ? (
-                          <ToolButton onClick={() => openMemory(sourceNoteId, { tab: "suggestions" })} tone="primary">
+                          <ToolButton onClick={() => openMemory(sourceNoteId, { tab: "suggestions" })}>
                             <Eye size="0.75rem" />
-                            Review
+                            Open source
                           </ToolButton>
                         ) : (
                           <ToolButton
@@ -2185,11 +2226,31 @@ export function LtmVaultManagerSection({
                           </ToolButton>
                         )}
                       </div>
-                      <ReviewSourceDiagnostics source={reviewSource} />
                     </div>
-                    {reviewSource.targets.map((target) => (
-                      <ReviewTargetSummary key={target.noteId} target={target} />
-                    ))}
+                    {expanded ? (
+                      <div
+                        id={`ltm-review-source-${sourceNoteId}`}
+                        className="space-y-3 border-t border-[var(--border)]/55 p-3"
+                      >
+                        <ReviewSourceDiagnostics source={reviewSource} />
+                        {sourceNote ? (
+                          <LongTermMemorySuggestionsTab
+                            note={sourceNote}
+                            reviewSource={reviewSource}
+                            embedded
+                            editedMutationsState={[editedReviewMutations, setEditedReviewMutations]}
+                            extractionPrefs={extractionPrefs}
+                            latestExtractionResult={resultsBySourceNoteId[sourceNoteId] ?? null}
+                            onLatestExtractionResultChange={(result) => setExtractionResult(sourceNoteId, result)}
+                            onRecoverDroppedCandidate={openRecoveryDraft}
+                          />
+                        ) : (
+                          <p className={emptyStateClassName}>
+                            This source is unavailable. Dismiss its extraction report.
+                          </p>
+                        )}
+                      </div>
+                    ) : null}
                   </section>
                 );
               })}

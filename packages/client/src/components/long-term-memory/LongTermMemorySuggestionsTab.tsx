@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { toast } from "sonner";
 import { AlertCircle, BrainCircuit, Check, ListChecks, Loader2, MoreHorizontal, Trash2, Wrench, X } from "lucide-react";
 import { DisclosureChevron } from "./ltm-panel-shared";
 import type {
   LtmDraftMutation,
   LtmDraftReviewDraft,
+  LtmDraftReviewSource,
   LtmDraftReviewTarget,
   LtmExtractionAccounting,
   LtmExtractionDiagnostic,
@@ -161,12 +162,18 @@ function summarizeBulkSkip(skippedCount: number, failedDraftCount: number) {
 
 export function LongTermMemorySuggestionsTab({
   note,
+  reviewSource: providedReviewSource,
+  embedded = false,
+  editedMutationsState,
   extractionPrefs,
   latestExtractionResult,
   onLatestExtractionResultChange,
   onRecoverDroppedCandidate,
 }: {
   note: LtmNote;
+  reviewSource?: LtmDraftReviewSource;
+  embedded?: boolean;
+  editedMutationsState?: [Record<string, LtmDraftMutation>, Dispatch<SetStateAction<Record<string, LtmDraftMutation>>>];
   extractionPrefs?: LtmManagedExtractionPrefs;
   latestExtractionResult: LongTermMemoryLatestExtractionResult | null;
   onLatestExtractionResultChange: (result: LongTermMemoryLatestExtractionResult | null) => void;
@@ -174,7 +181,7 @@ export function LongTermMemorySuggestionsTab({
 }) {
   const review = useLongTermMemoryDraftReview(
     { sourceNoteId: note.id, status: "pending" },
-    { enabled: isSourceMemory(note) },
+    { enabled: isSourceMemory(note) && !providedReviewSource },
   );
   const notes = useLongTermMemoryNotes();
   const noteLookup = useMemo(() => new Map((notes.data ?? []).map((n) => [n.id, n])), [notes.data]);
@@ -189,11 +196,14 @@ export function LongTermMemorySuggestionsTab({
   const autoApplyLowRisk = extractionPrefs?.autoApplyLowRisk ?? false;
   const [selectMode, setSelectMode] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<Set<string>>(() => new Set());
-  const [editedMutations, setEditedMutations] = useState<Record<string, LtmDraftMutation>>({});
+  const [localEditedMutations, setLocalEditedMutations] = useState<Record<string, LtmDraftMutation>>({});
+  const hasExternalEditedMutations = Boolean(editedMutationsState);
+  const editedMutations = editedMutationsState?.[0] ?? localEditedMutations;
+  const setEditedMutations = editedMutationsState?.[1] ?? setLocalEditedMutations;
   const [activeBatchAction, setActiveBatchAction] = useState<BatchAction | null>(null);
   const keepSkipLockRef = useRef(false);
   const sourceMemory = isSourceMemory(note);
-  const reviewSource = review.data?.sources.find((source) => source.sourceNoteId === note.id);
+  const reviewSource = providedReviewSource ?? review.data?.sources.find((source) => source.sourceNoteId === note.id);
   const reviewDrafts = useMemo(() => reviewSource?.drafts ?? [], [reviewSource?.drafts]);
   const draftReviewById = useMemo(
     () => new Map(reviewDrafts.map((draftReview) => [draftReview.draft.id, draftReview])),
@@ -273,8 +283,8 @@ export function LongTermMemorySuggestionsTab({
   useEffect(() => {
     setSelectMode(false);
     setSelectedRowKeys(new Set());
-    setEditedMutations({});
-  }, [note.id]);
+    if (!hasExternalEditedMutations) setEditedMutations({});
+  }, [hasExternalEditedMutations, note.id, setEditedMutations]);
 
   useEffect(() => {
     const liveKeys = new Set(allRowKeys);
@@ -283,12 +293,14 @@ export function LongTermMemorySuggestionsTab({
       const next = new Set(Array.from(current).filter((key) => liveKeys.has(key)));
       return next.size === current.size ? current : next;
     });
-    setEditedMutations((current) => {
-      const nextEntries = Object.entries(current).filter(([key]) => liveKeys.has(key));
-      if (nextEntries.length === Object.keys(current).length) return current;
-      return Object.fromEntries(nextEntries);
-    });
-  }, [allRowKeys]);
+    if (!hasExternalEditedMutations) {
+      setEditedMutations((current) => {
+        const nextEntries = Object.entries(current).filter(([key]) => liveKeys.has(key));
+        if (nextEntries.length === Object.keys(current).length) return current;
+        return Object.fromEntries(nextEntries);
+      });
+    }
+  }, [allRowKeys, hasExternalEditedMutations, setEditedMutations]);
 
   const setRowsSelected = useCallback((keys: string[], selected: boolean) => {
     setSelectedRowKeys((current) => {
@@ -312,7 +324,7 @@ export function LongTermMemorySuggestionsTab({
       }
       return changed ? next : current;
     });
-  }, []);
+  }, [setEditedMutations]);
 
   const withKeepSkipLock = useCallback(async <T,>(action: () => Promise<T>) => {
     if (keepSkipLockRef.current) return null;
@@ -542,6 +554,32 @@ export function LongTermMemorySuggestionsTab({
     );
   }
 
+  if (embedded) {
+    return (
+      <div className="space-y-3">
+        {targetGroups.map(({ target, rows: targetRows }) => (
+          <SuggestionTargetDrawer
+            key={target.noteId}
+            target={target}
+            rows={targetRows}
+            noteLookup={noteLookup}
+            selectMode={false}
+            selectedRowKeys={selectedRowKeys}
+            editedMutations={editedMutations}
+            busy={rowActionsDisabled}
+            initialOpen
+            onSelectRows={setRowsSelected}
+            onMutationEdited={(rowKey, mutation) =>
+              setEditedMutations((current) => ({ ...current, [rowKey]: mutation }))
+            }
+            onKeep={keepOne}
+            onSkip={skipOne}
+          />
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div className="grid gap-3">
       <div className={sectionCardClassName}>
@@ -758,8 +796,6 @@ function DraftReviewReport({
         ) : null}
       </div>
 
-      {review.draft.accounting ? <ExtractionAccountingLine accounting={review.draft.accounting} /> : null}
-
       {review.blockReasons.length > 0 ? (
         <div className="mt-3 space-y-1.5" aria-label="Apply blockers">
           {review.blockReasons.map((reason) => (
@@ -780,42 +816,55 @@ function DraftReviewReport({
         </div>
       ) : null}
 
-      {review.diagnostics.length > 0 ? (
-        <DraftDiagnosticList title="Extraction diagnostics" diagnostics={review.diagnostics} />
-      ) : null}
-
-      {review.candidateRejections.length > 0 ? (
-        <div className="mt-3 space-y-2">
-          <h4 className="text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">Candidate rejections</h4>
-          {review.candidateRejections.map((candidate) => (
-            <div
-              key={`${candidate.index}-${candidate.reason}`}
-              className="flex flex-col gap-2 rounded-lg bg-[var(--background)]/45 px-2.5 py-2 ring-1 ring-[var(--border)]/60 sm:flex-row sm:items-start sm:justify-between"
-            >
-              <div className="min-w-0">
-                {candidate.snippet ? (
-                  <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--foreground)]">
-                    {candidate.snippet}
-                  </p>
-                ) : null}
-                <p className="mt-1 break-words text-[0.6875rem] text-[var(--muted-foreground)]">{candidate.message}</p>
-                <code className="mt-0.5 block break-all text-[0.6875rem] text-[var(--muted-foreground)]">
-                  {candidate.reason}
-                </code>
+      {review.draft.accounting ||
+      review.diagnostics.length > 0 ||
+      review.candidateRejections.length > 0 ||
+      review.deduplications.length > 0 ? (
+        <details className="mt-3 rounded-lg bg-[var(--background)]/35 px-2.5 py-2 ring-1 ring-[var(--border)]/60">
+          <summary className="cursor-pointer text-xs font-medium text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60">
+            Technical details
+          </summary>
+          <div className="mt-2 border-t border-[var(--border)]/55 pt-2">
+            {review.draft.accounting ? <ExtractionAccountingLine accounting={review.draft.accounting} /> : null}
+            {review.diagnostics.length > 0 ? (
+              <DraftDiagnosticList title="Extraction diagnostics" diagnostics={review.diagnostics} />
+            ) : null}
+            {review.candidateRejections.length > 0 ? (
+              <div className="mt-3 space-y-2">
+                <h4 className="text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">Candidate rejections</h4>
+                {review.candidateRejections.map((candidate) => (
+                  <div
+                    key={`${candidate.index}-${candidate.reason}`}
+                    className="flex flex-col gap-2 rounded-lg bg-[var(--background)]/45 px-2.5 py-2 ring-1 ring-[var(--border)]/60 sm:flex-row sm:items-start sm:justify-between"
+                  >
+                    <div className="min-w-0">
+                      {candidate.snippet ? (
+                        <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--foreground)]">
+                          {candidate.snippet}
+                        </p>
+                      ) : null}
+                      <p className="mt-1 break-words text-[0.6875rem] text-[var(--muted-foreground)]">
+                        {candidate.message}
+                      </p>
+                      <code className="mt-0.5 block break-all text-[0.6875rem] text-[var(--muted-foreground)]">
+                        {candidate.reason}
+                      </code>
+                    </div>
+                    {candidate.snippet ? (
+                      <ToolButton onClick={() => onRecoverDroppedCandidate(candidate, note)}>
+                        <Wrench size="0.875rem" />
+                        Create manual memory
+                      </ToolButton>
+                    ) : null}
+                  </div>
+                ))}
               </div>
-              {candidate.snippet ? (
-                <ToolButton onClick={() => onRecoverDroppedCandidate(candidate, note)}>
-                  <Wrench size="0.875rem" />
-                  Create manual memory
-                </ToolButton>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      {review.deduplications.length > 0 ? (
-        <DraftDiagnosticList title="Deduplicated candidates" diagnostics={review.deduplications} />
+            ) : null}
+            {review.deduplications.length > 0 ? (
+              <DraftDiagnosticList title="Deduplicated candidates" diagnostics={review.deduplications} />
+            ) : null}
+          </div>
+        </details>
       ) : null}
     </section>
   );
@@ -917,56 +966,67 @@ function ExtractionOutcomePanel({
         </div>
       </div>
 
-      {accounting ? <ExtractionAccountingLine accounting={accounting} /> : null}
-
-      {rejectedCount > 0 ? (
-        <div className="mt-3 space-y-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-              <AlertCircle size="0.75rem" />
-              Candidate rejections
-            </div>
-            <ToolButton onClick={onClearDroppedCandidates}>
-              <X size="0.875rem" />
-              Remove all
-            </ToolButton>
-          </div>
-          {visibleDropped.map((candidate) => (
-            <article
-              key={`${candidate.index}-${candidate.reason}-${candidate.snippet}`}
-              className={insetSectionCardClassName}
-            >
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0 flex-1">
-                  <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--foreground)]">
-                    {candidate.snippet}
-                  </p>
-                  <p className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">{candidate.message}</p>
+      {accounting || rejectedCount > 0 ? (
+        <details className="mt-3 rounded-lg bg-[var(--background)]/35 px-2.5 py-2 ring-1 ring-[var(--border)]/60">
+          <summary className="cursor-pointer text-xs font-medium text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60">
+            Technical details
+          </summary>
+          <div className="mt-2 border-t border-[var(--border)]/55 pt-2">
+            {accounting ? <ExtractionAccountingLine accounting={accounting} /> : null}
+            {rejectedCount > 0 ? (
+              <div className="mt-3 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+                    <AlertCircle size="0.75rem" />
+                    Candidate rejections
+                  </div>
+                  <ToolButton onClick={onClearDroppedCandidates}>
+                    <X size="0.875rem" />
+                    Remove all
+                  </ToolButton>
                 </div>
-                <ToolButton onClick={() => onRecoverDroppedCandidate(candidate, note)}>
-                  <Wrench size="0.875rem" />
-                  Create manual memory
-                </ToolButton>
+                {visibleDropped.map((candidate) => (
+                  <article
+                    key={`${candidate.index}-${candidate.reason}-${candidate.snippet}`}
+                    className={insetSectionCardClassName}
+                  >
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--foreground)]">
+                          {candidate.snippet}
+                        </p>
+                        <p className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">{candidate.message}</p>
+                      </div>
+                      <ToolButton onClick={() => onRecoverDroppedCandidate(candidate, note)}>
+                        <Wrench size="0.875rem" />
+                        Create manual memory
+                      </ToolButton>
+                    </div>
+                  </article>
+                ))}
+                {hiddenCount > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllDropped((current) => !current)}
+                    aria-expanded={showAllDropped}
+                    className="inline-flex min-h-8 items-center gap-1 rounded-md px-2 py-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                  >
+                    <DisclosureChevron open={showAllDropped} size={12} />
+                    {showAllDropped
+                      ? "Show fewer dropped candidates"
+                      : `Show all dropped candidates (${hiddenCount} more)`}
+                  </button>
+                ) : null}
+                {unreadableCount > 0 ? (
+                  <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
+                    {unreadableCount} dropped candidate{unreadableCount === 1 ? "" : "s"} had no safe snippet to show
+                    here.
+                  </p>
+                ) : null}
               </div>
-            </article>
-          ))}
-          {hiddenCount > 0 ? (
-            <button
-              type="button"
-              onClick={() => setShowAllDropped((current) => !current)}
-              aria-expanded={showAllDropped}
-              className="inline-flex min-h-8 items-center gap-1 rounded-md px-2 py-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
-            >
-              <DisclosureChevron open={showAllDropped} size={12} />
-              {showAllDropped ? "Show fewer dropped candidates" : `Show all dropped candidates (${hiddenCount} more)`}
-            </button>
-          ) : null}
-          {unreadableCount > 0 ? (
-            <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
-              {unreadableCount} dropped candidate{unreadableCount === 1 ? "" : "s"} had no safe snippet to show here.
-            </p>
-          ) : null}
-        </div>
+            ) : null}
+          </div>
+        </details>
       ) : null}
     </section>
   );
@@ -980,6 +1040,7 @@ function SuggestionTargetDrawer({
   selectedRowKeys,
   editedMutations,
   busy,
+  initialOpen = false,
   onSelectRows,
   onMutationEdited,
   onKeep,
@@ -992,12 +1053,13 @@ function SuggestionTargetDrawer({
   selectedRowKeys: Set<string>;
   editedMutations: Record<string, LtmDraftMutation>;
   busy: boolean;
+  initialOpen?: boolean;
   onSelectRows: (keys: string[], selected: boolean) => void;
   onMutationEdited: (rowKey: string, mutation: LtmDraftMutation) => void;
   onKeep: (row: SuggestionRowModel) => void;
   onSkip: (row: SuggestionRowModel) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initialOpen);
   const rowKeys = rows.map((row) => suggestionRowKeyFor(row));
   const selectedCount = rowKeys.filter((key) => selectedRowKeys.has(key)).length;
   const allSelected = rows.length > 0 && selectedCount === rows.length;
