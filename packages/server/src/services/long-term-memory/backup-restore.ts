@@ -1,6 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { cp, mkdir, readdir, readFile, rename, rm } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { cp, mkdir, readdir, readFile, rm } from "node:fs/promises";
+import { basename, dirname } from "node:path";
 import { ltmEventSchema, ltmExtractionDraftSchema, type LtmIntegrityResponse } from "@marinara-engine/shared";
 import { fsyncPath, renameWithRetry, writeJsonAtomic } from "./atomic-json.js";
 import { getLtmExtractionConfig } from "./extraction-config.js";
@@ -10,6 +9,15 @@ import { getLongTermMemoryDirectories, getLongTermMemoryRoot, safeJoin } from ".
 import { rebuildLongTermMemoryIndexes, type LtmRebuildOptions, type LtmRebuildResult } from "./rebuild.js";
 import { getLtmGlobalSettings } from "./settings.js";
 import { LongTermMemoryStorage } from "./storage.js";
+import {
+  createLtmBackupRestoreJournal,
+  withActiveLtmBackupRestore,
+  ltmBackupRestoreWorkspacePath,
+  recoverInterruptedLtmBackupRestore,
+  removeLtmBackupRestoreJournal,
+  writeLtmBackupRestoreJournal,
+  type LtmBackupRestoreJournal,
+} from "./restore-recovery.js";
 import {
   longTermMemoryUsagePath,
   validateLongTermMemoryInjectionReceipts,
@@ -54,10 +62,6 @@ export async function copyLongTermMemoryBackupSnapshot(root: string, destination
       throw error;
     }
   });
-}
-
-function restoreWorkspacePath(root: string, label: string, id: string) {
-  return join(dirname(root), `.${basename(root)}-${label}-${id}`);
 }
 
 async function validateDrafts(root: string) {
@@ -126,13 +130,15 @@ export async function restoreLongTermMemoryBackup(
   options: RestoreLongTermMemoryBackupOptions,
 ): Promise<RestoreLongTermMemoryBackupResult> {
   const root = options.root ?? getLongTermMemoryRoot();
-  return withLtmVaultLock(root, async () => {
-    const restoreId = randomUUID();
-    const stagingRoot = restoreWorkspacePath(root, "restore-staging", restoreId);
-    const previousRoot = restoreWorkspacePath(root, "restore-previous", restoreId);
+  return withLtmVaultLock(root, () =>
+    withActiveLtmBackupRestore(root, async () => {
+      await recoverInterruptedLtmBackupRestore(root);
     const hadPreviousRoot = await readdir(dirname(root))
       .then((entries) => entries.includes(basename(root)))
       .catch(() => false);
+    let journal = createLtmBackupRestoreJournal(hadPreviousRoot);
+    const stagingRoot = ltmBackupRestoreWorkspacePath(root, "restore-staging", journal.id);
+    const previousRoot = ltmBackupRestoreWorkspacePath(root, "restore-previous", journal.id);
     let movedCurrentRoot = false;
     let published = false;
     let rollbackSucceeded = false;
@@ -144,6 +150,7 @@ export async function restoreLongTermMemoryBackup(
       await options.stage(stagingRoot);
       await validateCanonicalLtmData(stagingRoot);
       await discardImportedDerivedIndexes(stagingRoot);
+      await writeLtmBackupRestoreJournal(root, journal);
       await options.hooks?.onPhase?.("staged");
 
       if (hadPreviousRoot) {
@@ -151,17 +158,20 @@ export async function restoreLongTermMemoryBackup(
         movedCurrentRoot = true;
         await fsyncPath(dirname(root));
       }
+      journal = await writeRestorePhase(root, journal, "current_root_moved");
       await options.hooks?.onPhase?.("current_root_moved");
 
       await renameWithRetry(stagingRoot, root);
       published = true;
       await fsyncPath(dirname(root));
+      journal = await writeRestorePhase(root, journal, "published");
       await options.hooks?.onPhase?.("published");
 
       const rebuild = await (options.rebuild ?? rebuildLongTermMemoryIndexes)({
         ...options.rebuildOptions,
         root,
       });
+      journal = await writeRestorePhase(root, journal, "rebuilt");
       await options.hooks?.onPhase?.("rebuilt");
 
       const integrity = await (options.checkIntegrity ?? checkLongTermMemoryIntegrity)(root);
@@ -171,10 +181,12 @@ export async function restoreLongTermMemoryBackup(
         );
       }
       await options.hooks?.onPhase?.("verified");
+      journal = await writeRestorePhase(root, journal, "verified");
 
       if (movedCurrentRoot) {
         await rm(previousRoot, { recursive: true, force: true }).catch(() => {});
       }
+      await removeLtmBackupRestoreJournal(root).catch(() => {});
       return { root, rebuild, integrity };
     } catch (error) {
       try {
@@ -193,8 +205,20 @@ export async function restoreLongTermMemoryBackup(
         if (rollbackSucceeded && movedCurrentRoot) {
           await rm(previousRoot, { recursive: true, force: true }).catch(() => {});
         }
+        if (rollbackSucceeded) {
+          await removeLtmBackupRestoreJournal(root).catch(() => {});
+        }
       }
       throw error;
     }
-  });
+    }),
+  );
+}
+
+async function writeRestorePhase(
+  root: string,
+  journal: LtmBackupRestoreJournal,
+  phase: LtmBackupRestorePhase,
+) {
+  return writeLtmBackupRestoreJournal(root, { ...journal, phase });
 }

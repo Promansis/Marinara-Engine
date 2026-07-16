@@ -23,7 +23,7 @@ import {
 import { embedMemoryRecallTexts, type MemoryRecallEmbeddingOptions } from "../memory-recall.js";
 import { DEFAULT_LTM_POLICIES, DEFAULT_LTM_RETRIEVAL_CONFIG } from "./default-config.js";
 import { searchLtmBm25 } from "./bm25.js";
-import type { LtmMemoryChunk } from "./chunking.js";
+import { chunkNotes, stableJsonHash, type LtmMemoryChunk } from "./chunking.js";
 import { expandLtmGraph } from "./graph.js";
 import { loadLtmIndexGeneration } from "./index-generation.js";
 import { searchLtmKeywordIndex } from "./keyword-index.js";
@@ -268,14 +268,28 @@ async function loadRetrievalBundle(root: string, includeSourceNotes: boolean): P
   }
 }
 
-async function excludeMissingVaultChunks(root: string, chunks: LtmMemoryChunk[], warnings: string[]) {
+async function excludeStaleVaultChunks(
+  root: string,
+  chunks: LtmMemoryChunk[],
+  includeSourceNotes: boolean,
+  warnings: string[],
+) {
   if (chunks.length === 0) return chunks;
   const noteIds = Array.from(new Set(chunks.map((chunk) => chunk.noteId)));
   const notes = await new LongTermMemoryStorage(root).getNotesByIds(noteIds);
-  const present = chunks.filter((chunk) => notes.has(chunk.noteId));
+  const currentChunks = new Map(
+    chunkNotes(
+      Array.from(notes.values()),
+      includeSourceNotes ? { sourceNotesOnly: true } : undefined,
+    ).map((chunk) => [chunk.id, chunk]),
+  );
+  const present = chunks.filter((chunk) => {
+    const current = currentChunks.get(chunk.id);
+    return current ? stableJsonHash(current) === stableJsonHash(chunk) : false;
+  });
   const excluded = chunks.length - present.length;
   if (excluded > 0) {
-    warnings.push(`Excluded ${excluded} stale index chunk(s) whose vault notes no longer exist.`);
+    warnings.push(`Excluded ${excluded} stale index chunk(s) whose vault notes changed or no longer exist.`);
   }
   return present;
 }
@@ -822,7 +836,7 @@ export async function retrieveLongTermMemory(
     return chunk ? [chunk] : [];
   });
   const catalogChunks = bundle.dirty
-    ? await excludeMissingVaultChunks(root, indexedCatalogChunks, warnings)
+    ? await excludeStaleVaultChunks(root, indexedCatalogChunks, input.includeSourceNotes === true, warnings)
     : indexedCatalogChunks;
   const chunksById = new Map(catalogChunks.map((chunk) => [chunk.id, chunk]));
   const allowedChunkIds = new Set(
@@ -1001,7 +1015,7 @@ export async function retrieveLongTermMemory(
     return chunk ? [chunk] : [];
   });
   const graphChunks = bundle.dirty
-    ? await excludeMissingVaultChunks(root, indexedGraphChunks, warnings)
+    ? await excludeStaleVaultChunks(root, indexedGraphChunks, input.includeSourceNotes === true, warnings)
     : indexedGraphChunks;
   for (const chunk of graphChunks) {
     chunksById.set(chunk.id, chunk);

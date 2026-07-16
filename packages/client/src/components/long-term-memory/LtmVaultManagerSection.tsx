@@ -2240,7 +2240,10 @@ export function LtmVaultManagerSection({
           onDraftChange={setCreateNoteDraft}
           onCreated={(note) => {
             closeCreateForm();
-            openMemory(note.id, { mode: "edit", tab: "overview" });
+            setOpenNoteId(note.id);
+            setMemoryModalMode("edit");
+            setMemoryModalTab("overview");
+            setEditedNoteDirty(false);
           }}
         />
       </LtmModal>

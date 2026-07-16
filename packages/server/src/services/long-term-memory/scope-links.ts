@@ -1,6 +1,7 @@
 import { withMergedLtmScopeLinks } from "@marinara-engine/shared";
 import { rebuildLongTermMemoryIndexes } from "./rebuild.js";
 import { LongTermMemoryStorage } from "./storage.js";
+import { withLtmVaultLock } from "./vault-lock.js";
 
 export type ApplyLtmScopeLinksToDerivedResult = {
   sourceNoteId: string;
@@ -15,26 +16,30 @@ export async function applyLtmScopeLinksToDerivedNotes(
   options: { root?: string; rebuildIndexes?: boolean } = {},
 ): Promise<ApplyLtmScopeLinksToDerivedResult | null> {
   const storage = new LongTermMemoryStorage(options.root);
-  const sourceNote = await storage.getNote(sourceNoteId);
-  if (!sourceNote) return null;
+  const affectedNoteIds = await withLtmVaultLock(storage.root, async () => {
+    const sourceNote = await storage.getNote(sourceNoteId);
+    if (!sourceNote) return null;
 
-  const affectedNoteIds: string[] = [];
-  const notes = await storage.listNotes();
-  for (const note of notes) {
-    if (!note.links.some((link) => link.target === sourceNoteId && link.relation === "extracted_from")) continue;
-    const nextScope = withMergedLtmScopeLinks(note.scope, links);
-    if (JSON.stringify(nextScope) === JSON.stringify(note.scope)) continue;
-    const updated = await storage.updateNote(
-      note.id,
-      { scope: nextScope },
-      {
-        actor: "maintenance_api",
-        cause: "api.apply_scope_to_derived",
-        summary: `Applied source memory scope links from ${sourceNoteId}`,
-      },
-    );
-    affectedNoteIds.push(updated.id);
-  }
+    const affected: string[] = [];
+    const notes = await storage.listNotes();
+    for (const note of notes) {
+      if (!note.links.some((link) => link.target === sourceNoteId && link.relation === "extracted_from")) continue;
+      const nextScope = withMergedLtmScopeLinks(note.scope, links);
+      if (JSON.stringify(nextScope) === JSON.stringify(note.scope)) continue;
+      const updated = await storage.updateNote(
+        note.id,
+        { scope: nextScope },
+        {
+          actor: "maintenance_api",
+          cause: "api.apply_scope_to_derived",
+          summary: `Applied source memory scope links from ${sourceNoteId}`,
+        },
+      );
+      affected.push(updated.id);
+    }
+    return affected;
+  });
+  if (!affectedNoteIds) return null;
 
   const rebuild =
     affectedNoteIds.length && options.rebuildIndexes !== false

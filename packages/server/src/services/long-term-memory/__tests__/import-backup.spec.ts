@@ -2,7 +2,7 @@
 // LTM Import & Backup Contracts
 // ──────────────────────────────────────────────
 import assert from "node:assert/strict";
-import { mkdir, writeFile, readFile, rm, cp } from "node:fs/promises";
+import { mkdir, writeFile, readFile, rename, rm, cp } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { mkdtemp } from "node:fs/promises";
@@ -24,6 +24,11 @@ import {
   worldNote,
 } from "./fixtures/ltm-test-harness.js";
 import { getLongTermMemoryRoot } from "../paths.js";
+import {
+  createLtmBackupRestoreJournal,
+  ltmBackupRestoreWorkspacePath,
+  writeLtmBackupRestoreJournal,
+} from "../restore-recovery.js";
 
 test("full backups include LTM without exposing its private store as profile assets", () => {
   assert.ok(FULL_BACKUP_DATA_DIRS.includes("long-term-memory"));
@@ -233,6 +238,27 @@ test("staged restore rejects invalid staging data and rolls back", async () => {
     const postStorage = new LongTermMemoryStorage(targetRoot);
     const stillThere = await postStorage.getNote("world_prior");
     assert.ok(stillThere);
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
+test("initialization recovers a vault interrupted after the current root moved", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "marinara-ltm-restore-recovery-"));
+  try {
+    const targetRoot = join(parent, "long-term-memory");
+    const targetStorage = new LongTermMemoryStorage(targetRoot);
+    await targetStorage.createNote(worldNote("world_before_interruption", "Prior vault content."));
+
+    const journal = createLtmBackupRestoreJournal(true);
+    const previousRoot = ltmBackupRestoreWorkspacePath(targetRoot, "restore-previous", journal.id);
+    await writeLtmBackupRestoreJournal(targetRoot, journal);
+    await rename(targetRoot, previousRoot);
+    await writeLtmBackupRestoreJournal(targetRoot, { ...journal, phase: "current_root_moved" });
+
+    const recoveredStorage = new LongTermMemoryStorage(targetRoot);
+    const recovered = await recoveredStorage.getNote("world_before_interruption");
+    assert.equal(recovered?.sections.facts?.text, "Prior vault content.");
   } finally {
     await rm(parent, { recursive: true, force: true });
   }

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, unlink } from "node:fs/promises";
+import { mkdir, readdir, readFile } from "node:fs/promises";
 import { z } from "zod";
 import { withKeyedLock } from "../../lib/concurrency.js";
 import { logger } from "../../lib/logger.js";
@@ -27,14 +27,14 @@ import {
   type LtmNote,
   type LtmNoteType,
 } from "@marinara-engine/shared";
-import { appendJsonLineAtomic, createJsonFileExclusive, readJsonFile, writeJsonAtomic } from "./atomic-json.js";
+import { appendJsonLineAtomic, readJsonFile, writeJsonAtomic } from "./atomic-json.js";
 import { DEFAULT_LTM_POLICIES, DEFAULT_LTM_RETENTION_CONFIG, DEFAULT_LTM_RETRIEVAL_CONFIG } from "./default-config.js";
-import { markLtmIndexesDirty } from "./index-state.js";
 import { commitLtmMutation, recoverLtmMutations, type LtmMutationFileChange } from "./mutation-transaction.js";
 import { parseStoredLtmNote } from "./stored-note.js";
 import { isLtmSourceExtractionFingerprintCurrent } from "./source-hash.js";
 import { isLtmVaultLockHeld, withLtmVaultLock } from "./vault-lock.js";
 import { longTermMemoryRetentionConfigPath, runLongTermMemoryRetention } from "./retention.js";
+import { isLtmBackupRestoreActive, recoverInterruptedLtmBackupRestore } from "./restore-recovery.js";
 import {
   getLongTermMemoryDirectories,
   getLongTermMemoryRoot,
@@ -55,7 +55,14 @@ type LtmEventContext = {
 
 type PreparedDraftRewrite = {
   path: string;
-  draft: unknown;
+  before: unknown;
+  after: unknown;
+};
+
+type PreparedNoteReferenceRewrite = {
+  before: LtmNote;
+  after: LtmNote;
+  event: LtmEvent | null;
 };
 
 const noteWriteLocks = new Map<string, Promise<void>>();
@@ -215,16 +222,13 @@ export class LongTermMemoryStorage {
     return getLongTermMemoryDirectories(this.root);
   }
 
-  private async markIndexesDirty() {
-    await markLtmIndexesDirty(this.root).catch((err) => {
-      logger.warn(err, "[ltm] Failed to mark indexes dirty after a vault write");
-    });
-  }
-
   async initializeLtmStore() {
     // Nested work must initialize re-entrantly rather than wait on an
     // initializer that is itself waiting on the same vault lock.
     if (isLtmVaultLockHeld(this.root)) {
+      if (!isLtmBackupRestoreActive(this.root)) {
+        await recoverInterruptedLtmBackupRestore(this.root);
+      }
       await this.initializeLtmStoreUnlocked();
       return;
     }
@@ -234,7 +238,10 @@ export class LongTermMemoryStorage {
       return;
     }
 
-    const lock = this.initializeLtmStoreUnlocked().finally(() => {
+    const lock = withLtmVaultLock(this.root, async () => {
+      await recoverInterruptedLtmBackupRestore(this.root);
+      await this.initializeLtmStoreUnlocked();
+    }).finally(() => {
       if (initLocks.get(this.root) === lock) {
         initLocks.delete(this.root);
       }
@@ -469,25 +476,35 @@ export class LongTermMemoryStorage {
         const oldPath = notePathForId(currentId, current.type, this.root);
         const newPath = notePathForId(parsedNextId, current.type, this.root);
         const draftRewrites = await this.prepareDraftReferenceRewrites(currentId, parsedNextId);
-
-        await createJsonFileExclusive(newPath, next);
-        try {
-          await unlink(oldPath);
-        } catch (err) {
-          await unlink(newPath).catch(() => {});
-          throw err;
-        }
-        await this.writePreparedDraftRewrites(draftRewrites);
-        await this.rewriteNoteReferences(currentId, parsedNextId, eventContext);
-        if (!eventContext.suppressEvent) {
-          await this.appendEvent(
-            eventFor(`${current.type}.renamed`, parsedNextId, eventContext, {
-              previousNoteId: currentId,
-              note: next,
-            }),
-          );
-        }
-        await this.markIndexesDirty();
+        const noteRewrites = await this.prepareNoteReferenceRewrites(currentId, parsedNextId, eventContext, [
+          currentId,
+          parsedNextId,
+        ]);
+        await commitLtmMutation(this.root, {
+          files: [
+            { path: oldPath, before: current, after: null },
+            { path: newPath, before: null, after: next },
+            ...noteRewrites.map(({ before, after }) => ({
+              path: notePathForId(after.id, after.type, this.root),
+              before,
+              after,
+            })),
+            ...draftRewrites.map((rewrite) => ({
+              path: rewrite.path,
+              before: rewrite.before,
+              after: rewrite.after,
+            })),
+          ],
+          events: eventContext.suppressEvent
+            ? []
+            : [
+                ...noteRewrites.flatMap((rewrite) => (rewrite.event ? [rewrite.event] : [])),
+                eventFor(`${current.type}.renamed`, parsedNextId, eventContext, {
+                  previousNoteId: currentId,
+                  note: next,
+                }),
+              ],
+        });
         return next;
       }),
     );
@@ -504,9 +521,26 @@ export class LongTermMemoryStorage {
       }
 
       const draftRewrites = await this.prepareDraftReferenceRewrites(parsedFromId, parsedToId);
-      const rewrittenNoteCount = await this.rewriteNoteReferences(parsedFromId, parsedToId, eventContext);
-      await this.writePreparedDraftRewrites(draftRewrites);
-      return { rewrittenNoteCount, rewrittenDraftCount: draftRewrites.length };
+      const noteRewrites = await this.prepareNoteReferenceRewrites(parsedFromId, parsedToId, eventContext);
+      const files: LtmMutationFileChange[] = [
+        ...noteRewrites.map(({ before, after }) => ({
+          path: notePathForId(after.id, after.type, this.root),
+          before,
+          after,
+        })),
+        ...draftRewrites.map((rewrite) => ({
+          path: rewrite.path,
+          before: rewrite.before,
+          after: rewrite.after,
+        })),
+      ];
+      if (files.length > 0) {
+        await commitLtmMutation(this.root, {
+          files,
+          events: noteRewrites.flatMap((rewrite) => (rewrite.event ? [rewrite.event] : [])),
+        });
+      }
+      return { rewrittenNoteCount: noteRewrites.length, rewrittenDraftCount: draftRewrites.length };
     });
   }
 
@@ -515,8 +549,8 @@ export class LongTermMemoryStorage {
   }
 
   async archiveSourceNoteWithDerived(id: string, eventContext: LtmEventContext = {}) {
+    await this.initializeLtmStore();
     return withLtmVaultLock(this.root, async () => {
-      await this.initializeLtmStore();
       const existing = await this.getRequiredNote(id);
       const relatedNotes = isLtmSourceLikeNote(existing) ? await this.listNotes() : [];
       const derived = relatedNotes.filter(
@@ -530,13 +564,42 @@ export class LongTermMemoryStorage {
         },
       };
 
-      const archived: LtmNote[] = [];
-      archived.push(await this.updateNote(existing.id, { status: "archived" }, eventContext));
-      for (const note of derived) {
-        archived.push(await this.updateNote(note.id, { status: "archived" }, archiveContext));
-      }
-
-      return archived;
+      const timestamp = nowIso();
+      const changes = [
+        { note: existing, context: eventContext },
+        ...derived.map((note) => ({ note, context: archiveContext })),
+      ].map(({ note, context }) => {
+        const after = keepOnlyCurrentExtractionFingerprint(
+          ltmNoteSchema.parse({
+            ...note,
+            status: "archived",
+            updatedAt: timestamp,
+            version: note.version + 1,
+          }),
+        );
+        return {
+          before: note,
+          after,
+          event: context.suppressEvent
+            ? null
+            : eventFor(`${note.type}.updated`, note.id, context, { patch: { status: "archived" }, note: after }),
+        };
+      });
+      return withNoteWriteLocks(
+        this.root,
+        changes.map((change) => change.before.id),
+        async () => {
+          await commitLtmMutation(this.root, {
+            files: changes.map(({ before, after }) => ({
+              path: notePathForId(after.id, after.type, this.root),
+              before,
+              after,
+            })),
+            events: changes.flatMap((change) => (change.event ? [change.event] : [])),
+          });
+          return changes.map((change) => change.after);
+        },
+      );
     });
   }
 
@@ -863,42 +926,70 @@ export class LongTermMemoryStorage {
         version: current.version + 1,
       });
       const draftRewrites = await this.prepareDraftReferenceRewrites(current.id, next.id);
-
-      if (!eventContext.suppressEvent) {
-        const moveContext = {
-          ...eventContext,
-          payload: {
-            ...(eventContext.payload ?? {}),
-            previousNoteId: current.id,
-            previousType: current.type,
-            draftRewriteCount: draftRewrites.length,
-          },
-        };
-        await this.appendEvent(eventFor(`${current.type}.deleted`, current.id, moveContext, { note: current }));
-        await this.appendEvent(
-          eventFor(`${next.type}.created`, next.id, moveContext, {
-            note: next,
-            patch: { ...normalizedPatch, type: nextType },
-          }),
-        );
-      }
-      await createJsonFileExclusive(newPath, next);
-      await unlink(oldPath);
-      await this.writePreparedDraftRewrites(draftRewrites);
-      await this.rewriteNoteReferences(current.id, next.id, eventContext);
-      await this.markIndexesDirty();
+      const noteRewrites = await this.prepareNoteReferenceRewrites(current.id, next.id, eventContext, [
+        current.id,
+        next.id,
+      ]);
+      const moveContext = {
+        ...eventContext,
+        payload: {
+          ...(eventContext.payload ?? {}),
+          previousNoteId: current.id,
+          previousType: current.type,
+          draftRewriteCount: draftRewrites.length,
+        },
+      };
+      await commitLtmMutation(this.root, {
+        files: [
+          { path: oldPath, before: current, after: null },
+          { path: newPath, before: null, after: next },
+          ...noteRewrites.map(({ before, after }) => ({
+            path: notePathForId(after.id, after.type, this.root),
+            before,
+            after,
+          })),
+          ...draftRewrites.map((rewrite) => ({
+            path: rewrite.path,
+            before: rewrite.before,
+            after: rewrite.after,
+          })),
+        ],
+        events: eventContext.suppressEvent
+          ? []
+          : [
+              eventFor(`${current.type}.deleted`, current.id, moveContext, { note: current }),
+              eventFor(`${next.type}.created`, next.id, moveContext, {
+                note: next,
+                patch: { ...normalizedPatch, type: nextType },
+              }),
+              ...noteRewrites.flatMap((rewrite) => (rewrite.event ? [rewrite.event] : [])),
+            ],
+      });
       return next;
     });
   }
 
-  private async rewriteNoteReferences(fromId: string, toId: string, eventContext: LtmEventContext) {
+  private async prepareNoteReferenceRewrites(
+    fromId: string,
+    toId: string,
+    eventContext: LtmEventContext,
+    skipNoteIds: string[] = [],
+  ): Promise<PreparedNoteReferenceRewrite[]> {
     const notes = await this.listNotes();
-    let count = 0;
+    const skip = new Set(skipNoteIds);
+    const timestamp = nowIso();
+    const rewrites: PreparedNoteReferenceRewrite[] = [];
     for (const note of notes) {
-      if (note.id === toId) continue;
+      if (skip.has(note.id)) continue;
       const links = rewriteLinks(note.links, fromId, toId);
-      if (links.every((link, index) => link.target === note.links[index]?.target)) continue;
-      await this.writeNotePatch(note, { links }, `${note.type}.updated`, {
+      if (JSON.stringify(links) === JSON.stringify(note.links)) continue;
+      const after = ltmNoteSchema.parse({
+        ...note,
+        links,
+        updatedAt: timestamp,
+        version: note.version + 1,
+      });
+      const context = {
         ...eventContext,
         summary: eventContext.summary ?? `Updated links for moved memory ${fromId}`,
         payload: {
@@ -906,10 +997,16 @@ export class LongTermMemoryStorage {
           movedNoteId: fromId,
           replacementNoteId: toId,
         },
+      };
+      rewrites.push({
+        before: note,
+        after,
+        event: eventContext.suppressEvent
+          ? null
+          : eventFor(`${note.type}.updated`, note.id, context, { patch: { links }, note: after }),
       });
-      count += 1;
     }
-    return count;
+    return rewrites;
   }
 
   private async prepareDraftReferenceRewrites(fromId: string, toId: string): Promise<PreparedDraftRewrite[]> {
@@ -936,15 +1033,9 @@ export class LongTermMemoryStorage {
       }
       if (!changed) continue;
       const parsed = ltmExtractionDraftSchema.parse({ ...next, updatedAt: nowIso() });
-      rewrites.push({ path, draft: parsed });
+      rewrites.push({ path, before: raw, after: parsed });
     }
     return rewrites;
-  }
-
-  private async writePreparedDraftRewrites(rewrites: PreparedDraftRewrite[]) {
-    for (const rewrite of rewrites) {
-      await writeJsonAtomic(rewrite.path, rewrite.draft);
-    }
   }
 }
 
@@ -961,5 +1052,3 @@ async function writeJsonIfChanged(path: string, value: unknown) {
   }
   await writeJsonAtomic(path, value);
 }
-
-

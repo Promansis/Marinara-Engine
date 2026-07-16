@@ -2,13 +2,19 @@
 // LTM Durability & Recovery Contracts
 // ──────────────────────────────────────────────
 import assert from "node:assert/strict";
+import { readFile, writeFile } from "node:fs/promises";
 import test from "node:test";
+import { loadLtmIndexGeneration, ltmIndexPointerPath } from "../index-generation.js";
+import { rebuildLongTermMemoryIndexes } from "../rebuild.js";
+import { retrieveLongTermMemory } from "../retrieval.js";
+import { LongTermMemoryDraftStore } from "../draft-store.js";
 import { LongTermMemoryStorage } from "../storage.js";
 import {
   withTempRoot,
   sourceNote,
   worldNote,
   REFERENCE_TS,
+  seedDraft,
 } from "./fixtures/ltm-test-harness.js";
 
 function storage(root: string) { return new LongTermMemoryStorage(root); }
@@ -106,5 +112,101 @@ await test("reading a non-existent note returns null", async () => {
   await withTempRoot(async (root) => {
     const s = storage(root);
     assert.equal(await s.getNote("nonexistent_note_id"), null);
+  });
+});
+
+await test("dirty indexes do not serve stale content after an indexed note changes", async () => {
+  await withTempRoot(async (root) => {
+    const s = storage(root);
+    await s.createNote(worldNote("world_dirty_content", "The original indexed content."));
+    await rebuildLongTermMemoryIndexes({
+      root,
+      embeddingSource: { label: "test-disabled", embed: async () => null },
+    });
+
+    await s.updateNote("world_dirty_content", {
+      sections: { facts: { text: "The replacement content.", updatedAt: REFERENCE_TS } },
+    });
+    const result = await retrieveLongTermMemory({
+      root,
+      noteIds: ["world_dirty_content"],
+      semanticWeight: 0,
+      lexicalWeight: 1,
+      graphWeight: 0,
+      keywordWeight: 0,
+      queryText: "original indexed content",
+    });
+
+    assert.equal(result.chunks.some((candidate) => candidate.chunk.text === "The original indexed content."), false);
+  });
+});
+
+await test("index loading recovers a valid generation when current pointer is malformed", async () => {
+  await withTempRoot(async (root) => {
+    const s = storage(root);
+    await s.createNote(worldNote("world_pointer_recovery", "A recoverable index fact."));
+    await rebuildLongTermMemoryIndexes({
+      root,
+      generatedAt: "2026-07-14T00:00:00.000Z",
+      embeddingSource: { label: "test-disabled", embed: async () => null },
+    });
+    await rebuildLongTermMemoryIndexes({
+      root,
+      generatedAt: "2026-07-14T00:01:00.000Z",
+      embeddingSource: { label: "test-disabled", embed: async () => null },
+    });
+
+    await writeFile(ltmIndexPointerPath(root), "{\"version\":1,\"generationId\":\"broken\"}", "utf8");
+    const loaded = await loadLtmIndexGeneration(root);
+
+    assert.equal(loaded.recovered, true);
+    assert.ok(loaded.manifest);
+    assert.equal(loaded.manifest.generatedAt, "2026-07-14T00:01:00.000Z");
+    const recoveredPointer = JSON.parse(await readFile(ltmIndexPointerPath(root), "utf8")) as {
+      generationId?: string;
+    };
+    assert.equal(recoveredPointer.generationId, loaded.manifest.generationId);
+  });
+});
+
+await test("note rename moves the note, inbound links, and draft references together", async () => {
+  await withTempRoot(async (root) => {
+    const s = storage(root);
+    await s.createNote(sourceNote("source_rename_before", "Rename source content."));
+    await s.createNote(
+      worldNote("world_rename_reference", "References the source.", {
+        links: [{ target: "source_rename_before", relation: "extracted_from" }],
+      }),
+    );
+    const draft = await seedDraft(root, { sourceNoteId: "source_rename_before", mutations: [] });
+
+    await s.renameNoteId("source_rename_before", "source_rename_after");
+
+    assert.equal(await s.getNote("source_rename_before"), null);
+    assert.ok(await s.getNote("source_rename_after"));
+    assert.equal((await s.getNote("world_rename_reference"))?.links[0]?.target, "source_rename_after");
+    assert.equal(
+      (await new LongTermMemoryDraftStore(root).getDraft(draft.id))?.source.sourceNoteId,
+      "source_rename_after",
+    );
+  });
+});
+
+await test("note type change moves the note and rewrites inbound links together", async () => {
+  await withTempRoot(async (root) => {
+    const s = storage(root);
+    await s.createNote(worldNote("world_type_move", "Move this note."));
+    await s.createNote(
+      worldNote("world_type_reference", "References the moved note.", {
+        links: [{ target: "world_type_move", relation: "involves" }],
+      }),
+    );
+
+    const moved = await s.updateNote("world_type_move", { type: "character" });
+
+    assert.equal(moved.id, "char_type_move");
+    assert.equal(moved.type, "character");
+    assert.equal(await s.getNote("world_type_move"), null);
+    assert.equal((await s.getNote("world_type_reference"))?.links[0]?.target, "char_type_move");
   });
 });

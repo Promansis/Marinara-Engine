@@ -2352,21 +2352,20 @@ test("long-term memory settings stay reachable from the chat drawer", async ({ p
   const createdTitle = `Created memory ${testInfo.project.name}`;
   await newMemory.getByLabel("Title", { exact: true }).fill(createdTitle);
   await newMemory.getByLabel("Memory Text", { exact: true }).fill("The silver key stays beneath the chapel bell.");
-  await expect(newMemory.getByLabel("Internal ID", { exact: true })).toBeHidden();
+  const internalId = newMemory.getByRole("textbox", { name: /^Internal ID/ });
+  await expect(internalId).toBeHidden();
   await newMemory.getByText("Advanced options", { exact: true }).click();
-  await expect(newMemory.getByLabel("Internal ID", { exact: true })).toHaveValue(
-    /^scene_created_memory_.+_[a-z0-9]{5}$/,
-  );
+  await expect(internalId).toHaveValue(/^scene_created_memory_.+_[a-z0-9]{5}$/);
   await newMemory.getByRole("button", { name: "Save Memory" }).click();
 
   const memoryDetail = page.getByRole("dialog", { name: createdTitle });
   await expect(memoryDetail.getByLabel("Title", { exact: true })).toBeVisible();
   await expect(memoryDetail.getByText("Advanced options", { exact: true })).toBeVisible();
-  await memoryDetail.getByRole("button", { name: "Cancel" }).click();
+  await memoryDetail.getByRole("button", { name: "Cancel" }).first().click();
   await expect(memoryDetail.getByRole("tab")).toHaveCount(0);
   await memoryDetail.getByRole("button", { name: "Edit" }).click();
   await memoryDetail
-    .getByLabel("Memory Text", { exact: true })
+    .getByRole("textbox", { name: "Memory Text", exact: true })
     .fill("The silver key now hangs beside the chapel bell.");
   await memoryDetail.getByRole("button", { name: "Save", exact: true }).click();
   await expect(memoryDetail.getByText("The silver key now hangs beside the chapel bell.")).toBeVisible();
@@ -2378,7 +2377,7 @@ test("long-term memory settings stay reachable from the chat drawer", async ({ p
   await transfer.getByLabel("Chat or grouped chat").selectOption({ label: destinationName });
   await transfer.getByRole("button", { name: "Review transfer" }).click();
   await expect(transfer.getByText(/1 reviewed/)).toBeVisible();
-  await expect(transfer.getByRole("button", { name: "Copy selected" })).toBeVisible();
+  await expect(transfer.getByRole("button", { name: "Copy selected", exact: true })).toBeVisible();
   await transfer.getByRole("button", { name: "Close Copy Selected Memories" }).click();
 
   await vault.getByRole("button", { name: "Delete", exact: true }).click();
