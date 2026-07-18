@@ -179,7 +179,6 @@ import {
 } from "../services/memory-recall-embedding.js";
 import { postToDiscordWebhook } from "../services/discord-webhook.js";
 import {
-  notifyLongTermMemoryTurnFinalized,
   recallLongTermMemory,
   recordLongTermMemoryPromptAccepted,
   type LongTermMemoryRecallReceipt,
@@ -1414,7 +1413,6 @@ export async function generateRoutes(app: FastifyInstance) {
       // illustration await at the end see state from the latest iteration.
       let firstSavedMsg: any = null;
       let lastSavedMsg: any = null;
-      const longTermMemoryFinalizedMessageIds = new Set<string>();
       let pendingIllustration: Promise<void> | null = null;
       const collectedCommands: Array<{
         command: CharacterCommand;
@@ -6089,7 +6087,6 @@ export async function generateRoutes(app: FastifyInstance) {
             }
             firstSavedMsg ??= genResult.savedMsg;
             lastSavedMsg = genResult.savedMsg;
-            if (genResult.savedMsg?.id) longTermMemoryFinalizedMessageIds.add(genResult.savedMsg.id);
             recordExpressionTarget(genResult.savedMsg, charId);
             allResponses.push(genResult.response);
             for (const cmd of genResult.commands) {
@@ -6182,7 +6179,6 @@ export async function generateRoutes(app: FastifyInstance) {
           if (genResult) {
             firstSavedMsg ??= genResult.savedMsg;
             lastSavedMsg = genResult.savedMsg;
-            if (genResult.savedMsg?.id) longTermMemoryFinalizedMessageIds.add(genResult.savedMsg.id);
             recordExpressionTarget(genResult.savedMsg, genResult.characterId);
             for (let cmdIndex = 0; cmdIndex < genResult.commands.length; cmdIndex++) {
               collectedCommands.push({
@@ -8237,24 +8233,6 @@ export async function generateRoutes(app: FastifyInstance) {
           } catch (summaryErr) {
             logger.warn(summaryErr, "[chat-summary] Automatic summary update failed");
           }
-        }
-
-        if (!abortController.signal.aborted && chatEnableAgents && chatActiveAgentIds.includes("long-term-memory")) {
-          for (const messageId of longTermMemoryFinalizedMessageIds) {
-            const finalized = await chats.getMessage(messageId);
-            if (!finalized || finalized.role !== "assistant") continue;
-            await notifyLongTermMemoryTurnFinalized({
-              chatId: input.chatId,
-              chatMode,
-              messageId,
-              swipeIndex: finalized.activeSwipeIndex ?? 0,
-              content: finalized.content,
-              characterId: finalized.characterId ?? null,
-              regenerate: Boolean(input.regenerateMessageId),
-              continuation: Boolean(input.continueMessageId),
-            });
-          }
-          longTermMemoryFinalizedMessageIds.clear();
         }
 
         // ────────────────────────────────────────
