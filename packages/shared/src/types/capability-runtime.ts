@@ -212,7 +212,6 @@ export interface CapabilityPersistenceHost extends CapabilityPersistenceSession 
 }
 
 export interface CapabilityRuntimeHost {
-  getAgentConfig(): Promise<{ connectionId: string | null; settings: Record<string, unknown> } | null>;
   isDebugAgentsEnabled(): boolean;
   json: CapabilityJsonHost;
   languageModels: CapabilityLanguageModelHost;
