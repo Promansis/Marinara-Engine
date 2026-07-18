@@ -21,16 +21,6 @@ export interface LongTermMemoryRuntimeService {
     receipt: LongTermMemoryRecallReceipt;
     messages: Array<{ role: string; content: string }>;
   }): Promise<void>;
-  onTurnFinalized?(input: {
-    chatId: string;
-    chatMode: ChatMode;
-    messageId: string;
-    swipeIndex: number;
-    content: string;
-    characterId: string | null;
-    regenerate: boolean;
-    continuation: boolean;
-  }): Promise<void>;
 }
 
 function runtimeService() {
@@ -62,17 +52,5 @@ export async function recordLongTermMemoryPromptAccepted(
     await service.recordPromptAccepted(input);
   } catch (error) {
     logger.warn(error, "Long-term memory prompt accounting failed");
-  }
-}
-
-export async function notifyLongTermMemoryTurnFinalized(
-  input: Parameters<NonNullable<LongTermMemoryRuntimeService["onTurnFinalized"]>>[0],
-): Promise<void> {
-  const service = runtimeService();
-  if (!service) return;
-  try {
-    await service.onTurnFinalized?.(input);
-  } catch (error) {
-    logger.warn(error, "Long-term memory finalized-turn capture failed");
   }
 }
