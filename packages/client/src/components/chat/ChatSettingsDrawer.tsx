@@ -1265,6 +1265,9 @@ export function ChatSettingsDrawer({
   );
   const mapsPackageEnabledForChat =
     metadata.enableAgents === true && Boolean(mapsPackage && activeAgentIds.includes(mapsPackage.id));
+  const ltmPackage = installedCapabilities.find(
+    (item) => item.status === "active" && item.id === "long-term-memory" && item.manifest.entrypoints.client,
+  );
   const callsPackage = installedCapabilities.find(
     (item) =>
       item.status === "active" && item.manifest.kind.includes("conversation-calls") && item.manifest.entrypoints.client,
@@ -8876,6 +8879,36 @@ export function ChatSettingsDrawer({
                                                 onOpenLorebook: openLorebookDetail,
                                               }}
                                               className="mt-2 block overflow-hidden rounded-lg"
+                                            />
+                                          )}
+                                          {agent.id === "long-term-memory" && ltmPackage && (
+                                            <CapabilityElement
+                                              packageId={ltmPackage.id}
+                                              view="settings"
+                                              capabilityProps={{
+                                                chatId: chat.id,
+                                                enabledForChat: metadata.enableAgents === true && activeAgentIds.includes(ltmPackage.id),
+                                                chatSettings: {
+                                                  longTermMemoryRecallStyle: metadata.longTermMemoryRecallStyle,
+                                                  longTermMemoryBudgetTokens: metadata.longTermMemoryBudgetTokens,
+                                                  longTermMemoryMaxChunks: metadata.longTermMemoryMaxChunks,
+                                                },
+                                                onEnabledForChatChange: async (enabled: boolean) => {
+                                                  const current = readLatestActiveAgentIds();
+                                                  await updateMeta.mutateAsync({
+                                                    id: chat.id,
+                                                    ...(enabled ? { enableAgents: true } : {}),
+                                                    activeAgentIds: enabled
+                                                      ? Array.from(new Set([...current, ltmPackage.id]))
+                                                      : current.filter((id) => id !== ltmPackage.id),
+                                                  });
+                                                },
+                                                onChatSettingsChange: async (patch: Record<string, unknown>) => {
+                                                  await updateMeta.mutateAsync({ id: chat.id, ...patch });
+                                                },
+                                                onDirtyChange: setEditorDirty,
+                                              }}
+                                              className="mt-2 block overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--background)]/45"
                                             />
                                           )}
                                         </div>
