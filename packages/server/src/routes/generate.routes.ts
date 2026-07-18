@@ -181,6 +181,12 @@ import {
   resolveMemoryRecallEmbeddingSource,
 } from "../services/memory-recall-embedding.js";
 import { postToDiscordWebhook } from "../services/discord-webhook.js";
+import {
+  notifyLongTermMemoryTurnFinalized,
+  recallLongTermMemory,
+  recordLongTermMemoryPromptAccepted,
+  type LongTermMemoryRecallReceipt,
+} from "../services/generation/long-term-memory-runtime.js";
 import { newId } from "../utils/id-generator.js";
 import {
   appendGenerationTailMessages,
@@ -1430,6 +1436,7 @@ export async function generateRoutes(app: FastifyInstance) {
       // illustration await at the end see state from the latest iteration.
       let firstSavedMsg: any = null;
       let lastSavedMsg: any = null;
+      const longTermMemoryFinalizedMessageIds = new Set<string>();
       let pendingIllustration: Promise<void> | null = null;
       const collectedCommands: Array<{
         command: CharacterCommand;
@@ -1447,6 +1454,8 @@ export async function generateRoutes(app: FastifyInstance) {
         // doesn't burn an extra generation pass with no new context to read.
         let mariFetchSucceededThisIteration = false;
         let finalMessages: GenerationPromptMessage[] = [...runningMessagesForFollowUp];
+        let longTermMemoryRecallReceipt: LongTermMemoryRecallReceipt | undefined;
+        let longTermMemoryPromptRecorded = false;
         const ownerSpatialProjection = await ownerSpatialProjectionPromise;
         let conversationCommandsReminder: string | null = null;
         let conversationContextMacroSlots: ConversationContextMacroSlots = {
@@ -3882,7 +3891,12 @@ export async function generateRoutes(app: FastifyInstance) {
           .filter((entry) => entry.agentType && entry.text.trim().length > 0);
         const reviewedAgentTypes = new Set(reviewedAgentInjections.map((entry) => entry.agentType));
         let contextInjections: AgentInjection[] = reviewedAgentInjections;
-        const SEPARATE_INJECTION_AGENTS = new Set(["director", "knowledge-retrieval", "knowledge-router"]);
+        const SEPARATE_INJECTION_AGENTS = new Set([
+          "director",
+          "knowledge-retrieval",
+          "knowledge-router",
+          "long-term-memory",
+        ]);
         const EXCLUDED_FROM_PIPELINE = new Set(["knowledge-retrieval", "knowledge-router"]);
         const hasPreGenAgents = resolvedAgents.some(
           (a) => a.phase === "pre_generation" && !EXCLUDED_FROM_PIPELINE.has(a.type) && !reviewedAgentTypes.has(a.type),
@@ -4263,6 +4277,9 @@ export async function generateRoutes(app: FastifyInstance) {
 
           if (cachedSansSecret && cachedSansSecret.length > 0) {
             contextInjections = cachedSansSecret;
+            if (cachedSansSecret.some((injection) => injection.agentType === "long-term-memory")) {
+              longTermMemoryRecallReceipt = null;
+            }
             for (const inj of cachedSansSecret) {
               reply.raw.write(
                 `data: ${JSON.stringify({
@@ -4361,6 +4378,22 @@ export async function generateRoutes(app: FastifyInstance) {
           clearUnusedRuntimeAgentSections(finalMessages, runtimeAgentSectionTokens);
         } else {
           clearUnusedRuntimeAgentSections(finalMessages, runtimeAgentSectionTokens);
+        }
+
+        if (chatEnableAgents && chatActiveAgentIds.includes("long-term-memory") && !input.regenerateMessageId) {
+          const recall = await recallLongTermMemory({
+            chatId: input.chatId,
+            chatMode,
+            characterIds: promptCharacterIds,
+            messages: finalMessages.map(({ role, content }) => ({ role, content })),
+            signal: abortController.signal,
+            debugMode: requestDebug || isDebug,
+          });
+          if (recall) {
+            appendSeparateAgentInjection("long-term-memory", recall.text);
+            contextInjections.push({ agentType: "long-term-memory", text: recall.text });
+            longTermMemoryRecallReceipt = recall.receipt;
+          }
         }
 
         if (directorSecretPlotAgent) {
@@ -5017,6 +5050,16 @@ export async function generateRoutes(app: FastifyInstance) {
             }
           };
 
+          const recordAcceptedLongTermMemoryPrompt = async (messages: ChatMessage[]) => {
+            if (longTermMemoryPromptRecorded || longTermMemoryRecallReceipt === undefined) return;
+            longTermMemoryPromptRecorded = true;
+            await recordLongTermMemoryPromptAccepted({
+              chatId: input.chatId,
+              receipt: longTermMemoryRecallReceipt,
+              messages: messages.map(({ role, content }) => ({ role, content })),
+            });
+          };
+
           if (enableChatTools && provider.chatComplete) {
             const maxToolRounds = getMaxToolRounds();
             let loopMessages: ChatMessage[] = initialProviderMessages;
@@ -5109,6 +5152,7 @@ export async function generateRoutes(app: FastifyInstance) {
                     : (items) => encryptedReasoningCache.set(input.chatId, items),
                   onChatCompletionsReasoning: rememberChatCompletionsReasoning,
                 }));
+                await recordAcceptedLongTermMemoryPrompt(loopMessages);
               } catch (err: any) {
                 // If the error was caused by an abort, cancel silently and skip post-processing.
                 if (abortController.signal.aborted || (err && err.name === "AbortError")) {
@@ -5388,6 +5432,7 @@ export async function generateRoutes(app: FastifyInstance) {
             });
             try {
               let result = await withLlmRequestTimeout(chatGenerationTimeoutMs, () => gen.next());
+              await recordAcceptedLongTermMemoryPrompt(initialProviderMessages);
               while (!result.done) {
                 if (abortController.signal.aborted) {
                   return null;
@@ -6135,6 +6180,7 @@ export async function generateRoutes(app: FastifyInstance) {
             }
             firstSavedMsg ??= genResult.savedMsg;
             lastSavedMsg = genResult.savedMsg;
+            if (genResult.savedMsg?.id) longTermMemoryFinalizedMessageIds.add(genResult.savedMsg.id);
             recordExpressionTarget(genResult.savedMsg, charId);
             allResponses.push(genResult.response);
             for (const cmd of genResult.commands) {
@@ -6227,6 +6273,7 @@ export async function generateRoutes(app: FastifyInstance) {
           if (genResult) {
             firstSavedMsg ??= genResult.savedMsg;
             lastSavedMsg = genResult.savedMsg;
+            if (genResult.savedMsg?.id) longTermMemoryFinalizedMessageIds.add(genResult.savedMsg.id);
             recordExpressionTarget(genResult.savedMsg, genResult.characterId);
             for (let cmdIndex = 0; cmdIndex < genResult.commands.length; cmdIndex++) {
               collectedCommands.push({
@@ -8282,6 +8329,24 @@ export async function generateRoutes(app: FastifyInstance) {
           } catch (summaryErr) {
             logger.warn(summaryErr, "[chat-summary] Automatic summary update failed");
           }
+        }
+
+        if (!abortController.signal.aborted && chatEnableAgents && chatActiveAgentIds.includes("long-term-memory")) {
+          for (const messageId of longTermMemoryFinalizedMessageIds) {
+            const finalized = await chats.getMessage(messageId);
+            if (!finalized || finalized.role !== "assistant") continue;
+            await notifyLongTermMemoryTurnFinalized({
+              chatId: input.chatId,
+              chatMode,
+              messageId,
+              swipeIndex: finalized.activeSwipeIndex ?? 0,
+              content: finalized.content,
+              characterId: finalized.characterId ?? null,
+              regenerate: Boolean(input.regenerateMessageId),
+              continuation: Boolean(input.continueMessageId),
+            });
+          }
+          longTermMemoryFinalizedMessageIds.clear();
         }
 
         // ────────────────────────────────────────

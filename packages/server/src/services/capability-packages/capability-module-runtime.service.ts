@@ -10,6 +10,7 @@ import {
   type CapabilityRuntimeHost,
   type CapabilityRuntimeLogArgument,
   type InstalledCapabilityPackage,
+  parseAgentSettingsRecord,
 } from "@marinara-engine/shared";
 import { isDebugAgentsEnabled } from "../../config/runtime-config.js";
 import { logger, logDebugOverride } from "../../lib/logger.js";
@@ -24,6 +25,8 @@ import { registerCapabilityService } from "./capability-service-registry.service
 import { createCapabilityLanguageModelHost } from "./capability-language-model.service.js";
 import { createCapabilityPersistenceHost } from "./capability-persistence.service.js";
 import { createCapabilityResourceHost } from "./capability-resources.service.js";
+import { registerCapabilityPrivilegedRoutes } from "./capability-route-registration.service.js";
+import { createAgentsStorage } from "../storage/agents.storage.js";
 
 type Cleanup = () => void | Promise<void>;
 type CapabilityActivationContext = {
@@ -35,11 +38,18 @@ type CapabilityActivationContext = {
     registerTurnGameEngine(engine: AnyTurnGameEngine): Cleanup;
     registerConversationCommand(registration: CapabilityConversationCommandRegistration): Cleanup;
     registerService<T>(key: string, service: T): Cleanup;
+    registerPrivilegedRoutes(routes: import("fastify").FastifyPluginAsync, options: { prefix: string }): Promise<Cleanup>;
   };
 };
 
-function createCapabilityRuntimeHost(app: FastifyInstance): CapabilityRuntimeHost {
+function createCapabilityRuntimeHost(app: FastifyInstance, packageId: string): CapabilityRuntimeHost {
   return Object.freeze({
+    async getAgentConfig() {
+      const config = await createAgentsStorage(app.db).getByType(packageId);
+      return config
+        ? { connectionId: config.connectionId, settings: parseAgentSettingsRecord(config.settings) }
+        : null;
+    },
     isDebugAgentsEnabled,
     json: Object.freeze({ parseJsonish: parseGameJsonish }),
     languageModels: createCapabilityLanguageModelHost(app.db),
@@ -145,11 +155,13 @@ class CapabilityModuleRuntime {
         dataDir: DATA_DIR,
         package: installed,
         api: {
-          runtime: createCapabilityRuntimeHost(app),
+          runtime: createCapabilityRuntimeHost(app, installed.id),
           registerTurnGameEngine: (engine) => trackCleanup(registerTurnGameEngine(engine)),
           registerConversationCommand: (registration) =>
             trackCleanup(registerCapabilityConversationCommand(registration)),
           registerService: (key, service) => trackCleanup(registerCapabilityService(key, service)),
+          registerPrivilegedRoutes: async (routes, options) =>
+            trackCleanup(await registerCapabilityPrivilegedRoutes(app, installed, routes, options)),
         },
       };
       const cleanup = await module.activate(context);
