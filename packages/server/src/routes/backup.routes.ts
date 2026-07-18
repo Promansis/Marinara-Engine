@@ -60,6 +60,7 @@ const BACKUP_DIRS = [
   "lorebooks/images",
   "agents/images",
   "connections/images",
+  "long-term-memory",
 ];
 const ENCRYPTION_KEY_FILENAME = ".encryption-key";
 const PROFILE_ASSET_DIRS = BACKUP_DIRS.filter((dirName) => dirName !== "storage");

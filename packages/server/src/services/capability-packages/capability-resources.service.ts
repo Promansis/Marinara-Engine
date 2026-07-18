@@ -2,6 +2,8 @@ import type {
   CapabilityCharacterRecord,
   CapabilityLorebookEntryRecord,
   CapabilityLorebookEntrySelection,
+  CapabilityLorebookRecord,
+  CapabilityPersonaRecord,
   CapabilityResourceHost,
 } from "@marinara-engine/shared";
 import type { DB } from "../../db/connection.js";
@@ -25,9 +27,35 @@ export function createCapabilityResourceHost(db: DB): CapabilityResourceHost {
   const lorebooks = createLorebooksStorage(db);
   return {
     async listCharacters(characterIds): Promise<CapabilityCharacterRecord[]> {
-      const requestedIds = uniqueStrings(characterIds);
-      const records = await Promise.all(requestedIds.map((characterId) => characters.getById(characterId)));
-      return records.flatMap((record) => (record ? [{ id: record.id, data: record.data }] : []));
+      const requestedIds = characterIds ? uniqueStrings(characterIds) : null;
+      const records = requestedIds
+        ? await Promise.all(requestedIds.map((characterId) => characters.getById(characterId)))
+        : await characters.list();
+      return records.flatMap((record) =>
+        record ? [{ id: record.id, data: record.data, comment: record.comment ?? "" }] : [],
+      );
+    },
+
+    async listPersonas(personaIds): Promise<CapabilityPersonaRecord[]> {
+      const requestedIds = personaIds ? uniqueStrings(personaIds) : null;
+      const records = requestedIds
+        ? await Promise.all(requestedIds.map((personaId) => characters.getPersona(personaId)))
+        : await characters.listPersonas();
+      return records.flatMap((record) => (record ? [{ id: record.id, data: record }] : []));
+    },
+
+    async listLorebooks(lorebookIds): Promise<CapabilityLorebookRecord[]> {
+      const requestedIds = lorebookIds ? uniqueStrings(lorebookIds) : null;
+      const records = (requestedIds
+        ? await Promise.all(requestedIds.map((lorebookId) => lorebooks.getById(lorebookId)))
+        : await lorebooks.list()) as Array<({ id: string } & Record<string, unknown>) | null>;
+      return Promise.all(
+        records
+          .flatMap((record) =>
+            record ? [{ id: record.id, data: record, entries: lorebooks.listEntries(record.id) }] : [],
+          )
+          .map(async (record) => ({ ...record, entries: await record.entries })),
+      );
     },
 
     async listEligibleLorebookEntries(

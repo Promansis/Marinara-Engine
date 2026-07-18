@@ -40,6 +40,8 @@ function mapChat(row: typeof chats.$inferSelect): CapabilityChatRecord {
     name: row.name,
     mode: row.mode,
     characterIds: parseStringArray(row.characterIds),
+    groupId: row.groupId,
+    personaId: row.personaId,
     connectionId: row.connectionId,
     metadata: row.metadata,
     lastMessageAt: row.lastMessageAt,
@@ -189,6 +191,9 @@ function createSpatialSnapshotStore(db: DB): CapabilitySpatialSnapshotStore {
 
 function createPersistenceSession(db: DB): CapabilityPersistenceSession {
   return {
+    async listChats() {
+      return (await db.select().from(chats).orderBy(desc(chats.updatedAt))).map(mapChat);
+    },
     async getChat(chatId) {
       const rows = await db.select().from(chats).where(eq(chats.id, chatId)).limit(1);
       return rows[0] ? mapChat(rows[0]) : null;
