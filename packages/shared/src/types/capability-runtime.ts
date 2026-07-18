@@ -211,7 +211,13 @@ export interface CapabilityPersistenceHost extends CapabilityPersistenceSession 
   transaction<T>(operation: (session: CapabilityPersistenceSession) => Promise<T>): Promise<T>;
 }
 
+export interface CapabilityEmbeddingHost {
+  label: string;
+  embed(texts: string[], signal?: AbortSignal): Promise<number[][] | null>;
+}
+
 export interface CapabilityRuntimeHost {
+  embeddings: CapabilityEmbeddingHost;
   isDebugAgentsEnabled(): boolean;
   json: CapabilityJsonHost;
   languageModels: CapabilityLanguageModelHost;

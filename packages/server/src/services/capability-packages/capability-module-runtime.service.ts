@@ -22,6 +22,7 @@ import {
 } from "./capability-command-registry.service.js";
 import { registerCapabilityService } from "./capability-service-registry.service.js";
 import { createCapabilityLanguageModelHost } from "./capability-language-model.service.js";
+import { createCapabilityEmbeddingHost } from "./capability-embedding.service.js";
 import { createCapabilityPersistenceHost } from "./capability-persistence.service.js";
 import { createCapabilityResourceHost } from "./capability-resources.service.js";
 import { registerCapabilityPrivilegedRoutes } from "./capability-route-registration.service.js";
@@ -42,6 +43,7 @@ type CapabilityActivationContext = {
 
 function createCapabilityRuntimeHost(app: FastifyInstance): CapabilityRuntimeHost {
   return Object.freeze({
+    embeddings: createCapabilityEmbeddingHost(app.db),
     isDebugAgentsEnabled,
     json: Object.freeze({ parseJsonish: parseGameJsonish }),
     languageModels: createCapabilityLanguageModelHost(app.db),
