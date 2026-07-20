@@ -1539,6 +1539,9 @@ export async function generateRoutes(app: FastifyInstance) {
             settings: agent.settings,
           })),
         });
+        if (chatEnableAgents && chatActiveAgentIds.includes("long-term-memory")) {
+          runtimeSectionEligibleAgentTypes.add("long-term-memory");
+        }
         const chatActiveLorebookIds: string[] = Array.isArray(chatMeta.activeLorebookIds)
           ? (chatMeta.activeLorebookIds as string[])
           : [];
@@ -3916,6 +3919,12 @@ export async function generateRoutes(app: FastifyInstance) {
         const appendSeparateAgentInjection = (agentType: string, text: string): void => {
           appendSeparateAgentInjectionMessage(finalMessages, agentType, text, wrapFormat);
         };
+        const clearUnusedRuntimeSectionsBeforeLtm = (): void => {
+          clearUnusedRuntimeAgentSections(
+            finalMessages,
+            [...runtimeAgentSectionTokens].filter(([agentType]) => agentType !== "long-term-memory"),
+          );
+        };
 
         if (shouldRunDirectorSecretPlot || shouldRunPreGen || shouldRunKR || shouldRunRouter) {
           sendProgress("agents");
@@ -4209,7 +4218,7 @@ export async function generateRoutes(app: FastifyInstance) {
               contextInjections.push({ agentType: "knowledge-router", text: routerText });
             }
           }
-          clearUnusedRuntimeAgentSections(finalMessages, runtimeAgentSectionTokens);
+          clearUnusedRuntimeSectionsBeforeLtm();
         } else if (input.regenerateMessageId) {
           // Regeneration — try to reuse cached context injections from the original generation.
           // This must run regardless of whether `hasPreGenAgents` is true, because the cached
@@ -4323,9 +4332,9 @@ export async function generateRoutes(app: FastifyInstance) {
               appendSeparateAgentInjection(inj.agentType, inj.text);
             }
           }
-          clearUnusedRuntimeAgentSections(finalMessages, runtimeAgentSectionTokens);
+          clearUnusedRuntimeSectionsBeforeLtm();
         } else {
-          clearUnusedRuntimeAgentSections(finalMessages, runtimeAgentSectionTokens);
+          clearUnusedRuntimeSectionsBeforeLtm();
         }
 
         if (chatEnableAgents && chatActiveAgentIds.includes("long-term-memory") && !input.regenerateMessageId) {
@@ -4338,11 +4347,14 @@ export async function generateRoutes(app: FastifyInstance) {
             debugMode: requestDebug || isDebug,
           });
           if (recall) {
-            appendSeparateAgentInjection("long-term-memory", recall.text);
+            const tokens = runtimeAgentSectionTokens.get("long-term-memory");
+            const handledByPresetSection = tokens !== undefined && replaceRuntimeAgentSection(finalMessages, tokens, recall.text);
+            if (!handledByPresetSection) appendSeparateAgentInjection("long-term-memory", recall.text);
             contextInjections.push({ agentType: "long-term-memory", text: recall.text });
             longTermMemoryRecallReceipt = recall.receipt;
           }
         }
+        clearUnusedRuntimeAgentSections(finalMessages, runtimeAgentSectionTokens);
 
         if (directorSecretPlotAgent) {
           try {

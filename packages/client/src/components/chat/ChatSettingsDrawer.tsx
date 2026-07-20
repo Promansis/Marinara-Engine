@@ -1302,6 +1302,9 @@ export function ChatSettingsDrawer({
       item.manifest.kind.includes("conversation-calls") &&
       item.manifest.entrypoints.client,
   );
+  const longTermMemoryPackage = installedCapabilities.find(
+    (item) => item.id === "long-term-memory" && item.status === "active" && item.manifest.entrypoints.client,
+  );
   const availableConversationCommandOptions = useMemo(() => {
     return CONVERSATION_COMMAND_TOGGLE_OPTIONS.filter((command) => {
       const agentId = CONVERSATION_COMMAND_AGENT_IDS[command.id];
@@ -8212,6 +8215,22 @@ export function ChatSettingsDrawer({
                                         className="block overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--background)]/45"
                                       />
                                     )}
+                                    {active && agent.id === "long-term-memory" && longTermMemoryPackage && (
+                                      <CapabilityElement
+                                        packageId={longTermMemoryPackage.id}
+                                        view="settings"
+                                        capabilityProps={{
+                                          chatId: chat.id,
+                                          enabledForChat: true,
+                                          chatSettings: metadata,
+                                          onChatSettingsChange: (patch: Record<string, unknown>) =>
+                                            updateMeta.mutate({ id: chat.id, ...patch }),
+                                           onEnabledForChatChange: () => toggleAgent(agent.id),
+                                          confirmAction: showConfirmDialog,
+                                        }}
+                                        className="block"
+                                      />
+                                    )}
                                   </div>
                                 );
                               })}
@@ -8354,6 +8373,21 @@ export function ChatSettingsDrawer({
                                                 onOpenLorebook: openLorebookDetail,
                                               }}
                                               className="mt-2 block overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--background)]/45"
+                                            />
+                                          )}
+                                          {agent.id === "long-term-memory" && longTermMemoryPackage && (
+                                            <CapabilityElement
+                                              packageId={longTermMemoryPackage.id}
+                                              view="settings"
+                                              capabilityProps={{
+                                                chatId: chat.id,
+                                                enabledForChat: true,
+                                                chatSettings: metadata,
+                                                onChatSettingsChange: (patch: Record<string, unknown>) =>
+                                                  updateMeta.mutate({ id: chat.id, ...patch }),
+                                                 onEnabledForChatChange: () => toggleAgent(agent.id),
+                                              }}
+                                              className="mt-2 block"
                                             />
                                           )}
                                         </div>
