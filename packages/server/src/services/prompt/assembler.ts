@@ -133,6 +133,8 @@ export interface AssemblerInput {
   /** Chat context */
   chatId: string;
   characterIds: string[];
+  /** Full active roster when characterIds is narrowed to one generation target. */
+  groupCharacterIds?: string[];
   personaId?: string | null;
   personaName: string;
   personaPhoneticName?: string;
@@ -270,6 +272,19 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
   // Build lookup maps
   const sectionMap = new Map(input.sections.map((s) => [s.id, s]));
   const groupMap = new Map(input.groups.map((g) => [g.id, g]));
+  const hasDialogueExamplesMarker = sectionOrder.some((sectionId) => {
+    const section = sectionMap.get(sectionId);
+    if (!section || section.enabled !== "true" || section.isMarker !== "true" || !section.markerConfig) return false;
+    if (section.groupId) {
+      const group = groupMap.get(section.groupId);
+      if (group && group.enabled !== "true") return false;
+    }
+    try {
+      return (JSON.parse(section.markerConfig) as MarkerConfig).type === "dialogue_examples";
+    } catch {
+      return false;
+    }
+  });
 
   // Inject choice variable values into variableValues
   // chatChoices is { variableName: value | value[] } — resolve and merge into variables so {{varName}} resolves
@@ -306,6 +321,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
   const macroCtx = await buildPromptMacroContext({
     db: input.db,
     characterIds: input.characterIds,
+    groupCharacterIds: input.groupCharacterIds,
     personaName: input.personaName,
     personaPhoneticName: input.personaPhoneticName,
     personaDescription: input.personaDescription,
@@ -356,6 +372,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
     previewOnly: input.previewOnly === true,
     resolveLorebookContent: (value) => resolveMacrosWithVariableSnapshot(value, macroCtx, deferNameMacroOptions),
     groupScenarioOverrideText: input.groupScenarioOverrideText ?? null,
+    hasDialogueExamplesMarker,
     macroCtx,
   };
 
@@ -809,6 +826,15 @@ function appendFallbackChatSummaryToSystemPrompt(
 function enforceStrictRoles(messages: ChatMLMessage[]): ChatMLMessage[] {
   if (messages.length === 0) return messages;
 
+  const hasSameAudience = (first: ChatMLMessage | undefined, second: ChatMLMessage) => {
+    const firstAudience = first?.hiddenFromAICharacterIds ?? [];
+    const secondAudience = second.hiddenFromAICharacterIds ?? [];
+    return (
+      firstAudience.length === secondAudience.length &&
+      firstAudience.every((characterId) => secondAudience.includes(characterId))
+    );
+  };
+
   const mergeInto = (target: ChatMLMessage, source: ChatMLMessage) => {
     target.content += "\n\n" + source.content;
     if (target.contextKind !== source.contextKind) {
@@ -830,8 +856,8 @@ function enforceStrictRoles(messages: ChatMLMessage[]): ChatMLMessage[] {
   let idx = 0;
   while (idx < messages.length && messages[idx]!.role === "system") {
     const msg = messages[idx]!;
-    const leadingSystem = result[0];
-    if (leadingSystem?.role === "system") {
+    const leadingSystem = result[result.length - 1];
+    if (leadingSystem?.role === "system" && hasSameAudience(leadingSystem, msg)) {
       mergeInto(leadingSystem, msg);
     } else {
       result.push({ ...msg });
@@ -844,14 +870,14 @@ function enforceStrictRoles(messages: ChatMLMessage[]): ChatMLMessage[] {
 
     if (msg.role === "system") {
       const prev = result[result.length - 1];
-      if (prev?.role === "system") mergeInto(prev, msg);
+      if (prev?.role === "system" && hasSameAudience(prev, msg)) mergeInto(prev, msg);
       else result.push({ ...msg });
       continue;
     }
 
     const prev = result[result.length - 1];
     const sameCharacter = (prev?.characterId ?? null) === (msg.characterId ?? null);
-    if (prev && prev.role === msg.role && sameCharacter) {
+    if (prev && prev.role === msg.role && sameCharacter && hasSameAudience(prev, msg)) {
       mergeInto(prev, msg);
     } else {
       result.push({ ...msg });

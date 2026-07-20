@@ -97,7 +97,8 @@ function getMusicProvider(settings: Record<string, unknown> | null | undefined):
 }
 
 function getCustomMusicSource(settings: Record<string, unknown> | null | undefined): CustomMusicSource {
-  return settings?.customMusicSource === "folder" || settings?.localMusicSource === "folder" ? "folder" : "game-assets";
+  const source = settings?.customMusicSource ?? settings?.localMusicSource;
+  return source === "folder" ? "folder" : "game-assets";
 }
 
 function normalizeAgentContextWrapFormat(value: unknown): WrapFormat {
@@ -1487,7 +1488,6 @@ function shouldRunAgentIndividually(config: Pick<AgentExecConfig, "type" | "sett
   // These agents either need compact prompts or carry large private extras that
   // must not be merged into unrelated batched agent requests.
   return (
-    config.type === "expression" ||
     config.type === "illustrator" ||
     config.type === "lorebook-keeper" ||
     resolveAgentResultType(config) === "text_rewrite" ||
@@ -2150,9 +2150,9 @@ function buildLoreBlock(context: AgentContext): string {
     for (const char of context.characters) {
       parts.push(`<character id="${char.id}" name="${char.name}">`);
       pushLoreField(parts, "Description", char.description, CHARACTER_LORE_DESCRIPTION_LIMIT);
-      pushLoreField(parts, "Appearance", char.appearance, CHARACTER_LORE_FIELD_LIMIT);
       pushLoreField(parts, "Personality", char.personality, CHARACTER_LORE_FIELD_LIMIT);
       pushLoreField(parts, "Backstory", char.backstory, CHARACTER_LORE_FIELD_LIMIT);
+      pushLoreField(parts, "Appearance", char.appearance, CHARACTER_LORE_FIELD_LIMIT);
       pushLoreField(parts, "Scenario", char.scenario, CHARACTER_LORE_FIELD_LIMIT);
       if (char.rpgStats?.enabled) {
         const pools = normalizeRpgStatPools(char.rpgStats);

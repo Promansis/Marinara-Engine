@@ -128,7 +128,7 @@ import { executeAgent, normalizeAgentContextSize, resolveAgentResultType } from 
 import { matchCustomAgentActivation } from "./generate/agent-activation.js";
 import { listCharacterSprites } from "../services/game/sprite.service.js";
 import { generateChatBackground } from "../services/game/game-asset-generation.js";
-import { sanitizeGameNpcAvatarUrls } from "../services/game/npc-avatar-utils.js";
+import { npcAvatarSlug, sanitizeGameNpcAvatarUrls } from "../services/game/npc-avatar-utils.js";
 import {
   parseCharacterCommands,
   parseCharacterCommandsBySpeaker,
@@ -137,7 +137,7 @@ import {
   type DirectMessageCommand,
 } from "../services/conversation/character-commands.js";
 import {
-  isNovelAiImageConnection,
+  suppressesReferencePromptLine,
   mergeIllustratorNegativePrompt,
   resolveIllustratorCharacterReferences,
 } from "./generate/illustrator-references.js";
@@ -205,6 +205,7 @@ import {
   computeSummaryHideIds,
   selectRollingSummaryMessages,
   injectIntoOutputFormatOrLastUser,
+  getMessageHiddenFromAICharacterIds,
   isManualTrackerCharacterId,
   isMessageHiddenFromAI,
   mergeCustomParameters,
@@ -233,6 +234,7 @@ import {
   shouldAbortOnPassiveGenerationDisconnect,
   shouldEnableAgentsForGeneration,
   shouldInjectIdentityFallback,
+  shouldRestoreRegenerationCharacterTarget,
   stripSpeakerTagsExceptLastAssistant,
   type PromptAttachment,
   type SimpleMessage,
@@ -426,6 +428,7 @@ import {
   type ConversationProfileParticipant,
 } from "../services/conversation/conversation-profiles.js";
 import {
+  filterPromptMessagesForCharacterAudience,
   scopeIndividualGroupMessagesForTarget,
   type GenerationPromptMessage,
 } from "../services/generation/prompt-message-scope.js";
@@ -753,7 +756,16 @@ export async function generateRoutes(app: FastifyInstance) {
       if (regenCandidate?.chatId === input.chatId) {
         const replay = normalizeGenerationReplay(parseExtra(regenCandidate.extra).generationReplay);
         applyGenerationReplayToRegenerateInput(input, replay);
-        if (!input.forCharacterId && regenCandidate.characterId) {
+        const regenerationCharacterIds = parseJsonField<string[]>(chat.characterIds, []);
+        if (
+          !input.forCharacterId &&
+          regenCandidate.characterId &&
+          shouldRestoreRegenerationCharacterTarget(
+            requestChatMode,
+            earlyMeta.groupChatMode,
+            regenerationCharacterIds,
+          )
+        ) {
           input.forCharacterId = regenCandidate.characterId;
         }
       }
@@ -1131,6 +1143,7 @@ export async function generateRoutes(app: FastifyInstance) {
             attachments,
             imageCaptioning: imageCaptioningRuntime,
             signal: abortController.signal,
+            debugMode: requestDebug,
           });
           if (typeof regenMsg.id === "string" && attachmentInputs.updatedAttachments) {
             try {
@@ -1235,6 +1248,7 @@ export async function generateRoutes(app: FastifyInstance) {
           attachments,
           imageCaptioning: imageCaptioningRuntime,
           signal: abortController.signal,
+          debugMode: requestDebug,
         });
         await persistPromptAttachmentCaptions(
           typeof m.id === "string" ? m.id : null,
@@ -1246,6 +1260,7 @@ export async function generateRoutes(app: FastifyInstance) {
           const photoName = userUploadedImages[0]?.filename ?? userUploadedImages[0]?.name;
           content += `\n[Sent a photo${photoName ? `: ${photoName}` : ""}]`;
         }
+        const hiddenFromAICharacterIds = getMessageHiddenFromAICharacterIds(m);
 
         return {
           id: typeof m.id === "string" ? m.id : null,
@@ -1253,6 +1268,7 @@ export async function generateRoutes(app: FastifyInstance) {
           content,
           contextKind: "history" as const,
           characterId: typeof m.characterId === "string" && m.characterId ? m.characterId : null,
+          ...(hiddenFromAICharacterIds.length ? { hiddenFromAICharacterIds } : {}),
           ...(attachmentInputs.images.length ? { images: attachmentInputs.images } : {}),
           ...(attachmentInputs.files.length ? { files: attachmentInputs.files } : {}),
           ...(Object.keys(providerMetadata).length ? { providerMetadata } : {}),
@@ -1578,6 +1594,7 @@ export async function generateRoutes(app: FastifyInstance) {
         const promptMacroContext = await buildPromptMacroContext({
           db: app.db,
           characterIds: promptCharacterIds,
+          groupCharacterIds: promptTargetCharacterId ? characterIds : undefined,
           personaName,
           personaPhoneticName,
           personaDescription,
@@ -1826,6 +1843,7 @@ export async function generateRoutes(app: FastifyInstance) {
             chatChoices,
             chatId: input.chatId,
             characterIds: promptCharacterIds,
+            groupCharacterIds: characterIds,
             personaId,
             personaName,
             personaPhoneticName,
@@ -3187,6 +3205,7 @@ export async function generateRoutes(app: FastifyInstance) {
         }
 
         const illustratorAgentForInterval = resolvedAgents.find((a) => a.type === "illustrator");
+        const createsAssistantMessage = !input.impersonate && !input.regenerateMessageId && !input.continueMessageId;
         if (
           illustratorAgentForInterval &&
           (await shouldSkipAgentByAssistantInterval({
@@ -3196,6 +3215,7 @@ export async function generateRoutes(app: FastifyInstance) {
             settings: illustratorAgentForInterval.settings,
             fallbackInterval: (getDefaultBuiltInAgentSettings("illustrator").runInterval as number) ?? 5,
             messages: allChatMessages,
+            countUpcomingAssistantMessage: createsAssistantMessage,
           }))
         ) {
           resolvedAgents.splice(resolvedAgents.indexOf(illustratorAgentForInterval), 1);
@@ -3589,6 +3609,7 @@ export async function generateRoutes(app: FastifyInstance) {
               settings: ceaAgent.settings,
               fallbackInterval: (getDefaultBuiltInAgentSettings("card-evolution-auditor").runInterval as number) ?? 8,
               messages: allChatMessages,
+              countUpcomingAssistantMessage: createsAssistantMessage,
             })
           ) {
             resolvedAgents.splice(resolvedAgents.indexOf(ceaAgent), 1);
@@ -3606,6 +3627,7 @@ export async function generateRoutes(app: FastifyInstance) {
               settings: amkAgent.settings,
               fallbackInterval: (getDefaultBuiltInAgentSettings("about-me-keeper").runInterval as number) ?? 8,
               messages: allChatMessages,
+              countUpcomingAssistantMessage: createsAssistantMessage,
             })
           ) {
             resolvedAgents.splice(resolvedAgents.indexOf(amkAgent), 1);
@@ -4752,6 +4774,17 @@ export async function generateRoutes(app: FastifyInstance) {
               ]);
             }
           }
+          const audienceCharacterIds = input.impersonate
+            ? []
+            : speaksOnlyTargetCharacter
+              ? targetCharId
+                ? [targetCharId]
+                : []
+              : characterIds;
+          gameAwareMessagesForGen = filterPromptMessagesForCharacterAudience(
+            gameAwareMessagesForGen,
+            audienceCharacterIds,
+          );
           const scopedMessagesForGen =
             isGroupChat && usesIndividualGroupGeneration && targetCharId
               ? scopeIndividualGroupMessagesForTarget(gameAwareMessagesForGen, targetCharId, charInfo)
@@ -7231,10 +7264,7 @@ export async function generateRoutes(app: FastifyInstance) {
                     continue;
                   }
                   // Try loading a stored NPC avatar from disk
-                  const safeName = name
-                    .toLowerCase()
-                    .replace(/[^a-z0-9]+/g, "-")
-                    .replace(/(^-|-$)/g, "");
+                  const safeName = npcAvatarSlug(name);
                   if (safeName) {
                     const npcAvatarPath = join(NPC_AVATAR_DIR, input.chatId, `${safeName}.png`);
                     if (existsSync(npcAvatarPath)) {
@@ -7319,10 +7349,7 @@ export async function generateRoutes(app: FastifyInstance) {
                             });
 
                             // Save to NPC avatars directory
-                            const safeName = npcName
-                              .toLowerCase()
-                              .replace(/[^a-z0-9]+/g, "-")
-                              .replace(/(^-|-$)/g, "");
+                            const safeName = npcAvatarSlug(npcName);
                             const npcDir = join(NPC_AVATAR_DIR, input.chatId);
                             if (!existsSync(npcDir)) mkdirSync(npcDir, { recursive: true });
                             writeFileSync(join(npcDir, `${safeName}.png`), Buffer.from(imageResult.base64, "base64"));
@@ -7884,14 +7911,17 @@ export async function generateRoutes(app: FastifyInstance) {
                       const imgApiKey = imgConnFull.apiKey || "";
                       const imgSource = (imgConnFull as any).imageGenerationSource || imgModel;
                       const imgServiceHint = imgConnFull.imageService || imgSource;
-                      const suppressReferencePromptLine = isNovelAiImageConnection({
-                        model: imgModel,
-                        baseUrl: imgBaseUrl,
-                        imageService: imgServiceHint,
-                        imageGenerationSource: imgSource,
-                      });
-                      const imageDefaults = resolveConnectionImageDefaults(imgConnFull);
                       const imageFallback = await resolveImageConnectionFallback(connections, imgConnFull.id);
+                      const suppressReferencePromptLine = suppressesReferencePromptLine(
+                        {
+                          model: imgModel,
+                          baseUrl: imgBaseUrl,
+                          imageService: imgServiceHint,
+                          imageGenerationSource: imgSource,
+                        },
+                        imageFallback,
+                      );
+                      const imageDefaults = resolveConnectionImageDefaults(imgConnFull);
                       const imageSettings = await loadImageGenerationUserSettings(app.db);
                       const styleProfileId =
                         ((chatMeta.gameSetupConfig as Record<string, unknown> | undefined)?.imageStyleProfileId as

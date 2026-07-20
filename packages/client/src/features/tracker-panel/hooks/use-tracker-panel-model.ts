@@ -1,33 +1,40 @@
 import { useCallback, useMemo } from "react";
+import type { PresentCharacter } from "@marinara-engine/shared";
 import { useAgentConfigs, type AgentConfigRow } from "../../../hooks/use-agents";
 import { usePersona } from "../../../hooks/use-characters";
+import {
+  mergeTrackerCardPortraitFields,
+  parseTrackerCardColorConfig,
+  useTrackerCardColorPreviews,
+} from "../../../lib/tracker-card-colors";
 import { useChat, useChatMessages } from "../../../hooks/use-chats";
 import type { TrackerDataPanelSection } from "../../../stores/ui.store";
 import { TRACKER_FEATURED_CHARACTER_META_KEY, TRACKER_SECTION_AGENT_TYPES } from "../lib/tracker-panel.constants";
 import {
   normalizeMaybeJsonStringArray,
   normalizeStringArray,
-  parseAgentSettings,
-  parseMetadataRecord,
+  parseRecord,
 } from "../lib/tracker-metadata";
 import { getLatestSpriteExpressionsFromMessages, normalizeSpriteExpressionMap } from "../lib/sprite-expressions";
 import { useTrackerSpriteLookup } from "./use-tracker-sprite-lookup";
 
 interface UseTrackerPanelModelOptions {
   activeChatId: string | null;
+  presentCharacters: PresentCharacter[];
   trackerPanelSectionOrder: TrackerDataPanelSection[];
   trackerPanelUseExpressionSprites: boolean;
 }
 
 export function useTrackerPanelModel({
   activeChatId,
+  presentCharacters,
   trackerPanelSectionOrder,
   trackerPanelUseExpressionSprites,
 }: UseTrackerPanelModelOptions) {
   const { data: chat } = useChat(activeChatId);
   const chatMeta = useMemo(() => {
     const raw = (chat as unknown as { metadata?: string | Record<string, unknown> } | undefined)?.metadata;
-    return parseMetadataRecord(raw);
+    return parseRecord(raw);
   }, [chat]);
   const chatCharacterIds = useMemo(
     () => normalizeMaybeJsonStringArray((chat as unknown as { characterIds?: unknown } | undefined)?.characterIds),
@@ -65,42 +72,54 @@ export function useTrackerPanelModel({
     trackerPanelUseExpressionSprites &&
     expressionAgentEnabled &&
     (personaTrackerEnabled || characterTrackerEnabled);
-  const characterDataLookupEnabled = !!activeChatId && characterTrackerEnabled;
+  const characterTrackerLookupEnabled = !!activeChatId && characterTrackerEnabled;
   const personaDataLookupEnabled = !!activeChatId && personaTrackerEnabled;
-  const agentConfigLookupEnabled = !!activeChatId && characterTrackerEnabled;
   const { data: messageData } = useChatMessages(activeChatId, 20, spriteExpressionLookupEnabled);
-  const { data: agentConfigs } = useAgentConfigs(agentConfigLookupEnabled);
+  const { data: agentConfigs } = useAgentConfigs(characterTrackerLookupEnabled);
   const { data: activePersonaData } = usePersona(personaDataLookupEnabled ? chatPersonaId : null);
+  const previewValues = useTrackerCardColorPreviews();
   const { characterSpriteLookup, resolveSpriteCharacterId } = useTrackerSpriteLookup({
-    enabled: characterDataLookupEnabled,
+    enabled: characterTrackerLookupEnabled,
     chatCharacterIds,
+    presentCharacters,
   });
   const characterTrackerConfig = useMemo(() => {
     if (!Array.isArray(agentConfigs)) return null;
     return (agentConfigs as AgentConfigRow[]).find((agent) => agent.type === "character-tracker") ?? null;
   }, [agentConfigs]);
   const characterTrackerSettings = useMemo(
-    () => parseAgentSettings(characterTrackerConfig?.settings),
+    () => parseRecord(characterTrackerConfig?.settings),
     [characterTrackerConfig],
   );
-  const autoGenerateCharacterAvatars = characterTrackerSettings.autoGenerateAvatars === true;
-  const cachedMessages = useMemo(() => messageData?.pages.flat() ?? [], [messageData]);
   const spriteExpressions = useMemo(
     () =>
-      getLatestSpriteExpressionsFromMessages(cachedMessages as Array<{ role?: string; extra?: unknown }>) ??
+      getLatestSpriteExpressionsFromMessages(
+        (messageData?.pages.flat() ?? []) as Array<{ role?: string; extra?: unknown }>,
+      ) ??
       normalizeSpriteExpressionMap(chatMeta.spriteExpressions),
-    [cachedMessages, chatMeta.spriteExpressions],
+    [messageData, chatMeta.spriteExpressions],
   );
   const featuredCharacterCardKeys = useMemo(
     () => new Set(normalizeStringArray(chatMeta[TRACKER_FEATURED_CHARACTER_META_KEY])),
     [chatMeta],
   );
-  const activePersona = activePersonaData ?? null;
+  const activePersona = useMemo(() => {
+    if (!activePersonaData) return null;
+    const preview = previewValues.get(`persona:${activePersonaData.id}`);
+    return preview
+      ? {
+          ...activePersonaData,
+          trackerCardColors: mergeTrackerCardPortraitFields(
+            parseTrackerCardColorConfig(preview),
+            parseTrackerCardColorConfig(activePersonaData.trackerCardColors),
+          ),
+        }
+      : activePersonaData;
+  }, [activePersonaData, previewValues]);
   const expressionSpritesEnabled = trackerPanelUseExpressionSprites && expressionAgentEnabled;
 
   return {
     activePersona,
-    autoGenerateCharacterAvatars,
     characterSpriteLookup,
     characterTrackerConfig,
     characterTrackerSettings,

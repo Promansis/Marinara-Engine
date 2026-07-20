@@ -6,11 +6,12 @@
 
 import { createHash, createHmac, randomBytes } from "crypto";
 import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from "fs";
-import { join } from "path";
+import { dirname, join } from "path";
 import { inflateRawSync } from "zlib";
 import { DATA_DIR } from "../../utils/data-dir.js";
 import { newId } from "../../utils/id-generator.js";
 import {
+  COMFYUI_PLACEHOLDER_REFERENCE_BASE64,
   DEFAULT_AUTOMATIC1111_DEFAULTS,
   DEFAULT_COMFYUI_DEFAULTS,
   DEFAULT_NOVELAI_DEFAULTS,
@@ -28,6 +29,11 @@ import { generateRunPodComfyUI } from "./runpod-comfyui.service.js";
 import { logger, logDebugOverride } from "../../lib/logger.js";
 import { assertInsideDir, normalizeLoopbackUrl, safeFetch, validateOutboundUrl } from "../../utils/security.js";
 import { notifyGenerationFallback, type GenerationFallbackNotifier } from "../generation/fallback-notification.js";
+import {
+  COMFYUI_MAX_REFERENCE_IMAGES,
+  findMissingComfyReferenceSlots,
+  numberedComfyReferencePlaceholder,
+} from "./comfyui-reference-placeholders.js";
 import {
   buildVeniceApiUrl,
   buildVeniceImageRequest,
@@ -316,6 +322,49 @@ export function saveImageToDisk(chatId: string, base64: string, ext: string): st
     throw error;
   }
   return `${chatId}/${filename}`;
+}
+
+export type StagedGalleryImage = {
+  filePath: string;
+  promote: () => void;
+  compensate: () => void;
+};
+
+/** Stage provider output without making it visible in the gallery. */
+export function stageImageToDisk(chatId: string, base64: string, ext: string): StagedGalleryImage {
+  const filename = `${newId()}.${ext}`;
+  const relativePath = `${chatId}/${filename}`;
+  const finalPath = assertInsideDir(GALLERY_DIR, join(GALLERY_DIR, relativePath));
+  const stagingDir = assertInsideDir(GALLERY_DIR, join(GALLERY_DIR, ".staging", "noodle"));
+  const stagedPath = assertInsideDir(stagingDir, join(stagingDir, `${filename}.${process.pid}.${Date.now()}.tmp`));
+  mkdirSync(stagingDir, { recursive: true });
+  try {
+    writeFileSync(stagedPath, Buffer.from(base64, "base64"));
+  } catch (error) {
+    try {
+      if (existsSync(stagedPath)) unlinkSync(stagedPath);
+    } catch {
+      /* best-effort cleanup */
+    }
+    throw error;
+  }
+
+  return {
+    filePath: relativePath,
+    promote() {
+      mkdirSync(dirname(finalPath), { recursive: true });
+      renameSync(stagedPath, finalPath);
+    },
+    compensate() {
+      for (const path of [stagedPath, finalPath]) {
+        try {
+          if (existsSync(path)) unlinkSync(path);
+        } catch {
+          /* best-effort compensation */
+        }
+      }
+    },
+  };
 }
 
 // ── Provider Implementations ──
@@ -2259,9 +2308,6 @@ const DEFAULT_COMFYUI_WORKFLOW: Record<string, unknown> = {
   },
 };
 
-const COMFYUI_PLACEHOLDER_REFERENCE_BASE64 =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
-const COMFYUI_MAX_REFERENCE_IMAGES = 4;
 const COMFYUI_OUTPUT_FILE_KEYS = ["gifs", "images"] as const;
 
 interface ComfyUiOutputFile {
@@ -2432,13 +2478,6 @@ function collectComfyReferenceImages(request: ImageGenRequest, defaults: ComfyUi
   return defaults.uploadPlaceholderOnMissingReference ? [COMFYUI_PLACEHOLDER_REFERENCE_BASE64] : [];
 }
 
-function numberedComfyReferencePlaceholder(
-  baseName: "reference_image" | "reference_image_name",
-  index: number,
-): string {
-  return `%${baseName}_${String(index + 1).padStart(2, "0")}%`;
-}
-
 async function generateComfyUI(baseUrl: string, request: ImageGenRequest): Promise<ImageGenResult> {
   const base = baseUrl.replace(/\/+$/, "");
   const defaults = resolveComfyUiDefaults(request);
@@ -2479,6 +2518,7 @@ async function generateComfyUI(baseUrl: string, request: ImageGenRequest): Promi
   }
   const workflowJson = JSON.stringify(workflow);
   const references = collectComfyReferenceImages(request, defaults);
+  let placeholderUploadedName: string | undefined;
   for (let i = 0; i < references.length; i++) {
     const reference = references[i]!;
     const referenceBase64 = decodeReferenceImage(reference).base64;
@@ -2490,8 +2530,26 @@ async function generateComfyUI(baseUrl: string, request: ImageGenRequest): Promi
 
     if (workflowJson.includes(namePlaceholder) || (i === 0 && workflowJson.includes("%reference_image_name%"))) {
       const uploadedName = await uploadComfyReferenceImage(base, reference, request.signal);
+      if (reference === COMFYUI_PLACEHOLDER_REFERENCE_BASE64) placeholderUploadedName = uploadedName;
       replacements[namePlaceholder] = uploadedName;
       if (i === 0) replacements["%reference_image_name%"] = uploadedName;
+    }
+  }
+  if (defaults.uploadPlaceholderOnMissingReference) {
+    for (const index of findMissingComfyReferenceSlots(workflowJson, "reference_image", references.length)) {
+      const placeholder = numberedComfyReferencePlaceholder("reference_image", index);
+      logger.debug("Backfilled ComfyUI reference slot %s with the placeholder image", placeholder);
+      replacements[placeholder] = COMFYUI_PLACEHOLDER_REFERENCE_BASE64;
+    }
+    for (const index of findMissingComfyReferenceSlots(workflowJson, "reference_image_name", references.length)) {
+      const placeholder = numberedComfyReferencePlaceholder("reference_image_name", index);
+      placeholderUploadedName ??= await uploadComfyReferenceImage(
+        base,
+        COMFYUI_PLACEHOLDER_REFERENCE_BASE64,
+        request.signal,
+      );
+      logger.debug("Backfilled ComfyUI reference slot %s with the uploaded placeholder", placeholder);
+      replacements[placeholder] = placeholderUploadedName;
     }
   }
   const resolvedWorkflow = replaceComfyUiPlaceholders(workflow, replacements);

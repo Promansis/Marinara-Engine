@@ -4,14 +4,20 @@ import type { PresentCharacter } from "@marinara-engine/shared";
 import { characterKeys } from "../../../hooks/use-characters";
 import { api } from "../../../lib/api-client";
 import { parseCharacterDisplayData } from "../../../lib/character-display";
+import {
+  mergeTrackerCardPortraitFields,
+  parseTrackerCardColorConfig,
+  useTrackerCardColorPreviews,
+} from "../../../lib/tracker-card-colors";
 import type { TrackerSpriteLookup } from "../tracker-panel.types";
 import { isSpriteLookupCharacterId } from "../lib/sprite-expressions";
-import { addAliasLookups, addExactNameLookups, normalizeLookupText } from "../lib/tracker-metadata";
+import { buildCharacterLookupMap, normalizeLookupText } from "../lib/tracker-metadata";
 import { getCharacterProfileColors } from "../lib/tracker-profile-style";
 
 interface UseTrackerSpriteLookupOptions {
   enabled: boolean;
   chatCharacterIds: string[];
+  presentCharacters: PresentCharacter[];
 }
 
 interface TrackerLookupCharacterRow {
@@ -27,7 +33,7 @@ function normalizeLookupCharacterIds(characterIds: string[]) {
 
   for (const id of characterIds) {
     const trimmed = id.trim();
-    if (!trimmed || seen.has(trimmed)) continue;
+    if (!isSpriteLookupCharacterId(trimmed) || seen.has(trimmed)) continue;
     seen.add(trimmed);
     normalized.push(trimmed);
   }
@@ -45,8 +51,16 @@ function isTrackerLookupCharacterRow(value: unknown): value is TrackerLookupChar
   );
 }
 
-export function useTrackerSpriteLookup({ enabled, chatCharacterIds }: UseTrackerSpriteLookupOptions) {
-  const lookupCharacterIds = useMemo(() => normalizeLookupCharacterIds(chatCharacterIds), [chatCharacterIds]);
+export function useTrackerSpriteLookup({ enabled, chatCharacterIds, presentCharacters }: UseTrackerSpriteLookupOptions) {
+  const lookupCharacterIds = useMemo(
+    () =>
+      normalizeLookupCharacterIds([
+        ...chatCharacterIds,
+        ...presentCharacters.map((character) => character.characterId),
+      ]),
+    [chatCharacterIds, presentCharacters],
+  );
+  const previewValues = useTrackerCardColorPreviews();
   const characterQueries = useQueries({
     queries: lookupCharacterIds.map((id) => ({
       queryKey: characterKeys.detail(id),
@@ -61,25 +75,31 @@ export function useTrackerSpriteLookup({ enabled, chatCharacterIds }: UseTracker
       .map((query) => query.data)
       .filter(isTrackerLookupCharacterRow);
     const knownIds = new Set(rows.map((character) => character.id));
-    const idByName = new Map<string, string>();
     const pictureById: Record<string, string> = {};
     const profileColorsById: TrackerSpriteLookup["profileColorsById"] = {};
     const displayRows = rows.map((character) => ({
       character,
       display: parseCharacterDisplayData(character),
     }));
+    const idByName = buildCharacterLookupMap(displayRows);
 
     for (const character of rows) {
       if (character.avatarPath) pictureById[character.id] = character.avatarPath;
       const profileColors = getCharacterProfileColors(character.data);
+      const preview = previewValues.get(`character:${character.id}`);
+      if (preview && profileColors) {
+        profileColors.trackerCardColors = mergeTrackerCardPortraitFields(
+          parseTrackerCardColorConfig(preview),
+          profileColors.trackerCardColors ?? parseTrackerCardColorConfig(null),
+        );
+      } else if (preview) {
+        profileColorsById[character.id] = { trackerCardColors: parseTrackerCardColorConfig(preview) };
+      }
       if (profileColors) profileColorsById[character.id] = profileColors;
     }
 
-    addExactNameLookups(displayRows, idByName);
-    addAliasLookups(displayRows, idByName);
-
     return { knownIds, idByName, pictureById, profileColorsById };
-  }, [characterQueries]);
+  }, [characterQueries, previewValues]);
 
   const resolveSpriteCharacterId = useCallback(
     (character: PresentCharacter) => {

@@ -27,7 +27,6 @@ import {
   ADMIN_SECRET_STORAGE_KEY,
   ApiError,
   api,
-  getAdminSecretHeader,
   getPrivilegedActionErrorMessage,
 } from "../../lib/api-client";
 import { chatBackgroundUrlToMetadata } from "../../lib/backgrounds";
@@ -147,7 +146,7 @@ import {
   type FolderPackageImportEntry,
   type PackageTextFile,
 } from "../../lib/folder-package-transfer";
-import { HOST_DEVICE_FILE_MANAGER_MESSAGE } from "../../lib/host-device";
+import { HOST_DEVICE_FILE_MANAGER_MESSAGE, HostDeviceFileManagerError, isHostDeviceBrowser } from "../../lib/host-device";
 import { isZipFile as isZipArchiveFile, readTextFilesFromZip } from "../../lib/read-zip-text";
 
 type CustomFontFace = {
@@ -955,6 +954,14 @@ const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMeta[] = [
     kind: "Slider",
   },
   {
+    id: "roleplay-reduced-paint-effects",
+    sectionId: "roleplay-messages",
+    label: "Reduced paint effects",
+    description: "Flatten costly Roleplay transparency, shadows, and scene overlays.",
+    aliases: ["roleplay", "performance", "firefox", "slow", "paint", "effects"],
+    kind: "Toggle",
+  },
+  {
     id: "scrollable-avatars",
     sectionId: "roleplay-messages",
     label: "Scrollable Avatars",
@@ -1009,6 +1016,14 @@ const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMeta[] = [
     description: "Choose a classic dialogue box or segment history display.",
     aliases: ["game", "vn", "history"],
     kind: "Button group",
+  },
+  {
+    id: "game-text-effects",
+    sectionId: "game-presentation",
+    label: "Game text effects",
+    description: "Animate dramatic words and explicit text-effect tags in Game mode.",
+    aliases: ["game", "text", "animation", "effects", "accessibility", "motion"],
+    kind: "Toggle",
   },
   {
     id: "weather-effects",
@@ -3302,8 +3317,8 @@ function GameAssetsSettings() {
   const handleOpenGameAssetFolder = (subfolder: string) => {
     openGameAssetsFolder.mutate(subfolder, {
       onError: (error) => {
-        if (error instanceof Error && error.message === HOST_DEVICE_FILE_MANAGER_MESSAGE) return;
-        toast.error("Failed to open game assets folder.");
+        if (error instanceof HostDeviceFileManagerError) return;
+        toast.error(getPrivilegedActionErrorMessage(error, "Failed to open game assets folder."));
       },
     });
   };
@@ -3500,6 +3515,17 @@ function AppearanceSettings() {
   const activeChatId = useChatStore((s) => s.activeChatId);
   const updateMeta = useUpdateChatMetadata();
   const setActiveSyncedTheme = useSetActiveTheme();
+  const handleOpenFontsFolder = async () => {
+    if (!isHostDeviceBrowser()) {
+      toast.info(HOST_DEVICE_FILE_MANAGER_MESSAGE);
+      return;
+    }
+    try {
+      await api.post("/fonts/open-folder");
+    } catch (error) {
+      toast.error(getPrivilegedActionErrorMessage(error, "Could not open fonts folder."));
+    }
+  };
   const handleAppBackgroundColorChange = useCallback(
     (color: string) => {
       const normalized = color.trim();
@@ -3676,6 +3702,8 @@ function AppearanceSettings() {
   const setChatChromeTextColor = useUIStore((s) => s.setChatChromeTextColor);
   const chatFontOpacity = useUIStore((s) => s.chatFontOpacity);
   const setChatFontOpacity = useUIStore((s) => s.setChatFontOpacity);
+  const roleplayReducedPaintEffects = useUIStore((s) => s.roleplayReducedPaintEffects);
+  const setRoleplayReducedPaintEffects = useUIStore((s) => s.setRoleplayReducedPaintEffects);
   const roleplayAvatarStyle = useUIStore((s) => s.roleplayAvatarStyle);
   const setRoleplayAvatarStyle = useUIStore((s) => s.setRoleplayAvatarStyle);
   const roleplayAvatarScale = useUIStore((s) => s.roleplayAvatarScale);
@@ -3686,6 +3714,8 @@ function AppearanceSettings() {
   const setRoleplaySpriteScale = useUIStore((s) => s.setRoleplaySpriteScale);
   const gameDialogueDisplayMode = useUIStore((s) => s.gameDialogueDisplayMode);
   const setGameDialogueDisplayMode = useUIStore((s) => s.setGameDialogueDisplayMode);
+  const gameTextEffectsEnabled = useUIStore((s) => s.gameTextEffectsEnabled);
+  const setGameTextEffectsEnabled = useUIStore((s) => s.setGameTextEffectsEnabled);
   const gameAvatarScale = useUIStore((s) => s.gameAvatarScale);
   const setGameAvatarScale = useUIStore((s) => s.setGameAvatarScale);
   const gameFullBodySpriteScale = useUIStore((s) => s.gameFullBodySpriteScale);
@@ -3936,7 +3966,7 @@ function AppearanceSettings() {
               </p>
             )}
             <button
-              onClick={() => api.post("/fonts/open-folder").catch(() => {})}
+              onClick={handleOpenFontsFolder}
               className={cn(SETTINGS_BUTTON_CLASS, "mt-1 self-start")}
             >
               <FolderOpen size="0.75rem" />
@@ -4228,6 +4258,14 @@ function AppearanceSettings() {
             </button>
           </label>
 
+          <ToggleSetting
+            anchorId={getSettingsControlAnchorId("roleplay-reduced-paint-effects")}
+            label="Reduced paint effects"
+            checked={roleplayReducedPaintEffects}
+            onChange={setRoleplayReducedPaintEffects}
+            help="Flattens costly Roleplay transparency, shadows, and scene overlays to keep navigation responsive, especially in Firefox. Applies immediately in every browser."
+          />
+
           <div className="flex flex-col gap-2">
             <div className="flex items-center gap-1.5">
               <Image size="0.75rem" className="text-[var(--muted-foreground)]" />
@@ -4501,6 +4539,14 @@ function AppearanceSettings() {
               ))}
             </div>
           </div>
+
+          <ToggleSetting
+            anchorId={getSettingsControlAnchorId("game-text-effects")}
+            label="Game text effects"
+            checked={gameTextEffectsEnabled}
+            onChange={setGameTextEffectsEnabled}
+            help="Animates dramatic words, ALL CAPS emphasis, parenthetical asides, and explicit text-effect tags in Game mode. Turn this off for plain, stable text."
+          />
         </div>
       </SettingsSection>
 
@@ -5142,7 +5188,7 @@ function ThemesSettings({ showIntro = true }: { showIntro?: boolean } = {}) {
                   className="flex flex-1 items-center gap-2 min-w-0"
                 >
                   <FileCode2 size="0.75rem" className="shrink-0" />
-                  <span className="truncate">{t.name}</span>
+                  <span className="mari-chrome-text truncate">{t.name}</span>
                   {activeCustomTheme?.id === t.id && <Check size="0.75rem" className="shrink-0" />}
                 </button>
                 <button
@@ -5780,7 +5826,7 @@ function ExtensionsSettings({ showIntro = true }: { showIntro?: boolean } = {}) 
                 </button>
                 <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                   <div className="flex min-w-0 items-center gap-1.5">
-                    <span className="truncate font-medium">{ext.name}</span>
+                    <span className="mari-chrome-text truncate font-medium">{ext.name}</span>
                     <span
                       className={cn(
                         "shrink-0 rounded px-1 py-px text-[0.5625rem] font-semibold",
@@ -6773,9 +6819,8 @@ function AdvancedSettings() {
   const handleCreateBackup = async () => {
     setCreatingBackup(true);
     try {
-      const res = await fetch("/api/backup/download", {
+      const res = await api.raw("/backup/download", {
         method: "POST",
-        headers: getAdminSecretHeader(),
       });
       if (!res.ok) throw new Error(await readSettingsResponseError(res, "Backup failed"));
 

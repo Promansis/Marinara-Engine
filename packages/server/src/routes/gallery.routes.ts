@@ -46,7 +46,7 @@ import {
 } from "../services/generation/media-connection-fallback.js";
 import { resolveIllustratorPromptRuntime } from "../services/generation/illustrator-prompt-runtime.js";
 import { resolveConversationSelfieSystemPrompt } from "../services/conversation/selfie-prompt.js";
-import { isNovelAiImageConnection, resolveIllustratorCharacterReferences } from "./generate/illustrator-references.js";
+import { suppressesReferencePromptLine, resolveIllustratorCharacterReferences } from "./generate/illustrator-references.js";
 import { resolveBaseUrl } from "./generate/generate-route-utils.js";
 import {
   compactVideoPromptText,
@@ -743,8 +743,7 @@ export async function galleryRoutes(app: FastifyInstance) {
 
       return reply
         .header("Content-Type", "video/mp4")
-        .header("Cache-Control", "public, max-age=31536000, immutable")
-        .send(readFileSync(filePath));
+        .sendFile(filename, join(GAME_SCENE_VIDEOS_ROOT, chatId), { maxAge: "1y", immutable: true });
     },
   );
 
@@ -795,7 +794,8 @@ export async function galleryRoutes(app: FastifyInstance) {
     const sceneVideos = createGameSceneVideosStorage(app.db);
     const { videoConnectionId, galleryImage, videoRuntime, durationSeconds, aspectRatio, prompt, videoFallback } =
       prepared;
-    const { source, serviceHint, baseUrl, apiKey, model, resolution, publicReferenceUpload } = videoRuntime;
+    const { source, serviceHint, baseUrl, apiKey, model, resolution, publicReferenceUpload, comfyWorkflow } =
+      videoRuntime;
 
     const galleryImagePath = resolveGalleryImagePath(galleryImage);
     if (!galleryImagePath) {
@@ -833,6 +833,7 @@ export async function galleryRoutes(app: FastifyInstance) {
         durationSeconds,
         aspectRatio,
         resolution,
+        comfyWorkflow,
         referenceImage,
         publicReferenceUpload,
         queue: input.queueMediaGenerationRequests,
@@ -988,12 +989,16 @@ export async function galleryRoutes(app: FastifyInstance) {
       return reply.status(502).send({ error: "The conversation model returned an empty selfie prompt." });
     }
 
-    const suppressReferencePromptLine = isNovelAiImageConnection({
-      model: imageConn.model,
-      baseUrl: imageConn.baseUrl,
-      imageService: imageConn.imageService,
-      imageGenerationSource: imageConn.imageGenerationSource,
-    });
+    const imageFallback = await resolveImageConnectionFallback(connections, imageConn.id);
+    const suppressReferencePromptLine = suppressesReferencePromptLine(
+      {
+        model: imageConn.model,
+        baseUrl: imageConn.baseUrl,
+        imageService: imageConn.imageService,
+        imageGenerationSource: imageConn.imageGenerationSource,
+      },
+      imageFallback,
+    );
     let finalPrompt = selfiePositivePrompt ? `${imagePrompt}, ${selfiePositivePrompt}` : imagePrompt;
     let referenceImages: string[] | undefined;
     const selfieUseAvatarReferences = meta.selfieUseAvatarReferences === true;
@@ -1100,7 +1105,6 @@ export async function galleryRoutes(app: FastifyInstance) {
     }
 
     try {
-      const imageFallback = await resolveImageConnectionFallback(connections, imageConn.id);
       const imageConnectionQueueKey = imageConn.id?.trim() || `${imageServiceHint}:${imageBaseUrl}:${imageModel}`;
       const imageResult = await runImageGenerationRequest({
         connectionKey: imageConnectionQueueKey,

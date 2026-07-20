@@ -26,10 +26,6 @@ const TRACKER_CARD_NEUTRAL_MATERIAL =
 const TRACKER_CARD_NEUTRAL_LIFT =
   "var(--tracker-card-neutral-lift, color-mix(in srgb, var(--muted-foreground) 78%, var(--foreground) 22%))";
 
-export function getSolidCssColor(value: string | null | undefined) {
-  return getTrackerCardSolidColor(value);
-}
-
 function clampPercent(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
@@ -87,38 +83,25 @@ function getTrackerProfilePalette(
 function withTrackerProfileStyle(palette: TrackerProfilePalette, background?: string): CSSProperties {
   const vars = getTrackerCardStyleVars({ palette, background });
   const style: CSSProperties & {
-    "--tracker-profile-accent": string;
     "--tracker-profile-accent-highlight-opacity": string;
     "--tracker-profile-accent-layer": string;
     "--tracker-profile-accent-solid": string;
     "--tracker-profile-accent-wash-opacity": string;
-    "--tracker-profile-body-rule-opacity": string;
     "--tracker-profile-body-wash-opacity": string;
-    "--tracker-profile-dialogue": string;
     "--tracker-profile-dialogue-border": string;
     "--tracker-profile-dialogue-glow": string;
     "--tracker-profile-display-layer": string;
     "--tracker-profile-display-solid": string;
-    "--tracker-profile-display-rail-opacity": string;
     "--tracker-profile-field-material": string;
     "--tracker-profile-field-material-blend": string;
-    "--tracker-profile-glow-opacity": string;
     "--tracker-profile-icon": string;
     "--tracker-profile-label-icon": string;
     "--tracker-profile-label-muted-text": string;
     "--tracker-profile-label-text": string;
-    "--tracker-profile-box": string;
-    "--tracker-profile-box-layer": string;
-    "--tracker-profile-frame": string;
-    "--tracker-profile-frame-blend": string;
     "--tracker-profile-material": string;
     "--tracker-profile-material-blend": string;
-    "--tracker-profile-panel": string;
-    "--tracker-profile-panel-blend": string;
     "--tracker-profile-panel-material": string;
     "--tracker-profile-panel-material-blend": string;
-    "--tracker-profile-panel-strong": string;
-    "--tracker-profile-panel-strong-blend": string;
     "--tracker-profile-portrait-base": string;
     "--tracker-profile-portrait-bottom-glow-opacity": string;
     "--tracker-profile-portrait-bottom-rule-opacity": string;
@@ -131,8 +114,6 @@ function withTrackerProfileStyle(palette: TrackerProfilePalette, background?: st
     "--tracker-profile-portrait-rim-opacity": string;
     "--tracker-profile-portrait-side-mask-opacity": string;
     "--tracker-profile-portrait-veil": string;
-    "--tracker-profile-muted-panel": string;
-    "--tracker-profile-muted-panel-blend": string;
     "--tracker-profile-nameplate": string;
     "--tracker-profile-nameplate-glow": string;
     "--tracker-profile-nameplate-rule": string;
@@ -147,7 +128,6 @@ function withTrackerProfileStyle(palette: TrackerProfilePalette, background?: st
     "--tracker-profile-slot-surface": string;
     "--tracker-profile-slot-surface-blend": string;
     "--tracker-profile-tint-opacity": string;
-    "--tracker-profile-display-opacity": string;
     "--tracker-profile-contrast-soft-top": string;
     "--tracker-profile-contrast-soft-mid": string;
     "--tracker-profile-contrast-soft-bottom": string;
@@ -170,38 +150,25 @@ function withTrackerProfileStyle(palette: TrackerProfilePalette, background?: st
     "--tracker-inline-rule": string;
     "--primary"?: string;
   } = {
-    "--tracker-profile-accent": vars.accent,
     "--tracker-profile-accent-highlight-opacity": vars.accentHighlightOpacity,
     "--tracker-profile-accent-layer": vars.accentLayer,
     "--tracker-profile-accent-solid": vars.accentSolid,
     "--tracker-profile-accent-wash-opacity": vars.accentWashOpacity,
-    "--tracker-profile-body-rule-opacity": vars.bodyRuleOpacity,
     "--tracker-profile-body-wash-opacity": vars.bodyWashOpacity,
-    "--tracker-profile-dialogue": vars.accent,
     "--tracker-profile-dialogue-border": vars.dialogueBorder,
     "--tracker-profile-dialogue-glow": vars.dialogueGlow,
     "--tracker-profile-display-layer": vars.displayLayer,
     "--tracker-profile-display-solid": vars.displaySolid,
-    "--tracker-profile-display-rail-opacity": vars.displayRailOpacity,
     "--tracker-profile-field-material": vars.fieldMaterial,
     "--tracker-profile-field-material-blend": vars.fieldMaterialBlend,
-    "--tracker-profile-glow-opacity": vars.glowOpacity,
     "--tracker-profile-icon": vars.icon,
     "--tracker-profile-label-icon": vars.labelIcon,
     "--tracker-profile-label-muted-text": vars.labelMutedText,
     "--tracker-profile-label-text": vars.labelText,
-    "--tracker-profile-box": vars.box,
-    "--tracker-profile-box-layer": vars.boxLayer,
-    "--tracker-profile-frame": vars.frame,
-    "--tracker-profile-frame-blend": vars.frameBlend,
     "--tracker-profile-material": vars.material,
     "--tracker-profile-material-blend": vars.materialBlend,
-    "--tracker-profile-panel": vars.panel,
-    "--tracker-profile-panel-blend": vars.panelBlend,
     "--tracker-profile-panel-material": vars.panelMaterial,
     "--tracker-profile-panel-material-blend": vars.panelMaterialBlend,
-    "--tracker-profile-panel-strong": vars.panelStrong,
-    "--tracker-profile-panel-strong-blend": vars.panelStrongBlend,
     "--tracker-profile-portrait-base": vars.portraitBase,
     "--tracker-profile-portrait-bottom-glow-opacity": vars.portraitBottomGlowOpacity,
     "--tracker-profile-portrait-bottom-rule-opacity": vars.portraitBottomRuleOpacity,
@@ -214,8 +181,6 @@ function withTrackerProfileStyle(palette: TrackerProfilePalette, background?: st
     "--tracker-profile-portrait-rim-opacity": vars.portraitRimOpacity,
     "--tracker-profile-portrait-side-mask-opacity": vars.portraitSideMaskOpacity,
     "--tracker-profile-portrait-veil": vars.portraitVeil,
-    "--tracker-profile-muted-panel": vars.mutedPanel,
-    "--tracker-profile-muted-panel-blend": vars.mutedPanelBlend,
     "--tracker-profile-nameplate": vars.nameplate,
     "--tracker-profile-nameplate-glow": vars.nameplateGlow,
     "--tracker-profile-nameplate-rule": vars.nameplateRule,
@@ -230,7 +195,6 @@ function withTrackerProfileStyle(palette: TrackerProfilePalette, background?: st
     "--tracker-profile-slot-surface": vars.slotSurface,
     "--tracker-profile-slot-surface-blend": vars.slotSurfaceBlend,
     "--tracker-profile-tint-opacity": vars.tintOpacity,
-    "--tracker-profile-display-opacity": vars.displayOpacity,
     "--tracker-profile-contrast-soft-top": vars.contrastSoftTop,
     "--tracker-profile-contrast-soft-mid": vars.contrastSoftMid,
     "--tracker-profile-contrast-soft-bottom": vars.contrastSoftBottom,
@@ -262,20 +226,16 @@ function withTrackerProfileStyle(palette: TrackerProfilePalette, background?: st
   return style;
 }
 
-export function getPersonaProfileColors(persona: Persona | null): TrackerProfileColors {
-  return {
-    dialogueColor: persona?.dialogueColor,
-    nameColor: persona?.nameColor,
-    boxColor: persona?.boxColor,
-    trackerCardColors: parseTrackerCardColorConfig(persona?.trackerCardColors),
-  };
-}
-
 export function getPersonaAmbienceStyle(
   persona: Persona | null,
   options: { paintBackground?: boolean } = {},
 ): CSSProperties {
-  const palette = getTrackerProfilePalette(getPersonaProfileColors(persona));
+  const palette = getTrackerProfilePalette({
+    dialogueColor: persona?.dialogueColor,
+    nameColor: persona?.nameColor,
+    boxColor: persona?.boxColor,
+    trackerCardColors: parseTrackerCardColorConfig(persona?.trackerCardColors),
+  });
   const style = withTrackerProfileStyle(palette);
 
   if (options.paintBackground === false) {
@@ -328,7 +288,7 @@ export function getCharacterAmbienceStyle(
   const stats = Array.isArray(character.stats) ? character.stats : [];
   const palette = getTrackerProfilePalette(
     profileColors,
-    getSolidCssColor(stats.find((stat) => stat.color)?.color) ?? DEFAULT_TRACKER_CARD_ACCENT,
+    getTrackerCardSolidColor(stats.find((stat) => stat.color)?.color) ?? DEFAULT_TRACKER_CARD_ACCENT,
   );
   const finish = getTrackerCardSkinFinish(palette.finish);
   const surfaceOpacity = palette.hasSurfacePaint ? palette.opacity.boxColorOpacity : 0;

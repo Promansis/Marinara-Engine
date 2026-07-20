@@ -605,6 +605,13 @@ export const VIDEO_GENERATION_SOURCES: VideoGenSource[] = [
     defaultBaseUrl: "https://api.seedance2.ai",
     requiresApiKey: true,
   },
+  {
+    id: "comfyui",
+    name: "ComfyUI",
+    description: "Local API-format workflows for WAN and other video models.",
+    defaultBaseUrl: "http://127.0.0.1:8188",
+    requiresApiKey: false,
+  },
 ];
 
 export const IMAGE_GENERATION_SOURCES: ImageGenSource[] = [
@@ -790,6 +797,7 @@ const VIDEO_GEN_MODELS: KnownModel[] = [
 export function inferVideoSource(model: string, baseUrl: string): string {
   const m = model.toLowerCase();
   const u = baseUrl.toLowerCase();
+  if (m === "comfyui" || u.includes(":8188") || u.includes("comfyui")) return "comfyui";
   if (m === "seedance" || m.startsWith("seedance-") || u.includes("seedance2.ai")) return "seedance";
   if (m === "openrouter" || u.includes("openrouter.ai")) return "openrouter";
   if (m.includes("/") && (m.includes("veo") || m.includes("wan"))) return "openrouter";
@@ -888,6 +896,10 @@ export function shouldSuppressUnknownModelParameters(
   if (!provider || !modelId?.trim()) return false;
   const normalizedProvider = normalizeProviderForCatalog(provider);
   if (!normalizedProvider) return false;
+  // Custom OAI-compatible endpoints are user-defined. Their explicit parameter
+  // switches are the compatibility policy; a built-in catalog cannot know what
+  // an arbitrary endpoint accepts.
+  if (normalizedProvider === "custom") return false;
   const catalog = MODEL_LISTS[normalizedProvider];
   if (!catalog || catalog.length === 0) return false;
   return !findKnownModel(normalizedProvider, modelId.trim());

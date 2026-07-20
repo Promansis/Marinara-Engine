@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
+  getTypewriterRevealCharsPerSecond,
   isMessageShadowedByLiveStream,
   reconcileTypewriterReplacement,
   shouldKeepStreamLiveThroughPostProcessing,
@@ -23,6 +25,38 @@ import {
 import { useAgentStore } from "../../packages/client/src/stores/agent.store.js";
 import { advanceWeatherFrameClock } from "../../packages/client/src/lib/weather-frame-clock.js";
 import { trackerEditableText } from "../../packages/client/src/features/tracker-panel/lib/tracker-display.js";
+import { executeAgentBatch } from "../../packages/server/src/services/agents/agent-executor.js";
+import { resolveAgentPipelineAgents } from "../../packages/server/src/services/generation/agent-resolution.js";
+import {
+  BaseLLMProvider,
+  type ChatCompletionResult,
+  type ChatMessage,
+  type ChatOptions,
+} from "../../packages/server/src/services/llm/base-provider.js";
+import type { AgentCallDebugEvent, AgentContext } from "../../packages/shared/src/types/agent.js";
+
+const retryAgentRouteSource = readFileSync(
+  new URL("../../packages/server/src/routes/generate/retry-agents-route.ts", import.meta.url),
+  "utf8",
+);
+assert.match(
+  retryAgentRouteSource,
+  /const updateRetryTargetGameStateSnapshot = async/,
+  "tracker retries should have an unanchored snapshot persistence path",
+);
+for (const resultType of [
+  "game_state_update",
+  "character_tracker_update",
+  "persona_stats_update",
+  "quest_update",
+  "custom_tracker_update",
+]) {
+  assert.doesNotMatch(
+    retryAgentRouteSource,
+    new RegExp(`retryMessageId\\s*&&\\s*result\\.success\\s*&&\\s*result\\.type === ["']${resultType}["']`),
+    `${resultType} retries must not require an assistant-message anchor`,
+  );
+}
 
 assert.equal(
   trackerEditableText({ name: "HP", value: 75, max: 100, color: "#ef4444" }),
@@ -30,6 +64,37 @@ assert.equal(
   "object-shaped tracker values must become editable text instead of invalid React children",
 );
 assert.equal(trackerEditableText({ nested: true }), '{"nested":true}');
+
+assert.equal(
+  getTypewriterRevealCharsPerSecond({
+    selectedCharsPerSecond: 90,
+    pendingCharacters: 45,
+    observedArrivalCharsPerSecond: null,
+    streamComplete: false,
+  }),
+  42.75,
+  "the first provider burst should be spread across roughly one second instead of draining immediately",
+);
+assert.equal(
+  getTypewriterRevealCharsPerSecond({
+    selectedCharsPerSecond: 90,
+    pendingCharacters: 20,
+    observedArrivalCharsPerSecond: 40,
+    streamComplete: false,
+  }),
+  38,
+  "an open stream should reveal slightly behind its observed arrival rate to absorb chunk gaps",
+);
+assert.equal(
+  getTypewriterRevealCharsPerSecond({
+    selectedCharsPerSecond: 90,
+    pendingCharacters: 200,
+    observedArrivalCharsPerSecond: 40,
+    streamComplete: true,
+  }),
+  90,
+  "a completed stream should drain at the user's selected speed",
+);
 
 assert.equal(
   shouldKeepStreamLiveThroughPostProcessing({
@@ -164,6 +229,120 @@ assert.equal(
   2,
   "rewrite editors should count as one call separate from the tracker call",
 );
+
+class CountingTrackerBatchProvider extends BaseLLMProvider {
+  calls = 0;
+
+  constructor() {
+    super("http://localhost", "");
+  }
+
+  async *chat(_messages: ChatMessage[], _options: ChatOptions): AsyncGenerator<string, void, unknown> {
+    return;
+  }
+
+  override async chatComplete(_messages: ChatMessage[], _options: ChatOptions): Promise<ChatCompletionResult> {
+    this.calls += 1;
+    return {
+      content: JSON.stringify({
+        expression: { expressions: [] },
+        "world-state": { date: "Unknown", time: "Night" },
+        background: { chosen: null, generate: null },
+      }),
+      toolCalls: [],
+      finishReason: "stop",
+      usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+    };
+  }
+}
+
+const trackerBatchProvider = new CountingTrackerBatchProvider();
+const trackerBatchDebugEvents: AgentCallDebugEvent[] = [];
+const fallbackResolvedAgents = await resolveAgentPipelineAgents({
+  connections: {
+    getDefaultForAgents: async () => null,
+    getFallbackForAgents: async () => null,
+    getWithKey: async () => null,
+  } as unknown as Parameters<typeof resolveAgentPipelineAgents>[0]["connections"],
+  configuredAgents: [
+    { ...makeAgent("expression", "sprite_change"), connectionId: null },
+    { ...makeAgent("world-state", "game_state_update"), connectionId: null },
+    { ...makeAgent("background", "background_change"), connectionId: null },
+  ],
+  chatId: "tracker-batch-regression",
+  chatEnableAgents: true,
+  hasPerChatAgentList: false,
+  perChatAgentSet: new Set<string>(),
+  agentPromptTemplateSelections: {},
+  chatProvider: trackerBatchProvider,
+  chatConnectionId: "chat-connection",
+  chatModel: "agent-model",
+  chatCustomParameters: {},
+  chatMaxOutputTokens: null,
+  chatMaxParallelJobs: 1,
+  chatEnableCaching: false,
+  chatAnthropicExtendedCacheTtl: false,
+  chatCachingAtDepth: 5,
+  resolveBaseUrl: () => "",
+});
+
+assert.equal(fallbackResolvedAgents.resolvedAgents.length, 3);
+assert.ok(
+  fallbackResolvedAgents.resolvedAgents.every(
+    (agent) => agent.provider === fallbackResolvedAgents.resolvedAgents[0]!.provider,
+  ),
+  "ordinary generation should reuse one provider wrapper when agents share the chat fallback connection",
+);
+
+const trackerBatchResults = await executeAgentBatch(
+  [
+    makeAgent("expression", "sprite_change"),
+    makeAgent("world-state", "game_state_update"),
+    makeAgent("background", "background_change"),
+  ],
+  {
+    chatId: "tracker-batch-regression",
+    chatMode: "roleplay",
+    recentMessages: [],
+    mainResponse: "Night settles over the lake.",
+    gameState: null,
+    characters: [],
+    persona: null,
+    memory: {},
+    activatedLorebookEntries: null,
+    writableLorebookIds: null,
+    chatSummary: null,
+    streaming: false,
+    agentDebug: (event) => trackerBatchDebugEvents.push(event),
+  } satisfies AgentContext,
+  trackerBatchProvider,
+  "agent-model",
+);
+
+assert.equal(trackerBatchProvider.calls, 1, "compatible tracker agents should share one provider request");
+assert.equal(trackerBatchResults.length, 3);
+assert.ok(trackerBatchResults.every((result) => result.success));
+assert.deepEqual(
+  trackerBatchDebugEvents.map((event) => ({
+    stage: event.stage,
+    agentType: event.agentType,
+    batchedAgentTypes: event.batchedAgentTypes,
+  })),
+  [
+    {
+      stage: "request",
+      agentType: "__batch__",
+      batchedAgentTypes: ["expression", "world-state", "background"],
+    },
+    {
+      stage: "response",
+      agentType: "__batch__",
+      batchedAgentTypes: ["expression", "world-state", "background"],
+    },
+  ],
+  "tracker batch debug output should describe the real combined request",
+);
+
 const queuedEchoBatch = enqueueEchoChamberMessages(
   {
     messages: [{ characterName: "Watcher", reaction: "The old reaction.", timestamp: 1 }],

@@ -30,6 +30,8 @@ Package lifecycle and storage:
 
 Configuration lives in a file named `.env`. This is a plain text file with one setting per line, in the form `KEY=value`. Lines that start with `#` are comments and the server ignores them.
 
+The `.env` file is data, not a shell script. Marinara does not execute `$`, command substitutions such as `$(...)`, or other shell syntax found in a value. The macOS/Linux and Termux launchers use the same non-evaluating rule for the small set of settings they need before server startup. A value already supplied in the launcher's environment takes precedence over the matching `.env` entry.
+
 Marinara creates an empty `.env` for you the first time it starts, so you do not have to make one by hand.
 
 - On normal installs, the `.env` file sits in the project root folder.
@@ -160,9 +162,9 @@ A timeout is the longest time the server waits for a slow job before giving up. 
 | `CHAT_GENERATION_TIMEOUT_MS` | `300000` (5 minutes) | Provider headers/time-to-first-token and inter-chunk timeout for ordinary Conversation, Roleplay, and Game generations. Valid range: `10000`-`3600000`. It does not change Agent, media, embedding, tool, or background-job timeouts. |
 | `EMBEDDING_TIMEOUT_MS` | `300000` (5 minutes) | Time allowed for one embedding request. Higher helps slow local embedding servers. |
 | `IMAGE_GEN_TIMEOUT_MS` | `1800000` (30 minutes) | Time allowed for one image generation request. |
-| `VIDEO_GEN_TIMEOUT_MS` | `1800000` (30 minutes) | Time allowed for one scene video generation request. |
+| `VIDEO_GEN_TIMEOUT_MS` | `1800000` (30 minutes) | Time allowed for one scene video generation request, including local ComfyUI video workflows. |
 | `VIDEO_GEN_MAX_RESPONSE_BYTES` | `167772160` (160 MiB) | Largest scene video download the server will accept. |
-| `COMFYUI_GEN_TIMEOUT` | `2400` (40 minutes, in seconds) | Time allowed for one ComfyUI workflow after it is queued. |
+| `COMFYUI_GEN_TIMEOUT` | `2400` (40 minutes, in seconds) | Time allowed for one ComfyUI image workflow after it is queued. |
 | `SPRITE_GENERATION_TIMEOUT_MS` | falls back to `IMAGE_GEN_TIMEOUT_MS` | Time allowed for one AI sprite generation job. |
 | `CUSTOM_TOOL_TIMEOUT_MS` | `60000` (1 minute) | Time allowed for one custom tool call. |
 | `MAX_TOOL_ROUNDS` | `100` | Most tool-call rounds before the model must give a final answer. |

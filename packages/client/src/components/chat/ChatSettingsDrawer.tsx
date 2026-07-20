@@ -42,6 +42,7 @@ import {
   Save,
   FileText,
   FilePlus2,
+  FolderOpen,
   Upload,
   Download,
   Star,
@@ -259,8 +260,11 @@ import {
   applyAgentAddSetupToAgentSettings,
   buildAgentAddMetadataPatch,
   buildInitialAgentAddSetupState,
+  normalizeCustomMusicExternalFolder,
+  normalizeCustomMusicSource,
   type AgentAddSetupState,
   type AgentAddSpriteSubject,
+  type CustomMusicSource,
   type MusicProvider,
 } from "./AgentAddSetupFields";
 import { GameWidgetFileControls, GameWidgetSetupEditor, normalizeGameHudWidgets } from "../game/GameWidgetSetupEditor";
@@ -1334,7 +1338,11 @@ export function ChatSettingsDrawer({
     typeof metadata.gameSpotifyPlaylistId === "string" ? metadata.gameSpotifyPlaylistId : "";
   const gameSpotifyArtist = typeof metadata.gameSpotifyArtist === "string" ? metadata.gameSpotifyArtist : "";
   const musicDjSettings = mergeBuiltInAgentSettings("spotify", agentConfigsByType.get("spotify")?.settings);
+  const customMusicSource = normalizeCustomMusicSource(musicDjSettings);
   const customMusicFolder = normalizeCustomMusicFolder(metadata.customMusicFolder ?? musicDjSettings.customMusicFolder);
+  const customMusicExternalFolder = normalizeCustomMusicExternalFolder(
+    musicDjSettings.customMusicExternalFolder ?? musicDjSettings.localMusicExternalFolder,
+  );
   const gameMusicDjEnabled =
     metadata.gameUseMusicDj === true || gameUseSpotifyMusic || activeAgentIds.includes("youtube");
   const spriteCharacterIds: string[] = Array.isArray(metadata.spriteCharacterIds) ? metadata.spriteCharacterIds : [];
@@ -2116,14 +2124,14 @@ export function ChatSettingsDrawer({
     [chat.id, updateMeta],
   );
   const renderIllustratorPromptConnectionSelect = () => (
-    <label className="flex flex-col gap-1">
+    <div className="flex flex-col gap-1">
       <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Prompt Model</span>
       <select
         value={illustratorPromptConnectionId}
         onChange={(event) => updateIllustratorPromptConnection(event.target.value)}
         className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
       >
-        <option value="">Main chat model</option>
+        <option value="">Agent default</option>
         {selectedIllustratorPromptConnectionMissing && (
           <option value={illustratorPromptConnectionId}>Missing connection</option>
         )}
@@ -2138,7 +2146,11 @@ export function ChatSettingsDrawer({
         Chooses the text model that writes Illustrator/selfie prompts. Image rendering still uses the selected image
         connection for this feature or the agent setup.
       </span>
-    </label>
+      <AgentDefaultStatus
+        overridden={illustratorPromptConnectionId.length > 0}
+        onReset={() => updateIllustratorPromptConnection("")}
+      />
+    </div>
   );
   const toggleIllustratorCharacterAppearance = useCallback(() => {
     updateMeta.mutate({
@@ -2152,6 +2164,12 @@ export function ChatSettingsDrawer({
       illustratorUseAvatarReferences: !illustratorUseAvatarReferences,
     });
   }, [chat.id, illustratorUseAvatarReferences, updateMeta]);
+  const resetIllustratorCharacterAppearance = useCallback(() => {
+    updateMeta.mutate({ id: chat.id, illustratorIncludeCharacterAppearance: null });
+  }, [chat.id, updateMeta]);
+  const resetIllustratorAvatarReferences = useCallback(() => {
+    updateMeta.mutate({ id: chat.id, illustratorUseAvatarReferences: null });
+  }, [chat.id, updateMeta]);
   const proseGuardianBannedWords =
     typeof metadata.proseGuardianBannedWords === "string"
       ? metadata.proseGuardianBannedWords
@@ -3367,6 +3385,10 @@ export function ChatSettingsDrawer({
         ...buildAgentAddMetadataPatch(agent.id, setup, metadata, {
           allowSecretPlot: supportsNarrativeDirectorSecretPlot,
           defaultPromptTemplateId: resolveDefaultAgentPromptTemplateId(nextSettings),
+          illustratorDefaults: {
+            includeCharacterAppearance: nextSettings.includeCharacterAppearance === true,
+            useAvatarReferences: nextSettings.useAvatarReferences === true,
+          },
         }),
       });
       toast.success(`Added ${agent.name}! You can access its settings in Agents section in Chat Settings!`);
@@ -3390,7 +3412,9 @@ export function ChatSettingsDrawer({
         ...mergeBuiltInAgentSettings("spotify", config?.settings),
         musicProvider: provider,
         musicPlayerSource: provider,
+        customMusicSource,
         customMusicFolder,
+        customMusicExternalFolder,
         enabledTools: provider === "spotify" ? (DEFAULT_AGENT_TOOLS.spotify ?? []) : [],
       };
 
@@ -3409,7 +3433,15 @@ export function ChatSettingsDrawer({
         settings: nextSettings,
       });
     },
-    [agentConfigsByType, createAgent, customMusicFolder, installedAgentManifests, updateAgentConfig],
+    [
+      agentConfigsByType,
+      createAgent,
+      customMusicExternalFolder,
+      customMusicFolder,
+      customMusicSource,
+      installedAgentManifests,
+      updateAgentConfig,
+    ],
   );
 
   const changeMusicDjProvider = useCallback(
@@ -3448,6 +3480,107 @@ export function ChatSettingsDrawer({
       await updateAgentConfig.mutateAsync({ id: config.id, settings: nextSettings });
     },
     [agentConfigsByType, chat.id, updateAgentConfig, updateMeta],
+  );
+
+  const updateCustomMusicLibrary = useCallback(
+    async (patch: { customMusicSource?: CustomMusicSource; customMusicExternalFolder?: string }) => {
+      try {
+        const config = agentConfigsByType.get("spotify") ?? null;
+        if (!config) throw new Error("Music DJ agent settings are missing.");
+        const nextSettings = {
+          ...mergeBuiltInAgentSettings("spotify", config.settings),
+          ...patch,
+        };
+        await updateAgentConfig.mutateAsync({ id: config.id, settings: nextSettings });
+      } catch (error) {
+        await showAlertDialog({
+          title: "Couldn't Update Music Folder",
+          message: error instanceof Error ? error.message : "The custom music folder could not be updated.",
+        });
+      }
+    },
+    [agentConfigsByType, updateAgentConfig],
+  );
+
+  const selectCustomMusicExternalFolder = useCallback(async () => {
+    try {
+      const data = await api.post<{ success: boolean; path: string }>("/game-assets/pick-local-music-folder");
+      if (data.success !== true || !data.path) throw new Error("No folder selected.");
+      await updateCustomMusicLibrary({
+        customMusicSource: "folder",
+        customMusicExternalFolder: data.path,
+      });
+    } catch (error) {
+      await showAlertDialog({
+        title: "Couldn't Select Music Folder",
+        message: error instanceof Error ? error.message : "The music folder could not be selected.",
+      });
+    }
+  }, [updateCustomMusicLibrary]);
+
+  const renderCustomMusicLibrarySettings = (surface: "game" | "roleplay") => (
+    <div className="space-y-2">
+      <label className="flex flex-col gap-1">
+        <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Custom music source</span>
+        <select
+          value={customMusicSource}
+          onChange={(event) =>
+            void updateCustomMusicLibrary({ customMusicSource: event.target.value as CustomMusicSource })
+          }
+          className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)]"
+        >
+          <option value="game-assets">Game Assets</option>
+          <option value="folder">Folder on this device</option>
+        </select>
+      </label>
+
+      {customMusicSource === "folder" ? (
+        <div className="flex flex-col gap-1">
+          <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+            Music folder on this device
+          </span>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input
+              key={`${chat.id}-${surface}-custom-music-folder-${customMusicExternalFolder}`}
+              defaultValue={customMusicExternalFolder}
+              onBlur={(event) =>
+                void updateCustomMusicLibrary({
+                  customMusicSource: "folder",
+                  customMusicExternalFolder: normalizeCustomMusicExternalFolder(event.target.value),
+                })
+              }
+              placeholder="No folder selected"
+              className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 font-mono text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]/50"
+            />
+            <button
+              type="button"
+              onClick={() => void selectCustomMusicExternalFolder()}
+              className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--muted)] px-3 text-xs font-medium text-[var(--foreground)] transition-colors hover:bg-[var(--accent)]"
+            >
+              <FolderOpen size="0.75rem" />
+              Choose Folder
+            </button>
+          </div>
+          <span className="text-[0.5625rem] text-[var(--muted-foreground)]">
+            Music DJ will choose from audio files in this folder and its subfolders.
+          </span>
+        </div>
+      ) : (
+        <label className="flex flex-col gap-1">
+          <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Game Assets music folder</span>
+          <input
+            key={`${chat.id}-${surface}-custom-music-${customMusicFolder}`}
+            defaultValue={customMusicFolder}
+            onBlur={(event) => void saveCustomMusicFolder(event.target.value)}
+            placeholder="music"
+            className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 font-mono text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]/50"
+          />
+          <span className="text-[0.5625rem] text-[var(--muted-foreground)]">
+            Reads local audio from Game Assets, for example <code>music</code> or <code>music/combat</code>.
+          </span>
+        </label>
+      )}
+    </div>
   );
 
   const toggleGameMusicDj = useCallback(async () => {
@@ -3822,6 +3955,7 @@ export function ChatSettingsDrawer({
                 <AgentPromptTemplateSelect
                   options={promptOptions}
                   selectedId={agentPromptTemplateSelections[agent.id] ?? getDefaultPromptTemplateIdForAgent(agent.id)}
+                  overridden={typeof agentPromptTemplateSelections[agent.id] === "string"}
                   onChange={(promptTemplateId) => updateAgentPromptTemplateSelection(agent.id, promptTemplateId)}
                 />
               </div>
@@ -4043,8 +4177,7 @@ export function ChatSettingsDrawer({
             </div>
           )}
 
-          {/* Hardcoded — CHAT_MODES.defaultAgents looks like the source of truth but is currently
-              unused, and wouldn't cover non-agent built-ins (GM pipeline, autonomous messaging, etc.) anyway. */}
+          {/* Keep this display tied to the runtime defaults below. */}
           {MODE_INTROS[chatMode as ChatMode] && (
             <div
               style={{ order: CHAT_SETTINGS_ORDER.modeIntro }}
@@ -6524,24 +6657,7 @@ export function ChatSettingsDrawer({
                         </div>
                       )}
 
-                      {gameMusicDjEnabled && musicPlayerSource === "custom" && (
-                        <label className="flex flex-col gap-1">
-                          <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                            Custom music folder
-                          </span>
-                          <input
-                            key={`${chat.id}-game-custom-music-${customMusicFolder}`}
-                            defaultValue={customMusicFolder}
-                            onBlur={(event) => void saveCustomMusicFolder(event.target.value)}
-                            placeholder="music"
-                            className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 font-mono text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]/50"
-                          />
-                          <span className="text-[0.5625rem] text-[var(--muted-foreground)]">
-                            Reads local audio from Game Assets, for example <code>music</code> or{" "}
-                            <code>music/combat</code>.
-                          </span>
-                        </label>
-                      )}
+                      {gameMusicDjEnabled && musicPlayerSource === "custom" && renderCustomMusicLibrarySettings("game")}
                     </AgentSettingsCard>
                   )}
 
@@ -7174,6 +7290,7 @@ export function ChatSettingsDrawer({
                               agentPromptTemplateSelections["echo-chamber"] ??
                               getDefaultPromptTemplateIdForAgent("echo-chamber")
                             }
+                            overridden={typeof agentPromptTemplateSelections["echo-chamber"] === "string"}
                             onChange={(promptTemplateId) =>
                               updateAgentPromptTemplateSelection("echo-chamber", promptTemplateId)
                             }
@@ -7212,6 +7329,7 @@ export function ChatSettingsDrawer({
                               agentPromptTemplateSelections["illustrator"] ??
                               getDefaultPromptTemplateIdForAgent("illustrator")
                             }
+                            overridden={typeof agentPromptTemplateSelections["illustrator"] === "string"}
                             onChange={(promptTemplateId) =>
                               updateAgentPromptTemplateSelection("illustrator", promptTemplateId)
                             }
@@ -7222,12 +7340,16 @@ export function ChatSettingsDrawer({
                             description="Append matched character appearance lines to image prompts, using only visible/generated names."
                             enabled={illustratorIncludeCharacterAppearance}
                             onToggle={toggleIllustratorCharacterAppearance}
+                            overridden={typeof metadata.illustratorIncludeCharacterAppearance === "boolean"}
+                            onReset={resetIllustratorCharacterAppearance}
                           />
                           <AgentSettingsToggle
                             label="Send Avatar References"
                             description="Send matching character and persona avatars or sprites as reference images when the provider supports them."
                             enabled={illustratorUseAvatarReferences}
                             onToggle={toggleIllustratorAvatarReferences}
+                            overridden={typeof metadata.illustratorUseAvatarReferences === "boolean"}
+                            onReset={resetIllustratorAvatarReferences}
                           />
                           <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]">
                             <p className="min-w-0 flex-1 text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
@@ -7398,31 +7520,16 @@ export function ChatSettingsDrawer({
                             </>
                           )}
 
-                          {musicPlayerSource === "custom" && (
-                            <label className="flex flex-col gap-1">
-                              <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                                Custom music folder
-                              </span>
-                              <input
-                                key={`${chat.id}-roleplay-custom-music-${customMusicFolder}`}
-                                defaultValue={customMusicFolder}
-                                onBlur={(event) => void saveCustomMusicFolder(event.target.value)}
-                                placeholder="music"
-                                className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 font-mono text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]/50"
-                              />
-                              <span className="text-[0.5625rem] text-[var(--muted-foreground)]">
-                                Reads local audio from Game Assets, for example <code>music</code> or{" "}
-                                <code>music/combat</code>.
-                              </span>
-                            </label>
-                          )}
+                          {musicPlayerSource === "custom" && renderCustomMusicLibrarySettings("roleplay")}
 
                           <p className="text-[0.625rem] text-[var(--muted-foreground)]">
                             {musicPlayerSource === "spotify"
                               ? "Roleplay DJ queues several fitting tracks when it changes music."
                               : musicPlayerSource === "youtube"
                                 ? "YouTube mode uses the Music DJ agent's YouTube connection and embedded player."
-                                : "Custom mode picks from local Game Assets music and plays it in Marinara Engine."}
+                                : customMusicSource === "folder"
+                                  ? "Custom mode picks from the selected device folder and plays it in Marinara Engine."
+                                  : "Custom mode picks from local Game Assets music and plays it in Marinara Engine."}
                           </p>
                         </AgentSettingsCard>
                       )}
@@ -8170,6 +8277,7 @@ export function ChatSettingsDrawer({
                                             agentPromptTemplateSelections[agent.id] ??
                                             getDefaultPromptTemplateIdForAgent(agent.id)
                                           }
+                                          overridden={typeof agentPromptTemplateSelections[agent.id] === "string"}
                                           onChange={(promptTemplateId) =>
                                             updateAgentPromptTemplateSelection(agent.id, promptTemplateId)
                                           }
@@ -8180,12 +8288,18 @@ export function ChatSettingsDrawer({
                                           description="Append matched character appearance lines to image prompts, using only visible/generated names."
                                           enabled={illustratorIncludeCharacterAppearance}
                                           onToggle={toggleIllustratorCharacterAppearance}
+                                          overridden={
+                                            typeof metadata.illustratorIncludeCharacterAppearance === "boolean"
+                                          }
+                                          onReset={resetIllustratorCharacterAppearance}
                                         />
                                         <AgentSettingsToggle
                                           label="Send Avatar References"
                                           description="Send matching character and persona avatars or sprites as reference images when the provider supports them."
                                           enabled={illustratorUseAvatarReferences}
                                           onToggle={toggleIllustratorAvatarReferences}
+                                          overridden={typeof metadata.illustratorUseAvatarReferences === "boolean"}
+                                          onReset={resetIllustratorAvatarReferences}
                                         />
                                       </AgentSettingsCard>
                                     )}
@@ -9390,31 +9504,38 @@ function AgentSettingsToggle({
   description,
   enabled,
   onToggle,
+  overridden = false,
+  onReset,
   surface = "card",
 }: {
   label: string;
   description: string;
   enabled: boolean;
   onToggle: () => void;
+  overridden?: boolean;
+  onReset?: () => void;
   surface?: "card" | "secondary";
 }) {
   return (
-    <SettingsSwitch
-      label={label}
-      description={description}
-      checked={enabled}
-      onChange={() => onToggle()}
-      labelPosition="start"
-      className={cn(
-        "justify-between rounded-lg px-3 py-2.5 text-left",
-        enabled
-          ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
-          : surface === "secondary"
-            ? "bg-[var(--secondary)] hover:bg-[var(--accent)]"
-            : "bg-[var(--background)]/75 ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
-      )}
-      labelClassName="text-[0.6875rem] font-medium"
-    />
+    <div className="space-y-1">
+      <SettingsSwitch
+        label={label}
+        description={description}
+        checked={enabled}
+        onChange={() => onToggle()}
+        labelPosition="start"
+        className={cn(
+          "justify-between rounded-lg px-3 py-2.5 text-left",
+          enabled
+            ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+            : surface === "secondary"
+              ? "bg-[var(--secondary)] hover:bg-[var(--accent)]"
+              : "bg-[var(--background)]/75 ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
+        )}
+        labelClassName="text-[0.6875rem] font-medium"
+      />
+      {onReset ? <AgentDefaultStatus overridden={overridden} onReset={onReset} /> : null}
+    </div>
   );
 }
 
@@ -10257,13 +10378,17 @@ function HapticConnectionPanel({
 function AgentPromptTemplateSelect({
   options,
   selectedId,
+  overridden = false,
   onChange,
 }: {
   options: AgentPromptTemplateOption[];
   selectedId: string;
+  overridden?: boolean;
   onChange: (promptTemplateId: string) => void;
 }) {
-  if (options.length <= 1) return null;
+  if (options.length <= 1) {
+    return overridden ? <AgentDefaultStatus overridden onReset={() => onChange("")} /> : null;
+  }
   const activeOption = options.find((option) => option.id === selectedId) ?? options[0];
 
   return (
@@ -10286,6 +10411,24 @@ function AgentPromptTemplateSelect({
         <p className="mt-1.5 text-[0.5625rem] leading-snug text-[var(--muted-foreground)]">
           {activeOption.description}
         </p>
+      ) : null}
+      <AgentDefaultStatus overridden={overridden} onReset={() => onChange("")} />
+    </div>
+  );
+}
+
+function AgentDefaultStatus({ overridden, onReset }: { overridden: boolean; onReset: () => void }) {
+  return (
+    <div className="flex items-center justify-between gap-2 px-1 text-[0.625rem] text-[var(--muted-foreground)]">
+      <span>{overridden ? "Chat override" : "Using agent default"}</span>
+      {overridden ? (
+        <button
+          type="button"
+          onClick={onReset}
+          className="font-medium text-[var(--primary)] transition-opacity hover:opacity-80"
+        >
+          Use agent default
+        </button>
       ) : null}
     </div>
   );

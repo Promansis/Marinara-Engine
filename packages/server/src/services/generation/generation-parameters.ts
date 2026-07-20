@@ -1,5 +1,10 @@
-import { DEFAULT_AGENT_MAX_TOKENS, MIN_AGENT_MAX_TOKENS } from "@marinara-engine/shared";
-import type { BaseLLMProvider } from "../llm/base-provider.js";
+import {
+  DEFAULT_AGENT_MAX_TOKENS,
+  MIN_AGENT_MAX_TOKENS,
+  generationParametersSchema,
+  resolveProviderReasoningEffort,
+} from "@marinara-engine/shared";
+import type { BaseLLMProvider, ChatOptions } from "../llm/base-provider.js";
 
 export function normalizeMaxContext(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined;
@@ -14,6 +19,64 @@ export function normalizeAgentMaxTokens(value: unknown, fallback = DEFAULT_AGENT
 
 export function applyProviderMaxTokensOverride(provider: BaseLLMProvider, maxTokens: number): number {
   return provider.maxTokensOverrideValue !== null ? Math.min(maxTokens, provider.maxTokensOverrideValue) : maxTokens;
+}
+
+export function resolveStoredMaxTokens(defaultParameters: unknown, calculatedMaxTokens: number): number {
+  let parsed = defaultParameters;
+  if (typeof parsed === "string") {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch {
+      return calculatedMaxTokens;
+    }
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return calculatedMaxTokens;
+  const source = parsed as Record<string, unknown>;
+  const enabledParameters = generationParametersSchema.shape.enabledParameters.safeParse(source.enabledParameters);
+  if (enabledParameters.success && enabledParameters.data?.maxTokens === false) return calculatedMaxTokens;
+  if (!Object.prototype.hasOwnProperty.call(source, "maxTokens") || source.maxTokens === undefined) {
+    return calculatedMaxTokens;
+  }
+  const maxTokens = generationParametersSchema.shape.maxTokens.safeParse(source.maxTokens);
+  return maxTokens.success ? maxTokens.data : calculatedMaxTokens;
+}
+
+/** Resolve the connection's standard generation defaults for non-preset generation paths. */
+export function resolveStoredChatOptions(
+  defaultParameters: unknown,
+  provider: string,
+  model: string,
+): Partial<ChatOptions> {
+  let parsed = defaultParameters;
+  if (typeof parsed === "string") {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch {
+      return {};
+    }
+  }
+  const result = generationParametersSchema.partial().safeParse(parsed);
+  if (!result.success) return {};
+  const parameters = result.data;
+  const reasoningEffort = resolveProviderReasoningEffort({
+    provider,
+    model,
+    reasoningEffort: parameters.reasoningEffort,
+  });
+  return {
+    temperature: parameters.temperature,
+    topP: parameters.topP,
+    topK: parameters.topK,
+    minP: parameters.minP,
+    frequencyPenalty: parameters.frequencyPenalty,
+    presencePenalty: parameters.presencePenalty,
+    reasoningEffort: reasoningEffort ?? undefined,
+    verbosity: parameters.verbosity ?? undefined,
+    serviceTier: parameters.serviceTier,
+    stop: parameters.stopSequences,
+    customParameters: parameters.customParameters,
+    enabledParameters: parameters.enabledParameters,
+  };
 }
 
 export function minContextLimit(...limits: Array<number | undefined>): number | undefined {

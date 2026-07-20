@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from "react";
 import type {
   TrackerCardColorConfig,
   TrackerCardColorMode,
@@ -12,13 +13,53 @@ export const MAX_TRACKER_CARD_PORTRAIT_FOCUS_Y = 140;
 export const DEFAULT_TRACKER_CARD_PORTRAIT_ZOOM = 1;
 export const MIN_TRACKER_CARD_PORTRAIT_ZOOM = 0.75;
 export const MAX_TRACKER_CARD_PORTRAIT_ZOOM = 2.35;
-export const TRACKER_CARD_COLOR_PREVIEW_BASE_FIELD = "__trackerCardColorPreviewBase";
+let trackerCardColorPreviewValues = new Map<string, string>();
+const trackerCardColorPreviewListeners = new Set<() => void>();
+
+export type TrackerCardColorTargetKey = `${"persona" | "character"}:${string}`;
+
+function notifyTrackerCardColorPreviewListeners() {
+  for (const listener of trackerCardColorPreviewListeners) listener();
+}
+
+export function setTrackerCardColorPreview(key: TrackerCardColorTargetKey, serializedConfig: string | null) {
+  const currentValue = trackerCardColorPreviewValues.get(key);
+  if (serializedConfig === null ? currentValue === undefined : currentValue === serializedConfig) return;
+
+  const nextValues = new Map(trackerCardColorPreviewValues);
+  if (serializedConfig === null) nextValues.delete(key);
+  else nextValues.set(key, serializedConfig);
+  trackerCardColorPreviewValues = nextValues;
+  notifyTrackerCardColorPreviewListeners();
+}
+
+export function useTrackerCardColorPreviews() {
+  return useSyncExternalStore(
+    (listener) => {
+      trackerCardColorPreviewListeners.add(listener);
+      return () => trackerCardColorPreviewListeners.delete(listener);
+    },
+    () => trackerCardColorPreviewValues,
+    () => trackerCardColorPreviewValues,
+  );
+}
+
+export function mergeTrackerCardPortraitFields(
+  config: TrackerCardColorConfig,
+  portraitSource: TrackerCardColorConfig,
+): TrackerCardColorConfig {
+  return cleanTrackerCardColorConfig({
+    ...config,
+    portraitFocusX: portraitSource.portraitFocusX,
+    portraitFocusY: portraitSource.portraitFocusY,
+    portraitZoom: portraitSource.portraitZoom,
+  });
+}
 const DEFAULT_TRACKER_CARD_SURFACE = "var(--card)";
 const TRACKER_CARD_FIXED_TINT_INTENSITY = 100;
 const DEFAULT_TRACKER_CARD_MATERIAL_BRIGHTNESS = 50;
 
 export interface TrackerCardFinish {
-  tintIntensity: number;
   materialBrightness: number;
   glowIntensity: number;
   contrastIntensity: number;
@@ -74,7 +115,6 @@ export interface TrackerCardPaintColors {
 export interface TrackerCardStylePalette {
   accent: string;
   accentLayer: string;
-  accentGradientLayer: string | null;
   displayLayer: string;
   displayGradientLayer: string | null;
   displaySolid: string;
@@ -93,39 +133,25 @@ export interface TrackerCardStyleVars {
   accentLayer: string;
   accentSolid: string;
   accentWashOpacity: string;
-  bodyRuleOpacity: string;
   bodyWashOpacity: string;
-  box: string;
-  boxLayer: string;
   dialogueBorder: string;
   dialogueGlow: string;
   displayLayer: string;
-  displayOpacity: string;
-  displayRailOpacity: string;
   displaySolid: string;
-  frame: string;
-  frameBlend: string;
   fieldMaterial: string;
   fieldMaterialBlend: string;
-  glowOpacity: string;
   icon: string;
   labelIcon: string;
   labelMutedText: string;
   labelText: string;
   material: string;
   materialBlend: string;
-  mutedPanel: string;
-  mutedPanelBlend: string;
   nameplate: string;
   nameplateGlow: string;
   nameplateRule: string;
   nameplateText: string;
-  panel: string;
-  panelBlend: string;
   panelMaterial: string;
   panelMaterialBlend: string;
-  panelStrong: string;
-  panelStrongBlend: string;
   portraitBase: string;
   portraitBottomGlowOpacity: string;
   portraitBottomRuleOpacity: string;
@@ -203,19 +229,16 @@ export interface TrackerCardSkinFinish {
 
 export const TRACKER_CARD_FINISH_DEFAULTS: Record<TrackerCardColorMode, TrackerCardFinish> = {
   default: {
-    tintIntensity: TRACKER_CARD_FIXED_TINT_INTENSITY,
     materialBrightness: DEFAULT_TRACKER_CARD_MATERIAL_BRIGHTNESS,
     glowIntensity: 25,
     contrastIntensity: 55,
   },
   chat: {
-    tintIntensity: TRACKER_CARD_FIXED_TINT_INTENSITY,
     materialBrightness: DEFAULT_TRACKER_CARD_MATERIAL_BRIGHTNESS,
     glowIntensity: 45,
     contrastIntensity: 55,
   },
   custom: {
-    tintIntensity: TRACKER_CARD_FIXED_TINT_INTENSITY,
     materialBrightness: DEFAULT_TRACKER_CARD_MATERIAL_BRIGHTNESS,
     glowIntensity: 45,
     contrastIntensity: 55,
@@ -404,7 +427,6 @@ export function getTrackerCardFinish(
   const defaults = TRACKER_CARD_FINISH_DEFAULTS[mode];
 
   return {
-    tintIntensity: TRACKER_CARD_FIXED_TINT_INTENSITY,
     materialBrightness: getClampedFinishValue(config?.materialBrightness) ?? defaults.materialBrightness,
     glowIntensity: getClampedFinishValue(config?.glowIntensity) ?? defaults.glowIntensity,
     contrastIntensity: getClampedFinishValue(config?.contrastIntensity) ?? defaults.contrastIntensity,
@@ -739,18 +761,15 @@ export function getTrackerCardStylePalette({
     ]),
     boxColorOpacity: opacity.boxColorOpacity,
   };
-  const surfaceFillOpacity = scalePercent(effectiveOpacity.boxColorOpacity, finish.tintIntensity);
-
   return {
     accent,
     accentLayer: getTrackerCardBackgroundPaintLayer(accentPaint ?? accent, effectiveOpacity.dialogueColorOpacity),
-    accentGradientLayer: getTrackerCardGradientPaintLayer(accentPaint, effectiveOpacity.dialogueColorOpacity),
     displayLayer: getTrackerCardBackgroundPaintLayer(displayPaint ?? displaySolid, effectiveOpacity.nameColorOpacity),
     displayGradientLayer: getTrackerCardGradientPaintLayer(displayPaint, effectiveOpacity.nameColorOpacity),
     displaySolid,
     box: materialBox,
     boxLayer: getTrackerCardBackgroundPaintLayer(materialSurfacePaint ?? materialBox, effectiveOpacity.boxColorOpacity),
-    boxGradientLayer: getTrackerCardGradientPaintLayer(materialSurfacePaint, surfaceFillOpacity),
+    boxGradientLayer: getTrackerCardGradientPaintLayer(materialSurfacePaint, effectiveOpacity.boxColorOpacity),
     finish,
     hasSurfacePaint: !!surfacePaint,
     opacity: effectiveOpacity,
@@ -814,12 +833,8 @@ export function getTrackerCardStyleVars({
   const fieldBottomBase = `color-mix(in srgb, ${surfaceNeutralBottom} 70%, var(--background) 30%)`;
   const surfaceBoxMix = scalePercent(finish.surfaceBoxMix, surfaceOpacity);
   const panelBoxMix = scalePercent(finish.panelBoxMix, surfaceOpacity);
-  const mutedBoxMix = Math.round(panelBoxMix * 0.55);
   const surfaceBackMix = Math.round(surfaceBoxMix * 0.65);
   const panelBackMix = Math.round(panelBoxMix * 0.6);
-  const mutedBackMix = Math.round(mutedBoxMix * 0.55);
-  const strongPanelBoxMix = Math.min(62, Math.round(panelBoxMix * 1.25));
-  const strongPanelBackMix = Math.round(strongPanelBoxMix * 0.62);
   const nameplateDisplayMix = scalePercent(9, displayOpacity);
   const nameplateAccentMix = scalePercent(Math.min(4, 1 + Math.round(finish.accentPanelMix * 0.1)), accentOpacity);
   const nameplateBoxMix = scalePercent(Math.min(5, 2 + Math.round(finish.panelBoxMix * 0.08)), surfaceOpacity);
@@ -830,9 +845,7 @@ export function getTrackerCardStyleVars({
   const statTrackAccentMix = scalePercent(finish.statTrackAccentMix, accentOpacity);
   const statTrackBoxMix = scalePercent(finish.statTrackBoxMix, surfaceOpacity);
   const framePaintLayers = [palette.boxGradientLayer];
-  const mutedPanelPaintLayers = [palette.boxGradientLayer];
   const panelPaintLayers = [palette.boxGradientLayer];
-  const panelStrongPaintLayers = [palette.boxGradientLayer];
   const statTrackPaintLayers = [palette.boxGradientLayer];
   const surfacePaintLayers = [palette.boxGradientLayer];
   const slotPaintLayers = [palette.displayGradientLayer];
@@ -866,23 +879,11 @@ export function getTrackerCardStyleVars({
       `color-mix(in srgb, ${materialDepthBase} ${100 - surfaceBackMix}%, ${surfaceMaterialPaint} ${surfaceBackMix}%))`,
     framePaintLayers,
   );
-  const mutedPanelBackground = getTrackerCardPaintedBackground(
-    `linear-gradient(135deg, ` +
-      `color-mix(in srgb, ${panelTopBase} ${100 - mutedBoxMix}%, ${surfaceMaterialPaint} ${mutedBoxMix}%), ` +
-      `color-mix(in srgb, ${panelBottomBase} ${100 - mutedBackMix}%, ${surfaceMaterialPaint} ${mutedBackMix}%))`,
-    mutedPanelPaintLayers,
-  );
   const panelBackground = getTrackerCardPaintedBackground(
     `linear-gradient(135deg, ` +
       `color-mix(in srgb, ${panelTopBase} ${100 - panelBoxMix}%, ${surfaceMaterialPaint} ${panelBoxMix}%), ` +
       `color-mix(in srgb, ${panelBottomBase} ${100 - panelBackMix}%, ${surfaceMaterialPaint} ${panelBackMix}%))`,
     panelPaintLayers,
-  );
-  const panelStrongBackground = getTrackerCardPaintedBackground(
-    `linear-gradient(135deg, ` +
-      `color-mix(in srgb, ${panelTopBase} ${100 - strongPanelBoxMix}%, ${surfaceMaterialPaint} ${strongPanelBoxMix}%), ` +
-      `color-mix(in srgb, ${panelBottomBase} ${100 - strongPanelBackMix}%, ${surfaceMaterialPaint} ${strongPanelBackMix}%))`,
-    panelStrongPaintLayers,
   );
   const surfaceBackground = getTrackerCardPaintedBackground(
     `linear-gradient(135deg, ` +
@@ -903,15 +904,9 @@ export function getTrackerCardStyleVars({
     statTrackPaintLayers,
   );
   const glowStrength = Math.min(1, Math.max(0, finish.glowMix / 56));
-  const glowOpacity = (glowStrength * opacityWeight(Math.max(displayOpacity, accentOpacity))).toFixed(3);
   const accentStrength = opacityWeight(accentOpacity);
   const accentHighlightOpacity =
     accentStrength <= 0 ? "0.000" : Math.min(0.68, glowStrength * accentStrength * 0.68).toFixed(3);
-  const displayStrength = opacityWeight(displayOpacity);
-  const displayRailOpacity =
-    displayStrength <= 0
-      ? "0.000"
-      : Math.min(0.44, 0.05 + displayStrength * 0.16 + displayStrength * (finish.glowMix / 56) * 0.22).toFixed(3);
   const materialReadableForeground = getMaterialReadableColor({
     base: "var(--foreground)",
     materialBrightness,
@@ -945,29 +940,19 @@ export function getTrackerCardStyleVars({
     accentLayer: palette.accentLayer,
     accentSolid: effectiveAccent,
     accentWashOpacity: scaleOpacity((finish.glowMix / 74).toFixed(3), bodyAccentOpacity),
-    bodyRuleOpacity: scaleOpacity("0.45", bodyDisplayOpacity),
     bodyWashOpacity: scaleOpacity(finish.displayOpacity, bodyDisplayOpacity),
-    box: effectiveBox,
-    boxLayer: palette.boxLayer,
     dialogueBorder: `color-mix(in srgb, ${dialogueChromePaint} ${dialogueBorderOpacity}%, transparent)`,
     dialogueGlow: `color-mix(in srgb, ${identityChromePaint} ${scalePercent(Math.min(16, Math.round(finish.glowMix * 0.46)), accentOpacity)}%, transparent)`,
     displayLayer: palette.displayLayer,
-    displayOpacity: scaleOpacity(finish.displayOpacity, displayOpacity),
-    displayRailOpacity,
     displaySolid: effectiveDisplaySolid,
-    frame: frameBackground,
-    frameBlend: getTrackerCardBackgroundBlendMode(framePaintLayers),
     fieldMaterial: fieldInsetBackground,
     fieldMaterialBlend: getTrackerCardBackgroundBlendMode(slotPaintLayers, "soft-light"),
-    glowOpacity,
     icon: effectiveAccent,
     labelIcon: readableLabelIcon,
     labelMutedText: readableLabelMutedText,
     labelText: readableLabelText,
     material: frameBackground,
     materialBlend: getTrackerCardBackgroundBlendMode(framePaintLayers),
-    mutedPanel: mutedPanelBackground,
-    mutedPanelBlend: getTrackerCardBackgroundBlendMode(mutedPanelPaintLayers),
     nameplate:
       `radial-gradient(ellipse at 50% 0%, color-mix(in srgb, ${effectiveDisplaySolid} ${nameplateHighlightMix}%, transparent) 0%, transparent 46%), ` +
       `linear-gradient(180deg, ` +
@@ -977,12 +962,8 @@ export function getTrackerCardStyleVars({
     nameplateGlow: `color-mix(in srgb, ${effectiveAccent} ${scalePercent(Math.min(12, Math.round(finish.glowMix * 0.22)), accentOpacity)}%, transparent)`,
     nameplateRule: `color-mix(in srgb, ${nameplateChromePaint} ${Math.max(20, Math.round(borderOpacity * 0.48))}%, transparent)`,
     nameplateText: `color-mix(in srgb, ${TRACKER_CARD_NAMEPLATE_TEXT_BASE} 78%, ${effectiveDisplaySolid} 22%)`,
-    panel: panelBackground,
-    panelBlend: getTrackerCardBackgroundBlendMode(panelPaintLayers, "overlay"),
     panelMaterial: panelBackground,
     panelMaterialBlend: getTrackerCardBackgroundBlendMode(panelPaintLayers, "overlay"),
-    panelStrong: panelStrongBackground,
-    panelStrongBlend: getTrackerCardBackgroundBlendMode(panelStrongPaintLayers, "overlay"),
     portraitBase: portraitStage.base,
     portraitBottomGlowOpacity: portraitStage.bottomGlowOpacity,
     portraitBottomRuleOpacity: portraitStage.bottomRuleOpacity,
@@ -1166,7 +1147,7 @@ function getOpacity(base: number, value: number, scale: number, max: number) {
 }
 
 export function getTrackerCardSkinFinish(finish: TrackerCardFinish): TrackerCardSkinFinish {
-  const tint = finish.tintIntensity;
+  const tint = TRACKER_CARD_FIXED_TINT_INTENSITY;
   const glow = finish.glowIntensity;
   const contrast = finish.contrastIntensity;
 

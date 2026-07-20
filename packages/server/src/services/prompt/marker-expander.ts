@@ -92,6 +92,8 @@ export interface MarkerContext {
   lorebookScanResultApplied?: boolean;
   /** When set, replaces all individual character scenario fields with this shared group scenario. */
   groupScenarioOverrideText?: string | null;
+  /** Whether the preset has an enabled marker that owns Example Dialogue placement. */
+  hasDialogueExamplesMarker?: boolean;
 }
 
 /** Expanded marker result. */
@@ -108,6 +110,45 @@ function cardPromptText(value: unknown): string {
 
 function resolveSanitizedPromptLeaf(value: string, ctx: MarkerContext, macroCtx: MacroContext = ctx.macroCtx): string {
   return sanitizePromptLeaf(resolveMacros(value, macroCtx), ctx.wrapFormat);
+}
+
+const DEFAULT_CHARACTER_MARKER_FIELDS = [
+  "description",
+  "personality",
+  "backstory",
+  "appearance",
+  "scenario",
+  "system_prompt",
+];
+
+const CHARACTER_CARD_FIELD_ORDER = new Map(
+  ["description", "personality", "backstory", "appearance", "scenario", "mes_example", "example_dialogue"].map(
+    (field, index) => [field, index],
+  ),
+);
+
+/** Keep selected card sections in the same order as the Character editor. */
+export function orderCharacterMarkerFields(fields: readonly string[]): string[] {
+  return fields
+    .map((field, index) => ({ field, index }))
+    .sort((left, right) => {
+      const leftOrder = CHARACTER_CARD_FIELD_ORDER.get(left.field) ?? Number.POSITIVE_INFINITY;
+      const rightOrder = CHARACTER_CARD_FIELD_ORDER.get(right.field) ?? Number.POSITIVE_INFINITY;
+      return leftOrder - rightOrder || left.index - right.index;
+    })
+    .map(({ field }) => field);
+}
+
+/** Append Example Dialogue to Character Info when no dedicated marker owns it. */
+export function resolveCharacterMarkerFields(
+  configuredFields: readonly string[] | undefined,
+  hasDialogueExamplesMarker: boolean,
+): string[] {
+  const fields = [...(configuredFields ?? DEFAULT_CHARACTER_MARKER_FIELDS)];
+  if (!hasDialogueExamplesMarker && !fields.includes("mes_example") && !fields.includes("example_dialogue")) {
+    fields.push("mes_example");
+  }
+  return orderCharacterMarkerFields(fields);
 }
 
 /**
@@ -148,14 +189,7 @@ async function expandCharacter(config: MarkerConfig, ctx: MarkerContext): Promis
     const profile = characterMacroProfileFromData(data);
     const characterMacroContext = macroContextForCharacterProfile(ctx.macroCtx, profile);
 
-    const fields = config.characterFields ?? [
-      "description",
-      "personality",
-      "scenario",
-      "backstory",
-      "appearance",
-      "system_prompt",
-    ];
+    const fields = resolveCharacterMarkerFields(config.characterFields, ctx.hasDialogueExamplesMarker === true);
 
     const charParts: string[] = [];
     for (const field of fields) {

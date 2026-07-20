@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
 
 const TRANSPARENT_GIF_BASE64 = "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
 const WHATS_NEW_SEEN_VERSION_KEY = "marinara:whats-new:seen-version";
@@ -660,6 +661,117 @@ test("Roleplay side panels synchronize their slide with the desktop shell resize
   }
 });
 
+test("Roleplay Active Context shows rich lorebook activation provenance", async ({ page, request }, testInfo) => {
+  const lorebookId = "roleplay-active-context-smoke-lorebook";
+  const chatResponse = await request.post("/api/chats", {
+    data: { name: "Roleplay Active Context Smoke", mode: "roleplay", characterIds: [] },
+  });
+  expect(chatResponse.ok()).toBeTruthy();
+  const chat = (await chatResponse.json()) as { id: string };
+  const metadataResponse = await request.patch(`/api/chats/${chat.id}/metadata`, {
+    data: { activeLorebookIds: [lorebookId] },
+  });
+  expect(metadataResponse.ok()).toBeTruthy();
+
+  await page.route(`**/api/lorebooks/scan/${chat.id}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        entries: [
+          {
+            id: "semantic-entry",
+            name: "Whispered Archive",
+            content: "The archive answers only to a carefully spoken passphrase.",
+            keys: ["archive", "passphrase"],
+            lorebookId,
+            lorebookName: "Archive Codex",
+            activationSources: ["keyword", "semantic"],
+            order: 20,
+            constant: false,
+            selective: false,
+            matchedKeys: ["archive"],
+            matchType: "semantic",
+            semanticScore: 0.864,
+          },
+          {
+            id: "location-entry",
+            name: "Northland Bank",
+            content: "The bank occupies the northern edge of the square.",
+            keys: ["bank"],
+            lorebookId,
+            lorebookName: "Archive Codex",
+            activationSources: ["current_location"],
+            order: 10,
+            constant: false,
+            selective: true,
+            matchedKeys: ["bank"],
+            matchType: "keyword",
+          },
+        ],
+        budgetSkippedEntries: [
+          {
+            id: "skipped-entry",
+            name: "Sealed Annex",
+            lorebookId,
+            lorebookName: "Archive Codex",
+            matchedKeys: ["annex"],
+            activationSources: ["keyword"],
+            matchType: "keyword",
+            estimatedTokens: 144,
+            lorebookBudget: 400,
+            lorebookUsedTokens: 360,
+            chatBudget: 900,
+            chatUsedTokens: 500,
+            blockedBy: "lorebook",
+          },
+        ],
+        totalTokens: 321,
+        totalEntries: 2,
+      }),
+    });
+  });
+  await page.addInitScript((chatId) => {
+    localStorage.setItem("marinara-active-chat-id", chatId);
+  }, chat.id);
+
+  try {
+    await page.goto("/");
+    if (testInfo.project.name.includes("mobile")) {
+      await page.getByRole("button", { name: "More options" }).click();
+    }
+    await page.locator('button[aria-label="Active Context"]:visible').click();
+
+    const panel = page.locator('[data-component="RoleplayActiveContextPanel"]');
+    await expect(panel).toBeVisible();
+    await expect(panel.getByText("2 active • ~321 tokens", { exact: true })).toBeVisible();
+    await expect(panel.getByRole("region", { name: "Current location lore" })).toContainText("Northland Bank");
+    await expect(panel.getByText("Whispered Archive", { exact: true })).toBeVisible();
+    await expect(panel.getByText("Vector 0.864", { exact: true })).toBeVisible();
+    await expect(panel.getByText("Archive Codex · keyword, semantic", { exact: true })).toBeVisible();
+    await expect(panel.getByText("Keys: archive, passphrase", { exact: true })).toBeVisible();
+    await expect(panel.getByText("Matched: archive", { exact: true })).toBeVisible();
+
+    await panel.getByText("Whispered Archive", { exact: true }).click();
+    await expect(panel.getByText("The archive answers only to a carefully spoken passphrase.", { exact: true })).toBeVisible();
+    await panel.getByText("1 matching lore entry was skipped by token budget", { exact: true }).click();
+    await expect(panel.getByText("Sealed Annex", { exact: true })).toBeVisible();
+    await panel.getByText("Sealed Annex", { exact: true }).click();
+    await expect(panel.getByText("Budget used before entry: 360 / 400", { exact: true })).toBeVisible();
+
+    const bounds = await panel.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(testInfo.project.use.viewport!.width);
+    await testInfo.attach("roleplay-active-context.png", {
+      body: await panel.screenshot(),
+      contentType: "image/png",
+    });
+  } finally {
+    await page.request.delete(`/api/chats/${chat.id}`);
+  }
+});
+
 test("rewrite shield switches repeatedly between original and rewritten message versions", async ({
   page,
 }, testInfo) => {
@@ -770,6 +882,226 @@ test("historical Game Peek Prompt returns the exact selected turn request", asyn
     ]);
   } finally {
     await request.delete(`/api/chats/${chat.id}`);
+  }
+});
+
+test("game widget edits preserve their live numeric values", async ({ request }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "Game widget persistence is covered on desktop.");
+
+  const chatResponse = await request.post("/api/chats", {
+    data: { name: "Game Widget Value Smoke", mode: "game", characterIds: [] },
+  });
+  expect(chatResponse.ok()).toBeTruthy();
+  const chat = (await chatResponse.json()) as { id: string };
+
+  try {
+    const widgets = [
+      {
+        id: "party-health",
+        type: "gauge",
+        label: "Party health",
+        position: "hud_left",
+        config: { startingValue: 20, value: 55, max: 100 },
+      },
+    ];
+    const updateResponse = await request.put(`/api/game/${chat.id}/widgets`, { data: { widgets } });
+    expect(updateResponse.ok()).toBeTruthy();
+
+    const storedResponse = await request.get(`/api/chats/${chat.id}`);
+    expect(storedResponse.ok()).toBeTruthy();
+    const storedChat = (await storedResponse.json()) as { metadata: string | Record<string, unknown> };
+    const metadata =
+      typeof storedChat.metadata === "string"
+        ? (JSON.parse(storedChat.metadata) as Record<string, unknown>)
+        : storedChat.metadata;
+    const storedWidgets = metadata.gameWidgetState as typeof widgets;
+    expect(storedWidgets[0]?.config).toMatchObject({ startingValue: 20, value: 55, max: 100 });
+  } finally {
+    await request.delete(`/api/chats/${chat.id}`);
+  }
+});
+
+test("NPC avatar uploads accept Cyrillic character names", async ({ request }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "NPC avatar upload compatibility is covered on desktop.");
+
+  const chatResponse = await request.post("/api/chats", {
+    data: { name: "Unicode NPC Avatar Smoke", mode: "roleplay", characterIds: [] },
+  });
+  expect(chatResponse.ok()).toBeTruthy();
+  const chat = (await chatResponse.json()) as { id: string };
+
+  try {
+    const uploadResponse = await request.post(`/api/avatars/npc/${chat.id}`, {
+      data: {
+        name: "Корвин",
+        avatar: `data:image/gif;base64,${TRANSPARENT_GIF_BASE64}`,
+      },
+    });
+    expect(uploadResponse.ok()).toBeTruthy();
+    const upload = (await uploadResponse.json()) as { avatarPath: string };
+    expect(decodeURIComponent(upload.avatarPath)).toContain("/корвин.gif?");
+
+    const imageResponse = await request.get(upload.avatarPath);
+    expect(imageResponse.ok()).toBeTruthy();
+    expect(imageResponse.headers()["content-type"]).toBe("image/gif");
+  } finally {
+    await request.delete(`/api/chats/${chat.id}`);
+  }
+});
+
+test("PocketTTS discovers server voices and uses its speech endpoint", async ({ page, request }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "PocketTTS routing is covered on desktop.");
+
+  let receivedPath = "";
+  let receivedContentType = "";
+  let receivedBody = "";
+  const pocketTts = createServer((incoming, response) => {
+    const chunks: Buffer[] = [];
+    incoming.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    incoming.on("end", () => {
+      receivedPath = incoming.url ?? "";
+      receivedContentType = String(incoming.headers["content-type"] ?? "");
+      receivedBody = Buffer.concat(chunks).toString("utf8");
+      if (incoming.method === "GET" && incoming.url === "/v1/voices") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({
+            object: "list",
+            data: [
+              { id: "alba", name: "Alba", object: "voice", type: "builtin" },
+              { id: "AgentCobra.wav", name: "Agent Cobra", object: "voice", type: "custom" },
+            ],
+          }),
+        );
+        return;
+      }
+      response.writeHead(200, { "Content-Type": "audio/mpeg" });
+      response.end(Buffer.from([0x49, 0x44, 0x33]));
+    });
+  });
+  await new Promise<void>((resolve) => pocketTts.listen(0, "127.0.0.1", resolve));
+  let originalConfig: unknown;
+
+  try {
+    const address = pocketTts.address();
+    if (!address || typeof address === "string") throw new Error("PocketTTS mock did not bind to a TCP port");
+
+    const originalConfigResponse = await request.get("/api/tts/config");
+    expect(originalConfigResponse.ok()).toBeTruthy();
+    originalConfig = await originalConfigResponse.json();
+
+    const configResponse = await request.put("/api/tts/config", {
+      data: {
+        enabled: true,
+        source: "pockettts",
+        baseUrl: `http://127.0.0.1:${address.port}`,
+        model: "pocket-tts",
+        voice: "alba",
+        audioFormat: "mp3",
+      },
+    });
+    expect(configResponse.ok()).toBeTruthy();
+
+    const voicesResponse = await request.get("/api/tts/voices");
+    expect(voicesResponse.ok()).toBeTruthy();
+    expect(receivedPath).toBe("/v1/voices");
+    expect(await voicesResponse.json()).toEqual({
+      voices: ["alba", "AgentCobra.wav"],
+      voiceOptions: [
+        {
+          id: "alba",
+          name: "Alba",
+          description: null,
+          previewUrl: null,
+          category: "builtin",
+          labels: null,
+        },
+        {
+          id: "AgentCobra.wav",
+          name: "Agent Cobra",
+          description: null,
+          previewUrl: null,
+          category: "custom",
+          labels: null,
+        },
+      ],
+      fromProvider: true,
+      source: "pockettts",
+    });
+
+    const speechResponse = await request.post("/api/tts/speak", {
+      data: { text: "Hello from Marinara." },
+    });
+    expect(speechResponse.ok()).toBeTruthy();
+    expect(receivedPath).toBe("/v1/audio/speech");
+    expect(receivedContentType).toContain("application/json");
+    expect(JSON.parse(receivedBody)).toMatchObject({
+      model: "pocket-tts",
+      input: "Hello from Marinara.",
+      voice: "alba",
+      response_format: "mp3",
+      speed: 1,
+    });
+
+    const fallbackConfigResponse = await request.put("/api/tts/config", {
+      data: {
+        enabled: true,
+        source: "pockettts",
+        baseUrl: `http://127.0.0.1:${address.port}`,
+        model: "pocket-tts",
+        voice: "",
+        audioFormat: "mp3",
+      },
+    });
+    expect(fallbackConfigResponse.ok()).toBeTruthy();
+
+    const fallbackSpeechResponse = await request.post("/api/tts/speak", {
+      data: { text: "Use the default PocketTTS voice." },
+    });
+    expect(fallbackSpeechResponse.ok()).toBeTruthy();
+    expect(JSON.parse(receivedBody)).toMatchObject({
+      input: "Use the default PocketTTS voice.",
+      voice: "alba",
+    });
+
+    await page.goto("/");
+    await page.locator('[data-tour="panel-connections"]').click();
+    const rightPanel = page.locator('[data-component="RightPanel"]');
+    await expect(rightPanel).toBeVisible();
+    const ttsLabel = rightPanel.getByText("Text to Speech", { exact: true });
+    const ttsCard = ttsLabel.locator("xpath=../../..");
+    await ttsCard.getByTitle("Expand").click();
+    const serverVoiceSelect = ttsCard.getByLabel("PocketTTS server voice");
+    await expect(serverVoiceSelect.locator('option[value="AgentCobra.wav"]')).toHaveText(
+      "Agent Cobra (AgentCobra.wav)",
+    );
+    await expect(ttsCard.getByText("Loaded 2 voices from PocketTTS server.", { exact: true })).toBeVisible();
+
+    await ttsCard.getByText("Only read dialogues", { exact: true }).click();
+    const dialoguePause = ttsCard.getByLabel("Pause between dialogues in seconds");
+    await expect(dialoguePause).toHaveAttribute("min", "1");
+    await expect(dialoguePause).toHaveAttribute("max", "60");
+    await expect(dialoguePause).toHaveAttribute("step", "1");
+    await expect(dialoguePause).toHaveValue("1");
+    await expect(ttsCard.getByText("Pause between dialogues: 1 second", { exact: true })).toBeVisible();
+
+    await dialoguePause.fill("60");
+    await expect(ttsCard.getByText("Pause between dialogues: 60 seconds", { exact: true })).toBeVisible();
+    await expect
+      .poll(async () => {
+        const response = await request.get("/api/tts/config");
+        const config = (await response.json()) as { dialoguePauseMs?: number };
+        return config.dialoguePauseMs;
+      })
+      .toBe(60_000);
+  } finally {
+    try {
+      if (originalConfig !== undefined) await request.put("/api/tts/config", { data: originalConfig });
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        pocketTts.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
   }
 });
 
@@ -1769,9 +2101,7 @@ test("Conversation feature packages expose commands and settings without per-cha
     await expect(agentsSection).toHaveCount(1);
     await agentsSection.click();
     await expect(
-      drawer.locator(
-        '[data-capability-client-state="loading"][data-capability-package-id="conversation-calls"]',
-      ),
+      drawer.locator('[data-capability-client-state="loading"][data-capability-package-id="conversation-calls"]'),
     ).toBeVisible();
     releaseInitialClientLoad.resolve();
     const clientLoadFailure = drawer.getByRole("alert").filter({ hasText: "Conversation Calls didn't load" });
@@ -2067,10 +2397,9 @@ test("Game setup only shows features owned by installed agents", async ({ page, 
       "Imported Tower Run",
     );
     await expect(
-      initialDialog.getByText(
-        "tower-run.marinara-game-setup.json loaded. Review the steps, then start the new game.",
-        { exact: true },
-      ),
+      initialDialog.getByText("tower-run.marinara-game-setup.json loaded. Review the steps, then start the new game.", {
+        exact: true,
+      }),
     ).toBeVisible();
 
     const temperatureField = initialDialog.locator('input[inputmode="decimal"]').first();
@@ -2845,7 +3174,7 @@ test("selected Lorebook entries accept one batch setting update", async ({ page 
   }
 });
 
-test("Lorebook context filter chips keep complete borders inside their scroll areas", async ({ page }, testInfo) => {
+test("Lorebook context filter chips expose Noodle and keep complete borders", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name.includes("mobile"), "Desktop Lorebook filter geometry is covered on desktop.");
 
   const suffix = Date.now();
@@ -2882,6 +3211,7 @@ test("Lorebook context filter chips keep complete borders inside their scroll ar
     },
   });
   expect(entryResponse.ok()).toBeTruthy();
+  const entry = (await entryResponse.json()) as { id: string };
 
   try {
     await page.goto("/");
@@ -2896,6 +3226,18 @@ test("Lorebook context filter chips keep complete borders inside their scroll ar
     await expect(chips.first()).toBeVisible();
     expect(await chips.count()).toBeGreaterThan(8);
     await expect(filterArea.locator("button.mari-editor-chip--accent")).toHaveCount(4);
+
+    const noodleChip = filterArea.getByRole("button", { name: "Noodle", exact: true });
+    await expect(noodleChip).toBeVisible();
+    await noodleChip.click();
+    await expect(noodleChip).toHaveClass(/mari-editor-chip--accent/u);
+    await expect
+      .poll(async () => {
+        const entriesResponse = await page.request.get(`/api/lorebooks/${lorebook.id}/entries`);
+        const entries = (await entriesResponse.json()) as Array<{ id: string; generationTriggerFilters: string[] }>;
+        return entries.find((candidate) => candidate.id === entry.id)?.generationTriggerFilters ?? [];
+      })
+      .toContain("noodle");
 
     const invalidBorders = await chips.evaluateAll((elements) =>
       elements
@@ -4352,7 +4694,7 @@ test("Noodle mobile shell keeps navigation usable across every view", async ({ p
   await expect(drawer).toHaveCount(0);
   const composer = page.getByRole("heading", { name: "New post" });
   await expect(composer).toBeVisible();
-  await page.getByRole("button", { name: "Close post composer" }).click();
+  await page.getByRole("button", { name: "Close New post" }).click();
 
   await noodle.getByRole("button", { name: "Open Noodle account menu" }).click();
   await accountMenu.getByRole("button", { name: "Settings", exact: true }).click();
@@ -4436,6 +4778,125 @@ test("chat mode tabs and new-chat actions stay reachable", async ({ page }) => {
   }
 
   expect(errors).toEqual([]);
+});
+
+test("Roleplay reduced paint effects preserve semantic and custom styling", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name.includes("mobile"), "Reduced Roleplay paint styling is covered on desktop.");
+
+  const characterResponse = await page.request.post("/api/characters", {
+    data: {
+      data: {
+        name: "Reduced Paint Tint",
+        extensions: { boxColor: "#123456" },
+      },
+    },
+  });
+  expect(characterResponse.ok()).toBeTruthy();
+  const character = (await characterResponse.json()) as { id: string };
+  const chatResponse = await page.request.post("/api/chats", {
+    data: { name: "Reduced Roleplay Paint Smoke", mode: "roleplay", characterIds: [character.id] },
+  });
+  expect(chatResponse.ok()).toBeTruthy();
+  const chat = (await chatResponse.json()) as { id: string };
+
+  try {
+    const userMessageResponse = await page.request.post(`/api/chats/${chat.id}/messages`, {
+      data: {
+        role: "user",
+        content: "The default bubble should become transparent.",
+      },
+    });
+    expect(userMessageResponse.ok()).toBeTruthy();
+    const messageResponse = await page.request.post(`/api/chats/${chat.id}/messages`, {
+      data: {
+        role: "assistant",
+        characterId: character.id,
+        content: "A semantic ring must survive the lighter paint profile.",
+        extra: { isConversationStart: true },
+      },
+    });
+    expect(messageResponse.ok()).toBeTruthy();
+
+    await page.addInitScript((chatId) => localStorage.setItem("marinara-active-chat-id", chatId), chat.id);
+    await page.goto("/");
+
+    const surface = page.locator('[data-chat-mode="roleplay"]');
+    const bubble = page.locator('[data-message-role="assistant"] .mari-rp-bubble').first();
+    const defaultBubble = page.locator('[data-message-role="user"] .mari-rp-bubble').first();
+    await expect(surface).not.toHaveClass(/mari-rp-reduced-paint/);
+    await expect(bubble).toBeVisible();
+    await expect(page.locator(".rpg-vignette")).not.toHaveCSS("display", "none");
+
+    await page.locator('[data-tour="panel-settings"]').click();
+    await page.getByRole("tab", { name: "Appearance" }).click();
+    const reducedPaintToggle = page.getByLabel("Reduced paint effects");
+    await reducedPaintToggle.scrollIntoViewIfNeeded();
+    await page.getByText("Reduced paint effects", { exact: true }).click();
+    await expect(reducedPaintToggle).toBeChecked();
+
+    await expect(surface).toHaveClass(/mari-rp-reduced-paint/);
+    const reducedStyles = await bubble.evaluate((element) => {
+      const bubbleStyle = getComputedStyle(element);
+      const overlayStyle = getComputedStyle(document.querySelector(".rpg-overlay")!);
+      const vignetteStyle = getComputedStyle(document.querySelector(".rpg-vignette")!);
+      return {
+        backgroundImage: bubbleStyle.backgroundImage,
+        boxShadow: bubbleStyle.boxShadow,
+        dropShadow: bubbleStyle.getPropertyValue("--tw-shadow").trim(),
+        overlayBackgroundImage: overlayStyle.backgroundImage,
+        overlayBackgroundColor: overlayStyle.backgroundColor,
+        vignetteDisplay: vignetteStyle.display,
+      };
+    });
+    expect(reducedStyles.backgroundImage).toContain("linear-gradient");
+    expect(reducedStyles.dropShadow).toBe("0 0 #0000");
+    expect(reducedStyles.boxShadow).not.toBe("none");
+    expect(reducedStyles.overlayBackgroundImage).toBe("none");
+    expect(reducedStyles.overlayBackgroundColor).toBe("rgba(8, 8, 18, 0.5)");
+    expect(reducedStyles.vignetteDisplay).toBe("none");
+
+    await page.evaluate(() => {
+      const style = document.createElement("style");
+      style.id = "reduced-paint-card-css-smoke";
+      style.textContent = ".mari-card-css .mari-message-bubble { background: rgb(1, 2, 3); }";
+      document.head.append(style);
+    });
+    await expect(bubble).toHaveCSS("background-color", "rgb(1, 2, 3)");
+    await expect(bubble).toHaveCSS("background-image", "none");
+    await page.evaluate(() => document.getElementById("reduced-paint-card-css-smoke")?.remove());
+
+    const opacitySlider = page.getByLabel("Roleplay Messages Background Opacity");
+    await opacitySlider.focus();
+    for (let step = 0; step < 18; step += 1) await opacitySlider.press("ArrowLeft");
+    await expect(opacitySlider).toHaveValue("0");
+    await expect(defaultBubble).toHaveAttribute("data-roleplay-bubble-transparent", "true");
+    await expect(defaultBubble).toHaveCSS("background-image", "none");
+    await expect(defaultBubble).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(bubble).not.toHaveAttribute("data-roleplay-bubble-transparent", "true");
+    expect(await bubble.evaluate((element) => getComputedStyle(element).backgroundImage)).toContain("rgb(18, 52, 86)");
+
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const persisted = JSON.parse(localStorage.getItem("marinara-engine-ui") ?? '{"state":{}}') as {
+            state?: { roleplayReducedPaintEffects?: unknown; chatFontOpacity?: unknown };
+          };
+          return [persisted.state?.roleplayReducedPaintEffects, persisted.state?.chatFontOpacity];
+        }),
+      )
+      .toEqual([true, 0]);
+
+    await page.reload();
+    await expect(surface).toHaveClass(/mari-rp-reduced-paint/);
+    await expect(defaultBubble).toHaveAttribute("data-roleplay-bubble-transparent", "true");
+    await expect(bubble).not.toHaveAttribute("data-roleplay-bubble-transparent", "true");
+    await expect(bubble).not.toHaveCSS("box-shadow", "none");
+  } finally {
+    await Promise.all([
+      page.request.delete(`/api/chats/${chat.id}`).catch(() => undefined),
+      page.request.delete(`/api/characters/${character.id}`).catch(() => undefined),
+    ]);
+  }
 });
 
 test("memory recall modal accepts clicks from chat settings", async ({ page }, testInfo) => {
@@ -4725,7 +5186,7 @@ test("Roleplay displays a selected background when its file route is GET-only", 
       await route.fulfill({
         status: 200,
         contentType: "image/svg+xml",
-        body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><path fill="#47234f" d="M0 0h2v2H0z"/></svg>',
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" preserveAspectRatio="none"><path fill="#8f365f" d="M0 0h800v900H0z"/><path fill="#36548f" d="M800 0h800v900H800z"/></svg>',
       });
     });
     await page.addInitScript((chatId) => {
@@ -4746,13 +5207,42 @@ test("Roleplay displays a selected background when its file route is GET-only", 
             (layers, expectedUrl) =>
               layers.some(
                 (layer) =>
-                  (layer as HTMLElement).style.backgroundImage.includes(expectedUrl) &&
+                  (layer as HTMLImageElement).getAttribute("src")?.includes(expectedUrl) &&
                   (layer as HTMLElement).style.opacity === "1",
               ),
             backgroundUrl,
           ),
       )
       .toBe(true);
+
+    const roleplaySurface = page.locator('[data-chat-mode="roleplay"]');
+    const activeBackground = page.locator(`img.mari-background[src="${backgroundUrl}"]`);
+    await expect(activeBackground).toHaveCSS("object-fit", "fill");
+    const expectBackgroundToFitRoleplaySurface = async () => {
+      await expect
+        .poll(async () => {
+          const [surfaceBox, backgroundBox] = await Promise.all([
+            roleplaySurface.boundingBox(),
+            activeBackground.boundingBox(),
+          ]);
+          if (!surfaceBox || !backgroundBox) return null;
+          return {
+            width: Math.round(backgroundBox.width - surfaceBox.width),
+            height: Math.round(backgroundBox.height - surfaceBox.height),
+          };
+        })
+        .toEqual({ width: 0, height: 0 });
+    };
+
+    await expectBackgroundToFitRoleplaySurface();
+    await page.locator('[data-tour="panel-settings"]').click();
+    await expectBackgroundToFitRoleplaySurface();
+    await page.locator('[data-tour="panel-settings"]').click();
+    await expectBackgroundToFitRoleplaySurface();
+    await page.locator('[data-tour="sidebar-toggle"]').click();
+    await expectBackgroundToFitRoleplaySurface();
+    await page.locator('[data-tour="sidebar-toggle"]').click();
+    await expectBackgroundToFitRoleplaySurface();
     expect(requestedMethods).toContain("GET");
     expect(requestedMethods).not.toContain("HEAD");
   } finally {
@@ -4778,10 +5268,9 @@ test("Background library organization works with desktop drag and touch drag", a
   let folderId: string | null = null;
 
   try {
-    const tagResponse = await page.request.patch(
-      `/api/backgrounds/${encodeURIComponent(uploaded.filename)}/tags`,
-      { data: { tags: ["smoke-folder"] } },
-    );
+    const tagResponse = await page.request.patch(`/api/backgrounds/${encodeURIComponent(uploaded.filename)}/tags`, {
+      data: { tags: ["smoke-folder"] },
+    });
     expect(tagResponse.ok()).toBeTruthy();
 
     await page.goto("/");
@@ -4790,7 +5279,9 @@ test("Background library organization works with desktop drag and touch drag", a
     await page.getByPlaceholder("Search settings").fill("Backgrounds");
     await page.getByRole("button", { name: /Backgrounds Section/ }).click();
 
-    await expect(page.getByText("Drag and drop backgrounds to folders, double-click or double-tap to rename.")).toBeVisible();
+    await expect(
+      page.getByText("Drag and drop backgrounds to folders, double-click or double-tap to rename."),
+    ).toBeVisible();
     const sortSelect = page.getByLabel("Sort backgrounds");
     await expect(sortSelect.locator("option")).toHaveText(["A-Z", "Z-A", "Newest", "Oldest"]);
     await page.getByRole("button", { name: /Tags \(/ }).click();
@@ -4843,7 +5334,12 @@ test("Background library organization works with desktop drag and touch drag", a
             clientY: targetRect.top + Math.min(targetRect.height / 2, 20),
           });
           handle.dispatchEvent(
-            new TouchEvent("touchstart", { bubbles: true, cancelable: true, touches: [start], changedTouches: [start] }),
+            new TouchEvent("touchstart", {
+              bubbles: true,
+              cancelable: true,
+              touches: [start],
+              changedTouches: [start],
+            }),
           );
           window.dispatchEvent(
             new TouchEvent("touchmove", { bubbles: true, cancelable: true, touches: [end], changedTouches: [end] }),

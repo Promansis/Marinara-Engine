@@ -78,7 +78,7 @@ import {
 import { generateWeather, inferBiome, shouldWeatherChange } from "../services/game/weather.service.js";
 import { rollEncounter, rollEnemyCount } from "../services/game/encounter.service.js";
 import { processReputationActions } from "../services/game/reputation.service.js";
-import { sanitizeGameNpcAvatarUrls } from "../services/game/npc-avatar-utils.js";
+import { npcAvatarSlug, sanitizeGameNpcAvatarUrls } from "../services/game/npc-avatar-utils.js";
 import { createCheckpointService, type CheckpointTrigger } from "../services/game/checkpoint.service.js";
 import {
   resolveSkillCheck,
@@ -131,6 +131,8 @@ import {
   normalizeAgentPromptTemplateOptions,
   isClaudeAdaptiveOnlyNoSamplingModel,
   localAuthProviderBaseUrl,
+  sceneAnalysisRequestSchema,
+  sceneSpotifyTrackCandidateSchema,
   resolveProviderReasoningEffort,
   scoreMusic,
   scoreAmbient,
@@ -1583,6 +1585,7 @@ const gameSetupConfigSchema = z.object({
   tone: z.string().min(1).max(200),
   difficulty: z.string().min(1).max(100),
   combatStyle: z.enum(["classic", "tactical"]).optional(),
+  spatialMapInstructions: z.string().max(4000).optional(),
   playerGoals: z.string().max(2000).default(""),
   gmMode: z.enum(["standalone", "character"]),
   rating: z.enum(["sfw", "nsfw"]).default("sfw"),
@@ -2131,11 +2134,11 @@ function buildNpcPartyCard(npc: Pick<GameNpc, "name" | "description" | "location
 
 function buildRecruitCharacterSourceCard(characterData: Record<string, any>): string {
   const lines = [`Name: ${String(characterData.name || "Unknown")}`];
-  if (typeof characterData.personality === "string" && characterData.personality.trim()) {
-    lines.push(`Personality: ${characterData.personality.trim()}`);
-  }
   if (typeof characterData.description === "string" && characterData.description.trim()) {
     lines.push(`Description: ${characterData.description.trim()}`);
+  }
+  if (typeof characterData.personality === "string" && characterData.personality.trim()) {
+    lines.push(`Personality: ${characterData.personality.trim()}`);
   }
   const backstory =
     typeof characterData.extensions?.backstory === "string" && characterData.extensions.backstory.trim()
@@ -2372,7 +2375,10 @@ function clampWidgetValue(value: number, max: number): number {
   return Math.max(0, Math.min(max, value));
 }
 
-function normalizeSetupHudWidgetStartingValues(widgets: Array<{ type: string; config: Record<string, unknown> }>) {
+function normalizeHudWidgetValues(
+  widgets: Array<{ type: string; config: Record<string, unknown> }>,
+  preserveCurrentValues = false,
+) {
   for (const widget of widgets) {
     if (!isNumericHudWidgetType(widget.type)) continue;
 
@@ -2383,11 +2389,11 @@ function normalizeSetupHudWidgetStartingValues(widgets: Array<{ type: string; co
 
     widget.config.max = max;
     widget.config.startingValue = initialValue;
-    widget.config.value = initialValue;
+    widget.config.value = preserveCurrentValues ? clampWidgetValue(currentValue ?? initialValue, max) : initialValue;
   }
 }
 
-function sanitizeGameHudWidgets(value: unknown): HudWidget[] {
+function sanitizeGameHudWidgets(value: unknown, preserveCurrentValues = false): HudWidget[] {
   const parsed = z.array(hudWidgetSchema).max(MAX_GAME_HUD_WIDGETS).safeParse(value);
   if (!parsed.success) return [];
 
@@ -2399,7 +2405,7 @@ function sanitizeGameHudWidgets(value: unknown): HudWidget[] {
     accent: widget.accent?.trim() || undefined,
     config: { ...(widget.config as Record<string, unknown>) },
   }));
-  normalizeSetupHudWidgetStartingValues(widgets);
+  normalizeHudWidgetValues(widgets, preserveCurrentValues);
   return widgets as HudWidget[];
 }
 
@@ -4132,10 +4138,7 @@ function buildGameNpcId(name: string): string {
 }
 
 function buildNpcAvatarUrl(chatId: string, name: string): string | null {
-  const slug = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "");
+  const slug = npcAvatarSlug(name);
   return slug ? `/api/avatars/npc/${chatId}/${slug}.png` : null;
 }
 
@@ -4157,16 +4160,6 @@ function addPortraitAppearancePart(parts: string[], seenValues: Set<string>, val
 
   const part = label ? `${label}: ${trimmed}` : trimmed;
   parts.push(part);
-}
-
-function addPortraitAppearanceNotes(parts: string[], seenValues: Set<string>, notes: unknown): void {
-  if (!Array.isArray(notes)) return;
-
-  const noteText = notes
-    .map((note) => optionalTrimmedString(note))
-    .filter((note): note is string => Boolean(note))
-    .join("; ");
-  addPortraitAppearancePart(parts, seenValues, noteText, "Notable details");
 }
 
 function addPresentCharacterPortraitAppearance(
@@ -4220,7 +4213,6 @@ export function resolveNpcPortraitAppearance(
   }
 
   addPresentCharacterPortraitAppearance(parts, seenValues, presentCharacter);
-  addPortraitAppearanceNotes(parts, seenValues, metadataNpc?.notes);
 
   return parts.join(" ");
 }
@@ -4318,7 +4310,7 @@ function extractNarrationNpcCandidates(narration: string, excludedNames: string[
 }
 
 function buildSceneAssetNpcCandidates(
-  trackedNpcsRaw: Array<Record<string, unknown>>,
+  trackedNpcsRaw: GameNpc[],
   presentCharactersRaw: unknown,
   excludedNames: string[],
   narration: string,
@@ -5934,7 +5926,7 @@ export async function gameRoutes(app: FastifyInstance) {
       const parsed = blueprintSchema.safeParse(setupData.blueprint);
       if (parsed.success) {
         normalizeStatBlocks(parsed.data.hudWidgets);
-        normalizeSetupHudWidgetStartingValues(parsed.data.hudWidgets);
+        normalizeHudWidgetValues(parsed.data.hudWidgets);
         updates.gameBlueprint = parsed.data;
       } else {
         // Last-ditch recovery: keep the user's HUD widgets even if campaignPlan
@@ -5950,7 +5942,7 @@ export async function gameRoutes(app: FastifyInstance) {
         });
         if (hudOnly.success && hudOnly.data.hudWidgets.length > 0) {
           normalizeStatBlocks(hudOnly.data.hudWidgets);
-          normalizeSetupHudWidgetStartingValues(hudOnly.data.hudWidgets);
+          normalizeHudWidgetValues(hudOnly.data.hudWidgets);
           updates.gameBlueprint = { hudWidgets: hudOnly.data.hudWidgets };
         }
       }
@@ -6217,9 +6209,9 @@ export async function gameRoutes(app: FastifyInstance) {
       if (gmChar) {
         const data = typeof gmChar.data === "string" ? JSON.parse(gmChar.data) : gmChar.data;
         const parts = [`Name: ${data.name}`];
-        if (data.personality) parts.push(`Personality: ${data.personality}`);
         const description = typeof data.description === "string" ? data.description : "";
         if (description) parts.push(`Description: ${description}`);
+        if (data.personality) parts.push(`Personality: ${data.personality}`);
         const gmBackstory = data.extensions?.backstory || data.backstory;
         const gmAppearance = data.extensions?.appearance || data.appearance;
         if (gmBackstory) parts.push(`Backstory: ${gmBackstory}`);
@@ -6261,9 +6253,9 @@ export async function gameRoutes(app: FastifyInstance) {
         if (typeof data.name === "string" && data.name.trim()) {
           partyNames.push(data.name.trim());
         }
-        if (data.personality) parts.push(`Personality: ${data.personality}`);
         const description = typeof data.description === "string" ? data.description : "";
         if (description) parts.push(`Description: ${description}`);
+        if (data.personality) parts.push(`Personality: ${data.personality}`);
         const pcBackstory = data.extensions?.backstory || data.backstory;
         const pcAppearance = data.extensions?.appearance || data.appearance;
         if (pcBackstory) parts.push(`Backstory: ${pcBackstory}`);
@@ -9336,7 +9328,7 @@ export async function gameRoutes(app: FastifyInstance) {
     const { widgets: rawWidgets } = z
       .object({ widgets: z.array(hudWidgetSchema).max(MAX_GAME_HUD_WIDGETS) })
       .parse(req.body);
-    const widgets = sanitizeGameHudWidgets(rawWidgets);
+    const widgets = sanitizeGameHudWidgets(rawWidgets, true);
     const chats = createChatsStorage(app.db);
     const chat = await chats.getById(req.params.chatId);
     if (!chat) throw new Error("Chat not found");
@@ -9429,8 +9421,8 @@ export async function gameRoutes(app: FastifyInstance) {
         const description = typeof charData.description === "string" ? charData.description : "";
         const card = [
           `Name: ${charData.name}`,
-          charData.personality ? `Personality: ${charData.personality}` : null,
           description ? `Description: ${description}` : null,
+          charData.personality ? `Personality: ${charData.personality}` : null,
           charData.extensions?.backstory || charData.backstory
             ? `Backstory: ${charData.extensions?.backstory || charData.backstory}`
             : null,
@@ -9626,15 +9618,6 @@ export async function gameRoutes(app: FastifyInstance) {
     return { raw: cleanRaw };
   });
 
-  const spotifySceneTrackCandidateSchema = z.object({
-    uri: z.string().min(1).max(300),
-    name: z.string().min(1).max(300),
-    artist: z.string().min(1).max(300),
-    album: z.string().max(300).nullable().optional(),
-    position: z.number().nullable().optional(),
-    score: z.number().nullable().optional(),
-  });
-
   const spotifySceneTrackSelectionSchema = z.object({
     uri: z.string().min(1).max(300),
     name: z.string().max(300).nullable().optional(),
@@ -9736,40 +9719,11 @@ export async function gameRoutes(app: FastifyInstance) {
   // ── POST /game/scene-wrap ──
   // Scene wrap-up using a regular LLM connection (fallback when sidecar isn't available).
   // Uses the same prompt as the sidecar scene analyzer but via API.
-  const sceneWrapSchema = z.object({
+  const sceneWrapSchema = sceneAnalysisRequestSchema.extend({
     chatId: z.string().min(1),
-    narration: z.string().min(1).max(50000),
-    playerAction: z.string().max(5000).optional(),
     streaming: z.boolean().optional().default(true),
-    context: z.object({
-      currentState: z.string(),
-      availableBackgrounds: z.array(z.string()).max(2000),
-      availableSfx: z.array(z.string()).max(2000),
-      activeWidgets: z.array(z.unknown()).max(100),
-      trackedNpcs: z.array(z.unknown()).max(200),
-      characterNames: z.array(z.string().max(200)).max(100),
-      currentBackground: z.string().nullable(),
-      currentMusic: z.string().nullable(),
-      recentMusic: z.array(z.string().max(500)).max(20).optional().default([]),
-      useSpotifyMusic: z.boolean().optional().default(false),
-      availableSpotifyTracks: z.array(spotifySceneTrackCandidateSchema).max(50).optional().default([]),
-      currentSpotifyTrack: z.string().max(300).nullable().optional().default(null),
-      recentSpotifyTracks: z.array(z.string().max(300)).max(20).optional().default([]),
-      currentAmbient: z.string().nullable().optional().default(null),
-      currentLocation: z.string().nullable().optional().default(null),
-      currentWeather: z.string().nullable(),
-      currentTimeOfDay: z.string().nullable(),
-      genre: z.string().nullable().optional().default(null),
-      setting: z.string().nullable().optional().default(null),
-      worldOverview: z.string().nullable().optional().default(null),
-      canGenerateBackgrounds: z.boolean().optional(),
-      canGenerateIllustrations: z.boolean().optional(),
-      artStylePrompt: z.string().nullable().optional(),
-      imagePromptInstructions: z.string().max(5000).nullable().optional(),
-    }),
     /** Override connection (falls back to scene connection → GM connection). */
     connectionId: z.string().optional(),
-    debugMode: z.boolean().optional().default(false),
   });
 
   app.post("/scene-wrap", async (req, reply) => {
@@ -10052,7 +10006,7 @@ export async function gameRoutes(app: FastifyInstance) {
             const stateStore = createGameStateStorage(app.db);
             const latestState = await stateStore.getLatest(input.chatId);
             const npcs = buildSceneAssetNpcCandidates(
-              (input.context.trackedNpcs ?? []) as Array<Record<string, unknown>>,
+              input.context.trackedNpcs ?? [],
               latestState?.presentCharacters,
               input.context.characterNames ?? [],
               input.narration,
@@ -10812,6 +10766,7 @@ export async function gameRoutes(app: FastifyInstance) {
                   durationSeconds: Math.min(videoRuntime.maxDurationSeconds, plannedFrame.durationSeconds),
                   aspectRatio: plannedFrame.aspectRatio,
                   resolution: videoRuntime.resolution,
+                  comfyWorkflow: videoRuntime.comfyWorkflow,
                   referenceImage,
                   publicReferenceUpload: videoRuntime.publicReferenceUpload,
                   fallback: videoFallback,
@@ -10979,8 +10934,7 @@ export async function gameRoutes(app: FastifyInstance) {
 
       return reply
         .header("Content-Type", "video/mp4")
-        .header("Cache-Control", "public, max-age=31536000, immutable")
-        .send(readFileSync(filePath));
+        .sendFile(filename, join(GAME_SCENE_VIDEOS_ROOT, chatId), { maxAge: "1y", immutable: true });
     },
   );
 
@@ -11074,6 +11028,7 @@ export async function gameRoutes(app: FastifyInstance) {
       minDurationSeconds,
       maxDurationSeconds,
       publicReferenceUpload,
+      comfyWorkflow,
       activeDefaults: activeVideoDefaults,
       hasStoredDefaults,
     } = videoRuntime;
@@ -11178,6 +11133,7 @@ export async function gameRoutes(app: FastifyInstance) {
         durationSeconds,
         aspectRatio,
         resolution,
+        comfyWorkflow,
         referenceImage,
         publicReferenceUpload,
         queue: input.queueMediaGenerationRequests,

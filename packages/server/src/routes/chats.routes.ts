@@ -106,7 +106,7 @@ import {
   resolveMemoryRecallEmbeddingSource,
 } from "../services/memory-recall-embedding.js";
 import { applyRegexScriptsToPromptMessages } from "../services/regex/regex-application.js";
-import { sanitizeGameNpcAvatarUrls } from "../services/game/npc-avatar-utils.js";
+import { npcAvatarSlug, sanitizeGameNpcAvatarUrls } from "../services/game/npc-avatar-utils.js";
 import { buildCommittedTrackerContextBlock } from "../services/generation/committed-tracker-context.js";
 import { parseLorebookWriteApprovalText } from "./generate/agent-write-approval.js";
 import { persistLorebookKeeperUpdates } from "./generate/lorebook-keeper-utils.js";
@@ -742,10 +742,10 @@ export async function chatsRoutes(app: FastifyInstance) {
             },
           }));
         }
-        // Character selection can be patched more than once while the setup
-        // wizard is still configuring a new chat. Membership events begin only
-        // after setup completes or a real user/assistant turn starts the timeline.
-        if (hasStartedChat) {
+        // Conversation character selection can be patched more than once while
+        // the setup wizard is still configuring a new chat. Membership events
+        // begin only after setup completes or a real turn starts the timeline.
+        if (existing.mode === "conversation" && hasStartedChat) {
           for (const id of addedIds) {
             await storage.createMessage({
               chatId: req.params.id,
@@ -1701,12 +1701,15 @@ export async function chatsRoutes(app: FastifyInstance) {
       if (Object.prototype.hasOwnProperty.call(partial, "hiddenFromAI")) {
         syncAllSwipeExtra.hiddenFromAI = partial.hiddenFromAI;
       }
+      if (Object.prototype.hasOwnProperty.call(partial, "hiddenFromAICharacterIds")) {
+        syncAllSwipeExtra.hiddenFromAICharacterIds = partial.hiddenFromAICharacterIds;
+      }
       if (Object.prototype.hasOwnProperty.call(partial, "reactions")) {
         syncAllSwipeExtra.reactions = partial.reactions;
       }
 
       if (Object.keys(syncAllSwipeExtra).length > 0) {
-        // hiddenFromAI and reactions are message-level fields, so keep them
+        // AI visibility and reactions are message-level fields, so keep them
         // stable across swipe changes instead of binding them to one swipe.
         const swipes = await storage.getSwipes(req.params.messageId);
         for (const swipe of swipes) {
@@ -1875,10 +1878,7 @@ export async function chatsRoutes(app: FastifyInstance) {
           continue;
         }
         // 2. Try loading a stored NPC avatar from disk
-        const safeName = name
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "-")
-          .replace(/(^-|-$)/g, "");
+        const safeName = npcAvatarSlug(name);
         if (safeName) {
           const npcPath = join(NPC_AVATAR_DIR, req.params.id, `${safeName}.png`);
           if (existsSync(npcPath)) char.avatarPath = `/api/avatars/npc/${req.params.id}/${safeName}.png`;
@@ -2606,15 +2606,6 @@ export async function chatsRoutes(app: FastifyInstance) {
                     2,
                   ),
                 );
-              if (characterMacroContext.characterFields.scenario && !hasGroupOverride)
-                parts.push(
-                  wrapContent(
-                    resolveCharacterMacros(characterMacroContext.characterFields.scenario),
-                    "scenario",
-                    wrapFormat,
-                    2,
-                  ),
-                );
               if (characterMacroContext.characterFields.backstory)
                 parts.push(
                   wrapContent(
@@ -2629,6 +2620,15 @@ export async function chatsRoutes(app: FastifyInstance) {
                   wrapContent(
                     resolveCharacterMacros(characterMacroContext.characterFields.appearance),
                     "appearance",
+                    wrapFormat,
+                    2,
+                  ),
+                );
+              if (characterMacroContext.characterFields.scenario && !hasGroupOverride)
+                parts.push(
+                  wrapContent(
+                    resolveCharacterMacros(characterMacroContext.characterFields.scenario),
+                    "scenario",
                     wrapFormat,
                     2,
                   ),

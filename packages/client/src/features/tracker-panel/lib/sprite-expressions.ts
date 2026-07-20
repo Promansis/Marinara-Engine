@@ -1,6 +1,6 @@
 import type { PresentCharacter } from "@marinara-engine/shared";
 import type { SpriteInfo } from "../../../hooks/use-characters";
-import { parseMetadataRecord } from "./tracker-metadata";
+import { parseRecord } from "./tracker-metadata";
 
 export function normalizeSpriteExpressionMap(value: unknown): Record<string, string> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -20,7 +20,7 @@ export function getLatestSpriteExpressionsFromMessages(
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message?.role !== "assistant") continue;
-    const extra = parseMetadataRecord(message.extra);
+    const extra = parseRecord(message.extra);
     const expressions = normalizeSpriteExpressionMap(extra.spriteExpressions);
     if (Object.keys(expressions).length > 0) return expressions;
   }
@@ -29,7 +29,12 @@ export function getLatestSpriteExpressionsFromMessages(
 
 export function isSpriteLookupCharacterId(characterId: string | null | undefined) {
   const id = characterId?.trim();
-  return !!id && !id.startsWith("manual-") && !id.startsWith("party-npc:");
+  return (
+    !!id &&
+    !id.startsWith("manual-") &&
+    !id.startsWith("party-npc:") &&
+    !id.startsWith("npc:")
+  );
 }
 
 export function getSpriteExpressionForCharacter(

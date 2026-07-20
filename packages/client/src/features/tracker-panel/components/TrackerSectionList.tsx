@@ -25,7 +25,6 @@ import { WorldStatePanel } from "./sections/WorldStatePanel";
 export function TrackerSectionList({
   activeChatId,
   activePersona,
-  autoGenerateCharacterAvatars,
   characterSpriteLookup,
   characterTrackerConfig,
   characterTrackerSettings,
@@ -49,11 +48,9 @@ export function TrackerSectionList({
   toggleTrackerPanelSectionCollapsed,
   deleteMode,
   addMode,
-  hideMode,
 }: {
   activeChatId: string;
   activePersona: Persona | null;
-  autoGenerateCharacterAvatars: boolean;
   characterSpriteLookup: TrackerSpriteLookup;
   characterTrackerConfig: AgentConfigRow | null;
   characterTrackerSettings: Record<string, unknown>;
@@ -77,9 +74,9 @@ export function TrackerSectionList({
   toggleTrackerPanelSectionCollapsed: (section: TrackerPanelSection) => void;
   deleteMode: boolean;
   addMode: boolean;
-  hideMode: boolean;
 }) {
   const updateAgent = useUpdateAgent();
+  const autoGenerateCharacterAvatars = characterTrackerSettings.autoGenerateAvatars === true;
   const { featuredCharacterCards, removeFeaturedCharacterCard, toggleFeaturedCharacterCard } =
     useFeaturedCharacterCards({
       activeChatId,
@@ -245,7 +242,6 @@ export function TrackerSectionList({
             onToggleFeatured={toggleFeaturedCharacterCard}
             deleteMode={deleteMode}
             addMode={addMode}
-            hideMode={hideMode}
             collapsed={isPanelCollapsed("characters")}
             onToggleCollapsed={() => toggleTrackerPanelSectionCollapsed("characters")}
           />

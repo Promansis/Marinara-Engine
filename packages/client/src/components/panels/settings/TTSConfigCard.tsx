@@ -38,7 +38,14 @@ import type {
   TTSAudioFormat,
   TTSConversationCallAudioInputMode,
 } from "@marinara-engine/shared";
-import { ELEVENLABS_TTS_LANGUAGE_OPTIONS, TTS_API_KEY_MASK, ttsSourceProfileFromConfig } from "@marinara-engine/shared";
+import {
+  ELEVENLABS_TTS_LANGUAGE_OPTIONS,
+  TTS_API_KEY_MASK,
+  TTS_DIALOGUE_PAUSE_DEFAULT_SECONDS,
+  TTS_DIALOGUE_PAUSE_MAX_SECONDS,
+  TTS_DIALOGUE_PAUSE_MIN_SECONDS,
+  ttsSourceProfileFromConfig,
+} from "@marinara-engine/shared";
 import { HelpTooltip } from "../../ui/HelpTooltip";
 import { SettingsCheckbox, SettingsSwitch } from "./SettingControls";
 
@@ -78,7 +85,7 @@ const TTS_SOURCE_DEFAULTS: Record<
   },
   pockettts: {
     label: "PocketTTS",
-    baseUrl: "http://localhost:8000",
+    baseUrl: "http://localhost:49112",
     model: "pocket-tts",
     voice: "alba",
     idleText: "Local PocketTTS",
@@ -346,6 +353,55 @@ function TtsDropdownIcon({ compact = false }: { compact?: boolean }) {
   );
 }
 
+function PocketTTSVoiceControl({
+  value,
+  options,
+  fetching,
+  selectLabel,
+  inputLabel,
+  onChange,
+}: {
+  value: string;
+  options: VoiceOption[];
+  fetching: boolean;
+  selectLabel: string;
+  inputLabel: string;
+  onChange: (value: string) => void;
+}) {
+  const selectedServerVoice = options.some((option) => option.id === value) ? value : "";
+
+  return (
+    <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-2">
+      <div className="relative">
+        <select
+          aria-label={selectLabel}
+          value={selectedServerVoice}
+          onChange={(event) => {
+            if (event.target.value) onChange(event.target.value);
+          }}
+          disabled={fetching || options.length === 0}
+          className={cn(INPUT_CLS, "cursor-pointer appearance-none pr-10")}
+        >
+          <option value="">{fetching ? "Loading server voices…" : "Choose server voice"}</option>
+          {options.map((option) => (
+            <option key={option.id} value={option.id}>
+              {formatVoiceOptionLabel(option)}
+            </option>
+          ))}
+        </select>
+        <TtsDropdownIcon />
+      </div>
+      <input
+        aria-label={inputLabel}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className={INPUT_CLS}
+        placeholder="Voice ID, URL, or path"
+      />
+    </div>
+  );
+}
+
 function NpcDefaultVoicePool({
   label,
   options,
@@ -421,7 +477,7 @@ export function TTSConfigCard() {
   const [autoplayGame, setAutoplayGame] = useState(false);
   const [progressivePlayback, setProgressivePlayback] = useState(false);
   const [dialogueOnly, setDialogueOnly] = useState(false);
-  const [dialoguePauseMs, setDialoguePauseMs] = useState(300);
+  const [dialoguePauseSeconds, setDialoguePauseSeconds] = useState(TTS_DIALOGUE_PAUSE_DEFAULT_SECONDS);
   const [audioFormat, setAudioFormat] = useState<TTSAudioFormat>("mp3");
   const [callAudioEnabled, setCallAudioEnabled] = useState(false);
   const [callAudioInputMode, setCallAudioInputMode] = useState<TTSConversationCallAudioInputMode>("local_whisper");
@@ -477,7 +533,9 @@ export function TTSConfigCard() {
     setAutoplayGame(savedConfig.autoplayGame);
     setProgressivePlayback(savedConfig.progressivePlayback ?? false);
     setDialogueOnly(savedConfig.dialogueOnly ?? false);
-    setDialoguePauseMs(savedConfig.dialoguePauseMs ?? 300);
+    setDialoguePauseSeconds(
+      (savedConfig.dialoguePauseMs ?? TTS_DIALOGUE_PAUSE_DEFAULT_SECONDS * 1000) / 1000,
+    );
     setAudioFormat(savedConfig.audioFormat ?? "mp3");
     setCallAudioEnabled(savedConfig.callAudioEnabled ?? false);
     setCallAudioInputMode(savedConfig.callAudioInputMode ?? "local_whisper");
@@ -547,7 +605,7 @@ export function TTSConfigCard() {
     autoplayGame,
     progressivePlayback,
     dialogueOnly,
-    dialoguePauseMs,
+    dialoguePauseMs: dialoguePauseSeconds * 1000,
     audioFormat,
     callAudioEnabled,
     callSttConnectionId: "",
@@ -972,7 +1030,7 @@ export function TTSConfigCard() {
               source === "elevenlabs"
                 ? "The ElevenLabs API root. Use the default unless you proxy ElevenLabs through another server."
                 : source === "pockettts"
-                  ? "The PocketTTS server root. Start it with pocket-tts serve, then use http://localhost:8000 unless you changed the port."
+                  ? "The PocketTTS OpenAI-compatible server root. Its default is http://localhost:49112 unless you changed the port."
                   : source === "xai"
                     ? "The xAI Voice API root. Use https://api.x.ai/v1 unless you proxy xAI through another server."
                     : "The OpenAI-compatible TTS API endpoint. Use the default for OpenAI or point to a self-hosted server."
@@ -1095,23 +1153,17 @@ export function TTSConfigCard() {
             >
               <div className="flex gap-2">
                 {source === "pockettts" ? (
-                  <>
-                    <input
-                      value={voice}
-                      list="pockettts-voices"
-                      onChange={(e) => {
-                        setVoice(e.target.value);
-                        mark({ voice: e.target.value });
-                      }}
-                      className={cn(INPUT_CLS, "flex-1")}
-                      placeholder="alba or a voice URL/path"
-                    />
-                    <datalist id="pockettts-voices">
-                      {voiceOptions.map((option) => (
-                        <option key={option.id} value={option.id} />
-                      ))}
-                    </datalist>
-                  </>
+                  <PocketTTSVoiceControl
+                    value={voice}
+                    options={voiceOptions}
+                    fetching={fetchingVoices}
+                    selectLabel="PocketTTS server voice"
+                    inputLabel="PocketTTS voice ID, URL, or path"
+                    onChange={(nextVoice) => {
+                      setVoice(nextVoice);
+                      mark({ voice: nextVoice });
+                    }}
+                  />
                 ) : (
                   <select
                     value={voice}
@@ -1162,6 +1214,11 @@ export function TTSConfigCard() {
                 <p className="text-[0.625rem] text-[var(--muted-foreground)]">
                   Showing PocketTTS built-in fallbacks. Save and refresh to load built-in and custom voices from your
                   server.
+                </p>
+              )}
+              {voicesFromProvider && source === "pockettts" && (
+                <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                  Loaded {voices.length} voice{voices.length === 1 ? "" : "s"} from PocketTTS server.
                 </p>
               )}
               {!voicesFromProvider && source === "xai" && voices.length > 0 && (
@@ -1260,20 +1317,14 @@ export function TTSConfigCard() {
               {narratorVoiceEnabled && (
                 <div className="flex gap-2 max-sm:flex-col">
                   {source === "pockettts" ? (
-                    <>
-                      <input
-                        value={narratorVoice}
-                        list="pockettts-narrator-voices"
-                        onChange={(e) => handleNarratorVoiceChange(e.target.value)}
-                        className={cn(INPUT_CLS, "min-w-0 flex-1")}
-                        placeholder="alba or a voice URL/path"
-                      />
-                      <datalist id="pockettts-narrator-voices">
-                        {voiceOptions.map((option) => (
-                          <option key={option.id} value={option.id} />
-                        ))}
-                      </datalist>
-                    </>
+                    <PocketTTSVoiceControl
+                      value={narratorVoice}
+                      options={voiceOptions}
+                      fetching={fetchingVoices}
+                      selectLabel="PocketTTS narrator server voice"
+                      inputLabel="PocketTTS narrator voice ID, URL, or path"
+                      onChange={handleNarratorVoiceChange}
+                    />
                   ) : (
                     <select
                       value={narratorVoice}
@@ -1496,25 +1547,26 @@ export function TTSConfigCard() {
             />
             {dialogueOnly && (
               <FieldRow
-                label={`Pause between dialogues — ${dialoguePauseMs} ms`}
+                label={`Pause between dialogues: ${dialoguePauseSeconds} ${dialoguePauseSeconds === 1 ? "second" : "seconds"}`}
                 help="Adds silence between separate dialogue lines in the same message. It does not pause between chunks of the same long dialogue."
               >
                 <input
                   type="range"
-                  min={0}
-                  max={1500}
-                  step={50}
-                  value={dialoguePauseMs}
+                  aria-label="Pause between dialogues in seconds"
+                  min={TTS_DIALOGUE_PAUSE_MIN_SECONDS}
+                  max={TTS_DIALOGUE_PAUSE_MAX_SECONDS}
+                  step={1}
+                  value={dialoguePauseSeconds}
                   onChange={(event) => {
                     const next = Number(event.target.value);
-                    setDialoguePauseMs(next);
-                    mark({ dialoguePauseMs: next });
+                    setDialoguePauseSeconds(next);
+                    mark({ dialoguePauseMs: next * 1000 });
                   }}
-                  className="w-full accent-rose-400"
+                  className="w-full accent-[var(--primary)]"
                 />
                 <div className="flex justify-between text-[0.6rem] text-[var(--muted-foreground)]">
-                  <span>No pause</span>
-                  <span>1500 ms</span>
+                  <span>{TTS_DIALOGUE_PAUSE_MIN_SECONDS} s</span>
+                  <span>{TTS_DIALOGUE_PAUSE_MAX_SECONDS} s</span>
                 </div>
               </FieldRow>
             )}

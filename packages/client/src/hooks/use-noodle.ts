@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // React Query: Noodle hooks
 // ──────────────────────────────────────────────
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api-client";
 import { useUIStore } from "../stores/ui.store";
 import type {
@@ -23,6 +23,10 @@ import type {
   NoodleRefreshSchedulerStatus,
   NoodleSettings,
   NoodleSettingsUpdateInput,
+  NoodleStageProfileInput,
+  NoodlePrivateGenerationRequest,
+  NoodleStageProfileDraftRequest,
+  NoodlerStageProfile,
 } from "@marinara-engine/shared";
 import { mergeNoodlePollVoteInteractions } from "@marinara-engine/shared";
 import type { ImagePromptOverride, ImagePromptReviewItem } from "../components/ui/ImagePromptReviewModal";
@@ -36,6 +40,9 @@ export const noodleKeys = {
   all: ["noodle"] as const,
   bootstrap: () => [...noodleKeys.all, "bootstrap"] as const,
   privateAccounts: () => [...noodleKeys.all, "private-accounts"] as const,
+  privateEligibleAccounts: (search: string, kind: string) =>
+    [...noodleKeys.privateAccounts(), "eligible", search, kind] as const,
+  privatePosts: (accountId: string) => [...noodleKeys.privateAccounts(), accountId, "posts"] as const,
 };
 
 function preservePollVotes(current: NoodleBootstrap | undefined, next: NoodleBootstrap): NoodleBootstrap {
@@ -60,9 +67,79 @@ export function useNoodle(enabled = true) {
 export function useNoodlerAccounts(enabled = true) {
   return useQuery({
     queryKey: noodleKeys.privateAccounts(),
-    queryFn: () => api.get<NoodleAccount[]>("/noodle/noodler/accounts"),
+    queryFn: () => api.get<NoodlerStageProfile[]>("/noodle/noodler/accounts"),
     enabled,
     staleTime: 10_000,
+  });
+}
+
+export function useNoodlerEligibleAccounts(search: string, kind: "all" | "character" | "persona", enabled = true) {
+  const normalizedSearch = search.trim();
+  return useInfiniteQuery({
+    queryKey: noodleKeys.privateEligibleAccounts(normalizedSearch, kind),
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) =>
+      api.get<{ items: NoodleAccount[]; limit: number; offset: number; hasMore: boolean }>(
+        `/noodle/noodler/eligible-accounts?limit=20&offset=${pageParam}&search=${encodeURIComponent(normalizedSearch)}${kind === "all" ? "" : `&kind=${kind}`}`,
+      ),
+    getNextPageParam: (page) => (page.hasMore ? page.offset + page.items.length : undefined),
+    enabled,
+    staleTime: 10_000,
+  });
+}
+
+export function useNoodlerPosts(accountId: string | null) {
+  return useQuery({
+    queryKey: noodleKeys.privatePosts(accountId ?? "none"),
+    queryFn: () => api.get<NoodlePost[]>(`/noodle/noodler/accounts/${encodeURIComponent(accountId!)}/posts`),
+    enabled: Boolean(accountId),
+    staleTime: 10_000,
+  });
+}
+
+export function useCreateNoodlerStageProfile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      publicAccountId,
+      stageProfile,
+    }: {
+      publicAccountId: string;
+      stageProfile: NoodleStageProfileInput;
+    }) =>
+      api.post<NoodlerStageProfile>(`/noodle/accounts/${encodeURIComponent(publicAccountId)}/private`, {
+        stageProfile,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: noodleKeys.privateAccounts() }),
+  });
+}
+
+export function useUpdateNoodlerStageProfile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ accountId, ...input }: { accountId: string } & NoodleStageProfileInput) =>
+      api.put<NoodlerStageProfile>(`/noodle/noodler/accounts/${encodeURIComponent(accountId)}/stage-profile`, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: noodleKeys.privateAccounts() }),
+  });
+}
+
+export function useGenerateNoodlerStageProfileDraft() {
+  return useMutation({
+    mutationFn: (input: NoodleStageProfileDraftRequest) =>
+      api.post<NoodleStageProfileInput>("/noodle/noodler/stage-profile-draft", input),
+  });
+}
+
+export function useGeneratePrivateNoodlePost() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Pick<NoodlePrivateGenerationRequest, "targetAccountId" | "privatePostGuide">) =>
+      api.post<NoodlePost>("/noodle/refresh", {
+        mode: "private",
+        ...input,
+        debugMode: useUIStore.getState().debugMode,
+      } satisfies NoodlePrivateGenerationRequest),
+    onSuccess: (_post, input) => qc.invalidateQueries({ queryKey: noodleKeys.privatePosts(input.targetAccountId) }),
   });
 }
 
@@ -167,7 +244,11 @@ export function usePatchNoodleAccountSettings() {
 export function useUpdateNoodleAccountFollow() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, targetAccountId, ...input }: { id: string; targetAccountId: string } & NoodleAccountFollowUpdateInput) =>
+    mutationFn: ({
+      id,
+      targetAccountId,
+      ...input
+    }: { id: string; targetAccountId: string } & NoodleAccountFollowUpdateInput) =>
       api.patch<NoodleAccount>(`/noodle/accounts/${id}/follows/${targetAccountId}`, input),
     onSuccess: (account) => {
       qc.setQueryData<NoodleBootstrap | undefined>(noodleKeys.bootstrap(), (current) =>
@@ -382,6 +463,7 @@ export function useRefreshNoodle() {
   return useMutation({
     mutationFn: (input: { personaId?: string; connectionId?: string }) =>
       api.post<NoodleRefreshResult>("/noodle/refresh", {
+        mode: "public",
         ...input,
         debugMode: useUIStore.getState().debugMode,
         reviewImagePromptsBeforeSend: useUIStore.getState().reviewImagePromptsBeforeSend,

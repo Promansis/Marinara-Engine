@@ -174,6 +174,7 @@ try {
   const {
     capabilityPackageManager,
     findCompatibleCapabilityPackageUpdates,
+    getCapabilityPackageInstallIssue,
     resolveCapabilityCatalogUrl,
   } = await import(
     "../../packages/server/src/services/capability-packages/package-manager.service.js"
@@ -190,6 +191,20 @@ try {
     resolveCapabilityCatalogUrl("development", ""),
     "https://raw.githubusercontent.com/Pasta-Devs/Marinara-Agents/main/catalog/catalog.json",
     "Non-release builds must fall back to the legacy catalog instead of requesting a nonexistent lane",
+  );
+  assert.equal(getCapabilityPackageInstallIssue(legacyManifest), null);
+  const serverlessTurnGameManifest = capabilityPackageManifestSchema.parse({
+    ...legacyManifest,
+    id: "serverless-turn-game",
+    name: "Serverless Turn Game",
+    kind: ["agent", "turn-game"],
+    entrypoints: { client: "client.js" },
+    files: [{ path: "client.js", sha256: "0".repeat(64), bytes: 1 }],
+  });
+  assert.match(
+    getCapabilityPackageInstallIssue(serverlessTurnGameManifest) ?? "",
+    /require a server entrypoint/,
+    "Turn-game packages must fail validation before installation mutates package state",
   );
   assert.equal(
     resolveCapabilityCatalogUrl("3.2.2", " https://catalog.example.test/custom.json "),
@@ -482,6 +497,75 @@ try {
       `Hierarchical Maps ${version} must be blocked before its database adapter can crash the Engine`,
     );
   }
+  const agentSuite = {
+    ...installedPackage("agent-suite", ["agent"]),
+    manifest: {
+      ...installedPackage("agent-suite", ["agent"]).manifest,
+      entrypoints: { server: "server.mjs", client: "client.js", agents: "agents.json" },
+      files: [
+        ...installedPackage("agent-suite", ["agent"]).manifest.files,
+        { path: "agents.json", sha256: "0".repeat(64), bytes: 1 },
+      ],
+    },
+  };
+  writeRegistry([agentSuite]);
+  writeFileSync(
+    join(packagesRoot, "versions", agentSuite.id, agentSuite.version, "agents.json"),
+    JSON.stringify([
+      {
+        id: "agent-suite",
+        name: "Agent Suite",
+        description: "Primary agent.",
+        phase: "parallel",
+        enabledByDefault: true,
+        category: "misc",
+        defaultPromptTemplate: "Primary prompt.",
+      },
+      {
+        id: "suite-helper",
+        name: "Suite Helper",
+        description: "Secondary agent.",
+        phase: "parallel",
+        enabledByDefault: true,
+        category: "misc",
+        defaultPromptTemplate: "Helper prompt.",
+      },
+    ]),
+  );
+  assert.deepEqual(await capabilityPackageManager.packageAgentIds(agentSuite.id), ["agent-suite", "suite-helper"]);
+  const removedAgentSuite = await capabilityPackageManager.uninstall(agentSuite.id);
+  assert.deepEqual(
+    removedAgentSuite && removedAgentSuite.agentIds,
+    ["agent-suite", "suite-helper"],
+    "Uninstall must retain every package-owned agent ID before deleting its definition file",
+  );
+  const { buildCapabilityAgentCleanupPatch } =
+    await import("../../packages/server/src/routes/capability-packages.routes.js");
+  assert.deepEqual(
+    buildCapabilityAgentCleanupPatch(
+      {
+        activeAgentIds: ["agent-suite", "suite-helper", "illustrator"],
+        agentOverrides: { "suite-helper": true, illustrator: false },
+        agentPromptTemplateIds: { "agent-suite": "default", "suite-helper": "helper", illustrator: "portrait" },
+        knowledgeAgentSources: { "suite-helper": { sourceLorebookIds: ["book"] }, illustrator: {} },
+      },
+      ["agent-suite", "suite-helper"],
+    ),
+    {
+      activeAgentIds: ["illustrator"],
+      agentOverrides: { illustrator: false },
+      agentPromptTemplateIds: { illustrator: "portrait" },
+      knowledgeAgentSources: { illustrator: {} },
+    },
+  );
+  writeRegistry([agentSuite]);
+  assert.deepEqual(
+    await capabilityPackageManager.packageAgentIds(agentSuite.id),
+    ["agent-suite"],
+    "Uninstall cleanup must retain a safe package-ID fallback when agent definitions are unavailable",
+  );
+
+  writeRegistry([installedPackage("conversation-calls", ["agent", "conversation-calls"])]);
   const removedCalls = await capabilityPackageManager.uninstall("conversation-calls");
   assert.ok(removedCalls, "Conversation Calls should be removed");
   assert.equal(existsSync(join(modelsRoot, "Xenova", "whisper-tiny")), false);
@@ -560,14 +644,15 @@ try {
   const { capabilityModuleRuntime, prepareCapabilityRuntimeEnvironment } =
     await import("../../packages/server/src/services/capability-packages/capability-module-runtime.service.js");
   const configuredDataDir = process.env.DATA_DIR;
-  delete process.env.DATA_DIR;
+  process.env.DATA_DIR = "./data";
   prepareCapabilityRuntimeEnvironment(dataDir);
   assert.equal(
     process.env.DATA_DIR,
     dataDir,
-    "Downloaded capability runtimes must resolve host-owned models from the host data directory",
+    "Downloaded capability runtimes must replace relative DATA_DIR values with the host's resolved model directory",
   );
-  process.env.DATA_DIR = configuredDataDir;
+  if (configuredDataDir === undefined) delete process.env.DATA_DIR;
+  else process.env.DATA_DIR = configuredDataDir;
   const { getCapabilityService } =
     await import("../../packages/server/src/services/capability-packages/capability-service-registry.service.js");
   const { closeDB, getDB } = await import("../../packages/server/src/db/connection.js");
