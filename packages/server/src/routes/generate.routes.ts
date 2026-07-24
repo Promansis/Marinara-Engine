@@ -1473,6 +1473,7 @@ export async function generateRoutes(app: FastifyInstance) {
         }
         const runtimeAgentSectionTypes = new Set<RuntimeAgentSectionType>();
         const runtimeAgentSectionTokens = new Map<RuntimeAgentSectionType, RuntimeAgentSectionTokens>();
+        let presetOwnsAgentPlacement = false;
         const modelAccessPolicy = resolveModelAccessPolicy({
           provider: conn.provider,
           model: conn.model,
@@ -1908,6 +1909,7 @@ export async function generateRoutes(app: FastifyInstance) {
             knowledgeRouterActivationPassCompleted = true;
           }
           finalMessages = assembled.messages;
+          presetOwnsAgentPlacement = true;
           characterAdvancedPromptsInjected = true;
           temperature = assembled.parameters.temperature;
           maxTokens = assembled.parameters.maxTokens;
@@ -3919,6 +3921,13 @@ export async function generateRoutes(app: FastifyInstance) {
         const appendSeparateAgentInjection = (agentType: string, text: string): void => {
           appendSeparateAgentInjectionMessage(finalMessages, agentType, text, wrapFormat);
         };
+        const placeRuntimeAgentInjection = (injection: AgentInjection): boolean => {
+          const tokens = runtimeAgentSectionTokens.get(injection.agentType);
+          if (tokens && replaceRuntimeAgentSection(finalMessages, tokens, injection.text)) return true;
+          if (presetOwnsAgentPlacement) return false;
+          appendSeparateAgentInjection(injection.agentType, injection.text);
+          return true;
+        };
         const clearUnusedRuntimeSectionsBeforeLtm = (): void => {
           clearUnusedRuntimeAgentSections(
             finalMessages,
@@ -4166,6 +4175,10 @@ export async function generateRoutes(app: FastifyInstance) {
             finalMessages,
             runtimeAgentSectionTokens,
             contextInjections,
+            { omitUnmatched: presetOwnsAgentPlacement },
+          );
+          contextInjections = contextInjections.filter(
+            (injection) => !runtimeHandledPreGen.omittedInjections.includes(injection),
           );
 
           // Inject pre-gen agent context at depth 0 (very bottom of prompt)
@@ -4179,24 +4192,15 @@ export async function generateRoutes(app: FastifyInstance) {
             const wrapped = formatAgentInjections(fallbackPreGenInjections, wrapFormat);
             finalMessages = injectAtDepth(finalMessages, [{ content: wrapped, role: "system", depth: 0 }]);
           }
-          for (const inj of separatePreGenInjections) {
-            appendSeparateAgentInjection(inj.agentType, inj.text);
-          }
+          for (const inj of separatePreGenInjections) placeRuntimeAgentInjection(inj);
 
           // Inject KR output into the prompt
           if (krResult?.success && krResult.data) {
             const krText =
               typeof krResult.data === "string" ? krResult.data : ((krResult.data as { text?: string })?.text ?? "");
             if (krText) {
-              const tokens = runtimeAgentSectionTokens.get("knowledge-retrieval");
-              const handledByPresetSection =
-                !runtimeHandledPreGen.handledTypes.has("knowledge-retrieval") &&
-                tokens !== undefined &&
-                replaceRuntimeAgentSection(finalMessages, tokens, krText);
-              if (!handledByPresetSection) {
-                appendSeparateAgentInjection("knowledge-retrieval", krText);
-              }
-              contextInjections.push({ agentType: "knowledge-retrieval", text: krText });
+              const injection = { agentType: "knowledge-retrieval", text: krText };
+              if (placeRuntimeAgentInjection(injection)) contextInjections.push(injection);
             }
           }
 
@@ -4207,15 +4211,8 @@ export async function generateRoutes(app: FastifyInstance) {
                 ? routerResult.data
                 : ((routerResult.data as { text?: string })?.text ?? "");
             if (routerText) {
-              const tokens = runtimeAgentSectionTokens.get("knowledge-router");
-              const handledByPresetSection =
-                !runtimeHandledPreGen.handledTypes.has("knowledge-router") &&
-                tokens !== undefined &&
-                replaceRuntimeAgentSection(finalMessages, tokens, routerText);
-              if (!handledByPresetSection) {
-                appendSeparateAgentInjection("knowledge-router", routerText);
-              }
-              contextInjections.push({ agentType: "knowledge-router", text: routerText });
+              const injection = { agentType: "knowledge-router", text: routerText };
+              if (placeRuntimeAgentInjection(injection)) contextInjections.push(injection);
             }
           }
           clearUnusedRuntimeSectionsBeforeLtm();
@@ -4236,24 +4233,6 @@ export async function generateRoutes(app: FastifyInstance) {
             contextInjections = cachedSansSecret;
             if (cachedSansSecret.some((injection) => injection.agentType === "long-term-memory")) {
               longTermMemoryRecallReceipt = null;
-            }
-            for (const inj of cachedSansSecret) {
-              reply.raw.write(
-                `data: ${JSON.stringify({
-                  type: "agent_result",
-                  data: {
-                    agentType: inj.agentType,
-                    agentName: agentNameByType.get(inj.agentType) ?? inj.agentName ?? inj.agentType,
-                    resultType: "context_injection",
-                    data: { text: inj.text },
-                    tokensUsed: 0,
-                    success: true,
-                    error: null,
-                    durationMs: 0,
-                    cached: true,
-                  },
-                })}\n\n`,
-              );
             }
           } else if (hasPreGenAgents) {
             const hasContextInjectionAgents = resolvedAgents.some(
@@ -4309,7 +4288,14 @@ export async function generateRoutes(app: FastifyInstance) {
             finalMessages,
             runtimeAgentSectionTokens,
             contextInjections,
+            { omitUnmatched: presetOwnsAgentPlacement },
           );
+          contextInjections = contextInjections.filter(
+            (injection) => !runtimeHandledCached.omittedInjections.includes(injection),
+          );
+          if (runtimeHandledCached.omittedInjections.some((injection) => injection.agentType === "long-term-memory")) {
+            longTermMemoryRecallReceipt = undefined;
+          }
 
           const cachedPipelineInjections = runtimeHandledCached.fallbackInjections.filter(
             (inj) => !SEPARATE_INJECTION_AGENTS.has(inj.agentType),
@@ -4329,8 +4315,30 @@ export async function generateRoutes(app: FastifyInstance) {
             const handledByPresetSection =
               tokens !== undefined && replaceRuntimeAgentSection(finalMessages, tokens, inj.text);
             if (!handledByPresetSection) {
+              if (presetOwnsAgentPlacement) {
+                contextInjections = contextInjections.filter((candidate) => candidate !== inj);
+                continue;
+              }
               appendSeparateAgentInjection(inj.agentType, inj.text);
             }
+          }
+          for (const inj of contextInjections) {
+            reply.raw.write(
+              `data: ${JSON.stringify({
+                type: "agent_result",
+                data: {
+                  agentType: inj.agentType,
+                  agentName: agentNameByType.get(inj.agentType) ?? inj.agentName ?? inj.agentType,
+                  resultType: "context_injection",
+                  data: { text: inj.text },
+                  tokensUsed: 0,
+                  success: true,
+                  error: null,
+                  durationMs: 0,
+                  cached: true,
+                },
+              })}\n\n`,
+            );
           }
           clearUnusedRuntimeSectionsBeforeLtm();
         } else {
@@ -4348,10 +4356,13 @@ export async function generateRoutes(app: FastifyInstance) {
           });
           if (recall) {
             const tokens = runtimeAgentSectionTokens.get("long-term-memory");
-            const handledByPresetSection = tokens !== undefined && replaceRuntimeAgentSection(finalMessages, tokens, recall.text);
-            if (!handledByPresetSection) appendSeparateAgentInjection("long-term-memory", recall.text);
-            contextInjections.push({ agentType: "long-term-memory", text: recall.text });
-            longTermMemoryRecallReceipt = recall.receipt;
+            const handledByPresetSection =
+              tokens !== undefined && replaceRuntimeAgentSection(finalMessages, tokens, recall.text);
+            if (handledByPresetSection || !presetOwnsAgentPlacement) {
+              if (!handledByPresetSection) appendSeparateAgentInjection("long-term-memory", recall.text);
+              contextInjections.push({ agentType: "long-term-memory", text: recall.text });
+              longTermMemoryRecallReceipt = recall.receipt;
+            }
           }
         }
         clearUnusedRuntimeAgentSections(finalMessages, runtimeAgentSectionTokens);
