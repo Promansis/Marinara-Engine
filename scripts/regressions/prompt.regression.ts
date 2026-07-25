@@ -531,6 +531,7 @@ import {
   buildRuntimeAgentSectionEligibleTypesForTest,
   clearUnusedRuntimeAgentSectionsForTest,
   makeRuntimeAgentSectionTokens,
+  splitRuntimeHandledAgentInjectionsForTest,
 } from "../../packages/server/src/services/generation/runtime-agent-sections.js";
 import {
   getTextRewritePendingState,
@@ -552,6 +553,7 @@ import {
   appendSeparateAgentInjectionMessage,
   collectLatestTrackerCharacterHistory,
   computeSummaryHideIds,
+  formatSeparateAgentInjection,
   getMessageHiddenFromAICharacterIds,
   injectIntoOutputFormatOrLastUser,
   isMessageHiddenFromAIForCharacter,
@@ -5685,6 +5687,40 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       clearUnusedRuntimeAgentSectionsForTest(messages, [["knowledge-router", tokens]]);
 
       assert.equal(messages.length, 0);
+    },
+  },
+  {
+    name: "assembled presets own unmatched runtime agent placement",
+    run() {
+      const tokens = makeRuntimeAgentSectionTokens("long-term-memory", "placement");
+      const markerMessages = [{ content: tokens.placeholder }];
+      const marked = splitRuntimeHandledAgentInjectionsForTest(
+        markerMessages,
+        new Map([["long-term-memory", tokens]]),
+        [{ agentType: "long-term-memory", text: "MEMORY" }],
+        { omitUnmatched: true },
+      );
+      assert.deepEqual(marked.fallbackInjections, []);
+      assert.deepEqual(marked.omittedInjections, []);
+      assert.equal(markerMessages[0]?.content, "MEMORY");
+
+      const omitted = splitRuntimeHandledAgentInjectionsForTest(
+        [{ content: "preset" }],
+        new Map([["long-term-memory", tokens]]),
+        [{ agentType: "long-term-memory", text: "MEMORY" }],
+        { omitUnmatched: true },
+      );
+      assert.equal(omitted.omittedInjections.length, 1);
+      assert.equal(
+        formatSeparateAgentInjection("long-term-memory", "MEMORY", "xml"),
+        "<long_term_memory>\nMEMORY\n</long_term_memory>",
+      );
+
+      const fallback = splitRuntimeHandledAgentInjectionsForTest([{ content: "conversation" }], new Map(), [
+        { agentType: "long-term-memory", text: "MEMORY" },
+      ]);
+      assert.equal(fallback.fallbackInjections.length, 1);
+      assert.deepEqual(fallback.omittedInjections, []);
     },
   },
   {

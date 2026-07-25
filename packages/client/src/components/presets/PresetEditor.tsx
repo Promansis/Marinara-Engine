@@ -64,6 +64,7 @@ import { applyTextareaQuoteFormat } from "../../lib/textarea-quotes";
 import { api } from "../../lib/api-client";
 import { useAgentConfigs, type AgentConfigRow } from "../../hooks/use-agents";
 import { type MarkerType, type PromptSection, type WrapFormat } from "@marinara-engine/shared";
+import { useCapabilityAgentRegistry } from "../../hooks/use-capability-packages";
 import { useQuoteFormatter } from "../../hooks/use-quote-formatter";
 import { EditorTabRail } from "../ui/EditorTabRail";
 import { useTouchFolderDrag } from "../../hooks/use-touch-folder-drag";
@@ -968,13 +969,17 @@ function SectionsTab({
 
   // Fetch agent configs and filter to those with injectAsSection enabled
   const { data: agentConfigs } = useAgentConfigs();
+  const { data: capabilityAgents = [] } = useCapabilityAgentRegistry();
   const injectableAgents = useMemo(() => {
-    if (!agentConfigs) return [];
-    return (agentConfigs as AgentConfigRow[]).filter((a) => {
+    const configured = (agentConfigs ?? []).filter((a: AgentConfigRow) => {
       const settings = typeof a.settings === "string" ? JSON.parse(a.settings) : a.settings;
       return settings?.injectAsSection === true;
     });
-  }, [agentConfigs]);
+    const ltm = capabilityAgents.find((agent) => agent.id === "long-term-memory");
+    return ltm && !configured.some((agent) => agent.type === ltm.id)
+      ? [...configured, { id: ltm.id, type: ltm.id, name: ltm.name }]
+      : configured;
+  }, [agentConfigs, capabilityAgents]);
 
   const toggleExpanded = (id: string) => {
     setExpandedSections((prev) => {
