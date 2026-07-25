@@ -43,7 +43,7 @@ type CapabilityActivationContext = {
 
 function createCapabilityRuntimeHost(app: FastifyInstance): CapabilityRuntimeHost {
   return Object.freeze({
-    embeddings: createCapabilityEmbeddingHost(app.db),
+    embeddings: createCapabilityEmbeddingHost(),
     isDebugAgentsEnabled,
     json: Object.freeze({ parseJsonish: parseGameJsonish }),
     languageModels: createCapabilityLanguageModelHost(app.db),

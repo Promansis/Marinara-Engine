@@ -212,6 +212,7 @@ export interface CapabilityPersistenceHost extends CapabilityPersistenceSession 
 }
 
 export interface CapabilityEmbeddingHost {
+  spaceId: string;
   label: string;
   embed(texts: string[], signal?: AbortSignal): Promise<number[][] | null>;
 }
