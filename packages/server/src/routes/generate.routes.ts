@@ -1498,6 +1498,7 @@ export async function generateRoutes(app: FastifyInstance) {
         }
         const runtimeAgentSectionTypes = new Set<RuntimeAgentSectionType>();
         const runtimeAgentSectionTokens = new Map<RuntimeAgentSectionType, RuntimeAgentSectionTokens>();
+        let presetOwnsAgentPlacement = false;
         const modelAccessPolicy = resolveModelAccessPolicy({
           provider: conn.provider,
           model: conn.model,
@@ -1564,6 +1565,9 @@ export async function generateRoutes(app: FastifyInstance) {
             settings: agent.settings,
           })),
         });
+        if (chatEnableAgents && chatActiveAgentIds.includes("long-term-memory")) {
+          runtimeSectionEligibleAgentTypes.add("long-term-memory");
+        }
         const chatActiveLorebookIds: string[] = Array.isArray(chatMeta.activeLorebookIds)
           ? (chatMeta.activeLorebookIds as string[])
           : [];
@@ -1932,6 +1936,7 @@ export async function generateRoutes(app: FastifyInstance) {
             knowledgeRouterActivationPassCompleted = true;
           }
           finalMessages = assembled.messages;
+          presetOwnsAgentPlacement = true;
           characterAdvancedPromptsInjected = true;
           temperature = assembled.parameters.temperature;
           maxTokens = assembled.parameters.maxTokens;
@@ -3966,6 +3971,19 @@ export async function generateRoutes(app: FastifyInstance) {
         const appendSeparateAgentInjection = (agentType: string, text: string): void => {
           appendSeparateAgentInjectionMessage(finalMessages, agentType, text, wrapFormat);
         };
+        const placeRuntimeAgentInjection = (injection: AgentInjection): boolean => {
+          const tokens = runtimeAgentSectionTokens.get(injection.agentType);
+          if (tokens && replaceRuntimeAgentSection(finalMessages, tokens, injection.text)) return true;
+          if (presetOwnsAgentPlacement) return false;
+          appendSeparateAgentInjection(injection.agentType, injection.text);
+          return true;
+        };
+        const clearUnusedRuntimeSectionsBeforeLtm = (): void => {
+          clearUnusedRuntimeAgentSections(
+            finalMessages,
+            [...runtimeAgentSectionTokens].filter(([agentType]) => agentType !== "long-term-memory"),
+          );
+        };
 
         if (shouldRunDirectorSecretPlot || shouldRunPreGen || shouldRunKR || shouldRunRouter) {
           sendProgress("agents");
@@ -4207,6 +4225,10 @@ export async function generateRoutes(app: FastifyInstance) {
             finalMessages,
             runtimeAgentSectionTokens,
             contextInjections,
+            { omitUnmatched: presetOwnsAgentPlacement },
+          );
+          contextInjections = contextInjections.filter(
+            (injection) => !runtimeHandledPreGen.omittedInjections.includes(injection),
           );
 
           // Inject pre-gen agent context at depth 0 (very bottom of prompt)
@@ -4220,24 +4242,15 @@ export async function generateRoutes(app: FastifyInstance) {
             const wrapped = formatAgentInjections(fallbackPreGenInjections, wrapFormat);
             finalMessages = injectAtDepth(finalMessages, [{ content: wrapped, role: "system", depth: 0 }]);
           }
-          for (const inj of separatePreGenInjections) {
-            appendSeparateAgentInjection(inj.agentType, inj.text);
-          }
+          for (const inj of separatePreGenInjections) placeRuntimeAgentInjection(inj);
 
           // Inject KR output into the prompt
           if (krResult?.success && krResult.data) {
             const krText =
               typeof krResult.data === "string" ? krResult.data : ((krResult.data as { text?: string })?.text ?? "");
             if (krText) {
-              const tokens = runtimeAgentSectionTokens.get("knowledge-retrieval");
-              const handledByPresetSection =
-                !runtimeHandledPreGen.handledTypes.has("knowledge-retrieval") &&
-                tokens !== undefined &&
-                replaceRuntimeAgentSection(finalMessages, tokens, krText);
-              if (!handledByPresetSection) {
-                appendSeparateAgentInjection("knowledge-retrieval", krText);
-              }
-              contextInjections.push({ agentType: "knowledge-retrieval", text: krText });
+              const injection = { agentType: "knowledge-retrieval", text: krText };
+              if (placeRuntimeAgentInjection(injection)) contextInjections.push(injection);
             }
           }
 
@@ -4248,18 +4261,11 @@ export async function generateRoutes(app: FastifyInstance) {
                 ? routerResult.data
                 : ((routerResult.data as { text?: string })?.text ?? "");
             if (routerText) {
-              const tokens = runtimeAgentSectionTokens.get("knowledge-router");
-              const handledByPresetSection =
-                !runtimeHandledPreGen.handledTypes.has("knowledge-router") &&
-                tokens !== undefined &&
-                replaceRuntimeAgentSection(finalMessages, tokens, routerText);
-              if (!handledByPresetSection) {
-                appendSeparateAgentInjection("knowledge-router", routerText);
-              }
-              contextInjections.push({ agentType: "knowledge-router", text: routerText });
+              const injection = { agentType: "knowledge-router", text: routerText };
+              if (placeRuntimeAgentInjection(injection)) contextInjections.push(injection);
             }
           }
-          clearUnusedRuntimeAgentSections(finalMessages, runtimeAgentSectionTokens);
+          clearUnusedRuntimeSectionsBeforeLtm();
         } else if (input.regenerateMessageId) {
           // Regeneration — try to reuse cached context injections from the original generation.
           // This must run regardless of whether `hasPreGenAgents` is true, because the cached
@@ -4277,24 +4283,6 @@ export async function generateRoutes(app: FastifyInstance) {
             contextInjections = cachedSansSecret;
             if (cachedSansSecret.some((injection) => injection.agentType === "long-term-memory")) {
               longTermMemoryRecallReceipt = null;
-            }
-            for (const inj of cachedSansSecret) {
-              reply.raw.write(
-                `data: ${JSON.stringify({
-                  type: "agent_result",
-                  data: {
-                    agentType: inj.agentType,
-                    agentName: agentNameByType.get(inj.agentType) ?? inj.agentName ?? inj.agentType,
-                    resultType: "context_injection",
-                    data: { text: inj.text },
-                    tokensUsed: 0,
-                    success: true,
-                    error: null,
-                    durationMs: 0,
-                    cached: true,
-                  },
-                })}\n\n`,
-              );
             }
           } else if (hasPreGenAgents) {
             const hasContextInjectionAgents = resolvedAgents.some(
@@ -4350,7 +4338,14 @@ export async function generateRoutes(app: FastifyInstance) {
             finalMessages,
             runtimeAgentSectionTokens,
             contextInjections,
+            { omitUnmatched: presetOwnsAgentPlacement },
           );
+          contextInjections = contextInjections.filter(
+            (injection) => !runtimeHandledCached.omittedInjections.includes(injection),
+          );
+          if (runtimeHandledCached.omittedInjections.some((injection) => injection.agentType === "long-term-memory")) {
+            longTermMemoryRecallReceipt = undefined;
+          }
 
           const cachedPipelineInjections = runtimeHandledCached.fallbackInjections.filter(
             (inj) => !SEPARATE_INJECTION_AGENTS.has(inj.agentType),
@@ -4365,17 +4360,29 @@ export async function generateRoutes(app: FastifyInstance) {
           }
 
           for (const inj of cachedSeparateInjections) {
-            const runtimeType = toRuntimeAgentSectionType(inj.agentType, runtimeSectionEligibleAgentTypes);
-            const tokens = runtimeType ? runtimeAgentSectionTokens.get(runtimeType) : undefined;
-            const handledByPresetSection =
-              tokens !== undefined && replaceRuntimeAgentSection(finalMessages, tokens, inj.text);
-            if (!handledByPresetSection) {
-              appendSeparateAgentInjection(inj.agentType, inj.text);
-            }
+            appendSeparateAgentInjection(inj.agentType, inj.text);
           }
-          clearUnusedRuntimeAgentSections(finalMessages, runtimeAgentSectionTokens);
+          for (const inj of contextInjections) {
+            reply.raw.write(
+              `data: ${JSON.stringify({
+                type: "agent_result",
+                data: {
+                  agentType: inj.agentType,
+                  agentName: agentNameByType.get(inj.agentType) ?? inj.agentName ?? inj.agentType,
+                  resultType: "context_injection",
+                  data: { text: inj.text },
+                  tokensUsed: 0,
+                  success: true,
+                  error: null,
+                  durationMs: 0,
+                  cached: true,
+                },
+              })}\n\n`,
+            );
+          }
+          clearUnusedRuntimeSectionsBeforeLtm();
         } else {
-          clearUnusedRuntimeAgentSections(finalMessages, runtimeAgentSectionTokens);
+          clearUnusedRuntimeSectionsBeforeLtm();
         }
 
         if (chatEnableAgents && chatActiveAgentIds.includes("long-term-memory") && !input.regenerateMessageId) {
@@ -4388,11 +4395,17 @@ export async function generateRoutes(app: FastifyInstance) {
             debugMode: requestDebug || isDebug,
           });
           if (recall) {
-            appendSeparateAgentInjection("long-term-memory", recall.text);
-            contextInjections.push({ agentType: "long-term-memory", text: recall.text });
-            longTermMemoryRecallReceipt = recall.receipt;
+            const tokens = runtimeAgentSectionTokens.get("long-term-memory");
+            const handledByPresetSection =
+              tokens !== undefined && replaceRuntimeAgentSection(finalMessages, tokens, recall.text);
+            if (handledByPresetSection || !presetOwnsAgentPlacement) {
+              if (!handledByPresetSection) appendSeparateAgentInjection("long-term-memory", recall.text);
+              contextInjections.push({ agentType: "long-term-memory", text: recall.text });
+              longTermMemoryRecallReceipt = recall.receipt;
+            }
           }
         }
+        clearUnusedRuntimeAgentSections(finalMessages, runtimeAgentSectionTokens);
 
         if (directorSecretPlotAgent) {
           try {

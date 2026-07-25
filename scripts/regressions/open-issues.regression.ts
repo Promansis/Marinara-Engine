@@ -986,8 +986,13 @@ assert.doesNotMatch(conversationGroupSettingsSource, /label="Cross-Chat Awarenes
 assert.match(conversationGroupSettingsSource, /Individual replies can use many tokens/u);
 assert.match(
   conversationGroupSettingsSource,
-  /if \(!\(await flushProseGuardianDrafts\(\)\)\) return;[\s\S]{0,250}onClose\(\)/u,
+  /if \(!\(await flushProseGuardianDrafts\(\)\)\) return false;[\s\S]{0,250}onClose\(\)[\s\S]{0,100}return true/u,
   "Closing Chat Settings must persist changed Prose Guardian preferences before unmounting the drawer",
+);
+assert.match(
+  conversationGroupSettingsSource,
+  /onOpenAgentSettings:[\s\S]{0,250}requestClose\(\)\.then\(\(closed\)[\s\S]{0,150}if \(closed\)\s+useUIStore\.getState\(\)\.openAgentDetail\("long-term-memory"\)/u,
+  "Long-Term Memory settings navigation must wait for the guarded drawer close",
 );
 assert.match(
   conversationGroupSettingsSource,

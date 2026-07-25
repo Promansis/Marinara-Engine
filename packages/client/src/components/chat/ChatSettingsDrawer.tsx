@@ -3098,21 +3098,20 @@ export function ChatSettingsDrawer({
   const handleAgentSuiteCloseGuardChange = useCallback((guard: (() => Promise<boolean>) | null) => {
     agentSuiteCloseGuardRef.current = guard;
   }, []);
-  const requestClose = useCallback(() => {
-    if (drawerClosingRef.current) return;
+  const requestClose = useCallback(async () => {
+    if (drawerClosingRef.current) return false;
     drawerClosingRef.current = true;
-    void (async () => {
-      try {
-        const canCloseAgentSuite =
-          !showAgentSuiteModal || (await (agentSuiteCloseGuardRef.current?.() ?? Promise.resolve(true)));
-        if (!canCloseAgentSuite) return;
-        if (!(await flushProseGuardianDrafts())) return;
-        setShowAgentSuiteModal(false);
-        onClose();
-      } finally {
-        drawerClosingRef.current = false;
-      }
-    })();
+    try {
+      const canCloseAgentSuite =
+        !showAgentSuiteModal || (await (agentSuiteCloseGuardRef.current?.() ?? Promise.resolve(true)));
+      if (!canCloseAgentSuite) return false;
+      if (!(await flushProseGuardianDrafts())) return false;
+      setShowAgentSuiteModal(false);
+      onClose();
+      return true;
+    } finally {
+      drawerClosingRef.current = false;
+    }
   }, [flushProseGuardianDrafts, onClose, showAgentSuiteModal]);
   // Session-ephemeral: did the user change Day Rollover Hour in this drawer mount?
   // Used to gate the "transitional duplication" warning so it only appears
@@ -8538,6 +8537,11 @@ export function ChatSettingsDrawer({
                                                 },
                                                 onChatSettingsChange: async (patch: Record<string, unknown>) => {
                                                   await updateMeta.mutateAsync({ id: chat.id, ...patch });
+                                                },
+                                                onOpenAgentSettings: () => {
+                                                  void requestClose().then((closed) => {
+                                                    if (closed) useUIStore.getState().openAgentDetail("long-term-memory");
+                                                  });
                                                 },
                                                 onDirtyChange: setEditorDirty,
                                               }}
