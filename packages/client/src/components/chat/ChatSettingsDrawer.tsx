@@ -3051,20 +3051,19 @@ export function ChatSettingsDrawer({
   const handleAgentSuiteCloseGuardChange = useCallback((guard: (() => Promise<boolean>) | null) => {
     agentSuiteCloseGuardRef.current = guard;
   }, []);
-  const requestClose = useCallback(() => {
-    if (drawerClosingRef.current) return;
+  const requestClose = useCallback(async () => {
+    if (drawerClosingRef.current) return false;
     drawerClosingRef.current = true;
-    void (async () => {
-      try {
-        const canCloseAgentSuite =
-          !showAgentSuiteModal || (await (agentSuiteCloseGuardRef.current?.() ?? Promise.resolve(true)));
-        if (!canCloseAgentSuite) return;
-        setShowAgentSuiteModal(false);
-        onClose();
-      } finally {
-        drawerClosingRef.current = false;
-      }
-    })();
+    try {
+      const canCloseAgentSuite =
+        !showAgentSuiteModal || (await (agentSuiteCloseGuardRef.current?.() ?? Promise.resolve(true)));
+      if (!canCloseAgentSuite) return false;
+      setShowAgentSuiteModal(false);
+      onClose();
+      return true;
+    } finally {
+      drawerClosingRef.current = false;
+    }
   }, [onClose, showAgentSuiteModal]);
   // Session-ephemeral: did the user change Day Rollover Hour in this drawer mount?
   // Used to gate the "transitional duplication" warning so it only appears
@@ -8221,11 +8220,14 @@ export function ChatSettingsDrawer({
                                         view="settings"
                                         capabilityProps={{
                                           chatId: chat.id,
-                                          enabledForChat: true,
                                           chatSettings: metadata,
                                           onChatSettingsChange: (patch: Record<string, unknown>) =>
                                             updateMeta.mutate({ id: chat.id, ...patch }),
-                                           onEnabledForChatChange: () => toggleAgent(agent.id),
+                                          onOpenAgentSettings: () => {
+                                            void requestClose().then((closed) => {
+                                              if (closed) useUIStore.getState().openAgentDetail("long-term-memory");
+                                            });
+                                          },
                                           confirmAction: showConfirmDialog,
                                         }}
                                         className="block"
@@ -8381,11 +8383,14 @@ export function ChatSettingsDrawer({
                                               view="settings"
                                               capabilityProps={{
                                                 chatId: chat.id,
-                                                enabledForChat: true,
                                                 chatSettings: metadata,
                                                 onChatSettingsChange: (patch: Record<string, unknown>) =>
                                                   updateMeta.mutate({ id: chat.id, ...patch }),
-                                                 onEnabledForChatChange: () => toggleAgent(agent.id),
+                                                 onOpenAgentSettings: () => {
+                                                   void requestClose().then((closed) => {
+                                                     if (closed) useUIStore.getState().openAgentDetail("long-term-memory");
+                                                   });
+                                                 },
                                               }}
                                               className="mt-2 block"
                                             />
