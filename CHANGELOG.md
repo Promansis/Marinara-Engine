@@ -5,6 +5,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 ## [Unreleased]
 
 - Added a compact responsive batch-summary range list with a control to clear completed ranges while retaining retryable ones.
+- Added a clear-all-except-one batch range action, clearer range separators and numbering, and compact failure details behind an info control.
 
 - Fixed PNG metadata decompression, Nano Banana full-body image requests, GPT Image 2 OpenRouter routing, capability swipe timestamps, and bounded import uploads.
 - Prevented profile preview tokens from being sent over non-local HTTP connections.
