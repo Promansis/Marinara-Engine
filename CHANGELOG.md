@@ -4,6 +4,8 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ## [Unreleased]
 
+- Added a compact responsive batch-summary range list with a control to clear completed ranges while retaining retryable ones.
+
 - Fixed PNG metadata decompression, Nano Banana full-body image requests, GPT Image 2 OpenRouter routing, capability swipe timestamps, and bounded import uploads.
 - Prevented profile preview tokens from being sent over non-local HTTP connections.
 - Moved the desktop right-panel resize hit area away from the main chat scrollbar.
