@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
+  extractCharacterCardCastMembers,
   ANIME_GAME_PROMPT_TEMPLATE_ID,
   ANIME_GAME_SYSTEM_PROMPT,
   ANIME_GAME_VIDEO_PROMPT_TEMPLATE_ID,
@@ -11,6 +12,7 @@ import {
   applyTrackerFieldLocksToGameStatePatch,
   roleplayInventoryTrackerLockKey,
   characterTrackerLockKey,
+  worldCustomFieldTrackerLockKey,
   applyRegexReplacement,
   buildNarratorInstructionMessage,
   compileChatSummaryEntries,
@@ -50,7 +52,6 @@ import {
   DEFAULT_CONVERSATION_PROMPT,
   getDefaultAgentPrompt,
   replaceBuiltInAgentDefinitions,
-  GAME_GM_BUILT_IN_PROMPT_TEMPLATES,
   GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES,
   GAME_VIDEO_PROMPT_TEMPLATE,
   STORYBOARD_OPTIMIZED_IMAGE_PROMPT_TEMPLATE_ID,
@@ -287,7 +288,10 @@ import {
   DIRECTOR_SECRET_PLOT_LAST_MESSAGE_KEY,
   shouldRunDirectorSecretPlotMaintenance,
 } from "../../packages/server/src/services/generation/director-secret-plot-runtime.js";
-import { filterPromptMessagesForCharacterAudience } from "../../packages/server/src/services/generation/prompt-message-scope.js";
+import {
+  filterPromptHistoryByMessageIds,
+  filterPromptMessagesForCharacterAudience,
+} from "../../packages/server/src/services/generation/prompt-message-scope.js";
 import {
   mergeAdjacentMessages,
   squashLeadingSystemMessages,
@@ -658,7 +662,6 @@ import {
   buildBackgroundProviderPrompt,
   buildNpcPortraitProviderPrompt,
   buildSceneIllustrationProviderPrompt,
-  chatBackgroundTags,
   safeGeneratedAssetSlug,
 } from "../../packages/server/src/services/game/game-asset-generation.js";
 import { MAPS_LOCATION_ARTWORK } from "../../packages/server/src/services/prompt-overrides/registry/game-assets.js";
@@ -739,6 +742,8 @@ import {
   canonicalizeGamePartySpeakerLabels,
   buildGenerationGuideInstruction,
   buildLockedInventoryTrackerPatch,
+  buildLockedPlayerStatsArrayPatch,
+  resolveTrackerGroupUpdate,
   appendSeparateAgentInjectionMessage,
   collectLatestTrackerCharacterHistory,
   computeSummaryHideIds,
@@ -785,11 +790,17 @@ import {
   parseAssistantWorkspaceAction,
   professorMariWorkspaceResponseFormat,
   resolveWorkspaceMutationVerification,
-  workspaceActionNeedsVerification,
+  auditWorkspaceCompletionClaim,
   workspaceTextClaimsMutationCompletion,
   type WorkspaceCommandResult,
 } from "../../packages/server/src/services/professor-mari/workspace-agent.service.js";
 import { fitMessagesForModelAccess } from "../../packages/server/src/services/generation/model-access-policy.js";
+import {
+  resolveAdvancedMemoryPrompt,
+  describeAdvancedMemoryPlacements,
+  createAdvancedMemoryPlacement,
+  type AdvancedMemoryPromptParts,
+} from "../../packages/server/src/services/prompt/advanced-memory-prompt.js";
 import {
   assemblePrompt,
   appendFallbackChatSummaryToSystemPrompt,
@@ -1207,7 +1218,12 @@ const cases: RegressionCase[] = [
         "utf8",
       );
       assert.match(generateRouteSource, /shouldSuppressIllustratorForegroundForStoryboard\(\{/u);
-      assert.match(generateRouteSource, /if \(automaticBackgroundsEnabled && illustratorBackgroundAgent\)/u);
+      // Explicit image commands request foreground art; automatic backgrounds
+      // retain their independent setting when Storyboard owns foreground art.
+      assert.match(
+        generateRouteSource,
+        /if \(!commandTarget && automaticBackgroundsEnabled && illustratorBackgroundAgent\)/u,
+      );
       assert.match(generateRouteSource, /if \(!storyboardSuppressesForeground && shouldGenerate && imagePrompt\)/u);
     },
   },
@@ -1763,6 +1779,26 @@ const cases: RegressionCase[] = [
         ],
       );
 
+      // Reassigned persona snapshot name reflects immediately into historical speaker prefixing
+      const reassignedPersonaName = readPersonaSnapshotName({
+        personaSnapshot: { personaId: "new-identity", name: "Reassigned Hero" },
+      });
+      const updatedMessages = prefixGroupIndividualHistorySpeakers(
+        [
+          {
+            role: "user" as const,
+            content: "A decree from the old Persona.",
+            personaSnapshotName: reassignedPersonaName,
+          },
+          { role: "assistant" as const, content: "An answer.", characterId: "dottore" },
+        ],
+        {
+          personaName: "Mari",
+          characterNamesById: new Map([["dottore", "Dottore"]]),
+        },
+      );
+      assert.equal(updatedMessages[0]?.content, "Reassigned Hero: A decree from the old Persona.");
+
       const generateRouteSource = readFileSync(
         new URL("../../packages/server/src/routes/generate.routes.ts", import.meta.url),
         "utf8",
@@ -1780,7 +1816,7 @@ const cases: RegressionCase[] = [
       }
       assert.match(
         generateRouteSource,
-        /usesIndividualGroupGeneration && requestedNarrativeDirectorMode && directorAgent[\s\S]{0,700}appendSeparateAgentInjectionMessage\([\s\S]{0,400}requestedNarrativeDirectorMode === "random"/u,
+        /chatMode === "roleplay" && requestedNarrativeDirectorMode && directorAgent[\s\S]{0,700}appendSeparateAgentInjectionMessage\([\s\S]{0,400}requestedNarrativeDirectorMode === "random"/u,
         "individual group prompts should retain the armed Narrative Director instruction at the responder boundary",
       );
     },
@@ -3295,6 +3331,18 @@ const cases: RegressionCase[] = [
       });
 
       assert.equal(result.length <= 16, true);
+
+      const budget = { expansions: 0, exceeded: false };
+      const truncated = resolveMacros(
+        "{{user}}",
+        { ...context, user: "x".repeat(32) },
+        {
+          maxMacroOutputLength: 16,
+          macroBudget: budget,
+        },
+      );
+      assert.equal(truncated, "x".repeat(16));
+      assert.equal(budget.exceeded, true, "Callers must be able to refuse silently truncated macro output");
     },
   },
   {
@@ -3815,7 +3863,7 @@ const cases: RegressionCase[] = [
 
       assert.equal(normalizeGameStoryboardKeyframeCount(undefined), 3);
       assert.equal(normalizeGameStoryboardKeyframeCount(0), 1);
-      assert.equal(normalizeGameStoryboardKeyframeCount(12), 6);
+      assert.equal(normalizeGameStoryboardKeyframeCount(12), 12);
       assert.doesNotMatch(sharedPlannerSource, /You are Marinara's/u);
       assert.doesNotMatch(sharedImageSource, /promptTemplate:/u);
       assert.equal(listPromptOverrideKeys().includes("game.storyboardIllustrationDirector"), false);
@@ -4213,7 +4261,7 @@ const cases: RegressionCase[] = [
       assert.doesNotMatch(gameRouteSource, /ltxDirectorPrompt:\s*promptBuild|storyboardVideoTemplateId/);
       assert.match(gameRouteSource, /generateStoryboardVideos && !usedFallbackStoryboardPlanner/);
       assert.match(gameRouteSource, /if \(storyboardAbortSignal\.aborted\)/);
-      assert.match(gameRouteSource, /Storyboard Illustrator returned no usable keyframes/);
+      assert.match(gameRouteSource, /completeStoryboardPlan\(\{/);
       assert.match(gameRouteSource, /Storyboard keyframe is missing its planned animation prompt/);
       assert.doesNotMatch(
         gameRouteSource,
@@ -5832,7 +5880,18 @@ const cases: RegressionCase[] = [
         characters: ["Mari", "Dottore"],
         aspectRatio: "landscape",
         reason: "Manual Gallery illustration request.",
+        characterPrompts: [],
       });
+
+      const captionRoster = Array.from({ length: 25 }, (_, index) => `Guest ${index + 1}`);
+      const fullCastPlan = parseManualIllustratorPromptPlan(
+        JSON.stringify({ prompt: "A crowded banquet", characters: captionRoster }),
+      );
+      assert.deepEqual(
+        fullCastPlan.characters,
+        captionRoster.slice(0, 22),
+        "manual Illustrator keeps the complete V5 caption roster",
+      );
 
       const quarantinePrompt =
         "A cramped quarantine berth inside the Fontaine border checkpoint at night. A narrow iron-framed cot stands against a damp stone wall beside a battered table holding folded linen, simple medical supplies, an enamel basin, and a sprig of dried lavender. Heavy checkpoint doors and exposed brass pipes occupy the opposite wall. A high reinforced window reveals cold downpour streaming across the glass. A compact radiator and low amber utility lamp contrast with the blue-gray storm light. Chipped plaster, rust stains, patched bedding, old cargo crates, and hastily cleaned floorboards suggest an austere freight facility adapted for recovery.";
@@ -7183,6 +7242,7 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
         "regression-model",
       );
       assert.equal(results.length, 2);
+      assert.match(calls[0]![0]!.content, /tracker_incremental_updates: supported/);
       const messages = calls[0]!;
       const system = messages[0]!;
       const last = messages[messages.length - 1]!;
@@ -8174,18 +8234,19 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
     },
   },
   {
-    name: "Roleplay preserves an explicit no-Persona selection",
+    name: "Every chat mode requires an explicit Persona selection",
     run() {
       const personas = [
         { id: "active-persona", isActive: "true" },
         { id: "selected-persona", isActive: "false" },
       ];
 
-      assert.equal(resolveChatPersonaCandidate(personas, null, "roleplay"), null);
-      assert.equal(resolveActivePersonaCandidate(personas, null, "roleplay"), null);
-      assert.equal(resolveActivePersonaCandidate(personas, null, "game"), null);
-      assert.equal(resolveActivePersonaCandidate(personas, null, "conversation")?.id, "active-persona");
-      assert.equal(resolveActivePersonaCandidate(personas, "selected-persona", "roleplay")?.id, "selected-persona");
+      for (const mode of ["conversation", "roleplay", "game"]) {
+        assert.equal(resolveChatPersonaCandidate(personas, null, mode), null);
+        assert.equal(resolveActivePersonaCandidate(personas, null, mode), null);
+        assert.equal(resolveChatPersonaCandidate(personas, "missing-persona", mode), null);
+        assert.equal(resolveActivePersonaCandidate(personas, "selected-persona", mode)?.id, "selected-persona");
+      }
     },
   },
   {
@@ -8751,6 +8812,90 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
     },
   },
   {
+    name: "identity aliases cannot cross macro boundaries or suppress ordinary prose",
+    run() {
+      const character = {
+        id: "alias-character",
+        name: "Alias Character",
+        description: "CHAR_DESCRIPTION",
+        personality: "CHAR_PERSONALITY",
+        backstory: "CHAR_BACKSTORY",
+        appearance: "CHAR_APPEARANCE",
+        scenario: "CHAR_SCENARIO",
+        systemPrompt: "CHAR_SYSTEM",
+        mesExample: "CHAR_EXAMPLE",
+        creatorNotes: "",
+        firstMes: "",
+        postHistoryInstructions: "",
+        tags: [],
+        talkativeness: 0.5,
+        avatarPath: null,
+        avatarCrop: null,
+      };
+      const markers = [
+        "CHAR_DESCRIPTION",
+        "CHAR_PERSONALITY",
+        "CHAR_BACKSTORY",
+        "CHAR_APPEARANCE",
+        "CHAR_SCENARIO",
+        "CHAR_SYSTEM",
+        "CHAR_EXAMPLE",
+        "PERSONA_DESCRIPTION",
+        "PERSONA_PERSONALITY",
+        "PERSONA_BACKSTORY",
+        "PERSONA_APPEARANCE",
+        "PERSONA_SCENARIO",
+      ];
+      const cases = [
+        {
+          source:
+            "{{charName}} follows their personality and description.\nRespond to the user/persona as {{charName}}.",
+          omitted: [],
+        },
+        {
+          source: "{{charName}} backstory appearance scenario charSysInfo example personaAppearance {{charName}}",
+          omitted: [],
+        },
+        { source: "{{descriptionExtra}} {{personalityExtra}}", omitted: [] },
+        { source: "{{ description }} {{ personality }}", omitted: [] },
+        { source: "{{description}} {{personality}}", omitted: ["CHAR_DESCRIPTION", "CHAR_PERSONALITY"] },
+        { source: "{{persona}}", omitted: markers.filter((marker) => marker.startsWith("PERSONA_")) },
+        { source: "{{personaAppearance}}", omitted: ["PERSONA_APPEARANCE"] },
+        { source: "{{// description}} {{if personality}}", omitted: [] },
+        { source: '{{#if personality != ""}}Authored choice{{/if}}', omitted: ["CHAR_PERSONALITY"] },
+        { source: '{{#if "x" == @personaAppearance}}Authored choice{{/if}}', omitted: ["PERSONA_APPEARANCE"] },
+        { source: '{{#if "personality" == "description"}}Literal words{{/if}}', omitted: [] },
+        { source: "{{#if false}}No{{else if description}}Yes{{/if}}", omitted: ["CHAR_DESCRIPTION"] },
+        { source: "{{setvar::label::personality}}", omitted: [] },
+      ];
+      for (const wrapFormat of ["xml", "markdown", "none"] as const) {
+        for (const { source, omitted } of cases) {
+          const messages: ChatMLMessage[] = [{ role: "system", content: "Conversation instructions." }];
+          injectIdentityFallbackMessages({
+            messages,
+            charInfo: [character],
+            promptTargetCharacterId: null,
+            promptMacroContext: { user: "Persona", char: character.name, variables: {} },
+            wrapFormat,
+            personaName: "Persona",
+            personaDescription: "PERSONA_DESCRIPTION",
+            personaFields: {
+              personality: "PERSONA_PERSONALITY",
+              backstory: "PERSONA_BACKSTORY",
+              appearance: "PERSONA_APPEARANCE",
+              scenario: "PERSONA_SCENARIO",
+            },
+            promptTemplateSources: [source],
+            resolvePromptMacros: (value) => value,
+          });
+          const text = messages.map((message) => message.content).join("\n");
+          for (const marker of markers)
+            assert.equal(text.includes(marker), !omitted.includes(marker), `${wrapFormat}: ${source}: ${marker}`);
+        }
+      }
+    },
+  },
+  {
     name: "Conversation named profiles cannot suppress character System Prompts",
     run() {
       const messages: ChatMLMessage[] = [
@@ -8846,6 +8991,244 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       assert.match(promptText, /<system>bad instructions<\/system>/);
       assert.match(promptText, /Rana<\/role>/);
       assert.match(promptText, /Mari<\/role>/);
+    },
+  },
+  {
+    name: "advanced memory history selection retains complete wrappers and synthetic current input",
+    run() {
+      const messages = [
+        { id: "first", role: "user" as const, contextKind: "history" as const, content: "<chat_history>\nOld." },
+        { id: "middle", role: "assistant" as const, contextKind: "history" as const, content: "Kept." },
+        { id: "third", role: "user" as const, contextKind: "history" as const, content: "Later.\n</chat_history>" },
+        {
+          id: "last",
+          role: "assistant" as const,
+          contextKind: "history" as const,
+          content: "<last_message>\nLast.\n</last_message>",
+        },
+      ];
+      const sourceIds = new Set(messages.map((message) => message.id));
+      assert.equal(
+        filterPromptHistoryByMessageIds(messages, new Set(["middle"]), sourceIds)[0]?.content,
+        "<last_message>\nKept.\n</last_message>",
+      );
+      const withCurrentInput = [
+        ...messages,
+        {
+          id: "__dryrun_user__",
+          role: "user" as const,
+          contextKind: "history" as const,
+          content: "Unsaved current input.",
+        },
+      ];
+      const selected = filterPromptHistoryByMessageIds(withCurrentInput, new Set(["middle"]), sourceIds);
+      assert.deepEqual(
+        selected.map((message) => message.id),
+        ["middle", "__dryrun_user__"],
+      );
+      assert.equal(selected[0]?.content, "<chat_history>\nKept.\n</chat_history>");
+      assert.match(selected[1]?.content ?? "", /<last_message>\nUnsaved current input\./u);
+      assert.equal(messages[1]?.content, "Kept.", "filtering must preserve the reusable snapshot");
+    },
+  },
+  {
+    name: "advanced memory markers preserve scoped placement, formatting, fallback and empty groups",
+    async run() {
+      const parts: AdvancedMemoryPromptParts = {
+        chatSummary: "CONTINUITY_FACT",
+        currentSceneSummary: "OPEN_SCENE_FACT",
+        recalledScenes: "OLD_SCENE_FACT",
+        recalledMessages: "#12 Mari: EXACT_OLD_WORDS",
+      };
+      for (const format of ["xml", "markdown", "none"] as const) {
+        const headingParts = { chatSummary: "# A user heading\n<private>Literal tags & content</private>" };
+        const headingPlacement = createAdvancedMemoryPlacement("chat_summary", format);
+        for (const includeSlot of [true, false]) {
+          const headingText = resolveAdvancedMemoryPrompt(
+            [{ content: includeSlot ? headingPlacement.token : "LIVE_WORDS" }],
+            [headingPlacement],
+            headingParts,
+          )
+            .map((message) => message.content)
+            .join("\n");
+          assert.ok(headingText.includes("<private>Literal tags & content</private>"));
+          assert.ok(
+            headingText.includes(format === "markdown" ? "\\# A user heading" : "# A user heading"),
+            "authored and fallback memory slots use the existing format-specific leaf handling",
+          );
+          if (format === "markdown") assert.doesNotMatch(headingText, /^# A user heading$/mu);
+        }
+        const marker = (id: string, type: string, extra: Partial<AssemblerInput["sections"][number]> = {}) =>
+          promptSection({
+            id,
+            name: id,
+            identifier: id,
+            isMarker: "true",
+            markerConfig: JSON.stringify({ type }),
+            ...extra,
+          });
+        const sections = [
+          promptSection({ id: "main", identifier: "main", name: "Instructions", content: "STABLE_RULE" }),
+          marker("hidden_summary", "chat_summary", { groupId: "disabled" }),
+          marker("old_scene", "recalled_scenes", { groupId: "memory" }),
+          marker("history", "chat_history"),
+          marker("my_summary", "chat_summary", { role: "user" }),
+          marker("duplicate_summary", "chat_summary"),
+          marker("disabled_excerpt", "recalled_messages", { enabled: "false" }),
+        ];
+        const input: AssemblerInput = {
+          db: undefined as unknown as DB,
+          preset: {
+            id: "advanced-memory-markers",
+            name: "Memory fixture",
+            sectionOrder: JSON.stringify(sections.map((section) => section.id)),
+            groupOrder: JSON.stringify(["disabled", "memory"]),
+            wrapFormat: format,
+            parameters: JSON.stringify({}),
+            variableGroups: "[]",
+            variableValues: "{}",
+          },
+          sections,
+          groups: [
+            { id: "disabled", name: "Hidden group", enabled: "false" },
+            { id: "memory", name: "Memory group", enabled: "true" },
+          ].map((group) => ({
+            ...group,
+            presetId: "advanced-memory-markers",
+            parentGroupId: null,
+            order: 0,
+            createdAt: "",
+          })),
+          choiceBlocks: [],
+          chatChoices: {},
+          chatId: "advanced-memory-markers",
+          characterIds: [],
+          personaName: "Mari",
+          personaDescription: "",
+          chatMessages: [{ role: "user", content: "LIVE_WORDS" }],
+          chatSummary: "LEGACY_UNSCOPED_SECRET",
+          advancedMemory: parts,
+          previewOnly: true,
+        };
+        const assembled = await assemblePrompt(input);
+        const text = assembled.messages.map((message) => message.content).join("\n");
+        for (const fact of Object.values(parts)) assert.equal(text.split(fact!).length - 1, 1, fact!);
+        assert.doesNotMatch(text, /LEGACY_UNSCOPED_SECRET|duplicate_summary|hidden_summary|disabled_excerpt/u);
+        assert.match(text, /Below is a small excerpt from earlier chat history/u);
+        const summaryIndex = assembled.messages.findIndex((message) => message.content.includes("CONTINUITY_FACT"));
+        assert.ok(
+          text.indexOf("CONTINUITY_FACT") > text.indexOf("LIVE_WORDS"),
+          "explicit summary placement stays after history, including merged user sections",
+        );
+        assert.equal(assembled.messages[summaryIndex]?.role, "user");
+        assert.ok(
+          text.indexOf("EXACT_OLD_WORDS") < text.indexOf("LIVE_WORDS"),
+          "missing markers fall back before history",
+        );
+        if (format === "xml") assert.match(text, /<my_summary>/u);
+        if (format === "markdown") {
+          assert.match(text, /## my_summary/u);
+          assert.doesNotMatch(text, /<my_summary>|<recalled_messages>/u);
+        }
+        if (format === "none") assert.doesNotMatch(text, /<my_summary>|## my_summary|## Recalled/u);
+
+        const deferred = await assemblePrompt({ ...input, deferAdvancedMemory: true });
+        const preparedSnapshot = JSON.stringify(deferred.messages);
+        assert.doesNotMatch(preparedSnapshot, /CONTINUITY_FACT|EXACT_OLD_WORDS|LEGACY_UNSCOPED_SECRET/u);
+        const resolved = resolveAdvancedMemoryPrompt(deferred.messages, deferred.advancedMemoryPlacements!, parts);
+        assert.deepEqual(resolved, assembled.messages, "preview and late per-responder rendering agree");
+        const empty = resolveAdvancedMemoryPrompt(deferred.messages, deferred.advancedMemoryPlacements!, {});
+        const emptyText = empty.map((message) => message.content).join("\n");
+        assert.match(emptyText, /STABLE_RULE/u);
+        assert.match(emptyText, /LIVE_WORDS/u);
+        assert.doesNotMatch(emptyText, /Memory group|memory_group|Below is|Below are|MARINARA_ADVANCED_MEMORY/u);
+        assert.equal(
+          JSON.stringify(deferred.messages),
+          preparedSnapshot,
+          "budget probes must not mutate the prepared prompt",
+        );
+
+        const characterSections = [
+          ...input.sections.slice(0, 3),
+          promptSection({
+            id: "other_profile",
+            identifier: "other_profile",
+            name: "Other Profile",
+            groupId: "memory",
+            content: "CHARACTER_ONLY_PROFILE",
+          }),
+          ...input.sections.slice(3),
+        ];
+        const characterGrouped = await assemblePrompt({
+          ...input,
+          deferAdvancedMemory: true,
+          deferMessagePostProcessing: true,
+          sections: characterSections,
+          preset: { ...input.preset, sectionOrder: JSON.stringify(characterSections.map((section) => section.id)) },
+          groups: input.groups.map((group) => (group.id === "memory" ? { ...group, name: "Dottore" } : group)),
+        });
+        const characterScoped = scopeIndividualGroupMessagesForTarget(characterGrouped.messages, "visitor", [
+          { id: "dottore", name: "Dottore" },
+          { id: "visitor", name: "Visitor" },
+        ]);
+        const scopedText = resolveAdvancedMemoryPrompt(
+          characterScoped,
+          characterGrouped.advancedMemoryPlacements!,
+          parts,
+        )
+          .map((message) => message.content)
+          .join("\n");
+        for (const fact of Object.values(parts))
+          assert.equal(scopedText.split(fact!).length - 1, 1, "scoped-away slots still emit once");
+        assert.ok(scopedText.indexOf("OLD_SCENE_FACT") < scopedText.indexOf("LIVE_WORDS"));
+        if (format !== "none")
+          assert.doesNotMatch(
+            scopedText,
+            /CHARACTER_ONLY_PROFILE/u,
+            "memory group guards must not prevent ordinary character profile scoping",
+          );
+        const scenePlacement = describeAdvancedMemoryPlacements(
+          characterScoped,
+          characterGrouped.advancedMemoryPlacements!,
+        ).find((placement) => placement.markerType === "recalled_scenes")!;
+        assert.equal(
+          scenePlacement.fallback,
+          format !== "none",
+          "placement receipt reports a scoped-away authored group",
+        );
+
+        const deferredSquash = await assemblePrompt({
+          ...input,
+          deferAdvancedMemory: true,
+          deferMessagePostProcessing: true,
+          preset: { ...input.preset, parameters: JSON.stringify({ squashSystemMessages: true }) },
+          sections: [sections[0]!, sections[3]!],
+          chatMessages: [
+            { id: "old-narrator", role: "system", content: "OLD_NARRATOR_SECRET" },
+            { id: "current-user", role: "user", content: "LIVE_WORDS" },
+          ],
+        });
+        assert.ok(
+          deferredSquash.messages.some((message) => message.id === "old-narrator" && message.contextKind === "history"),
+          "deferred system squashing must preserve narrator source IDs",
+        );
+        const selectedNarrator = filterPromptHistoryByMessageIds(
+          deferredSquash.messages,
+          new Set(["current-user"]),
+          new Set(["old-narrator", "current-user"]),
+        );
+        assert.doesNotMatch(
+          resolveAdvancedMemoryPrompt(selectedNarrator, deferredSquash.advancedMemoryPlacements!, {})
+            .map((message) => message.content)
+            .join("\n"),
+          /OLD_NARRATOR_SECRET/u,
+        );
+
+        const disabled = await assemblePrompt({ ...input, advancedMemory: undefined });
+        const disabledText = disabled.messages.map((message) => message.content).join("\n");
+        assert.match(disabledText, /LEGACY_UNSCOPED_SECRET/u);
+        assert.doesNotMatch(disabledText, /OPEN_SCENE_FACT|OLD_SCENE_FACT|EXACT_OLD_WORDS|Below is|Below are/u);
+      }
     },
   },
   {
@@ -8947,7 +9330,9 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
         new URL("../../packages/server/src/routes/generate.routes.ts", import.meta.url),
         "utf8",
       );
-      const fallbackBranchStart = generateRouteSource.indexOf('if (chatMode === "roleplay" && !resolvedPreset) {');
+      const fallbackBranchStart = generateRouteSource.indexOf(
+        'if (chatMode === "roleplay" && !resolvedPreset && !advancedMemoryEnabled) {',
+      );
       const fallbackBranchEnd = generateRouteSource.indexOf("\n        }", fallbackBranchStart);
       assert.notEqual(fallbackBranchStart, -1);
       assert.notEqual(fallbackBranchEnd, -1);
@@ -8955,6 +9340,44 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
         generateRouteSource.slice(fallbackBranchStart, fallbackBranchEnd),
         /appendFallbackChatSummaryToSystemPrompt\(/u,
       );
+    },
+  },
+  {
+    name: "sequential Game agent phases do not overlap different model connections",
+    async run() {
+      for (const sequentialExecution of [false, true]) {
+        let active = 0;
+        let peak = 0;
+        const agents = [0, 1, 2].map((index) => {
+          const capture = makeCapturingProvider("Context checked.");
+          const complete = capture.provider.chatComplete;
+          capture.provider.chatComplete = async (...args) => {
+            active++;
+            peak = Math.max(peak, active);
+            try {
+              await new Promise((done) => setTimeout(done, 20));
+              return await complete(...args);
+            } finally {
+              active--;
+            }
+          };
+          return {
+            ...makeRegressionAgentConfig({
+              id: `custom:sequential-${index}`,
+              type: `sequential-${index}`,
+              isCustomAgent: true,
+              phase: "parallel",
+              promptTemplate: "Check the supplied context.",
+              settings: { resultType: "context_injection" },
+            }),
+            provider: capture.provider,
+            model: `model-${index}`,
+            maxParallelJobs: 4,
+          } as ResolvedAgent;
+        });
+        await runParallelAgents(agents, makeRegressionAgentContext({ chatMode: "game", sequentialExecution }));
+        assert.equal(peak, sequentialExecution ? 1 : 3);
+      }
     },
   },
   {
@@ -9388,6 +9811,38 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
         }),
         false,
       );
+    },
+  },
+  {
+    name: "prompt assembly resolves the request model and keeps an absent model empty",
+    async run() {
+      for (const model of [undefined, "vendor/model-a", "override-model-b"]) {
+        const result = await assemblePrompt({
+          db: undefined as unknown as DB,
+          model,
+          preset: {
+            id: "model-macro",
+            name: "Model macro",
+            sectionOrder: JSON.stringify(["main"]),
+            groupOrder: "[]",
+            wrapFormat: "xml",
+            parameters: "{}",
+            variableGroups: "[]",
+            variableValues: "{}",
+          },
+          sections: [promptSection({ id: "main", identifier: "main", name: "Main", content: "Model: {{model}}." })],
+          groups: [],
+          choiceBlocks: [],
+          chatChoices: {},
+          chatId: "model-macro",
+          characterIds: [],
+          personaName: "Mari",
+          personaDescription: "",
+          chatMessages: [],
+          disableLorebooks: true,
+        });
+        assert.ok(result.messages.some((message) => message.content.includes(`Model: ${model ?? ""}.`)));
+      }
     },
   },
   {
@@ -10163,6 +10618,11 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
         randomPick: "true",
       };
 
+      assert.equal(
+        resolveChoiceVariableValue({ ...input, randomPick: false, separator: "" }),
+        "tenderdramaticplayful",
+        "an explicitly empty multi-choice separator is preserved",
+      );
       assert.equal(resolveChoiceVariableValue({ ...input, random: () => 0 }), "tender");
       assert.equal(resolveChoiceVariableValue({ ...input, random: () => 0.5 }), "dramatic");
       assert.equal(resolveChoiceVariableValue({ ...input, random: () => 0.999999 }), "playful");
@@ -10413,6 +10873,270 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
         inventoryTrackerInventory: [{ name: "Scavenged axe", qty: 2 }],
       });
 
+      // Explicit incremental groups keep omitted state, while arrays still replace it.
+      const itemState = {
+        ...inventoryLockState,
+        playerStats: {
+          ...inventoryLockState.playerStats,
+          inventoryTrackerInventory: [{ name: "Billhook" }, { name: "Rope" }, { name: "Map" }],
+        },
+      };
+      const itemSnapshot = { playerStats: JSON.stringify(itemState.playerStats) };
+      const incrementalItems = buildLockedInventoryTrackerPatch({
+        data: {
+          currencies: { updates: [{ name: "Silver coin", qty: 2 }], removed: ["Silver coin"] },
+          inventory: { updates: [{ name: " rope ", qty: 3 }, { name: "Key" }], removed: ["Billhook", "unknown"] },
+        },
+        snapshot: itemSnapshot,
+        lockState: itemState,
+      });
+      assert.deepEqual(incrementalItems.playerStats.inventoryTrackerCurrencies, [{ name: "Silver coin", qty: 6 }]);
+      assert.deepEqual(incrementalItems.playerStats.inventoryTrackerInventory, [
+        { name: "Rope", qty: 3 },
+        { name: "Map" },
+        { name: "Key" },
+      ]);
+      assert.deepEqual(
+        buildLockedInventoryTrackerPatch({
+          data: { inventory: { updates: [{ name: "Rope", qty: 1 }] } },
+          snapshot: { playerStats: incrementalItems.playerStats },
+          lockState: null,
+        }).playerStats.inventoryTrackerInventory?.find((row) => row.name === "Rope"),
+        { name: "Rope" },
+        "qty:1 explicitly reduces an existing quantity",
+      );
+      assert.deepEqual(
+        buildLockedInventoryTrackerPatch({
+          data: { inventory: { updates: [{ name: "Rope" }] } },
+          snapshot: { playerStats: incrementalItems.playerStats },
+          lockState: null,
+        }).playerStats.inventoryTrackerInventory?.find((row) => row.name === "Rope"),
+        { name: "Rope", qty: 3 },
+        "omitted quantity preserves the existing total",
+      );
+      assert.equal(
+        itemSnapshot.playerStats,
+        JSON.stringify(itemState.playerStats),
+        "normalization does not mutate its source",
+      );
+      assert.deepEqual(
+        buildLockedInventoryTrackerPatch({ data: { inventory: [] }, snapshot: itemSnapshot, lockState: null })
+          .playerStats.inventoryTrackerInventory,
+        [],
+        "legacy empty arrays still clear their group",
+      );
+      assert.equal(
+        buildLockedInventoryTrackerPatch({
+          data: { inventory: { updates: "bad", removed: ["Map"] } },
+          snapshot: itemSnapshot,
+          lockState: null,
+        }).changed,
+        false,
+        "malformed operation must not partially delete state",
+      );
+
+      const customFields = [
+        { name: "Health", value: "10", locked: true },
+        { name: "Clue", value: "gate" },
+        { name: "Mood", value: "calm" },
+      ];
+      const customState = {
+        ...currentState,
+        playerStats: { ...itemState.playerStats, customTrackerFields: customFields },
+      };
+      const updatedFields = resolveTrackerGroupUpdate(
+        {
+          updates: [
+            { name: "Clue", value: "north gate" },
+            { name: "Count", value: "1" },
+          ],
+          removed: ["Mood", "Health"],
+        },
+        customFields,
+        customState,
+        "customTrackerFields",
+      )!;
+      const customPatch = buildLockedPlayerStatsArrayPatch({
+        field: "customTrackerFields",
+        values: updatedFields,
+        snapshot: { playerStats: customState.playerStats },
+        lockState: customState,
+      });
+      assert.deepEqual(customPatch.values, [
+        { name: "Health", value: "10", locked: true },
+        { name: "Clue", value: "north gate" },
+        { name: "Count", value: "1" },
+      ]);
+
+      const attemptedUnlock = resolveTrackerGroupUpdate(
+        {
+          updates: [
+            { name: "Health", value: "0", locked: false },
+            { name: "New", value: "kept" },
+          ],
+          removed: ["Health"],
+        },
+        customFields,
+        customState,
+        "customTrackerFields",
+      )!;
+      const lockedResult = buildLockedPlayerStatsArrayPatch({
+        field: "customTrackerFields",
+        values: attemptedUnlock,
+        snapshot: { playerStats: customState.playerStats },
+        lockState: customState,
+      });
+      assert.deepEqual(lockedResult.values, [...customFields, { name: "New", value: "kept" }]);
+      const nextLockedState = { ...customState, playerStats: lockedResult.playerStats };
+      const subsequentRemoval = resolveTrackerGroupUpdate(
+        { removed: ["Health"] },
+        lockedResult.values,
+        nextLockedState,
+        "customTrackerFields",
+      );
+      assert.deepEqual(subsequentRemoval, lockedResult.values, "a model update cannot unlock the saved row");
+
+      const trackedCharacters = [
+        {
+          characterId: "guard-a",
+          name: "Guard",
+          mood: "calm",
+          outfit: "coat",
+          customFields: { Goal: "Watch", Secret: "kept" },
+          stats: [
+            { name: "HP", value: 10, max: 20 },
+            { name: "MP", value: 4, max: 5 },
+          ],
+        },
+        { characterId: "guard-b", name: "Guard", mood: "tired" },
+        { characterId: "visitor", name: "Visitor", mood: "happy" },
+      ];
+      const characterState = { ...currentState, presentCharacters: trackedCharacters };
+      assert.deepEqual(
+        resolveTrackerGroupUpdate(
+          { removed: ["guard-a", "Guard"] },
+          trackedCharacters,
+          characterState,
+          "presentCharacters",
+        ),
+        trackedCharacters.slice(1),
+        "removing an ID must not disambiguate a name in the original snapshot",
+      );
+      assert.deepEqual(
+        resolveTrackerGroupUpdate(
+          { updates: [{ characterId: "guard-a", name: "Captain" }], removed: ["Guard"] },
+          trackedCharacters,
+          characterState,
+          "presentCharacters",
+        ),
+        [{ ...trackedCharacters[0], name: "Captain" }, ...trackedCharacters.slice(1)],
+        "renaming an ID must not disambiguate a removal from the original snapshot",
+      );
+      assert.deepEqual(
+        resolveTrackerGroupUpdate(
+          {
+            updates: [
+              { characterId: "guard-a", name: "Captain" },
+              { name: "Guard", mood: "angry" },
+              { characterId: "arrival", name: "Arrival", mood: "calm" },
+              { name: "Arrival", mood: "happy" },
+            ],
+          },
+          trackedCharacters,
+          characterState,
+          "presentCharacters",
+        ),
+        [
+          { ...trackedCharacters[0], name: "Captain" },
+          ...trackedCharacters.slice(1),
+          { characterId: "arrival", name: "Arrival", mood: "happy" },
+        ],
+        "renaming cannot disambiguate existing names, while a new row accepts repeated updates",
+      );
+      const updatedCharacters = resolveTrackerGroupUpdate(
+        {
+          updates: [
+            {
+              characterId: "guard-a",
+              mood: "alert",
+              customFields: { Goal: "Search" },
+              stats: [{ name: "HP", value: 9 }],
+            },
+            { name: "Guard", mood: "wrong" },
+            { characterId: "unknown", name: "Guard", mood: "wrong" },
+          ],
+          removed: ["Guard", "unknown", "visitor"],
+        },
+        trackedCharacters,
+        characterState,
+        "presentCharacters",
+      )!;
+      assert.equal(updatedCharacters.length, 2, "ambiguous names and unknown IDs do not remove or replace characters");
+      assert.deepEqual(updatedCharacters[0], {
+        ...trackedCharacters[0],
+        mood: "alert",
+        customFields: { Goal: "Search", Secret: "kept" },
+        stats: [
+          { name: "HP", value: 9, max: 20 },
+          { name: "MP", value: 4, max: 5 },
+        ],
+      });
+      preserveTrackerCharacterUiFields(updatedCharacters, trackedCharacters);
+      assert.equal(updatedCharacters.length, 2, "history enrichment must not resurrect a removed character");
+      assert.deepEqual(
+        resolveTrackerGroupUpdate(
+          { removed: ["guard-a", "guard-b", "visitor"] },
+          trackedCharacters,
+          characterState,
+          "presentCharacters",
+        ),
+        [],
+        "explicit removal can remove the last character",
+      );
+      const lockedCharacterState = {
+        ...characterState,
+        fieldLocks: { [characterTrackerLockKey(trackedCharacters[0]!, 0, "mood")]: true },
+      };
+      assert.equal(
+        resolveTrackerGroupUpdate(
+          { removed: ["guard-a"], updates: [{ characterId: "arrival", name: "Arrival" }] },
+          trackedCharacters,
+          lockedCharacterState,
+          "presentCharacters",
+        )?.length,
+        4,
+        "locked removal does not consume a new arrival",
+      );
+
+      const worldOps = { updates: [{ name: "Tension", value: "High" }], removed: ["Moon Phase", "unknown"] };
+      const worldPatch = applyTrackerFieldLocksToGameStatePatch({ worldCustomFields: worldOps }, currentState);
+      assert.deepEqual(worldPatch.worldCustomFields, [{ name: "Tension", value: "High", icon: "flame" }]);
+      const worldStreamPatch = {
+        worldCustomFields: { updates: worldPatch.worldCustomFields, removed: ["Moon Phase"] },
+      };
+      assert.deepEqual(
+        applyTrackerFieldLocksToGameStatePatch(worldStreamPatch, currentState).worldCustomFields,
+        worldPatch.worldCustomFields,
+        "live client merge honors explicit removal",
+      );
+      assert.deepEqual(
+        applyTrackerFieldLocksToGameStatePatch(worldStreamPatch, null).worldCustomFields,
+        worldPatch.worldCustomFields,
+        "early SSE seeds arrays before a snapshot is loaded",
+      );
+      const worldLockedState = {
+        ...currentState,
+        fieldLocks: { [worldCustomFieldTrackerLockKey(currentState.worldCustomFields[0]!, "value", 0)]: true },
+      };
+      assert.equal(
+        (
+          applyTrackerFieldLocksToGameStatePatch({ worldCustomFields: worldOps }, worldLockedState)
+            .worldCustomFields as unknown as unknown[]
+        ).length,
+        2,
+        "locked world rows survive explicit removal",
+      );
+
       // A group the agent did not mention must survive the turn. Treating an
       // absent key as an empty array silently wipes tracked state (#2370, #2724).
       const partialInventoryPatch = buildLockedInventoryTrackerPatch({
@@ -10535,6 +11259,54 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       // findInvalidInventoryTrackerRow is what lets the Agent Suite editor refuse bad
       // input instead of silently normalizing a hand-written group down to [].
       assert.equal(findInvalidInventoryTrackerRow([{ name: "Rope" }]), null, "well-formed rows must validate");
+      const detailedItem = {
+        name: "Painkillers",
+        qty: 3,
+        description: "Small white tablets",
+        location: "Backpack side pocket",
+      };
+      assert.deepEqual(normalizeInventoryTrackerRows([detailedItem]), [detailedItem]);
+      assert.deepEqual(
+        normalizeInventoryTrackerRows([
+          { name: "Key", description: "Marked 17" },
+          { name: "key", location: "Coat pocket", description: "Ignored duplicate" },
+        ]),
+        [{ name: "Key", qty: 2, description: "Marked 17", location: "Coat pocket" }],
+        "deduplication keeps first details and fills missing fields",
+      );
+      assert.equal(findInvalidInventoryTrackerRow([detailedItem]), null);
+      assert.match(String(findInvalidInventoryTrackerRow([{ name: "Key", description: 42 }])), /description/);
+      assert.match(String(findInvalidInventoryTrackerRow([{ name: "Key", location: {} }])), /location/);
+      const detailedState = {
+        ...currentState,
+        playerStats: { ...itemState.playerStats, inventoryTrackerInventory: [detailedItem] },
+        fieldLocks: {
+          [roleplayInventoryTrackerLockKey("inventory", detailedItem, "description")]: true,
+          [roleplayInventoryTrackerLockKey("inventory", detailedItem, "location")]: true,
+        },
+      };
+      const detailPatch = buildLockedInventoryTrackerPatch({
+        data: { inventory: { updates: [{ name: "Painkillers", qty: 1, description: "Wrong", location: "Unknown" }] } },
+        snapshot: { playerStats: detailedState.playerStats },
+        lockState: detailedState,
+      });
+      const singleItem = {
+        name: detailedItem.name,
+        description: detailedItem.description,
+        location: detailedItem.location,
+      };
+      assert.deepEqual(
+        detailPatch.values.inventoryTrackerInventory,
+        [singleItem],
+        "quantity changes retain locked details",
+      );
+      assert.deepEqual(
+        buildInventoryTrackerEditPatch(detailedState.playerStats, "inventory", [
+          { ...singleItem, description: "", location: "Bedside table" },
+        ]).inventoryTrackerInventory,
+        [{ ...singleItem, description: "", location: "Bedside table" }],
+        "manual edits can explicitly clear details and retain quantity-one metadata",
+      );
       assert.match(
         String(findInvalidInventoryTrackerRow([{ foo: 1 }])),
         /row 0/u,
@@ -10749,6 +11521,151 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       applyTrackerCharacterCardIdentity(unrelatedLongName, [{ id: "party-card", name: "Mari" }]);
       assert.deepEqual(unrelatedLongName, [{ name: "Mari Calder" }]);
 
+      // Multi-character cards: two distinctly named members of one card stay separate.
+      const castCard = { id: "resort-card", name: "Vacation Resort", avatarPath: "/api/avatars/file/resort.png" };
+      const castBatch: Array<Record<string, unknown>> = [
+        { characterId: "resort-card", name: "Ana", mood: "Playful", avatarPath: "/api/avatars/file/resort.png" },
+        { characterId: "resort-card", name: "Julia", mood: "Sleeping" },
+      ];
+      const castMatches = applyTrackerCharacterCardIdentity(castBatch, [castCard]);
+      assert.equal(castMatches.has("resort-card"), false);
+      assert.deepEqual(castBatch, [
+        { characterId: "resort-card:cast:ana", name: "Ana", mood: "Playful", avatarPath: null, avatarCrop: null },
+        { characterId: "resort-card:cast:julia", name: "Julia", mood: "Sleeping" },
+      ]);
+
+      // A lone member on a later turn keeps the cast identity when earlier state remembers the cast.
+      const loneMember: Array<Record<string, unknown>> = [{ characterId: "resort-card", name: "Ana", mood: "Bored" }];
+      applyTrackerCharacterCardIdentity(loneMember, [castCard], {
+        previousCharacters: [{ characterId: "resort-card:cast:julia", name: "Julia" }],
+      });
+      assert.deepEqual(loneMember, [{ characterId: "resort-card:cast:ana", name: "Ana", mood: "Bored" }]);
+
+      // A model echoing a cast id resolves to the same member, and duplicates merge.
+      const echoedCast: Array<Record<string, unknown>> = [
+        { characterId: "resort-card:cast:ana", name: "Ana", mood: "Smug" },
+        { characterId: "resort-card", name: "ana", outfit: "hoodie" },
+      ];
+      applyTrackerCharacterCardIdentity(echoedCast, [castCard]);
+      assert.deepEqual(echoedCast, [
+        { characterId: "resort-card:cast:ana", name: "ana", mood: "Smug", outfit: "hoodie" },
+      ]);
+
+      // Without cast evidence a single differently named entry still canonicalizes to the card.
+      const soloAlias: Array<Record<string, unknown>> = [{ characterId: "resort-card", name: "Ana" }];
+      const soloMatches = applyTrackerCharacterCardIdentity(soloAlias, [castCard]);
+      assert.equal(soloMatches.has("resort-card"), true);
+      assert.equal(soloAlias[0]?.name, "Vacation Resort");
+
+      // A card whose text lists its cast is multi-character from the first turn:
+      // the old merged row named after the card is dropped, and bare member names link to the card.
+      const declaredCastCard = {
+        ...castCard,
+        description:
+          "[PREMISE]\nA trip.\n\n[CHARACTER: Ana]\nFull Name: Ana\nAge: 20\n\n[CHARACTER: Julia]\nFull Name: Julia\nAge: 41",
+      };
+      assert.deepEqual(extractCharacterCardCastMembers(declaredCastCard), ["Ana", "Julia"]);
+      assert.deepEqual(
+        extractCharacterCardCastMembers({ name: "Mira", description: "[CHARACTER: Mira]\nA lone knight." }),
+        [],
+      );
+      assert.deepEqual(
+        extractCharacterCardCastMembers({
+          name: "Party",
+          description: "Name: Rook\nRole: scout\n\nName: Vale\nRole: mage",
+        }),
+        ["Rook", "Vale"],
+      );
+      assert.deepEqual(
+        extractCharacterCardCastMembers({
+          name: "Party",
+          description: '> **Full Name:** "Rook" (scout)\r\n- _Name_： **Vale** (mage)\r\nName: Rook',
+        }),
+        ["Rook", "Vale"],
+      );
+      // Long malformed fields used to trigger polynomial regex backtracking; the runner has a fixed timeout.
+      const longWhitespace = " ".repeat(100_000);
+      assert.deepEqual(
+        extractCharacterCardCastMembers({
+          name: "Party",
+          description: [
+            `Name${longWhitespace}`,
+            `Name:${longWhitespace}${"x".repeat(121)}`,
+            `Full${longWhitespace}namo: Decoy`,
+            `Name: ${"(".repeat(119)}x`,
+            `Name:${longWhitespace}Rook (scout)`,
+            "Name: Vale (mage)",
+          ].join("\n"),
+        }),
+        ["Rook", "Vale"],
+      );
+      const declaredBatch: Array<Record<string, unknown>> = [
+        {
+          characterId: "resort-card",
+          name: "Vacation Resort",
+          mood: "Excited",
+          avatarPath: "/api/avatars/file/resort.png",
+        },
+        { name: "Julia", mood: "Sleeping" },
+      ];
+      const declaredMatches = applyTrackerCharacterCardIdentity(declaredBatch, [declaredCastCard]);
+      assert.equal(declaredMatches.has("resort-card"), false);
+      assert.deepEqual(declaredBatch, [{ characterId: "resort-card:cast:julia", name: "Julia", mood: "Sleeping" }]);
+
+      // A manual row sharing a declared member's name keeps its manual identity and portrait guards.
+      const manualMember = {
+        characterId: "manual-ana",
+        name: "Ana",
+        mood: "Calm",
+        avatarPath: "/api/avatars/file/manual-ana.png",
+        avatarCrop: { zoom: 2, offsetX: 0, offsetY: 0 },
+      };
+      const manualBatch: Array<Record<string, unknown>> = [{ ...manualMember }];
+      assert.equal(applyTrackerCharacterCardIdentity(manualBatch, [declaredCastCard]).size, 0);
+      assert.deepEqual(manualBatch, [manualMember]);
+
+      // Preserve a legacy title row until this result actually provides a member to replace it.
+      const legacyTitle = {
+        characterId: "resort-card",
+        name: "Vacation Resort",
+        mood: "Excited",
+        outfit: "Summer clothes",
+        customFields: { Goal: "Reach the resort" },
+        avatarPath: "/api/avatars/file/resort.png",
+        avatarCrop: null,
+      };
+      const legacyBatch: Array<Record<string, unknown>> = [{ ...legacyTitle }];
+      const legacyMatches = applyTrackerCharacterCardIdentity(legacyBatch, [declaredCastCard], {
+        previousCharacters: [{ characterId: "resort-card:cast:julia", name: "Julia" }],
+      });
+      assert.equal(legacyMatches.has("resort-card"), true);
+      assert.deepEqual(legacyBatch, [legacyTitle]);
+
+      // The same replacement rule applies to a cast inferred from this batch or remembered from history.
+      for (const rememberedCast of [false, true]) {
+        const inferredBatch: Array<Record<string, unknown>> = [
+          { ...legacyTitle },
+          { characterId: "resort-card", name: "Ana", mood: "Calm" },
+          ...(rememberedCast ? [] : [{ characterId: "resort-card", name: "Julia", mood: "Sleeping" }]),
+        ];
+        const inferredMatches = applyTrackerCharacterCardIdentity(inferredBatch, [castCard], {
+          previousCharacters: rememberedCast ? [{ characterId: "resort-card:cast:julia", name: "Julia" }] : [],
+        });
+        assert.equal(inferredMatches.has("resort-card"), false);
+        assert.deepEqual(inferredBatch, [
+          { characterId: "resort-card:cast:ana", name: "Ana", mood: "Calm" },
+          ...(rememberedCast ? [] : [{ characterId: "resort-card:cast:julia", name: "Julia", mood: "Sleeping" }]),
+        ]);
+      }
+
+      const ordinaryAliasBatch: Array<Record<string, unknown>> = [
+        { ...legacyTitle },
+        { characterId: "resort-card", name: "Ana" },
+      ];
+      assert.equal(applyTrackerCharacterCardIdentity(ordinaryAliasBatch, [castCard]).has("resort-card"), true);
+      assert.equal(ordinaryAliasBatch.length, 1, "A lone alias does not establish a multi-character card");
+      assert.equal(ordinaryAliasBatch[0]?.name, "Vacation Resort");
+
       assert.equal(
         canonicalizeGamePartySpeakerLabels(
           '[Marisol "Mari"] [main] [happy]: "Ready."\n\nMarisol "Mari" crosses the room.',
@@ -10796,16 +11713,30 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       assert.match(promptBlock ?? "", /Field 62: 62/);
       assert.doesNotMatch(promptBlock ?? "", /Field 63: 63/);
 
-      const inventoryPromptBlock = buildCommittedTrackerContextBlock({
-        chatEnableAgents: true,
-        activeAgentIds: ["inventory-tracker"],
-        latestGameState: { playerStats: inventoryTrackerPatch.playerStats },
-        chatMetadata: {},
-        wrapFormat: "markdown",
-      });
-      assert.match(inventoryPromptBlock ?? "", /Currencies:\n- Silver coin x6/);
-      assert.match(inventoryPromptBlock ?? "", /Equipped:\n- Family heirloom longsword/);
-      assert.match(inventoryPromptBlock ?? "", /Inventory:\n- Scavenged axe x2/);
+      for (const wrapFormat of ["xml", "markdown", "none"] as const) {
+        const inventoryPromptBlock = buildCommittedTrackerContextBlock({
+          chatEnableAgents: true,
+          activeAgentIds: ["inventory-tracker"],
+          latestGameState: {
+            playerStats: {
+              ...inventoryTrackerPatch.playerStats,
+              inventoryTrackerInventory: [
+                { name: "Scavenged axe", qty: 2, description: "Chipped iron blade", location: "Backpack" },
+                { name: "Blank note", description: "", location: "  " },
+              ],
+            },
+          },
+          chatMetadata: {},
+          wrapFormat,
+        });
+        assert.match(inventoryPromptBlock ?? "", /Currencies:\n\s*- Silver coin x6/);
+        assert.match(inventoryPromptBlock ?? "", /Equipped:\n\s*- Family heirloom longsword/);
+        assert.match(
+          inventoryPromptBlock ?? "",
+          /Inventory:\n\s*- Scavenged axe x2 \(description: Chipped iron blade; location: Backpack\)/,
+        );
+        assert.doesNotMatch(inventoryPromptBlock ?? "", /Blank note \(/);
+      }
 
       const beholderState = normalizeBeholderState({
         characters: [
@@ -10838,6 +11769,31 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       assert.match(beholderPromptBlock ?? "", /left hand: holding: silver key/u);
       assert.match(beholderPromptBlock ?? "", /shallow cut \(minor, bleeding\)/u);
       assert.equal(resolveAgentResultType({ type: "beholder", settings: {} }), "context_injection");
+    },
+  },
+  {
+    name: "tracker singleton requests advertise incremental support without changing parsed responses",
+    async run() {
+      for (const type of ["world-state", "character-tracker", "custom-tracker", "inventory-tracker"]) {
+        const output = { fields: { updates: [{ name: "Clue", value: "found" }], removed: [] } };
+        const { calls, provider } = makeCapturingProvider(JSON.stringify(output));
+        const config = makeRegressionAgentConfig({
+          id: `builtin:${type}`,
+          type,
+          name: type,
+          promptTemplate: "Return tracker JSON.",
+          settings: {},
+        });
+        const result = await executeAgent(
+          config as any,
+          makeRegressionAgentContext(),
+          provider as any,
+          "regression-model",
+        );
+        assert.equal(result.success, true);
+        assert.deepEqual(result.data, output);
+        assert.match(calls[0]!.map((message) => message.content).join("\n"), /tracker_incremental_updates: supported/);
+      }
     },
   },
   {
@@ -11216,17 +12172,89 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       assert.equal(fencedTrailingComma.commands[0]?.arguments.action, "lorebook.search");
       assert.equal(fencedTrailingComma.protocolValid, true);
 
+      const updateArgs = {
+        action: "lorebook.updateEntry",
+        entryId: "entry-1",
+        patch: { content: "Changed" },
+        apply: true,
+      };
+      for (const raw of [
+        { name: "app_data", parameters: updateArgs },
+        { tool: "app_data", arguments: updateArgs },
+        { tool_name: "app_data", parameters: updateArgs },
+        { type: "function", function: { name: "app_data", arguments: JSON.stringify(updateArgs) } },
+      ]) {
+        for (const commands of [[raw], raw]) {
+          const recovered = parseAssistantWorkspaceAction(
+            JSON.stringify({ say: "I’ve updated the entry.", commands, stop: false }),
+          );
+          assert.equal(recovered.protocolValid, true);
+          assert.equal(recovered.commands.length, 1);
+          assert.deepEqual(recovered.commands[0]?.arguments, updateArgs);
+        }
+      }
+      const nestedCalls = [
+        { name: "app_data", arguments: updateArgs },
+        { name: "read", arguments: { path: "README.md" } },
+      ];
+      const nestedFrame = parseAssistantWorkspaceAction(
+        JSON.stringify({ commands: [{ tool_calls: nestedCalls }], stop: false }),
+      );
+      assert.equal(nestedFrame.protocolValid, true);
+      assert.equal(nestedFrame.commands.length, 2);
+      for (const commands of [
+        [{ tool_calls: nestedCalls }, { name: "unknown_tool" }],
+        [{ tool_calls: [...nestedCalls, { name: "unknown_tool" }] }],
+      ]) {
+        const invalid = parseAssistantWorkspaceAction(JSON.stringify({ commands, stop: false }));
+        assert.equal(invalid.protocolValid, false, "expanded nested commands cannot cancel out an unrecognized entry");
+        assert.deepEqual(invalid.commands, []);
+      }
+      const malformed = parseAssistantWorkspaceAction(
+        JSON.stringify({
+          say: "Done!",
+          commands: [{ name: "app_data", arguments: updateArgs }, { name: "unknown_tool" }],
+          stop: true,
+        }),
+      );
+      assert.equal(malformed.protocolValid, false, "a dropped command must enter protocol repair");
+      assert.equal(malformed.stop, false, "an explicit stop cannot hide malformed commands");
+      assert.equal(malformed.commands.length, 0, "repair the whole frame before applying only part of it");
+      for (const claim of [
+        "I added the entry.",
+        "I’ve created the entry.",
+        "I have now updated the card.",
+        "I just created it.",
+        "Updated.",
+        "Edit applied.",
+        "Done!",
+      ]) {
+        assert.equal(workspaceTextClaimsMutationCompletion(claim), true, claim);
+      }
+      for (const text of [
+        "I have not updated it.",
+        "Have I updated it?",
+        "I verified the entry.",
+        "Here are the updated instructions.",
+        "I can create it.",
+        "Set its type to Constant",
+        "Added fields appear",
+        "Removed entries cannot be restored",
+      ]) {
+        assert.equal(workspaceTextClaimsMutationCompletion(text), false, text);
+      }
+
       const unsupportedCompletion = parseAssistantWorkspaceAction(
         '{"say":"Done — I created it and verified it saved.","commands":[],"stop":true}',
       );
       assert.equal(workspaceTextClaimsMutationCompletion(unsupportedCompletion.visibleText), true);
-      assert.equal(workspaceActionNeedsVerification(unsupportedCompletion, []), "none");
+      assert.equal(auditWorkspaceCompletionClaim(unsupportedCompletion, []).issue, "none");
 
       const completedSupportReply = parseAssistantWorkspaceAction(
         '{"say":"Done. Shell commands are unavailable here, so use these manual steps.","commands":[],"stop":true}',
       );
       assert.equal(workspaceTextClaimsMutationCompletion(completedSupportReply.visibleText), false);
-      assert.equal(workspaceActionNeedsVerification(completedSupportReply, []), null);
+      assert.equal(auditWorkspaceCompletionClaim(completedSupportReply, []).issue, null);
       const approvalRequest = parseAssistantWorkspaceAction(
         '{"say":"Should I save this character update?","awaitingAuthorization":true,"commands":[{"name":"app_data","arguments":{"action":"character.update","characterId":"char-1","patch":{"appearance":"Blue coat"},"apply":true}}],"stop":false}',
       );
@@ -11247,9 +12275,12 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
         success: true,
       };
       assert.equal(resolveWorkspaceMutationVerification([mutationResult]), "unverified");
-      assert.equal(workspaceActionNeedsVerification(unsupportedCompletion, [mutationResult]), "unverified");
+      assert.equal(auditWorkspaceCompletionClaim(unsupportedCompletion, [mutationResult]).issue, "unverified");
       assert.equal(resolveWorkspaceMutationVerification([mutationResult, verificationResult]), "verified");
-      assert.equal(workspaceActionNeedsVerification(unsupportedCompletion, [mutationResult, verificationResult]), null);
+      assert.equal(
+        auditWorkspaceCompletionClaim(unsupportedCompletion, [mutationResult, verificationResult]).issue,
+        null,
+      );
 
       const dryRunMutation = { ...mutationResult, output: '{"saved": false}' };
       assert.equal(resolveWorkspaceMutationVerification([dryRunMutation, verificationResult]), "none");
@@ -11277,7 +12308,7 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       assert.equal(resolveWorkspaceMutationVerification([stagedSensitiveWrite]), "staged");
       assert.equal(resolveWorkspaceMutationVerification([stagedSensitiveWrite, verificationResult]), "staged");
       assert.equal(resolveWorkspaceMutationVerification([stagedSensitiveEdit, verificationResult]), "staged");
-      assert.equal(workspaceActionNeedsVerification(unsupportedCompletion, [stagedSensitiveWrite]), "staged");
+      assert.equal(auditWorkspaceCompletionClaim(unsupportedCompletion, [stagedSensitiveWrite]).issue, "staged");
 
       const appliedWrite: WorkspaceCommandResult = {
         ...stagedSensitiveWrite,
@@ -11312,7 +12343,12 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
         "staged",
       );
       assert.equal(
-        resolveWorkspaceMutationVerification([appliedWrite, verificationResult, stagedSensitiveWrite, verificationResult]),
+        resolveWorkspaceMutationVerification([
+          appliedWrite,
+          verificationResult,
+          stagedSensitiveWrite,
+          verificationResult,
+        ]),
         "staged",
       );
       // A read after the staged result still pays the applied mutation's
@@ -11322,10 +12358,193 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
         resolveWorkspaceMutationVerification([appliedWrite, stagedSensitiveWrite, verificationResult]),
         "staged",
       );
+      // ── Loop wiring pins: the pure function is only half the contract ────
+      const agentSourceForPins = readFileSync(
+        new URL("../../packages/server/src/services/professor-mari/workspace-agent.service.ts", import.meta.url),
+        "utf8",
+      ).replace(/\s+/gu, " ");
+      assert.ok(
+        agentSourceForPins.includes(
+          "auditWorkspaceCompletionClaim(action, commandResultsForContinuity, { auditFrom: claimAuditWatermark, hadPassedClaimAudit, })",
+        ),
+        "the loop audits against the live watermark, never from zero",
+      );
+      assert.ok(
+        agentSourceForPins.includes(
+          "if (claimAudit.advanceWatermark) { claimAuditWatermark = commandResultsForContinuity.length; hadPassedClaimAudit = true; }",
+        ),
+        "a passing audit consumes its evidence and arms the summary allowance",
+      );
+      assert.ok(
+        agentSourceForPins.includes("midRunClaimRepairRounds <= MAX_MIDRUN_CLAIM_REPAIR_ROUNDS"),
+        "mid-run claims draw on their own repair budget",
+      );
+      assert.ok(
+        agentSourceForPins.includes(
+          "auditWorkspaceCompletionClaim(finalAction, commandResultsForContinuity, { auditFrom: claimAuditWatermark, hadPassedClaimAudit, })",
+        ),
+        "the command-limit audit shares the run's scope state",
+      );
+
       const honestBlocker = parseAssistantWorkspaceAction(
         '{"say":"I could not create it because the name is missing.","commands":[],"stop":true}',
       );
-      assert.equal(workspaceActionNeedsVerification(honestBlocker, []), null);
+      assert.equal(auditWorkspaceCompletionClaim(honestBlocker, []).issue, null);
+
+      // ── #5819/#5830: watermark-scoped claim auditing ────────────────────
+      // The reported batch: step 1 verified, its claim passes and CONSUMES
+      // that evidence; the skipped step 2's empty scope is caught instead of
+      // riding step 1's success (the flaw that killed the first fix).
+      const midRunClaimOne = parseAssistantWorkspaceAction(
+        '{"say":"I created Aria. Now creating Bran.","commands":[{"name":"app_data","arguments":{"action":"character.create","apply":true}}],"stop":false}',
+      );
+      const batchResults: WorkspaceCommandResult[] = [mutationResult, verificationResult];
+      const auditOne = auditWorkspaceCompletionClaim(midRunClaimOne, batchResults, { auditFrom: 0 });
+      assert.equal(auditOne.issue, null, "a truthful step claim over verified work passes");
+      assert.equal(auditOne.advanceWatermark, true, "and consumes its evidence");
+      const midRunClaimTwo = parseAssistantWorkspaceAction(
+        '{"say":"I created Bran. Now creating Cass.","commands":[{"name":"app_data","arguments":{"action":"character.create","apply":true}}],"stop":false}',
+      );
+      const auditTwo = auditWorkspaceCompletionClaim(midRunClaimTwo, batchResults, { auditFrom: batchResults.length });
+      assert.equal(auditTwo.issue, "none", "a skipped step's empty scope is challenged - the #5819 report");
+
+      // A recap claim is backable by the read the coaching demands, so an
+      // honest continuation converges instead of looping into the budget
+      // (#5830's sticky-none trap).
+      const recapResults = [...batchResults, { ...verificationResult, id: "recap-read" }];
+      const recapAudit = auditWorkspaceCompletionClaim(midRunClaimTwo, recapResults, {
+        auditFrom: batchResults.length,
+      });
+      assert.equal(recapAudit.issue, null, "a successful read in scope backs a recap");
+      assert.equal(recapAudit.advanceWatermark, true, "and the read is consumed so it cannot vouch twice");
+
+      // A terminal summary right after a passed audit needs nothing new; the
+      // same empty scope WITHOUT a passed audit stays challenged.
+      assert.equal(
+        auditWorkspaceCompletionClaim(unsupportedCompletion, batchResults, {
+          auditFrom: batchResults.length,
+          hadPassedClaimAudit: true,
+        }).issue,
+        null,
+      );
+      assert.equal(
+        auditWorkspaceCompletionClaim(unsupportedCompletion, batchResults, {
+          auditFrom: batchResults.length,
+          hadPassedClaimAudit: false,
+        }).issue,
+        "none",
+      );
+
+      // Mismatch is GLOBAL debt: scoping past it must not launder it, and
+      // only the same-key verified retry clears it (#5754 invariant).
+      const mismatchedCreate: WorkspaceCommandResult = {
+        id: "mismatched-create",
+        name: "app_data",
+        input: { action: "lorebook.create" },
+        output: 'Readback: store-mismatch\n{"saved": true}',
+        success: true,
+      };
+      const afterMismatch = [mismatchedCreate, mutationResult, verificationResult];
+      assert.equal(
+        resolveWorkspaceMutationVerification(afterMismatch, 1),
+        "mismatch",
+        "an out-of-scope mismatch still shadows every later claim",
+      );
+      const retriedVerified: WorkspaceCommandResult = {
+        ...mismatchedCreate,
+        id: "retried-create",
+        output: 'Readback: store-verified\n{"saved": true}',
+      };
+      assert.equal(
+        resolveWorkspaceMutationVerification([mismatchedCreate, retriedVerified], 1),
+        "verified",
+        "the same-key store-verified retry clears it, wherever the mismatch happened",
+      );
+
+      // Tolerated states never advance the watermark, so their debt stays
+      // visible to the terminal audit.
+      const unverifiedMidRun = auditWorkspaceCompletionClaim(midRunClaimOne, [mutationResult], { auditFrom: 0 });
+      assert.equal(unverifiedMidRun.issue, null, "unverified is tolerated mid-run - a later frame can read it back");
+      assert.equal(unverifiedMidRun.advanceWatermark, false, "without consuming the debt");
+
+      // #5830: "I've verified..." describes a READ - the exact sentence the
+      // coaching asks for - and is no longer a completion claim.
+      assert.equal(
+        workspaceTextClaimsMutationCompletion("I have verified the card looks right."),
+        false,
+        "the verified verb is deliberately absent from the claim detector",
+      );
+      // Plural persistence assertions stay caught without it.
+      assert.equal(workspaceTextClaimsMutationCompletion("The changes were saved."), true);
+      assert.equal(workspaceTextClaimsMutationCompletion("Both entries have been created."), true);
+
+      // ── Escape hatches never paper over a failure the resolver cannot see ──
+      // A FAILED create plus an unrelated successful list resolves "none" to
+      // the resolver - but it is active evidence of non-completion, and both
+      // escapes are denied outright.
+      const failedCreate: WorkspaceCommandResult = {
+        id: "failed-create",
+        name: "app_data",
+        input: { action: "lorebook.create" },
+        output: "Error: name is required",
+        success: false,
+      };
+      const failedScope = [failedCreate, { ...verificationResult, id: "orienting-list" }];
+      assert.equal(
+        auditWorkspaceCompletionClaim(midRunClaimTwo, failedScope, { auditFrom: 0 }).issue,
+        "none",
+        "a read never launders a failed mutating attempt into a passing claim",
+      );
+      assert.equal(
+        auditWorkspaceCompletionClaim(unsupportedCompletion, failedScope, {
+          auditFrom: 0,
+          hadPassedClaimAudit: true,
+        }).issue,
+        "none",
+        "the terminal-summary escape is denied over a scope containing a failure",
+      );
+      // Same denial for an apply:false preview - it looks like nothing to the
+      // resolver but is a non-applied attempt to the audit.
+      const previewOnly: WorkspaceCommandResult = {
+        id: "preview-create",
+        name: "app_data",
+        input: { action: "lorebook.create", apply: false },
+        output: '{"preview": true}',
+        success: true,
+      };
+      assert.equal(
+        auditWorkspaceCompletionClaim(midRunClaimTwo, [previewOnly, verificationResult], { auditFrom: 0 }).issue,
+        "none",
+        "a preview plus a read cannot back a completion claim",
+      );
+
+      // Documentation reads never qualify as recap backing - knowing what the
+      // manual says is not knowing what the store holds.
+      const docsRead: WorkspaceCommandResult = {
+        id: "docs",
+        name: "docs_search",
+        input: { query: "characters" },
+        output: "results",
+        success: true,
+      };
+      assert.equal(
+        auditWorkspaceCompletionClaim(midRunClaimTwo, [docsRead], { auditFrom: 0 }).issue,
+        "none",
+        "a docs read is not a state read",
+      );
+
+      // A verified scope that ALSO contains a failed attempt is downgraded
+      // until a later state read clears it - then the retry passes.
+      const mixedScope = [failedCreate, mutationResult, verificationResult];
+      // verificationResult follows the failure, clearing the outstanding
+      // attempt: the verified pass stands.
+      assert.equal(auditWorkspaceCompletionClaim(unsupportedCompletion, mixedScope, { auditFrom: 0 }).issue, null);
+      const uncleared = [mutationResult, { ...verificationResult, id: "pre-read" }, failedCreate];
+      assert.equal(
+        auditWorkspaceCompletionClaim(unsupportedCompletion, uncleared, { auditFrom: 0 }).issue,
+        "unverified",
+        "a trailing failed attempt demands a fresh read before the claim can stand",
+      );
     },
   },
   {

@@ -44,7 +44,7 @@ There is no separate native mobile app. On a phone or tablet, you use the same w
 
 On Android, you can also [download the latest APK directly](https://github.com/Pasta-Devs/Marinara-Engine/releases/latest/download/marinara-engine-android.apk). It runs Marinara locally on the phone through Termux. Installing it does not require a signing key, password, or local-access secret; see [Android Installation](installation/android-termux.md) for the Android permission prompts. On iPhone and iPad, see the [iOS PWA Guide](installation/ios-pwa.md).
 
-The Android wrapper signs in automatically when it opens its APK-managed Termux server. The private credential is only visible to users who intentionally open the server in another browser on that phone: open `/android-login`, run `cat ~/.marinara-engine/android-secret` in Termux, and paste the displayed value. The local `mari` CLI reads that same launcher-managed secret automatically. Manual Termux installs keep the normal localhost and network-access rules.
+The Android wrapper signs in automatically in the app or your browser. Select **Open in browser** on its launcher and tap **Retry connection**; use **Install / Start Marinara** when the server is stopped. This choice is remembered. In the app, **Settings > General > App Behavior > Open Android launcher (app or browser)** returns to that choice. Update both the APK and Engine to use the automatic browser handoff. Older APKs still offer manual sign-in at `/android-login`. The local `mari` CLI reads the launcher-managed secret automatically, and manual Termux installs retain normal localhost rules.
 
 ## What are the three chat modes?
 
@@ -126,7 +126,7 @@ An **agent** is an optional AI helper that runs during a chat to do a focused jo
 
 ## How do I set up Noodle?
 
-Noodle is Marinara's local, fictional social network for your characters. First open **Agents** → **Download Agents** and install **Noodle & NoodleR**, then restart Marinara when prompted. Open **Home** → **Noodle**, enter its **Settings**, invite characters or character folders, choose a generation connection under **Refresh**, then select **Refresh now** to generate the first activity. You can also set automatic refresh times, image generation, random users, and carryover into your chats.
+Noodle is Marinara's local, fictional social network for your characters. First open **Agents** → **Download Agents** and install **Noodle**, then restart Marinara when prompted. Open **Home** → **Noodle**, enter its **Settings**, invite characters or character folders, choose a generation connection under **Refresh**, then select **Refresh now** to generate the first activity. You can also set automatic refresh times, image generation, random users, and carryover into your chats.
 
 See [Noodle: The In-App Social Timeline](noodle/overview.md) and [Noodle Settings and Chat Carryover](noodle/settings.md) for the full guides.
 
@@ -136,6 +136,8 @@ AI models can only hold so much text at once, so old messages fall out of view i
 
 - **Memory Recall** searches earlier messages and quietly adds the most relevant bits back into the prompt. Turn it on in **Chat Settings** under **Memory Recall**.
 - Summaries compress old messages into short recaps. Roleplay chats use **Chat Summary**, and Conversation chats use **Automatic Summarization**.
+
+For automatic Roleplay context management, enable **Advanced Memory Recall (Alpha)** in **Chat Settings → Memory Recall**. It keeps recent history, maintains bounded continuity, and selectively recalls older scenes within your chosen estimated context cap. Setup, progress and editing stay in the drawer. Older Individual group chats may need one-time confirmation of each character's knowledge range.
 
 For setup and details, see [Memory and Summaries](agents/memory.md).
 

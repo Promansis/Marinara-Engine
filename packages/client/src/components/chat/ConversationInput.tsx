@@ -20,6 +20,7 @@ import {
 import { toast } from "sonner";
 import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { useChatStore } from "../../stores/chat.store";
+import { hasActiveTextSelection } from "../../lib/text-selection";
 import { useAgentStore } from "../../stores/agent.store";
 import { useUIStore } from "../../stores/ui.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
@@ -33,6 +34,7 @@ import {
   matchSlashCommand,
   shouldExecuteQuickPostAsCommand,
   getSlashCompletions,
+  getSlashCommandUsage,
   type ConversationGameSlashContribution,
   type SlashCommand,
   type SlashCommandContext,
@@ -56,6 +58,7 @@ import { showChoiceDialog } from "../../lib/app-dialogs";
 import { useConversationCustomEmojis, type ConversationCustomEmoji } from "../../hooks/use-conversation-custom-emojis";
 import { SpeechToTextButton } from "../ui/SpeechToTextButton";
 import { SlashCommandFeedback } from "./SlashCommandFeedback";
+import { MessageReplyPreview } from "./MessageReplyPreview";
 import { QuickReplyMenu, type QuickReplyAction } from "./QuickReplyMenu";
 import { getChatInputShellClass } from "./chat-input-styles";
 import { MariSuggestionChips } from "./MariSuggestionChips";
@@ -111,6 +114,7 @@ type MobilePickerTab = ConversationMediaPickerTabId;
 type ConversationSlashCompletion = {
   key: string;
   label: string;
+  command?: SlashCommand;
   description?: string;
   insertValue: string;
   cursor: number;
@@ -118,6 +122,7 @@ type ConversationSlashCompletion = {
 };
 
 type SubmittedConversationInput = {
+  replyTo?: import("@marinara-engine/shared").MessageReply;
   chatId: string;
   draft: string;
   height: string;
@@ -243,6 +248,7 @@ function buildConversationSlashCompletions(
       return {
         key: `command:${command.name}`,
         label: `/${command.name}`,
+        command,
         description:
           command.name === "status"
             ? `${command.description}. Use online, idle, dnd, offline, or clear, then a character name.`
@@ -327,7 +333,7 @@ interface ConversationInputProps {
     conversationActivity?: string;
   }>;
   onPeekPrompt?: () => void;
-  onIllustrate?: () => void | Promise<void>;
+  onIllustrate?: (prompt?: string) => void | Promise<void>;
   onGenerateSelfie?: (characterId?: string) => void | Promise<void>;
 }
 
@@ -426,6 +432,8 @@ export function ConversationInput({
   });
   // Show stop button only during actual generation, not during busy delay
   const isActuallyGenerating = isStreaming && !delayedCharacterInfo;
+  const replyDraft = useChatStore((s) => (activeChatId ? s.replyDrafts.get(activeChatId) : undefined));
+  const setReplyDraft = useChatStore((s) => s.setReplyDraft);
   const setInputDraft = useChatStore((s) => s.setInputDraft);
   const clearInputDraft = useChatStore((s) => s.clearInputDraft);
   const setCurrentInput = useChatStore((s) => s.setCurrentInput);
@@ -661,6 +669,8 @@ export function ConversationInput({
 
   const restoreSubmittedInput = useCallback(
     (submitted: SubmittedConversationInput) => {
+      if (submitted.replyTo && !useChatStore.getState().replyDrafts.has(submitted.chatId))
+        useChatStore.getState().setReplyDraft(submitted.chatId, submitted.replyTo);
       const activeChatIdAfterFailure = useChatStore.getState().activeChatId;
       const currentValue = textareaRef.current?.value ?? "";
       const canRestoreVisibleDraft = activeChatIdAfterFailure === submitted.chatId && currentValue.length === 0;
@@ -704,6 +714,7 @@ export function ConversationInput({
           role: "user",
           content,
           characterId: null,
+          ...(submitted.replyTo ? { extra: { replyTo: submitted.replyTo } } : {}),
         });
         createdMessageId = created.id;
         if (persistedAttachments.length > 0) {
@@ -1129,6 +1140,7 @@ export function ConversationInput({
 
     const submittedInput: SubmittedConversationInput = {
       chatId: activeChatId,
+      replyTo: replyDraft,
       draft: textareaRef.current?.value ?? raw,
       height: textareaRef.current?.style.height ?? "auto",
       attachments,
@@ -1154,6 +1166,8 @@ export function ConversationInput({
     setMentionQuery(null);
     setMentionCompletions([]);
 
+    setReplyDraft(activeChatId, null);
+
     // Extract @mentions from the raw message (before regex transforms)
     const mentioned = extractMentions(raw);
 
@@ -1170,15 +1184,24 @@ export function ConversationInput({
       return;
     }
 
-    await generate({
-      chatId: activeChatId,
-      connectionId: null,
-      userMessage: message,
-      ...(pendingAttachments.length ? { attachments: pendingAttachments } : {}),
-      ...(mentioned.length ? { mentionedCharacterNames: mentioned } : {}),
-    });
+    try {
+      const succeeded = await generate({
+        chatId: activeChatId,
+        connectionId: null,
+        userMessage: message,
+        ...(replyDraft ? { replyTo: replyDraft } : {}),
+        ...(pendingAttachments.length ? { attachments: pendingAttachments } : {}),
+        ...(mentioned.length ? { mentionedCharacterNames: mentioned } : {}),
+      });
+      if (succeeded === false) restoreSubmittedInput(submittedInput);
+    } catch (error) {
+      restoreSubmittedInput(submittedInput);
+      toast.error(error instanceof Error ? error.message : localizeUi("chat.reply.sendFailed"));
+    }
   }, [
     activeChatId,
+    replyDraft,
+    setReplyDraft,
     availableConversationGames,
     activeChatCharacters,
     lastMessageRole,
@@ -1360,6 +1383,7 @@ export function ConversationInput({
     message = resolveInputMacros(message);
     const submittedInput: SubmittedConversationInput = {
       chatId: submittingChatId,
+      replyTo: replyDraft,
       draft: raw,
       height: textareaRef.current?.style.height ?? "auto",
       attachments,
@@ -1385,6 +1409,7 @@ export function ConversationInput({
     setMentionQuery(null);
     setMentionCompletions([]);
 
+    setReplyDraft(submittingChatId, null);
     await createDurableMessageWithRollback({
       content: message,
       attachments: pendingAttachments,
@@ -1392,6 +1417,8 @@ export function ConversationInput({
     });
   }, [
     activeChatId,
+    replyDraft,
+    setReplyDraft,
     isSendBlocked,
     isReadingAttachments,
     attachments,
@@ -2033,20 +2060,24 @@ export function ConversationInput({
                 }
               }}
               className={cn(
-                "flex w-full min-w-0 items-start gap-2 px-3 py-2.5 text-left text-sm transition-colors",
+                "flex w-full min-w-0 flex-col items-start gap-1 px-3 py-2.5 text-left text-sm transition-colors",
                 i === selectedCompletion ? "bg-foreground/10 text-foreground" : "hover:bg-foreground/10",
               )}
             >
               <span
                 className={cn(
-                  "shrink-0 whitespace-nowrap text-xs",
+                  "min-w-0 whitespace-normal text-xs [overflow-wrap:anywhere]",
                   cmd.kind === "character" ? "font-medium" : "font-mono",
                 )}
               >
-                {cmd.label}
+                {cmd.command
+                  ? getSlashCommandUsage(cmd.command, t)
+                  : cmd.kind === "status"
+                    ? t("ui.chat.slash.statusCompletionUsage", { status: cmd.label })
+                    : cmd.label}
               </span>
               {cmd.description && (
-                <span className="min-w-0 flex-1 text-[0.6875rem] leading-snug text-foreground/45 [overflow-wrap:anywhere]">
+                <span className="min-w-0 text-[0.6875rem] leading-snug text-foreground/45 [overflow-wrap:anywhere]">
                   {cmd.description}
                 </span>
               )}
@@ -2175,6 +2206,10 @@ export function ConversationInput({
       )}
       <MariSuggestionChips chips={chipRowChips} onSelect={handleMariChipSelect} disabled={isSendBlocked} />
 
+      {replyDraft && (
+        <MessageReplyPreview reply={replyDraft} onCancel={() => activeChatId && setReplyDraft(activeChatId, null)} />
+      )}
+
       {/* Input bar */}
       <div
         ref={inputBarRef}
@@ -2183,6 +2218,7 @@ export function ConversationInput({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onPointerDown={(event) => {
+          if (hasActiveTextSelection()) return;
           const target = event.target as HTMLElement;
           if (target.closest("button, input, textarea, select, a, [role='button']")) return;
           event.preventDefault();

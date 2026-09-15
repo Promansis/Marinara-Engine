@@ -32,7 +32,7 @@ import {
 } from "../../hooks/use-connection-folders";
 import { handleFolderRenameKeyDown, useFolderRenameGesture } from "../../hooks/use-folder-rename-gesture";
 import { useTouchFolderDrag } from "../../hooks/use-touch-folder-drag";
-import { useAgentConfigs, useCreateAgent, useUpdateAgent } from "../../hooks/use-agents";
+import { useAgentConfigs, useCreateAgent, useUpdateAgent, useUpdateAgentByType } from "../../hooks/use-agents";
 import {
   selectVisibleTrackerCapabilityAgents,
   useCapabilityAgentRegistry,
@@ -43,7 +43,10 @@ import { useUIStore, type ConnectionPanelSort } from "../../stores/ui.store";
 import { GEMMA_RESTART_MESSAGE, useSidecarStore } from "../../stores/sidecar.store";
 import {
   LOCAL_SIDECAR_CONNECTION_ID,
+  BUILT_IN_AGENTS,
   getDefaultAgentPrompt,
+  isAgentConfigDeleted,
+  isRetiredBuiltInAgentId,
   type ConnectionFolder,
   type SidecarSpeechModelId,
   type SidecarSpeechRuntimeDiagnostics,
@@ -122,6 +125,7 @@ const PROVIDER_COLORS: Record<string, { from: string; to: string; ring: string; 
   nanogpt: CONNECTION_ICON_COLORS,
   xai: CONNECTION_ICON_COLORS,
   arli: CONNECTION_ICON_COLORS,
+  zai: CONNECTION_ICON_COLORS,
   custom: CONNECTION_ICON_COLORS,
   image_generation: CONNECTION_ICON_COLORS,
   video_generation: CONNECTION_ICON_COLORS,
@@ -523,18 +527,26 @@ function SidecarCard() {
                   )}
                   {!speechModelDownloaded && speechAvailable && (
                     <div className="mt-2 flex flex-col gap-2">
-                      <select
-                        value={speechModelChoice}
-                        onChange={(event) => setSpeechModelChoice(event.target.value as SidecarSpeechModelId)}
-                        className="mari-chrome-field h-8 text-xs"
-                        disabled={speechDownloading || speechModels.length === 0}
-                      >
-                        {speechModels.map((model) => (
-                          <option key={model.id} value={model.id}>
-                            {model.label}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="max-md:relative md:contents">
+                        <select
+                          value={speechModelChoice}
+                          onChange={(event) => setSpeechModelChoice(event.target.value as SidecarSpeechModelId)}
+                          className="mari-chrome-field h-8 text-xs max-md:w-full max-md:min-w-0 max-md:appearance-none max-md:pl-2.5 max-md:pr-8"
+                          aria-label={localizeUi("ui.panels.sidecarcard.localSpeechModel")}
+                          disabled={speechDownloading || speechModels.length === 0}
+                        >
+                          {speechModels.map((model) => (
+                            <option key={model.id} value={model.id}>
+                              {model.label}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown
+                          size="0.875rem"
+                          aria-hidden="true"
+                          className="mari-chrome-field-icon pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 md:hidden"
+                        />
+                      </div>
                       {activeSpeechModel && (
                         <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
                           {activeSpeechModel.description} {localizeUi("ui.noodle.stageprofileview.about")}{" "}
@@ -807,6 +819,9 @@ function ConnectionDefaultPair({
   fallbackModelLabel,
   includeLocalSidecar,
   showPaidConnectionWarningToggle = false,
+  onApplyToAllAgents,
+  applyingToAllAgents = false,
+  canApplyToAllAgents = true,
 }: {
   title: string;
   icon: ReactNode;
@@ -820,6 +835,9 @@ function ConnectionDefaultPair({
    *  writes the sidecar config's useAsAgentsDefault instead. */
   includeLocalSidecar?: boolean;
   showPaidConnectionWarningToggle?: boolean;
+  onApplyToAllAgents?: () => void;
+  applyingToAllAgents?: boolean;
+  canApplyToAllAgents?: boolean;
 }) {
   const { t: localizeUi } = useUiTranslation();
   const openConnectionDetail = useUIStore((state) => state.openConnectionDetail);
@@ -974,6 +992,21 @@ function ConnectionDefaultPair({
               help={localizeUi("ui.panels.connectiondefaultssection.showPaidConnectionWarningHelp")}
             />
           )}
+          {onApplyToAllAgents && (
+            <button
+              type="button"
+              onClick={onApplyToAllAgents}
+              disabled={applyingToAllAgents || updateConnection.isPending || !canApplyToAllAgents}
+              className="mari-chrome-control mari-chrome-control--small w-fit text-[0.6875rem]"
+              title={localizeUi("ui.panels.agentspanel.bulkConnectionLabel")}
+            >
+              {applyingToAllAgents ? (
+                <Loader2 size="0.75rem" className="animate-spin" />
+              ) : (
+                localizeUi("ui.panels.agentspanel.bulkConnectionApply")
+              )}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -1006,6 +1039,88 @@ function ConnectionDefaultsSection({ connectionsList }: { connectionsList: Conne
     () => connectionsList.filter((connection) => connection.provider === "audio"),
     [connectionsList],
   );
+  const { data: agentConfigs, isLoading: agentConfigsLoading, isError: agentConfigsError } = useAgentConfigs();
+  const {
+    data: capabilityAgents,
+    isLoading: capabilityAgentsLoading,
+    isError: capabilityAgentsError,
+  } = useCapabilityAgentRegistry();
+  const updateAgent = useUpdateAgent();
+  const updateAgentByType = useUpdateAgentByType();
+  const sidecarAsAgentsDefault = useSidecarStore((state) => state.config.useAsAgentsDefault);
+  const sidecarModelDownloaded = useSidecarStore((state) => state.modelDownloaded);
+  const sidecarModelDisplayName = useSidecarStore((state) => state.modelDisplayName);
+  const [applyingToAllAgents, setApplyingToAllAgents] = useState(false);
+  const capabilityAgentRegistryReady =
+    !capabilityAgentsLoading && !capabilityAgentsError && capabilityAgents !== undefined;
+  const agentConfigsReady = !agentConfigsLoading && !agentConfigsError && agentConfigs !== undefined;
+  const agentConnection =
+    languageConnections.find((connection) => isEnabledConnectionRole(connection.defaultForAgents)) ?? null;
+  const effectiveAgentConnectionId = sidecarAsAgentsDefault
+    ? LOCAL_SIDECAR_CONNECTION_ID
+    : (agentConnection?.id ?? null);
+  const agentAssignmentReady =
+    capabilityAgentRegistryReady &&
+    agentConfigsReady &&
+    effectiveAgentConnectionId !== null &&
+    (!sidecarAsAgentsDefault || sidecarModelDownloaded);
+  const agentConnectionName = sidecarAsAgentsDefault
+    ? createLocalSidecarConnectionOption(sidecarModelDisplayName).name
+    : (agentConnection?.name ?? localizeUi("ui.panels.agentspanel.bulkConnectionAgentDefault"));
+  const builtInAgentIds = useMemo(() => new Set((capabilityAgents ?? []).map((agent) => agent.id)), [capabilityAgents]);
+  const visibleBuiltInAgents = useMemo(
+    () =>
+      BUILT_IN_AGENTS.filter((agent) => builtInAgentIds.has(agent.id)).filter(
+        (agent) => !isAgentConfigDeleted((agentConfigs ?? []).find((config) => config.type === agent.id)?.settings),
+      ),
+    [agentConfigs, builtInAgentIds],
+  );
+  const customAgentConfigs = useMemo(
+    () =>
+      (agentConfigs ?? []).filter(
+        (config) =>
+          !builtInAgentIds.has(config.type) &&
+          !isRetiredBuiltInAgentId(config.type) &&
+          !isAgentConfigDeleted(config.settings),
+      ),
+    [agentConfigs, builtInAgentIds],
+  );
+  const handleApplyToAllAgents = async () => {
+    const targetCount = visibleBuiltInAgents.length + customAgentConfigs.length;
+    if (applyingToAllAgents || !agentAssignmentReady || effectiveAgentConnectionId === null || targetCount === 0)
+      return;
+    const confirmed = await showConfirmDialog({
+      title: localizeUi("ui.panels.agentspanel.bulkConnectionApply"),
+      message: localizeUi("ui.panels.agentspanel.bulkConnectionConfirm", {
+        value1: String(targetCount),
+        value2: agentConnectionName,
+      }),
+    });
+    if (!confirmed) return;
+    setApplyingToAllAgents(true);
+    try {
+      const results = await Promise.allSettled([
+        ...visibleBuiltInAgents.map((agent) =>
+          updateAgentByType.mutateAsync({ agentType: agent.id, connectionId: effectiveAgentConnectionId }),
+        ),
+        ...customAgentConfigs.map((config) =>
+          updateAgent.mutateAsync({ id: config.id, connectionId: effectiveAgentConnectionId }),
+        ),
+      ]);
+      const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+      if (rejected) throw rejected.reason;
+      toast.success(
+        localizeUi("ui.panels.agentspanel.bulkConnectionDone", {
+          value1: String(targetCount),
+          value2: agentConnectionName,
+        }),
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : localizeUi("ui.panels.agentspanel.bulkConnectionFailed"));
+    } finally {
+      setApplyingToAllAgents(false);
+    }
+  };
 
   return (
     <section
@@ -1063,6 +1178,9 @@ function ConnectionDefaultsSection({ connectionsList }: { connectionsList: Conne
             fallbackModelLabel="No model set"
             includeLocalSidecar
             showPaidConnectionWarningToggle
+            onApplyToAllAgents={() => void handleApplyToAllAgents()}
+            applyingToAllAgents={applyingToAllAgents}
+            canApplyToAllAgents={agentAssignmentReady && visibleBuiltInAgents.length + customAgentConfigs.length > 0}
           />
           <ConnectionDefaultPair
             title={localizeUi("ui.panels.connectiondefaultssection.images")}

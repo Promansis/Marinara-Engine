@@ -52,6 +52,38 @@ export const MARI_AUTHORIZATION_ACCEPT_CHIP: MariSuggestionChip = {
   tone: "success",
 };
 
+/**
+ * #5820: the matching refusal. Held commands are never executed unless the
+ * user accepts, so declining is just a reply - but without a control for it
+ * the only way to say no was to compose a sentence, which is why users
+ * reported seeing "nowhere to apply or revert".
+ */
+export const MARI_AUTHORIZATION_DECLINE_CHIP: MariSuggestionChip = {
+  id: "authorization-decline",
+  label: "Don't apply",
+  prompt: "Do not apply those changes.",
+  tone: "caution",
+};
+
+/**
+ * The workspace agent reuses the id "authorization-accept" for an unrelated
+ * output-limit chip ("Continue the task."), so the id alone cannot tell a
+ * held-change approval from a keep-going prompt. Matching the prompt too
+ * keeps the approval wording and the decline action off rows where nothing
+ * is actually held.
+ */
+export function isMariHeldChangeApprovalChip(chip: MariSuggestionChip): boolean {
+  return chip.id === MARI_AUTHORIZATION_ACCEPT_CHIP.id && chip.prompt === MARI_AUTHORIZATION_ACCEPT_CHIP.prompt;
+}
+
+/** Pairs a held-change Accept with its decline action, exactly once. */
+export function withHeldChangeDeclineChip(chips: MariSuggestionChip[]): MariSuggestionChip[] {
+  if (!chips.some(isMariHeldChangeApprovalChip)) return chips;
+  if (chips.some((chip) => chip.id === MARI_AUTHORIZATION_DECLINE_CHIP.id)) return chips;
+  const acceptIndex = chips.findIndex(isMariHeldChangeApprovalChip);
+  return [...chips.slice(0, acceptIndex + 1), MARI_AUTHORIZATION_DECLINE_CHIP, ...chips.slice(acceptIndex + 1)];
+}
+
 export const MARI_STARTER_CHIPS: MariSuggestionChip[] = [
   {
     id: "starter-character",

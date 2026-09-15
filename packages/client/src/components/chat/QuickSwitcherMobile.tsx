@@ -137,13 +137,13 @@ export function QuickSwitcherMobile({ contextBudget }: { contextBudget?: Profess
     if (ungroupedList.length > 0) {
       parsedGroups.push({
         id: UNGROUPED_PERSONA_GROUP_ID,
-        name: "Ungrouped",
+        name: localizeUi("ui.chat.personapicker.ungrouped"),
         memberIds: ungroupedList.map((p) => p.id),
         members: ungroupedList,
       });
     }
     return { groups: parsedGroups };
-  }, [normalizedSearch, rawPersonaGroups, personaMap, visiblePersonas]);
+  }, [localizeUi, normalizedSearch, rawPersonaGroups, personaMap, visiblePersonas]);
 
   const visibleCharacterGroups = useMemo(
     () =>
@@ -357,7 +357,11 @@ export function QuickSwitcherMobile({ contextBudget }: { contextBudget?: Profess
         createPortal(
           <div
             ref={menuRef}
-            className="fixed z-[9999] flex min-w-0 flex-col overflow-hidden rounded-xl border border-foreground/10 bg-[var(--background)] shadow-2xl"
+            data-chat-floating-panel
+            className={cn(
+              "fixed z-[9999] flex min-w-0 flex-col overflow-hidden rounded-xl border border-foreground/10 shadow-2xl",
+              chatMode === "roleplay" ? "bg-[var(--card)]" : "bg-[var(--background)]",
+            )}
             style={
               pos
                 ? {

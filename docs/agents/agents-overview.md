@@ -8,7 +8,7 @@ Agents are small AI helpers that run automatically around your main chat reply. 
 
 Agents are turned on per chat, not per character. There is no agent toggle on a character card. Two chats with the same character can run completely different agents. You choose which agents run in each chat's settings.
 
-Fresh Marinara Engine installations start without optional agents. This keeps the base app and Termux installation smaller. The official v2.3.0+ catalog contains 33 one-click packages: 6 Writer Agents, 9 Tracker Agents, and 18 Misc Agents, including Long-Term Memory, Maps, Calls, Inventory Tracker, and all six Conversation games. Their source, manifests, downloadable artifacts, and repository-level catalog are public in [Pasta-Devs/Marinara-Agents](https://github.com/Pasta-Devs/Marinara-Agents). For the complete per-agent guide, see [Downloadable Agents Reference](built-in-agents.md). To make your own, see [Creating Custom Agents](custom-agents.md).
+Fresh Marinara Engine installations start without optional agents. This keeps the base app and Termux installation smaller. The official v2.3.0+ catalog contains 36 one-click packages: 6 Writer Agents, 11 Tracker Agents, and 19 Misc Agents, including Long-Term Memory, Maps, Calls, Inventory Tracker, and all six Conversation games. Their source, manifests, downloadable artifacts, and repository-level catalog are public in [Pasta-Devs/Marinara-Agents](https://github.com/Pasta-Devs/Marinara-Agents). For the complete per-agent guide, see [Downloadable Agents Reference](built-in-agents.md). To make your own, see [Creating Custom Agents](custom-agents.md).
 
 ## The three phases
 
@@ -46,6 +46,7 @@ You should see the agents you added listed as active, each with a small remove b
 
 The **Agents** section has a few more controls:
 
+- **Attach chat summaries** (Roleplay chats only): off by default, including in existing chats without a saved choice. Turn it on to include saved chat summaries in agent requests, including post-processing and manual retries. This does not remove summaries from the main reply or stop summary generation. Agents explicitly granted full main-prompt access can still read summaries inside that prompt.
 - **Review Agent Outputs**: when on, lorebook, summary, and character card changes wait for your approval before they save. When off, lorebook and summary changes can save on their own, but character card edits still ask you first. See [Agent Approvals and the Agent Suite](approvals-and-agent-suite.md).
 - **Manual Trackers** (Roleplay chats only): when on, tracker agents do not run after every reply. You trigger them by hand from a button in the HUD. HUD means heads-up display, the on-screen status overlay in Roleplay.
 - **Agent Suite**: opens a viewer where you can read and edit everything the agents have stored for this chat.
@@ -54,7 +55,7 @@ The **Agents** section has a few more controls:
 
 Agents cost extra tokens and extra model calls. Each agent adds its own instructions, and often its own model call. Marinara groups agents that share the same connection into one call when it can. Above the agent list, a readout estimates the load for your current setup. It shows about how many tokens of agent instructions you added and about how many extra calls happen per turn.
 
-This readout turns amber with a warning icon when the load gets heavy. The real cost per turn is higher than the number shown. Your chat history and character details are sent with each call. If you see the warning, remove agents you do not need, or move some to a cheaper or local connection.
+Tap the help icon beside the readout to open its explanation on desktop or mobile. This readout turns amber with a warning icon when the load gets heavy. The real cost per turn is higher than the number shown. Your chat history and character details are sent with each call. The recent-message limit only controls chat messages; agent instructions, character details, and attached summaries are additional context. If you see the warning, remove agents you do not need, or move some to a cheaper or local connection.
 
 ## Which agents each mode starts with
 

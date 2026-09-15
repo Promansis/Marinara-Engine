@@ -33,12 +33,12 @@ import {
 } from "../../hooks/use-chats";
 
 import { getCurrentInputSnapshot, useChatStore } from "../../stores/chat.store";
+import { hasActiveTextSelection } from "../../lib/text-selection";
 import { useGenerate } from "../../hooks/use-generate";
 import { useGenerateGallerySelfie } from "../../hooks/use-gallery";
 import {
   characterKeys,
   spriteKeys,
-  useActivePersona,
   useCharacters,
   usePersona,
   useUpdateCharacter,
@@ -82,10 +82,12 @@ import { useEncounter } from "../../hooks/use-encounter";
 import { useScene } from "../../hooks/use-scene";
 import { useEncounterStore } from "../../stores/encounter.store";
 import { useTranslationStore } from "../../stores/translation.store";
+import { getChatTranslationConfig } from "../../hooks/use-translate";
 import { ttsService } from "../../lib/tts-service";
 import { useTTSConfig } from "../../hooks/use-tts";
 import {
   buildTTSVoiceRequests,
+  filterTTSText,
   findTTSCharacterIdBySpeakerName,
   withTTSVoiceRequestCacheKeys,
 } from "../../lib/tts-dialogue";
@@ -134,6 +136,7 @@ import { HomeCreditsModal } from "./HomeCreditsModal";
 import { HomeBrowserHub } from "./HomeBrowserHub";
 import { NewChatConnectionGate } from "./NewChatConnectionGate";
 import { ChatCommonOverlays, preloadChatSettingsDrawer, type ChatSettingsInitialSection } from "./ChatCommonOverlays";
+import { ADVANCED_MEMORY_SETTINGS_EVENT } from "../../hooks/use-advanced-memory";
 import { CreatorNotesCssInjector, type CardCssMode, type PersonaCssRow } from "./CreatorNotesCssInjector";
 import type { ChatModeFilter } from "../../lib/card-css";
 import {
@@ -284,6 +287,7 @@ const shouldIgnoreIntuitiveSwipeTarget = (
   target: EventTarget | null,
   { allowEmptyMainComposer = false }: { allowEmptyMainComposer?: boolean } = {},
 ): boolean => {
+  if (hasActiveTextSelection()) return true;
   if (!(target instanceof Element)) return false;
   if (
     allowEmptyMainComposer &&
@@ -329,6 +333,7 @@ type AgentInjectionReviewRequest = {
 
 type IllustratorPromptReviewRequest = {
   chatId: string;
+  subjectOnly?: boolean;
   item: ImagePromptReviewItem;
   resultData: Record<string, unknown>;
 };
@@ -344,19 +349,6 @@ function isCharacterRow(value: unknown): value is CharacterRow {
     typeof (value as { id?: unknown }).id === "string" &&
     typeof (value as { data?: unknown }).data !== "undefined"
   );
-}
-
-function resolveChatPersonaId(chat: unknown): string | null {
-  const rawPersonaId = (chat as { personaId?: unknown } | null | undefined)?.personaId;
-  if (typeof rawPersonaId === "string" && rawPersonaId.trim()) return rawPersonaId.trim();
-
-  const metadata = parseChatMetadata((chat as { metadata?: unknown } | null | undefined)?.metadata);
-  const setupConfig = metadata.gameSetupConfig;
-  const rawSetupPersonaId =
-    setupConfig && typeof setupConfig === "object" && !Array.isArray(setupConfig)
-      ? (setupConfig as { personaId?: unknown }).personaId
-      : null;
-  return typeof rawSetupPersonaId === "string" && rawSetupPersonaId.trim() ? rawSetupPersonaId.trim() : null;
 }
 
 function toCharacterMapValue(char: CharacterRow): CharacterMapValue {
@@ -519,6 +511,22 @@ export const ChatArea = memo(function ChatArea() {
   useEffect(() => {
     homeProfessorChatOpenRef.current = homeProfessorChatOpen;
   }, [homeProfessorChatOpen]);
+  // #5889: when Safari's autoplay policy blocks playback, the service parks in
+  // "blocked" and waits for a user gesture instead of retrying - tell the user
+  // the one tap that resumes it. Deduped by toast id across repeat blocks.
+  useEffect(() => {
+    let lastTtsState: ReturnType<typeof ttsService.getState> | null = null;
+    return ttsService.subscribe((state) => {
+      if (state === "blocked" && lastTtsState !== "blocked") {
+        toast.info(localizeUi("ui.chat.chatarea.audioBlockedTapToPlay"), { id: "tts-playback-blocked" });
+      } else if (state !== "blocked" && lastTtsState === "blocked") {
+        // The tap that resumed playback also fulfilled the toast - a lingering
+        // "tap to play" over audio that is already playing reads as broken.
+        toast.dismiss("tts-playback-blocked");
+      }
+      lastTtsState = state;
+    });
+  }, [localizeUi]);
   const handleHomeProfessorChatOpenChange = useCallback((open: boolean) => {
     homeProfessorChatOpenRef.current = open;
     if (open) setHomeProfessorChatActive(true);
@@ -613,6 +621,16 @@ export const ChatArea = memo(function ChatArea() {
     };
     window.addEventListener(CHAT_RESOURCE_AGENT_SETUP_EVENT, openAgentSetup);
     return () => window.removeEventListener(CHAT_RESOURCE_AGENT_SETUP_EVENT, openAgentSetup);
+  }, [handleOpenSettingsPanel]);
+
+  useEffect(() => {
+    const openMemorySettings = (event: Event) => {
+      const chatId = (event as CustomEvent<{ chatId?: string }>).detail?.chatId;
+      if (chatId !== useChatStore.getState().activeChatId) return;
+      handleOpenSettingsPanel(undefined, { initialSection: "memory-recall" });
+    };
+    window.addEventListener(ADVANCED_MEMORY_SETTINGS_EVENT, openMemorySettings);
+    return () => window.removeEventListener(ADVANCED_MEMORY_SETTINGS_EVENT, openMemorySettings);
   }, [handleOpenSettingsPanel]);
 
   useEffect(() => {
@@ -777,6 +795,7 @@ export const ChatArea = memo(function ChatArea() {
       const success = await retryAgents(illustratorPromptReview.chatId, ["illustrator"], {
         illustratorPromptReviewOverride: {
           resultData: illustratorPromptReview.resultData,
+          ...(illustratorPromptReview.subjectOnly ? { subjectOnly: true } : {}),
           prompt: override.prompt,
           ...(override.negativePrompt ? { negativePrompt: override.negativePrompt } : {}),
         },
@@ -793,14 +812,49 @@ export const ChatArea = memo(function ChatArea() {
     setIllustratorPromptReview(null);
   }, [illustratorPromptReviewSubmitting]);
 
+  const handleIllustrate = useCallback(
+    (prompt?: string) => {
+      if (!activeChatId) return;
+      const resultData = { prompt, characters: [] };
+      if (prompt && useUIStore.getState().reviewImagePromptsBeforeSend) {
+        setIllustratorPromptReview({
+          chatId: activeChatId,
+          subjectOnly: true,
+          resultData,
+          item: {
+            id: "roleplay-scene-illustration",
+            kind: "illustration",
+            title: localizeUi("ui.chat.chatgallery.illustrate"),
+            prompt,
+          },
+        });
+        return;
+      }
+      return retryAgents(activeChatId, ["illustrator"], {
+        illustratorRetryTargets: ["illustration"],
+        ...(prompt ? { illustratorPromptReviewOverride: { prompt, subjectOnly: true, resultData } } : {}),
+      }).then(() => undefined);
+    },
+    [activeChatId, localizeUi, retryAgents],
+  );
+
+  const illustratorPromptReviewModal = (
+    <ImagePromptReviewModal
+      open={!!illustratorPromptReview}
+      items={illustratorPromptReview ? [illustratorPromptReview.item] : []}
+      isSubmitting={illustratorPromptReviewSubmitting}
+      onCancel={handleCloseIllustratorPromptReview}
+      onConfirm={(overrides) => void handleContinueIllustratorPromptReview(overrides)}
+    />
+  );
+
   // Character IDs in the active chat. Keyed on the raw characterIds field
   // (all getChatCharacterIds reads) so chat-detail refetches that only bump
   // other fields don't renew the array identity. [#3164]
   const chatCharacterIdsRaw = chat?.characterIds;
   const chatCharIds = useMemo(() => getChatCharacterIds({ characterIds: chatCharacterIdsRaw }), [chatCharacterIdsRaw]);
-  const chatPersonaId = useMemo(() => resolveChatPersonaId(chat), [chat]);
+  const chatPersonaId = chat?.personaId ?? null;
   const { data: chatPersona } = usePersona(chatPersonaId);
-  const { data: activePersonaFallback } = useActivePersona(!!chat?.id && !chatPersonaId && chatMode === "conversation");
 
   const activeCharacterQueries = useQueries({
     queries: chatCharIds.map((id) => ({
@@ -966,10 +1020,8 @@ export const ChatArea = memo(function ChatArea() {
     });
   }, [gameLibraryCharacters, isGameChat]);
 
-  // Active persona info (for user message styling: name, avatar, colors)
+  // Chat persona info (for user message styling: name, avatar, colors)
   const personaInfo = useMemo(() => {
-    // Roleplay and Game may intentionally have no Persona; only Conversation
-    // falls back to the globally active account Persona.
     if (chat?.personaCharacterId) {
       const row = identityCharacterRow;
       if (row && row.id === chat.personaCharacterId) {
@@ -1010,7 +1062,7 @@ export const ChatArea = memo(function ChatArea() {
       }
       return undefined;
     }
-    const persona = chatPersona ?? (chatMode === "conversation" ? activePersonaFallback : null);
+    const persona = chatPersona;
     if (!persona) return undefined;
     return {
       id: persona.id,
@@ -1029,7 +1081,7 @@ export const ChatArea = memo(function ChatArea() {
       dialogueColor: persona.dialogueColor || undefined,
       boxColor: persona.boxColor || undefined,
     };
-  }, [activePersonaFallback, chat, chatMode, chatPersona, identityCharacterRow]);
+  }, [chat, chatPersona, identityCharacterRow]);
 
   const { startEncounter } = useEncounter();
   const { concludeScene, abandonScene, forkScene, isForking } = useScene();
@@ -1414,9 +1466,9 @@ export const ChatArea = memo(function ChatArea() {
   // (personas have no other data-card-css hook), so only feed it in Convo mode.
   const cardCssPersonas = useMemo<PersonaCssRow[] | undefined>(() => {
     if (chatMode !== "conversation") return undefined;
-    const persona = chatPersona ?? activePersonaFallback;
+    const persona = chatPersona;
     return persona?.id ? [{ id: persona.id, creatorNotes: persona.creatorNotes }] : undefined;
-  }, [chatMode, chatPersona, activePersonaFallback]);
+  }, [chatMode, chatPersona]);
   const cardCssInjector = (
     <CreatorNotesCssInjector
       characterIds={chatCharIds}
@@ -1430,50 +1482,11 @@ export const ChatArea = memo(function ChatArea() {
   // Sync translation config from chat metadata to the translation store
   useEffect(() => {
     if (!chat?.id) return;
-    const legacyTargetLanguage = chatMeta.translationTargetLang?.trim() || "en";
-    const legacySystemPrompt = typeof chatMeta.translationPrompt === "string" ? chatMeta.translationPrompt : undefined;
-    const inputSystemPrompt =
-      chatMeta.translationInputPrompt === undefined
-        ? legacySystemPrompt
-        : typeof chatMeta.translationInputPrompt === "string"
-          ? chatMeta.translationInputPrompt
-          : undefined;
-    const outputSystemPrompt =
-      chatMeta.translationOutputPrompt === undefined
-        ? legacySystemPrompt
-        : typeof chatMeta.translationOutputPrompt === "string"
-          ? chatMeta.translationOutputPrompt
-          : undefined;
-    useTranslationStore.getState().setConfig({
-      provider: chatMeta.translationProvider ?? "google",
-      // A cleared settings field stores "" — fall back to the legacy/default
-      // language so translation never runs with an empty target.
-      inputTargetLanguage: chatMeta.translationInputTargetLang?.trim() || legacyTargetLanguage,
-      outputTargetLanguage: chatMeta.translationOutputTargetLang?.trim() || legacyTargetLanguage,
-      connectionId: chatMeta.translationConnectionId,
-      inputSystemPrompt,
-      outputSystemPrompt,
-      deeplApiKey: chatMeta.translationDeeplApiKey,
-      deeplxUrl: chatMeta.translationDeeplxUrl,
-    });
-  }, [
-    chat?.id,
-    chatMeta.translationProvider,
-    chatMeta.translationTargetLang,
-    chatMeta.translationInputTargetLang,
-    chatMeta.translationOutputTargetLang,
-    chatMeta.translationConnectionId,
-    chatMeta.translationPrompt,
-    chatMeta.translationInputPrompt,
-    chatMeta.translationOutputPrompt,
-    chatMeta.translationDeeplApiKey,
-    chatMeta.translationDeeplxUrl,
-  ]);
+    useTranslationStore.getState().setConfig(getChatTranslationConfig(chat.id, chatMeta));
+  }, [chat?.id, chatMeta]);
 
   // On chat switch, clear in-memory translations and seed from persisted extras.
-  // Also re-seed when new pages are fetched (pagination) so older persisted
-  // translations become visible.
-  const msgPageCount = msgData?.pages.length ?? 0;
+  // Also re-seed when message extras arrive after a chat switch or pagination.
   const prevChatIdRef = useRef(chat?.id);
   useEffect(() => {
     if (!messages) return;
@@ -1489,8 +1502,7 @@ export const ChatArea = memo(function ChatArea() {
         extra?: string | Record<string, unknown> | null;
       }>,
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chat?.id, msgPageCount]);
+  }, [chat?.id, messages]);
 
   // Sync chat background from metadata when switching chats. Set the UI store
   // to whatever the chat's metadata says — including null. The previous version
@@ -1518,7 +1530,6 @@ export const ChatArea = memo(function ChatArea() {
   // stale saved background. We only write null when metadata already had a
   // background — that way a global UI background carried over from a previous
   // chat doesn't pollute a fresh chat's metadata on switch.
-  const bgPersistTimer = useRef<ReturnType<typeof setTimeout>>(null);
   useEffect(() => {
     if (!chat?.id) return;
     const savedBackground = chatBackgroundUrlToMetadata(chatBackgroundMetadataToUrl(chatMeta.background));
@@ -1534,28 +1545,13 @@ export const ChatArea = memo(function ChatArea() {
       restoredBackground.isSyncing = false;
     }
 
-    if (!chatBackground) {
-      if (savedBackground === null) return;
-      if (bgPersistTimer.current) clearTimeout(bgPersistTimer.current);
-      bgPersistTimer.current = setTimeout(() => {
-        updateMeta.mutate({ id: chat!.id, background: null });
-      }, 500);
-      return;
-    }
-
     const nextBackground = chatBackgroundUrlToMetadata(chatBackground);
     if (nextBackground === savedBackground) return;
-    if (bgPersistTimer.current) clearTimeout(bgPersistTimer.current);
-    bgPersistTimer.current = setTimeout(() => {
-      updateMeta.mutate({ id: chat!.id, background: nextBackground });
-    }, 500);
+    // A selection is a discrete action, not typing: save immediately so leaving
+    // the chat cannot cancel a pending background change.
+    updateMeta.mutate({ id: chat.id, background: nextBackground });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatBackground, chat?.id]);
-  useEffect(() => {
-    return () => {
-      if (bgPersistTimer.current) clearTimeout(bgPersistTimer.current);
-    };
-  }, []);
 
   const expressionSaveTimer = useRef<ReturnType<typeof setTimeout>>(null);
   const pendingExpressions = useRef<Record<string, string>>(spriteExpressions);
@@ -2470,6 +2466,7 @@ export const ChatArea = memo(function ChatArea() {
   const openedAtBottomChatIdRef = useRef<string | null>(null);
   const streamScrollFrameRef = useRef(0);
   const scrollToMessagesBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    if (hasActiveTextSelection()) return;
     const el = scrollRef.current;
     if (el) {
       el.scrollTo({ top: el.scrollHeight, behavior });
@@ -2528,19 +2525,26 @@ export const ChatArea = memo(function ChatArea() {
 
     let frame = 0;
     const scrollWhenSurfaceIsReady = () => {
+      if (frame) cancelAnimationFrame(frame);
+      if (hasActiveTextSelection()) return;
       if (!scrollRef.current && !messagesEndRef.current) {
         frame = requestAnimationFrame(scrollWhenSurfaceIsReady);
         return;
       }
 
+      document.removeEventListener("selectionchange", scrollWhenSurfaceIsReady);
       openedAtBottomChatIdRef.current = activeChatId;
       userScrolledAwayRef.current = false;
       isNearBottomRef.current = true;
       scheduleScrollToMessagesBottom("auto");
     };
 
+    document.addEventListener("selectionchange", scrollWhenSurfaceIsReady);
     scrollWhenSurfaceIsReady();
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("selectionchange", scrollWhenSurfaceIsReady);
+    };
   }, [activeChatId, isFetchingNextPage, isLoading, loadedMessageCount, scheduleScrollToMessagesBottom]);
 
   useEffect(() => {
@@ -2646,7 +2650,7 @@ export const ChatArea = memo(function ChatArea() {
       if (mode === "roleplay" && cfg.roleplaySpeakerExtractorEnabled) {
         try {
           const extracted = await extractRoleplayTTSSpeakers({
-            message: lastMsg.content,
+            message: filterTTSText(lastMsg.content, cfg),
             group: getChatDisplayName(chat) || characterNames.join(", "),
             user: personaInfo?.name || "User",
             characters: characterNames,
@@ -2803,9 +2807,11 @@ export const ChatArea = memo(function ChatArea() {
   }, [pageCount, isFetchingNextPage]);
 
   const handleLoadMore = useCallback(() => {
-    if (!scrollRef.current || !hasNextPage || isFetchingNextPage) return;
-    prevScrollHeightRef.current = scrollRef.current.scrollHeight;
-    isLoadingMoreRef.current = true;
+    if (!hasNextPage || isFetchingNextPage) return;
+    if (scrollRef.current) {
+      prevScrollHeightRef.current = scrollRef.current.scrollHeight;
+      isLoadingMoreRef.current = true;
+    }
     fetchNextPage();
   }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
@@ -3186,11 +3192,7 @@ export const ChatArea = memo(function ChatArea() {
             onOpenScheduleEditor={handleOpenScheduleEditor}
             onCloseSettings={handleCloseSettingsPanel}
             onCloseGallery={handleCloseGalleryPanel}
-            onIllustrate={() =>
-              retryAgents(activeChatId, ["illustrator"], {
-                illustratorRetryTargets: ["illustration"],
-              })
-            }
+            onIllustrate={handleIllustrate}
             onIllustrateWithAgent={async (agentType) => {
               await retryAgents(activeChatId, [agentType], { forceImageGeneration: true });
             }}
@@ -3216,6 +3218,7 @@ export const ChatArea = memo(function ChatArea() {
             lastAssistantMessageId={lastAssistantMessageId}
           />
         </Suspense>
+        {illustratorPromptReviewModal}
         <ImagePromptReviewModal
           open={conversationSelfieReviewItems.length > 0}
           items={conversationSelfieReviewItems}
@@ -3333,11 +3336,7 @@ export const ChatArea = memo(function ChatArea() {
           onCloseSettings={handleCloseSettingsPanel}
           onCloseGallery={handleCloseGalleryPanel}
           onOpenScheduleEditor={handleOpenScheduleEditor}
-          onIllustrate={() =>
-            retryAgents(activeChatId, ["illustrator"], {
-              illustratorRetryTargets: ["illustration"],
-            })
-          }
+          onIllustrate={handleIllustrate}
           onIllustrateWithAgent={async (agentType) => {
             await retryAgents(activeChatId, [agentType], { forceImageGeneration: true });
           }}
@@ -3380,13 +3379,7 @@ export const ChatArea = memo(function ChatArea() {
           onClose={handleCloseAgentInjectionReview}
         />
       )}
-      <ImagePromptReviewModal
-        open={!!illustratorPromptReview}
-        items={illustratorPromptReview ? [illustratorPromptReview.item] : []}
-        isSubmitting={illustratorPromptReviewSubmitting}
-        onCancel={handleCloseIllustratorPromptReview}
-        onConfirm={(overrides) => void handleContinueIllustratorPromptReview(overrides)}
-      />
+      {illustratorPromptReviewModal}
       <ImagePromptReviewModal
         open={roleplayVideoReviewItems.length > 0}
         items={roleplayVideoReviewItems}

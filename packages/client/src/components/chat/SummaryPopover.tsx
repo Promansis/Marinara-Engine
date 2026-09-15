@@ -75,6 +75,7 @@ import {
   LONG_TERM_MEMORY_CHAT_SUMMARY_PROMPT_ID,
   SUMMARY_TAIL_MESSAGES,
   estimateChatSummaryTokens,
+  estimateTextTokens,
   normalizeChatSummaryEntries,
   type ChatSummaryEntry,
   type ChatSummaryPromptSettings,
@@ -853,7 +854,6 @@ export function SummaryPopover({
         : [
             {
               id: generateClientId(),
-              requestId: generateClientId(),
               start: "1",
               end: String(Math.max(1, Math.min(totalMessageCount, MAX_SUMMARY_MESSAGES))),
               status: "pending",
@@ -2074,7 +2074,7 @@ export function SummaryPopover({
                               active={normalizedActivePromptTemplateId === template.id}
                               name={template.name}
                               detail={localizeUi("chat.summary.template.tokenEstimate", {
-                                count: Math.ceil(template.prompt.length / 4),
+                                count: estimateTextTokens(template.prompt),
                               })}
                               disabled={promptSettingsSaveLocked}
                               onSelect={() => void handleSelectPromptTemplate(template.id)}

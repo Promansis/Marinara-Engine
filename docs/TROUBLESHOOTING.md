@@ -238,6 +238,12 @@ The cleanest long-term fix is to put the server behind HTTPS. Last checked again
 
 ## Storage and data
 
+### Restart Server does not return
+
+Start Marinara using `start.bat`, `start-local.bat`, `start.sh`, `start-termux.sh`, or `pnpm start`. These keep the server attached to its launcher and wait for the old process to exit before starting its replacement. In-app restart closes lingering connections after four seconds and forces exit after eight seconds if shutdown is still stuck; a forced shutdown can interrupt pending writes and is recorded as forced in diagnostics. Direct `node` runs and development watchers are not automatically replaced: stop and restart them from their terminal. Docker continues to use its container restart policy. On Windows, press Ctrl+C in the launcher console and wait for **Shutdown complete** before closing it. Closing or force-killing the terminal can interrupt pending saves.
+
+Do not launch another server against the same data directory while the old one is still running. If an older build left a process behind, stop that process first; do not remove a live server's writer lease.
+
 ### Startup says another process may be using the data directory
 
 Marinara allows only one running server to write to a local data directory. If startup reports **Another Marinara Engine process ... may be using** the directory, close the other Marinara process and start again.
@@ -301,11 +307,9 @@ APK-managed Termux installs protect localhost with a private per-install secret.
 
 An error naming origin `null` means an older APK/server pair let Android's opaque WebView origin reach the general CSRF gate before the private handshake. Editing `.env` cannot fix that: literal `null` is deliberately ignored, and trusting an opaque origin globally would weaken every unsafe API route. Update the APK and Engine instead; current Android login routes verify their own one-time proof or per-install secret while `null` remains rejected everywhere else.
 
-Only a separate browser on the same phone needs manual local-browser authentication. In that browser, open `/android-login` and paste the value shown by this Termux command:
+To open a browser on the same phone, select **Open in browser** on the Android launcher and tap **Retry connection**. A current APK and Engine authenticate it automatically; no secret entry is needed. Reopen through this action after a server restart or an expired session. From inside the app, return to the launcher through **Settings > General > App Behavior > Open Android launcher (app or browser)**.
 
-```bash
-cat ~/.marinara-engine/android-secret
-```
+Older APKs can still use `/android-login` with the value from `cat ~/.marinara-engine/android-secret`. A browser link expires after one minute and works once; an expired link should be opened again through the launcher, not reused from history.
 
 The local `mari` CLI reads the same file automatically. A 401 means the pasted secret or an authentication challenge was rejected; reload `/android-login` and paste the current value. A 503 means the server received a malformed configured secret. Restart through `./start-termux.sh`; if the launcher reports that its secret file is invalid or empty, return to the Android app and tap **Install / Start Marinara** so the APK provisions it again. Do not put this secret in screenshots or issue reports.
 

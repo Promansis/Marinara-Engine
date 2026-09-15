@@ -156,4 +156,52 @@ assert.ok(
 );
 assert.ok("home.browser.bookmarksCompact" in enJson);
 
+// #5820: the Accept action for held edits must never be captioned as a mere
+// suggestion. Users read "Suggestions only. Pick one, or type your own." and
+// concluded Mari had silently done nothing, so the safety mechanism's only
+// visible surface read as a failure of it.
+assert.ok(
+  mariChatFlat.includes(
+    '? localizeUi("ui.chat.homeprofessormarichat.awaitingApprovalHint") : chipRowChips.length > 0 ? "Suggestions only. Pick one, or type your own."',
+  ),
+  "an awaiting-approval row gets its own caption, ahead of the suggestions wording",
+);
+assert.ok("ui.chat.homeprofessormarichat.awaitingApprovalHint" in enJson);
+assert.match(
+  String(enJson["ui.chat.homeprofessormarichat.awaitingApprovalHint"]),
+  /nothing has been changed yet/iu,
+  "the caption states plainly that nothing is applied yet",
+);
+// Declining is a click, not a composed sentence (the reporter asked for
+// "apply or revert" and only apply existed). Both the reload-derived path and
+// the LIVE deferral path - where the server pushes the Accept chip itself and
+// the store branch is taken - must pair it, so the pin binds both call sites
+// rather than the import line, which an earlier version of this pin matched.
+assert.equal(
+  (mariChatFlat.match(/withHeldChangeDeclineChip\(/gu) ?? []).length,
+  2,
+  "both the derived and the server-chip paths pair Accept with its decline action",
+);
+assert.ok(
+  mariChatFlat.includes(
+    "if (chip.id === MARI_AUTHORIZATION_ACCEPT_CHIP.id || chip.id === MARI_AUTHORIZATION_DECLINE_CHIP.id)",
+  ),
+  "both authorization chips send immediately instead of filling the composer",
+);
+// The agent reuses the id "authorization-accept" for an unrelated
+// output-limit chip ("Continue the task."), so neither the approval caption
+// nor the decline action may key on the id alone.
+assert.ok(
+  mariChatFlat.includes("const chipRowAwaitsApproval = chipRowChips.some(isMariHeldChangeApprovalChip);"),
+  "the caption uses the prompt-aware predicate, not a bare id match",
+);
+const sharedChips = readSource("packages/shared/src/types/professor-mari-workspace.ts");
+assert.ok(
+  flatten(sharedChips).includes(
+    "return chip.id === MARI_AUTHORIZATION_ACCEPT_CHIP.id && chip.prompt === MARI_AUTHORIZATION_ACCEPT_CHIP.prompt;",
+  ),
+  "a held-change approval is identified by id AND prompt",
+);
+assert.match(sharedChips, /Continue the task/u, "the id collision is documented where the predicate lives");
+
 console.log("Mari polish regression passed.");

@@ -9,7 +9,12 @@ import { basename, join, resolve } from "node:path";
 import { eq } from "../../db/file-query.js";
 import type { DB } from "../../db/connection.js";
 import { flushDB } from "../../db/connection.js";
-import { CASCADE_DANGLING_EXEMPT_PREFIXES, CASCADES, FILE_BACKED_TABLES } from "../../db/file-backed-store.js";
+import {
+  CASCADE_DANGLING_EXEMPT_PREFIXES,
+  CASCADES,
+  FILE_BACKED_TABLES,
+  getRegisteredFileTable,
+} from "../../db/file-backed-store.js";
 import { getFileTableConfig, isFileTable, type AnyFileColumn, type AnyFileTable } from "../../db/file-schema.js";
 import * as schema from "../../db/schema/index.js";
 import { getFileStorageDir, getMonorepoRoot, isCustomToolScriptEnabled } from "../../config/runtime-config.js";
@@ -43,6 +48,7 @@ import {
   homeCustomWidgetSchema,
   normalizeLorebookCategory,
   normalizePersonalExtensionCapabilities,
+  scopedRegexModeSchema,
   type MariDbCommandResult,
   type MariDbMutationReadBack,
   type MariDbReadBackMismatch,
@@ -232,6 +238,8 @@ const BOOLEAN_FLAGS = new Set([
   "tail",
   "use-regex",
 ]);
+const DB_VALUE_FLAGS = new Set(["table", "limit", "offset", "where", "json", "json-file", "file", "reason"]);
+const DB_BOOLEAN_FLAGS = new Set(["apply", "cascade", "dry-run", "help", "parsed"]);
 
 function truncateOutput(value: string, limit = COMMAND_OUTPUT_LIMIT): { text: string; truncated: boolean } {
   if (value.length <= limit) return { text: value, truncated: false };
@@ -412,28 +420,30 @@ const JSON_COLUMNS: Record<string, readonly string[]> = {
   regex_scripts: ["trimStrings", "placement", "targetCharacterIds", "targetPromptPresetIds"],
 };
 
+function buildTableMeta(table: Parameters<typeof getFileTableConfig>[0]): TableMeta {
+  const config = getFileTableConfig(table);
+  const columns = config.columns.map((column) => ({
+    key: column.key,
+    dbName: column.name,
+    column,
+    primary: column.primary,
+    notNull: column.isNotNull,
+  }));
+  return {
+    name: config.name,
+    table,
+    columns,
+    byKey: new Map(columns.map((column) => [column.key, column])),
+    primaryKey: columns.find((column) => column.primary)?.key ?? null,
+  };
+}
+
 function buildTableMetas() {
   const metas = new Map<string, TableMeta>();
   for (const candidate of Object.values(schema)) {
     if (!isFileTable(candidate)) continue;
-    const table = candidate;
-    const config = getFileTableConfig(table);
-    const name = config.name;
-    if (!FILE_BACKED_TABLE_SET.has(name)) continue;
-    const columns = config.columns.map((column) => ({
-      key: column.key,
-      dbName: column.name,
-      column,
-      primary: column.primary,
-      notNull: column.isNotNull,
-    }));
-    metas.set(name, {
-      name,
-      table,
-      columns,
-      byKey: new Map(columns.map((column) => [column.key, column])),
-      primaryKey: columns.find((column) => column.primary)?.key ?? null,
-    });
+    const meta = buildTableMeta(candidate);
+    if (FILE_BACKED_TABLE_SET.has(meta.name)) metas.set(meta.name, meta);
   }
   return metas;
 }
@@ -712,8 +722,14 @@ function deepMerge(base: unknown, patch: unknown): unknown {
 }
 
 function getMeta(table: string): TableMeta {
-  const meta = TABLE_METAS.get(table);
-  if (!meta) throw new Error(`Unknown file-backed table: ${table}`);
+  let meta = TABLE_METAS.get(table);
+  if (!meta) {
+    // Capability packages register their tables after this module loads (registerTables).
+    const registered = getRegisteredFileTable(table);
+    if (!registered) throw new Error(`Unknown file-backed table: ${table}`);
+    meta = buildTableMeta(registered);
+    TABLE_METAS.set(table, meta);
+  }
   return meta;
 }
 
@@ -787,12 +803,17 @@ function formatCommand(argv: string[] | undefined, fallback: string | undefined)
     .trim();
 }
 
-function parseArgs(args: string[]) {
+function parseArgs(args: string[], knownValueFlags?: ReadonlySet<string>, booleanFlags = BOOLEAN_FLAGS) {
   const positionals: string[] = [];
   const flags = new Map<string, string | boolean>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (!arg.startsWith("--")) {
+    if (arg === "--") {
+      positionals.push(...args.slice(i + 1));
+      break;
+    }
+    const name = arg.slice(2).split("=", 1)[0]!;
+    if (!arg.startsWith("--") || (knownValueFlags && !knownValueFlags.has(name) && !booleanFlags.has(name))) {
       positionals.push(arg);
       continue;
     }
@@ -801,9 +822,8 @@ function parseArgs(args: string[]) {
       flags.set(arg.slice(2, eqIndex), arg.slice(eqIndex + 1));
       continue;
     }
-    const name = arg.slice(2);
     const next = args[i + 1];
-    if (next !== undefined && !next.startsWith("--") && !BOOLEAN_FLAGS.has(name)) {
+    if (next !== undefined && !next.startsWith("--") && !booleanFlags.has(name)) {
       flags.set(name, next);
       i += 1;
     } else {
@@ -1333,6 +1353,13 @@ function normalizePromptPresetActionData(input: Row, existing?: Row | null): Row
     wrapFormat:
       firstString(input, ["wrapFormat", "wrap_format"]) ??
       (typeof existing?.wrapFormat === "string" ? existing.wrapFormat : "xml"),
+    scopedRegexMode: scopedRegexModeSchema.parse(
+      input.scopedRegexMode !== undefined
+        ? input.scopedRegexMode
+        : input.scoped_regex_mode !== undefined
+          ? input.scoped_regex_mode
+          : (existing?.scopedRegexMode ?? "disabled"),
+    ),
     defaultChoices: jsonString(input.defaultChoices ?? input.default_choices ?? existing?.defaultChoices, {}),
     isDefault: boolText(
       firstBoolean(input, ["isDefault", "is_default"]) ?? (existing ? existing.isDefault === "true" : false),
@@ -1349,6 +1376,7 @@ function normalizePromptPresetActionData(input: Row, existing?: Row | null): Row
   delete row.variable_groups;
   delete row.variable_values;
   delete row.wrap_format;
+  delete row.scoped_regex_mode;
   delete row.default_choices;
   delete row.is_default;
   delete row.system_key;
@@ -2110,7 +2138,6 @@ function summarizePersonaRow(row: Row): Row {
   return {
     id: row.id,
     name: row.name,
-    isActive: row.isActive === "true",
     comment: row.comment ?? "",
     description: typeof row.description === "string" ? truncateStr(row.description, 120) : "",
     avatarPath: row.avatarPath ?? null,
@@ -2832,8 +2859,8 @@ export class MariDbService {
         };
       }
       case "active": {
-        const row = (await this.rawRows("personas")).find((candidate) => candidate.isActive === "true") ?? null;
-        return { ok: true, mode: "read", command: context.command, output: row ? parseRow("personas", row) : null };
+        // Retain legacy read compatibility without reviving a global selection.
+        return { ok: true, mode: "read", command: context.command, output: null };
       }
       case "get": {
         const id = requiredString(args, ["id", "personaId"], "persona id");
@@ -4382,6 +4409,8 @@ export class MariDbService {
             "variableValues",
             "parameters",
             "wrapFormat",
+            "scopedRegexMode",
+            "scoped_regex_mode",
             "defaultChoices",
             "isDefault",
             "author",
@@ -4428,6 +4457,8 @@ export class MariDbService {
             "variableValues",
             "parameters",
             "wrapFormat",
+            "scopedRegexMode",
+            "scoped_regex_mode",
             "defaultChoices",
             "isDefault",
             "author",
@@ -5901,8 +5932,7 @@ export class MariDbService {
         };
       }
       case "active": {
-        const row = (await this.rawRows("personas")).find((r) => r.isActive === "true") ?? null;
-        return { ok: true, mode: "read", command: context.command, output: row ? parseRow("personas", row) : null };
+        return { ok: true, mode: "read", command: context.command, output: null };
       }
       case "get": {
         const id = parsed.positionals[0];
@@ -6864,7 +6894,9 @@ export class MariDbService {
   ): Promise<MariDbCommandResult> {
     const sub = args[0];
     const rest = args.slice(1);
-    const parsed = parseArgs(rest);
+    // Row IDs may start with --. Only actual options are flags; exact option-name
+    // collisions can be passed after the standard -- end-of-options marker.
+    const parsed = parseArgs(rest, DB_VALUE_FLAGS, DB_BOOLEAN_FLAGS);
     if (!sub || sub === "help" || sub === "--help" || sub === "-h" || hasFlag(parsed.flags, "help")) {
       return { ok: true, mode: "read", command: context.command, output: this.helpText() };
     }
@@ -8760,7 +8792,7 @@ export class MariDbService {
       "Customization:       mari themes list|active|get|create|update|set-active",
       "Images/media:        mari images connections|preview|generate|edit|assign|delete|list",
       "Creative data:       mari characters list|get|search|create|update|delete",
-      "Creative data:       mari personas list|active|get|search|create|update|delete",
+      "Creative data:       mari personas list|get|search|create|update|delete",
       "Creative data:       mari lorebooks list|get|get-entry <entry-id>|entries <lorebook-id>|search|create|update <lorebook-id>|add-entry <lorebook-id>|update-entry <entry-id>|delete-entry <entry-id>|link-character|unlink-character|delete",
       "Creative data:       mari presets list|get|sections <preset-id>|get-section <id>|groups|get-group|choice-blocks|get-choice-block|add-section|update-section|delete-section|add-group|update-group|delete-group|add-choice-block|update-choice-block|delete-choice-block|create|update",
       "Chats (read-only):   mari chats list|get|messages|search",
@@ -8788,7 +8820,6 @@ export class MariDbService {
     return [
       "Usage: mari personas <command>",
       "Read:  list [--limit <n>]",
-      "Read:  active",
       "Read:  get <id>",
       "Read:  search <query> [--limit <n>]",
       "Write: create --name <name> [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--phonetic-name <text>] [--convo-display-name <text>] [--about-me <text>] [--convo-behavior <text-or-json>] [--comment <text>] [--creator <text>] [--creator-notes <text>] [--apply] [--reason <text>]",
@@ -8875,6 +8906,7 @@ export class MariDbService {
       "Read: list <table>, get <table> <id>, select <table> --where <expr>, search <table|all> <query>, validate [--table <table>]",
       "Where: row.field and row['field'] with comparisons, &&, ||, !, parentheses, and safe string/array methods (includes, startsWith, endsWith, case conversion, trim); arbitrary code and calls are rejected",
       "Write: insert|patch|replace|delete|transform ... (dry-run by default; --apply saves reversible changes and shows a Keep/Restore review card)",
+      "Use -- before positional arguments that match option names, with options first: mari db get --parsed -- characters --apply",
       "Transform scripts use an OS sandbox where supported; on other systems, reviewed local scripts remain available only with MARI_DB_ALLOW_UNSAFE_TRANSFORMS=true.",
       `Known tables: ${FILE_BACKED_TABLES.slice(0, 8).join(", ")} ... (${FILE_BACKED_TABLES.length})`,
       `Journal directory: ${this.journalDir()} (${basename(getFileStorageDir())})`,

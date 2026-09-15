@@ -785,7 +785,7 @@ export function CharactersPanel() {
         </button>
         <button
           type="button"
-          onClick={openCharacterLibrary}
+          onClick={() => openCharacterLibrary()}
           className="mari-chrome-segmented__button min-w-0 justify-center gap-1 overflow-hidden px-1.5 py-2 text-[0.625rem] leading-normal"
           title={localizeUi("ui.panels.characterspanel.openCharactersLibrary")}
         >
@@ -1273,7 +1273,7 @@ export function CharactersPanel() {
                             )}
                           >
                             <Hash size="0.5rem" />
-                            {formatEstimatedTokens(memberTokenEstimate)}
+                            {formatEstimatedTokens(memberTokenEstimate, localizeUi)}
                           </span>
                         )}
                         {memberTags.length > 0 && (
@@ -1607,7 +1607,7 @@ export function CharactersPanel() {
                   )}
                 >
                   <Hash size="0.5625rem" />
-                  {formatEstimatedTokens(tokenEstimate)}
+                  {formatEstimatedTokens(tokenEstimate, localizeUi)}
                 </div>
                 {charTags.length > 0 && (
                   <div data-character-row-tags className="mt-0.5 flex flex-wrap gap-0.5">
