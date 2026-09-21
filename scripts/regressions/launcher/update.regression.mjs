@@ -340,7 +340,9 @@ assert.match(devSource, /detached: process\.platform !== "win32"/u);
 assert.match(devSource, /process\.kill\(-child\.pid, signal\)/u);
 assert.match(devSource, /Reusing it and starting the client\./u);
 
-const fixtureRoot = mkdtempSync(join(tmpdir(), "marinara-launcher-data-"));
+// macOS's long per-user TMPDIR exceeds AF_UNIX's 103-byte path limit here.
+// Keep this fixture short so it still exercises copying a real live socket.
+const fixtureRoot = mkdtempSync(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "marinara-launcher-data-"));
 const fixtureBackupRoot = resolve(fixtureRoot, "..", `${basename(fixtureRoot)}-backups`);
 try {
   const installFixtureRoot = join(fixtureRoot, "install-check");
@@ -370,6 +372,13 @@ try {
   mkdirSync(capabilityRuntimeDependencies, { recursive: true });
   writeFileSync(join(capabilityPackagesDir, "installed.json"), '{"preserved":true}\n');
   writeFileSync(join(capabilityRuntimeDependencies, "runtime.js"), "export {};\n");
+  const runtimeSnapshots = join(defaultDataDir, "capability-runtime-snapshots");
+  mkdirSync(runtimeSnapshots, { recursive: true });
+  symlinkSync(
+    capabilityRuntimeDependencies,
+    join(runtimeSnapshots, "node_modules"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
   for (const downloadableDir of ["models", "sidecar-runtime"]) {
     const path = join(defaultDataDir, downloadableDir);
     mkdirSync(path, { recursive: true });
@@ -418,6 +427,11 @@ try {
     existsSync(join(snapshotCapabilityPackages, "node_modules")),
     false,
     "Launcher snapshots must omit the generated capability runtime junction",
+  );
+  assert.equal(
+    existsSync(join(snapshot.backupDir, "data", "capability-runtime-snapshots")),
+    false,
+    "Launcher snapshots must omit verified runtime copies and native dependency links",
   );
   for (const downloadableDir of ["models", "sidecar-runtime"]) {
     assert.equal(

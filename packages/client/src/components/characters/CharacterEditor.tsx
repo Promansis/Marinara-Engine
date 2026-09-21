@@ -63,6 +63,7 @@ import { useUIStore } from "../../stores/ui.store";
 import { lorebookKeys, useLorebook, useUpdateLorebook } from "../../hooks/use-lorebooks";
 import { useConnections } from "../../hooks/use-connections";
 import { useInstalledCapabilityPackages } from "../../hooks/use-capability-packages";
+import { RulesetSheetsSection } from "../rulesets/RulesetSheetsSection";
 import { showConfirmDialog, showPromptDialog } from "../../lib/app-dialogs";
 import { formatCardVersionTimestamp, getCardVersionTitle } from "../../lib/card-version-history";
 import { dataImageUrlToFile } from "../../lib/data-image-file";
@@ -1507,6 +1508,10 @@ function ConvoTab({
   const ext = formData.extensions;
   const { t: localizeUi } = useUiTranslation();
   const generateCharacterConvoProfile = useGenerateCharacterConvoProfile();
+  const { data: installedCapabilities = [] } = useInstalledCapabilityPackages(kind === "character");
+  const noodleInstalled = installedCapabilities.some(
+    (capability) => capability.id === "noodle" && capability.status === "active",
+  );
   const currentCharacterIdRef = useRef(characterId);
   currentCharacterIdRef.current = characterId;
   const currentConvoProfileDraft = {
@@ -1582,8 +1587,8 @@ function ConvoTab({
         imageInstructions={(ext.conversationImageInstructions as string) ?? ""}
         onImageInstructionsChange={(value) => updateExtension("conversationImageInstructions", value)}
         applyImageInstructionsToNoodle={ext.applyConversationImageInstructionsToNoodle === true}
-        onApplyImageInstructionsToNoodleChange={(value) =>
-          updateExtension("applyConversationImageInstructionsToNoodle", value)
+        onApplyImageInstructionsToNoodleChange={
+          noodleInstalled ? (value) => updateExtension("applyConversationImageInstructionsToNoodle", value) : undefined
         }
         schedule={schedule}
         onEditSchedule={kind === "character" && characterId ? () => setScheduleOpen(true) : undefined}
@@ -5301,6 +5306,11 @@ function StatsTab({
           </div>
         )}
       </div>
+
+      <RulesetSheetsSection
+        sheets={formData.extensions.rulesetSheets as Record<string, unknown> | undefined}
+        onChange={(sheets) => updateExtension("rulesetSheets", sheets)}
+      />
     </div>
   );
 }

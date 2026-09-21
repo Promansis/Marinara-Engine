@@ -456,6 +456,9 @@ function resolveVideoConnection(connection: VideoGenerationConnection) {
     comfyWorkflow: connection.comfyuiWorkflow || undefined,
     comfyLoras: isComfyUiVideo ? videoDefaults.comfyui.loras : [],
     comfyFps: isComfyUiVideo ? videoDefaults.comfyui.fps : undefined,
+    atlasModelOptions: isAtlasVideo
+      ? videoDefaults.atlas.modelOptions[connection.model?.trim() || "google/veo3.1/text-to-video"]
+      : undefined,
     publicReferenceUpload: resolveVideoReferencePublicUploadOptions(isSeedanceVideo, videoDefaults.seedance),
   };
 }
@@ -1349,8 +1352,11 @@ export async function spritesRoutes(app: FastifyInstance) {
    * GET /api/sprites/:characterId
    * List all sprite expressions for a character.
    */
-  app.get<{ Params: { characterId: string } }>("/:characterId", async (req) => {
+  app.get<{ Params: { characterId: string } }>("/:characterId", async (req, reply) => {
     const { characterId } = req.params;
+    if (characterId.includes("..") || characterId.includes("/") || characterId.includes("\\")) {
+      return reply.status(400).send({ error: "Invalid character ID" });
+    }
     return listSpriteInfos(characterId);
   });
 
@@ -2139,6 +2145,7 @@ export async function spritesRoutes(app: FastifyInstance) {
                   comfyWorkflow: resolved.comfyWorkflow,
                   comfyLoras: resolved.comfyLoras,
                   fps: resolved.comfyFps,
+                  atlasModelOptions: resolved.atlasModelOptions,
                   referenceImage,
                   publicReferenceUpload: resolved.publicReferenceUpload,
                   fallback: videoFallback,

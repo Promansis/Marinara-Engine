@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import type { AdvancedMemoryStatus, Message } from "@marinara-engine/shared";
 import { DEFAULT_ADVANCED_MEMORY_SETTINGS } from "@marinara-engine/shared";
@@ -7,7 +7,7 @@ import { seedUIState } from "./ui-state-fixture.js";
 const version = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version as string;
 test.use({ actionTimeout: 10_000 });
 
-async function captureThemes(page: Page, info: TestInfo, name: string) {
+async function captureThemes(page: Page, info: TestInfo, name: string, target?: Locator) {
   for (const theme of ["light", "dark"] as const) {
     await page.evaluate(async (theme) => {
       const { useUIStore } = await import("/src/stores/ui.store.ts" as string);
@@ -15,7 +15,7 @@ async function captureThemes(page: Page, info: TestInfo, name: string) {
       useUIStore.getState().setAppAccentColor("#3b9fe8");
     }, theme);
     await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
-    await page.screenshot({ path: info.outputPath(`${name}-${theme}.png`), animations: "disabled" });
+    await (target ?? page).screenshot({ path: info.outputPath(`${name}-${theme}.png`), animations: "disabled" });
   }
 }
 
@@ -73,7 +73,7 @@ async function createFixture(request: APIRequestContext) {
   };
 }
 
-async function openChat(page: Page, chatId: string) {
+async function openChat(page: Page, chatId: string, openSettings = true) {
   await page.route("**/api/app-settings/ui", (route) => route.fulfill({ json: { value: "" } }));
   await seedUIState(page, {
     hasCompletedOnboarding: true,
@@ -93,17 +93,68 @@ async function openChat(page: Page, chatId: string) {
   );
   await page.goto("/");
   await expect(page.locator("textarea[data-chat-composer]")).toBeVisible();
-  await page.evaluate(async () => {
-    const module = await import("/src/stores/chat.store.ts" as string);
-    module.useChatStore.getState().setShouldOpenSettings(true);
-  });
+  if (openSettings)
+    await page.evaluate(async () => {
+      const module = await import("/src/stores/chat.store.ts" as string);
+      module.useChatStore.getState().setShouldOpenSettings(true);
+    });
 }
+
+test("Advanced Memory shows and moves existing start markers for automatic cutoffs", async ({
+  page,
+  request,
+}, info) => {
+  const fixture = await createFixture(request);
+  const marker = page.locator('[data-advanced-memory-start="true"]');
+  const update = async (contextStarts: NonNullable<AdvancedMemoryStatus["job"]["contextStarts"]>, enabled = true) => {
+    const response = await request.patch(`/api/chats/${fixture.chat.id}/metadata`, {
+      data: {
+        advancedMemory: { ...DEFAULT_ADVANCED_MEMORY_SETTINGS, enabled },
+        advancedMemoryState: { status: "ready", stage: "ready", completed: 2, total: 2, error: null, contextStarts },
+      },
+    });
+    expect(response.ok()).toBeTruthy();
+  };
+  try {
+    await update([]);
+    await openChat(page, fixture.chat.id, false);
+    await expect(marker).toHaveCount(0);
+    await captureThemes(page, info, "automatic-cutoff-before");
+    await update([{ messageId: fixture.firstMessage.id, audienceCharacterIds: [] }]);
+    await page.reload();
+    await expect(marker).toHaveCount(1);
+    await expect(page.locator(`[data-message-id="${fixture.firstMessage.id}"]`).locator(marker)).toBeVisible();
+    await expect(marker).toContainText("New Start: All");
+    await expect(marker).toHaveAttribute(
+      "title",
+      "Advanced Memory starts live context here. Earlier messages remain available as memories.",
+    );
+    await captureThemes(page, info, "automatic-cutoff-shared");
+    await update([
+      { messageId: fixture.lastMessage.id, audienceCharacterIds: [fixture.character.id, fixture.narrator.id] },
+    ]);
+    await page.reload();
+    await expect(marker).toHaveCount(1);
+    await expect(page.locator(`[data-message-id="${fixture.lastMessage.id}"]`).locator(marker)).toBeVisible();
+    await expect(marker).toContainText("New Start: Dottore");
+    await expect(marker).toContainText("New Start: Narrator");
+    await expect(marker).not.toContainText("New Start: All");
+    await captureThemes(page, info, "automatic-cutoff-characters");
+    await update([], false);
+    await page.reload();
+    await expect(page.locator("textarea[data-chat-composer]")).toBeVisible();
+    await expect(marker).toHaveCount(0);
+  } finally {
+    await fixture.cleanup();
+  }
+});
 
 test("Advanced Memory stays in Chat Settings with confirmed knowledge, resumable progress and editable scenes", async ({
   page,
   request,
 }, info) => {
-  test.setTimeout(90_000);
+  // Setup/resume, deletion retries and both-theme captures share this scenario.
+  test.setTimeout(150_000);
   const fixture = await createFixture(request);
   const { character, narrator, firstMessage, lastMessage } = fixture;
   const knowledgeMessages = [
@@ -133,6 +184,7 @@ test("Advanced Memory stays in Chat Settings with confirmed knowledge, resumable
       helperConnectionId: null,
       initialProcessingModel: "helper",
       sceneCheckInterval: 5,
+      retrieveMaxScenes: 3,
       retrieveMinMessages: 3,
       retrieveMaxMessages: 10,
       narratorCharacterId: null,
@@ -149,10 +201,25 @@ test("Advanced Memory stays in Chat Settings with confirmed knowledge, resumable
   const initializeBodies: Array<{ settings?: Record<string, unknown> }> = [];
   let reindexRequests = 0;
   let resetRequests = 0;
+  let deleteSceneRequests = 0;
+  let failSceneDelete = true;
   let releaseResume: (() => void) | undefined;
   await page.route(`**/api/chats/${fixture.chat.id}/advanced-memory**`, async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     const method = route.request().method();
+    if (method === "DELETE" && pathname.includes("/records/")) {
+      deleteSceneRequests += 1;
+      if (failSceneDelete) {
+        failSceneDelete = false;
+        return route.fulfill({ status: 500, json: { error: "Scene deletion failed; please retry." } });
+      }
+      const record = status.records.find((item) => item.id === pathname.split("/").at(-1));
+      if (!record) throw new Error("Expected the selected scene summary");
+      status.records = status.records.filter((item) =>
+        record.kind === "scene" ? item.kind !== "scene" || item.sceneId !== record.sceneId : item.id !== record.id,
+      );
+      return route.fulfill({ json: status });
+    }
     if (method === "DELETE") {
       resetRequests += 1;
       status.records = [];
@@ -220,6 +287,15 @@ test("Advanced Memory stays in Chat Settings with confirmed knowledge, resumable
     await expect(settings.getByLabel("Maximum allowed context before compression (tokens)")).toHaveValue("65000");
     await expect(settings.getByLabel("Minimum messages per excerpt")).toHaveValue("3");
     await expect(settings.getByLabel("Maximum messages per excerpt")).toHaveValue("10");
+    const sceneLimit = settings.getByLabel("Maximum recalled scenes", { exact: true });
+    await expect(sceneLimit).toHaveValue("3");
+    await sceneLimit.fill("2");
+    await sceneLimit.press("Enter");
+    await expect.poll(() => status.settings.retrieveMaxScenes).toBe(2);
+    await expect(sceneLimit).toHaveValue("2");
+    await sceneLimit.scrollIntoViewIfNeeded();
+    await captureThemes(page, info, "advanced-memory-scene-limit", settings);
+
     await expect(settings.getByLabel("Narrator", { exact: true })).toHaveValue("");
     await expect(settings).toContainText("Moving context");
     const minimum = settings.getByLabel("Minimum messages per excerpt");
@@ -292,7 +368,7 @@ test("Advanced Memory stays in Chat Settings with confirmed knowledge, resumable
     await expect(progress).toContainText("1 of 4 work units completed");
     const wheel = progress.locator(".mari-memory-wheel");
     await expect(wheel).toHaveCSS("animation-name", "mari-memory-wheel-run");
-    await expect(wheel).toHaveCSS("background-image", /professor-mari-memory-wheel\.png/);
+    await expect(wheel).toHaveCSS("background-image", /professor-mari-memory-wheel-v2\.png/);
     await page.emulateMedia({ reducedMotion: "reduce" });
     await expect(wheel).toHaveCSS("animation-name", "none");
     await progress.scrollIntoViewIfNeeded();
@@ -321,7 +397,7 @@ test("Advanced Memory stays in Chat Settings with confirmed knowledge, resumable
     status.job = { ...status.job, status: "ready", stage: "ready", completed: 4, total: 4 };
     status.records = [
       {
-        id: "scene-proof",
+        id: "scene-summary-proof",
         chatId: fixture.chat.id,
         sceneId: "scene-proof",
         kind: "scene",
@@ -331,8 +407,8 @@ test("Advanced Memory stays in Chat Settings with confirmed knowledge, resumable
         startIndex: 1,
         endIndex: 2,
         messageIds: fixture.messages.map(({ id }) => id),
-        audienceCharacterIds: [character.id],
-        content: "The laboratory promise concerns a blue notebook.",
+        audienceCharacterIds: [character.id, narrator.id],
+        content: "The laboratory promise concerns a blue notebook. ".repeat(80),
         title: "The laboratory promise",
         timeline: "Before the experiment",
         enabled: true,
@@ -370,6 +446,11 @@ test("Advanced Memory stays in Chat Settings with confirmed knowledge, resumable
     status.records.push(
       {
         ...status.records[0]!,
+        id: "owner-scene-copy",
+        audienceCharacterIds: [],
+      },
+      {
+        ...status.records[0]!,
         id: "excerpt-proof",
         kind: "excerpt",
         content: "Exact words from the notebook conversation.",
@@ -396,6 +477,25 @@ test("Advanced Memory stays in Chat Settings with confirmed knowledge, resumable
     await expect(inspector).toContainText("No matching scenes or memories.");
     await search.fill("");
     await expect(inspector.locator("ul > li")).toHaveCount(2);
+    await expect(inspector.getByRole("button", { name: /Scene #1/ })).toContainText("Dottore, Narrator");
+    const cardBounds = await inspector.locator("ul > li > button").evaluateAll((buttons) =>
+      buttons.map((button) => {
+        const { y, height } = button.getBoundingClientRect();
+        const row = button.parentElement!.getBoundingClientRect();
+        return { y, height, rowY: row.y, rowHeight: row.height };
+      }),
+    );
+    await captureThemes(page, info, "advanced-memory-scene-spacing", inspector.locator("ul"));
+    expect(cardBounds[0]!.height, "long summaries have a compact three-line preview").toBeLessThan(300);
+    const topGap = cardBounds[0]!.y - cardBounds[0]!.rowY;
+    const rowSlack = cardBounds[0]!.rowHeight - cardBounds[0]!.height;
+    const cardGap = cardBounds[1]!.y - cardBounds[0]!.y - cardBounds[0]!.height;
+    expect(topGap).toBeGreaterThanOrEqual(0);
+    expect(topGap, "clamped text must not shift the button baseline down").toBeLessThan(2);
+    expect(rowSlack).toBeGreaterThanOrEqual(0);
+    expect(rowSlack, "the row fits its visible card").toBeLessThan(2);
+    expect(cardGap).toBeGreaterThanOrEqual(0);
+    expect(cardGap, "scene cards follow each other").toBeLessThan(20);
     await expect(inspector.getByText("Exact words from the notebook conversation.")).toHaveCount(0);
     await inspector.getByRole("button", { name: /Scene #1/ }).click();
     await expect(inspector).toContainText("Story timeframe: Before the experiment");
@@ -423,18 +523,87 @@ test("Advanced Memory stays in Chat Settings with confirmed knowledge, resumable
     await inspector.getByRole("button", { name: "Reindex", exact: true }).click();
     await expect.poll(() => reindexRequests).toBe(1);
     expect(status.records[0]?.enabled).toBe(false);
+    for (let index = 0; index < 10; index++) {
+      status.records.push({
+        ...status.records[0]!,
+        id: `long-scene-${index}`,
+        sceneId: `long-scene-${index}`,
+        startIndex: 5 + index * 2,
+        endIndex: 6 + index * 2,
+        content: "A long historical recap with several events and their outcomes. ".repeat(100),
+      });
+    }
+    await expect(inspector.locator("ul > li")).toHaveCount(12);
+    await inspector.locator("ul > li").last().scrollIntoViewIfNeeded();
+    const longRows = await inspector.locator("ul > li").evaluateAll((rows) =>
+      rows.map((row) => {
+        const { y, height } = row.getBoundingClientRect();
+        return { y, height };
+      }),
+    );
+    for (let index = 1; index < longRows.length; index++) {
+      expect(longRows[index]!.height).toBeLessThan(300);
+      const gap = longRows[index]!.y - longRows[index - 1]!.y - longRows[index - 1]!.height;
+      expect(gap).toBeGreaterThanOrEqual(0);
+      expect(gap).toBeLessThan(20);
+    }
     await inspector.scrollIntoViewIfNeeded();
     await captureThemes(page, info, "advanced-memory-inspector");
+    await inspector.getByRole("button", { name: /^Scene #1\b/ }).click();
+    const deleteSceneButton = inspector.getByRole("button", { name: "Delete summary", exact: true });
+    await deleteSceneButton.click();
+    const deleteSceneDialog = page.getByRole("dialog", { name: "Delete summary", exact: true });
+    await expect(deleteSceneDialog).toContainText("Delete Scene #1 for Dottore, Narrator?");
+    await expect(deleteSceneDialog).toContainText("Original chat messages stay intact.");
+    await captureThemes(page, info, "advanced-memory-delete-confirm", deleteSceneDialog);
+    await deleteSceneDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    expect(deleteSceneRequests).toBe(0);
+    await expect(inspector.getByRole("textbox", { name: "Summary text", exact: true })).toHaveValue(
+      "Correction: the notebook is green.",
+    );
+    await deleteSceneButton.click();
+    await deleteSceneDialog.getByRole("button", { name: "Delete summary", exact: true }).click();
+    await expect(
+      page.getByText("Advanced Memory: Scene deletion failed; please retry.", { exact: true }),
+    ).toBeVisible();
+    await expect(deleteSceneButton).toBeEnabled();
+    await deleteSceneButton.click();
+    await deleteSceneDialog.getByRole("button", { name: "Delete summary", exact: true }).click();
+    await expect.poll(() => deleteSceneRequests).toBe(2);
+    await expect(inspector.locator("ul > li")).toHaveCount(11);
+    expect(resetRequests).toBe(0);
+    for (const kind of ["continuity", "temporary"] as const) {
+      const legacy = {
+        ...status.records[0]!,
+        id: `old-${kind}`,
+        sceneId: `old-${kind}-source`,
+        kind,
+        title: kind === "continuity" ? "Continuity" : "Ongoing scene",
+        content: "Unwanted old summary",
+      };
+      status.records.push(legacy);
+      await expect(inspector.getByRole("button", { name: new RegExp(`^${legacy.title}`) })).toBeVisible();
+      await inspector.getByRole("button", { name: new RegExp(`^${legacy.title}`) }).click();
+      const remove = inspector.getByRole("button", { name: "Delete summary", exact: true });
+      await remove.scrollIntoViewIfNeeded();
+      await captureThemes(page, info, `delete-${kind}`);
+      await remove.click();
+      await deleteSceneDialog.getByRole("button", { name: "Delete summary", exact: true }).click();
+      await expect(inspector.locator("ul > li")).toHaveCount(11);
+      expect(status.records.some((record) => record.id === legacy.id)).toBe(false);
+    }
     await inspector.getByRole("button", { name: "Delete all memories", exact: true }).click();
     const resetDialog = page.getByRole("dialog", { name: "Delete all memories", exact: true });
     await expect(resetDialog).toContainText("Original chat messages and your settings will stay intact.");
     await resetDialog.getByRole("button", { name: "Cancel", exact: true }).click();
     expect(resetRequests).toBe(0);
-    await expect(inspector.locator("ul > li")).toHaveCount(2);
+    await expect(inspector.locator("ul > li")).toHaveCount(11);
     await inspector.getByRole("button", { name: "Delete all memories", exact: true }).click();
     await resetDialog.getByRole("button", { name: "Delete all memories", exact: true }).click();
     await expect.poll(() => resetRequests).toBe(1);
-    await expect(inspector).toContainText("Prepared scenes and continuity summaries will appear here.");
+    await expect(inspector).toContainText(
+      "Prepared scene summaries appear here. Constant summaries are in Chat Summaries.",
+    );
     await expect(settings.getByRole("button", { name: "Prepare existing history", exact: true })).toBeVisible();
     await settings.getByRole("button", { name: "Review character knowledge", exact: true }).click();
     await expect(confirmation).toBeVisible();
@@ -446,6 +615,59 @@ test("Advanced Memory stays in Chat Settings with confirmed knowledge, resumable
     await expect(drawer.getByRole("checkbox", { name: /^Enable Memory Recall/ })).not.toBeChecked();
     await drawer.getByRole("button", { name: "Access memories for this chat", exact: true }).click();
     await expect(page.getByRole("dialog", { name: "Memories for This Chat", exact: true })).toBeVisible();
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("Advanced Recall background activity appears without ordinary agents", async ({ page, request }, info) => {
+  const fixture = await createFixture(request);
+  const status: AdvancedMemoryStatus = {
+    settings: { ...DEFAULT_ADVANCED_MEMORY_SETTINGS, enabled: true },
+    job: {
+      id: "background-recall",
+      status: "running",
+      stage: "summarizing",
+      blocking: false,
+      completed: 1,
+      total: 2,
+      error: null,
+    },
+    missingKnowledgeCharacterIds: [],
+    records: [],
+    helperModel: "Mock helper",
+    summaryModel: "Mock summaries",
+    warnings: [],
+  };
+  expect(
+    (await request.patch(`/api/chats/${fixture.chat.id}/metadata`, { data: { advancedMemory: status.settings } })).ok(),
+  ).toBeTruthy();
+  await page.route(`**/api/chats/${fixture.chat.id}/advanced-memory`, (route) => route.fulfill({ json: status }));
+  let resumed = 0;
+  await page.route(`**/api/chats/${fixture.chat.id}/advanced-memory/initialize`, (route) => {
+    resumed += 1;
+    status.job = { ...status.job, status: "running", stage: "indexing", error: null };
+    return route.fulfill({ status: 202, json: status });
+  });
+  try {
+    await openChat(page, fixture.chat.id, false);
+    const agents = page.getByRole("button", { name: /^Agents & Actions/ }).filter({ visible: true });
+    await expect(agents.locator(".lucide-loader-circle")).toBeVisible();
+    await agents.click();
+    const activity = page.locator('[data-component="AdvancedRecallActivity"]');
+    await expect(activity).toContainText("Advanced Recall");
+    await expect(activity).toContainText("Summarizing scenes");
+    await expect(activity.getByRole("progressbar")).toHaveAttribute("value", "1");
+    await captureThemes(page, info, "advanced-recall-agents-menu", activity.locator(".."));
+    status.job = { ...status.job, status: "error", error: "Synthetic archive failure" };
+    await expect(activity).toContainText("Synthetic archive failure");
+    await activity.getByRole("button", { name: "Resume processing", exact: true }).click();
+    await expect.poll(() => resumed).toBe(1);
+    await expect(activity).toContainText("Indexing messages and scenes");
+    status.job = { ...status.job, status: "ready", stage: "ready", completed: 2 };
+    await expect(activity).toContainText("Memory is ready");
+    await expect(agents.locator(".lucide-loader-circle")).toHaveCount(0);
+    await expect(page.locator(".mari-chat-settings-drawer")).toBeHidden();
   } finally {
     await fixture.cleanup();
   }

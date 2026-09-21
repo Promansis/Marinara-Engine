@@ -271,10 +271,14 @@ export function ConversationPresenceCard({
       }
       setOpen(false);
     };
-    const handleResize = () => setOpen(false);
-    const handleScroll = (event: Event) => {
-      if (popoverRef.current?.contains(event.target as Node)) return;
+    const handleResize = () => {
+      // Mobile keyboards resize/pan the viewport when the activity editor gains focus.
+      if (popoverRef.current?.contains(document.activeElement)) return;
       setOpen(false);
+    };
+    const handleScroll = (event: Event) => {
+      if (event.target instanceof Node && popoverRef.current?.contains(event.target)) return;
+      handleResize();
     };
     document.addEventListener("mousedown", handleMouseDown);
     document.addEventListener("keydown", handleEscape);

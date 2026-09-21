@@ -446,6 +446,8 @@ export interface ChatMetadata {
   discordWebhookUrl?: string;
   /** When true, Noodle timeline refreshes may include this chat's recent messages as generation context. */
   noodleTimelineContextEnabled?: boolean;
+  /** When true, the Slurp package may add this chat's characters' recent Slurp activity to the prompt. Off unless set. */
+  slurp2ActivityContextEnabled?: boolean;
   /** Per-chat ephemeral / enabled overrides for lorebook entries (entryId → state).
    *  Tracked per-chat so ephemeral countdown in one chat doesn't affect others. */
   entryStateOverrides?: Record<string, { ephemeral?: number | null; enabled?: boolean }>;
@@ -602,6 +604,9 @@ export interface ChatMetadata {
   gameCombatStyle?: import("./game.js").GameCombatStyle;
   /** Live tactical (grid) battle snapshot — restored on page refresh while a tactical fight is in progress. */
   gameTacticalCombatSnapshot?: import("../features/tactical-combat/types.js").TacticalCombatState | null;
+  /** The ruleset this game was created on, pinned for the game's lifetime. Absent means
+   *  `engine-legacy`: the Engine's own rules, exactly as before rulesets existed. */
+  gameRuleset?: import("../schemas/ruleset.schema.js").RulesetRef;
   /** User's initial game setup preferences */
   gameSetupConfig?: import("./game.js").GameSetupConfig | null;
   /** Immutable creation-time setup retained for viewing and sharing after the campaign changes. */
