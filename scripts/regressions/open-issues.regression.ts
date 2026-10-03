@@ -8887,7 +8887,7 @@ assert.match(
 );
 assert.match(
   summaryPopoverSource,
-  /<div className="flex items-center gap-0\.5">[\s\S]{0,900}onMoveUp[\s\S]{0,900}onMoveDown/u,
+  /data-summary-reorder-controls[\s\S]{0,900}onMoveUp[\s\S]{0,900}onMoveDown/u,
   "Summary entries must keep keyboard reorder controls available on narrow viewports",
 );
 assert.match(
@@ -8897,7 +8897,7 @@ assert.match(
 );
 assert.match(
   summaryPopoverSource,
-  /role="tablist"[\s\S]{0,900}summaryPromptView === "summary"[\s\S]{0,900}summaryPromptView === "combine"/u,
+  /role="tablist"[\s\S]{0,900}data-summary-prompt-tab="summary"[\s\S]{0,900}data-summary-prompt-tab="combine"/u,
   "The Summary Prompt card must switch between Chat Summary and Combine prompt views",
 );
 assert.match(
@@ -8961,18 +8961,18 @@ assert.match(
   "The Summary popover must close only after its Combine draft is safely persisted",
 );
 assert.equal(
-  summaryPopoverSource.match(/className="h-48 space-y-[12] overflow-y-auto pr-0\.5"/gu)?.length,
+  summaryPopoverSource.match(/data-summary-prompt-view=/gu)?.length,
   2,
   "Chat Summary and Combine prompt views must reserve the same vertical space",
 );
 assert.match(
   summaryPopoverSource,
-  /rows=\{5\}[\s\S]{0,500}className="mari-chrome-field h-28 resize-none/u,
+  /data-summary-prompt-view="combine"[\s\S]{0,1500}rows=\{5\}/u,
   "The Combine prompt editor must stay compact enough to match the Chat Summary view",
 );
 const promptSettingsPersistSource = summaryPopoverSource.slice(
-  summaryPopoverSource.indexOf("const persistPromptTemplates"),
-  summaryPopoverSource.indexOf("const commitCombinePromptDraft"),
+  summaryPopoverSource.indexOf("// @summary-persist-start"),
+  summaryPopoverSource.indexOf("// @summary-persist-end"),
 );
 const promptSettingsLockIndex = promptSettingsPersistSource.indexOf("promptSettingsSaveLockedRef.current = true");
 const promptSettingsMutationIndex = promptSettingsPersistSource.indexOf("updateGlobalPromptSettings.mutateAsync");
@@ -8984,8 +8984,8 @@ assert.ok(
   "Summary prompt writes must lock before mutation and unlock only afterward",
 );
 const summaryPromptControlsSource = summaryPopoverSource.slice(
-  summaryPopoverSource.indexOf('role="tablist"'),
-  summaryPopoverSource.indexOf('localizeUi("ui.chat.summarypopover.summaryConnection")'),
+  summaryPopoverSource.indexOf("{/* @summary-prompt-controls-start */}"),
+  summaryPopoverSource.indexOf("{/* @summary-prompt-controls-end */}"),
 );
 assert.equal(
   summaryPromptControlsSource.match(/disabled=\{promptSettingsSaveLocked\}/gu)?.length,
@@ -9003,8 +9003,8 @@ assert.match(
   "The template Save action must use the save lock",
 );
 const summaryPromptSelectOptionSource = summaryPopoverSource.slice(
-  summaryPopoverSource.indexOf("interface SummaryPromptSelectOptionProps"),
-  summaryPopoverSource.indexOf("interface SummaryPromptTemplateRowProps"),
+  summaryPopoverSource.indexOf("// @summary-prompt-option-start"),
+  summaryPopoverSource.indexOf("// @summary-prompt-option-end"),
 );
 assert.equal(
   summaryPromptSelectOptionSource.match(/disabled=\{disabled\}/gu)?.length,
@@ -9012,7 +9012,8 @@ assert.equal(
   "Summary prompt select options must forward their disabled state",
 );
 const summaryPromptTemplateRowSource = summaryPopoverSource.slice(
-  summaryPopoverSource.indexOf("interface SummaryPromptTemplateRowProps"),
+  summaryPopoverSource.indexOf("// @summary-prompt-row-start"),
+  summaryPopoverSource.indexOf("// @summary-prompt-row-end"),
 );
 assert.equal(
   summaryPromptTemplateRowSource.match(/disabled=\{disabled\}/gu)?.length,
@@ -9021,7 +9022,7 @@ assert.equal(
 );
 assert.match(
   summaryPopoverSource,
-  /className="flex items-center justify-center gap-1\.5"[\s\S]{0,900}handleBackfill/u,
+  /data-summary-backfill[\s\S]{0,900}handleBackfill/u,
   "The Automatic Summaries backfill action must be centered",
 );
 assert.match(

@@ -1399,6 +1399,7 @@ export function SummaryPopover({
     if (editingEntryId && deletedIds.has(editingEntryId)) handleCancelEditEntry();
   }, [chatId, deleteSummaryEntry, editingEntryId, handleCancelEditEntry, localizeUi, selectedEntries]);
 
+  // @summary-persist-start
   const persistPromptTemplates = useCallback(
     async (
       templates: ChatSummaryPromptTemplate[],
@@ -1431,6 +1432,7 @@ export function SummaryPopover({
     },
     [combinePromptDraft, globalPromptSettingsReady, updateGlobalPromptSettings, localizeUi],
   );
+  // @summary-persist-end
 
   const commitCombinePromptDraft = useCallback(async (): Promise<boolean> => {
     combinePromptFocused.current = false;
@@ -1689,6 +1691,7 @@ export function SummaryPopover({
     <div
       ref={panelRef}
       data-chat-floating-panel
+      data-summary-panel
       onMouseDown={handlePanelMouseDown}
       onPointerDown={handlePanelPointerDown}
       className="fixed z-[9999]"
@@ -1924,7 +1927,7 @@ export function SummaryPopover({
                     </div>
                   )}
 
-                  <div className="flex items-center justify-center gap-1.5">
+                  <div data-summary-backfill className="flex items-center justify-center gap-1.5">
                     {backfillState.status === "running" && backfillState.chatId === chatId ? (
                       <button
                         type="button"
@@ -1979,6 +1982,7 @@ export function SummaryPopover({
                   </button>
                 </div>
 
+                {/* @summary-prompt-controls-start */}
                 <div
                   role="tablist"
                   aria-label={localizeUi("ui.chat.summarypopover.summaryPromptView")}
@@ -1987,6 +1991,7 @@ export function SummaryPopover({
                   <button
                     type="button"
                     role="tab"
+                    data-summary-prompt-tab="summary"
                     aria-selected={summaryPromptView === "summary"}
                     onClick={() => setSummaryPromptView("summary")}
                     className={cn(
@@ -2001,6 +2006,7 @@ export function SummaryPopover({
                   <button
                     type="button"
                     role="tab"
+                    data-summary-prompt-tab="combine"
                     aria-selected={summaryPromptView === "combine"}
                     onClick={() => setSummaryPromptView("combine")}
                     className={cn(
@@ -2015,7 +2021,7 @@ export function SummaryPopover({
                 </div>
 
                 {summaryPromptView === "summary" ? (
-                  <div className="h-48 space-y-2 overflow-y-auto pr-0.5">
+                  <div data-summary-prompt-view="summary" className="h-48 space-y-2 overflow-y-auto pr-0.5">
                     <div className="grid grid-cols-1 gap-1">
                       <div className="relative min-w-0">
                         <button
@@ -2175,7 +2181,7 @@ export function SummaryPopover({
                     )}
                   </div>
                 ) : (
-                  <div className="h-48 space-y-1 overflow-y-auto pr-0.5">
+                  <div data-summary-prompt-view="combine" className="h-48 space-y-1 overflow-y-auto pr-0.5">
                     <span className="text-[0.625rem] font-semibold text-[var(--muted-foreground)]">
                       {localizeUi("ui.chat.summarypopover.combinePrompt")}
                     </span>
@@ -2210,6 +2216,7 @@ export function SummaryPopover({
                   </div>
                 )}
               </div>
+              {/* @summary-prompt-controls-end */}
             </div>
 
             <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/35 p-2">
@@ -2477,7 +2484,7 @@ export function SummaryPopover({
         </div>
 
         {/* Source controls */}
-        <div className="border-t border-[var(--border)] bg-[var(--card)]/45 px-3 py-2.5">
+        <div data-summary-source-controls className="border-t border-[var(--border)] bg-[var(--card)]/45 px-3 py-2.5">
           <div className="mb-2.5 space-y-2">
             <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start gap-3">
               <div className="min-w-0">
@@ -2535,6 +2542,7 @@ export function SummaryPopover({
                       return (
                         <div
                           key={range.id}
+                          data-summary-batch-range
                           className={cn(
                             "space-y-1 min-w-0 rounded-md border bg-[var(--background)]/25 px-0.5 py-1",
                             validationMessage
@@ -2945,6 +2953,7 @@ function SummaryEntryRow({
   const metaLine = getSummaryEntryMetaLine(entry, localizeUi);
   return (
     <div
+      data-summary-entry-row
       data-touch-reorder-item={reorderable ? "summary-entry" : undefined}
       data-touch-reorder-index={reorderable ? entryIndex : undefined}
       draggable={reorderable && dragReady}
@@ -2982,7 +2991,7 @@ function SummaryEntryRow({
           >
             <GripVertical size="0.875rem" />
           </button>
-          <div className="flex items-center gap-0.5">
+          <div data-summary-reorder-controls className="flex items-center gap-0.5">
             <button
               type="button"
               onClick={onMoveUp}
@@ -3266,6 +3275,7 @@ function SummaryReadableSection({ section, sectionIndex }: SummaryReadableSectio
   );
 }
 
+// @summary-prompt-option-start
 interface SummaryPromptSelectOptionProps {
   active: boolean;
   label: string;
@@ -3278,6 +3288,7 @@ function SummaryPromptSelectOption({ active, label, disabled, onSelect }: Summar
     <button
       type="button"
       role="option"
+      data-summary-template-option
       aria-selected={active}
       disabled={disabled}
       onClick={onSelect}
@@ -3293,7 +3304,9 @@ function SummaryPromptSelectOption({ active, label, disabled, onSelect }: Summar
     </button>
   );
 }
+// @summary-prompt-option-end
 
+// @summary-prompt-row-start
 interface SummaryPromptTemplateRowProps {
   active: boolean;
   name: string;
@@ -3318,6 +3331,7 @@ function SummaryPromptTemplateRow({
   const { t: localizeUi } = useUiTranslation();
   return (
     <div
+      data-summary-template-row
       className={cn(
         "group flex items-center gap-1 rounded-md px-1.5 py-1 transition-colors",
         active
@@ -3384,3 +3398,4 @@ function SummaryPromptTemplateRow({
     </div>
   );
 }
+// @summary-prompt-row-end

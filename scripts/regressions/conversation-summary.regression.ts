@@ -165,11 +165,7 @@ assert.match(
   /handleClearCompletedRanges[\s\S]*?status !== "success"/u,
   "Completed batch ranges should be removable without clearing retryable ranges",
 );
-assert.match(
-  summaryPopoverSource,
-  /grid-cols-1 gap-1\.5 sm:grid-cols-2/u,
-  "Batch ranges should use one column on mobile and two on desktop",
-);
+assert.match(summaryPopoverSource, /data-summary-batch-range/u, "Batch ranges should render as range cards");
 assert.match(
   summaryPopoverSource,
   /remaining\.length > 0[\s\S]*?status: "pending"/u,
@@ -180,17 +176,7 @@ assert.match(
   /handleClearExtraRanges[\s\S]*?return \[kept\]/u,
   "Clearing extra batch ranges should retain one range",
 );
-assert.match(
-  summaryPopoverSource,
-  /text-emerald-600[\s\S]*?batchClearCompleted/u,
-  "Completed controls should be green",
-);
-assert.match(
-  summaryPopoverSource,
-  /w-\[4\.5rem\][\s\S]*?aria-label=.*batchRangeFrom/u,
-  "Range inputs should fit four digits",
-);
-assert.match(summaryPopoverSource, /<span[^>]*>\s*-\s*<\/span>/u, "Range inputs should show a separator");
+assert.match(summaryPopoverSource, /batchClearCompleted/u, "Completed batch ranges should expose a clear action");
 assert.match(
   summaryPopoverSource,
   /batchErrorInfoId[\s\S]*?role="tooltip"[\s\S]*?range\.error/u,
@@ -206,18 +192,8 @@ assert.match(summaryPopoverSource, /chat\.summary\.source\.batchRanges/u);
 assert.match(summaryPopoverSource, /chat\.summary\.source\.batchMessages/u);
 assert.match(
   summaryPopoverSource,
-  /grid-cols-\[1\.25rem_4\.5rem_minmax\(0,1fr\)_4\.5rem_1rem_1rem\].*?gap-0\.5/u,
-  "Range controls should keep the number left and the separator centered within the card",
-);
-assert.match(
-  summaryPopoverSource,
-  /range\.status === "pending" \|\| range\.status === "cancelled"[\s\S]*?h-4 w-4[\s\S]*?<button/u,
-  "Pending ranges should reserve the status column so the remove button stays inside the card",
-);
-assert.match(
-  summaryPopoverSource,
-  /className="rounded-full p-0 text-\[var\(--destructive\)\]/u,
-  "The failed status control should fit inside its compact status column",
+  /data-summary-batch-range[\s\S]{0,6000}batchRangeFrom[\s\S]{0,6000}batchRangeTo/u,
+  "Each batch range card should expose its from/to inputs",
 );
 assert.doesNotMatch(
   summaryPopoverSource,

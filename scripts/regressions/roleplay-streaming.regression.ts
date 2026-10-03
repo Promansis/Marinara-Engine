@@ -530,7 +530,7 @@ const activeContextLinksButtonSource =
   chatRoleplaySurfaceSource.match(/function ActiveContextLinksButton[\s\S]*?\nfunction SummaryButton/u)?.[0] ?? "";
 assert.match(
   summaryPopoverSource,
-  /className="fixed z-\[9999\]"[\s\S]*?return createPortal\(content, document\.body\)/u,
+  /data-summary-panel[\s\S]*?return createPortal\(content, document\.body\)/u,
   "the Roleplay Chat Summary panel should portal above independent floating-panel stacking contexts",
 );
 assert.match(
