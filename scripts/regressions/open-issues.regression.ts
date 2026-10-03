@@ -8724,6 +8724,14 @@ const summaryPopoverSource = readFileSync(
   join(REPOSITORY_ROOT, "packages/client/src/components/chat/SummaryPopover.tsx"),
   "utf8",
 );
+const summarySettingsPanelSource = readFileSync(
+  join(REPOSITORY_ROOT, "packages/client/src/components/chat/SummarySettingsPanel.tsx"),
+  "utf8",
+);
+const chatSummaryPromptPersistSource = readFileSync(
+  join(REPOSITORY_ROOT, "packages/client/src/hooks/use-chat-summary-prompt-persist.ts"),
+  "utf8",
+);
 assert.match(
   summaryPopoverSource,
   /function SummaryEntryEditor[\s\S]*?<MacroTextarea[\s\S]*?textareaRef=\{textareaRef\}/u,
@@ -8896,14 +8904,14 @@ assert.match(
   "Summary reorder requests must persist the complete user-selected entry order",
 );
 assert.match(
-  summaryPopoverSource,
+  summarySettingsPanelSource,
   /role="tablist"[\s\S]{0,1600}data-summary-prompt-tab="summary"[\s\S]{0,1600}data-summary-prompt-tab="combine"/u,
   "The Summary Prompt card must switch between Chat Summary and Combine prompt views",
 );
 assert.match(
   summaryPopoverSource,
-  /!templateEditorOpen[\s\S]{0,500}\{activeSummaryPrompt\}[\s\S]{0,500}templateEditorOpen/u,
-  "The active Chat Summary prompt must remain visible until its template editor opens",
+  /role="listbox"[\s\S]{0,3000}\{activeSummaryPrompt\}/u,
+  "The popover must show the active Chat Summary prompt below its template selector",
 );
 assert.doesNotMatch(
   summaryPopoverSource,
@@ -8911,42 +8919,27 @@ assert.doesNotMatch(
   "The Summary Prompt card must use one Edit path instead of a separate Templates button",
 );
 assert.match(
-  summaryPopoverSource,
-  /onClick=\{\(\) => void handleToggleVisiblePromptEditor\(\)\}[\s\S]{0,500}aria-expanded=\{visiblePromptEditorOpen\}/u,
-  "The Summary Prompt Edit/Done action must expose disclosure semantics for its editor",
+  summarySettingsPanelSource,
+  /SummaryPromptTemplateRow[\s\S]{0,4000}onClick=\{handleNewPromptTemplate\}/u,
+  "The drawer summary editor must offer template creation and selection",
 );
 assert.match(
-  summaryPopoverSource,
-  /visiblePromptEditorOpen[\s\S]{0,300}ui\.chat\.summarypopover\.done[\s\S]{0,100}ui\.noodle\.noodlepostcard\.edit/u,
-  "The Summary Prompt editor must replace Edit with a Done action while open",
+  summarySettingsPanelSource,
+  /data-summary-prompt-view="combine"[\s\S]{0,1200}handleCombinePromptBlur/u,
+  "The drawer summary editor must persist the Combine prompt on blur",
 );
 assert.match(
-  summaryPopoverSource,
-  /setTemplateSelectOpen\(false\);\s*setTemplateEditorOpen\(false\);/u,
-  "Done must close the Chat Summary prompt editor",
-);
-assert.match(
-  summaryPopoverSource,
-  /if \(!visiblePromptEditorOpen\) \{\s*setTemplateSelectOpen\(false\);\s*handleEditVisiblePrompt\(\);/u,
-  "Opening the Summary Prompt editor must close its template selector",
-);
-assert.match(
-  summaryPopoverSource,
-  /const saved = await commitCombinePromptDraft\(\);\s*if \(saved\) setCombinePromptEditorOpen\(false\);/u,
-  "Done must save and close the Combine prompt editor",
-);
-assert.match(
-  summaryPopoverSource,
-  /if \(promptSettingsSaveLockedRef\.current\) \{\s*await promptSettingsSaveQueueRef\.current;[\s\S]{0,350}combinePromptDraftRef\.current/u,
+  summarySettingsPanelSource,
+  /if \(isLocked\(\)\) \{\s*await whenIdle\(\);[\s\S]{0,350}combinePromptDraftRef\.current/u,
   "Combine prompt saves must wait for active settings writes and then retry the latest draft",
 );
 assert.match(
-  summaryPopoverSource,
+  summarySettingsPanelSource,
   /queryClient\.getQueryData<ChatSummaryPromptSettings/u,
   "Queued Combine saves must use the latest prompt settings from the query cache",
 );
 assert.match(
-  summaryPopoverSource,
+  summarySettingsPanelSource,
   /const currentSettings = readCurrentPromptSettings\(\);\s*const promise = persistPromptTemplates\(currentSettings\.templates, currentSettings\.activeTemplateId, nextPrompt\);/u,
   "Combine prompt persistence must apply the latest cached templates and active selection",
 );
@@ -8955,20 +8948,15 @@ assert.doesNotMatch(
   /promptTemplatesRef|activePromptTemplateIdRef/u,
   "Summary prompt saves must not replay mirrored template state from an earlier render",
 );
-assert.match(
+assert.doesNotMatch(
   summaryPopoverSource,
-  /const finish = \(\) => \{[\s\S]{0,200}onClose\(\);[\s\S]{0,900}if \(await commitCombinePromptDraft\(\)\) finish\(\);/u,
-  "The Summary popover must close only after its Combine draft is safely persisted",
+  /commitCombinePromptDraft/u,
+  "The popover must not own the Combine draft now that it lives in the drawer",
 );
 assert.match(
-  summaryPopoverSource,
-  /data-summary-prompt-view="summary"[\s\S]{0,400}className="h-48[\s\S]{0,12000}data-summary-prompt-view="combine"[\s\S]{0,400}className="h-48/u,
-  "Chat Summary and Combine prompt views must reserve the same vertical space",
-);
-assert.match(
-  summaryPopoverSource,
+  summarySettingsPanelSource,
   /data-summary-prompt-view="combine"[\s\S]{0,1500}rows=\{5\}[\s\S]{0,600}className="mari-chrome-field h-28 resize-none/u,
-  "The Combine prompt editor must stay compact enough to match the Chat Summary view",
+  "The Combine prompt editor must stay compact",
 );
 assert.match(
   summaryPopoverSource,
@@ -8977,39 +8965,34 @@ assert.match(
 );
 assert.match(
   summaryPopoverSource,
-  /const saved = await persistPromptTemplates\(currentSettings\.templates, templateId\);[\s\S]{0,200}if \(!saved\) return;[\s\S]{0,300}setTemplateSelectOpen\(false\);[\s\S]{0,400}templateTriggerRef\.current\?\.focus\(\)/u,
+  /const saved = await persistPromptTemplates\(currentSettings\.templates, templateId, globalCombinePrompt\);[\s\S]{0,200}if \(!saved\) return;[\s\S]{0,300}setTemplateSelectOpen\(false\);[\s\S]{0,400}templateTriggerRef\.current\?\.focus\(\)/u,
   "Selecting a summary prompt template must return focus to its trigger",
 );
-const promptSettingsPersistSource = summaryPopoverSource.slice(
-  summaryPopoverSource.indexOf("// @summary-persist-start"),
-  summaryPopoverSource.indexOf("// @summary-persist-end"),
-);
-const promptSettingsLockIndex = promptSettingsPersistSource.indexOf("promptSettingsSaveLockedRef.current = true");
-const promptSettingsMutationIndex = promptSettingsPersistSource.indexOf("updateGlobalPromptSettings.mutateAsync");
-const promptSettingsUnlockIndex = promptSettingsPersistSource.indexOf("promptSettingsSaveLockedRef.current = false");
+const promptSettingsLockIndex = chatSummaryPromptPersistSource.indexOf("lockedRef.current = true");
+const promptSettingsMutationIndex = chatSummaryPromptPersistSource.indexOf("update.mutateAsync");
+const promptSettingsUnlockIndex = chatSummaryPromptPersistSource.indexOf("lockedRef.current = false");
 assert.ok(
   promptSettingsLockIndex >= 0 &&
     promptSettingsLockIndex < promptSettingsMutationIndex &&
     promptSettingsMutationIndex < promptSettingsUnlockIndex,
   "Summary prompt writes must lock before mutation and unlock only afterward",
 );
-const summaryPromptControlsSource = summaryPopoverSource.slice(
-  summaryPopoverSource.indexOf("{/* @summary-prompt-controls-start */}"),
-  summaryPopoverSource.indexOf("{/* @summary-prompt-controls-end */}"),
+const summaryPromptControlsSource = summarySettingsPanelSource.slice(
+  summarySettingsPanelSource.indexOf("{/* @summary-prompt-controls-start */}"),
+  summarySettingsPanelSource.indexOf("{/* @summary-prompt-controls-end */}"),
 );
-assert.equal(
-  summaryPromptControlsSource.match(/disabled=\{promptSettingsSaveLocked\}/gu)?.length,
-  8,
-  "Every prompt option, template row, and open template editor control must use the save lock",
-);
-assert.equal(
-  summaryPromptControlsSource.match(/disabled=\{!globalPromptSettingsReady \|\| promptSettingsSaveLocked\}/gu)?.length,
-  2,
-  "Every prompt-level action must use the save lock",
+assert.ok(
+  summaryPromptControlsSource.includes("disabled={templateEditorDisabled}"),
+  "Every template editor control must use the save lock",
 );
 assert.match(
   summaryPromptControlsSource,
-  /!hasTemplateDraft \|\|\s*promptSettingsSaveLocked \|\|\s*!globalPromptSettingsReady/u,
+  /readOnly=\{!globalPromptSettingsReady \|\| promptSettingsSaveLocked\}/u,
+  "The Combine prompt editor must use the save lock",
+);
+assert.match(
+  summaryPromptControlsSource,
+  /!hasTemplateDraft \|\| templateEditorDisabled/u,
   "The template Save action must use the save lock",
 );
 const summaryPromptSelectOptionSource = summaryPopoverSource.slice(
@@ -9021,9 +9004,9 @@ assert.equal(
   1,
   "Summary prompt select options must forward their disabled state",
 );
-const summaryPromptTemplateRowSource = summaryPopoverSource.slice(
-  summaryPopoverSource.indexOf("// @summary-prompt-row-start"),
-  summaryPopoverSource.indexOf("// @summary-prompt-row-end"),
+const summaryPromptTemplateRowSource = summarySettingsPanelSource.slice(
+  summarySettingsPanelSource.indexOf("// @summary-prompt-row-start"),
+  summarySettingsPanelSource.indexOf("// @summary-prompt-row-end"),
 );
 assert.equal(
   summaryPromptTemplateRowSource.match(/disabled=\{disabled\}/gu)?.length,

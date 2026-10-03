@@ -6,6 +6,8 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 - The Summary popover now works with a keyboard and screen reader: it is announced as a dialog, focus moves inside when it opens and returns to the Summary button when you close it with Escape or the close button, the prompt and view tabs respond to the arrow keys, and the summary source and batch status icons are announced.
 
+- Summary prompt templates, the Combine prompt, the summary connection and output size, semantic retrieval, automatic summaries, and the recent message tail all now live together in Chat Settings, shown in every chat mode. The Summary popover keeps the quick prompt selector, the source controls, the entry list, and the Backfill action, so the chat no longer shows the same setting in two places.
+
 - `decision_choice:` statements now get answers from System One servers that need a description for every option, such as Strands decider. Before, those servers refused the whole request, so every Choice comparison read as no. Open-Jev's answers stayed the same in testing. The Decision Models guide now explains how to run Strands decider yourself as a Decision connection (#6981).
 
 - Reinstalling the local model's runtime, or installing a new llama.cpp runtime, no longer deletes an installed decision model such as Open-Jev 2B along with the old runtime (#6982).

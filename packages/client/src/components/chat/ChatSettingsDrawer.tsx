@@ -98,6 +98,7 @@ import {
   DEFAULT_GAME_DICE_POOL_AGE_TURNS as DEFAULT_DICE_POOL_AGE_TURNS,
   DEFAULT_GAME_DICE_POOL_WINDOW as DEFAULT_DICE_POOL_WINDOW,
   estimateTextTokens,
+  isLongTermMemoryChatSummaryPromptAllowed,
   isRoleplayCommandEnabled,
   normalizeGroupChatMode,
   normalizeSemanticSummaryRetrievalSettings,
@@ -140,6 +141,7 @@ import {
   SemanticSummaryRetrievalControls,
   type SemanticSummaryRetrievalControlField,
 } from "./SemanticSummaryRetrievalControls";
+import { SummarySettingsPanel } from "./SummarySettingsPanel";
 import { RoleplayMessagePreview } from "./ChatMessage";
 import { resolveChatContextBudget } from "../../lib/professor-mari-context-budget";
 import { CHAT_SETTINGS_SURFACES } from "./chat-settings-surfaces";
@@ -9358,15 +9360,21 @@ export function ChatSettingsDrawer({
             </Section>
           )}
 
-          {/* Automatic Summarization — conversation mode only. Opens a modal to edit per-day and per-week summaries. */}
-          {isConversation && (
-            <Section
-              id="conversation-automatic-summarization"
-              label={localizeUi("ui.chat.chatsettingsdrawer.automaticSummarization")}
-              icon={<CalendarClock size="0.875rem" />}
-              help={localizeUi("ui.chat.chatsettingsdrawer.toHelpKeepTheRequestContextLowTheConversation")}
-            >
-              <div className="space-y-2.5">
+          {/* Summaries — conversation mode adds day/week summaries; every mode gets model + prompt settings. */}
+          <Section
+            id="conversation-automatic-summarization"
+            label={localizeUi(
+              isConversation ? "ui.chat.chatsettingsdrawer.automaticSummarization" : "chat.summary.toolbarLabel",
+            )}
+            icon={<CalendarClock size="0.875rem" />}
+            help={
+              isConversation
+                ? localizeUi("ui.chat.chatsettingsdrawer.toHelpKeepTheRequestContextLowTheConversation")
+                : undefined
+            }
+          >
+            <div className="space-y-2.5">
+              {isConversation && (
                 <button
                   onClick={() => setShowSummariesModal(true)}
                   className="flex w-full items-center justify-between rounded-lg bg-[var(--secondary)] px-3 py-2.5 text-left transition-all hover:bg-[var(--accent)]"
@@ -9381,102 +9389,102 @@ export function ChatSettingsDrawer({
                   </div>
                   <Pencil size="0.875rem" className="shrink-0 text-[var(--muted-foreground)]" />
                 </button>
+              )}
 
-                {import.meta.env.VITE_MARINARA_LITE !== "true" && (
-                  <SettingsSwitch
-                    label={localizeUi("ui.chat.chatsettingsdrawer.semanticSummaryRetrieval")}
-                    description={localizeUi(
-                      "ui.chat.chatsettingsdrawer.keepRecentSummariesInContextAndRetrieveOnlyRelevantOlder",
-                    )}
-                    checked={metadata.semanticSummaryRetrievalEnabled === true}
-                    onChange={(semanticSummaryRetrievalEnabled) =>
-                      updateMeta.mutate({ id: chat.id, semanticSummaryRetrievalEnabled })
-                    }
-                    labelPosition="start"
-                    className={cn(
-                      "justify-between rounded-lg px-3 py-2.5 text-left",
-                      metadata.semanticSummaryRetrievalEnabled === true
-                        ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
-                        : cn(AGENT_SETTINGS_SURFACE_CLASS, "hover:bg-[var(--accent)]"),
-                    )}
-                    labelClassName="text-xs font-medium"
-                  />
-                )}
-                {import.meta.env.VITE_MARINARA_LITE !== "true" && (
-                  <SemanticSummaryRetrievalControls
-                    enabled={metadata.semanticSummaryRetrievalEnabled === true}
-                    recentCount={summaryRetrievalSettings.semanticSummaryRecentCount}
-                    olderCount={summaryRetrievalSettings.semanticSummaryOlderCount}
-                    minSimilarity={summaryRetrievalSettings.semanticSummaryMinSimilarity}
-                    recentLabel={localizeUi("ui.chat.chatsettingsdrawer.recentWeeks")}
-                    olderLabel={localizeUi("ui.chat.chatsettingsdrawer.olderWeeks")}
-                    thresholdLabel={localizeUi("ui.chat.chatsettingsdrawer.summaryRelevanceThreshold")}
-                    onChange={(field: SemanticSummaryRetrievalControlField, value) =>
-                      updateMeta.mutate({ id: chat.id, [field]: value })
-                    }
-                  />
-                )}
+              {import.meta.env.VITE_MARINARA_LITE !== "true" && (
+                <SettingsSwitch
+                  label={localizeUi("ui.chat.chatsettingsdrawer.semanticSummaryRetrieval")}
+                  description={localizeUi(
+                    "ui.chat.chatsettingsdrawer.keepRecentSummariesInContextAndRetrieveOnlyRelevantOlder",
+                  )}
+                  checked={metadata.semanticSummaryRetrievalEnabled === true}
+                  onChange={(semanticSummaryRetrievalEnabled) =>
+                    updateMeta.mutate({ id: chat.id, semanticSummaryRetrievalEnabled })
+                  }
+                  labelPosition="start"
+                  className={cn(
+                    "justify-between rounded-lg px-3 py-2.5 text-left",
+                    metadata.semanticSummaryRetrievalEnabled === true
+                      ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+                      : cn(AGENT_SETTINGS_SURFACE_CLASS, "hover:bg-[var(--accent)]"),
+                  )}
+                  labelClassName="text-xs font-medium"
+                />
+              )}
+              {import.meta.env.VITE_MARINARA_LITE !== "true" && (
+                <SemanticSummaryRetrievalControls
+                  enabled={metadata.semanticSummaryRetrievalEnabled === true}
+                  recentCount={summaryRetrievalSettings.semanticSummaryRecentCount}
+                  olderCount={summaryRetrievalSettings.semanticSummaryOlderCount}
+                  minSimilarity={summaryRetrievalSettings.semanticSummaryMinSimilarity}
+                  recentLabel={localizeUi("ui.chat.chatsettingsdrawer.recentWeeks")}
+                  olderLabel={localizeUi("ui.chat.chatsettingsdrawer.olderWeeks")}
+                  thresholdLabel={localizeUi("ui.chat.chatsettingsdrawer.summaryRelevanceThreshold")}
+                  onChange={(field: SemanticSummaryRetrievalControlField, value) =>
+                    updateMeta.mutate({ id: chat.id, [field]: value })
+                  }
+                />
+              )}
 
-                <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/35 p-2.5">
-                  <div className="space-y-1.5">
-                    <span className="text-xs font-medium">
-                      {localizeUi("ui.chat.summarypopover.summaryConnection_febe5c4")}
-                    </span>
-                    <select
-                      value={conversationSummaryConnectionId}
-                      onChange={(event) =>
-                        updateMeta.mutate({
-                          id: chat.id,
-                          summaryConnectionId: event.target.value || null,
-                        })
-                      }
-                      className="mari-chrome-field w-full !rounded-md px-3 py-2 text-xs"
-                      aria-label={localizeUi("ui.chat.summarypopover.summaryConnection_febe5c4")}
-                    >
-                      <option value="">{localizeUi("chat.summary.connection.agentDefaultFallback")}</option>
-                      {conversationSummaryConnectionMissing && (
-                        <option value={conversationSummaryConnectionId}>
-                          {localizeUi("chat.summary.connection.missing", {
-                            id: conversationSummaryConnectionId,
-                          })}
-                        </option>
-                      )}
-                      {chatGenerationConnectionsList.map((connection) => (
-                        <option key={connection.id} value={connection.id}>
-                          {connection.name}
-                          {connection.model ? localizeUi("ui.chat.datablock.value1", { value1: connection.model }) : ""}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                      {localizeUi("ui.chat.summarypopover.chooseTheModelConnectionUsedForManualAndAutomatic")}
-                    </p>
-                  </div>
-                  <div className="space-y-1.5">
-                    <span className="text-xs font-medium">
-                      {localizeUi("ui.chat.summarypopover.maximumOutputSize")}
-                    </span>
-                    <DraftNumberInput
-                      value={
-                        typeof metadata.summaryMaxTokens === "number"
-                          ? metadata.summaryMaxTokens
-                          : CHAT_SUMMARY_OUTPUT_TOKENS.DEFAULT
-                      }
-                      min={CHAT_SUMMARY_OUTPUT_TOKENS.MIN}
-                      max={CHAT_SUMMARY_OUTPUT_TOKENS.MAX}
-                      onCommit={(value) =>
-                        updateMeta.mutate({
-                          id: chat.id,
-                          summaryMaxTokens: value,
-                        })
-                      }
-                      ariaLabel={localizeUi("ui.chat.summarypopover.summaryMaximumOutputSize")}
-                      className="mari-chrome-field w-full !rounded-md px-3 py-2 text-xs"
-                    />
-                  </div>
+              <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/35 p-2.5">
+                <div className="space-y-1.5">
+                  <span className="text-xs font-medium">
+                    {localizeUi("ui.chat.summarypopover.summaryConnection_febe5c4")}
+                  </span>
+                  <select
+                    value={conversationSummaryConnectionId}
+                    onChange={(event) =>
+                      updateMeta.mutate({
+                        id: chat.id,
+                        summaryConnectionId: event.target.value || null,
+                      })
+                    }
+                    className="mari-chrome-field w-full !rounded-md px-3 py-2 text-xs"
+                    aria-label={localizeUi("ui.chat.summarypopover.summaryConnection_febe5c4")}
+                  >
+                    <option value="">{localizeUi("chat.summary.connection.agentDefaultFallback")}</option>
+                    {conversationSummaryConnectionMissing && (
+                      <option value={conversationSummaryConnectionId}>
+                        {localizeUi("chat.summary.connection.missing", {
+                          id: conversationSummaryConnectionId,
+                        })}
+                      </option>
+                    )}
+                    {chatGenerationConnectionsList.map((connection) => (
+                      <option key={connection.id} value={connection.id}>
+                        {connection.name}
+                        {connection.model ? localizeUi("ui.chat.datablock.value1", { value1: connection.model }) : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                    {localizeUi("ui.chat.summarypopover.chooseTheModelConnectionUsedForManualAndAutomatic")}
+                  </p>
                 </div>
+                <div className="space-y-1.5">
+                  <span className="text-xs font-medium">{localizeUi("ui.chat.summarypopover.maximumOutputSize")}</span>
+                  <DraftNumberInput
+                    value={
+                      typeof metadata.summaryMaxTokens === "number"
+                        ? metadata.summaryMaxTokens
+                        : CHAT_SUMMARY_OUTPUT_TOKENS.DEFAULT
+                    }
+                    min={CHAT_SUMMARY_OUTPUT_TOKENS.MIN}
+                    max={CHAT_SUMMARY_OUTPUT_TOKENS.MAX}
+                    onCommit={(value) =>
+                      updateMeta.mutate({
+                        id: chat.id,
+                        summaryMaxTokens: value,
+                      })
+                    }
+                    ariaLabel={localizeUi("ui.chat.summarypopover.summaryMaximumOutputSize")}
+                    className="mari-chrome-field w-full !rounded-md px-3 py-2 text-xs"
+                  />
+                </div>
+              </div>
 
-                {/* Day rollover hour */}
+              {/* Day rollover hour */}
+              {isConversation && (
                 <div className="space-y-1.5">
                   <span className="text-xs font-medium">
                     {localizeUi("ui.chat.chatsettingsdrawer.dayRolloverHour")}
@@ -9516,33 +9524,57 @@ export function ChatSettingsDrawer({
                       </div>
                     )}
                 </div>
+              )}
 
-                {/* Recent message tail */}
-                <div className="space-y-1.5">
-                  <span className="text-xs font-medium">
-                    {localizeUi("ui.chat.chatsettingsdrawer.recentMessageTail")}
-                  </span>
-                  <DraftNumberInput
-                    value={(metadata.summaryTailMessages as number | undefined) ?? SUMMARY_TAIL_MESSAGES.DEFAULT}
-                    min={SUMMARY_TAIL_MESSAGES.MIN}
-                    onCommit={(value) =>
-                      updateMeta.mutate({
-                        id: chat.id,
-                        summaryTailMessages: value,
-                      })
-                    }
-                    ariaLabel="Recent message tail"
-                    className="mari-chrome-field w-full !rounded-md px-3 py-2 text-xs"
-                  />
-                  <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                    {localizeUi("ui.chat.chatsettingsdrawer.howManyRecentMessagesToKeepWordForWord")}{" "}
-                    <span className="font-medium">0</span>{" "}
-                    {localizeUi("ui.chat.chatsettingsdrawer.toDisableHigherValuesIncreasePromptSizeAndModel")}
-                  </p>
-                </div>
+              {/* Recent message tail */}
+              <div className="space-y-1.5">
+                <span className="text-xs font-medium">
+                  {localizeUi("ui.chat.chatsettingsdrawer.recentMessageTail")}
+                </span>
+                <DraftNumberInput
+                  value={(metadata.summaryTailMessages as number | undefined) ?? SUMMARY_TAIL_MESSAGES.DEFAULT}
+                  min={SUMMARY_TAIL_MESSAGES.MIN}
+                  onCommit={(value) =>
+                    updateMeta.mutate({
+                      id: chat.id,
+                      summaryTailMessages: value,
+                    })
+                  }
+                  ariaLabel="Recent message tail"
+                  className="mari-chrome-field w-full !rounded-md px-3 py-2 text-xs"
+                />
+                <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                  {localizeUi("ui.chat.chatsettingsdrawer.howManyRecentMessagesToKeepWordForWord")}{" "}
+                  <span className="font-medium">0</span>{" "}
+                  {localizeUi("ui.chat.chatsettingsdrawer.toDisableHigherValuesIncreasePromptSizeAndModel")}
+                </p>
               </div>
-            </Section>
-          )}
+
+              <SummarySettingsPanel
+                chatId={chat.id}
+                longTermMemorySummaryPromptAvailable={isLongTermMemoryChatSummaryPromptAllowed(metadata)}
+                fallbackPromptTemplates={
+                  Array.isArray(metadata.summaryPromptTemplates) ? metadata.summaryPromptTemplates : []
+                }
+                fallbackActivePromptTemplateId={
+                  typeof metadata.activeSummaryPromptTemplateId === "string"
+                    ? metadata.activeSummaryPromptTemplateId
+                    : null
+                }
+                automaticSummariesAvailable={isRoleplayMode}
+                automaticSummaryEnabled={
+                  metadata.automaticSummaryEnabled === true ||
+                  (metadata.enableAgents === true && activeAgentIds.includes("chat-summary"))
+                }
+                summaryRunInterval={
+                  typeof metadata.summaryRunInterval === "number" && Number.isFinite(metadata.summaryRunInterval)
+                    ? metadata.summaryRunInterval
+                    : undefined
+                }
+                activeAgentIds={activeAgentIds}
+              />
+            </div>
+          </Section>
 
           <div style={{ order: CHAT_SETTINGS_ORDER.functionCalling }}>
             <FunctionCallingSection

@@ -1,7 +1,6 @@
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation, useTranslation as useUiTranslation } from "react-i18next";
-import { normalizeSemanticSummaryRetrievalSettings } from "@marinara-engine/shared";
 import { toast } from "sonner";
 import {
   Suspense,
@@ -868,18 +867,9 @@ function SummaryButton({
   summaryPromptTemplates,
   activeSummaryPromptTemplateId,
   longTermMemorySummaryPromptAvailable,
-  summaryConnectionId,
-  summaryMaxTokens,
-  automaticSummaryEnabled,
-  semanticSummaryRetrievalEnabled,
-  semanticSummaryRecentCount,
-  semanticSummaryOlderCount,
-  semanticSummaryMinSimilarity,
-  activeAgentIds,
   summaryRunInterval,
   hideSummarisedMessages,
   summaryTailMessages,
-  automaticSummariesAvailable,
   totalMessageCount,
   promptPresetId,
 }: {
@@ -890,18 +880,9 @@ function SummaryButton({
   summaryPromptTemplates?: ComponentProps<typeof SummaryPopover>["promptTemplates"];
   activeSummaryPromptTemplateId?: string | null;
   longTermMemorySummaryPromptAvailable: boolean;
-  summaryConnectionId?: string | null;
-  summaryMaxTokens?: number;
-  automaticSummaryEnabled: boolean;
-  semanticSummaryRetrievalEnabled: boolean;
-  semanticSummaryRecentCount: number;
-  semanticSummaryOlderCount: number;
-  semanticSummaryMinSimilarity: number;
-  activeAgentIds: string[];
   summaryRunInterval?: number;
   hideSummarisedMessages?: boolean;
   summaryTailMessages?: number;
-  automaticSummariesAvailable: boolean;
   totalMessageCount: number;
   promptPresetId?: string | null;
 }) {
@@ -1025,18 +1006,9 @@ function SummaryButton({
             promptTemplates={summaryPromptTemplates}
             activePromptTemplateId={activeSummaryPromptTemplateId}
             longTermMemorySummaryPromptAvailable={longTermMemorySummaryPromptAvailable}
-            summaryConnectionId={summaryConnectionId}
-            summaryMaxTokens={summaryMaxTokens}
-            automaticSummaryEnabled={automaticSummaryEnabled}
-            semanticSummaryRetrievalEnabled={semanticSummaryRetrievalEnabled}
-            semanticSummaryRecentCount={semanticSummaryRecentCount}
-            semanticSummaryOlderCount={semanticSummaryOlderCount}
-            semanticSummaryMinSimilarity={semanticSummaryMinSimilarity}
-            activeAgentIds={activeAgentIds}
             summaryRunInterval={summaryRunInterval}
             hideSummarisedMessages={hideSummarisedMessages}
             summaryTailMessages={summaryTailMessages}
-            automaticSummariesAvailable={automaticSummariesAvailable}
             totalMessageCount={totalMessageCount}
             summaryInjectionHint={summaryInjectionHint}
             anchor={anchor}
@@ -2025,18 +1997,9 @@ export function ChatRoleplaySurface({
     enableAgents: chatMeta.enableAgents,
     activeAgentIds: summaryActiveAgentIds,
   });
-  const automaticSummaryEnabled =
-    chatMeta.automaticSummaryEnabled === true ||
-    (chatMeta.enableAgents === true && summaryActiveAgentIds.includes("chat-summary"));
-  const semanticSummaryRetrievalEnabled = chatMeta.semanticSummaryRetrievalEnabled === true;
-  const semanticSummaryRetrievalSettings = normalizeSemanticSummaryRetrievalSettings(chatMeta);
   const summaryRunInterval =
     typeof chatMeta.summaryRunInterval === "number" && Number.isFinite(chatMeta.summaryRunInterval)
       ? chatMeta.summaryRunInterval
-      : undefined;
-  const summaryMaxTokens =
-    typeof chatMeta.summaryMaxTokens === "number" && Number.isFinite(chatMeta.summaryMaxTokens)
-      ? chatMeta.summaryMaxTokens
       : undefined;
   const hideSummarisedMessages =
     typeof chatMeta.hideSummarisedMessages === "boolean" ? chatMeta.hideSummarisedMessages : undefined;
@@ -2282,20 +2245,9 @@ export function ChatRoleplaySurface({
                             : null
                         }
                         longTermMemorySummaryPromptAvailable={longTermMemorySummaryPromptAvailable}
-                        summaryConnectionId={
-                          typeof chatMeta.summaryConnectionId === "string" ? chatMeta.summaryConnectionId : null
-                        }
-                        summaryMaxTokens={summaryMaxTokens}
-                        automaticSummaryEnabled={automaticSummaryEnabled}
-                        semanticSummaryRetrievalEnabled={semanticSummaryRetrievalEnabled}
-                        semanticSummaryRecentCount={semanticSummaryRetrievalSettings.semanticSummaryRecentCount}
-                        semanticSummaryOlderCount={semanticSummaryRetrievalSettings.semanticSummaryOlderCount}
-                        semanticSummaryMinSimilarity={semanticSummaryRetrievalSettings.semanticSummaryMinSimilarity}
-                        activeAgentIds={summaryActiveAgentIds}
                         summaryRunInterval={summaryRunInterval}
                         hideSummarisedMessages={hideSummarisedMessages}
                         summaryTailMessages={summaryTailMessages}
-                        automaticSummariesAvailable={chatMode === "roleplay"}
                         totalMessageCount={totalMessageCount}
                         promptPresetId={typeof chat?.promptPresetId === "string" ? chat.promptPresetId : null}
                       />
@@ -2420,20 +2372,9 @@ export function ChatRoleplaySurface({
                               : null
                           }
                           longTermMemorySummaryPromptAvailable={longTermMemorySummaryPromptAvailable}
-                          summaryConnectionId={
-                            typeof chatMeta.summaryConnectionId === "string" ? chatMeta.summaryConnectionId : null
-                          }
-                          summaryMaxTokens={summaryMaxTokens}
-                          automaticSummaryEnabled={automaticSummaryEnabled}
-                          semanticSummaryRetrievalEnabled={semanticSummaryRetrievalEnabled}
-                          semanticSummaryRecentCount={semanticSummaryRetrievalSettings.semanticSummaryRecentCount}
-                          semanticSummaryOlderCount={semanticSummaryRetrievalSettings.semanticSummaryOlderCount}
-                          semanticSummaryMinSimilarity={semanticSummaryRetrievalSettings.semanticSummaryMinSimilarity}
-                          activeAgentIds={summaryActiveAgentIds}
                           summaryRunInterval={summaryRunInterval}
                           hideSummarisedMessages={hideSummarisedMessages}
                           summaryTailMessages={summaryTailMessages}
-                          automaticSummariesAvailable={chatMode === "roleplay"}
                           totalMessageCount={totalMessageCount}
                           promptPresetId={typeof chat?.promptPresetId === "string" ? chat.promptPresetId : null}
                         />
@@ -2510,20 +2451,9 @@ export function ChatRoleplaySurface({
                             : null
                         }
                         longTermMemorySummaryPromptAvailable={longTermMemorySummaryPromptAvailable}
-                        summaryConnectionId={
-                          typeof chatMeta.summaryConnectionId === "string" ? chatMeta.summaryConnectionId : null
-                        }
-                        summaryMaxTokens={summaryMaxTokens}
-                        automaticSummaryEnabled={automaticSummaryEnabled}
-                        semanticSummaryRetrievalEnabled={semanticSummaryRetrievalEnabled}
-                        semanticSummaryRecentCount={semanticSummaryRetrievalSettings.semanticSummaryRecentCount}
-                        semanticSummaryOlderCount={semanticSummaryRetrievalSettings.semanticSummaryOlderCount}
-                        semanticSummaryMinSimilarity={semanticSummaryRetrievalSettings.semanticSummaryMinSimilarity}
-                        activeAgentIds={summaryActiveAgentIds}
                         summaryRunInterval={summaryRunInterval}
                         hideSummarisedMessages={hideSummarisedMessages}
                         summaryTailMessages={summaryTailMessages}
-                        automaticSummariesAvailable={chatMode === "roleplay"}
                         totalMessageCount={totalMessageCount}
                         promptPresetId={typeof chat?.promptPresetId === "string" ? chat.promptPresetId : null}
                       />
