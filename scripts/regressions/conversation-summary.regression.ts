@@ -231,8 +231,13 @@ assert.match(
 );
 assert.match(
   summaryPopoverSource,
-  /if \(batchRun !== null \|\| batchAbortControllerRef\.current\)[\s\S]*?batchAbortControllerRef\.current\?\.abort\(\)[\s\S]*?onClose\(\)/u,
+  /if \(batchRun !== null \|\| batchAbortControllerRef\.current\)[\s\S]*?batchAbortControllerRef\.current\?\.abort\(\)[\s\S]*?finish\(\)/u,
   "Closing during a batch should abort and discard active work",
+);
+assert.match(
+  summaryPopoverSource,
+  /const finish = \(\) => \{\s*onClose\(\);/u,
+  "Closing the Summary popover must call onClose",
 );
 assert.match(
   chatsRouteSource,

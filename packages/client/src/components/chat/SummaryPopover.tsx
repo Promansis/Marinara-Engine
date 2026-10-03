@@ -12,6 +12,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type DragEvent as ReactDragEvent,
   type TouchEvent as ReactTouchEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
@@ -129,6 +130,8 @@ interface SummaryPopoverProps {
   summaryInjectionHint?: string | null;
   anchor?: SummaryPopoverAnchor | null;
   onClose: () => void;
+  /** Toolbar trigger to restore focus to on explicit close (Escape or close button). */
+  returnFocusRef?: RefObject<HTMLButtonElement | null>;
 }
 
 interface SummaryPopoverAnchor {
@@ -410,6 +413,7 @@ export function SummaryPopover({
   summaryInjectionHint = null,
   anchor = null,
   onClose,
+  returnFocusRef,
 }: SummaryPopoverProps) {
   const { t: localizeUi } = useUiTranslation();
   const [expandedEntryIds, setExpandedEntryIds] = useState<Set<string>>(() => new Set());
@@ -420,6 +424,7 @@ export function SummaryPopover({
   const [draftEntry, setDraftEntry] = useState<ChatSummaryEntry | null>(null);
   const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
   const [templateSelectOpen, setTemplateSelectOpen] = useState(false);
+  const [templateOptionIndex, setTemplateOptionIndex] = useState(0);
   const [summaryPromptView, setSummaryPromptView] = useState<SummaryPromptView>("summary");
   const [combinePromptEditorOpen, setCombinePromptEditorOpen] = useState(false);
   const [showInactiveSummaries, setShowInactiveSummaries] = useState(false);
@@ -478,6 +483,8 @@ export function SummaryPopover({
   const reorderSummaryEntries = useReorderSummaryEntries();
   const entryTextareaRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const templateTriggerRef = useRef<HTMLButtonElement>(null);
   const summaryEntryListRef = useRef<HTMLDivElement>(null);
   const [draggingEntryIndex, setDraggingEntryIndex] = useState<number | null>(null);
   const [dragReadyEntryIndex, setDragReadyEntryIndex] = useState<number | null>(null);
@@ -1470,18 +1477,27 @@ export function SummaryPopover({
     await commitCombinePromptDraft();
   }, [commitCombinePromptDraft]);
 
-  const handleClose = useCallback(async () => {
-    if (document.querySelector("[data-macro-modal]")) return;
-    if (useDialogStore.getState().dialog) return; // a confirm/alert/prompt/choice dialog is open
-    if (batchRun !== null || batchAbortControllerRef.current) {
-      batchRunTokenRef.current += 1;
-      batchAbortControllerRef.current?.abort();
-      batchAbortControllerRef.current = null;
-      onClose();
-      return;
-    }
-    if (await commitCombinePromptDraft()) onClose();
-  }, [batchRun, commitCombinePromptDraft, onClose]);
+  const handleClose = useCallback(
+    async (reason: "explicit" | "dismiss" = "explicit") => {
+      if (document.querySelector("[data-macro-modal]")) return;
+      if (useDialogStore.getState().dialog) return; // a confirm/alert/prompt/choice dialog is open
+      const finish = () => {
+        onClose();
+        // Only explicit close (Escape / close button) returns focus to the trigger;
+        // on outside click focus must stay where the user clicked.
+        if (reason === "explicit") returnFocusRef?.current?.focus();
+      };
+      if (batchRun !== null || batchAbortControllerRef.current) {
+        batchRunTokenRef.current += 1;
+        batchAbortControllerRef.current?.abort();
+        batchAbortControllerRef.current = null;
+        finish();
+        return;
+      }
+      if (await commitCombinePromptDraft()) finish();
+    },
+    [batchRun, commitCombinePromptDraft, onClose, returnFocusRef],
+  );
 
   useEffect(
     () => () => {
@@ -1499,10 +1515,18 @@ export function SummaryPopover({
       if (eventTargetsPanel(e)) return;
       if (isChatToolbarPanelTrigger(e.target, "summary")) return;
       const activeElement = document.activeElement;
-      if (activeElement instanceof Node && panelRef.current?.contains(activeElement)) return;
+      // Only a focused editable field swallows an outside click (mobile soft-keyboard
+      // guard); an auto-focused control such as the close button must not.
+      if (
+        activeElement instanceof HTMLElement &&
+        panelRef.current?.contains(activeElement) &&
+        activeElement.matches("input, textarea, [contenteditable='true']")
+      ) {
+        return;
+      }
       if (rangeInputFocused.current || sizeInputFocused.current || automaticIntervalFocused.current) return;
       if (panelRef.current) {
-        void handleClose();
+        void handleClose("dismiss");
       }
     };
     const raf = requestAnimationFrame(() => {
@@ -1517,11 +1541,63 @@ export function SummaryPopover({
   // Close on Escape
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") void handleClose();
+      if (e.key !== "Escape") return;
+      if (templateSelectOpen) {
+        setTemplateSelectOpen(false);
+        templateTriggerRef.current?.focus();
+        return;
+      }
+      void handleClose("explicit");
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [handleClose]);
+  }, [handleClose, templateSelectOpen]);
+
+  // Land focus inside the popover when it opens so keyboard users start in it.
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => closeButtonRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  // Move focus onto the current option when the template listbox opens (roving tabindex).
+  useEffect(() => {
+    if (!templateSelectOpen) return;
+    const list = panelRef.current?.querySelector<HTMLElement>("[data-summary-template-listbox]");
+    const options = list ? Array.from(list.querySelectorAll<HTMLButtonElement>('[role="option"]:not(:disabled)')) : [];
+    const target = options.find((option) => option.getAttribute("aria-selected") === "true") ?? options[0];
+    if (!target) return;
+    setTemplateOptionIndex(options.indexOf(target));
+    const frame = requestAnimationFrame(() => target.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [templateSelectOpen]);
+
+  const handlePromptTabsKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      const next: SummaryPromptView = summaryPromptView === "summary" ? "combine" : "summary";
+      setSummaryPromptView(next);
+      event.currentTarget.querySelector<HTMLButtonElement>(`[data-summary-prompt-tab="${next}"]`)?.focus();
+    },
+    [summaryPromptView],
+  );
+
+  const handleTemplateOptionKeyDown = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    const list = event.currentTarget.closest("[data-summary-template-listbox]");
+    const options = list ? Array.from(list.querySelectorAll<HTMLButtonElement>('[role="option"]:not(:disabled)')) : [];
+    const current = options.indexOf(event.currentTarget);
+    if (current < 0) return;
+    let next: number | null = null;
+    if (event.key === "ArrowDown" || event.key === "ArrowRight") next = current + 1;
+    else if (event.key === "ArrowUp" || event.key === "ArrowLeft") next = current - 1;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = options.length - 1;
+    if (next === null) return;
+    event.preventDefault();
+    const clamped = (next + options.length) % options.length;
+    setTemplateOptionIndex(clamped);
+    options[clamped]?.focus();
+  }, []);
 
   const handleSelectPromptTemplate = useCallback(
     async (templateId: string | null) => {
@@ -1692,6 +1768,8 @@ export function SummaryPopover({
       ref={panelRef}
       data-chat-floating-panel
       data-summary-panel
+      role="dialog"
+      aria-label={localizeUi("chat.summary.toolbarLabel")}
       onMouseDown={handlePanelMouseDown}
       onPointerDown={handlePanelPointerDown}
       className="fixed z-[9999]"
@@ -1724,6 +1802,7 @@ export function SummaryPopover({
           <div className="flex shrink-0 items-center gap-1">
             <button
               type="button"
+              ref={closeButtonRef}
               onClick={() => void handleClose()}
               className={NEUTRAL_PANEL_CLOSE_BUTTON}
               aria-label={localizeUi("ui.chat.summarypopover.closeSummary")}
@@ -1986,13 +2065,17 @@ export function SummaryPopover({
                 <div
                   role="tablist"
                   aria-label={localizeUi("ui.chat.summarypopover.summaryPromptView")}
+                  onKeyDown={handlePromptTabsKeyDown}
                   className="grid grid-cols-2 rounded-md bg-[var(--background)]/30 p-0.5 ring-1 ring-[var(--border)]"
                 >
                   <button
                     type="button"
                     role="tab"
+                    id="summary-prompt-tab-summary"
                     data-summary-prompt-tab="summary"
                     aria-selected={summaryPromptView === "summary"}
+                    aria-controls="summary-prompt-panel-summary"
+                    tabIndex={summaryPromptView === "summary" ? 0 : -1}
                     onClick={() => setSummaryPromptView("summary")}
                     className={cn(
                       "rounded px-2 py-1 text-[0.625rem] font-semibold transition-colors",
@@ -2006,8 +2089,11 @@ export function SummaryPopover({
                   <button
                     type="button"
                     role="tab"
+                    id="summary-prompt-tab-combine"
                     data-summary-prompt-tab="combine"
                     aria-selected={summaryPromptView === "combine"}
+                    aria-controls="summary-prompt-panel-combine"
+                    tabIndex={summaryPromptView === "combine" ? 0 : -1}
                     onClick={() => setSummaryPromptView("combine")}
                     className={cn(
                       "rounded px-2 py-1 text-[0.625rem] font-semibold transition-colors",
@@ -2021,11 +2107,18 @@ export function SummaryPopover({
                 </div>
 
                 {summaryPromptView === "summary" ? (
-                  <div data-summary-prompt-view="summary" className="h-48 space-y-2 overflow-y-auto pr-0.5">
+                  <div
+                    data-summary-prompt-view="summary"
+                    className="h-48 space-y-2 overflow-y-auto pr-0.5"
+                    id="summary-prompt-panel-summary"
+                    role="tabpanel"
+                    aria-labelledby="summary-prompt-tab-summary"
+                  >
                     <div className="grid grid-cols-1 gap-1">
                       <div className="relative min-w-0">
                         <button
                           type="button"
+                          ref={templateTriggerRef}
                           onClick={() => setTemplateSelectOpen((open) => !open)}
                           disabled={!globalPromptSettingsReady || promptSettingsSaveLocked}
                           className="flex w-full min-w-0 items-center justify-between gap-2 rounded-md bg-[var(--card)] py-1 pl-2 pr-2 text-left truncate text-xs font-semibold text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-50"
@@ -2045,12 +2138,16 @@ export function SummaryPopover({
                         {templateSelectOpen && (
                           <div
                             role="listbox"
+                            data-summary-template-listbox
                             className="mt-1 max-h-40 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--popover)] p-1 text-[var(--popover-foreground)] shadow-xl shadow-black/25"
                           >
                             <SummaryPromptSelectOption
                               active={!normalizedActivePromptTemplateId}
                               label={localizeUi("ui.chat.summarypopover.builtInDefault")}
                               disabled={promptSettingsSaveLocked}
+                              index={0}
+                              activeIndex={templateOptionIndex}
+                              onKeyDown={handleTemplateOptionKeyDown}
                               onSelect={() => void handleSelectPromptTemplate(null)}
                             />
                             {longTermMemorySummaryPromptAvailable && (
@@ -2058,17 +2155,23 @@ export function SummaryPopover({
                                 active={isLongTermMemoryPromptSelected}
                                 label={localizeUi("chat.summary.template.longTermMemory")}
                                 disabled={promptSettingsSaveLocked}
+                                index={1}
+                                activeIndex={templateOptionIndex}
+                                onKeyDown={handleTemplateOptionKeyDown}
                                 onSelect={() =>
                                   void handleSelectPromptTemplate(LONG_TERM_MEMORY_CHAT_SUMMARY_PROMPT_ID)
                                 }
                               />
                             )}
-                            {cleanedPromptTemplates.map((template) => (
+                            {cleanedPromptTemplates.map((template, templateIndex) => (
                               <SummaryPromptSelectOption
                                 key={template.id}
                                 active={normalizedActivePromptTemplateId === template.id}
                                 label={template.name}
                                 disabled={promptSettingsSaveLocked}
+                                index={(longTermMemorySummaryPromptAvailable ? 1 : 0) + templateIndex}
+                                activeIndex={templateOptionIndex}
+                                onKeyDown={handleTemplateOptionKeyDown}
                                 onSelect={() => void handleSelectPromptTemplate(template.id)}
                               />
                             ))}
@@ -2181,7 +2284,13 @@ export function SummaryPopover({
                     )}
                   </div>
                 ) : (
-                  <div data-summary-prompt-view="combine" className="h-48 space-y-1 overflow-y-auto pr-0.5">
+                  <div
+                    data-summary-prompt-view="combine"
+                    className="h-48 space-y-1 overflow-y-auto pr-0.5"
+                    id="summary-prompt-panel-combine"
+                    role="tabpanel"
+                    aria-labelledby="summary-prompt-tab-combine"
+                  >
                     <span className="text-[0.625rem] font-semibold text-[var(--muted-foreground)]">
                       {localizeUi("ui.chat.summarypopover.combinePrompt")}
                     </span>
@@ -2553,13 +2662,13 @@ export function SummaryPopover({
                           )}
                         >
                           <div className="grid min-w-0 grid-cols-[1.25rem_4.5rem_minmax(0,1fr)_4.5rem_1rem_1rem] items-center gap-0.5">
-                            <span
-                              className="flex h-7 w-4 items-center justify-center p-0 text-sm font-bold tabular-nums text-[var(--foreground)]"
-                              aria-label={localizeUi("ui.chat.summarypopover.batchRangeNumber", {
-                                number: rangeIndex + 1,
-                              })}
-                            >
-                              {rangeIndex + 1}
+                            <span className="flex h-7 w-4 items-center justify-center p-0 text-sm font-bold tabular-nums text-[var(--foreground)]">
+                              <span className="sr-only">
+                                {localizeUi("ui.chat.summarypopover.batchRangeNumber", {
+                                  number: rangeIndex + 1,
+                                })}
+                              </span>
+                              <span aria-hidden="true">{rangeIndex + 1}</span>
                             </span>
                             <label className="min-w-0 justify-self-center text-[0.625rem] font-medium text-[var(--muted-foreground)]">
                               <span className="sr-only">{localizeUi("ui.chat.summarypopover.from")}</span>
@@ -2623,6 +2732,7 @@ export function SummaryPopover({
                             {range.status === "success" && (
                               <Check
                                 size="0.8125rem"
+                                role="img"
                                 className="justify-self-center text-emerald-500"
                                 aria-label={statusMessage}
                               />
@@ -2659,6 +2769,7 @@ export function SummaryPopover({
                             {range.status === "running" && (
                               <Loader2
                                 size="0.8125rem"
+                                role="img"
                                 className="h-4 w-4 shrink-0 animate-spin justify-self-center text-[var(--primary)]"
                                 aria-label={statusMessage}
                               />
@@ -2683,6 +2794,7 @@ export function SummaryPopover({
                             {inspection?.overlaps && (
                               <AlertTriangle
                                 size="0.75rem"
+                                role="img"
                                 className="mt-0.5 shrink-0 text-amber-500"
                                 aria-label={overlapMessage ?? undefined}
                               />
@@ -3200,6 +3312,7 @@ function SummaryEntryOriginIcon({ entry }: { entry: ChatSummaryEntry }) {
     return (
       <Sparkles
         size="0.75rem"
+        role="img"
         className="shrink-0 text-[var(--primary)]"
         aria-label={localizeUi("ui.chat.summaryentryoriginicon.automatedSummary")}
       />
@@ -3209,6 +3322,7 @@ function SummaryEntryOriginIcon({ entry }: { entry: ChatSummaryEntry }) {
     return (
       <ScrollText
         size="0.75rem"
+        role="img"
         className="shrink-0 text-[var(--muted-foreground)]"
         aria-label={localizeUi("ui.chat.summaryentryoriginicon.legacySummary")}
       />
@@ -3217,6 +3331,7 @@ function SummaryEntryOriginIcon({ entry }: { entry: ChatSummaryEntry }) {
   return (
     <PenLine
       size="0.75rem"
+      role="img"
       className="shrink-0 text-[var(--muted-foreground)]"
       aria-label={localizeUi("ui.chat.summaryentryoriginicon.manualSummary")}
     />
@@ -3279,19 +3394,32 @@ function SummaryReadableSection({ section, sectionIndex }: SummaryReadableSectio
 interface SummaryPromptSelectOptionProps {
   active: boolean;
   label: string;
+  index: number;
+  activeIndex: number;
   disabled?: boolean;
   onSelect: () => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
 }
 
-function SummaryPromptSelectOption({ active, label, disabled, onSelect }: SummaryPromptSelectOptionProps) {
+function SummaryPromptSelectOption({
+  active,
+  label,
+  index,
+  activeIndex,
+  disabled,
+  onSelect,
+  onKeyDown,
+}: SummaryPromptSelectOptionProps) {
   return (
     <button
       type="button"
       role="option"
       data-summary-template-option
       aria-selected={active}
+      tabIndex={index === activeIndex ? 0 : -1}
       disabled={disabled}
       onClick={onSelect}
+      onKeyDown={onKeyDown}
       className={cn(
         "flex w-full min-w-0 items-center gap-1.5 rounded px-2 py-1.5 text-left text-[0.6875rem] transition-colors disabled:cursor-not-allowed disabled:opacity-50",
         active

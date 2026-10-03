@@ -1041,6 +1041,7 @@ function SummaryButton({
             summaryInjectionHint={summaryInjectionHint}
             anchor={anchor}
             onClose={() => setOpen(false)}
+            returnFocusRef={buttonRef}
           />
         </Suspense>
       )}

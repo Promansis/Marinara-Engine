@@ -8897,7 +8897,7 @@ assert.match(
 );
 assert.match(
   summaryPopoverSource,
-  /role="tablist"[\s\S]{0,900}data-summary-prompt-tab="summary"[\s\S]{0,900}data-summary-prompt-tab="combine"/u,
+  /role="tablist"[\s\S]{0,1600}data-summary-prompt-tab="summary"[\s\S]{0,1600}data-summary-prompt-tab="combine"/u,
   "The Summary Prompt card must switch between Chat Summary and Combine prompt views",
 );
 assert.match(
@@ -8957,12 +8957,12 @@ assert.doesNotMatch(
 );
 assert.match(
   summaryPopoverSource,
-  /if \(await commitCombinePromptDraft\(\)\) onClose\(\);/u,
+  /const finish = \(\) => \{[\s\S]{0,200}onClose\(\);[\s\S]{0,900}if \(await commitCombinePromptDraft\(\)\) finish\(\);/u,
   "The Summary popover must close only after its Combine draft is safely persisted",
 );
 assert.match(
   summaryPopoverSource,
-  /data-summary-prompt-view="summary" className="h-48[\s\S]{0,12000}data-summary-prompt-view="combine" className="h-48/u,
+  /data-summary-prompt-view="summary"[\s\S]{0,400}className="h-48[\s\S]{0,12000}data-summary-prompt-view="combine"[\s\S]{0,400}className="h-48/u,
   "Chat Summary and Combine prompt views must reserve the same vertical space",
 );
 assert.match(
