@@ -8960,14 +8960,14 @@ assert.match(
   /if \(await commitCombinePromptDraft\(\)\) onClose\(\);/u,
   "The Summary popover must close only after its Combine draft is safely persisted",
 );
-assert.equal(
-  summaryPopoverSource.match(/data-summary-prompt-view=/gu)?.length,
-  2,
+assert.match(
+  summaryPopoverSource,
+  /data-summary-prompt-view="summary" className="h-48[\s\S]{0,12000}data-summary-prompt-view="combine" className="h-48/u,
   "Chat Summary and Combine prompt views must reserve the same vertical space",
 );
 assert.match(
   summaryPopoverSource,
-  /data-summary-prompt-view="combine"[\s\S]{0,1500}rows=\{5\}/u,
+  /data-summary-prompt-view="combine"[\s\S]{0,1500}rows=\{5\}[\s\S]{0,600}className="mari-chrome-field h-28 resize-none/u,
   "The Combine prompt editor must stay compact enough to match the Chat Summary view",
 );
 const promptSettingsPersistSource = summaryPopoverSource.slice(
