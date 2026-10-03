@@ -1605,6 +1605,13 @@ export function SummaryPopover({
       const saved = await persistPromptTemplates(currentSettings.templates, templateId);
       if (!saved) return;
       setTemplateSelectOpen(false);
+      // Return focus to the trigger unless the user has since moved focus to a
+      // control inside the panel; selecting unmounts the focused option.
+      requestAnimationFrame(() => {
+        const active = document.activeElement;
+        if (active instanceof Node && panelRef.current?.contains(active)) return;
+        templateTriggerRef.current?.focus();
+      });
     },
     [persistPromptTemplates, readCurrentPromptSettings],
   );
@@ -2139,6 +2146,7 @@ export function SummaryPopover({
                           <div
                             role="listbox"
                             data-summary-template-listbox
+                            aria-label={localizeUi("ui.chat.summarypopover.summaryPromptTemplate")}
                             className="mt-1 max-h-40 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--popover)] p-1 text-[var(--popover-foreground)] shadow-xl shadow-black/25"
                           >
                             <SummaryPromptSelectOption

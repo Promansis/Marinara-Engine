@@ -8970,6 +8970,16 @@ assert.match(
   /data-summary-prompt-view="combine"[\s\S]{0,1500}rows=\{5\}[\s\S]{0,600}className="mari-chrome-field h-28 resize-none/u,
   "The Combine prompt editor must stay compact enough to match the Chat Summary view",
 );
+assert.match(
+  summaryPopoverSource,
+  /role="listbox"[\s\S]{0,200}aria-label=\{localizeUi\("ui\.chat\.summarypopover\.summaryPromptTemplate"\)\}/u,
+  "The summary prompt template listbox must have an accessible name",
+);
+assert.match(
+  summaryPopoverSource,
+  /const saved = await persistPromptTemplates\(currentSettings\.templates, templateId\);[\s\S]{0,200}if \(!saved\) return;[\s\S]{0,300}setTemplateSelectOpen\(false\);[\s\S]{0,400}templateTriggerRef\.current\?\.focus\(\)/u,
+  "Selecting a summary prompt template must return focus to its trigger",
+);
 const promptSettingsPersistSource = summaryPopoverSource.slice(
   summaryPopoverSource.indexOf("// @summary-persist-start"),
   summaryPopoverSource.indexOf("// @summary-persist-end"),
