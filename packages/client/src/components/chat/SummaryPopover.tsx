@@ -1520,7 +1520,7 @@ export function SummaryPopover({
                     </div>
                   )}
                 </div>
-                <div className="h-36 overflow-y-auto whitespace-pre-wrap rounded-md bg-[var(--background)]/25 px-2 py-1.5 font-mono text-[0.625rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                <div className="whitespace-pre-wrap rounded-md bg-[var(--background)]/25 px-2 py-1.5 font-mono text-xs leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
                   {activeSummaryPrompt}
                 </div>
               </div>
@@ -1832,7 +1832,8 @@ export function SummaryPopover({
               </label>
             ) : (
               <div className="space-y-1.5">
-                <div className="max-h-64 overflow-y-auto pr-1">
+                {/* ponytail: neutral wrapper (former max-height scroll); remove with a reindent when this block changes. */}
+                <div>
                   <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                     {batchRanges.map((range, rangeIndex) => {
                       const inspection = inspectedBatchRanges.find((candidate) => candidate.id === range.id);
@@ -1954,7 +1955,7 @@ export function SummaryPopover({
                                 {batchErrorInfoId === range.id && (
                                   <div
                                     role="tooltip"
-                                    className="absolute right-0 top-full z-20 mt-1 w-48 rounded-md border border-[var(--border)] bg-[var(--popover)] p-2 text-left text-[0.625rem] leading-snug text-[var(--popover-foreground)] shadow-lg"
+                                    className="absolute right-0 top-full z-20 mt-1 w-48 rounded-md border border-[var(--border)] bg-[var(--popover)] p-2 text-left text-xs leading-snug text-[var(--popover-foreground)] shadow-lg"
                                   >
                                     {range.error ?? statusMessage}
                                   </div>
@@ -1985,7 +1986,7 @@ export function SummaryPopover({
                               <X size="0.75rem" />
                             </button>
                           </div>
-                          <div className="flex min-w-0 items-start gap-1.5 text-[0.625rem] leading-snug">
+                          <div className="flex min-w-0 items-start gap-1.5 text-xs leading-snug">
                             {inspection?.overlaps && (
                               <AlertTriangle
                                 size="0.75rem"
@@ -2303,7 +2304,7 @@ function SummaryEntryRow({
               type="button"
               onClick={onMoveUp}
               disabled={!reorderable || entryIndex === 0 || mutationPending}
-              className="rounded p-0.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:pointer-events-none disabled:opacity-30"
+              className="inline-flex h-7 w-7 items-center justify-center rounded text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:pointer-events-none disabled:opacity-30"
               title={localizeUi("ui.chat.summaryentryrow.moveSummaryUp", { title: entry.title })}
               aria-label={localizeUi("ui.chat.summaryentryrow.moveSummaryUp", { title: entry.title })}
             >
@@ -2313,7 +2314,7 @@ function SummaryEntryRow({
               type="button"
               onClick={onMoveDown}
               disabled={!reorderable || entryIndex === entryCount - 1 || mutationPending}
-              className="rounded p-0.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:pointer-events-none disabled:opacity-30"
+              className="inline-flex h-7 w-7 items-center justify-center rounded text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:pointer-events-none disabled:opacity-30"
               title={localizeUi("ui.chat.summaryentryrow.moveSummaryDown", { title: entry.title })}
               aria-label={localizeUi("ui.chat.summaryentryrow.moveSummaryDown", { title: entry.title })}
             >

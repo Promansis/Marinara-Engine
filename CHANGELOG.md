@@ -4,6 +4,8 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ## [Unreleased]
 
+- In the Summary popover, the prompt preview and batch error and status messages now use the same readable size as the summary text, the prompt preview and batch range list expand in place instead of scrolling inside the popover, and the Move up and Move down buttons are large enough to tap.
+
 - The Summary popover now works with a keyboard and screen reader: it is announced as a dialog, focus moves inside when it opens and returns to the Summary button when you close it with Escape or the close button, the prompt and view tabs respond to the arrow keys, and the summary source and batch status icons are announced.
 
 - Summary prompt templates, the Combine prompt, the summary connection and output size, semantic retrieval, automatic summaries, and the recent message tail all now live together in Chat Settings, shown in every chat mode. The Summary popover keeps the quick prompt selector, the source controls, the entry list, and the Backfill action, so the chat no longer shows the same setting in two places.
