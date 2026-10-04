@@ -4179,6 +4179,7 @@ export async function backupRoutes(app: FastifyInstance) {
                           injectionDepth: s.injectionDepth ?? 0,
                           injectionOrder: s.injectionOrder ?? 100,
                           forbidOverrides: s.forbidOverrides === "true" || s.forbidOverrides === true,
+                          skipWrap: s.skipWrap === "true" || s.skipWrap === true,
                         });
                       } catch {
                         /* skip individual section */

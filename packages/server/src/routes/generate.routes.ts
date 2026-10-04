@@ -11212,9 +11212,12 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
         };
 
         if (hasPostWork && (completedResponse || roleplayMediaRequests.length > 0) && !generationSignal.aborted) {
+          // A tracker the user gave its own request does not take on the scene check (#6977);
+          // Advanced Memory then checks the scene in a request of its own.
           const sceneCheckTrackers = pipelineAgents.filter(
             (agent) =>
               agent.phase === "post_processing" &&
+              agent.settings.batchWithOtherAgents !== false &&
               (trackerAgentTypes.has(agent.type) || resolveAgentResultType(agent) === "custom_tracker_update"),
           );
           if (

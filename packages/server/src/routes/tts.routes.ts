@@ -11,6 +11,10 @@ import { join } from "path";
 import {
   ttsConfigSchema,
   ttsSourceProfileFromConfig,
+  ttsVoiceAssignmentInputSchema,
+  ttsVoiceModeInputSchema,
+  setCharacterVoiceAssignment,
+  TTS_VOICE_MAX_LENGTH,
   normalizeMusicEnemyTier,
   TTS_SETTINGS_KEY,
   TTS_API_KEY_MASK,
@@ -147,7 +151,7 @@ const speakSchema = z.object({
   text: z.string().min(1).max(4096),
   speaker: z.string().max(120).optional(),
   tone: z.string().max(80).optional(),
-  voice: z.string().max(200).optional(),
+  voice: z.string().max(TTS_VOICE_MAX_LENGTH).optional(),
   /** Optional audio-connection override (#5146); absent = default/legacy resolution. */
   audioConnectionId: z.string().optional(),
 });
@@ -484,13 +488,18 @@ function withoutTemperatureCustomParameter(value: Record<string, unknown> | unde
   return Object.fromEntries(Object.entries(value).filter(([key]) => key.toLowerCase() !== "temperature"));
 }
 
-function parseStoredConfig(raw: string | null) {
+/** The stored config, or null when one is stored that this version cannot read. */
+function readStoredConfig(raw: string | null): TTSConfig | null {
   if (!raw) return ttsConfigSchema.parse({});
   try {
     return ttsConfigSchema.parse(JSON.parse(raw));
   } catch {
-    return ttsConfigSchema.parse({});
+    return null;
   }
+}
+
+function parseStoredConfig(raw: string | null) {
+  return readStoredConfig(raw) ?? ttsConfigSchema.parse({});
 }
 
 function withActiveSourceProfile(config: TTSConfig): TTSConfig {
@@ -1310,6 +1319,17 @@ async function fetchProviderVoices(cfg: TTSConfig): Promise<TTSVoicesResponse> {
 export async function ttsRoutes(app: FastifyInstance) {
   const storage = createAppSettingsStorage(app.db);
   const connections = createConnectionsStorage(app.db);
+  // Config saves read the stored settings and write them back. Storage can hold a write
+  // (for example behind another request's transaction), so a save that read before
+  // another one landed would overwrite it. Run them one at a time instead.
+  // ponytail: in-process only, which covers the store's single writer process; any new
+  // read-modify-write of TTS_SETTINGS_KEY must go through this chain too.
+  let configWrites: Promise<unknown> = Promise.resolve();
+  const withConfigWriteLock = <T>(write: () => Promise<T>): Promise<T> => {
+    const run = configWrites.then(write);
+    configWrites = run.catch(() => undefined);
+    return run;
+  };
 
   /**
    * GET /api/tts/config
@@ -1328,11 +1348,52 @@ export async function ttsRoutes(app: FastifyInstance) {
    */
   app.put("/config", async (req, reply) => {
     const input = ttsConfigSchema.parse(req.body);
-    const existing = parseStoredConfig(await storage.get(TTS_SETTINGS_KEY));
-    const storedConfig = prepareTTSConfigForStorage(input, existing);
-    clearPocketTtsApiModeCache(existing);
-    clearPocketTtsApiModeCache(storedConfig);
-    await storage.set(TTS_SETTINGS_KEY, JSON.stringify(storedConfig));
+    await withConfigWriteLock(async () => {
+      const existing = parseStoredConfig(await storage.get(TTS_SETTINGS_KEY));
+      const storedConfig = prepareTTSConfigForStorage(input, existing);
+      clearPocketTtsApiModeCache(existing);
+      clearPocketTtsApiModeCache(storedConfig);
+      await storage.set(TTS_SETTINGS_KEY, JSON.stringify(storedConfig));
+    });
+    return reply.status(204).send();
+  });
+
+  // Changes part of the stored settings and leaves everything else as stored. False when they cannot be read.
+  const updateStoredConfig = (change: (config: TTSConfig) => TTSConfig) =>
+    withConfigWriteLock(async () => {
+      const existing = readStoredConfig(await storage.get(TTS_SETTINGS_KEY));
+      // Settings this version cannot read (a newer version's, or edited by hand) stay as stored, not replaced by defaults.
+      if (!existing) return false;
+      // Keys stay exactly as stored (already encrypted); the active source profile mirrors the change, as on PUT /config.
+      await storage.set(TTS_SETTINGS_KEY, JSON.stringify(withActiveSourceProfile(change(existing))));
+      return true;
+    });
+  const UNREADABLE_SETTINGS = { error: "The saved Text to Speech settings could not be read." };
+
+  /**
+   * PUT /api/tts/config/voice-assignment
+   * Sets or clears one character's voice and leaves every other setting as stored,
+   * so a voice picked in the Character Editor cannot undo a newer settings save.
+   */
+  app.put("/config/voice-assignment", async (req, reply) => {
+    const { characterId, characterName, voice } = ttsVoiceAssignmentInputSchema.parse(req.body);
+    const saved = await updateStoredConfig((existing) => ({
+      ...existing,
+      voiceAssignments: setCharacterVoiceAssignment(existing.voiceAssignments, { characterId, characterName }, voice),
+    }));
+    if (!saved) return reply.status(409).send(UNREADABLE_SETTINGS);
+    return reply.status(204).send();
+  });
+
+  /**
+   * PUT /api/tts/config/voice-mode
+   * Switches between one shared voice and a voice per character and leaves every other setting
+   * as stored, so the Character Editor's "Use a voice per character" cannot undo a newer save.
+   */
+  app.put("/config/voice-mode", async (req, reply) => {
+    const { voiceMode } = ttsVoiceModeInputSchema.parse(req.body);
+    const saved = await updateStoredConfig((existing) => ({ ...existing, voiceMode }));
+    if (!saved) return reply.status(409).send(UNREADABLE_SETTINGS);
     return reply.status(204).send();
   });
 

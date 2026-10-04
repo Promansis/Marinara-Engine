@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Character Editor — Full-page detail view
 // Replaces the chat area when editing a character.
-// Sections: Metadata, Card, Convo, Lorebook, Sprites, Gallery, Colors, Stats, Advanced
+// Sections: Metadata, Card, Convo, Lorebook, Sprites, Gallery, Colors, Voice, Stats, Advanced
 // ──────────────────────────────────────────────
 import {
   useState,
@@ -78,6 +78,7 @@ import { CallClipGenerationModal } from "../ui/CallClipGenerationModal";
 import { ImageUploadDropzone } from "../ui/ImageUploadDropzone";
 import { CustomEmojiTagButton } from "../ui/CustomEmojiTagButton";
 import { CharacterRegexSection } from "./CharacterRegexSection";
+import { CharacterVoicePicker } from "./CharacterVoicePicker";
 import { NameAliasesSection } from "../ui/NameAliasesSection";
 import {
   ArrowDown,
@@ -117,6 +118,7 @@ import {
   MessageCircle,
   Pencil,
   Check,
+  Volume2,
 } from "lucide-react";
 import { cn, copyToClipboard, generateClientId, getAvatarCropStyle } from "../../lib/utils";
 import { normalizeAvatarCrop, type WeekSchedule } from "@marinara-engine/shared";
@@ -175,6 +177,7 @@ const TABS = [
   { id: "sprites", label: "Sprites", icon: Image },
   { id: "gallery", label: "Gallery", icon: Camera },
   { id: "colors", label: "Colors", icon: Palette },
+  { id: "voice", label: "Voice", icon: Volume2 },
   { id: "stats", label: "Stats", icon: Swords },
   { id: "advanced", label: "Advanced", icon: Settings2 },
 ] as const;
@@ -401,6 +404,10 @@ export function CharacterEditor() {
       setDirtyState(false);
     }
   }, [rawCharacter, setDirtyState]);
+  const persistedCharacterName = useMemo(
+    () => getPersistedCharacterName(rawCharacter as ParsedCharacter | undefined),
+    [rawCharacter],
+  );
 
   const updateField = useCallback(
     <K extends keyof CharacterData>(key: K, value: CharacterData[K]) => {
@@ -1227,6 +1234,16 @@ export function CharacterEditor() {
             <section data-editor-section="colors">
               <ColorsTab formData={formData} updateExtension={updateExtension} avatarUrl={avatarPreview} />
             </section>
+            <LazyEditorSection key={`voice:${characterId}`} id="voice">
+              {characterId && (
+                <VoiceTab
+                  characterId={characterId}
+                  characterName={persistedCharacterName ?? formData.name}
+                  formData={formData}
+                  updateExtension={updateExtension}
+                />
+              )}
+            </LazyEditorSection>
             <section data-editor-section="stats">
               <StatsTab formData={formData} updateExtension={updateExtension} onDraftChange={markDirty} />
             </section>
@@ -1757,20 +1774,6 @@ function MetadataTab({
             onChange={(e) => updateCharacterComment(e.target.value)}
             className="w-full rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
             placeholder={localizeUi("ui.characters.metadatatab.modernAuVersion")}
-          />
-        </label>
-        <label className="space-y-1.5">
-          <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
-            {localizeUi("ui.characters.metadatatab.phoneticName")}{" "}
-            <HelpTooltip
-              text={localizeUi("ui.characters.metadatatab.optionalPronunciationOverrideUsedOnlyWhenThisCharacterS")}
-            />
-          </span>
-          <input
-            value={typeof formData.extensions?.phoneticName === "string" ? formData.extensions.phoneticName : ""}
-            onChange={(e) => updateExtension("phoneticName", e.target.value)}
-            className="w-full rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
-            placeholder={formData.name}
           />
         </label>
         <label className="space-y-1.5">
@@ -5498,6 +5501,55 @@ function ColorsTab({
         onChange={(next) => updateExtension("nameAliases", next)}
         nameColor={nameColor}
       />
+    </div>
+  );
+}
+
+function VoiceTab({
+  characterId,
+  characterName,
+  formData,
+  updateExtension,
+}: {
+  characterId: string;
+  characterName: string;
+  formData: CharacterData;
+  updateExtension: (key: string, value: unknown) => void;
+}) {
+  const { t: localizeUi } = useUiTranslation();
+  const phoneticName = typeof formData.extensions?.phoneticName === "string" ? formData.extensions.phoneticName : "";
+
+  return (
+    <div className="space-y-5">
+      <SectionHeader
+        title={localizeUi("editor.tabs.voice")}
+        subtitle={localizeUi("ui.characters.voice.subtitle")}
+        helpText={localizeUi("ui.characters.voice.help")}
+      />
+      <div className="space-y-1.5">
+        <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
+          {localizeUi("ui.characters.voice.label")}
+        </span>
+        <CharacterVoicePicker
+          characterId={characterId}
+          characterName={characterName}
+          spokenName={phoneticName.trim() || formData.name}
+        />
+      </div>
+      <label className="block space-y-1.5">
+        <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
+          {localizeUi("ui.characters.metadatatab.phoneticName")}{" "}
+          <HelpTooltip
+            text={localizeUi("ui.characters.metadatatab.optionalPronunciationOverrideUsedOnlyWhenThisCharacterS")}
+          />
+        </span>
+        <input
+          value={phoneticName}
+          onChange={(e) => updateExtension("phoneticName", e.target.value)}
+          className="w-full rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
+          placeholder={formData.name}
+        />
+      </label>
     </div>
   );
 }

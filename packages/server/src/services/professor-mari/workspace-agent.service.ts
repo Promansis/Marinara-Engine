@@ -112,7 +112,10 @@ import {
 import { personalServerExtensionRuntime } from "../extensions/personal-server-extension-runtime.js";
 import { isLocalInferenceBaseUrl } from "../../middleware/ip-allowlist.js";
 import {
+  BUILD_OUTPUT_WRITE_REFUSAL,
   bashCommandTargetsSensitivePath,
+  bashCommandWritesBuildOutput,
+  isBuildOutputPath,
   isPackageManagerMutationCommand,
   WorkspaceChangeReviewService,
   workspacePathAccessPolicy,
@@ -2374,12 +2377,18 @@ function parseDirectMariArgv(command: string, cwd: string): string[] | null {
  * land. `sensitiveTarget` is non-null when either the requested path or the
  * file the OS would actually write (through any symlink, dangling ones
  * included) is supply-chain sensitive - callers must stage that target for
- * approval instead of writing directly. Exported for the regression lane.
+ * approval instead of writing directly. Build output is refused unless the
+ * caller only reads (`readOnly`). Exported for the regression lane.
  */
 export function workspaceMutationTargetForPath(
   workspaceRootInput: string,
   inputPath: string,
-  options: { allowMissing?: boolean; forbidStorageMutation?: boolean; requireOrdinaryMutationPath?: boolean } = {},
+  options: {
+    allowMissing?: boolean;
+    forbidStorageMutation?: boolean;
+    requireOrdinaryMutationPath?: boolean;
+    readOnly?: boolean;
+  } = {},
 ): { absolute: string; sensitiveTarget: string | null } {
   const rawPath = inputPath.trim() || ".";
   const workspaceRoot = resolve(workspaceRootInput);
@@ -2440,6 +2449,16 @@ export function workspaceMutationTargetForPath(
   const effectivePolicy = workspacePathAccessPolicy(canonicalRoot, effectiveTarget);
   if (requestedPolicy === "forbidden" || canonicalPolicy === "forbidden" || effectivePolicy === "forbidden") {
     throw new Error("Professor Mari cannot access environment-secret files or Git internals.");
+  }
+  // #6984: refused unless the caller only reads, so a new write path cannot forget it. The real paths count:
+  // a link elsewhere in the workspace, or node_modules/@marinara-engine/<pkg>, can lead into a dist folder.
+  if (
+    !options.readOnly &&
+    (isBuildOutputPath(workspaceRoot, absolute) ||
+      isBuildOutputPath(canonicalRoot, canonicalTarget) ||
+      isBuildOutputPath(canonicalRoot, effectiveTarget))
+  ) {
+    throw new Error(BUILD_OUTPUT_WRITE_REFUSAL);
   }
   if (
     options.requireOrdinaryMutationPath &&
@@ -3657,16 +3676,13 @@ ${sections.join("\n\n")}
     }
   }
 
-  private resolveWorkspacePath(
-    inputPath: string,
-    options: { allowMissing?: boolean; forbidStorageMutation?: boolean; requireOrdinaryMutationPath?: boolean } = {},
-  ) {
+  private resolveWorkspacePath(inputPath: string, options: Parameters<typeof workspaceMutationTargetForPath>[2] = {}) {
     return this.resolveWorkspaceMutationTarget(inputPath, options).absolute;
   }
 
   private resolveWorkspaceMutationTarget(
     inputPath: string,
-    options: { allowMissing?: boolean; forbidStorageMutation?: boolean; requireOrdinaryMutationPath?: boolean } = {},
+    options: Parameters<typeof workspaceMutationTargetForPath>[2] = {},
   ): { absolute: string; sensitiveTarget: string | null } {
     return workspaceMutationTargetForPath(this.workspaceRoot, inputPath, options);
   }
@@ -3702,7 +3718,7 @@ ${sections.join("\n\n")}
   }
 
   private async commandRead(args: Record<string, unknown>): Promise<string> {
-    const filePath = this.resolveWorkspacePath(stringArg(args, "path"));
+    const filePath = this.resolveWorkspacePath(stringArg(args, "path"), { readOnly: true });
     const stats = await stat(filePath);
     if (!stats.isFile()) throw new Error("read path must be a file");
     if (stats.size > COMMAND_FILE_READ_LIMIT) {
@@ -3727,7 +3743,7 @@ ${sections.join("\n\n")}
   }
 
   private async commandLs(args: Record<string, unknown>): Promise<string> {
-    const dirPath = this.resolveWorkspacePath(stringArg(args, "path", "."));
+    const dirPath = this.resolveWorkspacePath(stringArg(args, "path", "."), { readOnly: true });
     const stats = await stat(dirPath);
     if (!stats.isDirectory()) throw new Error("ls path must be a directory");
     const limit = numberArg(args, "limit", 500, 1, 1000);
@@ -3776,7 +3792,7 @@ ${sections.join("\n\n")}
   }
 
   private async commandFind(args: Record<string, unknown>): Promise<string> {
-    const root = this.resolveWorkspacePath(stringArg(args, "path", "."));
+    const root = this.resolveWorkspacePath(stringArg(args, "path", "."), { readOnly: true });
     const stats = await stat(root);
     const pattern = stringArg(args, "pattern", "**/*");
     const limit = numberArg(args, "limit", 1000, 1, 2000);
@@ -3788,7 +3804,7 @@ ${sections.join("\n\n")}
   }
 
   private async commandGrep(args: Record<string, unknown>): Promise<string> {
-    const root = this.resolveWorkspacePath(stringArg(args, "path", "."));
+    const root = this.resolveWorkspacePath(stringArg(args, "path", "."), { readOnly: true });
     const stats = await stat(root);
     const pattern = stringArg(args, "pattern");
     if (!pattern) throw new Error("grep requires pattern");
@@ -3855,11 +3871,12 @@ ${sections.join("\n\n")}
     return `Wrote ${Buffer.byteLength(content, "utf8")} bytes to ${this.displayPath(filePath)}.`;
   }
 
-  private ordinaryMutationPath(inputPath: string, options: { allowMissing?: boolean } = {}) {
+  private ordinaryMutationPath(inputPath: string, options: { allowMissing?: boolean; readOnly?: boolean } = {}) {
     const filePath = this.resolveWorkspacePath(inputPath, {
       allowMissing: options.allowMissing,
       forbidStorageMutation: true,
       requireOrdinaryMutationPath: true,
+      readOnly: options.readOnly,
     });
     if (resolve(filePath) === resolve(this.workspaceRoot))
       throw new Error("The workspace root cannot be moved or removed.");
@@ -3867,7 +3884,8 @@ ${sections.join("\n\n")}
   }
 
   private async commandCopy(args: Record<string, unknown>): Promise<string> {
-    const source = this.ordinaryMutationPath(stringArg(args, "source"));
+    // A copy only reads its source, so a build file may be copied out but never in.
+    const source = this.ordinaryMutationPath(stringArg(args, "source"), { readOnly: true });
     const destination = this.ordinaryMutationPath(stringArg(args, "destination"), { allowMissing: true });
     if (!(await stat(source)).isFile()) throw new Error("copy source must be a file");
     await mkdir(dirname(destination), { recursive: true });
@@ -4018,6 +4036,8 @@ ${sections.join("\n\n")}
         "This command touches a supply-chain-sensitive file (package manifests, launcher, installer, or workflow files). The shell sandbox blocks writes to those silently, so the command cannot work as intended. To change one, use the write or edit command - it stages the change for the user's approval. To copy content OUT of one, read it and write the copy to the destination instead.",
       );
     }
+    // #6984: the sandbox keeps build output read-only; refuse the common write shapes loudly first.
+    if (bashCommandWritesBuildOutput(command)) throw new Error(BUILD_OUTPUT_WRITE_REFUSAL);
     // #5786: the deny list is spawn-time-only, so a command can create a NEW
     // sensitive-by-name file no rule covers. Fingerprint the sensitive set
     // before the run; whatever changed unreviewed afterwards is reverted and

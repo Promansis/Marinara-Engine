@@ -200,7 +200,7 @@
   --input: var(--border);
   --ring: var(--primary);
   --radius: 0.75rem;
-  --sidebar: #08061a;
+  --sidebar: var(--marinara-shell-surface, #121114);
   --sidebar-foreground: #e8d4ff;
   --sidebar-border: color-mix(in srgb, var(--primary) 13%, transparent);
   --sidebar-accent: color-mix(in srgb, var(--primary) 10%, transparent);
@@ -236,6 +236,7 @@
   --mari-logo-title-cyan: #22d3ee;
   --mari-logo-title-orange: #fb923c;
   --mari-logo-title-pink: #ec4899;
+  --marinara-mode-game-accent: #ec4b97;
   --marinara-app-accent-solid: var(--primary);
   --marinara-app-accent-static: var(--primary);
   --marinara-app-accent-gradient: linear-gradient(90deg, #ec4b97, #f29744, #36cdde);
@@ -840,9 +841,9 @@
 }
 
 .mari-chat-logo-mode--game {
-  --mari-chat-logo-mode-color: var(--marinara-app-accent-solid);
-  --mari-chat-logo-mode-color-deep: color-mix(in srgb, var(--marinara-app-accent-solid) 85%, var(--background));
-  --mari-chat-logo-mode-text: var(--primary-foreground);
+  --mari-chat-logo-mode-color: var(--marinara-mode-game-accent);
+  --mari-chat-logo-mode-color-deep: color-mix(in srgb, var(--marinara-mode-game-accent) 85%, var(--background));
+  --mari-chat-logo-mode-text: #260d19;
 }
 
 .mari-chat-mode-action {
@@ -1460,6 +1461,26 @@
   color: var(--marinara-chat-chrome-panel-muted);
 }
 
+/* Older social-app bundles copy Engine's default accent into their scoped CSS.
+   Forward the live host accent while allowing explicit inline package themes. */
+:root
+  :is(
+    marinara-capability-noodle,
+    marinara-capability-slurp,
+    marinara-capability-slurp2,
+    [data-marinara-capability-scope="noodle"],
+    [data-marinara-capability-scope="slurp"],
+    [data-marinara-capability-scope="slurp2"]
+  ) {
+  --primary: inherit;
+  --marinara-app-accent-solid: inherit;
+  --marinara-app-accent-static: inherit;
+  --marinara-app-accent-gradient: inherit;
+  --marinara-app-accent-static-gradient: inherit;
+  --marinara-chat-chrome-accent: inherit;
+  --marinara-chat-chrome-accent-gradient: inherit;
+}
+
 .mari-chrome-token-scope,
 .mari-settings-panel-chrome {
   --accent: var(--marinara-chat-chrome-highlight-bg);
@@ -1469,6 +1490,12 @@
   --sidebar-accent: var(--marinara-chat-chrome-highlight-bg);
   --sidebar-accent-foreground: var(--marinara-chat-chrome-panel-title);
   --sidebar-foreground: var(--marinara-chat-chrome-panel-text);
+}
+
+/* Settings sections and fields share their enclosing sidebar surface. */
+.mari-settings-panel-chrome {
+  --background: var(--sidebar);
+  --secondary: var(--sidebar);
 }
 
 .mari-chrome-text-accent-scope {
@@ -2163,7 +2190,7 @@ html[data-mari-ios-webkit] .mari-modal-panel {
 
 /* Full-screen mobile navigation needs no translucent copy of the covered chat. */
 html[data-mari-ios-webkit] :is([data-component="RightPanelMobile"], [data-component="ChatSidebarPanel"]) {
-  background-color: var(--background) !important;
+  background-color: var(--sidebar) !important;
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
@@ -3105,15 +3132,29 @@ body {
 
 .mari-home-widget {
   --mari-home-widget-hover-transform: translate3d(0, -0.18rem, 0) scale(1.015);
-  --mari-home-widget-hover-filter: brightness(1.055) saturate(1.045)
-    drop-shadow(
-      0 0.7rem 0.9rem color-mix(in srgb, var(--home-module-accent, var(--marinara-app-accent-solid)) 22%, transparent)
-    );
+  --mari-home-widget-hover-filter: brightness(1.055) saturate(1.045);
+  --mari-home-widget-hover-glow: 0 0.7rem 1.8rem
+    color-mix(in srgb, var(--home-module-accent, var(--marinara-app-accent-solid)) 22%, transparent);
   grid-column: span 1;
   grid-row: span 1;
 
   isolation: isolate;
   container-type: inline-size;
+}
+
+/* The hover glow is a box-shadow behind the card that fades in with opacity. As a filter
+   drop-shadow() its color-mix() accent resolved to an oklab() color, which Chromium's compositor
+   leaves out while it runs the filter transition, so the whole shadow and its edges popped in
+   only after the card had finished lifting (#7032). */
+.mari-home-widget::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: 1rem;
+  box-shadow: var(--mari-home-widget-hover-glow);
+  opacity: 0;
 }
 
 .mari-home-widget[data-home-widget-kind="package"] {
@@ -3125,6 +3166,18 @@ body {
 
 .mari-home-professor-widget .mari-professor-pixel-scene [data-part="sprite"] {
   width: 68%;
+}
+
+/* Mari stands about 1.04 scene-widths tall. Rather than crop her head, she may rise past the
+   card's top border (#7032): the height cap lets her pass the art column's top by at most
+   1.125rem, so she clears the card's padding by under 0.5rem and stays inside the 0.65rem
+   minimum grid gap instead of covering a neighbour. */
+.mari-home-professor-widget [data-home-professor-art] {
+  container-type: size;
+}
+
+.mari-home-professor-widget [data-home-professor-scene] {
+  width: min(100%, 11rem, calc((100cqh + 1.125rem) / 1.04));
 }
 
 .mari-home-widget--achievements header > div > p:last-child {
@@ -3139,7 +3192,8 @@ body {
 @container (max-width: 19rem) {
   .mari-home-professor-widget {
     grid-template-columns: minmax(0, 1fr) minmax(4.5rem, 34%);
-    padding: 0.65rem;
+    /* The card's padding; its text column reaches into it by the same amount. */
+    --mari-home-professor-pad: 0.65rem;
   }
 
   .mari-home-professor-widget [data-home-professor-description] {
@@ -3210,19 +3264,20 @@ body {
 }
 
 [data-theme="light"] .mari-home-widget {
-  --mari-home-widget-hover-filter: brightness(1.012) saturate(1.035)
-    drop-shadow(
-      0 0.7rem 0.9rem color-mix(in srgb, var(--home-module-accent, var(--marinara-app-accent-solid)) 16%, transparent)
-    );
+  --mari-home-widget-hover-filter: brightness(1.012) saturate(1.035);
+  --mari-home-widget-hover-glow: 0 0.7rem 1.8rem
+    color-mix(in srgb, var(--home-module-accent, var(--marinara-app-accent-solid)) 16%, transparent);
 }
 
 /* Image grids use their cards' hover feedback without resampling or filtering the artwork. */
 .mari-home-widget:is(.mari-home-widget--recent, .mari-home-widget--character-library) {
   --mari-home-widget-hover-transform: none;
   --mari-home-widget-hover-filter: none;
+  --mari-home-widget-hover-glow: none;
 }
 
 @media (hover: hover) and (pointer: fine) {
+  .mari-home-widget::before,
   .mari-home-widget > :not(.mari-home-widget__drag-handle) {
     transform-origin: center;
     transition:
@@ -3230,10 +3285,19 @@ body {
       filter 190ms cubic-bezier(0.16, 1, 0.3, 1);
   }
 
+  .mari-home-widget::before {
+    transition-property: transform, opacity;
+  }
+
   html:not(.mari-home-widget-drag-active) .mari-home-widget:not(.mari-home-widget--dragging):hover {
     z-index: 6;
   }
 
+  html:not(.mari-home-widget-drag-active) .mari-home-widget:not(.mari-home-widget--dragging):hover::before {
+    opacity: 1;
+  }
+
+  html:not(.mari-home-widget-drag-active) .mari-home-widget:not(.mari-home-widget--dragging):hover::before,
   html:not(.mari-home-widget-drag-active)
     .mari-home-widget:not(.mari-home-widget--dragging):hover
     > :not(.mari-home-widget__drag-handle) {
@@ -3649,11 +3713,14 @@ html.mari-home-professor-drag-active * {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mari-home-widget {
+  /* :root keeps this ahead of the light-theme glow. */
+  :root .mari-home-widget {
     --mari-home-widget-hover-filter: none;
+    --mari-home-widget-hover-glow: none;
     --mari-home-widget-hover-transform: none;
   }
 
+  .mari-home-widget::before,
   .mari-home-widget > :not(.mari-home-widget__drag-handle) {
     transition: none;
   }
@@ -3692,9 +3759,12 @@ html[data-marinara-effects-paused="true"] .mari-home-browser-star {
 html[data-marinara-reduced-effects="true"] .mari-home-widget,
 html[data-marinara-effects-paused="true"] .mari-home-widget {
   --mari-home-widget-hover-filter: none;
+  --mari-home-widget-hover-glow: none;
   --mari-home-widget-hover-transform: none;
 }
 
+html[data-marinara-reduced-effects="true"] .mari-home-widget::before,
+html[data-marinara-effects-paused="true"] .mari-home-widget::before,
 html[data-marinara-reduced-effects="true"] .mari-home-widget > :not(.mari-home-widget__drag-handle),
 html[data-marinara-effects-paused="true"] .mari-home-widget > :not(.mari-home-widget__drag-handle) {
   transition: none;
@@ -4476,6 +4546,12 @@ strong {
   }
 }
 
+/* Use the same opaque surface as sidebar headers and item action trays.
+   Keep specificity low so authored theme backgrounds still take precedence. */
+:where(.mari-sidebar, .mari-right-panel) {
+  background-color: var(--sidebar);
+}
+
 /* Firefox on Windows can rasterize text inside large blurred/translucent layout layers,
    which shows up most clearly on high-DPI displays. Fall back to opaque shell chrome there. */
 @supports (-moz-appearance: none) {
@@ -4510,9 +4586,7 @@ strong {
   }
 
   .mari-topbar,
-  .mari-sidebar-header,
-  .mari-sidebar-footer,
-  .mari-right-panel-header {
+  .mari-sidebar-footer {
     background: var(--card) !important;
   }
 
@@ -4524,7 +4598,7 @@ strong {
 
   .mari-sidebar,
   .mari-right-panel {
-    background: var(--background) !important;
+    background-color: var(--sidebar) !important;
   }
 }
 
@@ -6196,6 +6270,11 @@ strong {
 /* Touch tablets get the phone shell (MOBILE_SHELL_MEDIA_QUERY in ui.store.ts),
    so they also need its keyboard-aware viewport. */
 @media (max-width: 767px), (max-width: 1440px) and (hover: none) and (any-pointer: coarse) {
+  .mari-topbar {
+    /* Match native page backing even over gradients; also override Gecko's card fallback. */
+    background-color: var(--marinara-page-backing, var(--marinara-topbar-surface)) !important;
+  }
+
   /*
    * WKWebView native backing color is set by the literal background-color in
    * index.html <style> (inline critical CSS — not cached by SW, always fresh).
@@ -6213,6 +6292,8 @@ strong {
   body {
     position: fixed;
     inset: 0;
+    /* Keep authored gradients inside the app, not over the keyboard backing. */
+    background-image: none;
     width: 100%;
     height: 100%;
     overflow: hidden;
@@ -6287,6 +6368,18 @@ strong {
     min-height: 0 !important;
     max-height: none !important;
     flex: 1 1 auto !important;
+  }
+
+  /* A footer pinned under a panel's scroll area can fill all the room left
+     above the keyboard and hide the field being typed in. It is hidden until
+     the keyboard closes, unless that field is in it. The panel attribute comes
+     from useKeepFocusedFieldAboveKeyboard and follows the field typed in, not
+     live focus, so a tap does not show or hide the footer under the finger. */
+  html[data-mari-software-keyboard-open]
+    body
+    > [data-chat-floating-panel][data-keyboard-hides-footer]
+    [data-chat-floating-footer] {
+    display: none;
   }
 
   html[data-mari-ios-webkit] body > [data-component="ExpandedTextarea"] {

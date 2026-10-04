@@ -955,6 +955,7 @@ function promptSection(
     injectionDepth: 0,
     injectionOrder: 0,
     forbidOverrides: "false",
+    skipWrap: "false",
     ...overrides,
   };
 }
@@ -9424,6 +9425,78 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
         assert.match(disabledText, /LEGACY_UNSCOPED_SECRET/u);
         assert.doesNotMatch(disabledText, /OPEN_SCENE_FACT|OLD_SCENE_FACT|EXACT_OLD_WORDS|Below is|Below are/u);
       }
+    },
+  },
+  {
+    name: "prompt blocks that skip wrapping are sent as written while the rest of the preset and markers stay wrapped",
+    async run() {
+      const assembleWith = async (wrapFormat: "xml" | "markdown") => {
+        const result = await assemblePrompt({
+          db: undefined as unknown as DB,
+          preset: {
+            id: "preset-skip-wrap",
+            name: "Skip Wrap Fixture",
+            sectionOrder: JSON.stringify(["main", "raw", "grouped", "summary"]),
+            groupOrder: JSON.stringify(["rules"]),
+            wrapFormat,
+            parameters: JSON.stringify({}),
+            variableGroups: JSON.stringify([]),
+            variableValues: JSON.stringify({}),
+          },
+          sections: [
+            promptSection({ id: "main", identifier: "main", name: "Main Prompt", content: "WRAPPED_MAIN" }),
+            promptSection({ id: "raw", identifier: "raw", name: "Raw Block", content: "RAW_TEXT", skipWrap: "true" }),
+            promptSection({
+              id: "grouped",
+              identifier: "grouped",
+              name: "Grouped Raw",
+              content: "GROUPED_RAW_TEXT",
+              groupId: "rules",
+              skipWrap: "true",
+            }),
+            promptSection({
+              id: "summary",
+              identifier: "chatSummary",
+              name: "Chat Summary",
+              isMarker: "true",
+              markerConfig: JSON.stringify({ type: "chat_summary" }),
+              skipWrap: "true",
+            }),
+          ],
+          groups: [
+            {
+              id: "rules",
+              presetId: "preset-skip-wrap",
+              name: "Rules",
+              parentGroupId: null,
+              order: 0,
+              enabled: "true",
+              createdAt: "2026-01-01T00:00:00.000Z",
+            },
+          ],
+          choiceBlocks: [],
+          chatChoices: {},
+          chatId: "chat-skip-wrap",
+          characterIds: [],
+          personaName: "Mari",
+          personaDescription: "",
+          chatMessages: [],
+          chatSummary: "SUMMARY_TEXT",
+        });
+        return result.messages.map((message) => message.content).join("\n");
+      };
+
+      const xml = await assembleWith("xml");
+      assert.match(xml, /<main_prompt>\s*WRAPPED_MAIN\s*<\/main_prompt>/u);
+      assert.match(xml, /(^|\n)RAW_TEXT(\n|$)/u);
+      assert.doesNotMatch(xml, /raw_block|grouped_raw/u);
+      assert.match(xml, /<rules>\s*GROUPED_RAW_TEXT\s*<\/rules>/u, "the group still wraps an opted-out section");
+      assert.match(xml, /<chat_summary>[\s\S]*SUMMARY_TEXT[\s\S]*<\/chat_summary>/u, "markers ignore skipWrap");
+
+      const markdown = await assembleWith("markdown");
+      assert.match(markdown, /## Main Prompt\nWRAPPED_MAIN/u);
+      assert.doesNotMatch(markdown, /Raw Block|Grouped Raw/u);
+      assert.match(markdown, /# Rules\nGROUPED_RAW_TEXT/u);
     },
   },
   {

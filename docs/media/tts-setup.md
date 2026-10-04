@@ -73,7 +73,9 @@ For **ElevenLabs**, you must pick a voice. Marinara loads the paginated account 
 4. Pick a character in the left dropdown and a voice in the right dropdown.
 5. Repeat for each character you want to give a custom voice.
 
-The **Refresh** button in the Character Voices box reloads the same provider library without switching back to the one-voice mode. You must create your characters first. If you have none yet, the app tells you to add characters in the Characters tab before assigning voices. Characters without a personal voice fall back to the global voice. See [Creating and Editing Characters](../characters/creating-and-editing-characters.md).
+You can also pick a character's voice in the **Character Editor**, on its **Voice** tab. It changes the same row, so both places always show the same voice.
+
+The **Refresh** button in the Character Voices box reloads the same provider library without switching back to the one-voice mode. You must create your characters first. If you have none yet, the app tells you to add characters in the Characters tab before assigning voices. A character without a personal voice uses one set for a card with a matching name, such as the original of an AU copy. Otherwise it falls back to the global voice. See [Creating and Editing Characters](../characters/creating-and-editing-characters.md).
 
 ## Narrator Voice
 
@@ -154,7 +156,7 @@ The same TTS setup serves every mode, with a few per-mode extras:
 
 ## Phonetic name (pronunciation in calls)
 
-If a character or persona name is spelled in a way the voice mispronounces, you can add a **Phonetic name**. In the **Character Editor**, the field sits next to the character's **Name** field. In the **Persona Editor**, it sits with the other basic info fields. Type how the name should sound.
+If a character or persona name is spelled in a way the voice mispronounces, you can add a **Phonetic name**. In the **Character Editor**, the field is on the **Voice** tab. In the **Persona Editor**, it sits with the other basic info fields. Type how the name should sound.
 
 This override is used only during Conversation audio and video calls. The regular per-message **Speak** button, chat auto-play, and Game Mode narration do not read this field.
 

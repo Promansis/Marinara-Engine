@@ -2456,7 +2456,7 @@ function TrackerPanelCardOrderSetting() {
           disabled={isDefaultOrder}
           title={localizeUi("settings.actions.resetTrackerOrder")}
           aria-label={localizeUi("settings.actions.resetTrackerOrder")}
-          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--secondary)] hover:text-[var(--foreground)] active:scale-95 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-[var(--muted-foreground)]"
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] active:scale-95 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-[var(--muted-foreground)]"
         >
           <RotateCcw size="0.6875rem" />
         </button>
@@ -2908,7 +2908,7 @@ export function SettingsPanel() {
                 type="button"
                 onClick={() => setSettingsSearch("")}
                 aria-label={localize("Clear settings search")}
-                className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-md text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
+                className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-md text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
               >
                 <X size="0.75rem" />
               </button>
@@ -2931,7 +2931,7 @@ export function SettingsPanel() {
                       key={`${result.type}-${result.type === "control" ? result.control.id : section.id}`}
                       type="button"
                       onClick={() => jumpToSearchResult(result)}
-                      className="grid min-w-0 gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-[var(--secondary)]/70"
+                      className="grid min-w-0 gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-[var(--accent)]/70"
                     >
                       <span className="flex min-w-0 items-center gap-1.5">
                         <span className="truncate text-xs font-semibold text-[var(--foreground)]">{label}</span>
@@ -2978,7 +2978,7 @@ export function SettingsPanel() {
                   "group relative isolate flex min-h-8 min-w-0 flex-col items-center justify-center gap-0.5 overflow-hidden rounded-md border px-1 py-0.5 text-center text-[0.625rem] font-semibold leading-tight transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]/40",
                   active
                     ? "border-[var(--primary)]/35 bg-[var(--primary)]/10 text-[var(--foreground)] shadow-[inset_0_1px_0_color-mix(in_srgb,var(--foreground)_11%,transparent)]"
-                    : "border-transparent text-[var(--muted-foreground)] hover:border-[var(--border)]/80 hover:bg-[var(--secondary)]/60 hover:text-[var(--foreground)]",
+                    : "border-transparent text-[var(--muted-foreground)] hover:border-[var(--border)]/80 hover:bg-[var(--accent)]/60 hover:text-[var(--foreground)]",
                 )}
                 title={t(tab.descriptionKey)}
               >
@@ -3015,7 +3015,7 @@ export function SettingsPanel() {
                   "flex min-h-6 max-w-full items-center gap-1 rounded-lg border px-1.5 py-0.5 text-[0.625rem] font-semibold transition-colors",
                   quickAccessOpen
                     ? "border-[var(--primary)]/30 bg-[var(--primary)]/10 text-[var(--foreground)]"
-                    : "border-transparent text-[var(--muted-foreground)] hover:bg-[var(--secondary)]/60 hover:text-[var(--foreground)]",
+                    : "border-transparent text-[var(--muted-foreground)] hover:bg-[var(--accent)]/60 hover:text-[var(--foreground)]",
                 )}
                 title={localize(quickAccessOpen ? "Collapse Quick Access" : "Expand Quick Access")}
               >
@@ -3130,7 +3130,7 @@ function QuickRepliesSetting() {
         "scroll-mt-3 overflow-hidden rounded-xl border transition-colors",
         showQuickRepliesMenu
           ? "border-[var(--primary)]/30 bg-[var(--secondary)]/15"
-          : "border-transparent bg-transparent hover:bg-[var(--secondary)]/30",
+          : "border-transparent bg-transparent hover:bg-[var(--accent)]/30",
       )}
     >
       <div className="flex min-h-9 items-stretch">
@@ -3181,7 +3181,7 @@ function QuickRepliesSetting() {
             "flex min-w-10 flex-1 items-center justify-end py-2 pl-2 pr-2 text-[var(--muted-foreground)] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]",
             showQuickRepliesMenu && drawerOpen ? "rounded-tr-xl" : "rounded-r-xl",
             showQuickRepliesMenu
-              ? "cursor-pointer hover:bg-[var(--secondary)]/35 hover:text-[var(--foreground)] active:scale-[0.99]"
+              ? "cursor-pointer hover:bg-[var(--accent)]/35 hover:text-[var(--foreground)] active:scale-[0.99]"
               : "cursor-not-allowed opacity-35",
           )}
           tabIndex={showQuickRepliesMenu ? 0 : -1}
@@ -3236,7 +3236,7 @@ function QuickRepliesSetting() {
                   "group flex min-h-10 min-w-0 max-w-full items-center gap-2.5 overflow-hidden rounded-md px-2 py-1.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] active:scale-[0.99]",
                   option.checked
                     ? "bg-[var(--primary)]/8 text-[var(--foreground)] ring-1 ring-[var(--primary)]/30"
-                    : "text-[var(--muted-foreground)] ring-1 ring-transparent hover:bg-[var(--secondary)]/45 hover:text-[var(--foreground)]",
+                    : "text-[var(--muted-foreground)] ring-1 ring-transparent hover:bg-[var(--accent)]/45 hover:text-[var(--foreground)]",
                 )}
               >
                 <span
@@ -3293,7 +3293,7 @@ function CustomQuickReplyIconButton({
         ref={buttonRef}
         type="button"
         onClick={() => setOpen((current) => !current)}
-        className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-[var(--secondary)]/60 text-sm leading-none outline-none ring-1 ring-transparent transition-colors hover:bg-[var(--secondary)] focus-visible:ring-[var(--primary)]/40"
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-[var(--secondary)]/60 text-sm leading-none outline-none ring-1 ring-transparent transition-colors hover:bg-[var(--accent)] focus-visible:ring-[var(--primary)]/40"
         title={localize("Choose quick reply icon")}
         aria-label={localize("Choose quick reply icon")}
         aria-expanded={open}
@@ -3329,7 +3329,7 @@ function CustomQuickRepliesManager() {
         <button
           type="button"
           onClick={() => addCustomQuickReply("", "")}
-          className="flex shrink-0 items-center gap-1 rounded-md bg-[var(--secondary)]/50 px-2 py-1 text-[0.65rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--secondary)] hover:text-[var(--foreground)] active:scale-[0.98]"
+          className="flex shrink-0 items-center gap-1 rounded-md bg-[var(--secondary)]/50 px-2 py-1 text-[0.65rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] active:scale-[0.98]"
           title={localize("Add a custom quick reply")}
         >
           <Plus size="0.75rem" aria-hidden="true" />
@@ -3730,7 +3730,7 @@ function GeneralSettings() {
             id={getSettingsControlAnchorId("streaming-speed")}
             className={cn(
               "flex scroll-mt-3 flex-col gap-1.5 rounded-lg p-1 transition-colors",
-              enableStreaming ? "hover:bg-[var(--secondary)]/50" : "opacity-40 pointer-events-none",
+              enableStreaming ? "hover:bg-[var(--accent)]/50" : "opacity-40 pointer-events-none",
             )}
           >
             <div className="flex items-center gap-2">
@@ -3775,7 +3775,7 @@ function GeneralSettings() {
 
           <label
             id={getSettingsControlAnchorId("messages-per-page")}
-            className="flex scroll-mt-3 flex-wrap items-center gap-2.5 rounded-lg p-1 transition-colors hover:bg-[var(--secondary)]/50"
+            className="flex scroll-mt-3 flex-wrap items-center gap-2.5 rounded-lg p-1 transition-colors hover:bg-[var(--accent)]/50"
           >
             <span className="text-xs">{localize("Messages per page")}</span>
             <HelpTooltip
@@ -3801,7 +3801,7 @@ function GeneralSettings() {
         {...getSettingsSectionAnchorProps("input-editing")}
       >
         <div className="flex flex-col gap-2.5">
-          <div className="flex flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--secondary)]/50">
+          <div className="flex flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--accent)]/50">
             <div className="flex items-center gap-2">
               <span className="text-xs">{localizeUi("settings.controls.sendOnEnter.label")}</span>
               <HelpTooltip text={localizeUi("settings.controls.sendOnEnter.help")} />
@@ -3942,7 +3942,7 @@ function GeneralSettings() {
           )}
           <div
             id={getSettingsControlAnchorId("quote-style")}
-            className="flex scroll-mt-3 flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--secondary)]/50"
+            className="flex scroll-mt-3 flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--accent)]/50"
           >
             <div className="flex items-center gap-2">
               <span className="text-xs">{localize("Quote style")}</span>
@@ -4003,7 +4003,7 @@ function GeneralSettings() {
           {!gameInstantTextReveal && (
             <label
               id={getSettingsControlAnchorId("game-narration-speed")}
-              className="flex scroll-mt-3 flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--secondary)]/50"
+              className="flex scroll-mt-3 flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--accent)]/50"
             >
               <div className="flex items-center gap-2">
                 <span className="text-xs">{localize("Game narration speed")}</span>
@@ -4032,7 +4032,7 @@ function GeneralSettings() {
 
           <label
             id={getSettingsControlAnchorId("game-auto-play-delay")}
-            className="flex scroll-mt-3 flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--secondary)]/50"
+            className="flex scroll-mt-3 flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--accent)]/50"
           >
             <div className="flex items-center gap-2">
               <span className="text-xs">{localize("Game auto-play segment delay")}</span>
@@ -6562,7 +6562,7 @@ function ThemesSettings({ showIntro = true }: { showIntro?: boolean } = {}) {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setEditorOpen(false)}
-              className="rounded-md p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
+              className="rounded-md p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
             >
               <X size="0.875rem" />
             </button>
@@ -6693,7 +6693,7 @@ function ThemesSettings({ showIntro = true }: { showIntro?: boolean } = {}) {
                   },
                 });
               }}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-[var(--border)] p-3 text-xs text-[var(--muted-foreground)] transition-all hover:border-[var(--primary)]/40 hover:bg-[var(--secondary)]/50"
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-[var(--border)] p-3 text-xs text-[var(--muted-foreground)] transition-all hover:border-[var(--primary)]/40 hover:bg-[var(--accent)]/50"
             >
               <Download size="0.875rem" /> {localizeUi("ui.panels.themessettings.importFile")}
             </button>
@@ -8666,7 +8666,7 @@ function AdvancedSettings() {
             <button
               onClick={() => void handleForceRefreshSpa()}
               disabled={refreshingSpa}
-              className="flex items-center justify-center gap-1.5 rounded-lg bg-[var(--background)]/70 px-3 py-2 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+              className={SETTINGS_PRIMARY_BUTTON_CLASS}
             >
               {refreshingSpa ? (
                 <>
@@ -8918,7 +8918,7 @@ function AdvancedSettings() {
           <button
             onClick={() => setExportProfileDialogOpen(true)}
             disabled={exportingProfile}
-            className="flex items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs font-medium ring-1 ring-[var(--border)] transition-all hover:bg-[var(--secondary)]/80 active:scale-95 disabled:opacity-50"
+            className={SETTINGS_PRIMARY_BUTTON_CLASS}
           >
             {exportingProfile ? (
               <>
@@ -9034,7 +9034,7 @@ function AdvancedSettings() {
                     "flex cursor-pointer items-start gap-2 rounded-lg px-2.5 py-2 ring-1 transition-colors",
                     checked
                       ? "bg-[var(--primary)]/10 ring-[var(--primary)]/30"
-                      : "bg-[var(--background)]/40 ring-[var(--border)] hover:bg-[var(--secondary)]/70",
+                      : "bg-[var(--background)]/40 ring-[var(--border)] hover:bg-[var(--accent)]/70",
                   )}
                 >
                   <input

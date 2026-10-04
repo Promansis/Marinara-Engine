@@ -1273,7 +1273,7 @@ function SectionsTab({
   sections,
   groupMap,
   choiceBlocks,
-  wrapFormat: _wrapFormat,
+  wrapFormat,
   onCreateSection,
   onUpdateSection,
   onDeleteSection,
@@ -1556,6 +1556,7 @@ function SectionsTab({
         injectionDepth: section.injectionDepth ?? 0,
         injectionOrder: section.injectionOrder ?? idx * 100,
         forbidOverrides: readBoolFlag(section.forbidOverrides),
+        skipWrap: readBoolFlag(section.skipWrap),
       });
       if (created?.id) {
         const sectionIds = sections.map((s: any) => s.id);
@@ -2197,6 +2198,24 @@ function SectionsTab({
                           </span>
                         )}
                       </div>
+
+                      {/* Prompt-block wrap opt-out; markers keep their wrapper, and NONE wraps nothing */}
+                      {!isMarker && wrapFormat !== "none" && (
+                        <SettingsSwitch
+                          label={localizeUi("ui.presets.sectionstab.sendWithoutWrapper")}
+                          description={localizeUi("ui.presets.sectionstab.sendWithoutWrapperDescription")}
+                          checked={readBoolFlag(section.skipWrap)}
+                          onChange={(checked) =>
+                            onUpdateSection.mutate({
+                              presetId,
+                              sectionId: section.id,
+                              skipWrap: checked,
+                            })
+                          }
+                          labelClassName="text-xs"
+                          className="p-0 hover:bg-transparent"
+                        />
+                      )}
                     </div>
                   )}
                 </div>
@@ -3351,7 +3370,7 @@ function ExpandedEditorModal({
         className="fixed inset-0 z-50 flex items-center justify-center p-3 pb-[max(0.75rem,var(--mari-safe-area-inset-bottom,env(safe-area-inset-bottom)))] pt-[max(0.75rem,env(safe-area-inset-top))] sm:p-6"
       >
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={handleClose} />
-        <div className="mari-editor-shell mari-editor-legacy-bridge relative flex h-[80vh] max-h-[calc(100vh-1.5rem)] w-full max-w-3xl flex-col rounded-2xl border border-[var(--marinara-editor-border)] bg-[var(--marinara-editor-surface-bg)] shadow-2xl shadow-black/50 supports-[height:100dvh]:h-[80dvh] supports-[height:100dvh]:max-h-[calc(100dvh-1.5rem)]">
+        <div className="mari-editor-shell mari-editor-legacy-bridge relative flex h-[80vh] max-h-[calc(100vh-1.5rem)] w-full max-w-3xl flex-col rounded-2xl border border-[var(--marinara-editor-border)] bg-[var(--marinara-editor-surface-bg)] shadow-2xl shadow-black/50 [--marinara-editor-bg:var(--sidebar)] [--marinara-editor-control-bg:var(--sidebar)] [--marinara-editor-surface-bg:var(--sidebar)] supports-[height:100dvh]:h-[80dvh] supports-[height:100dvh]:max-h-[calc(100dvh-1.5rem)]">
           {/* Header */}
           <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
             <h3 className="text-sm font-semibold">{title}</h3>

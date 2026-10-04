@@ -961,6 +961,7 @@ async function importPreset(data: unknown, db: DB) {
         injectionDepth: Number(s.injectionDepth ?? 0),
         injectionOrder: Number(s.injectionOrder ?? 100),
         forbidOverrides: s.forbidOverrides === true || s.forbidOverrides === "true",
+        skipWrap: s.skipWrap === true || s.skipWrap === "true",
       });
       if (newSection) sectionMap.set(String(s.id), newSection.id);
     }

@@ -1542,6 +1542,23 @@ assert.equal(merged.length, 2, "the three built-in rewrite agents should share o
 assert.match(merged[0]!.name, /prose-guardian.*continuity.*html/u);
 assert.equal(getAgentBatchLane(merged[0]!), "rewrite");
 assert.equal(getAgentBatchLane(trackerAgent), "standard");
+// #6977: a rewrite agent with sharing turned off keeps its own editor request.
+const soloContinuity = {
+  ...rewriteAgents[1]!,
+  settings: { ...rewriteAgents[1]!.settings, batchWithOtherAgents: false },
+};
+const partlyMerged = mergePairedBuiltInRewriteAgents([
+  rewriteAgents[0]!,
+  soloContinuity,
+  rewriteAgents[2]!,
+  trackerAgent,
+]);
+assert.deepEqual(
+  partlyMerged.map((agent) => agent.name),
+  ["prose-guardian + html", "continuity", "world-state"],
+  "a rewrite agent that may not share runs on its own beside the merged editor",
+);
+assert.doesNotMatch(partlyMerged[0]!.promptTemplate, /continuity prompt/u, "the merged editor leaves out its tasks");
 assert.equal(
   estimateAgentLoadCost(
     [
@@ -1564,6 +1581,20 @@ assert.equal(
   ).extraCalls,
   2,
   "rewrite editors should count as one call separate from the tracker call",
+);
+assert.equal(
+  estimateAgentLoadCost(
+    ["notes-a", "notes-b", "notes-solo"].map((type) => ({
+      type,
+      phase: "post_processing" as const,
+      connectionId: "connection-1",
+      promptTemplate: `${type} prompt`,
+      ownRequest: type === "notes-solo",
+    })),
+    null,
+  ).extraCalls,
+  2,
+  "#6977: an agent with its own request counts as a call of its own",
 );
 
 class CountingTrackerBatchProvider extends BaseLLMProvider {

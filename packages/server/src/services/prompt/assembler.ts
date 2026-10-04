@@ -90,6 +90,8 @@ export interface AssemblerInput {
     injectionDepth: number;
     injectionOrder: number;
     forbidOverrides: string;
+    /** "true" sends a prompt block without the preset wrapper; ignored for markers; missing means wrapped */
+    skipWrap?: string;
   }>;
   /** All groups for this preset */
   groups: Array<{
@@ -976,8 +978,9 @@ async function resolveSection(
     content.includes(runtimeAgentText),
   );
 
-  // Auto-wrap in the preset's format
-  const wrapped = wrapContent(content, wrapperName, ctx.wrapFormat);
+  // Auto-wrap in the preset's format unless this prompt block opts out (markers always keep their wrapper)
+  const skipWrap = section.skipWrap === "true" && section.isMarker !== "true";
+  const wrapped = wrapContent(content, wrapperName, skipWrap ? "none" : ctx.wrapFormat);
   const messageContent = shouldWrapRuntimeAgentSection
     ? `${runtimeAgentStartToken}${wrapped || content}${runtimeAgentEndToken}`
     : wrapped || content;

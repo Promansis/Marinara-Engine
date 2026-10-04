@@ -813,6 +813,34 @@ assert.equal(
   "Max Parallel Agent Jobs must also serialize isolated configs inside one batch group",
 );
 
+// #6977: turning off "Share requests with other agents" gives that agent its own
+// request, while the other agents on the same connection still share one.
+const shareableAgents = (provider: RecordingProvider, soloSettings: Record<string, unknown>): ResolvedAgent[] =>
+  ["batch-a", "batch-solo", "batch-b"].map((type) => ({
+    ...makeAgent(type),
+    provider,
+    settings: { ...makeAgent(type).settings, ...(type === "batch-solo" ? soloSettings : {}) },
+  }));
+const shareableResponse = JSON.stringify({ "batch-a": "A notes", "batch-b": "B notes", "batch-solo": "Solo notes" });
+const sharedByDefaultProvider = new RecordingProvider(shareableResponse);
+await createAgentPipeline(shareableAgents(sharedByDefaultProvider, {}), context).postGenerate("Agents share.");
+assert.equal(sharedByDefaultProvider.calls, 1, "agents on one connection still share one request by default");
+const ownRequestProvider = new ConcurrencyRecordingProvider(shareableResponse);
+const ownRequestResults = await createAgentPipeline(
+  shareableAgents(ownRequestProvider, { batchWithOtherAgents: false }),
+  context,
+).postGenerate("One agent asks for its own request.");
+assert.ok(ownRequestResults.every((result) => result.success));
+assert.equal(ownRequestProvider.calls, 2, "an agent that may not share gets its own request beside one shared request");
+assert.equal(ownRequestProvider.maxActiveCalls, 1, "its own request still queues behind the connection's job limit");
+const [sharedPrompt, soloPrompt] = ["batch-a prompt", "batch-solo prompt"].map((marker) =>
+  ownRequestProvider.messages.map((messages) => JSON.stringify(messages)).find((prompt) => prompt.includes(marker)),
+);
+assert.ok(sharedPrompt && soloPrompt, "each request carries its agents' instructions");
+assert.ok(sharedPrompt.includes("batch-b prompt"), "the agents that may share still go out together");
+assert.ok(!sharedPrompt.includes("batch-solo prompt"), "the shared request leaves out the opted-out agent");
+assert.ok(!/batch-[ab] prompt/.test(soloPrompt), "the agent's own request has only its instructions");
+
 const parallelLlamaArgs = buildLlamaArgs({
   modelPath: "/tmp/model.gguf",
   gpuLayers: 0,

@@ -25,6 +25,9 @@ const WHATS_NEW_E2E_BYPASS_KEY = "marinara:e2e:show-whats-new";
 const APP_VERSION = (
   JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }
 ).version;
+const EN_MESSAGES = JSON.parse(
+  readFileSync(new URL("../packages/client/src/localization/locales/en.json", import.meta.url), "utf8"),
+) as Record<string, string>;
 
 function createDeferred() {
   let resolve!: () => void;
@@ -46,6 +49,46 @@ function collectUnexpectedErrors(page: Page) {
     errors.push(text);
   });
   return errors;
+}
+
+/** Check a sidebar's header help: named after the sidebar, right after its title, its own text on screen, closable. */
+async function expectSidebarHelp(
+  page: Page,
+  header: Locator,
+  help: { key: string; name: string; titled: boolean },
+  testInfo: TestInfo,
+) {
+  const text = EN_MESSAGES[`navigation.sidebarHelp.${help.key}`];
+  expect(text, help.key).toBeTruthy();
+  const button = header.getByRole("button", { name: `Show help for ${help.name}`, exact: true });
+  await expect(button).toBeVisible();
+  if (help.titled) {
+    // Measure in one frame: the sidebar may still be sliding in.
+    const placement = await button.evaluate((element) => {
+      const title = element.parentElement!.previousElementSibling!;
+      const gap = element.querySelector("svg")!.getBoundingClientRect().left - title.getBoundingClientRect().right;
+      const titleGroup = element.parentElement!.parentElement!;
+      const overhang = element.getBoundingClientRect().right - titleGroup.getBoundingClientRect().right;
+      return { tag: title.tagName, title: title.textContent, gap, overhang };
+    });
+    expect(placement).toMatchObject({ tag: "H2", title: help.name });
+    expect(placement.gap).toBeGreaterThanOrEqual(0);
+    expect(placement.gap).toBeLessThanOrEqual(16);
+    // The tap area stays inside the title group, so a cut-off title cannot push it over the Close button.
+    expect(placement.overhang).toBeLessThanOrEqual(0.5);
+  }
+  const toggle = () => (testInfo.project.name.includes("mobile") ? button.tap() : button.click());
+  await toggle();
+  const tip = page.getByText(text!, { exact: true });
+  await expect(tip).toBeVisible();
+  const box = (await tip.boundingBox())!;
+  const viewport = page.viewportSize()!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+  expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
+  await toggle();
+  await expect(tip).toBeHidden();
 }
 
 async function prepareFreshClient(page: Page) {
@@ -3899,6 +3942,11 @@ test("Character Chat actions reuse mode selection and seed the chosen setup wiza
 
     const actions = characterRow.locator("[data-character-row-actions]");
     await expect(actions).toBeVisible();
+    const sidebarSurface = await rightPanel.evaluate(
+      (panel) => getComputedStyle(panel.closest(".mari-right-panel")!).backgroundColor,
+    );
+    await expect(actions).toHaveCSS("background-color", sidebarSurface);
+    await expect(rightPanel.locator(".mari-right-panel-header")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     const duplicateButton = actions.getByRole("button", { name: "Duplicate", exact: true });
     const deleteButton = actions.getByRole("button", { name: "Delete", exact: true });
     const chatButton = actions.getByRole("button", {
@@ -4358,7 +4406,7 @@ test("Character and Persona avatar actions stay separated and visually balanced"
         await expect(desktopTabs).toBeVisible();
         await expect(compactMenuButton).toBeHidden();
         await expect(editor.locator(".mari-editor-tab-rail")).toHaveCount(0);
-        await expect(desktopTabs.getByRole("button")).toHaveCount(panel === "characters" ? 9 : 8);
+        await expect(desktopTabs.getByRole("button")).toHaveCount(panel === "characters" ? 10 : 8);
         const [headerBox, identityBox, navigationBox, firstActionBox, tabBoxes] = await Promise.all([
           header.boundingBox(),
           header.locator(".mari-editor-header-main").boundingBox(),
@@ -8034,6 +8082,15 @@ test("Roleplay Tracker preserves named characters with missing or malformed card
       await toggle.click();
       const tracker = page.locator('[data-component="TrackerDataSidebar"]:visible');
       await expect(tracker).toBeVisible();
+      if (pass === 0) {
+        // The panel stays dark in light theme too, so its help icon must match the settings icon beside it.
+        const settingsColor = await tracker
+          .getByRole("button", { name: "Open tracker settings", exact: true })
+          .evaluate((button) => getComputedStyle(button).color);
+        const help = tracker.getByRole("button", { name: "Show help for Tracker Panel", exact: true });
+        await expect(help).toHaveCSS("color", settingsColor);
+        await expectSidebarHelp(page, tracker, { key: "trackerPanel", name: "Tracker Panel", titled: false }, testInfo);
+      }
       for (const character of characters)
         await expect(tracker.getByRole("button", { name: character.name, exact: true })).toBeVisible();
       for (const name of ["Named visitor", "Linked companion"]) {
@@ -12182,7 +12239,8 @@ test(
         artInsidePanel: inside(artBounds, panelBounds),
         actionInsidePanel: inside(actionBounds, panelBounds),
         preservesGridGap: siblingSeparations.every((separation) => separation >= gap - 1),
-        panelOverflow: getComputedStyle(panel).overflow,
+        // The card lets Mari rise past its top border (#7032), so its text column clips the overflow instead.
+        contentOverflowY: getComputedStyle(content).overflowY,
       };
     });
     expect(guideGeometry).toEqual({
@@ -12191,7 +12249,7 @@ test(
       artInsidePanel: true,
       actionInsidePanel: true,
       preservesGridGap: true,
-      panelOverflow: "hidden",
+      contentOverflowY: "clip",
     });
     const chromeSurfaces = await page.evaluate(() => ({
       app: getComputedStyle(document.querySelector<HTMLElement>('[data-component="TopBar"]')!).backgroundColor,
@@ -12300,6 +12358,52 @@ test(
     expect(errors).toEqual([]);
   },
 );
+
+test("every sidebar explains itself with a help tip next to its title", async ({ page }, testInfo) => {
+  const errors = collectUnexpectedErrors(page);
+  await page.goto("/");
+  await expect(page.locator('[data-component="TopBar"]')).toBeVisible();
+  await page.locator('[data-tour="sidebar-toggle"]').click();
+  await expectSidebarHelp(
+    page,
+    page.locator('[data-component="ChatSidebar"] .mari-sidebar-header'),
+    { key: "chats", name: "Chats", titled: true },
+    testInfo,
+  );
+  const header = page.locator('[data-component="RightPanel"] .mari-right-panel-header');
+  for (const panel of ["characters", "personas", "lorebooks", "presets", "connections", "agents", "settings"]) {
+    await clickTopbarPanel(page, panel);
+    const name = `${panel[0]!.toUpperCase()}${panel.slice(1)}`;
+    await expectSidebarHelp(page, header, { key: panel, name, titled: true }, testInfo);
+  }
+
+  // A personal extension's panel, the empty Extensions panel and the unknown-panel fallback have no help to show.
+  const expectNoHelp = async (title: string) => {
+    await expect(header.getByRole("heading", { name: title, exact: true })).toBeVisible();
+    await expect(header.getByRole("button", { name: /^Show help/ })).toHaveCount(0);
+  };
+  await page.evaluate(async () => {
+    const extensions = await import("/src/lib/personal-extension-contributions.ts" as string);
+    const extension = { id: "help-fixture", name: "Help Fixture", contentHash: "help-fixture-hash" };
+    if (!extensions.registerPersonalExtensionContribution(extension, { id: "panel", kind: "panel", label: "Fixture" }))
+      throw new Error("Could not register the synthetic extension panel");
+    extensions.openPersonalExtensionPanel("help-fixture:panel");
+    const { useUIStore } = (await import("/src/stores/ui.store.ts" as string)) as PageUiStoreModule;
+    useUIStore.getState().openRightPanel("extensions");
+  });
+  await expectNoHelp("Fixture");
+  await page.evaluate(async () => {
+    const extensions = await import("/src/lib/personal-extension-contributions.ts" as string);
+    extensions.removePersonalExtensionContributions("help-fixture");
+  });
+  await expectNoHelp("Extensions");
+  await page.evaluate(async () => {
+    const { useUIStore } = (await import("/src/stores/ui.store.ts" as string)) as PageUiStoreModule;
+    useUIStore.getState().openRightPanel("missing-panel" as never);
+  });
+  await expectNoHelp("Panel");
+  expect(errors).toEqual([]);
+});
 
 test("Home Professor controls and surfaces follow the configured accent", async ({ page }) => {
   await page.goto("/");
@@ -12465,6 +12569,8 @@ test("installed Home destinations appear as browser tabs without returning to th
 });
 
 test("Home recent chats use mode colors and show character sprites", async ({ page }, testInfo) => {
+  await page.route("**/api/app-settings/ui", (route) => route.fulfill({ json: { value: "" } }));
+  await seedUIState(page, { appAccentColor: "#3b82f6", appAccentPulseMode: false }, "merge");
   await page.addInitScript(() => localStorage.removeItem("marinara-active-chat-id"));
   const now = new Date().toISOString();
   const chatFixtures = [
@@ -12578,12 +12684,7 @@ test("Home recent chats use mode colors and show character sprites", async ({ pa
   const expectedAccents = [
     ["Cyan chat", "oklch(0.79 0.16 205)"],
     ["Orange story", "oklch(0.76 0.19 52)"],
-    [
-      "Pink game",
-      await page
-        .locator("html")
-        .evaluate((element) => getComputedStyle(element).getPropertyValue("--marinara-chat-chrome-accent").trim()),
-    ],
+    ["Pink game", "#ec4b97"],
   ] as const;
   for (const [chatName, accent] of expectedAccents) {
     const card = page.getByRole("button", { name: new RegExp(chatName) });
@@ -20793,6 +20894,8 @@ test("Home widget order can be dragged and persists across reloads", async ({ pa
 
 test("chat mode tabs and new-chat actions stay reachable", { tag: "@smoke" }, async ({ page }) => {
   const errors = collectUnexpectedErrors(page);
+  await page.route("**/api/app-settings/ui", (route) => route.fulfill({ json: { value: "" } }));
+  await seedUIState(page, { appAccentColor: "#3b82f6", appAccentRgbMode: true }, "merge");
   const modes = [
     {
       mode: "conversation",
@@ -20815,6 +20918,7 @@ test("chat mode tabs and new-chat actions stay reachable", { tag: "@smoke" }, as
 
   try {
     await page.goto("/");
+    await expect(page.locator("html")).toHaveAttribute("data-marinara-accent-animation");
     await page.locator('[data-tour="sidebar-toggle"]').click();
     const sidebar = page.locator('[data-component="ChatSidebar"]');
     await expect(sidebar).toBeVisible();
@@ -20823,12 +20927,23 @@ test("chat mode tabs and new-chat actions stay reachable", { tag: "@smoke" }, as
       const modeTab = page.locator(`[data-tour="${mode.tour}"]`);
       await expect(modeTab.locator(`[data-chat-mode-icon="${mode.mode}"]`)).toHaveClass(mode.iconClass);
       await modeTab.click();
-      await expect(page.getByLabel(mode.label, { exact: true })).toBeVisible();
-      await expect(
-        sidebar
-          .locator(`[data-chat-id="${characterlessChats[index]!.id}"]`)
-          .locator(`[data-chat-mode-icon="${mode.mode}"]`),
-      ).toHaveClass(mode.iconClass);
+      const newChatButton = page.getByLabel(mode.label, { exact: true });
+      await expect(newChatButton).toBeVisible();
+      const modeIcon = sidebar
+        .locator(`[data-chat-id="${characterlessChats[index]!.id}"]`)
+        .locator(`[data-chat-mode-icon="${mode.mode}"]`);
+      await expect(modeIcon).toHaveClass(mode.iconClass);
+      const colors = await modeIcon.evaluate((icon) => ({
+        icon: getComputedStyle(icon).color,
+        mode: getComputedStyle(icon.parentElement!).color,
+      }));
+      expect(colors.icon).toBe(colors.mode);
+      if (mode.mode === "game") expect(colors.icon).toBe("rgb(236, 75, 151)");
+      const buttonColors = await newChatButton.evaluate((button) => ({
+        icon: getComputedStyle(button.querySelector("svg")!).color,
+        text: getComputedStyle(button).color,
+      }));
+      expect(buttonColors.icon).toBe(buttonColors.text);
     }
 
     expect(errors).toEqual([]);
@@ -21787,6 +21902,7 @@ test("iPhone Conversation Presence keeps its last activity field reachable", asy
 
 test("mobile chat composer follows the visual viewport above the software keyboard", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("mobile"), "Software-keyboard viewport behavior is mobile-only.");
+  test.setTimeout(90_000);
 
   const response = await page.request.post("/api/chats", {
     data: {
@@ -21814,18 +21930,53 @@ test("mobile chat composer follows the visual viewport above the software keyboa
 
   try {
     await page.goto("/");
+    await page.evaluate(async () => {
+      const { useUIStore } = await import("/src/stores/ui.store.ts" as string);
+      useUIStore.getState().setTheme("dark");
+      useUIStore.getState().setVisualTheme("default");
+      useUIStore.getState().setAppBackgroundColor("");
+    });
     await page.locator("html").evaluate((element) => {
       element.style.setProperty("--mari-safe-area-inset-bottom", "34px");
     });
 
     const viewportMeta = page.locator('meta[name="viewport"]');
     await expect(viewportMeta).toHaveAttribute("content", /interactive-widget=resizes-content/);
+    const topbar = page.locator(".mari-topbar:visible");
+    const expectMatchingMobileBacking = async () => {
+      await expect(topbar).toHaveCSS("background-color", /^rgb\(\d+, \d+, \d+\)$/);
+      await expect
+        .poll(() =>
+          topbar.evaluate((element) => {
+            const color = getComputedStyle(element).backgroundColor;
+            const safeArea = document.querySelector('[data-component="CenterContent"] > div')!;
+            return {
+              html: getComputedStyle(document.documentElement).backgroundColor === color,
+              body: getComputedStyle(document.body).backgroundColor === color,
+              bodyImage: getComputedStyle(document.body).backgroundImage,
+              safeArea: getComputedStyle(safeArea).backgroundColor === color,
+              themeColor: document.querySelector('meta[name="theme-color"]')?.getAttribute("content") === color,
+            };
+          }),
+        )
+        .toEqual({ html: true, body: true, bodyImage: "none", safeArea: true, themeColor: true });
+      return topbar.evaluate((element) => getComputedStyle(element).backgroundColor);
+    };
+    const defaultBacking = await expectMatchingMobileBacking();
+    // Preserve the separate sidebar card composite when the TopBar backing changes.
+    const sidebarSurface = await page
+      .locator("html")
+      .evaluate((element) => element.style.getPropertyValue("--marinara-shell-surface"));
+    // Chromium and WebKit round the native card composite one RGB step apart.
+    expect(sidebarSurface).toMatch(/^rgb\(1[78], 17, (19|20)\)$/);
+    expect(defaultBacking).not.toBe(sidebarSurface);
 
     const shell = page.locator('[data-component="AppShell"]');
     const composer = page.locator(".chat-input-container:visible");
     const textarea = composer.locator("textarea:visible");
     const transcript = page.locator(".mari-messages-scroll:visible").first();
-    await expect(transcript).toBeVisible();
+    // Wait for the cold Roleplay chunk before asserting keyboard geometry.
+    await expect(transcript).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText(/^Keyboard viewport history line 18\./)).toBeVisible();
     await expect
       .poll(() => transcript.evaluate((element) => element.scrollHeight - element.clientHeight))
@@ -21924,6 +22075,19 @@ test("mobile chat composer follows the visual viewport above the software keyboa
       )
       .toEqual({ height: "360px", top: `${expectedOffsetTop}px` });
     await expect(page.locator("html")).toHaveAttribute("data-mari-software-keyboard-open", "");
+    expect(await expectMatchingMobileBacking()).toBe(defaultBacking);
+    let currentBacking = defaultBacking;
+    for (const theme of ["light", "dark"] as const) {
+      await page.evaluate(async (theme) => {
+        const { useUIStore } = await import("/src/stores/ui.store.ts" as string);
+        useUIStore.getState().setTheme(theme);
+      }, theme);
+      await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+      await expect(topbar).not.toHaveCSS("background-color", currentBacking);
+      currentBacking = await expectMatchingMobileBacking();
+      await expect(page.locator("html")).toHaveAttribute("data-mari-software-keyboard-open", "");
+    }
+    expect(currentBacking).toBe(defaultBacking);
     const compactComposerStyle = await composer.evaluate((element) => {
       const style = getComputedStyle(element);
       return {
@@ -22191,14 +22355,15 @@ test("mobile chat composer follows the visual viewport above the software keyboa
       };
       useUIStore.getState().setAppBackgroundColor("#123456");
     });
-    await expect
-      .poll(() =>
-        page.evaluate(() => ({
-          html: document.documentElement.style.getPropertyValue("background-color"),
-          body: document.body.style.getPropertyValue("background-color"),
-        })),
-      )
-      .toEqual({ html: "rgb(18, 52, 86)", body: "rgb(18, 52, 86)" });
+    await expect(topbar).not.toHaveCSS("background-color", defaultBacking);
+    const customSolidBacking = await expectMatchingMobileBacking();
+    await page.evaluate(async () => {
+      const { useUIStore } = await import("/src/stores/ui.store.ts" as string);
+      useUIStore.getState().setAppBackgroundColor("linear-gradient(135deg, #345678, #987654)");
+    });
+    await expect(topbar).not.toHaveCSS("background-color", customSolidBacking);
+    const gradientBacking = await expectMatchingMobileBacking();
+    await expect(shell).toHaveCSS("background-image", /^linear-gradient\(/);
 
     await page.evaluate(async () => {
       const storePath = "/src/stores/ui.store.ts";
@@ -22217,14 +22382,14 @@ test("mobile chat composer follows the visual viewport above the software keyboa
       useUIStore.getState().setAppBackgroundColor("");
       useUIStore.getState().setVisualTheme("sillytavern");
     });
-    await expect
-      .poll(() =>
-        page.evaluate(() => ({
-          html: document.documentElement.style.getPropertyValue("background-color"),
-          body: document.body.style.getPropertyValue("background-color"),
-        })),
-      )
-      .toEqual({ html: "rgb(101, 67, 33)", body: "rgb(101, 67, 33)" });
+    await expect(page.locator("html")).toHaveAttribute("data-visual-theme", "sillytavern");
+    await expect(topbar).not.toHaveCSS("background-color", gradientBacking);
+    expect(
+      await page
+        .locator("html")
+        .evaluate((element) => getComputedStyle(element).getPropertyValue("--background").trim()),
+    ).toBe("rgb(101, 67, 33)");
+    await expectMatchingMobileBacking();
 
     await page.evaluate(() => {
       Object.defineProperty(window, "scrollY", {
@@ -22274,6 +22439,31 @@ test("mobile chat composer follows the visual viewport above the software keyboa
     }, chat.id);
     await expect(shell).not.toHaveAttribute("data-chat-surface-active");
     await expect.poll(() => shell.evaluate((element) => getComputedStyle(element).transform)).toBe("none");
+
+    await page.route("**/api/themes", (route) =>
+      route.fulfill({
+        json: [
+          {
+            id: "mobile-backing-theme",
+            name: "Mobile backing fixture",
+            css: ":root { --background: #234567; --card: #abcdef80; }",
+            isActive: true,
+          },
+        ],
+      }),
+    );
+    await page.evaluate(async () => {
+      const { useUIStore } = await import("/src/stores/ui.store.ts" as string);
+      useUIStore.getState().setVisualTheme("default");
+    });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect
+      .poll(() =>
+        page.locator("html").evaluate((element) => getComputedStyle(element).getPropertyValue("--background").trim()),
+      )
+      .toBe("#234567");
+    await expect(topbar).not.toHaveCSS("background-color", defaultBacking);
+    await expectMatchingMobileBacking();
   } finally {
     await page.request.delete(`/api/chats/${chat.id}`).catch(() => undefined);
   }

@@ -39,6 +39,7 @@ import type {
   TTSSourceProfiles,
   TTSVoiceAssignment,
   TTSVoiceMode,
+  TTSVoicesResponse,
   TTSAudioFormat,
   TTSConversationCallAudioInputMode,
 } from "@marinara-engine/shared";
@@ -220,6 +221,19 @@ function addSavedVoiceOption(options: VoiceOption[], voiceId: string): VoiceOpti
   const id = voiceId.trim();
   if (!id || options.some((option) => option.id === id)) return options;
   return [...options, { id, name: id, category: "saved" }];
+}
+
+/** The provider's voices (ElevenLabs falls back to its defaults) plus saved voices the list lacks. */
+export function buildTTSVoiceOptions(
+  voicesData: TTSVoicesResponse | undefined,
+  source: TTSSource,
+  savedVoices: readonly string[],
+): VoiceOption[] {
+  const fetched = voicesData?.voiceOptions ?? (voicesData?.voices ?? []).map((id) => ({ id, name: id }));
+  let options: VoiceOption[] =
+    fetched.length > 0 ? fetched : source === "elevenlabs" ? ELEVENLABS_DEFAULT_VOICE_OPTIONS : [];
+  for (const savedVoice of savedVoices) options = addSavedVoiceOption(options, savedVoice);
+  return options;
 }
 
 function formatVoiceOptionLabel(option: VoiceOption): string {
@@ -706,7 +720,7 @@ function TtsSearchableSelect({
   );
 }
 
-function VoiceSelect({
+export function VoiceSelect({
   value,
   options,
   disabled,
@@ -745,7 +759,7 @@ function VoiceSelect({
   );
 }
 
-function CustomizableVoiceInput({
+export function CustomizableVoiceInput({
   value,
   options,
   placeholder,
@@ -1285,31 +1299,17 @@ export function TTSConfigCard() {
   };
 
   const voices = voicesData?.voices ?? [];
-  const fetchedVoiceOptions = voicesData?.voiceOptions ?? voices.map((v) => ({ id: v, name: v }));
-  const voiceOptions = useMemo(() => {
-    let nextOptions = fetchedVoiceOptions.length > 0 ? fetchedVoiceOptions : [];
-    if (source === "elevenlabs" && nextOptions.length === 0) {
-      nextOptions = ELEVENLABS_DEFAULT_VOICE_OPTIONS;
-    }
-    for (const savedVoice of [
-      voice,
-      narratorVoice,
-      ...voiceAssignments.map((assignment) => assignment.voice),
-      ...npcDefaultMaleVoices,
-      ...npcDefaultFemaleVoices,
-    ]) {
-      nextOptions = addSavedVoiceOption(nextOptions, savedVoice);
-    }
-    return nextOptions;
-  }, [
-    fetchedVoiceOptions,
-    narratorVoice,
-    npcDefaultFemaleVoices,
-    npcDefaultMaleVoices,
-    source,
-    voice,
-    voiceAssignments,
-  ]);
+  const voiceOptions = useMemo(
+    () =>
+      buildTTSVoiceOptions(voicesData, source, [
+        voice,
+        narratorVoice,
+        ...voiceAssignments.map((assignment) => assignment.voice),
+        ...npcDefaultMaleVoices,
+        ...npcDefaultFemaleVoices,
+      ]),
+    [narratorVoice, npcDefaultFemaleVoices, npcDefaultMaleVoices, source, voice, voiceAssignments, voicesData],
+  );
   const voicesFromProvider = voicesData?.fromProvider ?? false;
   const voicesErrorMessage = voicesError
     ? getTtsRequestErrorMessage(voicesRequestError, localizeUi("ui.panels.ttsconfigcard.couldNotRefreshVoices"))

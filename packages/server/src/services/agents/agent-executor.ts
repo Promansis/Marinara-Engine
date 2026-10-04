@@ -1964,9 +1964,13 @@ function buildInvalidJsonRetryMessages(
 }
 
 function shouldRunAgentIndividually(config: Pick<AgentExecConfig, "type" | "settings">): boolean {
-  // These agents either need compact prompts or carry large private extras that
-  // must not be merged into unrelated batched agent requests.
+  // The user can keep any agent out of shared requests, for local models that
+  // mix up batched instructions (#6977). The rest either need compact prompts
+  // or carry large private extras that must not be merged into unrelated
+  // batched agent requests. AgentEditor's alwaysRunsAlone copies the fixed
+  // rules, so keep the two in step.
   return (
+    config.settings.batchWithOtherAgents === false ||
     config.type === "illustrator" ||
     config.type === "beholder" ||
     getAgentContextSources(config).previousOutput ||

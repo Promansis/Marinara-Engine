@@ -635,6 +635,53 @@ try {
     });
     assert.equal(prepared.recalledScenes, null, "closed scenes still in the live context are excluded from retrieval");
   }
+  // #6977: a tracker with its own request keeps to its own task; the scene check gets a request of its own.
+  await createAgentsStorage(db).update(tracker.id, {
+    settings: { ...trackerSettings, runInterval: 1, batchWithOtherAgents: false },
+  });
+  const ownRequestChat = await chats.create({
+    name: "Tracker with its own request",
+    mode: "roleplay",
+    characterIds: [character.id],
+    connectionId: connection.id,
+  });
+  assert(ownRequestChat);
+  chatIds.push(ownRequestChat.id);
+  await chats.patchMetadata(ownRequestChat.id, {
+    enableAgents: true,
+    activeAgentIds: [tracker.type],
+    advancedMemory: {
+      ...DEFAULT_ADVANCED_MEMORY_SETTINGS,
+      enabled: true,
+      maxContextTokens: 16_384,
+      helperConnectionId: connection.id,
+    },
+  });
+  await memory.initialize(ownRequestChat.id);
+  await chats.createMessagesBatch(
+    ownRequestChat.id,
+    Array.from({ length: 4 }, (_, index) => ({ role: "user" as const, content: `Own request event ${index + 1}.` })),
+  );
+  calls.length = 0;
+  const ownRequestReply = await app.inject({
+    method: "POST",
+    url: "/api/generate/",
+    payload: { chatId: ownRequestChat.id, forCharacterId: character.id, streaming: true },
+  });
+  assert(!ownRequestReply.body.includes('"type":"error"'), ownRequestReply.body);
+  const ownRequestSource = await chats.listMessages(ownRequestChat.id);
+  await waitFor(async () => {
+    const state = JSON.parse((await chats.getById(ownRequestChat.id))!.metadata).advancedMemoryState;
+    return state.status === "ready" && state.sceneCheckMessageId === ownRequestSource.at(-1)!.id;
+  });
+  await memory.checkScenesAfterGeneration(ownRequestChat.id);
+  assert.doesNotMatch(
+    JSON.stringify(calls.find((call) => call.kind === "tracker")!.messages),
+    /__scene_check/u,
+    "a tracker with its own request carries only its own task",
+  );
+  assert.equal(calls.filter((call) => call.kind === "scene").length, 1, "the scene check runs in its own request");
+  await createAgentsStorage(db).update(tracker.id, { settings: { ...trackerSettings, runInterval: 1 } });
   const decisionConnection = await createConnectionsStorage(db).create({
     name: "Dedicated memory decisions",
     provider: "decision",

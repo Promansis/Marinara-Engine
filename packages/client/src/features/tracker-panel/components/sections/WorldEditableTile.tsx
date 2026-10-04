@@ -140,7 +140,7 @@ export function WorldRenderedEdit({
       {(lockMode || locked) && (
         <span
           className={cn(
-            "pointer-events-none absolute top-0.5 z-[12] flex h-3.5 w-3.5 items-center justify-center rounded-[2px] bg-[var(--background)]/58 shadow-[0_0_6px_color-mix(in_srgb,var(--foreground)_10%,transparent)] ring-1 ring-[var(--border)] transition-opacity duration-150 [@media(pointer:coarse)]:h-4 [@media(pointer:coarse)]:w-4",
+            "pointer-events-none absolute top-1/2 z-[12] flex h-3.5 w-3.5 -translate-y-1/2 items-center justify-center rounded-[2px] bg-[var(--background)]/58 shadow-[0_0_6px_color-mix(in_srgb,var(--foreground)_10%,transparent)] ring-1 ring-[var(--border)] transition-opacity duration-150 [@media(pointer:coarse)]:h-4 [@media(pointer:coarse)]:w-4",
             controlsSide === "left" ? "left-0.5" : "right-0.5",
             locked ? "text-[var(--foreground)] opacity-90" : "text-[var(--muted-foreground)] opacity-50",
           )}
@@ -156,7 +156,7 @@ export function WorldRenderedEdit({
       {showEditHint && !lockMode && !locked && (
         <span
           className={cn(
-            "pointer-events-none absolute top-0.5 z-[12] flex h-3 w-3 translate-y-0.5 items-center justify-center rounded-[2px] bg-[var(--background)]/58 text-[var(--muted-foreground)] opacity-0 shadow-[0_0_6px_color-mix(in_srgb,var(--foreground)_10%,transparent)] ring-1 ring-[var(--border)] transition-[opacity,transform] duration-150 group-hover/world-edit:translate-y-0 group-hover/world-edit:opacity-70 group-focus-visible/world-edit:translate-y-0 group-focus-visible/world-edit:opacity-80 max-md:translate-y-0 max-md:opacity-45",
+            "pointer-events-none absolute top-1/2 z-[12] flex h-3 w-3 -translate-y-1/2 items-center justify-center rounded-[2px] bg-[var(--background)]/58 text-[var(--muted-foreground)] opacity-0 shadow-[0_0_6px_color-mix(in_srgb,var(--foreground)_10%,transparent)] ring-1 ring-[var(--border)] transition-opacity duration-150 group-hover/world-edit:opacity-70 group-focus-visible/world-edit:opacity-80 max-md:hidden",
             controlsSide === "left" ? "left-0.5" : "right-0.5",
           )}
           aria-hidden="true"

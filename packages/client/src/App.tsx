@@ -640,10 +640,35 @@ export function App() {
       // background-color, not from resolved custom properties (see index.html).
       // Read the rendered variable so visual themes and injected custom theme
       // CSS are reflected instead of falling back to the stock scheme.
-      const computedBackground = getComputedStyle(root).getPropertyValue("--background").trim();
-      const literalBackground = getCssColorFallback(computedBackground, resolvedBackground);
+      const computedStyle = getComputedStyle(root);
+      const computedBackground = computedStyle.getPropertyValue("--background").trim();
+      let literalBackground = getCssColorFallback(computedBackground, resolvedBackground);
+      // Flatten translucent shell surfaces over the app background. Browser
+      // chrome needs an opaque color, and sidebars retain the Home menu surface.
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 1;
+      const context = canvas.getContext("2d");
+      if (context) {
+        context.fillStyle = defaultBackground;
+        context.fillRect(0, 0, 1, 1);
+        context.fillStyle = literalBackground;
+        context.fillRect(0, 0, 1, 1);
+        const backgroundPixels = context.getImageData(0, 0, 1, 1);
+        context.fillStyle = computedStyle.getPropertyValue("--card").trim();
+        context.fillRect(0, 0, 1, 1);
+        const [red, green, blue] = context.getImageData(0, 0, 1, 1).data;
+        const shellSurface = `rgb(${red}, ${green}, ${blue})`;
+        root.style.setProperty("--marinara-shell-surface", shellSurface);
+        context.putImageData(backgroundPixels, 0, 0);
+        context.fillStyle = computedStyle.getPropertyValue("--marinara-topbar-surface").trim();
+        context.fillRect(0, 0, 1, 1);
+        const [topbarRed, topbarGreen, topbarBlue] = context.getImageData(0, 0, 1, 1).data;
+        literalBackground = `rgb(${topbarRed}, ${topbarGreen}, ${topbarBlue})`;
+      }
+      root.style.setProperty("--marinara-page-backing", literalBackground);
       root.style.setProperty("background-color", literalBackground, "important");
       document.body.style.setProperty("background-color", literalBackground, "important");
+      document.querySelector('meta[name="theme-color"]')?.setAttribute("content", literalBackground);
     };
 
     syncLiteralBackground();

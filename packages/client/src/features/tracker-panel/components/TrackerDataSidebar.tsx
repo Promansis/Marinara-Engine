@@ -221,7 +221,7 @@ export function TrackerDataSidebar({
       data-component="TrackerDataSidebar"
       data-tracker-size-profile={trackerPanelSizeProfile}
       className={cn(
-        "@container relative flex flex-col bg-zinc-950/95 text-zinc-100 backdrop-blur-sm",
+        "@container relative flex flex-col bg-zinc-950 text-zinc-100 backdrop-blur-sm",
         TRACKER_PANEL_NEUTRAL_VARS,
         fillHeight ? "overflow-hidden" : "overflow-visible",
         fillHeight ? "h-full" : "min-h-0",

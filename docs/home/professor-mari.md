@@ -48,6 +48,7 @@ Here is the trust boundary in plain terms:
 - She cannot write straight into your saved data folder, where your characters and chats live. Instead she uses the reviewable change flow described below.
 - Raw shell commands have no network access, do not inherit server secrets, and may write only ordinary workspace files and a private temporary directory.
 - She can keep editing normal source files directly. Changes to dependency manifests, lockfiles, launchers, installers, and CI workflows are staged and shown to you before Marinara applies them.
+- She can read Marinara's built app files, the `dist` folders the app runs from, but cannot create, edit, move, or delete them. She changes the source files instead.
 - If a source change needs a public npm library, she requests a specific package target. Marinara resolves `latest` to an exact version, shows its registry integrity in a review card, and installs it only after you approve. Package lifecycle scripts stay disabled.
 - If Marinara cannot provide its macOS or Linux shell sandbox, raw shell commands are disabled. She can still use the safer structured file and app-data tools.
 - Commands she runs stop on their own after a short time, so a stuck command cannot run forever.
