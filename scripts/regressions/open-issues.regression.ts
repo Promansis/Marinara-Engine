@@ -8908,10 +8908,35 @@ assert.match(
   /role="tablist"[\s\S]{0,1600}data-summary-prompt-tab="summary"[\s\S]{0,1600}data-summary-prompt-tab="combine"/u,
   "The Summary Prompt card must switch between Chat Summary and Combine prompt views",
 );
+assert.doesNotMatch(
+  summaryPopoverSource,
+  /activeSummaryPrompt/u,
+  "The popover must not inline the full Chat Summary prompt; prompt content is edited in the summary settings drill-in",
+);
 assert.match(
   summaryPopoverSource,
-  /role="listbox"[\s\S]{0,3000}\{activeSummaryPrompt\}/u,
-  "The popover must show the active Chat Summary prompt below its template selector",
+  /data-summary-settings[\s\S]{0,600}<SummarySettingsPanel/u,
+  "The popover must host the summary settings behind a drill-in view",
+);
+assert.match(
+  chatSettingsDrawerSource,
+  /!isRoleplayMode &&\s*\(\s*<SummarySettingsPanel/u,
+  "Chat Settings must keep the summary settings for modes with no Summary popover",
+);
+assert.match(
+  summaryPopoverSource,
+  /aria-label=\{localizeUi\(settingsOpen \? "ui\.chat\.summarypopover\.settings" : "chat\.summary\.toolbarLabel"\)\}/u,
+  "The popover dialog must name the settings view while the drill-in is open",
+);
+assert.match(
+  summaryPopoverSource,
+  /if \(!settingsOpen\) return;[\s\S]{0,220}settingsBackRef\.current\?\.focus\(\)/u,
+  "Opening the settings drill-in must move focus onto its Back button",
+);
+assert.match(
+  summaryPopoverSource,
+  /setSettingsOpen\(false\);[\s\S]{0,220}settingsTriggerRef\.current\?\.focus\(\)/u,
+  "Leaving the settings drill-in must restore focus to the gear trigger",
 );
 assert.doesNotMatch(
   summaryPopoverSource,
@@ -8951,7 +8976,7 @@ assert.doesNotMatch(
 assert.doesNotMatch(
   summaryPopoverSource,
   /commitCombinePromptDraft/u,
-  "The popover must not own the Combine draft now that it lives in the drawer",
+  "The popover must not own the Combine draft; it lives in SummarySettingsPanel",
 );
 assert.match(
   summarySettingsPanelSource,
@@ -9017,6 +9042,39 @@ assert.match(
   summaryPopoverSource,
   /data-summary-backfill[\s\S]{0,900}handleBackfill/u,
   "The Automatic Summaries backfill action must be centered",
+);
+const summaryOriginIconSource = summaryPopoverSource.slice(
+  summaryPopoverSource.indexOf("function SummaryEntryOriginIcon"),
+  summaryPopoverSource.indexOf("interface SummaryReadableSectionProps"),
+);
+assert.doesNotMatch(
+  summaryOriginIconSource,
+  /PenLine/u,
+  "Manual summary entries must not render a pencil origin icon beside the title",
+);
+assert.match(
+  summaryPopoverSource,
+  /\{sourceMode === "range" && \(\s*<button[\s\S]{0,300}handleAddBatchRange/u,
+  "The Add range action must live in the source header and only for Range scope",
+);
+assert.doesNotMatch(
+  summaryPopoverSource,
+  /dockedToFooter/u,
+  "Summary entry rows must keep their rounded bottom border instead of docking to the footer",
+);
+const summarySettingsGridIndex = summarySettingsPanelSource.indexOf("md:grid-cols-2");
+const summarySettingsSemanticIndex = summarySettingsPanelSource.indexOf("semanticSummaryRetrievalAvailable && (");
+const summarySettingsConnectionIndex = summarySettingsPanelSource.indexOf("Model connection and output size");
+assert.ok(
+  summarySettingsGridIndex >= 0 &&
+    summarySettingsGridIndex < summarySettingsSemanticIndex &&
+    summarySettingsSemanticIndex < summarySettingsConnectionIndex,
+  "Automatic Summaries and Semantic Summary Retrieval must share a two-column row above the model connection settings",
+);
+assert.match(
+  summarySettingsPanelSource,
+  /data-summary-prompt-view="summary"[\s\S]{0,400}<div className="space-y-1">/u,
+  "The prompt list must flow in the settings panel so hovering it never blocks the panel's scroll",
 );
 assert.match(
   chatRoutesSource,

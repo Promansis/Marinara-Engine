@@ -868,6 +868,9 @@ function SummaryButton({
   activeSummaryPromptTemplateId,
   longTermMemorySummaryPromptAvailable,
   summaryRunInterval,
+  automaticSummariesAvailable,
+  automaticSummaryEnabled,
+  summaryActiveAgentIds,
   hideSummarisedMessages,
   summaryTailMessages,
   totalMessageCount,
@@ -881,6 +884,9 @@ function SummaryButton({
   activeSummaryPromptTemplateId?: string | null;
   longTermMemorySummaryPromptAvailable: boolean;
   summaryRunInterval?: number;
+  automaticSummariesAvailable: boolean;
+  automaticSummaryEnabled: boolean;
+  summaryActiveAgentIds: string[];
   hideSummarisedMessages?: boolean;
   summaryTailMessages?: number;
   totalMessageCount: number;
@@ -1007,6 +1013,9 @@ function SummaryButton({
             activePromptTemplateId={activeSummaryPromptTemplateId}
             longTermMemorySummaryPromptAvailable={longTermMemorySummaryPromptAvailable}
             summaryRunInterval={summaryRunInterval}
+            automaticSummariesAvailable={automaticSummariesAvailable}
+            automaticSummaryEnabled={automaticSummaryEnabled}
+            activeAgentIds={summaryActiveAgentIds}
             hideSummarisedMessages={hideSummarisedMessages}
             summaryTailMessages={summaryTailMessages}
             totalMessageCount={totalMessageCount}
@@ -2001,6 +2010,9 @@ export function ChatRoleplaySurface({
     typeof chatMeta.summaryRunInterval === "number" && Number.isFinite(chatMeta.summaryRunInterval)
       ? chatMeta.summaryRunInterval
       : undefined;
+  const summaryAutomaticEnabled =
+    chatMeta.automaticSummaryEnabled === true ||
+    (chatMeta.enableAgents === true && summaryActiveAgentIds.includes("chat-summary"));
   const hideSummarisedMessages =
     typeof chatMeta.hideSummarisedMessages === "boolean" ? chatMeta.hideSummarisedMessages : undefined;
   const summaryTailMessages =
@@ -2246,6 +2258,9 @@ export function ChatRoleplaySurface({
                         }
                         longTermMemorySummaryPromptAvailable={longTermMemorySummaryPromptAvailable}
                         summaryRunInterval={summaryRunInterval}
+                        automaticSummariesAvailable={isRoleplay}
+                        automaticSummaryEnabled={summaryAutomaticEnabled}
+                        summaryActiveAgentIds={summaryActiveAgentIds}
                         hideSummarisedMessages={hideSummarisedMessages}
                         summaryTailMessages={summaryTailMessages}
                         totalMessageCount={totalMessageCount}
@@ -2381,6 +2396,9 @@ export function ChatRoleplaySurface({
                           }
                           longTermMemorySummaryPromptAvailable={longTermMemorySummaryPromptAvailable}
                           summaryRunInterval={summaryRunInterval}
+                          automaticSummariesAvailable={isRoleplay}
+                          automaticSummaryEnabled={summaryAutomaticEnabled}
+                          summaryActiveAgentIds={summaryActiveAgentIds}
                           hideSummarisedMessages={hideSummarisedMessages}
                           summaryTailMessages={summaryTailMessages}
                           totalMessageCount={totalMessageCount}
@@ -2460,6 +2478,9 @@ export function ChatRoleplaySurface({
                         }
                         longTermMemorySummaryPromptAvailable={longTermMemorySummaryPromptAvailable}
                         summaryRunInterval={summaryRunInterval}
+                        automaticSummariesAvailable={isRoleplay}
+                        automaticSummaryEnabled={summaryAutomaticEnabled}
+                        summaryActiveAgentIds={summaryActiveAgentIds}
                         hideSummarisedMessages={hideSummarisedMessages}
                         summaryTailMessages={summaryTailMessages}
                         totalMessageCount={totalMessageCount}

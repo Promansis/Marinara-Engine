@@ -7,23 +7,34 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent a
 import { useTranslation } from "react-i18next";
 import { Check, Copy, PenLine, Plus, Save, Trash2 } from "lucide-react";
 import {
+  CHAT_SUMMARY_OUTPUT_TOKENS,
   CHAT_SUMMARY_PROMPT_MAX_LENGTH,
   DEFAULT_CHAT_SUMMARY_COMBINE_PROMPT,
   DEFAULT_CHAT_SUMMARY_PROMPT,
   DEFAULT_LONG_TERM_MEMORY_CHAT_SUMMARY_PROMPT,
   LONG_TERM_MEMORY_CHAT_SUMMARY_PROMPT_ID,
   estimateTextTokens,
+  normalizeSemanticSummaryRetrievalSettings,
   type ChatSummaryPromptSettings,
   type ChatSummaryPromptTemplate,
 } from "@marinara-engine/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn, generateClientId } from "../../lib/utils";
 import { showConfirmDialog } from "../../lib/app-dialogs";
+import { appendLocalSidecarConnectionOption, filterLanguageGenerationConnections } from "../../lib/connection-filters";
+import type { ChatConnectionOption } from "../../features/chat-settings/sections/ConnectionSection";
 import { MacroTextarea } from "../ui/MacroTextarea";
+import { DraftNumberInput } from "../ui/DraftNumberInput";
 import { SettingsSwitch } from "../panels/settings/SettingControls";
-import { useUpdateChatMetadata } from "../../hooks/use-chats";
+import {
+  SemanticSummaryRetrievalControls,
+  type SemanticSummaryRetrievalControlField,
+} from "./SemanticSummaryRetrievalControls";
+import { useChat, useUpdateChatMetadata } from "../../hooks/use-chats";
+import { useConnections } from "../../hooks/use-connections";
 import { chatSummaryPromptKeys } from "../../hooks/use-chat-summary-prompts";
 import { useChatSummaryPromptPersist } from "../../hooks/use-chat-summary-prompt-persist";
+import { useSidecarStore } from "../../stores/sidecar.store";
 
 const SUMMARY_AGENT_ID = "chat-summary";
 const DEFAULT_AUTOMATIC_SUMMARY_INTERVAL = 5;
@@ -73,6 +84,31 @@ export function SummarySettingsPanel({
     whenIdle,
   } = useChatSummaryPromptPersist();
   const updateMeta = useUpdateChatMetadata();
+
+  // Model connection and semantic retrieval settings are read straight off the
+  // chat so this panel stays self-sufficient wherever it is mounted.
+  const { data: chat } = useChat(chatId);
+  const chatMetadata = useMemo<Record<string, unknown>>(() => {
+    const raw = chat?.metadata;
+    return (typeof raw === "string" ? JSON.parse(raw) : (raw ?? {})) as Record<string, unknown>;
+  }, [chat?.metadata]);
+  const { data: connections } = useConnections();
+  const sidecarModelDownloaded = useSidecarStore((state) => state.modelDownloaded);
+  const sidecarModelDisplayName = useSidecarStore((state) => state.modelDisplayName);
+  const summaryConnections = useMemo(
+    () =>
+      appendLocalSidecarConnectionOption(
+        filterLanguageGenerationConnections((connections ?? []) as ChatConnectionOption[]),
+        chat?.mode !== "game" && sidecarModelDownloaded,
+        sidecarModelDisplayName,
+      ),
+    [chat?.mode, connections, sidecarModelDisplayName, sidecarModelDownloaded],
+  );
+  const summaryConnectionId =
+    typeof chatMetadata.summaryConnectionId === "string" ? chatMetadata.summaryConnectionId : "";
+  const summaryConnectionMissing =
+    summaryConnectionId.length > 0 && !summaryConnections.some((connection) => connection.id === summaryConnectionId);
+  const summaryRetrievalSettings = normalizeSemanticSummaryRetrievalSettings(chatMetadata);
 
   const normalizedAutomaticSummaryInterval = clampAutomaticSummaryInterval(summaryRunInterval);
   const [summaryPromptView, setSummaryPromptView] = useState<SummaryPromptView>("summary");
@@ -327,63 +363,158 @@ export function SummarySettingsPanel({
   );
 
   const templateEditorDisabled = !globalPromptSettingsReady || promptSettingsSaveLocked;
+  const semanticSummaryRetrievalAvailable = import.meta.env.VITE_MARINARA_LITE !== "true";
 
   return (
     <div className={cn("space-y-2.5", className)}>
-      {automaticSummariesAvailable && (
-        <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/35 p-2">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-[0.6875rem] font-semibold text-[var(--popover-foreground)]">
-                {localizeUi("ui.chat.summarypopover.automaticSummaries")}
-              </p>
-              <p className="mt-0.5 text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
-                {automaticSummariesOn
-                  ? localizeUi("chat.summary.automatic.updateInterval", {
-                      count: normalizedAutomaticSummaryInterval,
-                    })
-                  : localizeUi("ui.chat.summarypopover.offForThisRoleplayChat")}
-              </p>
+      <div
+        className={cn(
+          "grid items-start gap-2",
+          automaticSummariesAvailable && semanticSummaryRetrievalAvailable && "md:grid-cols-2",
+        )}
+      >
+        {automaticSummariesAvailable && (
+          <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/35 p-2">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[0.6875rem] font-semibold text-[var(--popover-foreground)]">
+                  {localizeUi("ui.chat.summarypopover.automaticSummaries")}
+                </p>
+                <p className="mt-0.5 text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
+                  {automaticSummariesOn
+                    ? localizeUi("chat.summary.automatic.updateInterval", {
+                        count: normalizedAutomaticSummaryInterval,
+                      })
+                    : localizeUi("ui.chat.summarypopover.offForThisRoleplayChat")}
+                </p>
+              </div>
+              <SettingsSwitch
+                label={localizeUi("ui.noodle.noodlehome.enabled")}
+                checked={automaticSummariesOn}
+                onChange={handleAutomaticSummaryToggle}
+              />
             </div>
+            <label className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-[var(--background)]/25 px-2 py-1.5 text-[0.6875rem] text-[var(--muted-foreground)]">
+              <span>{localizeUi("ui.chat.summarypopover.every")}</span>
+              <span className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={MIN_AUTOMATIC_SUMMARY_INTERVAL}
+                  max={MAX_AUTOMATIC_SUMMARY_INTERVAL}
+                  value={automaticIntervalDraft}
+                  disabled={!automaticSummariesOn}
+                  onFocus={() => {
+                    automaticIntervalFocused.current = true;
+                  }}
+                  onChange={(event) => {
+                    setAutomaticIntervalDraft(event.target.value);
+                  }}
+                  onBlur={() => {
+                    automaticIntervalFocused.current = false;
+                    persistAutomaticSummaryInterval(
+                      clampAutomaticSummaryInterval(automaticIntervalDraft || DEFAULT_AUTOMATIC_SUMMARY_INTERVAL),
+                    );
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.currentTarget.blur();
+                    }
+                  }}
+                  className="mari-chrome-field w-16 !rounded-md px-2 py-1 text-center text-xs tabular-nums disabled:cursor-not-allowed disabled:opacity-50"
+                />
+                <span>{localizeUi("ui.chat.summarypopover.userMessages")}</span>
+              </span>
+            </label>
+          </div>
+        )}
+
+        {/* Semantic retrieval */}
+        {semanticSummaryRetrievalAvailable && (
+          <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/35 p-2">
             <SettingsSwitch
-              label={localizeUi("ui.noodle.noodlehome.enabled")}
-              checked={automaticSummariesOn}
-              onChange={handleAutomaticSummaryToggle}
+              label={localizeUi("ui.chat.chatsettingsdrawer.semanticSummaryRetrieval")}
+              description={localizeUi(
+                "ui.chat.chatsettingsdrawer.keepRecentSummariesInContextAndRetrieveOnlyRelevantOlder",
+              )}
+              checked={chatMetadata.semanticSummaryRetrievalEnabled === true}
+              onChange={(semanticSummaryRetrievalEnabled) =>
+                updateMeta.mutate({ id: chatId, semanticSummaryRetrievalEnabled })
+              }
+              labelPosition="start"
+              className="justify-between rounded-lg px-1 text-left"
+              labelClassName="text-xs font-medium"
+            />
+            <SemanticSummaryRetrievalControls
+              enabled={chatMetadata.semanticSummaryRetrievalEnabled === true}
+              recentCount={summaryRetrievalSettings.semanticSummaryRecentCount}
+              olderCount={summaryRetrievalSettings.semanticSummaryOlderCount}
+              minSimilarity={summaryRetrievalSettings.semanticSummaryMinSimilarity}
+              recentLabel={localizeUi("ui.chat.chatsettingsdrawer.recentWeeks")}
+              olderLabel={localizeUi("ui.chat.chatsettingsdrawer.olderWeeks")}
+              thresholdLabel={localizeUi("ui.chat.chatsettingsdrawer.summaryRelevanceThreshold")}
+              onChange={(field: SemanticSummaryRetrievalControlField, value) =>
+                updateMeta.mutate({ id: chatId, [field]: value })
+              }
             />
           </div>
-          <label className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-[var(--background)]/25 px-2 py-1.5 text-[0.6875rem] text-[var(--muted-foreground)]">
-            <span>{localizeUi("ui.chat.summarypopover.every")}</span>
-            <span className="flex items-center gap-2">
-              <input
-                type="number"
-                min={MIN_AUTOMATIC_SUMMARY_INTERVAL}
-                max={MAX_AUTOMATIC_SUMMARY_INTERVAL}
-                value={automaticIntervalDraft}
-                disabled={!automaticSummariesOn}
-                onFocus={() => {
-                  automaticIntervalFocused.current = true;
-                }}
-                onChange={(event) => {
-                  setAutomaticIntervalDraft(event.target.value);
-                }}
-                onBlur={() => {
-                  automaticIntervalFocused.current = false;
-                  persistAutomaticSummaryInterval(
-                    clampAutomaticSummaryInterval(automaticIntervalDraft || DEFAULT_AUTOMATIC_SUMMARY_INTERVAL),
-                  );
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.currentTarget.blur();
-                  }
-                }}
-                className="mari-chrome-field w-16 !rounded-md px-2 py-1 text-center text-xs tabular-nums disabled:cursor-not-allowed disabled:opacity-50"
-              />
-              <span>{localizeUi("ui.chat.summarypopover.userMessages")}</span>
-            </span>
-          </label>
+        )}
+      </div>
+
+      {/* Model connection and output size */}
+      <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/35 p-2">
+        <div className="space-y-1.5">
+          <span className="text-xs font-medium">{localizeUi("ui.chat.summarypopover.summaryConnection_febe5c4")}</span>
+          <select
+            value={summaryConnectionId}
+            onChange={(event) =>
+              updateMeta.mutate({
+                id: chatId,
+                summaryConnectionId: event.target.value || null,
+              })
+            }
+            className="mari-chrome-field w-full !rounded-md px-3 py-2 text-xs"
+            aria-label={localizeUi("ui.chat.summarypopover.summaryConnection_febe5c4")}
+          >
+            <option value="">{localizeUi("chat.summary.connection.agentDefaultFallback")}</option>
+            {summaryConnectionMissing && (
+              <option value={summaryConnectionId}>
+                {localizeUi("chat.summary.connection.missing", {
+                  id: summaryConnectionId,
+                })}
+              </option>
+            )}
+            {summaryConnections.map((connection) => (
+              <option key={connection.id} value={connection.id}>
+                {connection.name}
+                {connection.model ? localizeUi("ui.chat.datablock.value1", { value1: connection.model }) : ""}
+              </option>
+            ))}
+          </select>
+          <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+            {localizeUi("ui.chat.summarypopover.chooseTheModelConnectionUsedForManualAndAutomatic")}
+          </p>
         </div>
-      )}
+        <div className="space-y-1.5">
+          <span className="text-xs font-medium">{localizeUi("ui.chat.summarypopover.maximumOutputSize")}</span>
+          <DraftNumberInput
+            value={
+              typeof chatMetadata.summaryMaxTokens === "number"
+                ? chatMetadata.summaryMaxTokens
+                : CHAT_SUMMARY_OUTPUT_TOKENS.DEFAULT
+            }
+            min={CHAT_SUMMARY_OUTPUT_TOKENS.MIN}
+            max={CHAT_SUMMARY_OUTPUT_TOKENS.MAX}
+            onCommit={(value) =>
+              updateMeta.mutate({
+                id: chatId,
+                summaryMaxTokens: value,
+              })
+            }
+            ariaLabel={localizeUi("ui.chat.summarypopover.summaryMaximumOutputSize")}
+            className="mari-chrome-field w-full !rounded-md px-3 py-2 text-xs"
+          />
+        </div>
+      </div>
 
       {/* @summary-prompt-controls-start */}
       <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/35 p-2">
@@ -443,7 +574,7 @@ export function SummarySettingsPanel({
             role="tabpanel"
             aria-labelledby="summary-prompt-tab-summary"
           >
-            <div className="max-h-72 space-y-1 overflow-y-auto pr-0.5">
+            <div className="space-y-1">
               <SummaryPromptTemplateRow
                 active={!normalizedActivePromptTemplateId}
                 name={localizeUi("ui.chat.summarypopover.builtInDefault")}

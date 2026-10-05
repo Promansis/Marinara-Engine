@@ -35,6 +35,7 @@ import {
   Check,
   CheckCheck,
   ArrowDown,
+  ArrowLeft,
   ArrowUp,
   AlertTriangle,
   ChevronRight,
@@ -46,12 +47,14 @@ import {
   GripVertical,
   Save,
   ScrollText,
+  Settings2,
   Sparkles,
   Trash2,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn, generateClientId } from "../../lib/utils";
+import { SummarySettingsPanel } from "./SummarySettingsPanel";
 import { useUIStore } from "../../stores/ui.store";
 import { useDialogStore } from "../../stores/dialog.store";
 import {
@@ -64,8 +67,6 @@ import {
 } from "../ui/neutral-surface-styles";
 import {
   DEFAULT_CHAT_SUMMARY_COMBINE_PROMPT,
-  DEFAULT_CHAT_SUMMARY_PROMPT,
-  DEFAULT_LONG_TERM_MEMORY_CHAT_SUMMARY_PROMPT,
   LONG_TERM_MEMORY_CHAT_SUMMARY_PROMPT_ID,
   SUMMARY_TAIL_MESSAGES,
   estimateChatSummaryTokens,
@@ -102,6 +103,10 @@ interface SummaryPopoverProps {
   activePromptTemplateId?: string | null;
   longTermMemorySummaryPromptAvailable?: boolean;
   summaryRunInterval?: number;
+  /** Whether the automatic-summary toggle applies to this chat mode (roleplay/game). */
+  automaticSummariesAvailable?: boolean;
+  automaticSummaryEnabled?: boolean;
+  activeAgentIds?: string[];
   /** Per-chat persisted "Hide summarised messages" preference (metadata-backed). Undefined/false means off (opt-in default). */
   hideSummarisedMessages?: boolean;
   /** How many recent messages stay visible when summarised messages are auto-hidden (roleplay tail). Default 10. */
@@ -343,6 +348,9 @@ export function SummaryPopover({
   activePromptTemplateId = null,
   longTermMemorySummaryPromptAvailable = false,
   summaryRunInterval,
+  automaticSummariesAvailable = false,
+  automaticSummaryEnabled = false,
+  activeAgentIds = [],
   hideSummarisedMessages,
   summaryTailMessages,
   totalMessageCount,
@@ -359,6 +367,11 @@ export function SummaryPopover({
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [draftEntry, setDraftEntry] = useState<ChatSummaryEntry | null>(null);
   const [templateSelectOpen, setTemplateSelectOpen] = useState(false);
+  // Settings are a drill-in view, not a second tab: the default Summaries view
+  // stays the whole popover. Once opened the panel stays mounted so prompt drafts
+  // survive the swap, but it is not built until the user actually asks for it.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSeen, setSettingsSeen] = useState(false);
   const [templateOptionIndex, setTemplateOptionIndex] = useState(0);
   const [showInactiveSummaries, setShowInactiveSummaries] = useState(false);
   const summaryPopoverSettings = useUIStore((s) => s.summaryPopoverSettings);
@@ -407,6 +420,8 @@ export function SummaryPopover({
   const entryTextareaRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const settingsTriggerRef = useRef<HTMLButtonElement>(null);
+  const settingsBackRef = useRef<HTMLButtonElement>(null);
   const templateTriggerRef = useRef<HTMLButtonElement>(null);
   const summaryEntryListRef = useRef<HTMLDivElement>(null);
   const [draggingEntryIndex, setDraggingEntryIndex] = useState<number | null>(null);
@@ -569,9 +584,6 @@ export function SummaryPopover({
   const promptTemplateSummary = isLongTermMemoryPromptSelected
     ? localizeUi("chat.summary.template.longTermMemory")
     : (activePromptTemplate?.name ?? localizeUi("ui.chat.summarypopover.builtInDefault"));
-  const activeSummaryPrompt = isLongTermMemoryPromptSelected
-    ? DEFAULT_LONG_TERM_MEMORY_CHAT_SUMMARY_PROMPT
-    : (activePromptTemplate?.prompt ?? DEFAULT_CHAT_SUMMARY_PROMPT);
   const readCurrentPromptSettings = useCallback(() => {
     const cached = queryClient.getQueryData<ChatSummaryPromptSettings & { hasPersistedSettings?: boolean }>(
       chatSummaryPromptKeys.settings,
@@ -1301,6 +1313,14 @@ export function SummaryPopover({
     return () => cancelAnimationFrame(frame);
   }, []);
 
+  // The gear button unmounts when the drill-in opens, so land focus on its Back button
+  // instead of letting it fall back to the page body.
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const frame = requestAnimationFrame(() => settingsBackRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [settingsOpen]);
+
   // Move focus onto the current option when the template listbox opens (roving tabindex).
   useEffect(() => {
     if (!templateSelectOpen) return;
@@ -1365,7 +1385,7 @@ export function SummaryPopover({
       data-chat-floating-panel
       data-summary-panel
       role="dialog"
-      aria-label={localizeUi("chat.summary.toolbarLabel")}
+      aria-label={localizeUi(settingsOpen ? "ui.chat.summarypopover.settings" : "chat.summary.toolbarLabel")}
       onMouseDown={handlePanelMouseDown}
       onPointerDown={handlePanelPointerDown}
       className="fixed z-[9999]"
@@ -1383,19 +1403,56 @@ export function SummaryPopover({
         <div className="mb-2 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className={NEUTRAL_PANEL_TITLE}>
-              <ScrollText size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
-              <span className="truncate">{localizeUi("chat.summary.toolbarLabel")}</span>
+              {settingsOpen ? (
+                <Settings2 size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
+              ) : (
+                <ScrollText size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
+              )}
+              <span className="truncate">
+                {settingsOpen ? localizeUi("ui.chat.summarypopover.settings") : localizeUi("chat.summary.toolbarLabel")}
+              </span>
             </div>
-            <p className={cn(NEUTRAL_PANEL_SUBTITLE, "truncate")}>
-              {hasEntries
-                ? localizeUi("chat.summary.headerActive", {
-                    count: enabledEntryCount,
-                    tokens: formatTokenCount(enabledTokenEstimate),
-                  })
-                : localizeUi("ui.chat.summarypopover.noSummariesYet")}
-            </p>
+            {!settingsOpen && (
+              <p className={cn(NEUTRAL_PANEL_SUBTITLE, "truncate")}>
+                {hasEntries
+                  ? localizeUi("chat.summary.headerActive", {
+                      count: enabledEntryCount,
+                      tokens: formatTokenCount(enabledTokenEstimate),
+                    })
+                  : localizeUi("ui.chat.summarypopover.noSummariesYet")}
+              </p>
+            )}
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            {settingsOpen ? (
+              <button
+                type="button"
+                ref={settingsBackRef}
+                onClick={() => {
+                  setSettingsOpen(false);
+                  requestAnimationFrame(() => settingsTriggerRef.current?.focus());
+                }}
+                className={NEUTRAL_PANEL_CLOSE_BUTTON}
+                aria-label={localizeUi("ui.chat.summarypopover.backToSummaries")}
+              >
+                <ArrowLeft size={NEUTRAL_PANEL_CLOSE_ICON_SIZE} />
+              </button>
+            ) : (
+              <button
+                type="button"
+                ref={settingsTriggerRef}
+                data-summary-settings-trigger
+                onClick={() => {
+                  setTemplateSelectOpen(false);
+                  setSettingsSeen(true);
+                  setSettingsOpen(true);
+                }}
+                className={NEUTRAL_PANEL_CLOSE_BUTTON}
+                aria-label={localizeUi("ui.chat.summarypopover.settings")}
+              >
+                <Settings2 size={NEUTRAL_PANEL_CLOSE_ICON_SIZE} />
+              </button>
+            )}
             <button
               type="button"
               ref={closeButtonRef}
@@ -1409,7 +1466,22 @@ export function SummaryPopover({
         </div>
 
         <div className={cn(NEUTRAL_PANEL_SCROLL_AREA, "min-h-0 flex-1 overflow-y-auto pr-1")}>
-          <div className="mb-3 space-y-2">
+          {/* Settings drill-in: kept mounted once opened so prompt drafts survive the swap. */}
+          {settingsSeen && (
+            <div hidden={!settingsOpen} data-summary-settings>
+              <SummarySettingsPanel
+                chatId={chatId}
+                longTermMemorySummaryPromptAvailable={longTermMemorySummaryPromptAvailable}
+                fallbackPromptTemplates={promptTemplates}
+                fallbackActivePromptTemplateId={activePromptTemplateId}
+                automaticSummariesAvailable={automaticSummariesAvailable}
+                automaticSummaryEnabled={automaticSummaryEnabled}
+                summaryRunInterval={summaryRunInterval}
+                activeAgentIds={activeAgentIds}
+              />
+            </div>
+          )}
+          <div className="mb-3 space-y-2" hidden={settingsOpen}>
             <div className="grid gap-2 sm:grid-cols-2">
               <div className="space-y-1.5 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2">
                 <p className="px-1 text-[0.6875rem] font-semibold text-[var(--popover-foreground)]">
@@ -1554,74 +1626,74 @@ export function SummaryPopover({
                     </div>
                   )}
                 </div>
-                <div className="whitespace-pre-wrap rounded-md bg-[var(--background)]/25 px-2 py-1.5 font-mono text-xs leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-                  {activeSummaryPrompt}
-                </div>
               </div>
 
-              <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/35 p-2">
-                {backfillState.status === "running" && backfillState.chatId === chatId && (
-                  <div className="space-y-1.5">
-                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--border)]">
-                      <div
-                        role="progressbar"
-                        aria-valuenow={backfillState.completedBatches}
-                        aria-valuemin={0}
-                        aria-valuemax={backfillState.totalBatches}
-                        aria-labelledby="backfill-progress-label"
-                        className="h-full rounded-full bg-[var(--primary)] transition-all duration-300"
-                        style={{
-                          width: `${backfillState.totalBatches > 0 ? (backfillState.completedBatches / backfillState.totalBatches) * 100 : 0}%`,
-                        }}
-                      />
+              {/* Backfill catches up whole-chat history, so it is not offered on the Range workflow. */}
+              {(backfillState.status === "running" ? backfillState.chatId === chatId : sourceMode !== "range") && (
+                <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/35 p-2">
+                  {backfillState.status === "running" && backfillState.chatId === chatId && (
+                    <div className="space-y-1.5">
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--border)]">
+                        <div
+                          role="progressbar"
+                          aria-valuenow={backfillState.completedBatches}
+                          aria-valuemin={0}
+                          aria-valuemax={backfillState.totalBatches}
+                          aria-labelledby="backfill-progress-label"
+                          className="h-full rounded-full bg-[var(--primary)] transition-all duration-300"
+                          style={{
+                            width: `${backfillState.totalBatches > 0 ? (backfillState.completedBatches / backfillState.totalBatches) * 100 : 0}%`,
+                          }}
+                        />
+                      </div>
+                      <p
+                        id="backfill-progress-label"
+                        className="text-[0.625rem] leading-snug text-[var(--muted-foreground)]"
+                      >
+                        {backfillState.currentRangeStart && backfillState.currentRangeEnd
+                          ? localizeUi("chat.summary.backfill.rangeProgress", {
+                              start: backfillState.currentRangeStart,
+                              end: backfillState.currentRangeEnd,
+                              completed: backfillState.completedBatches,
+                              total: backfillState.totalBatches,
+                            })
+                          : localizeUi("chat.summary.backfill.batchProgress", {
+                              completed: backfillState.completedBatches,
+                              total: backfillState.totalBatches,
+                            })}
+                      </p>
                     </div>
-                    <p
-                      id="backfill-progress-label"
-                      className="text-[0.625rem] leading-snug text-[var(--muted-foreground)]"
-                    >
-                      {backfillState.currentRangeStart && backfillState.currentRangeEnd
-                        ? localizeUi("chat.summary.backfill.rangeProgress", {
-                            start: backfillState.currentRangeStart,
-                            end: backfillState.currentRangeEnd,
-                            completed: backfillState.completedBatches,
-                            total: backfillState.totalBatches,
-                          })
-                        : localizeUi("chat.summary.backfill.batchProgress", {
-                            completed: backfillState.completedBatches,
-                            total: backfillState.totalBatches,
-                          })}
-                    </p>
-                  </div>
-                )}
-
-                <div data-summary-backfill className="flex items-center justify-center gap-1.5">
-                  {backfillState.status === "running" && backfillState.chatId === chatId ? (
-                    <button
-                      type="button"
-                      onClick={stopBackfill}
-                      className="flex items-center gap-1.5 rounded-md bg-[var(--destructive)]/10 px-2.5 py-1.5 text-[0.6875rem] font-medium text-[var(--destructive)] ring-1 ring-[var(--destructive)]/30 transition-colors hover:bg-[var(--destructive)]/20"
-                    >
-                      <Loader2 size="0.75rem" className="animate-spin" />
-                      {localizeUi("ui.chat.summarypopover.stop")}
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => void handleBackfill()}
-                      disabled={totalMessageCount === 0 || !globalPromptSettingsReady}
-                      className="flex items-center gap-1.5 rounded-md bg-[var(--secondary)] px-2.5 py-1.5 text-[0.6875rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <RefreshCw size="0.75rem" />
-                      {localizeUi("ui.chat.summarypopover.backfillSummary")}
-                    </button>
                   )}
+
+                  <div data-summary-backfill className="flex items-center justify-center gap-1.5">
+                    {backfillState.status === "running" && backfillState.chatId === chatId ? (
+                      <button
+                        type="button"
+                        onClick={stopBackfill}
+                        className="flex items-center gap-1.5 rounded-md bg-[var(--destructive)]/10 px-2.5 py-1.5 text-[0.6875rem] font-medium text-[var(--destructive)] ring-1 ring-[var(--destructive)]/30 transition-colors hover:bg-[var(--destructive)]/20"
+                      >
+                        <Loader2 size="0.75rem" className="animate-spin" />
+                        {localizeUi("ui.chat.summarypopover.stop")}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void handleBackfill()}
+                        disabled={totalMessageCount === 0 || !globalPromptSettingsReady}
+                        className="flex items-center gap-1.5 rounded-md bg-[var(--secondary)] px-2.5 py-1.5 text-[0.6875rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <RefreshCw size="0.75rem" />
+                        {localizeUi("ui.chat.summarypopover.backfillSummary")}
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           </div>
 
           {/* Body */}
-          <div>
+          <div hidden={settingsOpen}>
             <div className="space-y-2">
               {hasPersistedEntries && (
                 <div className="flex items-center justify-between gap-1.5 px-0.5">
@@ -1791,7 +1863,6 @@ export function SummaryPopover({
                               ? handleDeleteSelectedEntries()
                               : handleDeleteEntry(entry))
                           }
-                          dockedToFooter={entry.id === visibleEntries[visibleEntries.length - 1]?.id}
                         />
                         {showDropAfter && (
                           <div className="mari-chrome-accent-progress mari-accent-animated mx-2 mt-2 h-0.5 rounded-full" />
@@ -1829,9 +1900,22 @@ export function SummaryPopover({
         >
           <div className="mb-2.5 space-y-2">
             <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start gap-3">
-              <div className="min-w-0">
-                <p className="truncate text-xs font-semibold text-[var(--foreground)]">{sourceSummary}</p>
-                <p className="truncate text-[0.625rem] text-[var(--muted-foreground)]">{sourceDetail}</p>
+              <div className="flex min-w-0 items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-semibold text-[var(--foreground)]">{sourceSummary}</p>
+                  <p className="truncate text-[0.625rem] text-[var(--muted-foreground)]">{sourceDetail}</p>
+                </div>
+                {sourceMode === "range" && (
+                  <button
+                    type="button"
+                    onClick={handleAddBatchRange}
+                    disabled={isBatchGenerating || !nextBatchRange}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[0.625rem] font-semibold text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Plus size="0.6875rem" />
+                    {localizeUi("ui.chat.summarypopover.batchAddRange")}
+                  </button>
+                )}
               </div>
               <div className="min-w-0 text-right">
                 <p className="truncate text-xs font-semibold text-[var(--foreground)]">
@@ -2037,42 +2121,31 @@ export function SummaryPopover({
                     })}
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <button
-                    type="button"
-                    onClick={handleAddBatchRange}
-                    disabled={isBatchGenerating || !nextBatchRange}
-                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.625rem] font-semibold text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <Plus size="0.6875rem" />
-                    {localizeUi("ui.chat.summarypopover.batchAddRange")}
-                  </button>
-                  <div className="flex flex-wrap items-center justify-end gap-1">
-                    {batchCompletedRanges.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={handleClearCompletedRanges}
-                        disabled={isBatchGenerating}
-                        className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[0.625rem] font-semibold text-emerald-600 transition-colors hover:bg-emerald-500/10 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40 dark:text-emerald-400 dark:hover:text-emerald-300"
-                        title={localizeUi("ui.chat.summarypopover.batchClearCompleted")}
-                      >
-                        <CheckCheck size="0.6875rem" />
-                        {localizeUi("ui.chat.summarypopover.batchClearCompleted")}
-                      </button>
-                    )}
-                    {batchRanges.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={handleClearExtraRanges}
-                        disabled={isBatchGenerating}
-                        className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[0.625rem] font-semibold text-[var(--destructive)] transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)] disabled:cursor-not-allowed disabled:opacity-40"
-                        title={localizeUi("ui.chat.summarypopover.batchClear")}
-                      >
-                        <Trash2 size="0.6875rem" />
-                        {localizeUi("ui.chat.summarypopover.batchClear")}
-                      </button>
-                    )}
-                  </div>
+                <div className="flex flex-wrap items-center justify-end gap-1">
+                  {batchCompletedRanges.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleClearCompletedRanges}
+                      disabled={isBatchGenerating}
+                      className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[0.625rem] font-semibold text-emerald-600 transition-colors hover:bg-emerald-500/10 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40 dark:text-emerald-400 dark:hover:text-emerald-300"
+                      title={localizeUi("ui.chat.summarypopover.batchClearCompleted")}
+                    >
+                      <CheckCheck size="0.6875rem" />
+                      {localizeUi("ui.chat.summarypopover.batchClearCompleted")}
+                    </button>
+                  )}
+                  {batchRanges.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={handleClearExtraRanges}
+                      disabled={isBatchGenerating}
+                      className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[0.625rem] font-semibold text-[var(--destructive)] transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)] disabled:cursor-not-allowed disabled:opacity-40"
+                      title={localizeUi("ui.chat.summarypopover.batchClear")}
+                    >
+                      <Trash2 size="0.6875rem" />
+                      {localizeUi("ui.chat.summarypopover.batchClear")}
+                    </button>
+                  )}
                 </div>
                 {batchRun && (
                   <div className="space-y-1.5" aria-live="polite">
@@ -2249,7 +2322,6 @@ interface SummaryEntryRowProps {
   onCancelEdit: () => void;
   onSaveEdit: (entry: ChatSummaryEntry) => void;
   onDelete: () => void;
-  dockedToFooter?: boolean;
 }
 
 function SummaryEntryRow({
@@ -2280,7 +2352,6 @@ function SummaryEntryRow({
   onCancelEdit,
   onSaveEdit,
   onDelete,
-  dockedToFooter = false,
 }: SummaryEntryRowProps) {
   const { t: localizeUi } = useUiTranslation();
   const metaLine = getSummaryEntryMetaLine(entry, localizeUi);
@@ -2296,7 +2367,6 @@ function SummaryEntryRow({
       onDragEnd={onDragEnd}
       className={cn(
         "group overflow-hidden rounded-lg border shadow-sm shadow-black/10 ring-1 ring-[var(--border)]/25 transition-all",
-        dockedToFooter && "rounded-b-none border-b-0",
         expanded
           ? "border-[var(--primary)]/45 bg-[var(--accent)]/22 ring-[var(--primary)]/20"
           : "border-[var(--border)]/80 bg-[var(--secondary)]/28 hover:border-[var(--primary)]/30 hover:bg-[var(--accent)]/30",
@@ -2549,14 +2619,8 @@ function SummaryEntryOriginIcon({ entry }: { entry: ChatSummaryEntry }) {
       />
     );
   }
-  return (
-    <PenLine
-      size="0.75rem"
-      role="img"
-      className="shrink-0 text-[var(--muted-foreground)]"
-      aria-label={localizeUi("ui.chat.summaryentryoriginicon.manualSummary")}
-    />
-  );
+  // Manual entries carry no origin icon; the row title starts the line.
+  return null;
 }
 
 interface SummaryReadableSectionProps {
