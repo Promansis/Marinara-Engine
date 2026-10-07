@@ -6,6 +6,8 @@ export async function resolveConversationSelfieSystemPrompt(input: {
   promptOverridesStorage: PromptOverridesStorage;
   chatPromptTemplate?: string | null;
   appearance: string;
+  /** Card appearance text, supplied only when an appearance override replaced `appearance` (#7243). */
+  baseAppearance?: string;
   charName: string;
   characterImageInstructions?: string;
   personality?: string;
@@ -13,6 +15,7 @@ export async function resolveConversationSelfieSystemPrompt(input: {
 }): Promise<string> {
   const promptContext: ConversationSelfieCtx = {
     appearance: input.appearance,
+    baseAppearance: input.baseAppearance?.trim() ?? "",
     charName: input.charName,
     characterImageInstructions: input.characterImageInstructions?.trim() ?? "",
     personality: input.personality?.trim() ?? "",

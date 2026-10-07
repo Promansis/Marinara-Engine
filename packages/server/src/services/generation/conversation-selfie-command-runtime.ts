@@ -157,7 +157,8 @@ async function generateSelfie(
     (typeof args.charData?.description === "string" ? args.charData.description : "");
   // #7053: selfies are image prompts, so an enabled non-empty override replaces
   // the card appearance here too.
-  const appearance = readImageAppearanceOverride(extensions, cardAppearance) ?? cardAppearance;
+  const appearanceOverride = readImageAppearanceOverride(extensions, null);
+  const appearance = appearanceOverride ?? cardAppearance;
   const personality = typeof args.charData?.personality === "string" ? args.charData.personality : "";
   const characterImageInstructions =
     typeof extensions?.conversationImageInstructions === "string" ? extensions.conversationImageInstructions : "";
@@ -203,6 +204,11 @@ async function generateSelfie(
     promptOverridesStorage: createPromptOverridesStorage(args.db),
     chatPromptTemplate: selfiePromptTemplate,
     appearance,
+    // #7243: the override replaces `appearance`, which left the prompt-builder with
+    // a bare override (for a LoRA user, a single trigger token) and no visual
+    // context at all, so it discarded the token and invented a look. Carry the card
+    // text as background context whenever an override is what replaced it.
+    baseAppearance: appearanceOverride ? cardAppearance : "",
     charName: args.charName,
     characterImageInstructions,
     personality,
