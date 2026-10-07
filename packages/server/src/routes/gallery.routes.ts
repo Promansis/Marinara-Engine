@@ -360,22 +360,26 @@ function readStringArray(value: unknown): string[] {
   return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
 }
 
-function getCharacterAppearance(data: Record<string, unknown>): string {
+/** Card appearance text plus the override that replaced it, if any (#7053, #7243). */
+function getCharacterAppearance(data: Record<string, unknown>): { appearance: string; baseAppearance: string } {
   const extensions = parseJsonRecord(data.extensions);
-  // #7053: gallery selfies are image prompts, so an enabled non-empty override
-  // replaces the card appearance here too. Read it before the fallback chain is
-  // resolved so the override wins over the normal appearance.
-  const override = readImageAppearanceOverride(extensions, null);
-  if (override) return override;
-  const appearance =
+  const cardAppearance = (
     typeof extensions.appearance === "string"
       ? extensions.appearance
       : typeof data.appearance === "string"
         ? data.appearance
         : typeof data.description === "string"
           ? data.description
-          : "";
-  return appearance.trim();
+          : ""
+  ).trim();
+  // #7053: gallery selfies are image prompts, so an enabled non-empty override
+  // replaces the card appearance here too.
+  const override = readImageAppearanceOverride(extensions, null);
+  if (!override) return { appearance: cardAppearance, baseAppearance: "" };
+  // #7243: hand the card text along as background context. The override alone gives
+  // the prompt-builder nothing to work with, so it discards unrecognized tags (a
+  // ComfyUI LoRA trigger) and invents a look.
+  return { appearance: override, baseAppearance: cardAppearance };
 }
 
 function titleCaseSlug(value: string): string {
@@ -1257,7 +1261,7 @@ export async function galleryRoutes(app: FastifyInstance) {
 
     const characterData = parseJsonRecord(character.data);
     const characterName = readTrimmedString(characterData.name) ?? "character";
-    const appearance = getCharacterAppearance(characterData);
+    const { appearance, baseAppearance } = getCharacterAppearance(characterData);
     const selfiePromptTemplate = readTrimmedString(meta.selfiePrompt) ?? "";
     const selfieTags = readStringArray(meta.selfieTags);
     const selfiePositivePrompt = readTrimmedString(meta.selfiePositivePrompt) ?? selfieTags.join(", ").trim();
@@ -1282,6 +1286,7 @@ export async function galleryRoutes(app: FastifyInstance) {
       promptOverridesStorage,
       chatPromptTemplate: selfiePromptTemplate,
       appearance,
+      baseAppearance,
       charName: characterName,
     });
     const selfieSystemPrompt = styleGuidance
