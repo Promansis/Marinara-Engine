@@ -12,6 +12,16 @@ import type { PromptOverrideKeyDef } from "../types.js";
 
 export interface ConversationSelfieCtx extends Record<string, string | number | undefined> {
   appearance: string;
+  /**
+   * The card's own appearance text, populated ONLY when an enabled appearance
+   * override replaced `appearance` (#7243). Empty otherwise, so the default
+   * builder stays byte-identical for cards without an override.
+   *
+   * Without it the prompt-builder saw the override alone and had no visual
+   * context, so a bare token (e.g. a ComfyUI LoRA trigger) was discarded and the
+   * model invented a look instead.
+   */
+  baseAppearance: string;
   charName: string;
   characterImageInstructions: string;
   personality: string;
@@ -31,6 +41,12 @@ export const CONVERSATION_SELFIE: PromptOverrideKeyDef<ConversationSelfieCtx> = 
       name: "appearance",
       description: "Character appearance text.",
       example: "auburn hair, green eyes, leather jacket, mid-twenties, athletic build",
+    },
+    {
+      name: "baseAppearance",
+      description:
+        "The character card's own appearance text, supplied as background context when an Image Appearance Override replaced ${appearance}. Empty when no override is set.",
+      example: "auburn hair, green eyes, mid-twenties, athletic build, freckles",
     },
     { name: "charName", description: "Character display name.", example: "Lyra" },
     {
@@ -53,7 +69,21 @@ export const CONVERSATION_SELFIE: PromptOverrideKeyDef<ConversationSelfieCtx> = 
   defaultBuilder: (ctx) =>
     [
       `You are an image prompt generator. Create a concise, detailed image generation prompt for a selfie photo.`,
+      // #7243: with an override in play, `appearance` holds the override's tags and
+      // `baseAppearance` the card text it replaced. The override is authoritative
+      // and must survive the rewrite verbatim (a ComfyUI LoRA trigger has no visual
+      // meaning, so a model left to interpret it drops it); the card text is context
+      // only, present so the model can still dress and stage the character.
+      //
+      // With no override, `baseAppearance` is empty and this collapses back to the
+      // original single line, byte for byte.
       `The character's appearance: ${ctx.appearance}`,
+      ...(ctx.baseAppearance
+        ? [
+            `Include those appearance tags in your prompt exactly as written, character for character. Do not reword, reorder, translate, or omit any of them, even if a tag is not a word you recognize — it may be a LoRA trigger or another identifier the image model needs verbatim.`,
+            `Background context (do NOT copy this text into the prompt; use it only to render the character, their build, and what they are wearing): ${ctx.baseAppearance}`,
+          ]
+        : []),
       `Character name: ${ctx.charName}`,
       ...(ctx.personality
         ? [
@@ -77,6 +107,9 @@ export const CONVERSATION_SELFIE: PromptOverrideKeyDef<ConversationSelfieCtx> = 
     ].join("\n"),
   exampleContext: {
     appearance: "auburn hair, green eyes, leather jacket, mid-twenties, athletic build",
+    // Left empty on purpose: the default path (no override) is what most users see,
+    // and an empty baseAppearance keeps the previewed default identical to it.
+    baseAppearance: "",
     charName: "Lyra",
     personality: "reserved, observant, fascinated by old architecture",
     characterImageInstructions: "Uses grainy 35mm film and prefers candid, imperfect framing.",
