@@ -47,9 +47,17 @@ MAX_CONTRACT_STATE_LIST_ITEMS = 3
 # Long xhigh-effort calls can run several minutes; one retry still fits the review deadline.
 MODEL_REQUEST_TIMEOUT = 360
 MODEL_MAX_RETRIES = 1
-REVIEW_ROLES = ("broad", "skeptic", "verify")
+REVIEW_ROLES = ("broad", "skeptic", "lead", "scout", "verify")
 FINDER_ROLES = ("broad", "skeptic")
-SEGMENT_LABELS = {"broad": "Broad segment", "skeptic": "Skeptical segment"}
+SEGMENT_LABELS = {"broad": "Broad segment", "skeptic": "Skeptical segment", "lead": "Lead reviewer"}
+# "segments" runs the broad and skeptical finders with tools; "lead" has one reviewer read the packet
+# without tools and ask a cheaper scout to locate the code it needs, so the large packet is sent twice
+# instead of once per tool turn.
+PIPELINES = ("segments", "lead")
+MAX_SCOUT_REQUESTS = 6
+SCOUT_TOOL_BUDGET = 10
+SCOUT_TOOL_CHARS = 48_000
+MAX_DOSSIER_CHARS = 32_000
 FINDER_TOOL_BUDGET = 5
 VERIFIER_TOOL_BUDGET = 5
 # Each agent also has a tool-output budget, since every later turn resends its tool results.
@@ -649,6 +657,8 @@ def print_telemetry(stats):
     roles = stats["roles"]
     counters = ("model_calls", "tool_calls", "prompt_tokens", "cached_tokens", "completion_tokens", "reasoning_tokens", "total_tokens")
     parts = [f"elapsed_s={elapsed:.1f}", f"review_packet_chars={stats['review_packet_chars']}"]
+    if stats.get("pipeline"):
+        parts.append(f"pipeline={stats['pipeline']}")
     parts += [f"{key}={sum(role[key] for role in roles.values())}" for key in counters]
     for name, role in roles.items():
         parts.append(f"{name}=" + ",".join(f"{key}:{value}" for key, value in role.items() if value))
@@ -669,7 +679,7 @@ def role_models():
         role in REVIEW_ROLES and isinstance(value, dict) for role, value in overrides.items()
     ):
         raise ValueError(
-            'DOTTORE_MODELS must map "broad", "skeptic" or "verify" to {"model", "effort"} objects.'
+            'DOTTORE_MODELS must map "broad", "skeptic", "lead", "scout" or "verify" to {"model", "effort"} objects.'
         )
     return {
         role: {
@@ -689,6 +699,13 @@ def review_concurrency():
     return min(int(raw), MAX_CONCURRENCY)
 
 
+def review_pipeline():
+    raw = os.environ.get("DOTTORE_PIPELINE", "").strip() or PIPELINES[0]
+    if raw not in PIPELINES:
+        raise ValueError(f"DOTTORE_PIPELINE must be one of: {', '.join(PIPELINES)}.")
+    return raw
+
+
 @dataclass
 class ReviewRun:
     """What every agent in one review shares: the client, models, telemetry and the diff scope."""
@@ -701,6 +718,7 @@ class ReviewRun:
     merge_base: str
     files: frozenset
     deadline: float
+    pipeline: str = PIPELINES[0]
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -1015,22 +1033,25 @@ def finder_packet(review_target, focus_note, prior_contracts, review_packet):
     )
 
 
+FINDING_RULES = (
+    "Dottore verifies every candidate against the code before anything is published, so report each "
+    "concrete suspicion once, at its exact changed line, and do not pad. If prior Dottore contracts are "
+    "included, first judge whether the current diff satisfies or leaves those contracts incomplete before "
+    "issuing adjacent related findings. Findings must point to added/changed RIGHT lines or deleted LEFT "
+    "lines; report one finding per line, combining related concerns. Dottore never runs commands, tests "
+    "or builds and CI does, so do not report unexecuted checks as a limitation. Record what you checked "
+    "in what_i_checked, and name any limitation there instead of inventing certainty."
+)
+
+
 def finder_instructions(role):
     return (
         f"{FINDER_FOCUS[role]} Treat the review packet as the specimen. Use the read-only tools only to "
         "settle a concrete suspicion that depends on code outside the packet, fetching just what it needs; "
         "do not browse, and when the packet is enough, submit without any tool calls. You have at most "
         f"{FINDER_TOOL_BUDGET} tool calls and {FINDER_TOOL_CHARS} characters of tool output, and repeating a "
-        "call returns nothing new. Dottore verifies every candidate against the code "
-        "before anything is published, so report each concrete suspicion once, at its exact changed "
-        "line, and do not pad. If prior Dottore contracts are included, first judge whether the current "
-        "diff satisfies or leaves those contracts incomplete before issuing adjacent related findings. "
-        "Findings must point to added/changed RIGHT lines or deleted LEFT lines; report one finding per "
-        "line, combining related concerns. Guidance is listed by heading in the selected guidance index; "
-        "read_file only the sections that bear on a suspicion. Dottore never runs commands, tests or "
-        "builds and CI does, so do not report unexecuted checks as a limitation. Record what this segment "
-        "checked in what_i_checked, and name any limitation there instead of inventing certainty. "
-        "Finish by calling submit_findings."
+        f"call returns nothing new. Guidance is listed by heading in the selected guidance index; read_file "
+        f"only the sections that bear on a suspicion. {FINDING_RULES} Finish by calling submit_findings."
     )
 
 
@@ -1064,6 +1085,188 @@ def run_finders(ctx, packets, pool):
         raise
 
 
+REQUEST_CONTEXT = function_tool(
+    "request_context",
+    "Ask the scout to locate repository code the packet does not show. You get one round of requests.",
+    {
+        "requests": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string", "description": "The code to locate, naming symbols and files."},
+                    "why": {"type": "string", "description": "The suspicion this code would settle."},
+                },
+                "required": ["question", "why"],
+            },
+        },
+    },
+    ["requests"],
+)
+SUBMIT_LOCATIONS = function_tool(
+    "submit_locations",
+    "Submit the code locations that answer the requests. This ends the search.",
+    {
+        "locations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "request": {"type": "integer"},
+                    "path": {"type": "string"},
+                    "side": {"type": "string", "enum": ["head", "base"]},
+                    "start": {"type": "integer"},
+                    "end": {"type": "integer"},
+                    "note": {"type": "string"},
+                },
+                "required": ["request", "path", "start", "end"],
+            },
+        },
+    },
+    ["locations"],
+)
+LEAD_FOCUS = (
+    "Act as Dottore's lead reviewer, covering both segments' ground. Search widely for correctness, "
+    "contracts, failure paths, tests, security/privacy, CI/deployment risks, architecture, and "
+    "user-visible regressions, and record up to 2 concrete nitpicks when changed lines carry optional but "
+    "actionable polish. Then look skeptically for invariant mismatches the diff introduces: data collected "
+    "in a pre-scan but persisted after later filters, fallback behavior that diverges from validation, "
+    "rollback paths, partial writes, contract drift, and tests that prove only the happy path."
+)
+SCOUT_SYSTEM = (
+    "You are a code locator for a pull request reviewer. Use the read-only tools to find the code each "
+    "request asks for, then call submit_locations with the exact line range of every relevant excerpt "
+    "(at most 120 lines each; side 'base' for code the PR removed). Keep each note to one factual sentence "
+    "about what the excerpt contains. Do not judge the pull request. If you cannot find something, submit "
+    "no location for it rather than a guess."
+)
+
+
+def lead_call(ctx, messages, tools, choice):
+    """One lead turn that must end in one of its tools; return (tool name, arguments, messages)."""
+    names = {tool["function"]["name"] for tool in tools}
+    messages = list(messages)
+    for _ in range(MAX_SUBMIT_ATTEMPTS):
+        message = chat(ctx, "lead", messages, tools, choice)
+        calls = [call for call in message.tool_calls or [] if call.function.name in names]
+        for call in calls:
+            try:
+                arguments = json.loads(call.function.arguments or "{}")
+            except ValueError:
+                arguments = None
+            if isinstance(arguments, dict):
+                assistant = {
+                    "role": "assistant",
+                    "content": message.content,
+                    "tool_calls": [
+                        {
+                            "id": call.id,
+                            "type": "function",
+                            "function": {"name": call.function.name, "arguments": call.function.arguments},
+                        }
+                    ],
+                }
+                return call.function.name, arguments, [*messages, assistant], call.id
+        messages.append({"role": "user", "content": f"Call one of {', '.join(sorted(names))} with one JSON object."})
+    raise RuntimeError("The lead reviewer never called its tools.")
+
+
+def scout_dossier(ctx, requests):
+    """Let the scout locate code, then quote each location from the repository, not from the scout."""
+    listing = "\n".join(
+        f"{number}. {item.get('question', '')} (suspicion: {item.get('why', '')})"
+        for number, item in enumerate(requests, 1)
+    )
+    try:
+        submitted = run_agent(
+            ctx,
+            "scout",
+            [
+                {"role": "system", "content": SCOUT_SYSTEM},
+                {
+                    "role": "user",
+                    "content": f"Changed files:\n{chr(10).join(sorted(ctx.files))}\n\n# Requests\n{listing}",
+                },
+            ],
+            SUBMIT_LOCATIONS,
+            SCOUT_TOOL_BUDGET,
+            SCOUT_TOOL_CHARS,
+        )
+    except Exception as exc:
+        print(f"Dottore scout failed: {error_text(exc)}", flush=True)
+        return "The scout failed, so no excerpts are available; review from the packet alone."
+    seen = set()
+    sections = []
+    for number, item in enumerate(requests, 1):
+        found = []
+        for location in as_list(submitted.get("locations")):
+            if not isinstance(location, dict) or location.get("request") != number:
+                continue
+            side = "base" if location.get("side") == "base" else "head"
+            key = (str(location.get("path")), side, location.get("start"), location.get("end"))
+            if key in seen:
+                found.append(f"### {key[0]} ({side}) — already quoted above")
+                continue
+            seen.add(key)
+            try:
+                text = head_file_text(key[0]) if side == "head" else base_file_text(ctx, key[0])
+                lines = numbered_lines(text, location.get("start"), location.get("end"))
+            except Exception as exc:
+                lines = f"refused: {exc}"
+            note = " ".join(str(location.get("note") or "").split())
+            found.append(f"### {key[0]} ({side}){f' — scout note: {note}' if note else ''}\n{redact_for_model(lines)}")
+        sections.append(f"## Request {number}: {item.get('question', '')}\n" + ("\n\n".join(found) or "The scout found nothing."))
+    return truncate("\n\n".join(sections), MAX_DOSSIER_CHARS)
+
+
+def run_lead(ctx, packet):
+    """Stage 1, lead pipeline: read the packet, optionally get code from the scout, then submit findings."""
+    base = [
+        {"role": "system", "content": ctx.skill},
+        {"role": "user", "content": packet},
+        {
+            "role": "user",
+            "content": (
+                f"{LEAD_FOCUS} Treat the review packet as the specimen. You have no repository tools. If the "
+                "packet settles every suspicion, call submit_findings now. Otherwise call request_context "
+                f"once with at most {MAX_SCOUT_REQUESTS} specific requests, each naming the symbols or files "
+                "you need (callers, guards, schemas, tests, or guidance sections from the index) and the "
+                "suspicion they would settle; a scout will return the excerpts and you then submit. "
+                f"{FINDING_RULES}"
+            ),
+        },
+    ]
+    tools = [REQUEST_CONTEXT, SUBMIT_FINDINGS]
+    name, arguments, messages, call_id = lead_call(ctx, base, tools, "required")
+    if name == "submit_findings":
+        return arguments
+    requests = [item for item in as_list(arguments.get("requests")) if isinstance(item, dict)]
+    dossier = scout_dossier(ctx, requests[:MAX_SCOUT_REQUESTS]) if requests else "No requests were made."
+    messages += [
+        {"role": "tool", "tool_call_id": call_id, "content": dossier},
+        {
+            "role": "user",
+            "content": (
+                "The excerpts above are quoted verbatim from the repository at the cited lines; the scout "
+                "chose them and wrote the notes, which may be wrong, and a missing excerpt does not prove the "
+                "code is absent. Now call submit_findings."
+            ),
+        },
+    ]
+    submit = {"type": "function", "function": {"name": "submit_findings"}}
+    return lead_call(ctx, messages, tools, submit)[1]
+
+
+def run_leads(ctx, packets, pool):
+    jobs = [pool.submit(run_lead, ctx, packet) for packet in packets]
+    try:
+        return [("lead", future.result()) for future in jobs]
+    except Exception:
+        for future in jobs:
+            future.cancel()
+        raise
+
+
 def as_list(value):
     return value if isinstance(value, list) else []
 
@@ -1093,14 +1296,15 @@ def merge_segments(reports):
     status_rank = {"fail": 0, "warn": 1, "unknown": 2, "pass": 3}
     severity_rank = {"blocking": 0, "high": 1, "medium": 2, "low": 3}
     for role, report in reports:
-        if role == "broad":
+        if role != "skeptic":
             merged["change_summary"].extend(str(item) for item in as_list(report.get("change_summary")))
         for key in ("findings", "nitpicks"):
             for item in as_list(report.get(key)):
                 if not isinstance(item, dict):
                     continue
                 # Segments word the same defect differently and cite neighbouring lines, so findings
-                # within a few lines of each other keep one candidate: the most severe.
+                # within a few lines of each other keep one candidate: the most severe. "segment"
+                # names every segment that reported it, for telemetry.
                 entry = {**item, "segment": role}
                 index = next(
                     (index for index, kept in enumerate(merged[key]) if same_spot(kept, entry)), None
@@ -1108,9 +1312,12 @@ def merge_segments(reports):
                 if index is None:
                     merged[key].append(entry)
                     continue
+                kept = merged[key][index]
+                segments = "+".join(sorted({*kept["segment"].split("+"), role}))
                 rank = severity_rank.get(str(item.get("severity", "")).lower(), 4)
-                if rank < severity_rank.get(str(merged[key][index].get("severity", "")).lower(), 4):
-                    merged[key][index] = entry
+                if rank < severity_rank.get(str(kept.get("severity", "")).lower(), 4):
+                    kept = entry
+                merged[key][index] = {**kept, "segment": segments}
         for check in as_list(report.get("pre_merge_checks")):
             if not isinstance(check, dict):
                 continue
@@ -1252,6 +1459,11 @@ def verify_candidates(ctx, candidates, pool):
             continue
         outcome, finding, note, evidence = results[id(candidate)]
         counts[outcome] += 1
+        print(
+            f"Dottore candidate: {outcome}; found_by={finding.segment}; {finding.severity}; "
+            f"{finding.path}:{finding.line}; {finding.title[:120]}",
+            flush=True,
+        )
         if outcome == "confirmed":
             confirmed.append({**dataclasses.asdict(finding), "verification": {"note": note, "evidence": evidence[:3]}})
         elif outcome == "uncertain":
@@ -1261,7 +1473,9 @@ def verify_candidates(ctx, candidates, pool):
 
 def agentic_review(ctx, packets, mode, pool):
     """Find in parallel, merge, then let Dottore verify each candidate before it can be posted."""
-    merged = merge_segments(run_finders(ctx, packets, pool))
+    ctx.stats["pipeline"] = ctx.pipeline
+    finders = run_leads if ctx.pipeline == "lead" else run_finders
+    merged = merge_segments(finders(ctx, packets, pool))
     candidates, severity_nitpicks, withheld = validate_review_items(
         {"findings": merged["findings"], "mode": mode}, ctx.base
     )
@@ -2594,6 +2808,7 @@ def produce_review(args):
             merge_base=run(["git", "merge-base", base, "HEAD"], check=True).stdout.strip(),
             files=frozenset(files),
             deadline=stats["started_at"] + REVIEW_DEADLINE_SECONDS,
+            pipeline=review_pipeline(),
         )
         with ThreadPoolExecutor(max_workers=review_concurrency()) as pool:
             review_obj = agentic_review(ctx, packets, effective_mode, pool)
