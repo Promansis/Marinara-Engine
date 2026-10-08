@@ -56,7 +56,7 @@ concurrency:
 jobs:
   review:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     env:
       PR_NUM: ${{ inputs.pr_number }}
       DOTTORE_COMMENT_BODY: ${{ inputs.comment_body }}
@@ -140,12 +140,15 @@ jobs:
             -f description="The specimen is on Dottore's observation table. Examination in progress." >/dev/null
 
       - name: Run Dottore review
-        timeout-minutes: 25
+        timeout-minutes: 30
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
           LLM_MODEL: ${{ vars.DOTTORE_MODEL || 'gpt-5.5' }}
           DOTTORE_REASONING_EFFORT: ${{ vars.DOTTORE_REASONING_EFFORT }}
+          # Optional JSON giving the broad, skeptic and verify roles their own model and effort.
+          DOTTORE_MODELS: ${{ vars.DOTTORE_MODELS }}
+          DOTTORE_CONCURRENCY: ${{ vars.DOTTORE_CONCURRENCY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python /tmp/dottore-review-tool/dottore_review.py produce
 

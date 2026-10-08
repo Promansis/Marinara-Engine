@@ -1,16 +1,21 @@
 # .github/dottore-review/dottore_review.py
 import argparse
 import base64
+import dataclasses
 import fnmatch
 import hashlib
+import itertools
 import json
 import os
 import pathlib
+import posixpath
 import re
 import shutil
 import subprocess
+import threading
 import time
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 
 REPO_ROOT = pathlib.Path.cwd().resolve()
 DOTTORE_MARKER = "<!-- dottore:walkthrough -->"
@@ -20,9 +25,6 @@ STATE_MARKER_RE = re.compile(r"<!-- dottore:last-reviewed-sha=([0-9a-f]{40}) -->
 CONTRACT_STATE_RE = re.compile(r"<!-- dottore:contract-state=([A-Za-z0-9_=-]+) -->")
 MAX_REVIEW_PACKET_CHARS = 180_000
 MAX_SECTION_CHARS = 60_000
-MAX_CONTEXT_FILES = 5
-MAX_CONTEXT_SEARCHES = 5
-MAX_CONTEXT_CHARS = 80_000
 MAX_CONTEXT_FILE_CHARS = 20_000
 MAX_SEARCH_HITS = 30
 MAX_SEARCH_FILE_BYTES = 250_000
@@ -39,6 +41,20 @@ MAX_CONTRACT_STATE_TEXT_CHARS = 320
 MAX_CONTRACT_STATE_LIST_ITEMS = 3
 MODEL_REQUEST_TIMEOUT = 120
 MODEL_MAX_RETRIES = 1
+REVIEW_ROLES = ("broad", "skeptic", "verify")
+FINDER_ROLES = ("broad", "skeptic")
+SEGMENT_LABELS = {"broad": "Broad segment", "skeptic": "Skeptical segment"}
+FINDER_TOOL_BUDGET = 6
+VERIFIER_TOOL_BUDGET = 5
+MAX_SUBMIT_ATTEMPTS = 3
+MAX_TOOL_LINES = 300
+MAX_VERIFIED_CANDIDATES = 20
+MAX_OPEN_QUESTIONS = 2
+EVIDENCE_WINDOW = 3
+DEFAULT_CONCURRENCY = 4
+MAX_CONCURRENCY = 16
+# The review step times out at 30 minutes; after this, agents submit and no new verifier starts.
+REVIEW_DEADLINE_SECONDS = 20 * 60
 SECRET_VALUE_RE = re.compile(
     r"(?i)(api[_-]?key|token|secret|password|passwd|authorization|bearer|client[_-]?secret)"
     r"(\s*[:=]\s*|\s+)([^\s'\"`;&|]+)"
@@ -62,6 +78,7 @@ class Finding:
     fix_hint: str
     repair_contract: dict | None = None
     side: str = "RIGHT"
+    segment: str = ""
 
 
 def _safe_path(rel: str) -> pathlib.Path:
@@ -81,10 +98,12 @@ def _safe_path(rel: str) -> pathlib.Path:
 
 
 def run(args, *, input_text=None, timeout=120, check=False):
+    # Without input, give the command an empty stdin: rg with no path reads a piped stdin and hangs.
+    stdin = {"input": input_text} if input_text is not None else {"stdin": subprocess.DEVNULL}
     result = subprocess.run(
         args,
         cwd=REPO_ROOT,
-        input=input_text,
+        **stdin,
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -163,10 +182,6 @@ def compact_state_values(value):
 def read_text(path, limit=MAX_SECTION_CHARS):
     p = _safe_path(path)
     return truncate(p.read_text(encoding="utf-8", errors="replace"), limit)
-
-
-def read_context_file(path):
-    return read_text(path, MAX_CONTEXT_FILE_CHARS)
 
 
 def search_repo(pattern):
@@ -487,7 +502,7 @@ def build_review_packet(base, mode, focus_files=None, include_full_patch=True):
     if len(patch_body) > MAX_SECTION_CHARS:
         patch_body = (
             "Full patch exceeded the inline packet limit; use the per-file patch sections "
-            "below and request focused extra context for specific files if needed.\n\n"
+            "below and the file_diff tool for specific files if needed.\n\n"
             + truncate(patch_body, MAX_SECTION_CHARS)
         )
     sections = [
@@ -564,219 +579,577 @@ def add_usage(totals, usage):
 def build_stats(review_packet):
     return {
         "started_at": time.monotonic(),
-        "model_calls": 0,
         "review_packet_chars": len(review_packet),
-        "extra_context_chars": 0,
-        "context_files": 0,
-        "context_searches": 0,
-        "prompt_tokens": 0,
-        "completion_tokens": 0,
-        "reasoning_tokens": 0,
-        "total_tokens": 0,
+        "roles": {
+            role: {
+                "model": "",
+                "model_calls": 0,
+                "tool_calls": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "reasoning_tokens": 0,
+                "total_tokens": 0,
+            }
+            for role in REVIEW_ROLES
+        },
+        "verification": {},
     }
 
 
 def print_telemetry(stats):
     elapsed = time.monotonic() - stats["started_at"]
-    print(
-        "Dottore telemetry: "
-        f"elapsed_s={elapsed:.1f}; "
-        f"model_calls={stats['model_calls']}; "
-        f"review_packet_chars={stats['review_packet_chars']}; "
-        f"extra_context_chars={stats['extra_context_chars']}; "
-        f"context_files={stats['context_files']}; "
-        f"context_searches={stats['context_searches']}; "
-        f"prompt_tokens={stats['prompt_tokens']}; "
-        f"completion_tokens={stats['completion_tokens']}; "
-        f"reasoning_tokens={stats['reasoning_tokens']}; "
-        f"total_tokens={stats['total_tokens']}",
-        flush=True,
-    )
+    roles = stats["roles"]
+    counters = ("model_calls", "tool_calls", "prompt_tokens", "completion_tokens", "reasoning_tokens", "total_tokens")
+    parts = [f"elapsed_s={elapsed:.1f}", f"review_packet_chars={stats['review_packet_chars']}"]
+    parts += [f"{key}={sum(role[key] for role in roles.values())}" for key in counters]
+    for name, role in roles.items():
+        parts.append(f"{name}=" + ",".join(f"{key}:{value}" for key, value in role.items() if value))
+    parts += [f"{key}={value}" for key, value in stats["verification"].items()]
+    print("Dottore telemetry: " + "; ".join(parts), flush=True)
 
 
-def model_call(client, messages, stats):
+def role_models():
+    """Resolve each role's model and effort; DOTTORE_MODELS overrides the shared default per role."""
+    default_model = os.environ.get("LLM_MODEL", "").strip() or "gpt-5.5"
+    default_effort = os.environ.get("DOTTORE_REASONING_EFFORT", "").strip()
+    raw = os.environ.get("DOTTORE_MODELS", "").strip()
+    try:
+        overrides = json.loads(raw) if raw else {}
+    except ValueError as exc:
+        raise ValueError(f"DOTTORE_MODELS is not valid JSON: {exc}") from exc
+    if not isinstance(overrides, dict) or not all(
+        role in REVIEW_ROLES and isinstance(value, dict) for role, value in overrides.items()
+    ):
+        raise ValueError(
+            'DOTTORE_MODELS must map "broad", "skeptic" or "verify" to {"model", "effort"} objects.'
+        )
+    return {
+        role: {
+            "model": str(overrides.get(role, {}).get("model") or default_model).strip(),
+            "effort": str(overrides.get(role, {}).get("effort") or default_effort).strip(),
+        }
+        for role in REVIEW_ROLES
+    }
+
+
+def review_concurrency():
+    raw = os.environ.get("DOTTORE_CONCURRENCY", "").strip()
+    if not raw:
+        return DEFAULT_CONCURRENCY
+    if not raw.isdigit() or int(raw) < 1:
+        raise ValueError("DOTTORE_CONCURRENCY must be a positive whole number.")
+    return min(int(raw), MAX_CONCURRENCY)
+
+
+@dataclass
+class ReviewRun:
+    """What every agent in one review shares: the client, models, telemetry and the diff scope."""
+
+    client: object
+    skill: str
+    models: dict
+    stats: dict
+    base: str
+    merge_base: str
+    files: frozenset
+    deadline: float
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+
+def function_tool(name, description, properties, required):
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": {"type": "object", "properties": properties, "required": required},
+        },
+    }
+
+
+PATH_PARAM = {"type": "string", "description": "Repository-relative path."}
+LINE_RANGE = {
+    "start": {"type": "integer", "description": "First line, 1-based."},
+    "end": {"type": "integer", "description": "Last line, inclusive."},
+}
+READ_TOOLS = [
+    function_tool(
+        "read_file",
+        f"Read numbered lines of a repository file at the PR head, at most {MAX_TOOL_LINES} lines per call.",
+        {"path": PATH_PARAM, **LINE_RANGE},
+        ["path"],
+    ),
+    function_tool(
+        "search",
+        f"Find literal text in the repository at the PR head; returns up to {MAX_SEARCH_HITS} path:line hits.",
+        {"literal": {"type": "string", "description": "Exact text to find, 1-120 characters."}},
+        ["literal"],
+    ),
+    function_tool(
+        "file_diff",
+        "Show the pull request's diff for one changed file.",
+        {"path": PATH_PARAM},
+        ["path"],
+    ),
+    function_tool(
+        "base_version",
+        f"Read numbered lines of a file at the review base, for code the PR removes or rewrites; at most {MAX_TOOL_LINES} lines per call.",
+        {"path": PATH_PARAM, **LINE_RANGE},
+        ["path"],
+    ),
+]
+STRING_LIST = {"type": "array", "items": {"type": "string"}}
+REVIEW_ITEM = {
+    "type": "object",
+    "properties": {
+        "severity": {"type": "string", "enum": ["blocking", "high", "medium", "low"]},
+        "path": {"type": "string"},
+        "line": {"type": "integer"},
+        "side": {"type": "string", "enum": ["LEFT", "RIGHT"]},
+        "title": {"type": "string"},
+        "body": {"type": "string"},
+        "fix_hint": {"type": "string"},
+        "repair_contract": {"type": "object"},
+    },
+    "required": ["path", "line", "title", "body"],
+}
+SUBMIT_FINDINGS = function_tool(
+    "submit_findings",
+    "Submit this segment's candidate findings and notes. This ends the segment.",
+    {
+        "change_summary": STRING_LIST,
+        "findings": {"type": "array", "items": REVIEW_ITEM},
+        "nitpicks": {"type": "array", "items": REVIEW_ITEM},
+        "pre_merge_checks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "status": {"type": "string", "enum": ["pass", "warn", "fail", "unknown"]},
+                    "type": {"type": "string", "enum": ["Proof Gap", "Review Limitation", "Non-blocking Coverage"]},
+                    "detail": {"type": "string"},
+                },
+                "required": ["name", "status", "detail"],
+            },
+        },
+        "open_questions": STRING_LIST,
+        "what_i_checked": STRING_LIST,
+    },
+    ["change_summary", "findings", "nitpicks", "pre_merge_checks", "open_questions", "what_i_checked"],
+)
+SUBMIT_VERDICT = function_tool(
+    "submit_verdict",
+    "Submit Dottore's verdict on the candidate finding. This ends the verification.",
+    {
+        "verdict": {"type": "string", "enum": ["confirmed", "rejected", "uncertain"]},
+        "severity": {"type": "string", "enum": ["blocking", "high", "medium", "low"]},
+        "evidence": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "line": {"type": "integer"},
+                    "snippet": {"type": "string"},
+                },
+                "required": ["path", "line", "snippet"],
+            },
+        },
+        "note": {"type": "string"},
+    },
+    ["verdict", "severity", "evidence", "note"],
+)
+
+
+def tool_path(path):
+    """Normalize a model-supplied path; refuse anything outside the tree, in .git, or secret-looking."""
+    normalized = posixpath.normpath(str(path or "").strip())
+    if (
+        normalized in {".", ".."}
+        or normalized.startswith(("/", "../"))
+        or ".git" in normalized.split("/")
+        or SECRET_FILE_PART_RE.search(normalized)
+    ):
+        raise ValueError(f"path {path!r} is outside the reviewable repository")
+    return normalized
+
+
+def head_file_text(path):
+    full = _safe_path(tool_path(path))
+    # Check the resolved path too, so a symlink cannot lead into .git or a secret file.
+    tool_path(full.relative_to(REPO_ROOT).as_posix())
+    return full.read_text("utf-8", "replace")
+
+
+def base_file_text(ctx, path):
+    shown = run(["git", "show", f"{ctx.merge_base}:{tool_path(path)}"], timeout=60)
+    if shown.returncode != 0:
+        raise ValueError(f"{path} does not exist at the review base")
+    return shown.stdout
+
+
+def numbered_lines(text, start=None, end=None):
+    lines = text.splitlines()
+    first = max(1, int(start or 1))
+    last = min(len(lines), int(end or first + MAX_TOOL_LINES - 1), first + MAX_TOOL_LINES - 1)
+    if first > last:
+        return f"No lines in that range; the file has {len(lines)} lines."
+    body = "\n".join(f"{number}: {lines[number - 1]}" for number in range(first, last + 1))
+    return truncate(body, MAX_CONTEXT_FILE_CHARS)
+
+
+def searchable_hit(hit):
+    try:
+        tool_path(hit.split(":", 1)[0])
+    except ValueError:
+        return False
+    return True
+
+
+def run_tool(ctx, name, arguments):
+    """Run one read-only tool call; every result is redacted and every failure becomes a refusal."""
+    try:
+        args = json.loads(arguments or "{}")
+        if not isinstance(args, dict):
+            raise ValueError("arguments must be a JSON object")
+        if name == "read_file":
+            result = numbered_lines(head_file_text(args.get("path")), args.get("start"), args.get("end"))
+        elif name == "base_version":
+            result = numbered_lines(base_file_text(ctx, args.get("path")), args.get("start"), args.get("end"))
+        elif name == "file_diff":
+            path = tool_path(args.get("path"))
+            if path not in ctx.files:
+                raise ValueError(f"{path} is not a changed file; use read_file")
+            result = truncate(diff_for_path(ctx.base, path), MAX_FILE_PATCH_CHARS)
+        elif name == "search":
+            hits = search_repo(str(args.get("literal") or "")).splitlines()
+            result = "\n".join(hit for hit in hits if searchable_hit(hit)) or "no matches"
+        else:
+            raise ValueError(f"unknown tool {name}")
+    except Exception as exc:
+        return f"refused: {exc}"
+    return redact_for_model(result)
+
+
+def chat(ctx, role, messages, tools, tool_choice):
+    settings = ctx.models[role]
     request = {
-        "model": os.environ.get("LLM_MODEL", "gpt-5.5"),
+        "model": settings["model"],
         "messages": messages,
+        "tools": tools,
+        "tool_choice": tool_choice,
         "timeout": MODEL_REQUEST_TIMEOUT,
     }
-    reasoning_effort = os.environ.get("DOTTORE_REASONING_EFFORT", "").strip()
-    if reasoning_effort:
-        request["reasoning_effort"] = reasoning_effort
-    resp = client.chat.completions.create(**request)
-    stats["model_calls"] += 1
-    add_usage(stats, getattr(resp, "usage", None))
-    if isinstance(resp, str):
-        return resp
-    return resp.choices[0].message.content or ""
+    if settings["effort"]:
+        request["reasoning_effort"] = settings["effort"]
+    response = ctx.client.chat.completions.create(**request)
+    with ctx.lock:
+        totals = ctx.stats["roles"][role]
+        totals["model"] = settings["model"]
+        totals["model_calls"] += 1
+        add_usage(totals, getattr(response, "usage", None))
+    return response.choices[0].message
 
 
-def extract_json_or_repair(client, messages, content, stats):
-    try:
-        return extract_json(content)
-    except ValueError:
-        repair_messages = [
-            *messages,
-            {"role": "assistant", "content": content},
+def run_agent(ctx, role, messages, submit_tool, budget):
+    """Let one agent read with the tools until it calls its submit tool; return the submitted arguments.
+
+    The budget counts read-tool calls. Once it is spent, or the review deadline has passed, the
+    model is made to call the submit tool, and a few malformed submissions are tolerated.
+    """
+    submit = submit_tool["function"]["name"]
+    tools = [*READ_TOOLS, submit_tool]
+    messages = list(messages)
+    used = 0
+    for turn in range(budget + MAX_SUBMIT_ATTEMPTS):
+        forced = used >= budget or turn >= budget or time.monotonic() > ctx.deadline
+        choice = {"type": "function", "function": {"name": submit}} if forced else "auto"
+        message = chat(ctx, role, messages, tools, choice)
+        calls = list(message.tool_calls or [])
+        if not calls:
+            messages += [
+                {"role": "assistant", "content": message.content or ""},
+                {"role": "user", "content": f"Call {submit} to finish."},
+            ]
+            continue
+        messages.append(
             {
-                "role": "user",
-                "content": (
-                    "The previous response did not contain a JSON object. Reply only "
-                    "with FINAL_REVIEW followed by one JSON object matching the required "
-                    "Dottore Review schema. Do not include prose, Markdown, or another "
-                    "context request."
-                ),
-            },
-        ]
-        return extract_json(model_call(client, repair_messages, stats))
+                "role": "assistant",
+                "content": message.content,
+                "tool_calls": [
+                    {
+                        "id": call.id,
+                        "type": "function",
+                        "function": {"name": call.function.name, "arguments": call.function.arguments},
+                    }
+                    for call in calls
+                ],
+            }
+        )
+        for call in calls:
+            if call.function.name == submit:
+                try:
+                    submitted = json.loads(call.function.arguments or "{}")
+                except ValueError:
+                    submitted = None
+                if isinstance(submitted, dict):
+                    return submitted
+                reply = f"refused: {submit} needs one JSON object as its arguments; call it again."
+            elif forced or used >= budget:
+                reply = f"refused: the tool budget is spent; call {submit} now."
+            else:
+                used += 1
+                with ctx.lock:
+                    ctx.stats["roles"][role]["tool_calls"] += 1
+                reply = run_tool(ctx, call.function.name, call.function.arguments)
+            messages.append({"role": "tool", "tool_call_id": call.id, "content": reply})
+    raise RuntimeError(f"The {role} agent never called {submit}.")
 
 
-def review_packet_with_model(client, skill, triage_content, stats):
-    messages = [
-        {"role": "system", "content": skill},
-        {"role": "user", "content": triage_content},
-    ]
-    first_response = model_call(client, messages, stats)
-    request = parse_context_request(first_response)
-    if request is None:
-        return extract_json_or_repair(client, messages, first_response, stats)
-    extra_context = build_extra_context(request, stats)
-    final_messages = [
-        {"role": "system", "content": skill},
-        {"role": "user", "content": triage_content},
-        {"role": "assistant", "content": first_response},
-        {
-            "role": "user",
-            "content": (
-                "Here is the bounded extra context you requested. "
-                "Do not request more context. Produce only the final JSON review object."
-                f"\n\n# Extra Context\n{extra_context}"
+FINDER_FOCUS = {
+    "broad": (
+        "Act as the broad segment. Search widely for correctness, contracts, failure paths, tests, "
+        "security/privacy, CI/deployment risks, architecture, and user-visible regressions, and record "
+        "up to 2 concrete nitpicks when changed lines carry optional but actionable polish."
+    ),
+    "skeptic": (
+        "Act as the skeptical segment, independently of the broad segment. Focus on invariant mismatches "
+        "introduced by the diff: data collected in a pre-scan but persisted after later filters, parent "
+        "metadata derived from rows that are not imported as children, fallback behavior that diverges "
+        "from validation, rollback paths, partial writes, contract drift, and tests that prove only the "
+        "happy path. Leave nitpicks to the broad segment."
+    ),
+}
+
+
+def finder_packet(review_target, focus_note, prior_contracts, review_packet):
+    # Shared by both segments and placed before their instructions, so providers can cache it.
+    return (
+        f"{review_target} {focus_note}"
+        f"\n\n# Prior Dottore Repair Contracts\n{prior_contracts}"
+        f"\n\n# Review Packet\n{review_packet}"
+    )
+
+
+def finder_instructions(role):
+    return (
+        f"{FINDER_FOCUS[role]} Treat the review packet as the specimen. Before reporting a concrete "
+        "suspicion that depends on code outside the packet, check it with the read-only tools; you have "
+        f"at most {FINDER_TOOL_BUDGET} tool calls. Dottore verifies every candidate against the code "
+        "before anything is published, so report each concrete suspicion once, at its exact changed "
+        "line, and do not pad. If prior Dottore contracts are included, first judge whether the current "
+        "diff satisfies or leaves those contracts incomplete before issuing adjacent related findings. "
+        "Findings must point to added/changed RIGHT lines or deleted LEFT lines. Record what this segment "
+        "checked in what_i_checked, and name any limitation there instead of inventing certainty. "
+        "Finish by calling submit_findings."
+    )
+
+
+def run_finders(ctx, packets, pool):
+    """Stage 1: run the broad and skeptical segments over every packet concurrently."""
+    jobs = [
+        (
+            role,
+            pool.submit(
+                run_agent,
+                ctx,
+                role,
+                [
+                    {"role": "system", "content": ctx.skill},
+                    {"role": "user", "content": packet},
+                    {"role": "user", "content": finder_instructions(role)},
+                ],
+                SUBMIT_FINDINGS,
+                FINDER_TOOL_BUDGET,
             ),
-        },
+        )
+        for packet in packets
+        for role in FINDER_ROLES
     ]
-    final_response = model_call(client, final_messages, stats)
-    return extract_json_or_repair(client, final_messages, final_response, stats)
-
-
-def skeptical_review_pass(client, skill, triage_content, stats):
-    segment_prompt = (
-        "Run the independent skeptical segment over the same packet. Do not treat "
-        "the broad segment's conclusion as authoritative. Focus on invariant mismatches "
-        "introduced by the diff: data collected in a pre-scan but persisted after later "
-        "filters, parent metadata derived from rows that are not imported as children, "
-        "fallback behavior that diverges from validation, rollback paths, partial writes, "
-        "contract drift, and tests that prove only the happy path. Report only concrete "
-        "actionable findings that cite added/changed RIGHT lines or deleted LEFT lines. If there are no "
-        "findings from this segment lens, return the same JSON schema with empty "
-        "findings and nitpicks arrays and attribute the skeptical segment's notes in what_i_checked."
-    )
-    messages = [
-        {"role": "system", "content": skill},
-        {"role": "user", "content": triage_content},
-        {"role": "user", "content": segment_prompt},
-    ]
-    response = model_call(client, messages, stats)
-    return extract_json_or_repair(client, messages, response, stats)
-
-
-def judge_review_pass(client, skill, triage_content, first_segment, second_segment, stats):
-    judge_prompt = (
-        "Il Dottore is the final judge. Merge these two finder segment reports "
-        "into the final Dottore Review JSON. "
-        "Deduplicate overlapping findings, keep the clearest title/body/fix_hint, normalize "
-        "severity, and reject weak or speculative findings. Preserve concrete findings even "
-        "if only one pass found them, and include a repair_contract for every defect finding. "
-        "Enumerate every distinct actionable finding visible in these passes that you would "
-        "flag in a production code review. Do not defer known findings to later review rounds, "
-        "and do not manufacture marginal findings to appear comprehensive. "
-        "Preserve up to 2 concrete nitpicks in the separate nitpicks array when they are "
-        "actionable changed-line polish; non-blocking does not mean weak. Every final "
-        "finding must cite an added/changed RIGHT line or deleted LEFT line; nitpicks use RIGHT only. Combine useful "
-        "change_summary, nitpicks, pre_merge_checks, "
-        "open_questions, and what_i_checked entries without repeating yourself. Reply only "
-        "with FINAL_REVIEW followed by the final JSON object."
-        f"\n\n# Broad Segment JSON\n{json.dumps(first_segment, indent=2, sort_keys=True)}"
-        f"\n\n# Skeptical Segment JSON\n{json.dumps(second_segment, indent=2, sort_keys=True)}"
-    )
-    messages = [
-        {"role": "system", "content": skill},
-        {"role": "user", "content": triage_content},
-        {"role": "user", "content": judge_prompt},
-    ]
-    response = model_call(client, messages, stats)
-    return extract_json_or_repair(client, messages, response, stats)
-
-
-def three_pass_review(client, skill, triage_content, stats):
-    first_segment = review_packet_with_model(client, skill, triage_content, stats)
-    second_segment = skeptical_review_pass(client, skill, triage_content, stats)
-    return judge_review_pass(
-        client,
-        skill,
-        triage_content,
-        first_segment,
-        second_segment,
-        stats,
-    )
-
-
-def parse_context_request(content):
-    marker = "CONTEXT_REQUEST"
-    if marker not in content:
-        return None
-    start = content.find("{")
-    end = content.rfind("}")
-    if start == -1 or end == -1 or end < start:
-        return {"files": [], "searches": []}
     try:
-        parsed = json.loads(content[start : end + 1])
+        return [(role, future.result()) for role, future in jobs]
     except Exception:
-        return {"files": [], "searches": []}
-    files = parsed.get("files", [])
-    searches = parsed.get("searches", [])
-    return {
-        "files": [value for value in files if isinstance(value, str)][:MAX_CONTEXT_FILES],
-        "searches": [
-            value for value in searches if isinstance(value, str)
-        ][:MAX_CONTEXT_SEARCHES],
+        for _, future in jobs:
+            future.cancel()
+        raise
+
+
+def as_list(value):
+    return value if isinstance(value, list) else []
+
+
+def merge_segments(reports):
+    """Stage 2: combine the segment reports without a model call."""
+    merged = {key: [] for key in ("change_summary", "findings", "nitpicks", "open_questions")}
+    seen = set()
+    checks = {}
+    notes = []
+    status_rank = {"fail": 0, "warn": 1, "unknown": 2, "pass": 3}
+    for role, report in reports:
+        if role == "broad":
+            merged["change_summary"].extend(str(item) for item in as_list(report.get("change_summary")))
+        for key in ("findings", "nitpicks"):
+            for item in as_list(report.get(key)):
+                if not isinstance(item, dict):
+                    continue
+                identity = (
+                    key,
+                    str(item.get("path", "")).strip(),
+                    str(item.get("side") or "RIGHT").strip().upper(),
+                    item.get("line"),
+                    " ".join(re.sub(r"[^\w\s]", " ", str(item.get("title", "")).lower()).split()),
+                )
+                if identity not in seen:
+                    seen.add(identity)
+                    merged[key].append({**item, "segment": role})
+        for check in as_list(report.get("pre_merge_checks")):
+            if not isinstance(check, dict):
+                continue
+            name = str(check.get("name", "")).strip().lower()
+            rank = status_rank.get(str(check.get("status", "")).lower(), 2)
+            if name not in checks or rank < status_rank.get(str(checks[name].get("status", "")).lower(), 2):
+                checks[name] = check
+        for question in as_list(report.get("open_questions")):
+            if question not in merged["open_questions"]:
+                merged["open_questions"].append(question)
+        label = SEGMENT_LABELS[role]
+        notes.append([f"{label}: {note}" for note in as_list(report.get("what_i_checked"))])
+    merged["pre_merge_checks"] = list(checks.values())
+    merged["nitpicks"] = merged["nitpicks"][:2]
+    # Interleave the segments' notes so the rendered first few show both segments.
+    merged["what_i_checked"] = [note for group in itertools.zip_longest(*notes) for note in group if note]
+    return merged
+
+
+def evidence_snippet(text):
+    # Models often copy the numbered or diff-marked lines the tools showed them.
+    lines = [re.sub(r"^\s*\d+: ?", "", re.sub(r"^[+-]", "", line)) for line in str(text or "").splitlines()]
+    return " ".join(" ".join(lines).split())
+
+
+def evidence_grounded(ctx, evidence):
+    """True when at least one quoted snippet appears near its cited line in the head or base file."""
+    for item in evidence:
+        snippet = evidence_snippet(item.get("snippet"))
+        if len(snippet) < 3:
+            continue
+        line = item.get("line")
+        for read in (head_file_text, lambda path: base_file_text(ctx, path)):
+            try:
+                lines = read(item.get("path")).splitlines()
+            except Exception:
+                continue
+            if isinstance(line, int) and not isinstance(line, bool) and line > 0:
+                lines = lines[max(0, line - 1 - EVIDENCE_WINDOW) : line + EVIDENCE_WINDOW]
+            window = "\n".join(lines)
+            if any(snippet in " ".join(text.split()) for text in (window, redact_for_model(window))):
+                return True
+    return False
+
+
+def verification_prompt(ctx, candidate):
+    claim = {
+        key: value
+        for key, value in dataclasses.asdict(candidate).items()
+        if key in {"severity", "path", "line", "side", "title", "body", "fix_hint"}
     }
-
-
-def extract_json(content):
-    cleaned = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL | re.IGNORECASE)
-    cleaned = cleaned.replace("FINAL_REVIEW", "", 1).strip()
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-        cleaned = re.sub(r"\s*```$", "", cleaned)
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start == -1 or end == -1 or end < start:
-        raise ValueError("model response did not contain a JSON object")
-    return json.loads(cleaned[start : end + 1])
-
-
-def build_extra_context(request, stats):
-    sections = []
-    for path in request.get("files", []):
-        stats["context_files"] += 1
-        try:
-            body = read_context_file(path)
-        except Exception as exc:
-            body = f"Could not read: {exc}"
-        sections.append((f"context file: {path}", body))
-    for pattern in request.get("searches", []):
-        stats["context_searches"] += 1
-        try:
-            body = search_repo(pattern)
-        except Exception as exc:
-            body = f"Could not search: {exc}"
-        sections.append((f"context search: {pattern}", body))
-    context = "\n\n".join(
-        f"## {title}\n```text\n{body}\n```" for title, body in sections
+    return (
+        f"Verify this candidate finding from the {SEGMENT_LABELS.get(candidate.segment, 'finder').lower()} "
+        "before publication, following the Verification section. You have at most "
+        f"{VERIFIER_TOOL_BUDGET} tool calls. Finish by calling submit_verdict."
+        f"\n\n# Candidate\n{json.dumps(claim, indent=2)}"
+        f"\n\n# Path Rules\n{matching_path_rules([candidate.path])}"
+        f"\n\n# Diff of {candidate.path}\n{truncate(diff_for_path(ctx.base, candidate.path), MAX_CONTEXT_FILE_CHARS)}"
     )
-    context = truncate(context, MAX_CONTEXT_CHARS)
-    stats["extra_context_chars"] = len(context)
-    return context
+
+
+def verify_candidate(ctx, candidate):
+    """Stage 3: Dottore checks one candidate against the code; return (outcome, finding, note, evidence)."""
+    if time.monotonic() > ctx.deadline:
+        return "unverified", candidate, "", []
+    verdict = run_agent(
+        ctx,
+        "verify",
+        [
+            {"role": "system", "content": ctx.skill},
+            {"role": "user", "content": verification_prompt(ctx, candidate)},
+        ],
+        SUBMIT_VERDICT,
+        VERIFIER_TOOL_BUDGET,
+    )
+    outcome = str(verdict.get("verdict", "")).strip().lower()
+    note = " ".join(str(verdict.get("note") or "").split())
+    evidence = [item for item in as_list(verdict.get("evidence")) if isinstance(item, dict)]
+    if outcome not in {"confirmed", "rejected", "uncertain"}:
+        outcome = "uncertain"
+    if outcome == "confirmed" and not evidence_grounded(ctx, evidence):
+        outcome = "uncertain"
+        note = f"The quoted evidence did not match the code. {note}".strip()
+    severity = str(verdict.get("severity", "")).strip().lower()
+    if outcome == "confirmed" and severity in {"blocking", "high", "medium", "low"}:
+        candidate.severity = severity
+    return outcome, candidate, note, evidence
+
+
+def verify_candidates(ctx, candidates, pool):
+    """Verify the highest-severity candidates in parallel and sort them by outcome."""
+    chosen = candidates[:MAX_VERIFIED_CANDIDATES]
+    futures = [pool.submit(verify_candidate, ctx, candidate) for candidate in chosen]
+    counts = dict.fromkeys(("candidates", "confirmed", "rejected", "uncertain", "unverified", "failed"), 0)
+    counts["candidates"] = len(candidates)
+    counts["unverified"] = len(candidates) - len(chosen)
+    confirmed, hypotheses = [], []
+    for candidate, future in zip(chosen, futures):
+        try:
+            outcome, finding, note, evidence = future.result()
+        except Exception as exc:
+            print(f"Dottore verifier failed for {candidate.path}:{candidate.line}: {error_text(exc)}", flush=True)
+            counts["failed"] += 1
+            continue
+        counts[outcome] += 1
+        if outcome == "confirmed":
+            confirmed.append({**dataclasses.asdict(finding), "verification": {"note": note, "evidence": evidence[:3]}})
+        elif outcome == "uncertain":
+            hypotheses.append(f"{finding.title} (`{finding.path}:{finding.line}`): {note}")
+    return confirmed, hypotheses, counts
+
+
+def agentic_review(ctx, packets, mode, pool):
+    """Find in parallel, merge, then let Dottore verify each candidate before it can be posted."""
+    merged = merge_segments(run_finders(ctx, packets, pool))
+    candidates, severity_nitpicks, withheld = validate_review_items(
+        {"findings": merged["findings"], "mode": mode}, ctx.base
+    )
+    merged["nitpicks"] = (merged["nitpicks"] + [dataclasses.asdict(item) for item in severity_nitpicks])[:2]
+    confirmed, hypotheses, counts = verify_candidates(ctx, candidates, pool)
+    ctx.stats["verification"] = counts
+    questions = hypotheses + merged["open_questions"]
+    merged["findings"] = confirmed
+    merged["open_questions"] = questions[:MAX_OPEN_QUESTIONS]
+    merged["withheld_findings"] = withheld
+    merged["verification"] = counts
+    unresolved = len(hypotheses) - MAX_OPEN_QUESTIONS
+    if unresolved > 0:
+        merged["pre_merge_checks"].append(
+            {
+                "name": "Unresolved Candidates",
+                "status": "warn",
+                "type": "Review Limitation",
+                "detail": f"{unresolved} more candidate(s) could be neither confirmed nor refuted from the code, so they were withheld.",
+            }
+        )
+    unexamined = counts["unverified"] + counts["failed"]
+    if unexamined:
+        merged["pre_merge_checks"].append(
+            {
+                "name": "Verification Coverage",
+                "status": "warn",
+                "type": "Review Limitation",
+                "detail": f"{unexamined} candidate(s) went unexamined ({counts['unverified']} past the {MAX_VERIFIED_CANDIDATES}-candidate cap or the time limit, {counts['failed']} after a verifier error), so they were withheld.",
+            }
+        )
+    return merged
 
 
 def touched_lines(base):
@@ -865,6 +1238,7 @@ def normalize_review_item(item, *, default_severity):
         fix_hint=str(item.get("fix_hint", "")).strip(),
         repair_contract=normalize_repair_contract(item.get("repair_contract")),
         side=side,
+        segment=str(item.get("segment", "")).strip(),
     )
 
 
@@ -1630,55 +2004,27 @@ def render_walkthrough(
         body.extend([f"- {line}" for line in questions[:2]])
     body.extend(["", "### 🧪 Observations"])
     body.extend([f"- {line}" for line in checked[:3]] or ["- Review packet and diff context inspected."])
+    verification = review_obj.get("verification") or {}
+    if invalid_findings or verification:
+        body.extend(["", "### 📝 Lab Notes"])
+    if verification:
+        unexamined = verification.get("unverified", 0) + verification.get("failed", 0)
+        body.append(
+            f"- Dottore examined {verification.get('candidates', 0)} segment claim(s) against the code: "
+            f"{verification.get('confirmed', 0)} confirmed, {verification.get('rejected', 0)} rejected, "
+            f"{verification.get('uncertain', 0)} unresolved"
+            + (f", {unexamined} unexamined." if unexamined else ".")
+        )
     if invalid_findings:
         body.extend(
             [
                 "",
-                "### 📝 Lab Notes",
                 "> [!WARNING]",
                 f"> Withheld {len(invalid_findings)} model finding(s) because their diff locations failed validation.",
             ]
         )
         body.extend([f"- {note}" for note in invalid_findings[:5]])
     return "\n".join(body).strip() + "\n"
-
-
-def merge_review_objects(reviews):
-    merged = {
-        "change_summary": [],
-        "findings": [],
-        "nitpicks": [],
-        "pre_merge_checks": [],
-        "open_questions": [],
-        "what_i_checked": [],
-    }
-    seen_findings = set()
-    for review in reviews:
-        for key in ("change_summary", "open_questions", "what_i_checked"):
-            for item in review.get(key, []):
-                if item not in merged[key]:
-                    merged[key].append(item)
-        for check in review.get("pre_merge_checks", []):
-            key = (check.get("name"), check.get("status"), check.get("type"), check.get("detail"))
-            if key not in {
-                (item.get("name"), item.get("status"), item.get("type"), item.get("detail"))
-                for item in merged["pre_merge_checks"]
-            }:
-                merged["pre_merge_checks"].append(check)
-        for key_name in ("findings", "nitpicks"):
-            for finding in review.get(key_name, []):
-                key = (
-                    finding.get("path"),
-                    finding.get("line"),
-                    str(finding.get("side", "RIGHT")).upper(),
-                    finding.get("title"),
-                )
-                if key in seen_findings:
-                    continue
-                seen_findings.add(key)
-                merged[key_name].append(finding)
-    merged["nitpicks"] = merged["nitpicks"][:2]
-    return merged
 
 
 def prior_review_contracts_context(pr_num, limit=12_000):
@@ -1725,14 +2071,16 @@ def write_skipped_review(title, body, *, status="unknown", metadata=None):
     )
 
 
-def model_failure_detail(exc):
+def error_text(exc):
     message = " ".join(str(exc).split())
     if len(message) > 500:
         message = message[:497] + "..."
-    return (
-        f"Dottore Review could not complete because the model provider rejected the "
-        f"review request: {type(exc).__name__}: {message}"
-    )
+    return f"{type(exc).__name__}: {message}"
+
+
+def model_failure_detail(exc):
+    # Provider errors, a bad DOTTORE_MODELS value and an agent that never submits all land here.
+    return f"Dottore Review could not complete: {error_text(exc)}"
 
 
 def current_head_sha():
@@ -2049,7 +2397,6 @@ def produce_review(args):
         return
 
     chunks = chunk_changed_files(base, files)
-    use_chunked_review = len(chunks) > 1
 
     from openai import OpenAI
 
@@ -2065,34 +2412,14 @@ def produce_review(args):
         if prior_contract_state
         else prior_review_contracts_context(pr_num)
     )
+    review_target = (
+        f"Review this PR. The review base is '{base}' from target branch '{base_ref}', "
+        f"head is '{head_sha}', and mode is '{effective_mode}'."
+    )
 
-    def triage_for_packet(review_packet, focus_note):
-        triage = (
-            f"Review this PR. The review base is '{base}' from target branch '{base_ref}', "
-            f"head is '{head_sha}', and mode is '{effective_mode}'. {focus_note} "
-            "Act as the broad segment. Use the provided review packet as the complete inspection context. "
-            "If prior Dottore contracts are included, first judge whether the current diff satisfies "
-            "or leaves those contracts incomplete before issuing adjacent related findings. "
-            "You have one chance to request focused extra context before the final review. "
-            "If the packet is enough, reply with FINAL_REVIEW followed by a JSON object in the skill's schema. "
-            "If more context is necessary to validate a concrete potential finding, reply only with "
-            'CONTEXT_REQUEST and JSON like {"files":["path"],"searches":["literal text"]}. '
-            f"Request at most {MAX_CONTEXT_FILES} files and {MAX_CONTEXT_SEARCHES} literal searches."
-        )
-        triage += (
-            "\n\nFocus on correctness, contracts, failure paths, tests, CI/deployment risks, "
-            "and architecture. Findings must point to added/changed RIGHT lines or deleted LEFT lines. "
-            "Attribute broad-segment notes in what_i_checked. "
-            "If the packet is truncated or missing context for a potential issue, mention that "
-            "limitation in what_i_checked rather than inventing certainty."
-            f"\n\n# Prior Dottore Repair Contracts\n{prior_contract_context}"
-            f"\n\n# Review Packet\n{review_packet}"
-        )
-        return triage
-
-    if use_chunked_review:
+    if len(chunks) > 1:
         stats = build_stats("")
-        chunk_reviews = []
+        packets = []
         for index, chunk in enumerate(chunks, 1):
             review_packet = build_review_packet(
                 base,
@@ -2106,51 +2433,45 @@ def produce_review(args):
                 + ", ".join(chunk)
                 + "."
             )
-            triage_content = triage_for_packet(review_packet, focus_note)
-            try:
-                chunk_reviews.append(
-                    three_pass_review(client, skill, triage_content, stats)
-                )
-            except Exception as exc:
-                write_skipped_review(
-                    "Review Failed",
-                    model_failure_detail(exc),
-                    status="fail",
-                    metadata={
-                        "head_sha": head_sha,
-                        "head_commit_message": commit_subject(head_sha),
-                        "review_base": base,
-                        "base_ref": base_ref,
-                        "mode": effective_mode,
-                    },
-                )
-                print_telemetry(stats)
-                return
-        review_obj = merge_review_objects(chunk_reviews)
-        review_obj.setdefault("what_i_checked", []).append(
-            f"Examined the PR in {len(chunks)} file chunk(s) so the large diff did not contaminate context retention."
-        )
+            packets.append(finder_packet(review_target, focus_note, prior_contract_context, review_packet))
     else:
         review_packet = build_review_packet(base, effective_mode)
         stats = build_stats(review_packet)
-        triage_content = triage_for_packet(review_packet, "Review the full current diff.")
-        try:
-            review_obj = three_pass_review(client, skill, triage_content, stats)
-        except Exception as exc:
-            write_skipped_review(
-                "Review Failed",
-                model_failure_detail(exc),
-                status="fail",
-                metadata={
-                    "head_sha": head_sha,
-                    "head_commit_message": commit_subject(head_sha),
-                    "review_base": base,
-                    "base_ref": base_ref,
-                    "mode": effective_mode,
-                },
-            )
-            print_telemetry(stats)
-            return
+        packets = [
+            finder_packet(review_target, "Review the full current diff.", prior_contract_context, review_packet)
+        ]
+    try:
+        ctx = ReviewRun(
+            client=client,
+            skill=skill,
+            models=role_models(),
+            stats=stats,
+            base=base,
+            merge_base=run(["git", "merge-base", base, "HEAD"], check=True).stdout.strip(),
+            files=frozenset(files),
+            deadline=stats["started_at"] + REVIEW_DEADLINE_SECONDS,
+        )
+        with ThreadPoolExecutor(max_workers=review_concurrency()) as pool:
+            review_obj = agentic_review(ctx, packets, effective_mode, pool)
+    except Exception as exc:
+        write_skipped_review(
+            "Review Failed",
+            model_failure_detail(exc),
+            status="fail",
+            metadata={
+                "head_sha": head_sha,
+                "head_commit_message": commit_subject(head_sha),
+                "review_base": base,
+                "base_ref": base_ref,
+                "mode": effective_mode,
+            },
+        )
+        print_telemetry(stats)
+        return
+    if len(chunks) > 1:
+        review_obj["what_i_checked"].append(
+            f"Examined the PR in {len(chunks)} file chunk(s) so the large diff did not contaminate context retention."
+        )
     for key in ("findings", "nitpicks", "pre_merge_checks"):
         if review_obj.get(key) is None:
             review_obj[key] = []
@@ -2204,6 +2525,8 @@ def render_review(args):
         requested_mode = args.mode or parse_command_mode()
         base, _, _, _ = resolve_review_base(pr_num, requested_mode)
     findings, nitpicks, invalid = validate_review_items(review_obj, base)
+    # Candidates withheld before verification count with the ones withheld here.
+    invalid = [*as_list(review_obj.get("withheld_findings")), *invalid]
     head_sha = review_obj.get("head_sha") or os.environ.get("DOTTORE_HEAD_SHA", "")
     walkthrough = render_walkthrough(
         review_obj,
