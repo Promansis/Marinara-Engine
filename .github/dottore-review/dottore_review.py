@@ -566,11 +566,15 @@ def print_telemetry(stats):
 
 
 def model_call(client, messages, stats):
-    resp = client.chat.completions.create(
-        model=os.environ.get("LLM_MODEL", "gpt-5.5"),
-        messages=messages,
-        timeout=MODEL_REQUEST_TIMEOUT,
-    )
+    request = {
+        "model": os.environ.get("LLM_MODEL", "gpt-5.5"),
+        "messages": messages,
+        "timeout": MODEL_REQUEST_TIMEOUT,
+    }
+    reasoning_effort = os.environ.get("DOTTORE_REASONING_EFFORT", "").strip()
+    if reasoning_effort:
+        request["reasoning_effort"] = reasoning_effort
+    resp = client.chat.completions.create(**request)
     stats["model_calls"] += 1
     add_usage(stats, getattr(resp, "usage", None))
     if isinstance(resp, str):

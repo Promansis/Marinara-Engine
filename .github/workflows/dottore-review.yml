@@ -17,9 +17,6 @@ on:
       requested_by:
         description: GitHub login that requested the dispatch.
         default: ""
-      is_draft:
-        description: Whether the pull request was draft when dispatch was requested.
-        default: "false"
       last_reviewed_sha:
         description: Explicit Dottore-reviewed head SHA from the dispatcher, when known.
         default: ""
@@ -37,9 +34,6 @@ on:
       requested_by:
         type: string
         default: ""
-      is_draft:
-        type: string
-        default: "false"
       last_reviewed_sha:
         type: string
         default: ""

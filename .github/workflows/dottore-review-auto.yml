@@ -2,7 +2,7 @@ name: Dottore Review Auto Dispatch
 
 on:
   pull_request_target:
-    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, edited]
+    types: [opened, reopened, synchronize, ready_for_review, edited]
 
 permissions:
   actions: write
@@ -17,9 +17,8 @@ concurrency:
 jobs:
   dispatch:
     if: >
-      github.event.pull_request.base.ref == 'refactor' ||
-      github.event.pull_request.base.ref == 'main' ||
-      github.event.pull_request.base.ref == 'staging'
+      (!github.event.pull_request.draft || github.event.action == 'ready_for_review') &&
+      contains(format(',{0},', vars.DOTTORE_BASE_REFS || 'refactor,main,staging'), format(',{0},', github.event.pull_request.base.ref))
     runs-on: ubuntu-latest
     steps:
       - name: Dispatch trusted Dottore reviewer
@@ -32,11 +31,16 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           PREVIOUS_BASE_REF: ${{ github.event.changes.base.ref.from }}
+          DOTTORE_BASE_REFS: ${{ vars.DOTTORE_BASE_REFS || 'refactor,main,staging' }}
         run: |
           # This pull_request_target workflow is intentionally a dispatcher only.
           # It must not checkout, install, or execute code from the pull request.
           TARGET_REF="$PR_BASE_REF"
-          if [ "$TARGET_REF" != "refactor" ] && [ "$TARGET_REF" != "main" ] && [ "$TARGET_REF" != "staging" ]; then
+          if [ "$PR_IS_DRAFT" = "true" ] && [ "$EVENT_ACTION" != "ready_for_review" ]; then
+            echo "Draft specimen withheld from automatic examination."
+            exit 0
+          fi
+          if ! jq -en --arg refs "$DOTTORE_BASE_REFS" --arg ref "$TARGET_REF" '$refs | split(",") | index($ref) != null' >/dev/null; then
             echo "::error::Unsupported Dottore review base ref: $TARGET_REF"
             exit 1
           fi
@@ -76,5 +80,4 @@ jobs:
             -f comment_body="auto pull_request_target dispatch" \
             -f review_mode="$REVIEW_MODE" \
             -f requested_by="$REQUESTED_BY" \
-            -f is_draft="$PR_IS_DRAFT" \
             -f last_reviewed_sha="${LAST_REVIEWED_SHA:-}"

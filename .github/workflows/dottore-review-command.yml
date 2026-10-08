@@ -25,17 +25,21 @@ jobs:
           PR_NUM: ${{ github.event.issue.number }}
           COMMENT_BODY: ${{ github.event.comment.body }}
           COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          DOTTORE_BASE_REFS: ${{ vars.DOTTORE_BASE_REFS || 'refactor,main,staging' }}
         run: |
           # Keep this bootstrap deliberately inert: it only authorizes the slash command
           # and dispatches the trusted reviewer workflow on the PR base ref.
           # It must not checkout, install, or execute code from the pull request.
           REVIEW_MODE=auto
-          if [[ "$COMMENT_BODY" =~ ^/dottore[[:space:]]+full([[:space:]]|$) ]]; then
+          if ! [[ "$COMMENT_BODY" =~ ^/dottore([[:space:]]+full)?[[:space:]]*$ ]]; then
+            echo "No supported examination command; use /dottore or /dottore full."
+            exit 0
+          fi
+          if [[ "$COMMENT_BODY" =~ ^/dottore[[:space:]]+full[[:space:]]*$ ]]; then
             REVIEW_MODE=full
           fi
           TARGET_REF="$(gh pr view "$PR_NUM" --repo "${{ github.repository }}" --json baseRefName -q .baseRefName)"
-          PR_IS_DRAFT="$(gh pr view "$PR_NUM" --repo "${{ github.repository }}" --json isDraft -q .isDraft)"
-          if [ "$TARGET_REF" != "refactor" ] && [ "$TARGET_REF" != "main" ] && [ "$TARGET_REF" != "staging" ]; then
+          if ! jq -en --arg refs "$DOTTORE_BASE_REFS" --arg ref "$TARGET_REF" '$refs | split(",") | index($ref) != null' >/dev/null; then
             echo "::error::Unsupported Dottore review base ref: $TARGET_REF"
             exit 1
           fi
@@ -71,7 +75,7 @@ jobs:
             local comment_id
             comment_id="$(gh api "repos/${{ github.repository }}/issues/$PR_NUM/comments?per_page=100" \
               --paginate \
-              --jq '.[] | select(.body | contains("<!-- dottore:command-status -->")) | .id' \
+              --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("<!-- dottore:command-status -->")) | .id' \
               | tail -n 1)"
             if [ -n "$comment_id" ]; then
               gh api \
@@ -96,8 +100,7 @@ jobs:
             -f pr_number="$PR_NUM" \
             -f comment_body="$COMMENT_BODY" \
             -f review_mode="$REVIEW_MODE" \
-            -f requested_by="$COMMENT_AUTHOR" \
-            -f is_draft="$PR_IS_DRAFT" 2>&1)"
+            -f requested_by="$COMMENT_AUTHOR" 2>&1)"
           DISPATCH_RC=$?
           set -e
 
