@@ -1,0 +1,186 @@
+name: Dottore Review
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to review.
+        required: true
+      comment_body:
+        description: Slash command body that requested the review.
+        default: ""
+      review_mode:
+        description: Review mode for the requested pass.
+        type: choice
+        options: [auto, full, incremental]
+        default: auto
+      requested_by:
+        description: GitHub login that requested the dispatch.
+        default: ""
+      last_reviewed_sha:
+        description: Explicit Dottore-reviewed head SHA from the dispatcher, when known.
+        default: ""
+  workflow_call:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+      comment_body:
+        type: string
+        default: ""
+      review_mode:
+        type: string
+        default: auto
+      requested_by:
+        type: string
+        default: ""
+      last_reviewed_sha:
+        type: string
+        default: ""
+    secrets:
+      OPENAI_API_KEY:
+        required: true
+      LLM_BASE_URL:
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  statuses: write
+
+concurrency:
+  group: dottore-review-${{ github.repository }}-${{ inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      PR_NUM: ${{ inputs.pr_number }}
+      DOTTORE_COMMENT_BODY: ${{ inputs.comment_body }}
+      DOTTORE_REVIEW_MODE: ${{ inputs.review_mode || 'auto' }}
+      DOTTORE_LAST_REVIEWED_SHA: ${{ inputs.last_reviewed_sha }}
+      # Comma-separated exact refs; a single ref (staging or dottore-lab) also works.
+      DOTTORE_BASE_REFS: ${{ vars.DOTTORE_BASE_REFS || 'refactor,main,staging' }}
+      # Never import modules from the untrusted PR working directory.
+      PYTHONSAFEPATH: "1"
+      DOTTORE_REVIEW_PROMPT_PATH: /tmp/dottore-review-tool/reviewer-prompt.md
+      DOTTORE_REVIEW_RULES_PATH: /tmp/dottore-review-tool/rules.json
+    steps:
+      - name: Validate trusted tooling reference
+        env:
+          TOOLING_SHA: ${{ job.workflow_sha }}
+        run: |
+          [[ "$TOOLING_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::job.workflow_sha is unavailable, so Dottore cannot pin its own tooling."
+            exit 1
+          }
+
+      - name: Checkout calling repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout pinned Engine tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # In workflow_call the github context belongs to the caller; job.workflow_*
+          # names the repository and commit of this workflow file itself.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .dottore-tooling
+          persist-credentials: false
+
+      - name: Preserve trusted tooling and base-branch rules
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          [[ "$PR_NUM" =~ ^[1-9][0-9]*$ ]] || exit 1
+          BASE=$(gh pr view "$PR_NUM" --repo "$GITHUB_REPOSITORY" --json baseRefName -q .baseRefName)
+          jq -en --arg refs "$DOTTORE_BASE_REFS" --arg ref "$BASE" '$refs | split(",") | index($ref) != null' >/dev/null || {
+            echo "::error::Unsupported Dottore review base ref: $BASE"
+            exit 1
+          }
+          echo "PR_BASE_REF=$BASE" >> "$GITHUB_ENV"
+          gh auth setup-git
+          git fetch --force origin "$BASE:refs/remotes/origin/$BASE"
+          mkdir -p /tmp/dottore-review-tool
+          cp .dottore-tooling/.github/dottore-review/{dottore_review.py,requirements.txt,reviewer-prompt.md} /tmp/dottore-review-tool/
+          # Caller-specific rules are trusted base content, never PR-head content.
+          git show "origin/$BASE:.github/dottore-review/rules.json" > /tmp/dottore-review-tool/rules.json
+          rm -rf .dottore-tooling
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install trusted reviewer dependencies
+        run: pip install -r /tmp/dottore-review-tool/requirements.txt
+
+      - name: Fetch review specimen without executing it
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh auth setup-git
+          git fetch --force origin "pull/$PR_NUM/head:refs/remotes/dottore-review/pr-$PR_NUM"
+          HEAD_SHA=$(git rev-parse "refs/remotes/dottore-review/pr-$PR_NUM")
+          git checkout --detach "$HEAD_SHA"
+          echo "PR_HEAD_SHA=$HEAD_SHA" >> "$GITHUB_ENV"
+
+      - name: Mark Dottore status in progress
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$PR_HEAD_SHA" \
+            -f state=pending -f context="Dottore Review" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            -f description="The specimen is on Dottore's observation table. Examination in progress." >/dev/null
+
+      - name: Run Dottore review
+        timeout-minutes: 30
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM_MODEL: ${{ vars.DOTTORE_MODEL || 'gpt-5.5' }}
+          DOTTORE_REASONING_EFFORT: ${{ vars.DOTTORE_REASONING_EFFORT }}
+          # Optional JSON giving the broad, skeptic and verify roles their own model and effort.
+          DOTTORE_MODELS: ${{ vars.DOTTORE_MODELS }}
+          DOTTORE_CONCURRENCY: ${{ vars.DOTTORE_CONCURRENCY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python /tmp/dottore-review-tool/dottore_review.py produce
+
+      - name: Render review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python /tmp/dottore-review-tool/dottore_review.py render
+
+      - name: Post the review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python /tmp/dottore-review-tool/dottore_review.py post
+
+      - name: Complete Dottore status
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          if [ -z "${PR_HEAD_SHA:-}" ]; then
+            PR_HEAD_SHA=$(gh pr view "$PR_NUM" --repo "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)
+          fi
+          if [ -f /tmp/dottore-review-tool/dottore_review.py ]; then
+            STATUS_OUTPUT=$(python /tmp/dottore-review-tool/dottore_review.py status-state \
+              --review-json review.json --job-status "$JOB_STATUS")
+          else
+            STATUS_OUTPUT=$(printf '%s\n' 'state=failure' \
+              'description=The examination apparatus was unavailable. Inspect the trusted Dottore workflow run.')
+          fi
+          STATE=$(printf '%s\n' "$STATUS_OUTPUT" | sed -n 's/^state=//p')
+          DESCRIPTION=$(printf '%s\n' "$STATUS_OUTPUT" | sed -n 's/^description=//p')
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$PR_HEAD_SHA" \
+            -f state="$STATE" -f context="Dottore Review" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            -f description="$DESCRIPTION" >/dev/null
