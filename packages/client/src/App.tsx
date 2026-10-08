@@ -651,22 +651,28 @@ export function App() {
       const canvas = document.createElement("canvas");
       canvas.width = canvas.height = 1;
       const context = canvas.getContext("2d");
+      // WebKit can refuse canvas reads under memory pressure (InvalidStateError);
+      // keep the unflattened color then instead of crashing the app shell.
       if (context) {
-        context.fillStyle = defaultBackground;
-        context.fillRect(0, 0, 1, 1);
-        context.fillStyle = literalBackground;
-        context.fillRect(0, 0, 1, 1);
-        const backgroundPixels = context.getImageData(0, 0, 1, 1);
-        context.fillStyle = computedStyle.getPropertyValue("--card").trim();
-        context.fillRect(0, 0, 1, 1);
-        const [red, green, blue] = context.getImageData(0, 0, 1, 1).data;
-        const shellSurface = `rgb(${red}, ${green}, ${blue})`;
-        root.style.setProperty("--marinara-shell-surface", shellSurface);
-        context.putImageData(backgroundPixels, 0, 0);
-        context.fillStyle = computedStyle.getPropertyValue("--marinara-topbar-surface").trim();
-        context.fillRect(0, 0, 1, 1);
-        const [topbarRed, topbarGreen, topbarBlue] = context.getImageData(0, 0, 1, 1).data;
-        literalBackground = `rgb(${topbarRed}, ${topbarGreen}, ${topbarBlue})`;
+        try {
+          context.fillStyle = defaultBackground;
+          context.fillRect(0, 0, 1, 1);
+          context.fillStyle = literalBackground;
+          context.fillRect(0, 0, 1, 1);
+          const backgroundPixels = context.getImageData(0, 0, 1, 1);
+          context.fillStyle = computedStyle.getPropertyValue("--card").trim();
+          context.fillRect(0, 0, 1, 1);
+          const [red, green, blue] = context.getImageData(0, 0, 1, 1).data;
+          const shellSurface = `rgb(${red}, ${green}, ${blue})`;
+          root.style.setProperty("--marinara-shell-surface", shellSurface);
+          context.putImageData(backgroundPixels, 0, 0);
+          context.fillStyle = computedStyle.getPropertyValue("--marinara-topbar-surface").trim();
+          context.fillRect(0, 0, 1, 1);
+          const [topbarRed, topbarGreen, topbarBlue] = context.getImageData(0, 0, 1, 1).data;
+          literalBackground = `rgb(${topbarRed}, ${topbarGreen}, ${topbarBlue})`;
+        } catch (error) {
+          console.warn("[theme] Could not read the canvas to flatten the page backing", error);
+        }
       }
       root.style.setProperty("--marinara-page-backing", literalBackground);
       root.style.setProperty("background-color", literalBackground, "important");

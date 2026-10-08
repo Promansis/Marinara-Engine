@@ -22592,6 +22592,20 @@ test("mobile chat composer follows the visual viewport above the software keyboa
   }
 });
 
+test("page backing keeps the app running when the browser refuses canvas reads", async ({ page }) => {
+  // WebKit throws InvalidStateError from getImageData under memory pressure (#7241).
+  await page.addInitScript(() => {
+    CanvasRenderingContext2D.prototype.getImageData = () => {
+      throw new DOMException("Unable to get image data from canvas", "InvalidStateError");
+    };
+  });
+  await page.goto("/");
+  await expect(page.locator('[data-component="AppShell"]')).toBeVisible();
+  await expect(page.getByText("Marinara hit a recoverable UI error.")).toHaveCount(0);
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", /\S/);
+  await expect(page.locator("html")).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+});
+
 test("mobile Roleplay releases its inactive background after a crossfade", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("webkit"), "Decoded-background retention is covered in mobile WebKit.");
 
