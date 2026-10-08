@@ -1562,11 +1562,9 @@ export function createAdvancedMemoryService(db: DB, { includeExcerptsInStatus = 
         const unmatched = names.filter((_, index) => matches[index] === null);
         const characters = ctx.characterIds.filter((id) => id !== ctx.settings.narratorCharacterId);
         // A missing key is a format slip, not "nobody": a one-character chat's character was there.
-        // With several characters it cannot be guessed, so the scene stays narrator-only and is flagged.
-        const audience =
-          raw === "all" || (missing && characters.length === 1)
-            ? ctx.characterIds
-            : matches.filter((id): id is string => !!id);
+        // In a group chat every character gets the scene and it is flagged, so the user removes
+        // anyone who wasn't there (maintainer decision on #7184). [] still means a user-only scene.
+        const audience = raw === "all" || missing ? ctx.characterIds : matches.filter((id): id is string => !!id);
         const audienceIssue = unmatched.length
           ? unmatched.join(", ").slice(0, 200)
           : missing && characters.length > 1

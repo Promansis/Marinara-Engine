@@ -315,6 +315,13 @@ try {
     [["sister of Kaito Nakamura"], ["kaito"], [], true, "a description naming a character"],
     [[{ name: "Kaito Nakamura" }], ["kaito"], [], true, "an object is not a name"],
     [{ Kaito: false }, ["kaito"], [], true, "an unreadable answer is not a missing one"],
+    // Mari decided on 2026-10-07 (#7184): a group scene with no listed participants goes to every
+    // character and is flagged, so the user removes anyone who wasn't there. It was narrator-only before.
+    [undefined, ["kaito", "tanaka"], ["kaito", "tanaka"], true, "a group's missing audience goes to everyone"],
+    [null, ["kaito", "tanaka"], ["kaito", "tanaka"], true, "a group's null audience goes to everyone"],
+    [[], ["kaito", "tanaka"], [], false, "a group's empty list is a user-only scene"],
+    [{ Kaito: false }, ["kaito", "tanaka"], [], true, "a group's unreadable answer still grants nothing"],
+    [["sister of Kaito Nakamura"], ["kaito", "tanaka"], [], true, "a group's description still grants nothing"],
   ] as Array<[unknown, string[], string[], boolean, string]>) {
     matrixAudience = answer;
     const matrix = await chats.create({ name: label, mode: "roleplay", characterIds, connectionId: connection.id });
@@ -334,6 +341,21 @@ try {
     const saved = status.records.find((record) => record.kind === "scene" && record.content)!;
     assert.deepEqual(saved.audienceCharacterIds, expected, label);
     assert.equal(status.warnings.includes("scene-audience-unmatched"), flagged, `${label}: warning`);
+    // The participant check for older scenes reads the same answer the same way.
+    await db
+      .update(advancedMemoryRecords)
+      .set({ dependencies: "[]", audienceCharacterIds: "[]" })
+      .where(eq(advancedMemoryRecords.id, saved.id));
+    const checks = participantChecks.length;
+    await memory.initialize(matrix.id, { detectScenes: false });
+    assert.equal(participantChecks.length, checks + 1, `${label}: older-scene check ran`);
+    const checked = await memory.status(matrix.id);
+    assert.deepEqual(
+      checked.records.find((record) => record.id === saved.id)!.audienceCharacterIds,
+      expected,
+      `${label}: older-scene check`,
+    );
+    assert.equal(checked.warnings.includes("scene-audience-unmatched"), flagged, `${label}: older-scene warning`);
   }
 
   // (4) A scene that ends inside the swiped reply's live messages cannot be recalled, so the swipe reuses its memory.

@@ -170,7 +170,19 @@ try {
   assert.equal(saved.length, 4, "one scene memory, regardless of the number of characters");
   const at = (index: number) => saved.find((record) => record.messageIds.includes(source[index]!.id))!;
   assert.deepEqual(at(0).audienceCharacterIds, ["maukie"], "discussing Pantalone does not grant Pantalone access");
-  assert.deepEqual(at(2).audienceCharacterIds, [], "missing audience is narrator-only, including a user-only scene");
+  // Mari decided on 2026-10-07 (#7184) that a group scene with no listed participants goes to every
+  // character, flagged so the user removes anyone who wasn't there. It was narrator-only before.
+  assert.deepEqual(
+    at(2).audienceCharacterIds,
+    ["maukie", "pantalone"],
+    "a missing audience in a group chat goes to every character, excluding the implicit narrator",
+  );
+  const flag = (index: number) =>
+    at(index).dependencies.find((item) => item.id === "scene-audience-unmatched")?.revision;
+  assert.equal(flag(2), "no audience returned", "a group scene with a missing audience is flagged for review");
+  assert.equal(flag(6), "not-a-chat-character", "unknown names are flagged with the names that fit no character");
+  assert.equal(flag(0), undefined, "matched names are not flagged");
+  assert.equal(flag(4), undefined, "explicit all is not flagged");
   assert.deepEqual(
     at(4).audienceCharacterIds,
     ["maukie", "pantalone"],
@@ -188,17 +200,17 @@ try {
   );
   const recall = (audienceCharacterIds: string[], messages = source) =>
     memory.prepare({ chatId: chat.id, messages, audienceCharacterIds, budgetTokens: 12000, readOnly: true });
-  const narratorScene = at(2);
-  const narratorRow = (
-    await db.select().from(advancedMemoryRecords).where(eq(advancedMemoryRecords.id, narratorScene.id))
+  const unlistedScene = at(2);
+  const unlistedRow = (
+    await db.select().from(advancedMemoryRecords).where(eq(advancedMemoryRecords.id, unlistedScene.id))
   )[0]!;
   await db
     .update(advancedMemoryRecords)
     .set({ dependencies: "[]" })
-    .where(eq(advancedMemoryRecords.id, narratorScene.id));
+    .where(eq(advancedMemoryRecords.id, unlistedScene.id));
   await db.insert(advancedMemoryRecords).values({
-    ...narratorRow,
-    id: `${narratorScene.id}-audience`,
+    ...unlistedRow,
+    id: `${unlistedScene.id}-audience`,
     content: "",
     dependencies: "[]",
     summaryWork: null,
@@ -208,22 +220,24 @@ try {
   assert.equal((await recall(["narrator"])).receipt.recalledSceneIds.length, 4);
   await memory.reindex(chat.id);
   assert.equal(summaries, 4, "reindexing never generates summaries or calls participant classification");
-  assert.equal((await scenes()).find((record) => record.id === narratorScene.id)?.content, narratorScene.content);
-  await db.delete(advancedMemoryRecords).where(eq(advancedMemoryRecords.id, `${narratorScene.id}-audience`));
+  assert.equal((await scenes()).find((record) => record.id === unlistedScene.id)?.content, unlistedScene.content);
+  await db.delete(advancedMemoryRecords).where(eq(advancedMemoryRecords.id, `${unlistedScene.id}-audience`));
   await db
     .update(advancedMemoryRecords)
-    .set({ dependencies: narratorRow.dependencies })
-    .where(eq(advancedMemoryRecords.id, narratorScene.id));
+    .set({ dependencies: unlistedRow.dependencies })
+    .where(eq(advancedMemoryRecords.id, unlistedScene.id));
   for (const mode of ["individual", "shared"]) {
     await chats.patchMetadata(chat.id, { groupChatMode: mode });
     const absent = await recall(["pantalone"]);
+    // Pantalone has the unlisted scene and the "all" scene, never the one Maukie only discussed him in.
+    const assigned = [at(2), at(4)];
     assert.deepEqual(
       absent.receipt.recalledSceneIds,
-      [at(4).sceneId],
+      assigned.map((record) => record.sceneId),
       `${mode}: absent characters recall only assigned scenes`,
     );
     assert(
-      absent.receipt.recalledMessageIds.every((id) => at(4).messageIds.includes(id)),
+      absent.receipt.recalledMessageIds.every((id) => assigned.some((record) => record.messageIds.includes(id))),
       "raw excerpts obey their scene access too",
     );
     assert.equal(
@@ -233,10 +247,10 @@ try {
     );
     assert.deepEqual(
       (await recall(["maukie", "pantalone", "narrator"])).receipt.recalledSceneIds,
-      [at(4).sceneId],
+      assigned.map((record) => record.sceneId),
       "a mixed group cannot use narrator privilege for absent characters",
     );
-    assert.equal((await recall(["maukie"])).receipt.recalledSceneIds.length, 2);
+    assert.equal((await recall(["maukie"])).receipt.recalledSceneIds.length, 3);
   }
   const shared = at(4);
   const row = (await db.select().from(advancedMemoryRecords).where(eq(advancedMemoryRecords.id, shared.id)))[0]!;
@@ -298,7 +312,9 @@ try {
   await memory.updateRecord(chat.id, editId, { audienceCharacterIds: [] });
   saved = await scenes();
   assert.deepEqual(at(4).audienceCharacterIds, [], "clearing selection saves narrator-only access");
-  assert.equal((await recall(["pantalone"])).receipt.recalledSceneIds.length, 0);
+  // Pantalone keeps only the unlisted scene, which every character received.
+  const unlistedOnly = [unlistedScene.sceneId];
+  assert.deepEqual((await recall(["pantalone"])).receipt.recalledSceneIds, unlistedOnly);
   assert.equal((await recall(["narrator"])).receipt.recalledSceneIds.length, 4);
   assert.equal(summaries, 5, "reading/editing legacy access spends no model tokens");
   await memory.initialize(chat.id, { detectScenes: false });
@@ -318,23 +334,23 @@ try {
     budgetTokens: 12000,
     readOnly: true,
   });
-  assert.equal(
-    hidden.receipt.recalledSceneIds.length,
-    0,
+  assert.deepEqual(
+    hidden.receipt.recalledSceneIds,
+    unlistedOnly,
     "changed source visibility cannot expose an old unreviewed recap",
   );
   assert(!hidden.receipt.recalledMessageIds.includes(source[4]!.id), "hidden source messages stay out of excerpts");
   await memory.updateRecord(chat.id, editId, {
     content: (await scenes()).find((record) => record.id === editId)!.content,
   });
-  assert.equal(
-    (await recall(["pantalone"], await chats.listMessages(chat.id))).receipt.recalledSceneIds.length,
-    1,
+  assert.deepEqual(
+    (await recall(["pantalone"], await chats.listMessages(chat.id))).receipt.recalledSceneIds,
+    [...unlistedOnly, shared.sceneId],
     "reviewing the recap restores partial scene access",
   );
   for (const messageId of (await scenes()).find((record) => record.id === editId)!.messageIds)
     await chats.updateMessageExtra(messageId, { hiddenFromAICharacterIds: ["pantalone"] });
-  assert.equal(
+  assert.deepEqual(
     (
       await memory.prepare({
         chatId: chat.id,
@@ -343,8 +359,8 @@ try {
         budgetTokens: 12000,
         readOnly: true,
       })
-    ).receipt.recalledSceneIds.length,
-    0,
+    ).receipt.recalledSceneIds,
+    unlistedOnly,
     "an entirely hidden scene remains inaccessible",
   );
   await memory.deleteRecord(chat.id, editId);
@@ -556,7 +572,7 @@ try {
   assert.equal(classifiedIds.size, 0, "hiding already classified history does not repeat paid scene decisions");
   assert.equal(summaries, beforeVisibilityChange, "visibility-only edits keep completed summaries");
   console.log(
-    "Advanced Memory narrator-only defaults, participant access, shared scenes and legacy duplicate corrections passed.",
+    "Advanced Memory unlisted-participant defaults, participant access, shared scenes and legacy duplicate corrections passed.",
   );
 } finally {
   provider.closeAllConnections();
