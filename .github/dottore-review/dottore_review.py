@@ -623,29 +623,30 @@ def review_packet_with_model(client, skill, triage_content, stats):
 
 
 def skeptical_review_pass(client, skill, triage_content, stats):
-    audit_prompt = (
-        "Run an independent skeptical specialist review over the same packet. Do not treat "
-        "any broad-review conclusion as authoritative. Focus on invariant mismatches "
+    segment_prompt = (
+        "Run the independent skeptical segment over the same packet. Do not treat "
+        "the broad segment's conclusion as authoritative. Focus on invariant mismatches "
         "introduced by the diff: data collected in a pre-scan but persisted after later "
         "filters, parent metadata derived from rows that are not imported as children, "
         "fallback behavior that diverges from validation, rollback paths, partial writes, "
         "contract drift, and tests that prove only the happy path. Report only concrete "
         "actionable findings that cite added or changed diff lines. If there are no "
-        "findings from this specialist lens, return the same JSON schema with empty "
-        "findings and nitpicks arrays and mention the skeptical audit in what_i_checked."
+        "findings from this segment lens, return the same JSON schema with empty "
+        "findings and nitpicks arrays and attribute the skeptical segment's notes in what_i_checked."
     )
     messages = [
         {"role": "system", "content": skill},
         {"role": "user", "content": triage_content},
-        {"role": "user", "content": audit_prompt},
+        {"role": "user", "content": segment_prompt},
     ]
     response = model_call(client, messages, stats)
     return extract_json_or_repair(client, messages, response, stats)
 
 
-def judge_review_pass(client, skill, triage_content, broad_review, skeptical_review, stats):
+def judge_review_pass(client, skill, triage_content, first_segment, second_segment, stats):
     judge_prompt = (
-        "Merge these two independent review passes into the final Dottore Review JSON. "
+        "Il Dottore is the final judge. Merge these two finder segment reports "
+        "into the final Dottore Review JSON. "
         "Deduplicate overlapping findings, keep the clearest title/body/fix_hint, normalize "
         "severity, and reject weak or speculative findings. Preserve concrete findings even "
         "if only one pass found them, and include a repair_contract for every defect finding. "
@@ -658,8 +659,8 @@ def judge_review_pass(client, skill, triage_content, broad_review, skeptical_rev
         "change_summary, nitpicks, pre_merge_checks, "
         "open_questions, and what_i_checked entries without repeating yourself. Reply only "
         "with FINAL_REVIEW followed by the final JSON object."
-        f"\n\n# Broad Review JSON\n{json.dumps(broad_review, indent=2, sort_keys=True)}"
-        f"\n\n# Skeptical Review JSON\n{json.dumps(skeptical_review, indent=2, sort_keys=True)}"
+        f"\n\n# Broad Segment JSON\n{json.dumps(first_segment, indent=2, sort_keys=True)}"
+        f"\n\n# Skeptical Segment JSON\n{json.dumps(second_segment, indent=2, sort_keys=True)}"
     )
     messages = [
         {"role": "system", "content": skill},
@@ -671,14 +672,14 @@ def judge_review_pass(client, skill, triage_content, broad_review, skeptical_rev
 
 
 def three_pass_review(client, skill, triage_content, stats):
-    broad_review = review_packet_with_model(client, skill, triage_content, stats)
-    skeptical_review = skeptical_review_pass(client, skill, triage_content, stats)
+    first_segment = review_packet_with_model(client, skill, triage_content, stats)
+    second_segment = skeptical_review_pass(client, skill, triage_content, stats)
     return judge_review_pass(
         client,
         skill,
         triage_content,
-        broad_review,
-        skeptical_review,
+        first_segment,
+        second_segment,
         stats,
     )
 
@@ -1058,7 +1059,7 @@ def merge_signal(review_obj, findings, nitpicks, pre_merge):
     if review_incomplete:
         return {
             "label": "REVIEW INCOMPLETE",
-            "title": "Review Incomplete",
+            "title": "Specimen Unexamined",
             "admonition": "CAUTION",
             "detail": "Dottore Review did not complete, so no model findings are available.",
         }
@@ -1071,15 +1072,15 @@ def merge_signal(review_obj, findings, nitpicks, pre_merge):
     )
     if has_blocking or has_failed_check:
         return {
-            "label": "DO NOT MERGE",
-            "title": "Do Not Merge",
+            "label": "SPECIMEN UNSTABLE",
+            "title": "Specimen Unstable",
             "admonition": "CAUTION",
             "detail": "Repair blocking/high findings or failed controls before merge.",
         }
     if findings or any(warn_is_blocking_proof_gap(item) for item in pre_merge):
         return {
-            "label": "ACTION NEEDED",
-            "title": "Action Needed",
+            "label": "REPAIR REQUIRED",
+            "title": "Repair Required",
             "admonition": "WARNING",
             "detail": "Actionable findings or blocking proof gaps remain for this head.",
         }
@@ -1089,14 +1090,14 @@ def merge_signal(review_obj, findings, nitpicks, pre_merge):
     )
     if has_notes:
         return {
-            "label": "READY WITH NOTES",
-            "title": "Ready With Notes",
+            "label": "VIABLE, WITH NOTES",
+            "title": "Viable, With Notes",
             "admonition": "WARNING",
             "detail": "No actionable defects were isolated, but non-blocking notes remain.",
         }
     return {
-        "label": "READY",
-        "title": "Ready",
+        "label": "VIABLE",
+        "title": "Viable",
         "admonition": "TIP",
         "detail": "No actionable findings were isolated for this head. Expected CI controls were observed passing.",
     }
@@ -1107,7 +1108,7 @@ def render_merge_signal(review_obj, findings, nitpicks, pre_merge, head_sha):
     controls = control_summary(pre_merge)
     mode = review_obj.get("mode") or "unknown"
     body = [
-        f"## Dottore Merge Signal: {signal['title']}",
+        f"## Dottore Verdict: {signal['title']}",
         "",
         f"> [!{signal['admonition']}]",
         f"> **{signal['label']}**",
@@ -1592,7 +1593,7 @@ def render_walkthrough(
             location = f"{item.get('path') or 'unknown'}:{item.get('line') or '?'}"
             title = item.get("title") or "Prior Dottore finding"
             body.append(f"- `{md_cell(location)}` - {md_cell(title)}")
-    body.extend(["", "### 🧹 Nitpicks"])
+    body.extend(["", "### 🧹 Minor Imperfections"])
     if nitpicks:
         body.extend(
             [
@@ -1635,7 +1636,7 @@ def render_walkthrough(
                 f"{md_cell(detail)} |"
             )
     if questions:
-        body.extend(["", "### ❓ Open Questions"])
+        body.extend(["", "### ❓ Unresolved Hypotheses"])
         body.extend([f"- {line}" for line in questions[:2]])
     body.extend(["", "### 🧪 Observations"])
     body.extend([f"- {line}" for line in checked[:3]] or ["- Review packet and diff context inspected."])
@@ -1643,7 +1644,7 @@ def render_walkthrough(
         body.extend(
             [
                 "",
-                "### 📝 Reviewer Notes",
+                "### 📝 Lab Notes",
                 "> [!WARNING]",
                 f"> Withheld {len(invalid_findings)} model finding(s) because their diff locations failed validation.",
             ]
@@ -2080,7 +2081,7 @@ def produce_review(args):
         triage = (
             f"Review this PR. The review base is '{base}' from target branch '{base_ref}', "
             f"head is '{head_sha}', and mode is '{effective_mode}'. {focus_note} "
-            "Use the provided review packet as the complete inspection context. "
+            "Act as the broad segment. Use the provided review packet as the complete inspection context. "
             "If prior Dottore contracts are included, first judge whether the current diff satisfies "
             "or leaves those contracts incomplete before issuing adjacent related findings. "
             "You have one chance to request focused extra context before the final review. "
@@ -2092,6 +2093,7 @@ def produce_review(args):
         triage += (
             "\n\nFocus on correctness, contracts, failure paths, tests, CI/deployment risks, "
             "and architecture. Findings must point to changed diff lines. "
+            "Attribute broad-segment notes in what_i_checked. "
             "If the packet is truncated or missing context for a potential issue, mention that "
             "limitation in what_i_checked rather than inventing certainty."
             f"\n\n# Prior Dottore Repair Contracts\n{prior_contract_context}"
@@ -2263,7 +2265,7 @@ def patch_command_status_running(pr_num, head_sha, mode):
     body = "\n".join(
         [
             COMMAND_STATUS_MARKER,
-            "## 🎭 Dottore Review Running",
+            "## 🎭 Dottore Review — Experiment in Progress",
             "",
             "> [!NOTE]",
             "> Reviewer workflow is running. The specimen is under observation.",
@@ -2279,7 +2281,7 @@ def patch_command_status_complete(pr_num, head_sha):
     body = "\n".join(
         [
             COMMAND_STATUS_MARKER,
-            "## ✅ Dottore Review Completed",
+            "## 🎭 Dottore Review — Concluded",
             "",
             "> [!TIP]",
             "> Review posted. The specimen has left the observation table.",
@@ -2394,7 +2396,7 @@ def post_review(args):
         return
     payload = {
         "event": "COMMENT",
-        "body": "Dottore Review inline findings",
+        "body": "Dottore Review — isolated defects from the specimen.",
         "comments": comments,
     }
     run_gh(
