@@ -1165,6 +1165,7 @@ function normalizeSpotifyTrackUri(value: unknown): string | null {
   return uri?.startsWith("spotify:track:") ? uri : null;
 }
 
+/** Valid, de-duplicated Spotify track URIs from stored history, oldest first, capped at `limit`. */
 function normalizeSpotifyTrackHistory(value: unknown, limit = SPOTIFY_RECENT_TRACK_HISTORY_LIMIT): string[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
