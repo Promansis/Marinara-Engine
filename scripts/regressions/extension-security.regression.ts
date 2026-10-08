@@ -95,6 +95,14 @@ assert.match(
 );
 assert.match(clientInjectorSource, /registerPersonalExtensionContribution/u);
 assert.match(clientInjectorSource, /removePersonalExtensionContributions/u);
+// #7260: a worker stopped by the sandbox must not leave dead controls behind.
+assert.match(
+  clientInjectorSource,
+  /message\.stopped === true && message\.contentHash === active\.contentHash\) \{\s*void cleanupExtension\(active\.extension\.id\)/u,
+);
+assert.match(clientInjectorSource, /extensions\.runtime\.restart/u);
+assert.match(clientInjectorSource, /\[extensions, restartRequest\]/u);
+assert.match(localizationSource, /"extensions\.runtime\.stopped": "\{\{name\}\} stopped working\."/u);
 assert.match(clientInjectorSource, /message\.contentHash === active\.contentHash/u);
 assert.match(clientInjectorSource, /useChatStore\.subscribe/u);
 assert.match(clientInjectorSource, /type:\s*"context-update"/u);
@@ -716,6 +724,92 @@ try {
     doc.includes("new Worker(") && doc.includes("marinara.ui.showWindow"),
     "Extension JS must run in the worker embedded by the bootstrap, not in the document",
   );
+
+  // #7260: background tabs, sleep and suspended mobile apps throttle timers.
+  // The heartbeat watchdog must not stop a healthy worker for that silence,
+  // but must still stop a worker that hangs on a visible page.
+  {
+    const bootstrap = /<script nonce="test-nonce">([\s\S]*?)<\/script>/u.exec(doc)?.[1];
+    assert.ok(bootstrap, "Sandbox bootstrap script must be present");
+    let now = 1_000_000;
+    let watchdogTick: (() => void) | undefined;
+    let deliverWorkerMessage: ((event: { data: unknown }) => void) | undefined;
+    let terminated = false;
+    const posted: Array<{ type?: string; stopped?: boolean; message?: string }> = [];
+    const fakeElement = () => ({
+      style: { setProperty: () => undefined },
+      setAttribute: () => undefined,
+      appendChild: () => undefined,
+      addEventListener: () => undefined,
+      remove: () => undefined,
+    });
+    const fakeDocument = {
+      hidden: false,
+      createElement: fakeElement,
+      documentElement: { style: {} },
+      body: { style: {}, appendChild: () => undefined },
+    };
+    runInNewContext(bootstrap, {
+      Date: { now: () => now },
+      Blob: class {},
+      URL: { createObjectURL: () => "blob:test", revokeObjectURL: () => undefined },
+      Worker: class {
+        addEventListener(type: string, listener: (event: { data: unknown }) => void) {
+          if (type === "message") deliverWorkerMessage = listener;
+        }
+        postMessage() {}
+        terminate() {
+          terminated = true;
+        }
+      },
+      document: fakeDocument,
+      window: {
+        parent: { postMessage: (message: (typeof posted)[number]) => posted.push(message) },
+        setInterval: (callback: () => void) => {
+          watchdogTick = callback;
+          return 1;
+        },
+        clearInterval: () => undefined,
+        setTimeout: () => 0,
+        addEventListener: () => undefined,
+      },
+    });
+    assert.ok(watchdogTick && deliverWorkerMessage, "Sandbox must start the heartbeat watchdog");
+    const tick = (elapsedMs: number) => {
+      now += elapsedMs;
+      watchdogTick!();
+    };
+    const heartbeat = () => deliverWorkerMessage!({ data: { type: "heartbeat" } });
+
+    // Hidden tab: the worker's heartbeat stalls while the watchdog keeps ticking.
+    heartbeat();
+    fakeDocument.hidden = true;
+    for (let second = 0; second < 30; second += 1) tick(1_000);
+    tick(60_000);
+    assert.equal(terminated, false, "A hidden page must not stop a worker whose heartbeat is throttled");
+    fakeDocument.hidden = false;
+    tick(1_000);
+    tick(1_000);
+    assert.equal(terminated, false, "Returning to the tab must give the worker a fresh heartbeat window");
+    heartbeat();
+
+    // Sleep or a frozen page on a visible tab: the watchdog's own tick arrives late.
+    tick(120_000);
+    tick(1_000);
+    assert.equal(terminated, false, "A late watchdog tick proves throttling, not a hung worker");
+
+    // A worker that hangs on a visible page is still stopped within the same window.
+    heartbeat();
+    for (let second = 0; second < 5; second += 1) tick(1_000);
+    assert.equal(terminated, false, "Five seconds of silence must stay within the heartbeat window");
+    tick(1_000);
+    assert.equal(terminated, true, "A worker silent for over five seconds on a visible page must be stopped");
+    assert.deepEqual(
+      posted.filter((message) => message.type === "error").map(({ stopped, message }) => ({ stopped, message })),
+      [{ stopped: true, message: "Browser extension was stopped because its sandbox became unresponsive" }],
+      "The host must be told the worker was stopped so it can drop dead controls",
+    );
+  }
 
   const fullPageExtension = {
     ...uiExtension,

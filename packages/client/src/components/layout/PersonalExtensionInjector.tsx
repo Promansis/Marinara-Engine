@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import {
   CSRF_HEADER,
   CSRF_HEADER_VALUE,
@@ -21,6 +22,7 @@ import {
   setPersonalExtensionContributionDispatcher,
 } from "../../lib/personal-extension-contributions";
 import { fetchForPersonalExtension } from "../../lib/personal-extension-traffic";
+import { translate } from "../../localization/i18n";
 import { useChatStore } from "../../stores/chat.store";
 
 type ActiveClientExtension = {
@@ -91,6 +93,7 @@ type SandboxMessage = {
   level?: "debug" | "info" | "warn" | "error";
   args?: unknown[];
   message?: string;
+  stopped?: boolean;
   width?: number;
   height?: number;
 };
@@ -390,6 +393,7 @@ async function handleStorage(active: ActiveClientExtension, message: SandboxMess
 
 export function PersonalExtensionInjector() {
   const { data: extensions = [] } = usePersonalExtensionRuntime();
+  const [restartRequest, setRestartRequest] = useState(0);
 
   useEffect(() => {
     const host = window as FullPageExtensionHostWindow;
@@ -513,6 +517,20 @@ export function PersonalExtensionInjector() {
             },
           }),
         );
+        // The sandbox stopped this worker, so its buttons and panels can no
+        // longer respond. Remove them and let the user restart the extension.
+        if (message.stopped === true && message.contentHash === active.contentHash) {
+          void cleanupExtension(active.extension.id);
+          toast.error(translate("extensions.runtime.stopped", { name: active.extension.name }), {
+            id: `personal-extension-stopped-${active.extension.id}`,
+            description: translate("extensions.runtime.stoppedDescription"),
+            duration: Infinity,
+            action: {
+              label: translate("extensions.runtime.restart"),
+              onClick: () => setRestartRequest((count) => count + 1),
+            },
+          });
+        }
       }
     };
     window.addEventListener("message", onMessage);
@@ -609,7 +627,7 @@ export function PersonalExtensionInjector() {
         iframe.contentWindow?.postMessage({ channel: "marinara-personal-extension", ...message }, "*");
       });
     }
-  }, [extensions]);
+  }, [extensions, restartRequest]);
 
   useEffect(
     () => () => {
