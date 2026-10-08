@@ -1174,7 +1174,6 @@ function normalizeSpotifyTrackHistory(value: unknown, limit = SPOTIFY_RECENT_TRA
     if (!uri || seen.has(uri)) continue;
     seen.add(uri);
     normalized.push(uri);
-    if (normalized.length >= limit) break;
   }
   return normalized;
 }
