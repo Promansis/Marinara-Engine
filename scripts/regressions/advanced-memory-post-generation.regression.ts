@@ -1752,6 +1752,31 @@ try {
   assert.equal(calls.length, 1, "a rejected combination is not requested again for the same summaries");
   assert.deepEqual(await combineEntries(), [privateRecap]);
 
+  // A result that is only shorter because it left out a condition is not saved, so it is not paid for on every reply.
+  const walkRecap = recap("walk-recap", 0, privateRecap.content);
+  summaryReply = () => `${"SHARED_WALK ".repeat(300)}${maukieSecret}`;
+  await chats.patchMetadata(combineChat.id, { summaryEntries: [walkRecap] });
+  calls.length = 0;
+  await memory.checkScenesAfterGeneration(combineChat.id, { blocking: false });
+  await memory.checkScenesAfterGeneration(combineChat.id, { blocking: false });
+  assert.equal(calls.length, 1, "a combination that shortens nothing is requested once");
+  assert.deepEqual(await combineEntries(), [walkRecap], "a combination that shortens nothing is not saved");
+
+  // A private section may repeat a sentence both characters already read; keeping it shared is no leak.
+  const innRecap = recap(
+    "inn-recap",
+    0,
+    `${forBoth}They returned to the inn. ${"SHARED_WALK ".repeat(300)}{{#if char == "Maukie"}}MAUKIE_SECRET hid the key. They returned to the inn.{{/if}}{{/if}}`,
+  );
+  summaryReply = () => `They returned to the inn. COMBINED_WALK. ${maukieSecret}`;
+  await chats.patchMetadata(combineChat.id, { summaryEntries: [innRecap] });
+  await memory.checkScenesAfterGeneration(combineChat.id, { blocking: false });
+  assert.match(
+    (await combineEntries()).find((entry) => entry.enabled)!.content,
+    /COMBINED_WALK/u,
+    "a sentence that was already shared does not block the combination",
+  );
+
   // A summary edited by hand keeps its text; only the plain summary is shortened.
   summaryReply = undefined;
   const editedRecap = {

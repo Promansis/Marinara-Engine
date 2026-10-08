@@ -3334,7 +3334,7 @@ export function createAdvancedMemoryService(db: DB, { includeExcerptsInStatus = 
         });
       return found;
     };
-    // A private sentence of four or more words found in a section someone else can also read.
+    // A private sentence of four or more words newly found in a section someone else can also read.
     const leaks = (before: Map<string, string>, after: Map<string, string>) =>
       [...before].some(
         ([key, text]) =>
@@ -3346,7 +3346,12 @@ export function createAdvancedMemoryService(db: DB, { includeExcerptsInStatus = 
               text
                 .split(/[.!?]/u)
                 .map((sentence) => sentence.trim())
-                .some((sentence) => sentence.split(" ").length >= 4 && output.includes(sentence)),
+                .some(
+                  (sentence) =>
+                    sentence.split(" ").length >= 4 &&
+                    output.includes(sentence) &&
+                    !before.get(wider)?.includes(sentence),
+                ),
           ),
       );
     // Combine the summaries the same characters read. One whose text differs by character joins
@@ -3414,21 +3419,24 @@ export function createAdvancedMemoryService(db: DB, { includeExcerptsInStatus = 
         options,
       );
       const content = (await summarize(ctx, inputs, target, options, cache, false, combine)).summary;
+      const scoped = scopeConstantSummary(ctx, content, readers);
       // Keep originals if the helper did not shorten them. The completed work
       // stays cached so unchanged inputs do not repeat the same paid attempt.
-      if (tokenSize(content) >= groupTokens) continue;
-      const scoped = scopeConstantSummary(ctx, content, readers);
+      // A combined group's inputs carry their conditions, so measure the result with its conditions too.
+      if (tokenSize(combine ? scoped : content) >= groupTokens) continue;
       const before = combine ? sections(inputs) : new Map<string, string>();
       const after = combine ? sections([scoped]) : before;
       // Every group of readers must keep its section, none may be added, and no private sentence
       // may reach more readers. ponytail: a reworded private fact in a wider section still passes;
       // upgrade by asking a second model to compare the facts in each section.
       if (after.size !== before.size || [...after.keys()].some((key) => !before.has(key)) || leaks(before, after)) {
-        logger.warn(
-          "[advanced-memory] Combined summaries for %s would change who can read a private section; keeping them",
-          chatId,
-        );
         const plain = entries.filter((entry) => !conditional.has(entry.id));
+        logger.warn(
+          "[advanced-memory] Chat %s: the Helper's combined summary would change who can read a private part, so it was not saved. Summaries with private parts kept as they are: %d. Other summaries shortened on their own: %d.",
+          chatId,
+          entries.length - plain.length,
+          plain.length,
+        );
         if (plain.length) queue.push({ audience, ranged, entries: plain, combine: false });
         continue;
       }
