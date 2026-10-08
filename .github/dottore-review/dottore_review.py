@@ -1,6 +1,7 @@
-# .github/bunny-review/bunny_review.py
+# .github/dottore-review/dottore_review.py
 import argparse
 import base64
+import fnmatch
 import hashlib
 import json
 import os
@@ -12,11 +13,11 @@ import time
 from dataclasses import dataclass
 
 REPO_ROOT = pathlib.Path.cwd().resolve()
-BUNNY_MARKER = "<!-- bunny-review:walkthrough -->"
-COMMAND_STATUS_MARKER = "<!-- bunny-review:command-status -->"
-FINDING_MARKER_RE = re.compile(r"<!-- bunny-review:finding=([0-9a-f]{16}) -->")
-STATE_MARKER_RE = re.compile(r"<!-- bunny-review:last-reviewed-sha=([0-9a-f]{40}) -->")
-CONTRACT_STATE_RE = re.compile(r"<!-- bunny-review:contract-state=([A-Za-z0-9_=-]+) -->")
+DOTTORE_MARKER = "<!-- dottore:walkthrough -->"
+COMMAND_STATUS_MARKER = "<!-- dottore:command-status -->"
+FINDING_MARKER_RE = re.compile(r"<!-- dottore:finding=([0-9a-f]{16}) -->")
+STATE_MARKER_RE = re.compile(r"<!-- dottore:last-reviewed-sha=([0-9a-f]{40}) -->")
+CONTRACT_STATE_RE = re.compile(r"<!-- dottore:contract-state=([A-Za-z0-9_=-]+) -->")
 MAX_REVIEW_PACKET_CHARS = 180_000
 MAX_SECTION_CHARS = 60_000
 MAX_CONTEXT_FILES = 5
@@ -60,6 +61,7 @@ class Finding:
     body: str
     fix_hint: str
     repair_contract: dict | None = None
+    side: str = "RIGHT"
 
 
 def _safe_path(rel: str) -> pathlib.Path:
@@ -315,9 +317,25 @@ def build_identifier_context(patch):
     return truncate("\n\n".join(sections), MAX_IDENTIFIER_CONTEXT_CHARS)
 
 
+def diff_command(base, *options, paths=None):
+    command = ["diff", *options, f"{base}...HEAD"]
+    if paths is not None:
+        command.extend(["--", *paths])
+    return command
+
+
 def changed_files(base):
-    names = run_git(["diff", "--name-only", f"{base}...HEAD"])
-    return [line.strip() for line in names.splitlines() if line.strip()]
+    names = run_git(["diff", "--find-renames", "--name-status", f"{base}...HEAD"])
+    patterns = load_rules().get("exclude_paths", [])
+    paths = []
+    for line in names.splitlines():
+        fields = line.split("\t")
+        if len(fields) < 2:
+            continue
+        changed = fields[1:] if fields[0].startswith("R") else fields[1:2]
+        if not any(fnmatch.fnmatchcase(path, pattern) for path in changed for pattern in patterns):
+            paths.extend(changed)
+    return list(dict.fromkeys(paths))
 
 
 def load_json_file(path):
@@ -329,23 +347,27 @@ def load_json_file(path):
         return {"_load_error": str(exc)}
 
 
-def bunny_prompt_path():
+def dottore_prompt_path():
     prompt_path = pathlib.Path(
-        os.environ.get("BUNNY_REVIEW_PROMPT_PATH")
-        or os.environ.get("BUNNY_REVIEW_SKILL_PATH")
-        or ".github/bunny-review/reviewer-prompt.md"
+        os.environ.get("DOTTORE_REVIEW_PROMPT_PATH")
+        or ".github/dottore-review/reviewer-prompt.md"
     )
     if not prompt_path.is_absolute():
         prompt_path = REPO_ROOT / prompt_path
     return prompt_path
 
 
-def bunny_skill_dir():
-    return bunny_prompt_path().parent
+def dottore_skill_dir():
+    return dottore_prompt_path().parent
 
 
 def load_rules():
-    rules_path = bunny_skill_dir() / "rules.json"
+    rules_path = pathlib.Path(
+        os.environ.get("DOTTORE_REVIEW_RULES_PATH")
+        or dottore_skill_dir() / "rules.json"
+    )
+    if not rules_path.is_absolute():
+        rules_path = REPO_ROOT / rules_path
     try:
         return json.loads(rules_path.read_text("utf-8"))
     except FileNotFoundError:
@@ -373,7 +395,11 @@ def select_guidance(files):
         marker in joined
         for marker in ("packages/shared/", "packages/server/src/", "packages/client/src/")
     ):
-        guidance.append("docs/ARCHITECTURE_MAP.md")
+        guidance.append("docs/development/architecture-map.md")
+    if "packages/client/" in joined:
+        guidance.extend(["docs/development/frontend.md", "packages/client/.instructions.md", "docs/development/localization.md"])
+    if "packages/server/" in joined:
+        guidance.extend(["CONTRIBUTING.md", "docs/development/logging.md"])
     if any(
         marker in joined
         for marker in (
@@ -392,7 +418,7 @@ def select_guidance(files):
         marker in joined
         for marker in ("storage", "import", "provider", "db/", "migration", "services/")
     ):
-        guidance.append("docs/FILE_STORAGE_MIGRATION.md")
+        guidance.append("docs/development/file-storage.md")
     if any(marker in joined for marker in ("README", "docs/", "AGENTS.md", "CONTRIBUTING.md", "CLAUDE.md")):
         guidance.append("CONTRIBUTING.md")
     return list(dict.fromkeys(guidance))
@@ -401,7 +427,7 @@ def select_guidance(files):
 def matching_path_rules(files):
     rules = load_rules()
     if not rules or "_load_error" in rules:
-        return "No additional Bunny path rules loaded."
+        return "No additional Dottore path rules loaded."
     matched = []
     for item in rules.get("path_instructions", []):
         prefixes = item.get("prefixes", [])
@@ -411,6 +437,7 @@ def matching_path_rules(files):
         "severity_policy": rules.get("severity_policy", {}),
         "review_focus": rules.get("review_focus", []),
         "matched_path_instructions": matched,
+        "repo_concerns": rules.get("repo_concerns", []),
     }
     return json.dumps(payload, indent=2, sort_keys=True)
 
@@ -434,19 +461,25 @@ def build_file_context(base, files):
             "### "
             + path
             + "\n```text\n"
-            + truncate(run_git(["diff", "--stat", f"{base}...HEAD", "--", path], 2_000), 2_000)
+            + truncate(run_git(diff_command(base, "--stat", paths=[path]), 2_000), 2_000)
             + truncate(patch, MAX_FILE_SUMMARY_CHARS)
             + "\n```"
         )
     return "\n\n".join(sections) or "No per-file patch context found."
 
 
-def build_review_packet(base, ci_status, mode, focus_files=None, include_full_patch=True):
+def build_review_packet(base, mode, focus_files=None, include_full_patch=True):
     files = changed_files(base)
     context_files = focus_files or files
     if focus_files is None or include_full_patch:
-        patch = redact_for_model(
-            run_git_raw(["diff", "--find-renames", "--unified=80", f"{base}...HEAD"])
+        patch = (
+            redact_for_model(
+                run_git_raw(
+                    diff_command(base, "--find-renames", "--unified=80", paths=files)
+                )
+            )
+            if files
+            else ""
         )
     else:
         patch = "\n".join(diff_for_path(base, path) for path in focus_files)
@@ -462,17 +495,15 @@ def build_review_packet(base, ci_status, mode, focus_files=None, include_full_pa
         ("git status", run_git(["status", "--short", "--branch"], 12_000)),
         ("repo root", run_git(["rev-parse", "--show-toplevel"], 4_000)),
         ("merge base", run_git(["merge-base", "HEAD", base], 4_000)),
-        ("diff stat", run_git(["diff", "--stat", f"{base}...HEAD"], 20_000)),
+        ("diff stat", run_git(diff_command(base, "--stat", paths=files), 20_000) if files else "No included changes."),
         ("changed files", "\n".join(files) or "No changed files reported."),
-        ("numstat", run_git(["diff", "--numstat", f"{base}...HEAD"], 20_000)),
+        ("numstat", run_git(diff_command(base, "--numstat", paths=files), 20_000) if files else "No included changes."),
         ("focus files", "\n".join(context_files) or "All changed files."),
         ("patch overview", patch_body),
         ("per-file patch context", build_file_context(base, context_files)),
         ("changed identifier usage", build_identifier_context(patch)),
-        ("Bunny path rules", matching_path_rules(files)),
+        ("Dottore path rules", matching_path_rules(files)),
     ]
-    if ci_status:
-        sections.append(("CI status", ci_status))
     for path in select_guidance(files):
         try:
             sections.append((f"guidance: {path}", read_text(path, 30_000)))
@@ -548,7 +579,7 @@ def build_stats(review_packet):
 def print_telemetry(stats):
     elapsed = time.monotonic() - stats["started_at"]
     print(
-        "Bunny telemetry: "
+        "Dottore telemetry: "
         f"elapsed_s={elapsed:.1f}; "
         f"model_calls={stats['model_calls']}; "
         f"review_packet_chars={stats['review_packet_chars']}; "
@@ -564,11 +595,15 @@ def print_telemetry(stats):
 
 
 def model_call(client, messages, stats):
-    resp = client.chat.completions.create(
-        model=os.environ.get("LLM_MODEL", "gpt-5.5"),
-        messages=messages,
-        timeout=MODEL_REQUEST_TIMEOUT,
-    )
+    request = {
+        "model": os.environ.get("LLM_MODEL", "gpt-5.5"),
+        "messages": messages,
+        "timeout": MODEL_REQUEST_TIMEOUT,
+    }
+    reasoning_effort = os.environ.get("DOTTORE_REASONING_EFFORT", "").strip()
+    if reasoning_effort:
+        request["reasoning_effort"] = reasoning_effort
+    resp = client.chat.completions.create(**request)
     stats["model_calls"] += 1
     add_usage(stats, getattr(resp, "usage", None))
     if isinstance(resp, str):
@@ -588,7 +623,7 @@ def extract_json_or_repair(client, messages, content, stats):
                 "content": (
                     "The previous response did not contain a JSON object. Reply only "
                     "with FINAL_REVIEW followed by one JSON object matching the required "
-                    "Bunny Review schema. Do not include prose, Markdown, or another "
+                    "Dottore Review schema. Do not include prose, Markdown, or another "
                     "context request."
                 ),
             },
@@ -624,29 +659,30 @@ def review_packet_with_model(client, skill, triage_content, stats):
 
 
 def skeptical_review_pass(client, skill, triage_content, stats):
-    audit_prompt = (
-        "Run an independent skeptical specialist review over the same packet. Do not treat "
-        "any broad-review conclusion as authoritative. Focus on invariant mismatches "
+    segment_prompt = (
+        "Run the independent skeptical segment over the same packet. Do not treat "
+        "the broad segment's conclusion as authoritative. Focus on invariant mismatches "
         "introduced by the diff: data collected in a pre-scan but persisted after later "
         "filters, parent metadata derived from rows that are not imported as children, "
         "fallback behavior that diverges from validation, rollback paths, partial writes, "
         "contract drift, and tests that prove only the happy path. Report only concrete "
-        "actionable findings that cite added or changed diff lines. If there are no "
-        "findings from this specialist lens, return the same JSON schema with empty "
-        "findings and nitpicks arrays and mention the skeptical audit in what_i_checked."
+        "actionable findings that cite added/changed RIGHT lines or deleted LEFT lines. If there are no "
+        "findings from this segment lens, return the same JSON schema with empty "
+        "findings and nitpicks arrays and attribute the skeptical segment's notes in what_i_checked."
     )
     messages = [
         {"role": "system", "content": skill},
         {"role": "user", "content": triage_content},
-        {"role": "user", "content": audit_prompt},
+        {"role": "user", "content": segment_prompt},
     ]
     response = model_call(client, messages, stats)
     return extract_json_or_repair(client, messages, response, stats)
 
 
-def judge_review_pass(client, skill, triage_content, broad_review, skeptical_review, stats):
+def judge_review_pass(client, skill, triage_content, first_segment, second_segment, stats):
     judge_prompt = (
-        "Merge these two independent review passes into the final Bunny Review JSON. "
+        "Il Dottore is the final judge. Merge these two finder segment reports "
+        "into the final Dottore Review JSON. "
         "Deduplicate overlapping findings, keep the clearest title/body/fix_hint, normalize "
         "severity, and reject weak or speculative findings. Preserve concrete findings even "
         "if only one pass found them, and include a repair_contract for every defect finding. "
@@ -655,12 +691,12 @@ def judge_review_pass(client, skill, triage_content, broad_review, skeptical_rev
         "and do not manufacture marginal findings to appear comprehensive. "
         "Preserve up to 2 concrete nitpicks in the separate nitpicks array when they are "
         "actionable changed-line polish; non-blocking does not mean weak. Every final "
-        "finding and nitpick must be actionable and cite an added or changed diff line. Combine useful "
+        "finding must cite an added/changed RIGHT line or deleted LEFT line; nitpicks use RIGHT only. Combine useful "
         "change_summary, nitpicks, pre_merge_checks, "
         "open_questions, and what_i_checked entries without repeating yourself. Reply only "
         "with FINAL_REVIEW followed by the final JSON object."
-        f"\n\n# Broad Review JSON\n{json.dumps(broad_review, indent=2, sort_keys=True)}"
-        f"\n\n# Skeptical Review JSON\n{json.dumps(skeptical_review, indent=2, sort_keys=True)}"
+        f"\n\n# Broad Segment JSON\n{json.dumps(first_segment, indent=2, sort_keys=True)}"
+        f"\n\n# Skeptical Segment JSON\n{json.dumps(second_segment, indent=2, sort_keys=True)}"
     )
     messages = [
         {"role": "system", "content": skill},
@@ -672,14 +708,14 @@ def judge_review_pass(client, skill, triage_content, broad_review, skeptical_rev
 
 
 def three_pass_review(client, skill, triage_content, stats):
-    broad_review = review_packet_with_model(client, skill, triage_content, stats)
-    skeptical_review = skeptical_review_pass(client, skill, triage_content, stats)
+    first_segment = review_packet_with_model(client, skill, triage_content, stats)
+    second_segment = skeptical_review_pass(client, skill, triage_content, stats)
     return judge_review_pass(
         client,
         skill,
         triage_content,
-        broad_review,
-        skeptical_review,
+        first_segment,
+        second_segment,
         stats,
     )
 
@@ -744,29 +780,54 @@ def build_extra_context(request, stats):
 
 
 def touched_lines(base):
-    by_path: dict[str, set[int]] = {}
-    current_path = None
-    new_line = None
-    diff = run_git_raw(["diff", "--unified=0", f"{base}...HEAD"])
+    by_path: dict[str, dict[str, set[int]]] = {}
+    old_path = new_path = None
+    old_line = new_line = None
+    diff = run_git_raw(["diff", "--find-renames", "--unified=0", f"{base}...HEAD"])
     for line in diff.splitlines():
-        if line.startswith("+++ b/"):
-            current_path = line.removeprefix("+++ b/")
-            by_path.setdefault(current_path, set())
+        if line.startswith("diff --git "):
+            old_path = new_path = None
+            old_line = new_line = None
             continue
-        match = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", line)
+        if old_line is None and line.startswith("--- "):
+            old_path = line[4:]
+            if old_path.startswith("a/"):
+                old_path = old_path[2:]
+            elif old_path == "/dev/null":
+                old_path = None
+            if old_path:
+                by_path.setdefault(old_path, {"RIGHT": set(), "LEFT": set()})
+            continue
+        if new_line is None and line.startswith("+++ b/"):
+            new_path = line.removeprefix("+++ b/")
+            by_path.setdefault(new_path, {"RIGHT": set(), "LEFT": set()})
+            continue
+        if new_line is None and line.startswith("+++ /dev/null"):
+            new_path = None
+            continue
+        match = re.match(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
         if match:
-            new_line = int(match.group(1))
+            old_line = int(match.group(1))
+            new_line = int(match.group(3))
             continue
-        if current_path is None or new_line is None:
+        if old_line is None or new_line is None:
             continue
-        if line.startswith("+") and not line.startswith("+++"):
-            by_path[current_path].add(new_line)
+        if line.startswith("\\"):
+            continue
+        if line.startswith("+"):
+            if new_path:
+                by_path[new_path]["RIGHT"].add(new_line)
             new_line += 1
-        elif line.startswith("-") and not line.startswith("---"):
-            continue
+        elif line.startswith("-"):
+            path = new_path or old_path
+            if path:
+                by_path[path]["LEFT"].add(old_line)
+            old_line += 1
         else:
+            old_line += 1
             new_line += 1
-    return by_path
+    files = set(changed_files(base))
+    return {path: sides for path, sides in by_path.items() if path in files}
 
 
 def normalize_repair_contract(value):
@@ -792,6 +853,9 @@ def normalize_repair_contract(value):
 
 
 def normalize_review_item(item, *, default_severity):
+    side = str(item.get("side", "RIGHT")).strip().upper()
+    if side not in {"LEFT", "RIGHT"}:
+        raise ValueError("side must be LEFT or RIGHT")
     return Finding(
         severity=str(item.get("severity", default_severity)).lower(),
         path=str(item.get("path", "")).strip(),
@@ -800,6 +864,7 @@ def normalize_review_item(item, *, default_severity):
         body=str(item.get("body", "")).strip(),
         fix_hint=str(item.get("fix_hint", "")).strip(),
         repair_contract=normalize_repair_contract(item.get("repair_contract")),
+        side=side,
     )
 
 
@@ -824,16 +889,23 @@ def validate_review_items(review_obj, base):
                 f"{finding.path or '<missing path>'}: not in changed files"
             )
             continue
-        if not isinstance(finding.line, int):
+        if isinstance(finding.line, bool) or not isinstance(finding.line, int) or finding.line <= 0:
             invalid.append(
                 f"{finding.severity} '{finding.title or '<untitled>'}' at "
                 f"{finding.path}: missing integer line"
             )
             continue
-        if finding.line not in allowed.get(finding.path, set()):
+        if finding.side == "LEFT" and review_obj.get("mode") != "full":
+            # GitHub anchors LEFT lines to the PR base, not the incremental review base.
             invalid.append(
                 f"{finding.severity} '{finding.title or '<untitled>'}' at "
-                f"{finding.path}:{finding.line}: line is not an added/changed diff line"
+                f"{finding.path}:{finding.line}: deleted-line findings need a full review (`/dottore full`)"
+            )
+            continue
+        if finding.line not in allowed[finding.path].get(finding.side, set()):
+            invalid.append(
+                f"{finding.severity} '{finding.title or '<untitled>'}' at "
+                f"{finding.path}:{finding.line}: line is not a changed {finding.side} diff line"
             )
             continue
         if not finding.title or not finding.body:
@@ -854,13 +926,16 @@ def validate_review_items(review_obj, base):
                 f"{nitpick.path or '<missing path>'}: not in changed files"
             )
             continue
-        if not isinstance(nitpick.line, int):
+        if nitpick.side != "RIGHT":
+            invalid.append(f"nitpick '{nitpick.title or '<untitled>'}' must use RIGHT side")
+            continue
+        if isinstance(nitpick.line, bool) or not isinstance(nitpick.line, int) or nitpick.line <= 0:
             invalid.append(
                 f"nitpick '{nitpick.title or '<untitled>'}' at "
                 f"{nitpick.path}: missing integer line"
             )
             continue
-        if nitpick.line not in allowed.get(nitpick.path, set()):
+        if nitpick.line not in allowed[nitpick.path].get("RIGHT", set()):
             invalid.append(
                 f"nitpick '{nitpick.title or '<untitled>'}' at "
                 f"{nitpick.path}:{nitpick.line}: line is not an added/changed diff line"
@@ -882,7 +957,7 @@ def render_finding_body(finding):
         finding_marker(finding),
         f"### {meta['icon']} {meta['label']}: {finding.title}",
         "",
-        f"**Location:** `{finding.path}:{finding.line}`",
+        f"**Location:** `{finding.path}:{finding.line}` ({finding.side})",
         "",
         blockquote(finding.body),
     ]
@@ -892,12 +967,12 @@ def render_finding_body(finding):
 
 
 def finding_id(finding):
-    raw = f"{finding.path}:{finding.line}:{finding.title}".encode("utf-8", "replace")
+    raw = f"{finding.side}:{finding.path}:{finding.line}:{finding.title}".encode("utf-8", "replace")
     return hashlib.sha256(raw).hexdigest()[:16]
 
 
 def finding_marker(finding):
-    return f"<!-- bunny-review:finding={finding_id(finding)} -->"
+    return f"<!-- dottore:finding={finding_id(finding)} -->"
 
 
 def short_ref(value):
@@ -982,7 +1057,6 @@ def control_type(item):
     allowed = {
         "Proof Gap",
         "Review Limitation",
-        "CI Timing",
         "Non-blocking Coverage",
     }
     if explicit in allowed:
@@ -990,8 +1064,6 @@ def control_type(item):
     combined = " ".join(
         str(item.get(key, "")) for key in ("name", "status", "detail")
     ).lower()
-    if "ci" in combined or "check" in combined or "pending" in combined:
-        return "CI Timing"
     if "proof" in combined or "test" in combined or "coverage" in combined:
         if "missing" in combined or "gap" in combined or "lacks" in combined:
             return "Proof Gap"
@@ -1053,15 +1125,15 @@ def merge_signal(review_obj, findings, nitpicks, pre_merge):
             "label": "NO NEW DIFF REVIEWED",
             "title": "No New Diff Reviewed",
             "admonition": "NOTE",
-            "detail": "Bunny already reviewed this head; this run did not inspect new changes.",
+            "detail": "Dottore already reviewed this head; this run did not inspect new changes.",
         }
     review_incomplete = has_incomplete_review_check(pre_merge)
     if review_incomplete:
         return {
             "label": "REVIEW INCOMPLETE",
-            "title": "Review Incomplete",
+            "title": "Specimen Unexamined",
             "admonition": "CAUTION",
-            "detail": "Bunny Review did not complete, so no model findings are available.",
+            "detail": "Dottore Review did not complete, so no model findings are available.",
         }
     has_blocking = any(
         severity_meta(finding.severity)["rank"] <= severity_meta("high")["rank"]
@@ -1072,15 +1144,15 @@ def merge_signal(review_obj, findings, nitpicks, pre_merge):
     )
     if has_blocking or has_failed_check:
         return {
-            "label": "DO NOT MERGE",
-            "title": "Do Not Merge",
+            "label": "SPECIMEN UNSTABLE",
+            "title": "Specimen Unstable",
             "admonition": "CAUTION",
             "detail": "Repair blocking/high findings or failed controls before merge.",
         }
     if findings or any(warn_is_blocking_proof_gap(item) for item in pre_merge):
         return {
-            "label": "ACTION NEEDED",
-            "title": "Action Needed",
+            "label": "REPAIR REQUIRED",
+            "title": "Repair Required",
             "admonition": "WARNING",
             "detail": "Actionable findings or blocking proof gaps remain for this head.",
         }
@@ -1090,16 +1162,16 @@ def merge_signal(review_obj, findings, nitpicks, pre_merge):
     )
     if has_notes:
         return {
-            "label": "READY WITH NOTES",
-            "title": "Ready With Notes",
+            "label": "VIABLE, WITH NOTES",
+            "title": "Viable, With Notes",
             "admonition": "WARNING",
             "detail": "No actionable defects were isolated, but non-blocking notes remain.",
         }
     return {
-        "label": "READY",
-        "title": "Ready",
+        "label": "VIABLE",
+        "title": "Viable",
         "admonition": "TIP",
-        "detail": "No actionable findings were isolated for this head. Expected CI controls were observed passing.",
+        "detail": "No actionable findings were isolated for this head.",
     }
 
 
@@ -1108,7 +1180,7 @@ def render_merge_signal(review_obj, findings, nitpicks, pre_merge, head_sha):
     controls = control_summary(pre_merge)
     mode = review_obj.get("mode") or "unknown"
     body = [
-        f"## Bunny Merge Signal: {signal['title']}",
+        f"## Dottore Verdict: {signal['title']}",
         "",
         f"> [!{signal['admonition']}]",
         f"> **{signal['label']}**",
@@ -1154,8 +1226,8 @@ def review_callout(findings, pre_merge):
         return "\n".join(
             [
                 "> [!CAUTION]",
-                "> **Specimen unexamined.** Bunny Review did not complete, so no model findings are available.",
-                "> Repair the failed review control or rerun Bunny before treating this PR as reviewed.",
+                "> **Specimen unexamined.** Dottore Review did not complete, so no model findings are available.",
+                "> Repair the failed review control or rerun Dottore before treating this PR as reviewed.",
             ]
         )
     if has_blocking or has_failed_check:
@@ -1215,7 +1287,7 @@ def code_block_text(text):
 def agent_prompt_for_finding(finding):
     contract = finding.repair_contract or {}
     lines = [
-        f"Task: Fix `{finding.path}:{finding.line}`.",
+        f"Task: Fix `{finding.path}:{finding.line}` on the {finding.side} side.",
         f"Finding: {finding.title}",
         f"Severity: {finding.severity}",
     ]
@@ -1277,6 +1349,7 @@ def contract_state_entry_from_finding(finding, *, status="open"):
         "severity": str(finding.severity or "medium"),
         "path": finding.path,
         "line": finding.line,
+        "side": finding.side,
         "title": compact_state_text(finding.title, 180),
         "fix_hint": compact_state_text(finding.fix_hint, 260),
         "repair_contract": contract,
@@ -1287,15 +1360,16 @@ def contract_identity(entry):
     return (
         str(entry.get("id") or "").strip(),
         str(entry.get("path") or "").strip(),
+        str(entry.get("side") or "RIGHT").strip().upper(),
         compact_state_text(entry.get("title"), 180).lower(),
     )
 
 
 def contract_matches_finding(entry, finding):
-    entry_id, entry_path, entry_title = contract_identity(entry)
+    entry_id, entry_path, entry_side, entry_title = contract_identity(entry)
     if entry_id and entry_id == finding_id(finding):
         return True
-    if entry_path and entry_path == finding.path:
+    if entry_path and entry_path == finding.path and entry_side == finding.side:
         finding_title = compact_state_text(finding.title, 180).lower()
         if entry_title and entry_title == finding_title:
             return True
@@ -1316,7 +1390,8 @@ def resolved_contracts_since_last_review(prior_entries, current_findings, change
                 "severity": entry.get("severity"),
                 "path": path,
                 "line": entry.get("line"),
-                "title": entry.get("title") or "Prior Bunny finding",
+                "title": entry.get("title") or "Prior Dottore finding",
+                "side": entry.get("side") or "RIGHT",
                 "status": "likely_resolved",
             }
         )
@@ -1342,6 +1417,7 @@ def normalize_contract_state_entries(entries):
                 "severity": compact_state_text(raw.get("severity") or "medium", 24),
                 "path": compact_state_text(raw.get("path"), 260),
                 "line": raw.get("line") if isinstance(raw.get("line"), int) else None,
+                "side": str(raw.get("side") or "RIGHT").strip().upper(),
                 "title": compact_state_text(raw.get("title"), 180),
                 "fix_hint": compact_state_text(raw.get("fix_hint"), 260),
                 "repair_contract": contract,
@@ -1389,7 +1465,7 @@ def encode_contract_state(entries):
     payload = {"version": 1, "contracts": normalized}
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     encoded = base64.urlsafe_b64encode(raw).decode("ascii")
-    return f"<!-- bunny-review:contract-state={encoded} -->"
+    return f"<!-- dottore:contract-state={encoded} -->"
 
 
 def decode_contract_state_from_body(body):
@@ -1408,9 +1484,9 @@ def decode_contract_state_from_body(body):
 def format_contract_entries_for_prompt(entries, limit=12_000):
     entries = normalize_contract_state_entries(entries)
     if not entries:
-        return "No prior Bunny repair contracts found."
+        return "No prior Dottore repair contracts found."
     lines = [
-        "Prior Bunny repair contracts from earlier review rounds. Judge whether the current diff satisfies each invariant before reporting adjacent defects.",
+        "Prior Dottore repair contracts from earlier review rounds. Judge whether the current diff satisfies each invariant before reporting adjacent defects.",
     ]
     for index, entry in enumerate(entries, 1):
         location = f"{entry.get('path') or 'unknown'}:{entry.get('line') or '?'}"
@@ -1422,6 +1498,7 @@ def format_contract_entries_for_prompt(entries, limit=12_000):
                 f"- Status: {entry.get('status') or 'prior'}",
                 f"- Severity: {entry.get('severity') or 'medium'}",
                 f"- Location: {location}",
+                f"- Side: {entry.get('side') or 'RIGHT'}",
             ]
         )
         if entry.get("fix_hint"):
@@ -1434,110 +1511,23 @@ def format_contract_entries_for_prompt(entries, limit=12_000):
     return truncate("\n".join(lines).strip(), limit)
 
 
-def is_ci_check(item):
-    name = str(item.get("name", "")).strip().lower()
-    return name in {"ci", "ci status", "checks", "github checks"}
-
-
-def is_stale_ci_text(text):
-    lowered = text.lower()
-    if "ci" not in lowered and "pnpm" not in lowered and "build" not in lowered:
-        return False
-    stale_markers = (
-        "still running",
-        "not available",
-        "unavailable",
-        "unknown",
-        "pending",
-        "not include",
-        "not provided",
-    )
-    return any(marker in lowered for marker in stale_markers)
-
-
-def is_stale_ci_check(item):
-    if is_ci_check(item):
-        return True
-    combined = " ".join(
-        str(item.get(key, "")) for key in ("name", "status", "detail")
-    )
-    return is_stale_ci_text(combined)
-
-
-def normalize_ci_status(ci_status):
-    if not ci_status:
-        return ""
-    unique_lines = []
-    seen = set()
-    for raw_line in ci_status.splitlines():
-        line = raw_line.strip()
-        if not line or line.lower() == "### ci status":
-            continue
-        if line.startswith("- "):
-            key = line.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-        unique_lines.append(line)
-    return "\n".join(unique_lines).strip()
-
-
-def ci_status_to_pre_merge_checks(ci_status):
-    normalized = normalize_ci_status(ci_status)
-    if not normalized:
-        return []
-    lowered = normalized.lower()
-    if "failure:" in lowered or ": failure" in lowered or ": cancelled" in lowered:
-        return [
-            {
-                "name": "CI Status",
-                "status": "fail",
-                "type": "CI Timing",
-                "detail": "One or more expected CI controls failed or were cancelled; the specimen is not fit for merge.",
-            }
-        ]
-    if "warning:" in lowered or "still running" in lowered:
-        return [
-            {
-                "name": "CI Status",
-                "status": "warn",
-                "type": "CI Timing",
-                "detail": "Expected CI controls were missing or incomplete when Bunny posted; verify the control path before merge.",
-            }
-        ]
-    return [
-        {
-            "name": "CI Status",
-            "status": "pass",
-            "type": "CI Timing",
-            "detail": "Expected CI controls completed without a reported failure.",
-        }
-    ]
-
-
 def render_walkthrough(
     review_obj,
     findings,
     nitpicks,
     invalid_findings,
-    ci_status,
     head_sha,
     prior_contracts=None,
 ):
     summary = review_obj.get("change_summary") or []
     questions = review_obj.get("open_questions") or []
     checked = review_obj.get("what_i_checked") or []
-    normalized_ci_status = normalize_ci_status(ci_status)
     pre_merge = review_obj.get("pre_merge_checks") or []
-    if normalized_ci_status:
-        pre_merge = [item for item in pre_merge if not is_stale_ci_check(item)]
-        checked = [item for item in checked if not is_stale_ci_text(str(item))]
-        pre_merge = ci_status_to_pre_merge_checks(normalized_ci_status) + pre_merge
     resolved = review_obj.get("resolved_since_last_review") or []
     state_marker = (
-        f"<!-- bunny-review:last-reviewed-sha={head_sha} -->"
+        f"<!-- dottore:last-reviewed-sha={head_sha} -->"
         if head_sha and not has_incomplete_review_check(pre_merge)
-        else "<!-- bunny-review:last-reviewed-sha=unrecorded -->"
+        else "<!-- dottore:last-reviewed-sha=unrecorded -->"
     )
     contract_state_marker = encode_contract_state(
         merge_contract_state(
@@ -1545,13 +1535,13 @@ def render_walkthrough(
         )
     )
     body = [
-        BUNNY_MARKER,
+        DOTTORE_MARKER,
         state_marker,
     ]
     if contract_state_marker:
         body.append(contract_state_marker)
     body.extend([
-        "## 🐰 Bunny Review",
+        "## 🎭 Dottore Review",
         "",
         render_merge_signal(review_obj, findings, nitpicks, pre_merge, head_sha),
         "",
@@ -1573,7 +1563,7 @@ def render_walkthrough(
             body.append(
                 "| "
                 f"{status_badge(meta)} | "
-                f"`{md_cell(finding.path)}:{finding.line}` | "
+                f"`{md_cell(finding.path)}:{finding.line}` ({finding.side}) | "
                 f"{md_cell(finding.title)} |"
             )
     else:
@@ -1582,7 +1572,7 @@ def render_walkthrough(
                 [
                     "",
                     "> [!CAUTION]",
-                    "> No model findings are available because Bunny Review failed before completing inspection.",
+                    "> No model findings are available because Dottore Review failed before completing inspection.",
                 ]
             )
         else:
@@ -1591,9 +1581,9 @@ def render_walkthrough(
         body.extend(["", "### ✅ Resolved Since Last Review"])
         for item in resolved[:5]:
             location = f"{item.get('path') or 'unknown'}:{item.get('line') or '?'}"
-            title = item.get("title") or "Prior Bunny finding"
+            title = item.get("title") or "Prior Dottore finding"
             body.append(f"- `{md_cell(location)}` - {md_cell(title)}")
-    body.extend(["", "### 🧹 Nitpicks"])
+    body.extend(["", "### 🧹 Minor Imperfections"])
     if nitpicks:
         body.extend(
             [
@@ -1604,13 +1594,13 @@ def render_walkthrough(
         for nitpick in nitpicks:
             body.append(
                 "| "
-                f"`{md_cell(nitpick.path)}:{nitpick.line}` | "
+                f"`{md_cell(nitpick.path)}:{nitpick.line}` ({nitpick.side}) | "
                 f"{md_cell(nitpick.title)} |"
             )
     else:
         body.append("- None recorded.")
     agent_prompt = render_agent_prompt_details(
-        findings, "🤖 Copy prompt for isolated Bunny findings"
+        findings, "🤖 Copy prompt for isolated Dottore findings"
     )
     if agent_prompt:
         body.extend(["", agent_prompt])
@@ -1636,7 +1626,7 @@ def render_walkthrough(
                 f"{md_cell(detail)} |"
             )
     if questions:
-        body.extend(["", "### ❓ Open Questions"])
+        body.extend(["", "### ❓ Unresolved Hypotheses"])
         body.extend([f"- {line}" for line in questions[:2]])
     body.extend(["", "### 🧪 Observations"])
     body.extend([f"- {line}" for line in checked[:3]] or ["- Review packet and diff context inspected."])
@@ -1644,14 +1634,12 @@ def render_walkthrough(
         body.extend(
             [
                 "",
-                "### 📝 Reviewer Notes",
+                "### 📝 Lab Notes",
                 "> [!WARNING]",
                 f"> Withheld {len(invalid_findings)} model finding(s) because their diff locations failed validation.",
             ]
         )
         body.extend([f"- {note}" for note in invalid_findings[:5]])
-    if normalized_ci_status:
-        body.extend(["", "### 🧰 CI Status", normalized_ci_status])
     return "\n".join(body).strip() + "\n"
 
 
@@ -1682,6 +1670,7 @@ def merge_review_objects(reviews):
                 key = (
                     finding.get("path"),
                     finding.get("line"),
+                    str(finding.get("side", "RIGHT")).upper(),
                     finding.get("title"),
                 )
                 if key in seen_findings:
@@ -1694,16 +1683,16 @@ def merge_review_objects(reviews):
 
 def prior_review_contracts_context(pr_num, limit=12_000):
     if not pr_num:
-        return "No prior Bunny review context available."
+        return "No prior Dottore review context available."
     state_entries = prior_review_contract_state(pr_num)
     if state_entries:
         return format_contract_entries_for_prompt(state_entries, limit)
     comment = latest_walkthrough_comment(pr_num)
     if not comment:
-        return "No prior Bunny walkthrough comment or inline contract comments found."
+        return "No prior Dottore walkthrough comment or inline contract comments found."
     body = comment.get("body", "")
     if not body:
-        return "Prior Bunny walkthrough comment was empty."
+        return "Prior Dottore walkthrough comment was empty."
     useful_lines = []
     keep = False
     for line in body.splitlines():
@@ -1711,7 +1700,7 @@ def prior_review_contracts_context(pr_num, limit=12_000):
             keep = True
         elif line.startswith("### ") and keep:
             keep = False
-        if keep or "bunny-review:finding=" in line or "Invariant" in line or "Expected proof" in line:
+        if keep or "dottore:finding=" in line or "Invariant" in line or "Expected proof" in line:
             useful_lines.append(line)
     compact = "\n".join(useful_lines).strip()
     if not compact:
@@ -1741,7 +1730,7 @@ def model_failure_detail(exc):
     if len(message) > 500:
         message = message[:497] + "..."
     return (
-        f"Bunny Review could not complete because the model provider rejected the "
+        f"Dottore Review could not complete because the model provider rejected the "
         f"review request: {type(exc).__name__}: {message}"
     )
 
@@ -1761,7 +1750,7 @@ def ensure_local_head(head_sha, pr_num):
                 "fetch",
                 "--force",
                 "origin",
-                f"pull/{pr_num}/head:refs/remotes/bunny-review/pr-{pr_num}",
+                f"pull/{pr_num}/head:refs/remotes/dottore-review/pr-{pr_num}",
             ],
             timeout=120,
         )
@@ -1790,7 +1779,7 @@ def issue_comments(pr_num):
 
 def sorted_walkthrough_comments(pr_num):
     walkthroughs = [
-        comment for comment in issue_comments(pr_num) if BUNNY_MARKER in comment.get("body", "")
+        comment for comment in issue_comments(pr_num) if DOTTORE_MARKER in comment.get("body", "")
     ]
     return sorted(
         walkthroughs,
@@ -1879,6 +1868,7 @@ def inline_comment_contract_entry(comment):
         "severity": severity,
         "path": path,
         "line": line_number,
+        "side": str(comment.get("side") or "RIGHT").upper(),
         "title": title,
         "fix_hint": fix_hint,
         "repair_contract": contract,
@@ -1903,7 +1893,7 @@ def prior_inline_contract_state(pr_num):
         ),
         reverse=True,
     ):
-        if "bunny-review:finding=" not in comment.get("body", ""):
+        if "dottore:finding=" not in comment.get("body", ""):
             continue
         entry = inline_comment_contract_entry(comment)
         if not entry:
@@ -1984,14 +1974,14 @@ def resolve_review_base(pr_num, requested_mode):
     )
     data = json.loads(pr.stdout)
     base_ref = os.environ.get("PR_BASE_REF") or data["baseRefName"]
-    head_sha = data["headRefOid"]
-    explicit_base = os.environ.get("BUNNY_BASE_SHA")
+    head_sha = os.environ.get("PR_HEAD_SHA") or data["headRefOid"]
+    explicit_base = os.environ.get("DOTTORE_BASE_SHA")
     mode = requested_mode
     if explicit_base:
         return explicit_base, base_ref, head_sha, "custom"
     if mode == "full":
         return f"origin/{base_ref}", base_ref, head_sha, mode
-    explicit_previous = os.environ.get("BUNNY_LAST_REVIEWED_SHA", "").strip()
+    explicit_previous = os.environ.get("DOTTORE_LAST_REVIEWED_SHA", "").strip()
     if valid_review_base_sha(explicit_previous, head_sha):
         return explicit_previous, base_ref, head_sha, "incremental"
     previous = discover_last_reviewed_sha(pr_num)
@@ -2001,12 +1991,12 @@ def resolve_review_base(pr_num, requested_mode):
 
 
 def parse_command_mode():
-    body = os.environ.get("BUNNY_COMMENT_BODY", "")
-    if "/bunny-review" not in body:
-        return os.environ.get("BUNNY_REVIEW_MODE", "auto")
-    if re.search(r"/bunny-review\s+full\b", body):
+    body = os.environ.get("DOTTORE_COMMENT_BODY", "")
+    if "/dottore" not in body:
+        return os.environ.get("DOTTORE_REVIEW_MODE", "auto")
+    if re.search(r"/dottore\s+full\b", body):
         return "full"
-    if re.search(r"/bunny-review\s+review\b", body):
+    if re.search(r"/dottore\s+review\b", body):
         return "auto"
     return "auto"
 
@@ -2018,19 +2008,18 @@ def produce_review(args):
             "Review Skipped",
             "The reviewer could not run because `OPENAI_API_KEY` is absent from this workflow run. Repository-secret withholding leaves the specimen unexamined.",
         )
-        print("Bunny telemetry: skipped=missing_openai_api_key", flush=True)
+        print("Dottore telemetry: skipped=missing_openai_api_key", flush=True)
         return
 
     requested_mode = args.mode or parse_command_mode()
     base, base_ref, head_sha, effective_mode = resolve_review_base(pr_num, requested_mode)
     ensure_local_head(head_sha, pr_num)
     patch_command_status_running(pr_num, head_sha, effective_mode)
-    ci_status = os.environ.get("CI_STATUS", "")
     files = changed_files(base)
     if not files and effective_mode == "incremental":
         write_skipped_review(
             "No New Diff Reviewed",
-            "Bunny already reviewed this head; this run did not inspect new changes.",
+            "Dottore already reviewed this head; this run did not inspect new changes.",
             status="pass",
             metadata={
                 "head_sha": head_sha,
@@ -2041,7 +2030,7 @@ def produce_review(args):
                 "review_state": "no_new_diff_reviewed",
             },
         )
-        print("Bunny telemetry: skipped=no_new_diff_reviewed", flush=True)
+        print("Dottore telemetry: skipped=no_new_diff_reviewed", flush=True)
         return
 
     if not os.environ.get("OPENAI_API_KEY"):
@@ -2056,7 +2045,7 @@ def produce_review(args):
                 "mode": effective_mode,
             },
         )
-        print("Bunny telemetry: skipped=missing_openai_api_key", flush=True)
+        print("Dottore telemetry: skipped=missing_openai_api_key", flush=True)
         return
 
     chunks = chunk_changed_files(base, files)
@@ -2069,7 +2058,7 @@ def produce_review(args):
         base_url=os.environ.get("LLM_BASE_URL"),
         max_retries=MODEL_MAX_RETRIES,
     )
-    skill = bunny_prompt_path().read_text("utf-8")
+    skill = dottore_prompt_path().read_text("utf-8")
     prior_contract_state = prior_review_contract_state(pr_num)
     prior_contract_context = (
         format_contract_entries_for_prompt(prior_contract_state)
@@ -2081,8 +2070,8 @@ def produce_review(args):
         triage = (
             f"Review this PR. The review base is '{base}' from target branch '{base_ref}', "
             f"head is '{head_sha}', and mode is '{effective_mode}'. {focus_note} "
-            "Use the provided review packet as the complete inspection context. "
-            "If prior Bunny contracts are included, first judge whether the current diff satisfies "
+            "Act as the broad segment. Use the provided review packet as the complete inspection context. "
+            "If prior Dottore contracts are included, first judge whether the current diff satisfies "
             "or leaves those contracts incomplete before issuing adjacent related findings. "
             "You have one chance to request focused extra context before the final review. "
             "If the packet is enough, reply with FINAL_REVIEW followed by a JSON object in the skill's schema. "
@@ -2092,10 +2081,11 @@ def produce_review(args):
         )
         triage += (
             "\n\nFocus on correctness, contracts, failure paths, tests, CI/deployment risks, "
-            "and architecture. Findings must point to changed diff lines. "
+            "and architecture. Findings must point to added/changed RIGHT lines or deleted LEFT lines. "
+            "Attribute broad-segment notes in what_i_checked. "
             "If the packet is truncated or missing context for a potential issue, mention that "
             "limitation in what_i_checked rather than inventing certainty."
-            f"\n\n# Prior Bunny Repair Contracts\n{prior_contract_context}"
+            f"\n\n# Prior Dottore Repair Contracts\n{prior_contract_context}"
             f"\n\n# Review Packet\n{review_packet}"
         )
         return triage
@@ -2106,7 +2096,6 @@ def produce_review(args):
         for index, chunk in enumerate(chunks, 1):
             review_packet = build_review_packet(
                 base,
-                ci_status,
                 effective_mode,
                 focus_files=chunk,
                 include_full_patch=False,
@@ -2142,7 +2131,7 @@ def produce_review(args):
             f"Examined the PR in {len(chunks)} file chunk(s) so the large diff did not contaminate context retention."
         )
     else:
-        review_packet = build_review_packet(base, ci_status, effective_mode)
+        review_packet = build_review_packet(base, effective_mode)
         stats = build_stats(review_packet)
         triage_content = triage_for_packet(review_packet, "Review the full current diff.")
         try:
@@ -2162,12 +2151,15 @@ def produce_review(args):
             )
             print_telemetry(stats)
             return
+    for key in ("findings", "nitpicks", "pre_merge_checks"):
+        if review_obj.get(key) is None:
+            review_obj[key] = []
     review_obj.setdefault("head_sha", head_sha)
     review_obj.setdefault("head_commit_message", commit_subject(head_sha))
     review_obj.setdefault("review_base", base)
     review_obj.setdefault("base_ref", base_ref)
     review_obj.setdefault("mode", effective_mode)
-    review_obj.setdefault("_prior_bunny_contract_state", prior_contract_state)
+    review_obj.setdefault("_prior_dottore_contract_state", prior_contract_state)
     review_obj.setdefault("what_i_checked", []).append(
         f"Selected review base `{base}` for target branch `{base_ref}` in `{effective_mode}` mode."
     )
@@ -2186,15 +2178,8 @@ def produce_review(args):
     print_telemetry(stats)
 
 
-def read_ci_status():
-    path = pathlib.Path("bunny-ci-status.md")
-    if path.exists():
-        return path.read_text("utf-8")
-    return ""
-
-
 def findings_for_inline_comments(findings):
-    mode = os.environ.get("BUNNY_INLINE_FINDINGS", "urgent").strip().lower()
+    mode = os.environ.get("DOTTORE_INLINE_FINDINGS", "urgent").strip().lower()
     if mode in {"none", "off", "false", "0"}:
         return []
     if mode in {"all", "true", "1"}:
@@ -2210,8 +2195,8 @@ def render_review(args):
     review_obj = json.loads(pathlib.Path(args.review_json).read_text("utf-8"))
     base = (
         args.base
-        or os.environ.get("BUNNY_VALIDATION_BASE")
-        or os.environ.get("BUNNY_BASE_SHA")
+        or os.environ.get("DOTTORE_VALIDATION_BASE")
+        or os.environ.get("DOTTORE_BASE_SHA")
         or review_obj.get("review_base")
     )
     if not base:
@@ -2219,16 +2204,14 @@ def render_review(args):
         requested_mode = args.mode or parse_command_mode()
         base, _, _, _ = resolve_review_base(pr_num, requested_mode)
     findings, nitpicks, invalid = validate_review_items(review_obj, base)
-    ci_status = read_ci_status()
-    head_sha = review_obj.get("head_sha") or os.environ.get("BUNNY_HEAD_SHA", "")
+    head_sha = review_obj.get("head_sha") or os.environ.get("DOTTORE_HEAD_SHA", "")
     walkthrough = render_walkthrough(
         review_obj,
         findings,
         nitpicks,
         invalid,
-        ci_status,
         head_sha,
-        prior_contracts=review_obj.get("_prior_bunny_contract_state") or [],
+        prior_contracts=review_obj.get("_prior_dottore_contract_state") or [],
     )
     pathlib.Path("review.md").write_text(walkthrough, "utf-8")
     inline_findings = findings_for_inline_comments(findings)
@@ -2236,7 +2219,7 @@ def render_review(args):
         {
             "path": f.path,
             "line": f.line,
-            "side": "RIGHT",
+            "side": f.side,
             "body": render_finding_body(f),
         }
         for f in inline_findings
@@ -2264,7 +2247,7 @@ def patch_command_status_running(pr_num, head_sha, mode):
     body = "\n".join(
         [
             COMMAND_STATUS_MARKER,
-            "## 🐰 Bunny Review Running",
+            "## 🎭 Dottore Review — Experiment in Progress",
             "",
             "> [!NOTE]",
             "> Reviewer workflow is running. The specimen is under observation.",
@@ -2280,7 +2263,7 @@ def patch_command_status_complete(pr_num, head_sha):
     body = "\n".join(
         [
             COMMAND_STATUS_MARKER,
-            "## ✅ Bunny Review Completed",
+            "## 🎭 Dottore Review — Concluded",
             "",
             "> [!TIP]",
             "> Review posted. The specimen has left the observation table.",
@@ -2395,7 +2378,8 @@ def post_review(args):
         return
     payload = {
         "event": "COMMENT",
-        "body": "Bunny Review inline findings",
+        "commit_id": head_sha,
+        "body": "Dottore Review — isolated defects from the specimen.",
         "comments": comments,
     }
     run_gh(
@@ -2412,10 +2396,6 @@ def post_review(args):
     )
 
 
-def truthy(value):
-    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
-
-
 def load_review_for_status(path):
     try:
         return json.loads(pathlib.Path(path).read_text("utf-8"))
@@ -2423,90 +2403,34 @@ def load_review_for_status(path):
         return {}
 
 
-def ci_control_has_failure(path):
-    try:
-        data = json.loads(pathlib.Path(path).read_text("utf-8"))
-    except Exception:
-        return False
-    failed = data.get("failed") if isinstance(data, dict) else []
-    return bool(failed)
-
-
-def ci_control_has_pending_or_missing(path):
-    try:
-        data = json.loads(pathlib.Path(path).read_text("utf-8"))
-    except Exception:
-        return False
-    if not isinstance(data, dict):
-        return False
-    return bool(data.get("pending") or data.get("missing"))
-
-
 def status_state(args):
     if str(args.job_status or "").lower() != "success":
         print("state=failure")
-        print("description=Bunny Review did not complete. Inspect the trusted workflow run for details.")
+        print("description=Dottore Review did not complete. Inspect the trusted workflow run for details.")
         return
     if not pathlib.Path(args.review_json).exists():
         print("state=failure")
-        print("description=Bunny Review did not produce review.json; inspect the trusted workflow run.")
+        print("description=Dottore Review did not produce review.json; inspect the trusted workflow run.")
         return
     review_obj = load_review_for_status(args.review_json)
-    pre_merge = review_obj.get("pre_merge_checks") if isinstance(review_obj, dict) else []
-    findings = status_findings(review_obj)
+    required_lists = ("findings", "nitpicks", "pre_merge_checks")
+    if not isinstance(review_obj, dict) or any(
+        not isinstance(review_obj.get(key), list) for key in required_lists
+    ):
+        print("state=failure")
+        print("description=Dottore Review produced an invalid review.json; inspect the trusted workflow run.")
+        return
+    pre_merge = review_obj["pre_merge_checks"]
+    if any(not isinstance(item, dict) for item in pre_merge):
+        print("state=failure")
+        print("description=The control record is malformed; Dottore cannot certify this examination.")
+        return
     if has_incomplete_review_check(pre_merge or []):
         print("state=failure")
-        print("description=Bunny Review posted a failure or skipped report; rerun after repairing the review control.")
-        return
-    draft = truthy(args.draft)
-    has_high_or_blocking = any(
-        severity_meta(finding.severity)["rank"] <= severity_meta("high")["rank"]
-        for finding in findings
-    )
-    failed_ci = ci_control_has_failure(args.ci_control)
-    pending_ci = ci_control_has_pending_or_missing(args.ci_control)
-    if not draft and has_high_or_blocking:
-        print("state=failure")
-        print("description=Bunny found blocking/high issues; repair before merge.")
-        return
-    if not draft and failed_ci:
-        print("state=failure")
-        print("description=Expected CI controls failed; repair CI before merge.")
-        return
-    if not draft and pending_ci:
-        print("state=pending")
-        print("description=Expected CI controls are still pending or missing.")
-        return
-    if draft and (findings or failed_ci):
-        print("state=success")
-        print("description=Draft review posted with notes.")
-        return
-    if findings:
-        print("state=success")
-        print("description=Bunny posted non-blocking findings or notes.")
+        print("description=Dottore Review posted a failure or skipped report; rerun after repairing the review control.")
         return
     print("state=success")
-    print("description=Bunny posted or updated its review for this pull request.")
-
-
-def status_findings(review_obj):
-    base = (review_obj or {}).get("review_base")
-    if base:
-        try:
-            findings, _, _ = validate_review_items(review_obj, base)
-            return findings
-        except Exception:
-            pass
-    findings = []
-    for raw in (review_obj or {}).get("findings", []):
-        try:
-            finding = normalize_review_item(raw, default_severity="medium")
-        except Exception:
-            continue
-        if finding.severity not in {"blocking", "high", "medium", "low", "nitpick"}:
-            finding.severity = "medium"
-        findings.append(finding)
-    return findings
+    print("description=Examination concluded. Dottore's findings await their repair; independent controls remain separate.")
 
 
 def main():
@@ -2523,8 +2447,6 @@ def main():
     post.add_argument("--inline-json", default="inline-comments.json")
     status = sub.add_parser("status-state")
     status.add_argument("--review-json", default="review.json")
-    status.add_argument("--ci-control", default="bunny-ci-control.json")
-    status.add_argument("--draft", default=os.environ.get("BUNNY_IS_DRAFT", "false"))
     status.add_argument("--job-status", default="success")
     args = parser.parse_args()
 
