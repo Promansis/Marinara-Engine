@@ -344,7 +344,12 @@ def dottore_skill_dir():
 
 
 def load_rules():
-    rules_path = dottore_skill_dir() / "rules.json"
+    rules_path = pathlib.Path(
+        os.environ.get("DOTTORE_REVIEW_RULES_PATH")
+        or dottore_skill_dir() / "rules.json"
+    )
+    if not rules_path.is_absolute():
+        rules_path = REPO_ROOT / rules_path
     try:
         return json.loads(rules_path.read_text("utf-8"))
     except FileNotFoundError:
@@ -440,7 +445,7 @@ def build_file_context(base, files):
     return "\n\n".join(sections) or "No per-file patch context found."
 
 
-def build_review_packet(base, ci_status, mode, focus_files=None, include_full_patch=True):
+def build_review_packet(base, mode, focus_files=None, include_full_patch=True):
     files = changed_files(base)
     context_files = focus_files or files
     if focus_files is None or include_full_patch:
@@ -470,8 +475,6 @@ def build_review_packet(base, ci_status, mode, focus_files=None, include_full_pa
         ("changed identifier usage", build_identifier_context(patch)),
         ("Dottore path rules", matching_path_rules(files)),
     ]
-    if ci_status:
-        sections.append(("CI status", ci_status))
     for path in select_guidance(files):
         try:
             sections.append((f"guidance: {path}", read_text(path, 30_000)))
@@ -982,7 +985,6 @@ def control_type(item):
     allowed = {
         "Proof Gap",
         "Review Limitation",
-        "CI Timing",
         "Non-blocking Coverage",
     }
     if explicit in allowed:
@@ -990,8 +992,6 @@ def control_type(item):
     combined = " ".join(
         str(item.get(key, "")) for key in ("name", "status", "detail")
     ).lower()
-    if "ci" in combined or "check" in combined or "pending" in combined:
-        return "CI Timing"
     if "proof" in combined or "test" in combined or "coverage" in combined:
         if "missing" in combined or "gap" in combined or "lacks" in combined:
             return "Proof Gap"
@@ -1099,7 +1099,7 @@ def merge_signal(review_obj, findings, nitpicks, pre_merge):
         "label": "VIABLE",
         "title": "Viable",
         "admonition": "TIP",
-        "detail": "No actionable findings were isolated for this head. Expected CI controls were observed passing.",
+        "detail": "No actionable findings were isolated for this head.",
     }
 
 
@@ -1434,105 +1434,18 @@ def format_contract_entries_for_prompt(entries, limit=12_000):
     return truncate("\n".join(lines).strip(), limit)
 
 
-def is_ci_check(item):
-    name = str(item.get("name", "")).strip().lower()
-    return name in {"ci", "ci status", "checks", "github checks"}
-
-
-def is_stale_ci_text(text):
-    lowered = text.lower()
-    if "ci" not in lowered and "pnpm" not in lowered and "build" not in lowered:
-        return False
-    stale_markers = (
-        "still running",
-        "not available",
-        "unavailable",
-        "unknown",
-        "pending",
-        "not include",
-        "not provided",
-    )
-    return any(marker in lowered for marker in stale_markers)
-
-
-def is_stale_ci_check(item):
-    if is_ci_check(item):
-        return True
-    combined = " ".join(
-        str(item.get(key, "")) for key in ("name", "status", "detail")
-    )
-    return is_stale_ci_text(combined)
-
-
-def normalize_ci_status(ci_status):
-    if not ci_status:
-        return ""
-    unique_lines = []
-    seen = set()
-    for raw_line in ci_status.splitlines():
-        line = raw_line.strip()
-        if not line or line.lower() == "### ci status":
-            continue
-        if line.startswith("- "):
-            key = line.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-        unique_lines.append(line)
-    return "\n".join(unique_lines).strip()
-
-
-def ci_status_to_pre_merge_checks(ci_status):
-    normalized = normalize_ci_status(ci_status)
-    if not normalized:
-        return []
-    lowered = normalized.lower()
-    if "failure:" in lowered or ": failure" in lowered or ": cancelled" in lowered:
-        return [
-            {
-                "name": "CI Status",
-                "status": "fail",
-                "type": "CI Timing",
-                "detail": "One or more expected CI controls failed or were cancelled; the specimen is not fit for merge.",
-            }
-        ]
-    if "warning:" in lowered or "still running" in lowered:
-        return [
-            {
-                "name": "CI Status",
-                "status": "warn",
-                "type": "CI Timing",
-                "detail": "Expected CI controls were missing or incomplete when Dottore posted; verify the control path before merge.",
-            }
-        ]
-    return [
-        {
-            "name": "CI Status",
-            "status": "pass",
-            "type": "CI Timing",
-            "detail": "Expected CI controls completed without a reported failure.",
-        }
-    ]
-
-
 def render_walkthrough(
     review_obj,
     findings,
     nitpicks,
     invalid_findings,
-    ci_status,
     head_sha,
     prior_contracts=None,
 ):
     summary = review_obj.get("change_summary") or []
     questions = review_obj.get("open_questions") or []
     checked = review_obj.get("what_i_checked") or []
-    normalized_ci_status = normalize_ci_status(ci_status)
     pre_merge = review_obj.get("pre_merge_checks") or []
-    if normalized_ci_status:
-        pre_merge = [item for item in pre_merge if not is_stale_ci_check(item)]
-        checked = [item for item in checked if not is_stale_ci_text(str(item))]
-        pre_merge = ci_status_to_pre_merge_checks(normalized_ci_status) + pre_merge
     resolved = review_obj.get("resolved_since_last_review") or []
     state_marker = (
         f"<!-- dottore:last-reviewed-sha={head_sha} -->"
@@ -1650,8 +1563,6 @@ def render_walkthrough(
             ]
         )
         body.extend([f"- {note}" for note in invalid_findings[:5]])
-    if normalized_ci_status:
-        body.extend(["", "### 🧰 CI Status", normalized_ci_status])
     return "\n".join(body).strip() + "\n"
 
 
@@ -2025,7 +1936,6 @@ def produce_review(args):
     base, base_ref, head_sha, effective_mode = resolve_review_base(pr_num, requested_mode)
     ensure_local_head(head_sha, pr_num)
     patch_command_status_running(pr_num, head_sha, effective_mode)
-    ci_status = os.environ.get("CI_STATUS", "")
     files = changed_files(base)
     if not files and effective_mode == "incremental":
         write_skipped_review(
@@ -2107,7 +2017,6 @@ def produce_review(args):
         for index, chunk in enumerate(chunks, 1):
             review_packet = build_review_packet(
                 base,
-                ci_status,
                 effective_mode,
                 focus_files=chunk,
                 include_full_patch=False,
@@ -2143,7 +2052,7 @@ def produce_review(args):
             f"Examined the PR in {len(chunks)} file chunk(s) so the large diff did not contaminate context retention."
         )
     else:
-        review_packet = build_review_packet(base, ci_status, effective_mode)
+        review_packet = build_review_packet(base, effective_mode)
         stats = build_stats(review_packet)
         triage_content = triage_for_packet(review_packet, "Review the full current diff.")
         try:
@@ -2163,6 +2072,9 @@ def produce_review(args):
             )
             print_telemetry(stats)
             return
+    for key in ("findings", "nitpicks", "pre_merge_checks"):
+        if review_obj.get(key) is None:
+            review_obj[key] = []
     review_obj.setdefault("head_sha", head_sha)
     review_obj.setdefault("head_commit_message", commit_subject(head_sha))
     review_obj.setdefault("review_base", base)
@@ -2185,13 +2097,6 @@ def produce_review(args):
         json.dumps(review_obj, indent=2, sort_keys=True) + "\n", "utf-8"
     )
     print_telemetry(stats)
-
-
-def read_ci_status():
-    path = pathlib.Path("dottore-ci-status.md")
-    if path.exists():
-        return path.read_text("utf-8")
-    return ""
 
 
 def findings_for_inline_comments(findings):
@@ -2220,14 +2125,12 @@ def render_review(args):
         requested_mode = args.mode or parse_command_mode()
         base, _, _, _ = resolve_review_base(pr_num, requested_mode)
     findings, nitpicks, invalid = validate_review_items(review_obj, base)
-    ci_status = read_ci_status()
     head_sha = review_obj.get("head_sha") or os.environ.get("DOTTORE_HEAD_SHA", "")
     walkthrough = render_walkthrough(
         review_obj,
         findings,
         nitpicks,
         invalid,
-        ci_status,
         head_sha,
         prior_contracts=review_obj.get("_prior_dottore_contract_state") or [],
     )
@@ -2413,34 +2316,11 @@ def post_review(args):
     )
 
 
-def truthy(value):
-    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
-
-
 def load_review_for_status(path):
     try:
         return json.loads(pathlib.Path(path).read_text("utf-8"))
     except Exception:
         return {}
-
-
-def ci_control_has_failure(path):
-    try:
-        data = json.loads(pathlib.Path(path).read_text("utf-8"))
-    except Exception:
-        return False
-    failed = data.get("failed") if isinstance(data, dict) else []
-    return bool(failed)
-
-
-def ci_control_has_pending_or_missing(path):
-    try:
-        data = json.loads(pathlib.Path(path).read_text("utf-8"))
-    except Exception:
-        return False
-    if not isinstance(data, dict):
-        return False
-    return bool(data.get("pending") or data.get("missing"))
 
 
 def status_state(args):
@@ -2453,61 +2333,24 @@ def status_state(args):
         print("description=Dottore Review did not produce review.json; inspect the trusted workflow run.")
         return
     review_obj = load_review_for_status(args.review_json)
-    pre_merge = review_obj.get("pre_merge_checks") if isinstance(review_obj, dict) else []
-    findings = status_findings(review_obj)
+    required_lists = ("findings", "nitpicks", "pre_merge_checks")
+    if not isinstance(review_obj, dict) or any(
+        not isinstance(review_obj.get(key), list) for key in required_lists
+    ):
+        print("state=failure")
+        print("description=Dottore Review produced an invalid review.json; inspect the trusted workflow run.")
+        return
+    pre_merge = review_obj["pre_merge_checks"]
+    if any(not isinstance(item, dict) for item in pre_merge):
+        print("state=failure")
+        print("description=The control record is malformed; Dottore cannot certify this examination.")
+        return
     if has_incomplete_review_check(pre_merge or []):
         print("state=failure")
         print("description=Dottore Review posted a failure or skipped report; rerun after repairing the review control.")
         return
-    draft = truthy(args.draft)
-    has_high_or_blocking = any(
-        severity_meta(finding.severity)["rank"] <= severity_meta("high")["rank"]
-        for finding in findings
-    )
-    failed_ci = ci_control_has_failure(args.ci_control)
-    pending_ci = ci_control_has_pending_or_missing(args.ci_control)
-    if not draft and has_high_or_blocking:
-        print("state=failure")
-        print("description=Dottore found blocking/high issues; repair before merge.")
-        return
-    if not draft and failed_ci:
-        print("state=failure")
-        print("description=Expected CI controls failed; repair CI before merge.")
-        return
-    if not draft and pending_ci:
-        print("state=pending")
-        print("description=Expected CI controls are still pending or missing.")
-        return
-    if draft and (findings or failed_ci):
-        print("state=success")
-        print("description=Draft review posted with notes.")
-        return
-    if findings:
-        print("state=success")
-        print("description=Dottore posted non-blocking findings or notes.")
-        return
     print("state=success")
-    print("description=Dottore posted or updated its review for this pull request.")
-
-
-def status_findings(review_obj):
-    base = (review_obj or {}).get("review_base")
-    if base:
-        try:
-            findings, _, _ = validate_review_items(review_obj, base)
-            return findings
-        except Exception:
-            pass
-    findings = []
-    for raw in (review_obj or {}).get("findings", []):
-        try:
-            finding = normalize_review_item(raw, default_severity="medium")
-        except Exception:
-            continue
-        if finding.severity not in {"blocking", "high", "medium", "low", "nitpick"}:
-            finding.severity = "medium"
-        findings.append(finding)
-    return findings
+    print("description=Examination concluded. Dottore's findings await their repair; independent controls remain separate.")
 
 
 def main():
@@ -2524,8 +2367,6 @@ def main():
     post.add_argument("--inline-json", default="inline-comments.json")
     status = sub.add_parser("status-state")
     status.add_argument("--review-json", default="review.json")
-    status.add_argument("--ci-control", default="dottore-ci-control.json")
-    status.add_argument("--draft", default=os.environ.get("DOTTORE_IS_DRAFT", "false"))
     status.add_argument("--job-status", default="success")
     args = parser.parse_args()
 

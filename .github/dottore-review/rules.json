@@ -24,7 +24,6 @@
   "control_warn_types": {
     "Proof Gap": "Important changed behavior lacks focused proof.",
     "Review Limitation": "Dottore lacked full packet/context to prove a suspected issue.",
-    "CI Timing": "Expected checks were missing, pending, or not yet observable when posted.",
     "Non-blocking Coverage": "Useful coverage or context note that should not block merge by itself."
   },
   "path_instructions": [
@@ -146,8 +145,7 @@
       ],
       "checks": [
         "Container and image changes must keep the app buildable and runnable; the pnpm-validate and container-build-test checks must still pass.",
-        "Workflow changes stay narrow, testable, and least-privilege; pull_request_target dispatchers must not check out or execute pull-request code.",
-        "If CI check-run names change, mirror them in .github/dottore-review/ci-checks.json so Dottore gates on the real checks."
+        "Workflow changes stay narrow, testable, and least-privilege; pull_request_target dispatchers must not check out or execute pull-request code."
       ]
     },
     {

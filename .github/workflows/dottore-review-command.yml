@@ -108,5 +108,4 @@ jobs:
             exit "$DISPATCH_RC"
           fi
 
-          upsert_status "Dispatched" "Reviewer workflow dispatched; waiting for Dottore Review to post results." \
-            || echo "::warning::Unable to write Dottore command dispatched status."
+          # The reviewer owns status updates after dispatch; do not overwrite a fast result.

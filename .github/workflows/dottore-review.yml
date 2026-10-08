@@ -1,4 +1,3 @@
-# .github/workflows/dottore-review.yml
 name: Dottore Review
 
 on:
@@ -9,40 +8,55 @@ on:
         required: true
       comment_body:
         description: Slash command body that requested the review.
-        required: false
         default: ""
       review_mode:
         description: Review mode for the requested pass.
-        required: false
         type: choice
-        options:
-          - auto
-          - full
-          - incremental
+        options: [auto, full, incremental]
         default: auto
       requested_by:
         description: GitHub login that requested the dispatch.
-        required: false
         default: ""
       is_draft:
         description: Whether the pull request was draft when dispatch was requested.
-        required: false
         default: "false"
       last_reviewed_sha:
         description: Explicit Dottore-reviewed head SHA from the dispatcher, when known.
-        required: false
         default: ""
+  workflow_call:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+      comment_body:
+        type: string
+        default: ""
+      review_mode:
+        type: string
+        default: auto
+      requested_by:
+        type: string
+        default: ""
+      is_draft:
+        type: string
+        default: "false"
+      last_reviewed_sha:
+        type: string
+        default: ""
+    secrets:
+      OPENAI_API_KEY:
+        required: true
+      LLM_BASE_URL:
+        required: false
 
 permissions:
   contents: read
   pull-requests: write
   issues: write
-  actions: read
-  checks: read
   statuses: write
 
 concurrency:
-  group: dottore-review-${{ github.event.pull_request.number || inputs.pr_number || github.run_id }}
+  group: dottore-review-${{ github.repository }}-${{ inputs.pr_number }}
   cancel-in-progress: true
 
 jobs:
@@ -50,252 +64,126 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      PR_NUM: ${{ github.event.pull_request.number || inputs.pr_number }}
-      DOTTORE_COMMENT_BODY: ${{ inputs.comment_body || '' }}
+      PR_NUM: ${{ inputs.pr_number }}
+      DOTTORE_COMMENT_BODY: ${{ inputs.comment_body }}
       DOTTORE_REVIEW_MODE: ${{ inputs.review_mode || 'auto' }}
-      DOTTORE_IS_DRAFT: ${{ inputs.is_draft || 'false' }}
-      DOTTORE_LAST_REVIEWED_SHA: ${{ inputs.last_reviewed_sha || '' }}
-      # The PR head is the working directory; keep it off Python's import path so its files can't shadow modules.
+      DOTTORE_LAST_REVIEWED_SHA: ${{ inputs.last_reviewed_sha }}
+      # Comma-separated exact refs; a single ref (staging or dottore-lab) also works.
+      DOTTORE_BASE_REFS: ${{ vars.DOTTORE_BASE_REFS || 'refactor,main,staging' }}
+      # Never import modules from the untrusted PR working directory.
       PYTHONSAFEPATH: "1"
+      DOTTORE_REVIEW_PROMPT_PATH: /tmp/dottore-review-tool/reviewer-prompt.md
+      DOTTORE_REVIEW_RULES_PATH: /tmp/dottore-review-tool/rules.json
     steps:
-      - name: Checkout repository
+      - name: Validate trusted tooling reference
+        env:
+          TOOLING_SHA: ${{ job.workflow_sha }}
+        run: |
+          [[ "$TOOLING_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::job.workflow_sha is unavailable, so Dottore cannot pin its own tooling."
+            exit 1
+          }
+
+      - name: Checkout calling repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Resolve PR refs
+      - name: Checkout pinned Engine tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # In workflow_call the github context belongs to the caller; job.workflow_*
+          # names the repository and commit of this workflow file itself.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .dottore-tooling
+          persist-credentials: false
+
+      - name: Preserve trusted tooling and base-branch rules
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          BASE=$(gh pr view "$PR_NUM" --json baseRefName -q .baseRefName)
+          [[ "$PR_NUM" =~ ^[1-9][0-9]*$ ]] || exit 1
+          BASE=$(gh pr view "$PR_NUM" --repo "$GITHUB_REPOSITORY" --json baseRefName -q .baseRefName)
+          jq -en --arg refs "$DOTTORE_BASE_REFS" --arg ref "$BASE" '$refs | split(",") | index($ref) != null' >/dev/null || {
+            echo "::error::Unsupported Dottore review base ref: $BASE"
+            exit 1
+          }
           echo "PR_BASE_REF=$BASE" >> "$GITHUB_ENV"
           gh auth setup-git
           git fetch --force origin "$BASE:refs/remotes/origin/$BASE"
+          mkdir -p /tmp/dottore-review-tool
+          cp .dottore-tooling/.github/dottore-review/{dottore_review.py,requirements.txt,reviewer-prompt.md} /tmp/dottore-review-tool/
+          # Caller-specific rules are trusted base content, never PR-head content.
+          git show "origin/$BASE:.github/dottore-review/rules.json" > /tmp/dottore-review-tool/rules.json
+          rm -rf .dottore-tooling
 
-      - name: Preserve review tooling from base branch
-        run: |
-          mkdir -p /tmp/dottore-review-tool/.github/dottore-review
-          if git cat-file -e "origin/$PR_BASE_REF:.github/dottore-review/dottore_review.py"; then
-            # PR head is the review target; reviewer tooling always comes from the trusted base branch.
-            git show "origin/$PR_BASE_REF:.github/dottore-review/dottore_review.py" > /tmp/dottore-review-tool/.github/dottore-review/dottore_review.py
-            git show "origin/$PR_BASE_REF:.github/dottore-review/requirements.txt" > /tmp/dottore-review-tool/.github/dottore-review/requirements.txt
-            git show "origin/$PR_BASE_REF:.github/dottore-review/reviewer-prompt.md" > /tmp/dottore-review-tool/.github/dottore-review/reviewer-prompt.md
-            git show "origin/$PR_BASE_REF:.github/dottore-review/rules.json" > /tmp/dottore-review-tool/.github/dottore-review/rules.json || true
-            git show "origin/$PR_BASE_REF:.github/dottore-review/ci-checks.json" > /tmp/dottore-review-tool/.github/dottore-review/ci-checks.json || true
-          else
-            echo "::error::Dottore review tooling not found on base branch $PR_BASE_REF"
-            exit 1
-          fi
-          if [ ! -s /tmp/dottore-review-tool/.github/dottore-review/ci-checks.json ]; then
-            cat > /tmp/dottore-review-tool/.github/dottore-review/ci-checks.json <<'JSON'
-          {
-            "expected_checks": [
-              { "name": "Frontend, Architecture, and Organization", "required": "always" },
-              { "name": "Rust Capability Layer", "required": "always" },
-              { "name": "Browser Smoke and Performance", "required": "always" }
-            ]
-          }
-          JSON
-          fi
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
 
-      - name: Fetch PR and checkout head
+      - name: Install trusted reviewer dependencies
+        run: pip install -r /tmp/dottore-review-tool/requirements.txt
+
+      - name: Fetch review specimen without executing it
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git status
           gh auth setup-git
-          git fetch origin "pull/$PR_NUM/head:pr-$PR_NUM"
-          git checkout "pr-$PR_NUM"
-          HEAD_SHA=$(gh pr view "$PR_NUM" --json headRefOid -q .headRefOid)
+          git fetch --force origin "pull/$PR_NUM/head:refs/remotes/dottore-review/pr-$PR_NUM"
+          HEAD_SHA=$(git rev-parse "refs/remotes/dottore-review/pr-$PR_NUM")
+          git checkout --detach "$HEAD_SHA"
           echo "PR_HEAD_SHA=$HEAD_SHA" >> "$GITHUB_ENV"
 
       - name: Mark Dottore status in progress
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh api \
-            --method POST \
-            "repos/${{ github.repository }}/statuses/$PR_HEAD_SHA" \
-            -f state="pending" \
-            -f context="Dottore Review" \
-            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            -f description="The trusted Dottore reviewer is inspecting this pull request." >/dev/null
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$PR_HEAD_SHA" \
+            -f state=pending -f context="Dottore Review" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            -f description="The specimen is on Dottore's observation table. Examination in progress." >/dev/null
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: pip install -r /tmp/dottore-review-tool/.github/dottore-review/requirements.txt
-
-      - name: Run review while CI completes
+      - name: Run Dottore review
         timeout-minutes: 25
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
-          LLM_MODEL: gpt-5.5
-          CI_STATUS: CI checks are still running; final CI results will be appended before posting.
-          DOTTORE_REVIEW_PROMPT_PATH: /tmp/dottore-review-tool/.github/dottore-review/reviewer-prompt.md
+          LLM_MODEL: ${{ vars.DOTTORE_MODEL || 'gpt-5.5' }}
+          DOTTORE_REASONING_EFFORT: ${{ vars.DOTTORE_REASONING_EFFORT }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          HEAD_SHA=$(gh pr view "$PR_NUM" --json headRefOid -q .headRefOid)
-          if [ "$HEAD_SHA" != "$(git rev-parse HEAD)" ]; then
-            gh auth setup-git
-            git fetch --force origin "pull/$PR_NUM/head:refs/remotes/dottore-review/pr-$PR_NUM"
-            git checkout --detach "$HEAD_SHA"
-          fi
-
-          python /tmp/dottore-review-tool/.github/dottore-review/dottore_review.py produce &
-          DOTTORE_PID=$!
-
-          CHECK_CONFIG=/tmp/dottore-review-tool/.github/dottore-review/ci-checks.json
-          python - "$CHECK_CONFIG" > dottore-ci-config.env <<'PY'
-          import json
-          import sys
-
-          with open(sys.argv[1], encoding="utf-8") as handle:
-              expected = json.load(handle).get("expected_checks", [])
-          always = [item for item in expected if item.get("required") == "always"]
-          print(f"EXPECTED_COUNT={len(always)}")
-          with open("dottore-ci-config-warnings.md", "w", encoding="utf-8") as handle:
-              for item in expected:
-                  required = item.get("required")
-                  if required != "always":
-                      name = str(item.get("name") or "<unnamed>")
-                      handle.write(
-                          f"- warning: required mode {required} for {name} is recognized "
-                          "but not implemented by Dottore gating; it is reported only.\n"
-                      )
-          PY
-          . dottore-ci-config.env
-          MISSING_CHECK_ATTEMPTS=18
-          MAX_CHECK_ATTEMPTS=90
-          for attempt in $(seq 1 "$MAX_CHECK_ATTEMPTS"); do
-            gh api "repos/${{ github.repository }}/commits/$HEAD_SHA/check-runs" > check-runs.json
-            python - "$CHECK_CONFIG" check-runs.json > dottore-ci-loop.env <<'PY'
-          import json
-          import sys
-
-          with open(sys.argv[1], encoding="utf-8") as handle:
-              expected = [
-                  item.get("name")
-                  for item in json.load(handle).get("expected_checks", [])
-                  if item.get("required") == "always"
-              ]
-          with open(sys.argv[2], encoding="utf-8") as handle:
-              check_runs = json.load(handle).get("check_runs", [])
-          found = 0
-          pending = 0
-          for name in expected:
-              matches = [check for check in check_runs if check.get("name") == name]
-              found += len(matches)
-              pending += sum(1 for check in matches if check.get("status") != "completed")
-          print(f"FOUND={found}")
-          print(f"PENDING={pending}")
-          PY
-            . dottore-ci-loop.env
-            if [ "${FOUND:-0}" -eq 0 ] && [ "$attempt" -ge "$MISSING_CHECK_ATTEMPTS" ]; then
-              break
-            fi
-            if [ "${FOUND:-0}" -ge "${EXPECTED_COUNT:-0}" ] && [ "${PENDING:-0}" -eq 0 ]; then
-              break
-            fi
-            sleep 10
-          done
-
-          gh api "repos/${{ github.repository }}/commits/$HEAD_SHA/check-runs" > check-runs.json
-          python - "$CHECK_CONFIG" check-runs.json <<'PY'
-          import json
-          import sys
-
-          with open(sys.argv[1], encoding="utf-8") as handle:
-              expected = [
-                  item.get("name")
-                  for item in json.load(handle).get("expected_checks", [])
-                  if item.get("required") == "always"
-              ]
-          with open(sys.argv[2], encoding="utf-8") as handle:
-              check_runs = json.load(handle).get("check_runs", [])
-          control = {"expected": expected, "passing": [], "pending": [], "failed": [], "missing": []}
-          for name in expected:
-              matches = [check for check in check_runs if check.get("name") == name]
-              if not matches:
-                  control["missing"].append(name)
-                  continue
-              for check in matches:
-                  status = check.get("status")
-                  conclusion = check.get("conclusion")
-                  if status != "completed":
-                      control["pending"].append(name)
-                  elif conclusion in {"success", "skipped"}:
-                      control["passing"].append(name)
-                  else:
-                      control["failed"].append({"name": name, "conclusion": conclusion})
-          with open("dottore-ci-control.json", "w", encoding="utf-8") as handle:
-              json.dump(control, handle, indent=2, sort_keys=True)
-              handle.write("\n")
-          with open("dottore-ci-status.md", "w", encoding="utf-8") as handle:
-              handle.write("\n### CI Status\n")
-              for name in control["passing"]:
-                  handle.write(f"- pass: {name}\n")
-              for name in control["pending"]:
-                  handle.write(f"- warning: {name} is still running.\n")
-              for item in control["failed"]:
-                  handle.write(f"- failure: {item['name']} ended with {item.get('conclusion')}.\n")
-              for name in control["missing"]:
-                  handle.write(f"- warning: required check {name} did not appear before Dottore posted.\n")
-              try:
-                  with open("dottore-ci-config-warnings.md", encoding="utf-8") as warnings:
-                      handle.write(warnings.read())
-              except FileNotFoundError:
-                  pass
-              handle.write(
-                  "- note: Dottore gates only required job conclusions from ci-checks.json; "
-                  "advisory reports such as continue-on-error dependency checks are not included in this status.\n"
-              )
-          PY
-
-          wait "$DOTTORE_PID"
+        run: python /tmp/dottore-review-tool/dottore_review.py produce
 
       - name: Render review
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python /tmp/dottore-review-tool/.github/dottore-review/dottore_review.py render
+        run: python /tmp/dottore-review-tool/dottore_review.py render
 
       - name: Post the review
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python /tmp/dottore-review-tool/.github/dottore-review/dottore_review.py post
+        run: python /tmp/dottore-review-tool/dottore_review.py post
 
       - name: Complete Dottore status
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JOB_STATUS: ${{ job.status }}
         run: |
-          # review.json is Dottore's machine contract; status-state converts it plus CI/draft state into GitHub's commit status.
           if [ -z "${PR_HEAD_SHA:-}" ]; then
-            PR_HEAD_SHA="$(gh pr view "$PR_NUM" --json headRefOid -q .headRefOid)"
+            PR_HEAD_SHA=$(gh pr view "$PR_NUM" --repo "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)
           fi
-          if [ -f /tmp/dottore-review-tool/.github/dottore-review/dottore_review.py ]; then
-            STATUS_OUTPUT="$(python /tmp/dottore-review-tool/.github/dottore-review/dottore_review.py status-state \
-              --review-json review.json \
-              --ci-control dottore-ci-control.json \
-              --draft "$DOTTORE_IS_DRAFT" \
-              --job-status "${{ job.status }}")"
+          if [ -f /tmp/dottore-review-tool/dottore_review.py ]; then
+            STATUS_OUTPUT=$(python /tmp/dottore-review-tool/dottore_review.py status-state \
+              --review-json review.json --job-status "$JOB_STATUS")
           else
-            STATUS_OUTPUT="$(printf '%s\n' \
-              'state=failure' \
-              'description=Dottore Review tooling was unavailable; inspect the trusted workflow run.')"
+            STATUS_OUTPUT=$(printf '%s\n' 'state=failure' \
+              'description=The examination apparatus was unavailable. Inspect the trusted Dottore workflow run.')
           fi
-          echo "$STATUS_OUTPUT"
-          STATE="$(printf '%s\n' "$STATUS_OUTPUT" | sed -n 's/^state=//p' | tail -n 1)"
-          DESCRIPTION="$(printf '%s\n' "$STATUS_OUTPUT" | sed -n 's/^description=//p' | tail -n 1)"
-
-          gh api \
-            --method POST \
-            "repos/${{ github.repository }}/statuses/$PR_HEAD_SHA" \
-            -f state="$STATE" \
-            -f context="Dottore Review" \
-            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+          STATE=$(printf '%s\n' "$STATUS_OUTPUT" | sed -n 's/^state=//p')
+          DESCRIPTION=$(printf '%s\n' "$STATUS_OUTPUT" | sed -n 's/^description=//p')
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$PR_HEAD_SHA" \
+            -f state="$STATE" -f context="Dottore Review" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             -f description="$DESCRIPTION" >/dev/null
