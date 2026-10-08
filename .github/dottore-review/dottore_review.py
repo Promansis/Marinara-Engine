@@ -27,7 +27,10 @@ MAX_REVIEW_PACKET_CHARS = 180_000
 MAX_SECTION_CHARS = 60_000
 MAX_CONTEXT_FILE_CHARS = 20_000
 MAX_SEARCH_HITS = 30
-MAX_SEARCH_FILE_BYTES = 250_000
+# Search skips minified lines, not large files, so large real sources stay findable; the Python
+# fallback still skips files over MAX_SEARCH_FILE_BYTES.
+MAX_SEARCH_FILE_BYTES = 5_000_000
+MAX_SEARCH_LINE_CHARS = 1_000
 MAX_IDENTIFIER_CONTEXT_CHARS = 60_000
 MAX_IDENTIFIER_TERMS = 24
 MAX_IDENTIFIER_HITS_PER_TERM = 12
@@ -47,10 +50,18 @@ MODEL_MAX_RETRIES = 1
 REVIEW_ROLES = ("broad", "skeptic", "verify")
 FINDER_ROLES = ("broad", "skeptic")
 SEGMENT_LABELS = {"broad": "Broad segment", "skeptic": "Skeptical segment"}
-FINDER_TOOL_BUDGET = 8
+FINDER_TOOL_BUDGET = 5
 VERIFIER_TOOL_BUDGET = 5
+# Each agent also has a tool-output budget, since every later turn resends its tool results.
+# Verifiers get their own, so finders can never starve verification.
+FINDER_TOOL_CHARS = 24_000
+VERIFIER_TOOL_CHARS = 20_000
+VERIFIER_TOOL_CHARS_PER_EXTRA = 6_000
 MAX_SUBMIT_ATTEMPTS = 3
-MAX_TOOL_LINES = 300
+# Every later turn resends a tool result, so reads are kept to a section.
+MAX_TOOL_LINES = 120
+MAX_TOOL_CHARS = 8_000
+NEARBY_LINES = 3
 MAX_VERIFIED_CANDIDATES = 20
 MAX_OPEN_QUESTIONS = 2
 MAX_REVIEW_LIMITATIONS = 2
@@ -221,8 +232,8 @@ def search_repo(pattern):
     for line in rg.stdout.splitlines():
         try:
             rel, line_no, body = line.split(":", 2)
-            p = _safe_path(rel)
-            if p.stat().st_size > MAX_SEARCH_FILE_BYTES:
+            _safe_path(rel)
+            if excluded_path(rel) or len(body) > MAX_SEARCH_LINE_CHARS:
                 continue
             lines.append(f"{rel}:{line_no}: {body.strip()[:220]}")
         except Exception:
@@ -255,11 +266,15 @@ def search_repo_with_python(pattern):
             if path.stat().st_size > MAX_SEARCH_FILE_BYTES:
                 continue
             rel = path.relative_to(REPO_ROOT)
+            if excluded_path(rel.as_posix()):
+                continue
             text = path.read_text("utf-8", "replace")
         except Exception:
             continue
+        if "\0" in text[:8_000]:
+            continue
         for line_no, line in enumerate(text.splitlines(), 1):
-            if pattern in line:
+            if pattern in line and len(line) <= MAX_SEARCH_LINE_CHARS:
                 hits.append(f"{rel}:{line_no}: {line.strip()[:220]}")
                 if len(hits) >= MAX_SEARCH_HITS:
                     break
@@ -342,6 +357,11 @@ def diff_command(base, *options, paths=None):
     if paths is not None:
         command.extend(["--", *paths])
     return command
+
+
+def excluded_path(path):
+    """True for paths rules.json excludes, such as generated bundles; tools neither read nor search them."""
+    return any(fnmatch.fnmatchcase(path, pattern) for pattern in load_rules().get("exclude_paths", []))
 
 
 def changed_files(base):
@@ -766,27 +786,37 @@ SUBMIT_FINDINGS = function_tool(
     },
     ["change_summary", "findings", "nitpicks", "pre_merge_checks", "open_questions", "what_i_checked"],
 )
-SUBMIT_VERDICT = function_tool(
-    "submit_verdict",
-    "Submit Dottore's verdict on the candidate finding. This ends the verification.",
+SUBMIT_VERDICTS = function_tool(
+    "submit_verdicts",
+    "Submit Dottore's verdict on each candidate finding. This ends the verification.",
     {
-        "verdict": {"type": "string", "enum": ["confirmed", "rejected", "uncertain"]},
-        "severity": {"type": "string", "enum": ["blocking", "high", "medium", "low"]},
-        "evidence": {
+        "verdicts": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string"},
-                    "line": {"type": "integer"},
-                    "snippet": {"type": "string"},
+                    "candidate": {"type": "integer"},
+                    "verdict": {"type": "string", "enum": ["confirmed", "rejected", "uncertain"]},
+                    "severity": {"type": "string", "enum": ["blocking", "high", "medium", "low"]},
+                    "evidence": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string"},
+                                "line": {"type": "integer"},
+                                "snippet": {"type": "string"},
+                            },
+                            "required": ["path", "line", "snippet"],
+                        },
+                    },
+                    "note": {"type": "string"},
                 },
-                "required": ["path", "line", "snippet"],
+                "required": ["candidate", "verdict", "severity", "evidence", "note"],
             },
         },
-        "note": {"type": "string"},
     },
-    ["verdict", "severity", "evidence", "note"],
+    ["verdicts"],
 )
 
 
@@ -803,18 +833,26 @@ def tool_path(path):
     return normalized
 
 
+def readable_text(path, text):
+    if excluded_path(path):
+        raise ValueError(f"{path} is generated or excluded by the review rules; read its source instead")
+    if "\0" in text[:8_000]:
+        raise ValueError(f"{path} is a binary file")
+    return text
+
+
 def head_file_text(path):
     full = _safe_path(tool_path(path))
     # Check the resolved path too, so a symlink cannot lead into .git or a secret file.
-    tool_path(full.relative_to(REPO_ROOT).as_posix())
-    return full.read_text("utf-8", "replace")
+    relative = tool_path(full.relative_to(REPO_ROOT).as_posix())
+    return readable_text(relative, full.read_text("utf-8", "replace"))
 
 
 def base_file_text(ctx, path):
     shown = run(["git", "show", f"{ctx.merge_base}:{tool_path(path)}"], timeout=60)
     if shown.returncode != 0:
         raise ValueError(f"{path} does not exist at the review base")
-    return shown.stdout
+    return readable_text(tool_path(path), shown.stdout)
 
 
 def numbered_lines(text, start=None, end=None):
@@ -824,7 +862,7 @@ def numbered_lines(text, start=None, end=None):
     if first > last:
         return f"No lines in that range; the file has {len(lines)} lines."
     body = "\n".join(f"{number}: {lines[number - 1]}" for number in range(first, last + 1))
-    return truncate(body, MAX_CONTEXT_FILE_CHARS)
+    return truncate(body, MAX_TOOL_CHARS)
 
 
 def searchable_hit(hit):
@@ -880,18 +918,31 @@ def chat(ctx, role, messages, tools, tool_choice):
     return response.choices[0].message
 
 
-def run_agent(ctx, role, messages, submit_tool, budget):
+def tool_call_key(call):
+    try:
+        args = json.dumps(json.loads(call.function.arguments or "{}"), sort_keys=True)
+    except ValueError:
+        args = call.function.arguments
+    return call.function.name, args
+
+
+def run_agent(ctx, role, messages, submit_tool, budget, output_budget):
     """Let one agent read with the tools until it calls its submit tool; return the submitted arguments.
 
-    The budget counts read-tool calls. Once it is spent, or the review deadline has passed, the
-    model is made to call the submit tool, and a few malformed submissions are tolerated.
+    The budget counts read-tool calls and output_budget their characters; a repeated call is answered
+    from the earlier result for free. Once either budget is spent, or the review deadline has passed,
+    the model is made to call the submit tool, and a few malformed submissions are tolerated.
     """
     submit = submit_tool["function"]["name"]
     tools = [*READ_TOOLS, submit_tool]
     messages = list(messages)
     used = 0
+    spent = 0
+    answered = {}
     for turn in range(budget + MAX_SUBMIT_ATTEMPTS):
-        forced = used >= budget or turn >= budget or time.monotonic() > ctx.deadline
+        forced = (
+            used >= budget or spent >= output_budget or turn >= budget or time.monotonic() > ctx.deadline
+        )
         choice = {"type": "function", "function": {"name": submit}} if forced else "auto"
         message = chat(ctx, role, messages, tools, choice)
         calls = list(message.tool_calls or [])
@@ -924,13 +975,17 @@ def run_agent(ctx, role, messages, submit_tool, budget):
                 if isinstance(submitted, dict):
                     return submitted
                 reply = f"refused: {submit} needs one JSON object as its arguments; call it again."
-            elif forced or used >= budget:
+            elif tool_call_key(call) in answered:
+                reply = f"Already returned above as tool call {answered[tool_call_key(call)]}; reuse that result."
+            elif forced or used >= budget or spent >= output_budget:
                 reply = f"refused: the tool budget is spent; call {submit} now."
             else:
                 used += 1
+                answered[tool_call_key(call)] = used
                 with ctx.lock:
                     ctx.stats["roles"][role]["tool_calls"] += 1
-                reply = run_tool(ctx, call.function.name, call.function.arguments)
+                reply = truncate(run_tool(ctx, call.function.name, call.function.arguments), output_budget - spent)
+                spent += len(reply)
             messages.append({"role": "tool", "tool_call_id": call.id, "content": reply})
     raise RuntimeError(f"The {role} agent never called {submit}.")
 
@@ -962,9 +1017,11 @@ def finder_packet(review_target, focus_note, prior_contracts, review_packet):
 
 def finder_instructions(role):
     return (
-        f"{FINDER_FOCUS[role]} Treat the review packet as the specimen. Before reporting a concrete "
-        "suspicion that depends on code outside the packet, check it with the read-only tools; you have "
-        f"at most {FINDER_TOOL_BUDGET} tool calls. Dottore verifies every candidate against the code "
+        f"{FINDER_FOCUS[role]} Treat the review packet as the specimen. Use the read-only tools only to "
+        "settle a concrete suspicion that depends on code outside the packet, fetching just what it needs; "
+        "do not browse, and when the packet is enough, submit without any tool calls. You have at most "
+        f"{FINDER_TOOL_BUDGET} tool calls and {FINDER_TOOL_CHARS} characters of tool output, and repeating a "
+        "call returns nothing new. Dottore verifies every candidate against the code "
         "before anything is published, so report each concrete suspicion once, at its exact changed "
         "line, and do not pad. If prior Dottore contracts are included, first judge whether the current "
         "diff satisfies or leaves those contracts incomplete before issuing adjacent related findings. "
@@ -993,6 +1050,7 @@ def run_finders(ctx, packets, pool):
                 ],
                 SUBMIT_FINDINGS,
                 FINDER_TOOL_BUDGET,
+                FINDER_TOOL_CHARS,
             ),
         )
         for packet in packets
@@ -1010,10 +1068,26 @@ def as_list(value):
     return value if isinstance(value, list) else []
 
 
+def same_spot(left, right):
+    def spot(item):
+        line = item.get("line")
+        return (
+            str(item.get("path", "")).strip(),
+            str(item.get("side") or "RIGHT").strip().upper(),
+            line if isinstance(line, int) and not isinstance(line, bool) else None,
+        )
+
+    (left_path, left_side, left_line), (right_path, right_side, right_line) = spot(left), spot(right)
+    if (left_path, left_side) != (right_path, right_side):
+        return False
+    if left_line is None or right_line is None:
+        return left.get("line") == right.get("line")
+    return abs(left_line - right_line) <= NEARBY_LINES
+
+
 def merge_segments(reports):
     """Stage 2: combine the segment reports without a model call."""
     merged = {key: [] for key in ("change_summary", "findings", "nitpicks", "open_questions")}
-    seen = {}
     checks = {}
     notes = []
     status_rank = {"fail": 0, "warn": 1, "unknown": 2, "pass": 3}
@@ -1025,22 +1099,18 @@ def merge_segments(reports):
             for item in as_list(report.get(key)):
                 if not isinstance(item, dict):
                     continue
-                # Segments word the same defect differently, so one line keeps one candidate: the most severe.
-                identity = (
-                    key,
-                    str(item.get("path", "")).strip(),
-                    str(item.get("side") or "RIGHT").strip().upper(),
-                    item.get("line"),
-                )
+                # Segments word the same defect differently and cite neighbouring lines, so findings
+                # within a few lines of each other keep one candidate: the most severe.
                 entry = {**item, "segment": role}
-                if identity not in seen:
-                    seen[identity] = len(merged[key])
+                index = next(
+                    (index for index, kept in enumerate(merged[key]) if same_spot(kept, entry)), None
+                )
+                if index is None:
                     merged[key].append(entry)
                     continue
-                kept = merged[key][seen[identity]]
                 rank = severity_rank.get(str(item.get("severity", "")).lower(), 4)
-                if rank < severity_rank.get(str(kept.get("severity", "")).lower(), 4):
-                    merged[key][seen[identity]] = entry
+                if rank < severity_rank.get(str(merged[key][index].get("severity", "")).lower(), 4):
+                    merged[key][index] = entry
         for check in as_list(report.get("pre_merge_checks")):
             if not isinstance(check, dict):
                 continue
@@ -1091,36 +1161,37 @@ def evidence_grounded(ctx, evidence):
     return False
 
 
-def verification_prompt(ctx, candidate):
-    claim = {
-        key: value
-        for key, value in dataclasses.asdict(candidate).items()
-        if key in {"severity", "path", "line", "side", "title", "body", "fix_hint"}
-    }
+def verification_prompt(ctx, candidates):
+    claims = [
+        {
+            "candidate": number,
+            **{
+                key: value
+                for key, value in dataclasses.asdict(candidate).items()
+                if key in {"severity", "path", "line", "side", "title", "body", "fix_hint"}
+            },
+        }
+        for number, candidate in enumerate(candidates, 1)
+    ]
+    path = candidates[0].path
     return (
-        f"Verify this candidate finding from the {SEGMENT_LABELS.get(candidate.segment, 'finder').lower()} "
-        "before publication, following the Verification section. You have at most "
-        f"{VERIFIER_TOOL_BUDGET} tool calls. Finish by calling submit_verdict."
-        f"\n\n# Candidate\n{json.dumps(claim, indent=2)}"
-        f"\n\n# Path Rules\n{matching_path_rules([candidate.path])}"
-        f"\n\n# Diff of {candidate.path}\n{truncate(diff_for_path(ctx.base, candidate.path), MAX_CONTEXT_FILE_CHARS)}"
+        f"Verify these {len(claims)} candidate finding(s) in {path} before publication, following the "
+        f"Verification section. You have at most {verifier_budget(candidates)} tool calls. Finish by "
+        "calling submit_verdicts with one verdict per candidate number."
+        f"\n\n# Candidates\n{json.dumps(claims, indent=2)}"
+        f"\n\n# Path Rules\n{matching_path_rules([path])}"
+        f"\n\n# Diff of {path}\n{truncate(diff_for_path(ctx.base, path), MAX_CONTEXT_FILE_CHARS)}"
     )
 
 
-def verify_candidate(ctx, candidate):
-    """Stage 3: Dottore checks one candidate against the code; return (outcome, finding, note, evidence)."""
-    if time.monotonic() > ctx.deadline:
+def verifier_budget(candidates):
+    return VERIFIER_TOOL_BUDGET + len(candidates) - 1
+
+
+def judge(ctx, candidate, verdict):
+    """Turn one submitted verdict into (outcome, finding, note, evidence)."""
+    if not isinstance(verdict, dict):
         return "unverified", candidate, "", []
-    verdict = run_agent(
-        ctx,
-        "verify",
-        [
-            {"role": "system", "content": ctx.skill},
-            {"role": "user", "content": verification_prompt(ctx, candidate)},
-        ],
-        SUBMIT_VERDICT,
-        VERIFIER_TOOL_BUDGET,
-    )
     outcome = str(verdict.get("verdict", "")).strip().lower()
     note = " ".join(str(verdict.get("note") or "").split())
     evidence = [item for item in as_list(verdict.get("evidence")) if isinstance(item, dict)]
@@ -1135,21 +1206,51 @@ def verify_candidate(ctx, candidate):
     return outcome, candidate, note, evidence
 
 
+def verify_file(ctx, candidates):
+    """Stage 3: Dottore checks one file's candidates against the code in a single agent run."""
+    if time.monotonic() > ctx.deadline:
+        return [("unverified", candidate, "", []) for candidate in candidates]
+    submitted = run_agent(
+        ctx,
+        "verify",
+        [
+            {"role": "system", "content": ctx.skill},
+            {"role": "user", "content": verification_prompt(ctx, candidates)},
+        ],
+        SUBMIT_VERDICTS,
+        verifier_budget(candidates),
+        VERIFIER_TOOL_CHARS + VERIFIER_TOOL_CHARS_PER_EXTRA * (len(candidates) - 1),
+    )
+    by_number = {}
+    for verdict in as_list(submitted.get("verdicts")):
+        if isinstance(verdict, dict) and isinstance(verdict.get("candidate"), int):
+            by_number.setdefault(verdict["candidate"], verdict)
+    return [judge(ctx, candidate, by_number.get(number)) for number, candidate in enumerate(candidates, 1)]
+
+
 def verify_candidates(ctx, candidates, pool):
-    """Verify the highest-severity candidates in parallel and sort them by outcome."""
+    """Verify the highest-severity candidates, one agent per file in parallel, and sort them by outcome."""
     chosen = candidates[:MAX_VERIFIED_CANDIDATES]
-    futures = [pool.submit(verify_candidate, ctx, candidate) for candidate in chosen]
+    groups = {}
+    for candidate in chosen:
+        groups.setdefault(candidate.path, []).append(candidate)
+    futures = {path: pool.submit(verify_file, ctx, group) for path, group in groups.items()}
     counts = dict.fromkeys(("candidates", "confirmed", "rejected", "uncertain", "unverified", "failed"), 0)
     counts["candidates"] = len(candidates)
     counts["unverified"] = len(candidates) - len(chosen)
-    confirmed, hypotheses = [], []
-    for candidate, future in zip(chosen, futures):
+    results = {}
+    for path, future in futures.items():
         try:
-            outcome, finding, note, evidence = future.result()
+            for result in future.result():
+                results[id(result[1])] = result
         except Exception as exc:
-            print(f"Dottore verifier failed for {candidate.path}:{candidate.line}: {error_text(exc)}", flush=True)
-            counts["failed"] += 1
+            print(f"Dottore verifier failed for {path}: {error_text(exc)}", flush=True)
+            counts["failed"] += len(groups[path])
+    confirmed, hypotheses = [], []
+    for candidate in chosen:
+        if id(candidate) not in results:
             continue
+        outcome, finding, note, evidence = results[id(candidate)]
         counts[outcome] += 1
         if outcome == "confirmed":
             confirmed.append({**dataclasses.asdict(finding), "verification": {"note": note, "evidence": evidence[:3]}})
@@ -1189,7 +1290,7 @@ def agentic_review(ctx, packets, mode, pool):
                 "name": "Verification Coverage",
                 "status": "warn",
                 "type": "Review Limitation",
-                "detail": f"{unexamined} candidate(s) went unexamined ({counts['unverified']} past the {MAX_VERIFIED_CANDIDATES}-candidate cap or the time limit, {counts['failed']} after a verifier error), so they were withheld.",
+                "detail": f"{unexamined} candidate(s) went unexamined ({counts['unverified']} past the {MAX_VERIFIED_CANDIDATES}-candidate cap, the time limit or without a verdict, {counts['failed']} after a verifier error), so they were withheld.",
             }
         )
     return merged
