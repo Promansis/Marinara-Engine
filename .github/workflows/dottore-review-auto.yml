@@ -1,4 +1,4 @@
-name: Bunny Review Auto Dispatch
+name: Dottore Review Auto Dispatch
 
 on:
   pull_request_target:
@@ -11,7 +11,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: bunny-review-auto-dispatch-${{ github.event.pull_request.number }}
+  group: dottore-review-auto-dispatch-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -22,7 +22,7 @@ jobs:
       github.event.pull_request.base.ref == 'staging'
     runs-on: ubuntu-latest
     steps:
-      - name: Dispatch trusted Bunny reviewer
+      - name: Dispatch trusted Dottore reviewer
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUM: ${{ github.event.pull_request.number }}
@@ -37,39 +37,39 @@ jobs:
           # It must not checkout, install, or execute code from the pull request.
           TARGET_REF="$PR_BASE_REF"
           if [ "$TARGET_REF" != "refactor" ] && [ "$TARGET_REF" != "main" ] && [ "$TARGET_REF" != "staging" ]; then
-            echo "::error::Unsupported Bunny review base ref: $TARGET_REF"
+            echo "::error::Unsupported Dottore review base ref: $TARGET_REF"
             exit 1
           fi
           REVIEW_MODE=auto
 
           if [ "$EVENT_ACTION" = "edited" ] && [ -z "$PREVIOUS_BASE_REF" ]; then
-            echo "Skipping Bunny auto dispatch for pull request metadata edit."
+            echo "Skipping Dottore auto dispatch for pull request metadata edit."
             exit 0
           fi
 
           if [ "$EVENT_ACTION" = "ready_for_review" ]; then
-            echo "Pull request became ready for review; dispatching Bunny even if this SHA was reviewed while draft."
+            echo "Pull request became ready for review; dispatching Dottore even if this SHA was reviewed while draft."
             REVIEW_MODE=full
           elif [ "$EVENT_ACTION" = "edited" ] && [ -n "$PREVIOUS_BASE_REF" ]; then
-            echo "Base ref changed from $PREVIOUS_BASE_REF to $PR_BASE_REF; dispatching Bunny review for the new diff base."
+            echo "Base ref changed from $PREVIOUS_BASE_REF to $PR_BASE_REF; dispatching Dottore review for the new diff base."
           else
             LAST_REVIEWED_SHA="$(gh api "repos/${{ github.repository }}/issues/$PR_NUM/comments?per_page=100" \
               --paginate \
-              --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("<!-- bunny-review:walkthrough -->")) | .body' \
-              | sed -n 's/.*<!-- bunny-review:last-reviewed-sha=\([0-9a-f]\{40\}\) -->.*/\1/p' \
+              --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("<!-- dottore:walkthrough -->")) | .body' \
+              | sed -n 's/.*<!-- dottore:last-reviewed-sha=\([0-9a-f]\{40\}\) -->.*/\1/p' \
               | tail -n 1)"
             if [ -n "$LAST_REVIEWED_SHA" ] && [ "$LAST_REVIEWED_SHA" = "$PR_HEAD_SHA" ]; then
-              echo "Skipping Bunny auto dispatch because head $PR_HEAD_SHA was already reviewed."
+              echo "Skipping Dottore auto dispatch because head $PR_HEAD_SHA was already reviewed."
               exit 0
             fi
           fi
 
-          gh api "repos/${{ github.repository }}/contents/.github/workflows/bunny-review.yml?ref=$TARGET_REF" --silent >/dev/null || {
-            echo "::error::Bunny trusted workflow not found on base ref $TARGET_REF"
+          gh api "repos/${{ github.repository }}/contents/.github/workflows/dottore-review.yml?ref=$TARGET_REF" --silent >/dev/null || {
+            echo "::error::Dottore trusted workflow not found on base ref $TARGET_REF"
             exit 1
           }
 
-          gh workflow run bunny-review.yml \
+          gh workflow run dottore-review.yml \
             --repo "${{ github.repository }}" \
             --ref "$TARGET_REF" \
             -f pr_number="$PR_NUM" \

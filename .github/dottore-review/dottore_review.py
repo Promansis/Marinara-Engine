@@ -1,4 +1,4 @@
-# .github/bunny-review/bunny_review.py
+# .github/dottore-review/dottore_review.py
 import argparse
 import base64
 import hashlib
@@ -12,11 +12,11 @@ import time
 from dataclasses import dataclass
 
 REPO_ROOT = pathlib.Path.cwd().resolve()
-BUNNY_MARKER = "<!-- bunny-review:walkthrough -->"
-COMMAND_STATUS_MARKER = "<!-- bunny-review:command-status -->"
-FINDING_MARKER_RE = re.compile(r"<!-- bunny-review:finding=([0-9a-f]{16}) -->")
-STATE_MARKER_RE = re.compile(r"<!-- bunny-review:last-reviewed-sha=([0-9a-f]{40}) -->")
-CONTRACT_STATE_RE = re.compile(r"<!-- bunny-review:contract-state=([A-Za-z0-9_=-]+) -->")
+DOTTORE_MARKER = "<!-- dottore:walkthrough -->"
+COMMAND_STATUS_MARKER = "<!-- dottore:command-status -->"
+FINDING_MARKER_RE = re.compile(r"<!-- dottore:finding=([0-9a-f]{16}) -->")
+STATE_MARKER_RE = re.compile(r"<!-- dottore:last-reviewed-sha=([0-9a-f]{40}) -->")
+CONTRACT_STATE_RE = re.compile(r"<!-- dottore:contract-state=([A-Za-z0-9_=-]+) -->")
 MAX_REVIEW_PACKET_CHARS = 180_000
 MAX_SECTION_CHARS = 60_000
 MAX_CONTEXT_FILES = 5
@@ -329,23 +329,22 @@ def load_json_file(path):
         return {"_load_error": str(exc)}
 
 
-def bunny_prompt_path():
+def dottore_prompt_path():
     prompt_path = pathlib.Path(
-        os.environ.get("BUNNY_REVIEW_PROMPT_PATH")
-        or os.environ.get("BUNNY_REVIEW_SKILL_PATH")
-        or ".github/bunny-review/reviewer-prompt.md"
+        os.environ.get("DOTTORE_REVIEW_PROMPT_PATH")
+        or ".github/dottore-review/reviewer-prompt.md"
     )
     if not prompt_path.is_absolute():
         prompt_path = REPO_ROOT / prompt_path
     return prompt_path
 
 
-def bunny_skill_dir():
-    return bunny_prompt_path().parent
+def dottore_skill_dir():
+    return dottore_prompt_path().parent
 
 
 def load_rules():
-    rules_path = bunny_skill_dir() / "rules.json"
+    rules_path = dottore_skill_dir() / "rules.json"
     try:
         return json.loads(rules_path.read_text("utf-8"))
     except FileNotFoundError:
@@ -401,7 +400,7 @@ def select_guidance(files):
 def matching_path_rules(files):
     rules = load_rules()
     if not rules or "_load_error" in rules:
-        return "No additional Bunny path rules loaded."
+        return "No additional Dottore path rules loaded."
     matched = []
     for item in rules.get("path_instructions", []):
         prefixes = item.get("prefixes", [])
@@ -469,7 +468,7 @@ def build_review_packet(base, ci_status, mode, focus_files=None, include_full_pa
         ("patch overview", patch_body),
         ("per-file patch context", build_file_context(base, context_files)),
         ("changed identifier usage", build_identifier_context(patch)),
-        ("Bunny path rules", matching_path_rules(files)),
+        ("Dottore path rules", matching_path_rules(files)),
     ]
     if ci_status:
         sections.append(("CI status", ci_status))
@@ -548,7 +547,7 @@ def build_stats(review_packet):
 def print_telemetry(stats):
     elapsed = time.monotonic() - stats["started_at"]
     print(
-        "Bunny telemetry: "
+        "Dottore telemetry: "
         f"elapsed_s={elapsed:.1f}; "
         f"model_calls={stats['model_calls']}; "
         f"review_packet_chars={stats['review_packet_chars']}; "
@@ -588,7 +587,7 @@ def extract_json_or_repair(client, messages, content, stats):
                 "content": (
                     "The previous response did not contain a JSON object. Reply only "
                     "with FINAL_REVIEW followed by one JSON object matching the required "
-                    "Bunny Review schema. Do not include prose, Markdown, or another "
+                    "Dottore Review schema. Do not include prose, Markdown, or another "
                     "context request."
                 ),
             },
@@ -646,7 +645,7 @@ def skeptical_review_pass(client, skill, triage_content, stats):
 
 def judge_review_pass(client, skill, triage_content, broad_review, skeptical_review, stats):
     judge_prompt = (
-        "Merge these two independent review passes into the final Bunny Review JSON. "
+        "Merge these two independent review passes into the final Dottore Review JSON. "
         "Deduplicate overlapping findings, keep the clearest title/body/fix_hint, normalize "
         "severity, and reject weak or speculative findings. Preserve concrete findings even "
         "if only one pass found them, and include a repair_contract for every defect finding. "
@@ -897,7 +896,7 @@ def finding_id(finding):
 
 
 def finding_marker(finding):
-    return f"<!-- bunny-review:finding={finding_id(finding)} -->"
+    return f"<!-- dottore:finding={finding_id(finding)} -->"
 
 
 def short_ref(value):
@@ -1053,7 +1052,7 @@ def merge_signal(review_obj, findings, nitpicks, pre_merge):
             "label": "NO NEW DIFF REVIEWED",
             "title": "No New Diff Reviewed",
             "admonition": "NOTE",
-            "detail": "Bunny already reviewed this head; this run did not inspect new changes.",
+            "detail": "Dottore already reviewed this head; this run did not inspect new changes.",
         }
     review_incomplete = has_incomplete_review_check(pre_merge)
     if review_incomplete:
@@ -1061,7 +1060,7 @@ def merge_signal(review_obj, findings, nitpicks, pre_merge):
             "label": "REVIEW INCOMPLETE",
             "title": "Review Incomplete",
             "admonition": "CAUTION",
-            "detail": "Bunny Review did not complete, so no model findings are available.",
+            "detail": "Dottore Review did not complete, so no model findings are available.",
         }
     has_blocking = any(
         severity_meta(finding.severity)["rank"] <= severity_meta("high")["rank"]
@@ -1108,7 +1107,7 @@ def render_merge_signal(review_obj, findings, nitpicks, pre_merge, head_sha):
     controls = control_summary(pre_merge)
     mode = review_obj.get("mode") or "unknown"
     body = [
-        f"## Bunny Merge Signal: {signal['title']}",
+        f"## Dottore Merge Signal: {signal['title']}",
         "",
         f"> [!{signal['admonition']}]",
         f"> **{signal['label']}**",
@@ -1154,8 +1153,8 @@ def review_callout(findings, pre_merge):
         return "\n".join(
             [
                 "> [!CAUTION]",
-                "> **Specimen unexamined.** Bunny Review did not complete, so no model findings are available.",
-                "> Repair the failed review control or rerun Bunny before treating this PR as reviewed.",
+                "> **Specimen unexamined.** Dottore Review did not complete, so no model findings are available.",
+                "> Repair the failed review control or rerun Dottore before treating this PR as reviewed.",
             ]
         )
     if has_blocking or has_failed_check:
@@ -1316,7 +1315,7 @@ def resolved_contracts_since_last_review(prior_entries, current_findings, change
                 "severity": entry.get("severity"),
                 "path": path,
                 "line": entry.get("line"),
-                "title": entry.get("title") or "Prior Bunny finding",
+                "title": entry.get("title") or "Prior Dottore finding",
                 "status": "likely_resolved",
             }
         )
@@ -1389,7 +1388,7 @@ def encode_contract_state(entries):
     payload = {"version": 1, "contracts": normalized}
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     encoded = base64.urlsafe_b64encode(raw).decode("ascii")
-    return f"<!-- bunny-review:contract-state={encoded} -->"
+    return f"<!-- dottore:contract-state={encoded} -->"
 
 
 def decode_contract_state_from_body(body):
@@ -1408,9 +1407,9 @@ def decode_contract_state_from_body(body):
 def format_contract_entries_for_prompt(entries, limit=12_000):
     entries = normalize_contract_state_entries(entries)
     if not entries:
-        return "No prior Bunny repair contracts found."
+        return "No prior Dottore repair contracts found."
     lines = [
-        "Prior Bunny repair contracts from earlier review rounds. Judge whether the current diff satisfies each invariant before reporting adjacent defects.",
+        "Prior Dottore repair contracts from earlier review rounds. Judge whether the current diff satisfies each invariant before reporting adjacent defects.",
     ]
     for index, entry in enumerate(entries, 1):
         location = f"{entry.get('path') or 'unknown'}:{entry.get('line') or '?'}"
@@ -1502,7 +1501,7 @@ def ci_status_to_pre_merge_checks(ci_status):
                 "name": "CI Status",
                 "status": "warn",
                 "type": "CI Timing",
-                "detail": "Expected CI controls were missing or incomplete when Bunny posted; verify the control path before merge.",
+                "detail": "Expected CI controls were missing or incomplete when Dottore posted; verify the control path before merge.",
             }
         ]
     return [
@@ -1535,9 +1534,9 @@ def render_walkthrough(
         pre_merge = ci_status_to_pre_merge_checks(normalized_ci_status) + pre_merge
     resolved = review_obj.get("resolved_since_last_review") or []
     state_marker = (
-        f"<!-- bunny-review:last-reviewed-sha={head_sha} -->"
+        f"<!-- dottore:last-reviewed-sha={head_sha} -->"
         if head_sha and not has_incomplete_review_check(pre_merge)
-        else "<!-- bunny-review:last-reviewed-sha=unrecorded -->"
+        else "<!-- dottore:last-reviewed-sha=unrecorded -->"
     )
     contract_state_marker = encode_contract_state(
         merge_contract_state(
@@ -1545,13 +1544,13 @@ def render_walkthrough(
         )
     )
     body = [
-        BUNNY_MARKER,
+        DOTTORE_MARKER,
         state_marker,
     ]
     if contract_state_marker:
         body.append(contract_state_marker)
     body.extend([
-        "## 🐰 Bunny Review",
+        "## 🎭 Dottore Review",
         "",
         render_merge_signal(review_obj, findings, nitpicks, pre_merge, head_sha),
         "",
@@ -1582,7 +1581,7 @@ def render_walkthrough(
                 [
                     "",
                     "> [!CAUTION]",
-                    "> No model findings are available because Bunny Review failed before completing inspection.",
+                    "> No model findings are available because Dottore Review failed before completing inspection.",
                 ]
             )
         else:
@@ -1591,7 +1590,7 @@ def render_walkthrough(
         body.extend(["", "### ✅ Resolved Since Last Review"])
         for item in resolved[:5]:
             location = f"{item.get('path') or 'unknown'}:{item.get('line') or '?'}"
-            title = item.get("title") or "Prior Bunny finding"
+            title = item.get("title") or "Prior Dottore finding"
             body.append(f"- `{md_cell(location)}` - {md_cell(title)}")
     body.extend(["", "### 🧹 Nitpicks"])
     if nitpicks:
@@ -1610,7 +1609,7 @@ def render_walkthrough(
     else:
         body.append("- None recorded.")
     agent_prompt = render_agent_prompt_details(
-        findings, "🤖 Copy prompt for isolated Bunny findings"
+        findings, "🤖 Copy prompt for isolated Dottore findings"
     )
     if agent_prompt:
         body.extend(["", agent_prompt])
@@ -1694,16 +1693,16 @@ def merge_review_objects(reviews):
 
 def prior_review_contracts_context(pr_num, limit=12_000):
     if not pr_num:
-        return "No prior Bunny review context available."
+        return "No prior Dottore review context available."
     state_entries = prior_review_contract_state(pr_num)
     if state_entries:
         return format_contract_entries_for_prompt(state_entries, limit)
     comment = latest_walkthrough_comment(pr_num)
     if not comment:
-        return "No prior Bunny walkthrough comment or inline contract comments found."
+        return "No prior Dottore walkthrough comment or inline contract comments found."
     body = comment.get("body", "")
     if not body:
-        return "Prior Bunny walkthrough comment was empty."
+        return "Prior Dottore walkthrough comment was empty."
     useful_lines = []
     keep = False
     for line in body.splitlines():
@@ -1711,7 +1710,7 @@ def prior_review_contracts_context(pr_num, limit=12_000):
             keep = True
         elif line.startswith("### ") and keep:
             keep = False
-        if keep or "bunny-review:finding=" in line or "Invariant" in line or "Expected proof" in line:
+        if keep or "dottore:finding=" in line or "Invariant" in line or "Expected proof" in line:
             useful_lines.append(line)
     compact = "\n".join(useful_lines).strip()
     if not compact:
@@ -1741,7 +1740,7 @@ def model_failure_detail(exc):
     if len(message) > 500:
         message = message[:497] + "..."
     return (
-        f"Bunny Review could not complete because the model provider rejected the "
+        f"Dottore Review could not complete because the model provider rejected the "
         f"review request: {type(exc).__name__}: {message}"
     )
 
@@ -1761,7 +1760,7 @@ def ensure_local_head(head_sha, pr_num):
                 "fetch",
                 "--force",
                 "origin",
-                f"pull/{pr_num}/head:refs/remotes/bunny-review/pr-{pr_num}",
+                f"pull/{pr_num}/head:refs/remotes/dottore-review/pr-{pr_num}",
             ],
             timeout=120,
         )
@@ -1790,7 +1789,7 @@ def issue_comments(pr_num):
 
 def sorted_walkthrough_comments(pr_num):
     walkthroughs = [
-        comment for comment in issue_comments(pr_num) if BUNNY_MARKER in comment.get("body", "")
+        comment for comment in issue_comments(pr_num) if DOTTORE_MARKER in comment.get("body", "")
     ]
     return sorted(
         walkthroughs,
@@ -1903,7 +1902,7 @@ def prior_inline_contract_state(pr_num):
         ),
         reverse=True,
     ):
-        if "bunny-review:finding=" not in comment.get("body", ""):
+        if "dottore:finding=" not in comment.get("body", ""):
             continue
         entry = inline_comment_contract_entry(comment)
         if not entry:
@@ -1985,13 +1984,13 @@ def resolve_review_base(pr_num, requested_mode):
     data = json.loads(pr.stdout)
     base_ref = os.environ.get("PR_BASE_REF") or data["baseRefName"]
     head_sha = data["headRefOid"]
-    explicit_base = os.environ.get("BUNNY_BASE_SHA")
+    explicit_base = os.environ.get("DOTTORE_BASE_SHA")
     mode = requested_mode
     if explicit_base:
         return explicit_base, base_ref, head_sha, "custom"
     if mode == "full":
         return f"origin/{base_ref}", base_ref, head_sha, mode
-    explicit_previous = os.environ.get("BUNNY_LAST_REVIEWED_SHA", "").strip()
+    explicit_previous = os.environ.get("DOTTORE_LAST_REVIEWED_SHA", "").strip()
     if valid_review_base_sha(explicit_previous, head_sha):
         return explicit_previous, base_ref, head_sha, "incremental"
     previous = discover_last_reviewed_sha(pr_num)
@@ -2001,12 +2000,12 @@ def resolve_review_base(pr_num, requested_mode):
 
 
 def parse_command_mode():
-    body = os.environ.get("BUNNY_COMMENT_BODY", "")
-    if "/bunny-review" not in body:
-        return os.environ.get("BUNNY_REVIEW_MODE", "auto")
-    if re.search(r"/bunny-review\s+full\b", body):
+    body = os.environ.get("DOTTORE_COMMENT_BODY", "")
+    if "/dottore" not in body:
+        return os.environ.get("DOTTORE_REVIEW_MODE", "auto")
+    if re.search(r"/dottore\s+full\b", body):
         return "full"
-    if re.search(r"/bunny-review\s+review\b", body):
+    if re.search(r"/dottore\s+review\b", body):
         return "auto"
     return "auto"
 
@@ -2018,7 +2017,7 @@ def produce_review(args):
             "Review Skipped",
             "The reviewer could not run because `OPENAI_API_KEY` is absent from this workflow run. Repository-secret withholding leaves the specimen unexamined.",
         )
-        print("Bunny telemetry: skipped=missing_openai_api_key", flush=True)
+        print("Dottore telemetry: skipped=missing_openai_api_key", flush=True)
         return
 
     requested_mode = args.mode or parse_command_mode()
@@ -2030,7 +2029,7 @@ def produce_review(args):
     if not files and effective_mode == "incremental":
         write_skipped_review(
             "No New Diff Reviewed",
-            "Bunny already reviewed this head; this run did not inspect new changes.",
+            "Dottore already reviewed this head; this run did not inspect new changes.",
             status="pass",
             metadata={
                 "head_sha": head_sha,
@@ -2041,7 +2040,7 @@ def produce_review(args):
                 "review_state": "no_new_diff_reviewed",
             },
         )
-        print("Bunny telemetry: skipped=no_new_diff_reviewed", flush=True)
+        print("Dottore telemetry: skipped=no_new_diff_reviewed", flush=True)
         return
 
     if not os.environ.get("OPENAI_API_KEY"):
@@ -2056,7 +2055,7 @@ def produce_review(args):
                 "mode": effective_mode,
             },
         )
-        print("Bunny telemetry: skipped=missing_openai_api_key", flush=True)
+        print("Dottore telemetry: skipped=missing_openai_api_key", flush=True)
         return
 
     chunks = chunk_changed_files(base, files)
@@ -2069,7 +2068,7 @@ def produce_review(args):
         base_url=os.environ.get("LLM_BASE_URL"),
         max_retries=MODEL_MAX_RETRIES,
     )
-    skill = bunny_prompt_path().read_text("utf-8")
+    skill = dottore_prompt_path().read_text("utf-8")
     prior_contract_state = prior_review_contract_state(pr_num)
     prior_contract_context = (
         format_contract_entries_for_prompt(prior_contract_state)
@@ -2082,7 +2081,7 @@ def produce_review(args):
             f"Review this PR. The review base is '{base}' from target branch '{base_ref}', "
             f"head is '{head_sha}', and mode is '{effective_mode}'. {focus_note} "
             "Use the provided review packet as the complete inspection context. "
-            "If prior Bunny contracts are included, first judge whether the current diff satisfies "
+            "If prior Dottore contracts are included, first judge whether the current diff satisfies "
             "or leaves those contracts incomplete before issuing adjacent related findings. "
             "You have one chance to request focused extra context before the final review. "
             "If the packet is enough, reply with FINAL_REVIEW followed by a JSON object in the skill's schema. "
@@ -2095,7 +2094,7 @@ def produce_review(args):
             "and architecture. Findings must point to changed diff lines. "
             "If the packet is truncated or missing context for a potential issue, mention that "
             "limitation in what_i_checked rather than inventing certainty."
-            f"\n\n# Prior Bunny Repair Contracts\n{prior_contract_context}"
+            f"\n\n# Prior Dottore Repair Contracts\n{prior_contract_context}"
             f"\n\n# Review Packet\n{review_packet}"
         )
         return triage
@@ -2167,7 +2166,7 @@ def produce_review(args):
     review_obj.setdefault("review_base", base)
     review_obj.setdefault("base_ref", base_ref)
     review_obj.setdefault("mode", effective_mode)
-    review_obj.setdefault("_prior_bunny_contract_state", prior_contract_state)
+    review_obj.setdefault("_prior_dottore_contract_state", prior_contract_state)
     review_obj.setdefault("what_i_checked", []).append(
         f"Selected review base `{base}` for target branch `{base_ref}` in `{effective_mode}` mode."
     )
@@ -2187,14 +2186,14 @@ def produce_review(args):
 
 
 def read_ci_status():
-    path = pathlib.Path("bunny-ci-status.md")
+    path = pathlib.Path("dottore-ci-status.md")
     if path.exists():
         return path.read_text("utf-8")
     return ""
 
 
 def findings_for_inline_comments(findings):
-    mode = os.environ.get("BUNNY_INLINE_FINDINGS", "urgent").strip().lower()
+    mode = os.environ.get("DOTTORE_INLINE_FINDINGS", "urgent").strip().lower()
     if mode in {"none", "off", "false", "0"}:
         return []
     if mode in {"all", "true", "1"}:
@@ -2210,8 +2209,8 @@ def render_review(args):
     review_obj = json.loads(pathlib.Path(args.review_json).read_text("utf-8"))
     base = (
         args.base
-        or os.environ.get("BUNNY_VALIDATION_BASE")
-        or os.environ.get("BUNNY_BASE_SHA")
+        or os.environ.get("DOTTORE_VALIDATION_BASE")
+        or os.environ.get("DOTTORE_BASE_SHA")
         or review_obj.get("review_base")
     )
     if not base:
@@ -2220,7 +2219,7 @@ def render_review(args):
         base, _, _, _ = resolve_review_base(pr_num, requested_mode)
     findings, nitpicks, invalid = validate_review_items(review_obj, base)
     ci_status = read_ci_status()
-    head_sha = review_obj.get("head_sha") or os.environ.get("BUNNY_HEAD_SHA", "")
+    head_sha = review_obj.get("head_sha") or os.environ.get("DOTTORE_HEAD_SHA", "")
     walkthrough = render_walkthrough(
         review_obj,
         findings,
@@ -2228,7 +2227,7 @@ def render_review(args):
         invalid,
         ci_status,
         head_sha,
-        prior_contracts=review_obj.get("_prior_bunny_contract_state") or [],
+        prior_contracts=review_obj.get("_prior_dottore_contract_state") or [],
     )
     pathlib.Path("review.md").write_text(walkthrough, "utf-8")
     inline_findings = findings_for_inline_comments(findings)
@@ -2264,7 +2263,7 @@ def patch_command_status_running(pr_num, head_sha, mode):
     body = "\n".join(
         [
             COMMAND_STATUS_MARKER,
-            "## 🐰 Bunny Review Running",
+            "## 🎭 Dottore Review Running",
             "",
             "> [!NOTE]",
             "> Reviewer workflow is running. The specimen is under observation.",
@@ -2280,7 +2279,7 @@ def patch_command_status_complete(pr_num, head_sha):
     body = "\n".join(
         [
             COMMAND_STATUS_MARKER,
-            "## ✅ Bunny Review Completed",
+            "## ✅ Dottore Review Completed",
             "",
             "> [!TIP]",
             "> Review posted. The specimen has left the observation table.",
@@ -2395,7 +2394,7 @@ def post_review(args):
         return
     payload = {
         "event": "COMMENT",
-        "body": "Bunny Review inline findings",
+        "body": "Dottore Review inline findings",
         "comments": comments,
     }
     run_gh(
@@ -2445,18 +2444,18 @@ def ci_control_has_pending_or_missing(path):
 def status_state(args):
     if str(args.job_status or "").lower() != "success":
         print("state=failure")
-        print("description=Bunny Review did not complete. Inspect the trusted workflow run for details.")
+        print("description=Dottore Review did not complete. Inspect the trusted workflow run for details.")
         return
     if not pathlib.Path(args.review_json).exists():
         print("state=failure")
-        print("description=Bunny Review did not produce review.json; inspect the trusted workflow run.")
+        print("description=Dottore Review did not produce review.json; inspect the trusted workflow run.")
         return
     review_obj = load_review_for_status(args.review_json)
     pre_merge = review_obj.get("pre_merge_checks") if isinstance(review_obj, dict) else []
     findings = status_findings(review_obj)
     if has_incomplete_review_check(pre_merge or []):
         print("state=failure")
-        print("description=Bunny Review posted a failure or skipped report; rerun after repairing the review control.")
+        print("description=Dottore Review posted a failure or skipped report; rerun after repairing the review control.")
         return
     draft = truthy(args.draft)
     has_high_or_blocking = any(
@@ -2467,7 +2466,7 @@ def status_state(args):
     pending_ci = ci_control_has_pending_or_missing(args.ci_control)
     if not draft and has_high_or_blocking:
         print("state=failure")
-        print("description=Bunny found blocking/high issues; repair before merge.")
+        print("description=Dottore found blocking/high issues; repair before merge.")
         return
     if not draft and failed_ci:
         print("state=failure")
@@ -2483,10 +2482,10 @@ def status_state(args):
         return
     if findings:
         print("state=success")
-        print("description=Bunny posted non-blocking findings or notes.")
+        print("description=Dottore posted non-blocking findings or notes.")
         return
     print("state=success")
-    print("description=Bunny posted or updated its review for this pull request.")
+    print("description=Dottore posted or updated its review for this pull request.")
 
 
 def status_findings(review_obj):
@@ -2523,8 +2522,8 @@ def main():
     post.add_argument("--inline-json", default="inline-comments.json")
     status = sub.add_parser("status-state")
     status.add_argument("--review-json", default="review.json")
-    status.add_argument("--ci-control", default="bunny-ci-control.json")
-    status.add_argument("--draft", default=os.environ.get("BUNNY_IS_DRAFT", "false"))
+    status.add_argument("--ci-control", default="dottore-ci-control.json")
+    status.add_argument("--draft", default=os.environ.get("DOTTORE_IS_DRAFT", "false"))
     status.add_argument("--job-status", default="success")
     args = parser.parse_args()
 
