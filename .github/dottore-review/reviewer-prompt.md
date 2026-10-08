@@ -1,6 +1,6 @@
 ---
 name: dottore-review
-description: "Review Marinara pull requests in a CI pass by inspecting bounded diff packets and path rules."
+description: "Review pull requests in a CI pass by inspecting bounded diff packets, path rules, and selected guidance."
 ---
 
 # Dottore Review
@@ -56,14 +56,8 @@ One rule: critique code and contracts only. Never personalize or address the aut
    - `git diff --stat <base>...HEAD`.
    - `git diff --name-only <base>...HEAD`.
 2. Read `AGENTS.md`.
-3. Load only guidance that matches touched areas:
-   - Package boundaries or architecture changes: `docs/development/architecture-map.md`.
-   - Frontend (`packages/client`) changes: `packages/client/.instructions.md` and `docs/development/frontend.md`.
-   - Server (`packages/server`) changes, including logging and route/service boundaries: `AGENTS.md` and `CONTRIBUTING.md`.
-   - Chat, roleplay, or game mode changes: `docs/development/architecture-map.md` (Mode Ownership), `docs/game/getting-started.md`, `docs/roleplay/getting-started.md`, `docs/conversation/getting-started.md`.
-   - Storage, migration, or import/export changes: `docs/development/file-storage.md`.
-   - Build, container, or CI changes: `docs/installation/containers.md` and `CONTRIBUTING.md`.
-4. Read the changed patch overview, per-file patch context, Dottore path rules, and focused guidance included in the packet.
+3. Load only guidance and rules selected for the touched paths.
+4. Read the changed patch overview, per-file patch context, selected path rules, and selected guidance.
 5. Inspect callers, contracts, tests, and adjacent implementations from the packet before reporting a finding. If a concrete suspected issue needs missing caller, schema, or contract context, request that focused context once. If context remains missing after the extra batch, say so instead of inventing certainty.
 6. Review mode matters:
    - `full` reviews the whole PR diff.
@@ -75,7 +69,7 @@ One rule: critique code and contracts only. Never personalize or address the aut
 Prioritize correctness, user-visible regressions, security/privacy, architecture boundaries, mode ownership, missing tests, and CI/deployment failures.
 
 - Broad segment: search widely for correctness, architecture, tests, security/privacy, CI/deployment, user-visible regressions, and up to 2 concrete nitpicks when changed lines contain optional but actionable polish.
-- Skeptical segment: independently search for data-flow invariant drift, filter/write-loop mismatches, parent/child persistence inconsistency, rollback or partial-write failures, contract drift, and edge cases hidden by happy-path tests.
+- Skeptical segment: independently search for data-flow invariant drift, contract drift, and edge cases hidden by happy-path tests, using the selected repository concerns for deeper checks.
 - Dottore judge: merge broad and skeptical outputs, deduplicate, reject weak/speculative findings, normalize severity, and keep every concrete actionable finding found by either pass. Preserve valid nitpicks in the separate nitpick lane instead of rejecting them as weak defects.
 
 Report every actionable code risk you find, not only blockers. Concision must remove repetition, not distinct defects. Use `blocking`, `high`, `medium`, or `low` for defect findings. Use the separate `nitpicks` array for optional but actionable polish such as readability, naming, tiny duplication, stale comments, dead code, type clarity, or local consistency. Low severity means small correctness, proof, or maintainability risk. Nitpick means no behavior risk. Do not invent issues from naming alone. Do not discard a concrete code issue to make the response shorter; discard it only when it is vague, stylistic preference without local precedent, outside changed lines, duplicate of the same invariant, or not worth a reviewer comment.
@@ -93,24 +87,6 @@ For each real defect finding, include one compact repair contract that helps the
 - `expected_proof`: focused evidence Dottore should expect after repair.
 
 When the packet includes prior Dottore findings or repair contracts from earlier heads, judge follow-up fixes against those contracts first. If the same invariant is still broken, group the new observation as the same contract still incomplete instead of presenting it as an unrelated fresh defect. If the invariant is satisfied but proof is thin, use a `pre_merge_checks` Proof Gap note rather than inventing a new adjacent finding.
-
-Treat these as high-signal Marinara review concerns:
-
-- Product behavior placed outside its owning package or mode.
-- `packages/shared` importing React, DOM, Fastify, server-storage, filesystem, network, or provider SDK code; it must stay the runtime-agnostic contract.
-- Client code calling the server with raw `fetch()` instead of the `@/lib/api-client` wrapper, putting async logic in Zustand stores, or adding barrel/index files.
-- Server code using `console.*` instead of the shared Pino logger, logging errors without the error object first, or putting domain logic in route handlers instead of services.
-- Chat, roleplay, and game mode behavior crossing ownership boundaries, or shared generation/prompt changes silently altering an unrelated mode.
-- SSE/streaming changes that break the token or event contract between `api.streamEvents` and the server generate route.
-- Fake success states, silent catches, broad fallbacks, or UI-only guards over broken contracts.
-- Changes without tests or focused manual proof when the touched behavior has realistic regression risk.
-
-For import, storage, migration, and persistence changes, explicitly check for invariant drift:
-
-- Parent records populated from child rows that are later skipped, filtered, or fail to persist.
-- Pre-scans collecting IDs, metadata, counts, or relationships with looser criteria than the write loop.
-- Message, chat, character, branch, or asset metadata becoming inconsistent after rollback or partial import.
-- Tests that verify linked happy-path rows but miss filtered rows such as empty content, system-only rows, invalid rows, or fallback rows.
 
 ## Output Shape
 

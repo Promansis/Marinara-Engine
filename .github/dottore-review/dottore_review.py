@@ -1,6 +1,7 @@
 # .github/dottore-review/dottore_review.py
 import argparse
 import base64
+import fnmatch
 import hashlib
 import json
 import os
@@ -316,9 +317,25 @@ def build_identifier_context(patch):
     return truncate("\n\n".join(sections), MAX_IDENTIFIER_CONTEXT_CHARS)
 
 
+def diff_command(base, *options, paths=None):
+    command = ["diff", *options, f"{base}...HEAD"]
+    if paths is not None:
+        command.extend(["--", *paths])
+    return command
+
+
 def changed_files(base):
-    names = run_git(["diff", "--name-only", f"{base}...HEAD"])
-    return [line.strip() for line in names.splitlines() if line.strip()]
+    names = run_git(["diff", "--find-renames", "--name-status", f"{base}...HEAD"])
+    patterns = load_rules().get("exclude_paths", [])
+    paths = []
+    for line in names.splitlines():
+        fields = line.split("\t")
+        if len(fields) < 2:
+            continue
+        changed = fields[1:] if fields[0].startswith("R") else fields[1:2]
+        if not any(fnmatch.fnmatchcase(path, pattern) for path in changed for pattern in patterns):
+            paths.extend(changed)
+    return list(dict.fromkeys(paths))
 
 
 def load_json_file(path):
@@ -420,6 +437,7 @@ def matching_path_rules(files):
         "severity_policy": rules.get("severity_policy", {}),
         "review_focus": rules.get("review_focus", []),
         "matched_path_instructions": matched,
+        "repo_concerns": rules.get("repo_concerns", []),
     }
     return json.dumps(payload, indent=2, sort_keys=True)
 
@@ -443,7 +461,7 @@ def build_file_context(base, files):
             "### "
             + path
             + "\n```text\n"
-            + truncate(run_git(["diff", "--stat", f"{base}...HEAD", "--", path], 2_000), 2_000)
+            + truncate(run_git(diff_command(base, "--stat", paths=[path]), 2_000), 2_000)
             + truncate(patch, MAX_FILE_SUMMARY_CHARS)
             + "\n```"
         )
@@ -454,8 +472,14 @@ def build_review_packet(base, mode, focus_files=None, include_full_patch=True):
     files = changed_files(base)
     context_files = focus_files or files
     if focus_files is None or include_full_patch:
-        patch = redact_for_model(
-            run_git_raw(["diff", "--find-renames", "--unified=80", f"{base}...HEAD"])
+        patch = (
+            redact_for_model(
+                run_git_raw(
+                    diff_command(base, "--find-renames", "--unified=80", paths=files)
+                )
+            )
+            if files
+            else ""
         )
     else:
         patch = "\n".join(diff_for_path(base, path) for path in focus_files)
@@ -471,9 +495,9 @@ def build_review_packet(base, mode, focus_files=None, include_full_patch=True):
         ("git status", run_git(["status", "--short", "--branch"], 12_000)),
         ("repo root", run_git(["rev-parse", "--show-toplevel"], 4_000)),
         ("merge base", run_git(["merge-base", "HEAD", base], 4_000)),
-        ("diff stat", run_git(["diff", "--stat", f"{base}...HEAD"], 20_000)),
+        ("diff stat", run_git(diff_command(base, "--stat", paths=files), 20_000) if files else "No included changes."),
         ("changed files", "\n".join(files) or "No changed files reported."),
-        ("numstat", run_git(["diff", "--numstat", f"{base}...HEAD"], 20_000)),
+        ("numstat", run_git(diff_command(base, "--numstat", paths=files), 20_000) if files else "No included changes."),
         ("focus files", "\n".join(context_files) or "All changed files."),
         ("patch overview", patch_body),
         ("per-file patch context", build_file_context(base, context_files)),
@@ -802,7 +826,8 @@ def touched_lines(base):
         else:
             old_line += 1
             new_line += 1
-    return by_path
+    files = set(changed_files(base))
+    return {path: sides for path, sides in by_path.items() if path in files}
 
 
 def normalize_repair_contract(value):

@@ -1,4 +1,7 @@
 {
+  "exclude_paths": [
+    ".github/plans/**"
+  ],
   "review_focus": [
     "correctness",
     "user-visible regressions",
@@ -27,6 +30,12 @@
     "Review Limitation": "Dottore lacked full packet/context to prove a suspected issue.",
     "Non-blocking Coverage": "Useful coverage or context note that should not block merge by itself."
   },
+  "repo_concerns": [
+    "Product behavior belongs in its owning package or mode; shared generation and prompt changes must not silently alter an unrelated mode.",
+    "Fake success states, silent catches, broad fallbacks, and response-shape drift are defects, not resilience.",
+    "Changed behavior with realistic regression risk needs focused tests or manual proof.",
+    "Persistence stays consistent wherever it happens: parent records take nothing from child rows that later skip or fail to persist, pre-scans use the write loop's eligibility criteria, and rollback or partial writes leave no inconsistent metadata."
+  ],
   "path_instructions": [
     {
       "name": "Shared contract package",
