@@ -377,7 +377,11 @@ def select_guidance(files):
         marker in joined
         for marker in ("packages/shared/", "packages/server/src/", "packages/client/src/")
     ):
-        guidance.append("docs/ARCHITECTURE_MAP.md")
+        guidance.append("docs/development/architecture-map.md")
+    if "packages/client/" in joined:
+        guidance.extend(["docs/development/frontend.md", "packages/client/.instructions.md", "docs/development/localization.md"])
+    if "packages/server/" in joined:
+        guidance.extend(["CONTRIBUTING.md", "docs/development/logging.md"])
     if any(
         marker in joined
         for marker in (
@@ -396,7 +400,7 @@ def select_guidance(files):
         marker in joined
         for marker in ("storage", "import", "provider", "db/", "migration", "services/")
     ):
-        guidance.append("docs/FILE_STORAGE_MIGRATION.md")
+        guidance.append("docs/development/file-storage.md")
     if any(marker in joined for marker in ("README", "docs/", "AGENTS.md", "CONTRIBUTING.md", "CLAUDE.md")):
         guidance.append("CONTRIBUTING.md")
     return list(dict.fromkeys(guidance))

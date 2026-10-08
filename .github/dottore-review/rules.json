@@ -48,13 +48,15 @@
       ],
       "guidance": [
         "packages/client/.instructions.md",
-        "docs/development/frontend.md"
+        "docs/development/frontend.md",
+        "docs/development/localization.md"
       ],
       "checks": [
         "Server calls go through the @/lib/api-client wrapper (api.get/post/patch/delete/upload/download/streamEvents), never raw fetch().",
         "Async server access lives in React Query hooks; Zustand stores stay synchronous state plus actions. Only ui.store uses persist.",
         "Navigation is state-based via ui.store (no URL router), new editors are lazy-loaded in AppShell, and there are no barrel/index files.",
-        "console.* is acceptable in client code (the browser has no Pino and production builds strip console.log); do not flag it here as a logging violation."
+        "console.* is acceptable in client code (the browser has no Pino and production builds strip console.log); do not flag it here as a logging violation.",
+        "New or changed visible UI copy uses semantic localization keys and updates the canonical English catalog. Do not translate prompts or user-authored/generated content, and run pnpm localization:check."
       ]
     },
     {
@@ -64,13 +66,15 @@
       ],
       "guidance": [
         "AGENTS.md",
-        "CONTRIBUTING.md"
+        "CONTRIBUTING.md",
+        "docs/development/logging.md"
       ],
       "checks": [
         "Server code never uses console.log/warn/error. It imports the shared Pino logger from packages/server/src/lib/logger.ts and logs errors error-first: logger.error(err, \"message\").",
         "Multi-argument logs use Pino format specifiers (%s, %d, %j) or a single template literal, not comma-separated arguments that Pino silently drops.",
         "Fastify route files validate HTTP input and delegate domain decisions to services; storage, LLM, prompt, and game logic belong in services, not in route handlers.",
-        "Provider, storage, and transport changes preserve existing error contracts and self-hostable behavior; no fake success, silent catches, broad fallbacks, or response-shape drift."
+        "Provider, storage, and transport changes preserve existing error contracts and self-hostable behavior; no fake success, silent catches, broad fallbacks, or response-shape drift.",
+        "Prompt, model output, provider response bodies, and poll bodies stay at debug rather than warn or error; repeated failures use rate limiting and long-lived work does not retain an unrelated request context."
       ]
     },
     {
@@ -122,7 +126,7 @@
         "packages/server/src/services/import/"
       ],
       "guidance": [
-        "docs/development/file-storage-migration.md"
+        "docs/development/file-storage.md"
       ],
       "checks": [
         "Parent records must not collect IDs, metadata, counts, or relationships from child rows that later skip import or fail to persist.",

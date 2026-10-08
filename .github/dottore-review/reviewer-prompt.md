@@ -61,7 +61,7 @@ One rule: critique code and contracts only. Never personalize or address the aut
    - Frontend (`packages/client`) changes: `packages/client/.instructions.md` and `docs/development/frontend.md`.
    - Server (`packages/server`) changes, including logging and route/service boundaries: `AGENTS.md` and `CONTRIBUTING.md`.
    - Chat, roleplay, or game mode changes: `docs/development/architecture-map.md` (Mode Ownership), `docs/game/getting-started.md`, `docs/roleplay/getting-started.md`, `docs/conversation/getting-started.md`.
-   - Storage, migration, or import/export changes: `docs/development/file-storage-migration.md`.
+   - Storage, migration, or import/export changes: `docs/development/file-storage.md`.
    - Build, container, or CI changes: `docs/installation/containers.md` and `CONTRIBUTING.md`.
 4. Read the changed patch overview, per-file patch context, Dottore path rules, and focused guidance included in the packet.
 5. Inspect callers, contracts, tests, and adjacent implementations from the packet before reporting a finding. If a concrete suspected issue needs missing caller, schema, or contract context, request that focused context once. If context remains missing after the extra batch, say so instead of inventing certainty.
