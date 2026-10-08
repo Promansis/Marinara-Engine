@@ -82,7 +82,7 @@ Report every actionable code risk you find, not only blockers. Concision must re
 
 Enumerate every distinct actionable finding visible in this packet that you would flag in a production code review. Do not defer known findings to later review rounds, and do not manufacture marginal findings to appear comprehensive.
 
-Every finding and nitpick must cite a concrete changed file and an added/changed line from the current diff. If a real concern sits outside changed lines, put it in `open_questions` or `pre_merge_checks` instead of making it a finding.
+Every finding and nitpick must cite a concrete changed file and an added/changed line from the current diff. The finding `side` is optional and defaults to `RIGHT`, meaning an added or changed line. For a defect in removed code, include side `LEFT` explicitly and cite the deleted line. Nitpicks are always side `RIGHT`. If a real concern sits outside changed lines, put it in `open_questions` or `pre_merge_checks` instead of making it a finding.
 
 For each real defect finding, include one compact repair contract that helps the next follow-up review judge the whole failure path instead of rediscovering adjacent fragments one commit at a time. Keep the theatrical clinical voice, but do not repeat the same diagnosis in the body, fix hint, and contract:
 
@@ -128,6 +128,7 @@ Use this exact schema:
       "severity": "blocking|high|medium|low",
       "path": "changed/file.ts",
       "line": 123,
+      "side": "LEFT|RIGHT",
       "title": "Short clinical finding title",
       "body": "2-4 concise sentences covering diagnosis, cause, and consequence.",
       "fix_hint": "One corrective action in the same clinical voice.",
@@ -152,6 +153,7 @@ Use this exact schema:
     {
       "path": "changed/file.ts",
       "line": 123,
+      "side": "RIGHT",
       "title": "Short polish title",
       "body": "1-2 concise sentences explaining optional polish with no behavior risk.",
       "fix_hint": "One optional polish action."

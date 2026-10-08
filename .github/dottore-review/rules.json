@@ -19,7 +19,8 @@
   "nitpick_policy": {
     "max_count": 2,
     "line_scope": "changed-line only",
-    "risk": "No behavior-risk requirement; use for optional polish only."
+    "risk": "No behavior-risk requirement; use for optional polish only.",
+    "side": "RIGHT only"
   },
   "control_warn_types": {
     "Proof Gap": "Important changed behavior lacks focused proof.",

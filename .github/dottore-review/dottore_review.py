@@ -60,6 +60,7 @@ class Finding:
     body: str
     fix_hint: str
     repair_contract: dict | None = None
+    side: str = "RIGHT"
 
 
 def _safe_path(rel: str) -> pathlib.Path:
@@ -641,7 +642,7 @@ def skeptical_review_pass(client, skill, triage_content, stats):
         "filters, parent metadata derived from rows that are not imported as children, "
         "fallback behavior that diverges from validation, rollback paths, partial writes, "
         "contract drift, and tests that prove only the happy path. Report only concrete "
-        "actionable findings that cite added or changed diff lines. If there are no "
+        "actionable findings that cite added/changed RIGHT lines or deleted LEFT lines. If there are no "
         "findings from this segment lens, return the same JSON schema with empty "
         "findings and nitpicks arrays and attribute the skeptical segment's notes in what_i_checked."
     )
@@ -666,7 +667,7 @@ def judge_review_pass(client, skill, triage_content, first_segment, second_segme
         "and do not manufacture marginal findings to appear comprehensive. "
         "Preserve up to 2 concrete nitpicks in the separate nitpicks array when they are "
         "actionable changed-line polish; non-blocking does not mean weak. Every final "
-        "finding and nitpick must be actionable and cite an added or changed diff line. Combine useful "
+        "finding must cite an added/changed RIGHT line or deleted LEFT line; nitpicks use RIGHT only. Combine useful "
         "change_summary, nitpicks, pre_merge_checks, "
         "open_questions, and what_i_checked entries without repeating yourself. Reply only "
         "with FINAL_REVIEW followed by the final JSON object."
@@ -755,27 +756,51 @@ def build_extra_context(request, stats):
 
 
 def touched_lines(base):
-    by_path: dict[str, set[int]] = {}
-    current_path = None
-    new_line = None
-    diff = run_git_raw(["diff", "--unified=0", f"{base}...HEAD"])
+    by_path: dict[str, dict[str, set[int]]] = {}
+    old_path = new_path = None
+    old_line = new_line = None
+    diff = run_git_raw(["diff", "--find-renames", "--unified=0", f"{base}...HEAD"])
     for line in diff.splitlines():
-        if line.startswith("+++ b/"):
-            current_path = line.removeprefix("+++ b/")
-            by_path.setdefault(current_path, set())
+        if line.startswith("diff --git "):
+            old_path = new_path = None
+            old_line = new_line = None
             continue
-        match = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", line)
+        if old_line is None and line.startswith("--- "):
+            old_path = line[4:]
+            if old_path.startswith("a/"):
+                old_path = old_path[2:]
+            elif old_path == "/dev/null":
+                old_path = None
+            if old_path:
+                by_path.setdefault(old_path, {"RIGHT": set(), "LEFT": set()})
+            continue
+        if new_line is None and line.startswith("+++ b/"):
+            new_path = line.removeprefix("+++ b/")
+            by_path.setdefault(new_path, {"RIGHT": set(), "LEFT": set()})
+            continue
+        if new_line is None and line.startswith("+++ /dev/null"):
+            new_path = None
+            continue
+        match = re.match(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
         if match:
-            new_line = int(match.group(1))
+            old_line = int(match.group(1))
+            new_line = int(match.group(3))
             continue
-        if current_path is None or new_line is None:
+        if old_line is None or new_line is None:
             continue
-        if line.startswith("+") and not line.startswith("+++"):
-            by_path[current_path].add(new_line)
+        if line.startswith("\\"):
+            continue
+        if line.startswith("+"):
+            if new_path:
+                by_path[new_path]["RIGHT"].add(new_line)
             new_line += 1
-        elif line.startswith("-") and not line.startswith("---"):
-            continue
+        elif line.startswith("-"):
+            path = new_path or old_path
+            if path:
+                by_path[path]["LEFT"].add(old_line)
+            old_line += 1
         else:
+            old_line += 1
             new_line += 1
     return by_path
 
@@ -803,6 +828,9 @@ def normalize_repair_contract(value):
 
 
 def normalize_review_item(item, *, default_severity):
+    side = str(item.get("side", "RIGHT")).strip().upper()
+    if side not in {"LEFT", "RIGHT"}:
+        raise ValueError("side must be LEFT or RIGHT")
     return Finding(
         severity=str(item.get("severity", default_severity)).lower(),
         path=str(item.get("path", "")).strip(),
@@ -811,6 +839,7 @@ def normalize_review_item(item, *, default_severity):
         body=str(item.get("body", "")).strip(),
         fix_hint=str(item.get("fix_hint", "")).strip(),
         repair_contract=normalize_repair_contract(item.get("repair_contract")),
+        side=side,
     )
 
 
@@ -835,16 +864,23 @@ def validate_review_items(review_obj, base):
                 f"{finding.path or '<missing path>'}: not in changed files"
             )
             continue
-        if not isinstance(finding.line, int):
+        if isinstance(finding.line, bool) or not isinstance(finding.line, int) or finding.line <= 0:
             invalid.append(
                 f"{finding.severity} '{finding.title or '<untitled>'}' at "
                 f"{finding.path}: missing integer line"
             )
             continue
-        if finding.line not in allowed.get(finding.path, set()):
+        if finding.side == "LEFT" and review_obj.get("mode") != "full":
+            # GitHub anchors LEFT lines to the PR base, not the incremental review base.
             invalid.append(
                 f"{finding.severity} '{finding.title or '<untitled>'}' at "
-                f"{finding.path}:{finding.line}: line is not an added/changed diff line"
+                f"{finding.path}:{finding.line}: deleted-line findings need a full review (`/dottore full`)"
+            )
+            continue
+        if finding.line not in allowed[finding.path].get(finding.side, set()):
+            invalid.append(
+                f"{finding.severity} '{finding.title or '<untitled>'}' at "
+                f"{finding.path}:{finding.line}: line is not a changed {finding.side} diff line"
             )
             continue
         if not finding.title or not finding.body:
@@ -865,13 +901,16 @@ def validate_review_items(review_obj, base):
                 f"{nitpick.path or '<missing path>'}: not in changed files"
             )
             continue
-        if not isinstance(nitpick.line, int):
+        if nitpick.side != "RIGHT":
+            invalid.append(f"nitpick '{nitpick.title or '<untitled>'}' must use RIGHT side")
+            continue
+        if isinstance(nitpick.line, bool) or not isinstance(nitpick.line, int) or nitpick.line <= 0:
             invalid.append(
                 f"nitpick '{nitpick.title or '<untitled>'}' at "
                 f"{nitpick.path}: missing integer line"
             )
             continue
-        if nitpick.line not in allowed.get(nitpick.path, set()):
+        if nitpick.line not in allowed[nitpick.path].get("RIGHT", set()):
             invalid.append(
                 f"nitpick '{nitpick.title or '<untitled>'}' at "
                 f"{nitpick.path}:{nitpick.line}: line is not an added/changed diff line"
@@ -893,7 +932,7 @@ def render_finding_body(finding):
         finding_marker(finding),
         f"### {meta['icon']} {meta['label']}: {finding.title}",
         "",
-        f"**Location:** `{finding.path}:{finding.line}`",
+        f"**Location:** `{finding.path}:{finding.line}` ({finding.side})",
         "",
         blockquote(finding.body),
     ]
@@ -903,7 +942,7 @@ def render_finding_body(finding):
 
 
 def finding_id(finding):
-    raw = f"{finding.path}:{finding.line}:{finding.title}".encode("utf-8", "replace")
+    raw = f"{finding.side}:{finding.path}:{finding.line}:{finding.title}".encode("utf-8", "replace")
     return hashlib.sha256(raw).hexdigest()[:16]
 
 
@@ -1223,7 +1262,7 @@ def code_block_text(text):
 def agent_prompt_for_finding(finding):
     contract = finding.repair_contract or {}
     lines = [
-        f"Task: Fix `{finding.path}:{finding.line}`.",
+        f"Task: Fix `{finding.path}:{finding.line}` on the {finding.side} side.",
         f"Finding: {finding.title}",
         f"Severity: {finding.severity}",
     ]
@@ -1285,6 +1324,7 @@ def contract_state_entry_from_finding(finding, *, status="open"):
         "severity": str(finding.severity or "medium"),
         "path": finding.path,
         "line": finding.line,
+        "side": finding.side,
         "title": compact_state_text(finding.title, 180),
         "fix_hint": compact_state_text(finding.fix_hint, 260),
         "repair_contract": contract,
@@ -1295,15 +1335,16 @@ def contract_identity(entry):
     return (
         str(entry.get("id") or "").strip(),
         str(entry.get("path") or "").strip(),
+        str(entry.get("side") or "RIGHT").strip().upper(),
         compact_state_text(entry.get("title"), 180).lower(),
     )
 
 
 def contract_matches_finding(entry, finding):
-    entry_id, entry_path, entry_title = contract_identity(entry)
+    entry_id, entry_path, entry_side, entry_title = contract_identity(entry)
     if entry_id and entry_id == finding_id(finding):
         return True
-    if entry_path and entry_path == finding.path:
+    if entry_path and entry_path == finding.path and entry_side == finding.side:
         finding_title = compact_state_text(finding.title, 180).lower()
         if entry_title and entry_title == finding_title:
             return True
@@ -1325,6 +1366,7 @@ def resolved_contracts_since_last_review(prior_entries, current_findings, change
                 "path": path,
                 "line": entry.get("line"),
                 "title": entry.get("title") or "Prior Dottore finding",
+                "side": entry.get("side") or "RIGHT",
                 "status": "likely_resolved",
             }
         )
@@ -1350,6 +1392,7 @@ def normalize_contract_state_entries(entries):
                 "severity": compact_state_text(raw.get("severity") or "medium", 24),
                 "path": compact_state_text(raw.get("path"), 260),
                 "line": raw.get("line") if isinstance(raw.get("line"), int) else None,
+                "side": str(raw.get("side") or "RIGHT").strip().upper(),
                 "title": compact_state_text(raw.get("title"), 180),
                 "fix_hint": compact_state_text(raw.get("fix_hint"), 260),
                 "repair_contract": contract,
@@ -1430,6 +1473,7 @@ def format_contract_entries_for_prompt(entries, limit=12_000):
                 f"- Status: {entry.get('status') or 'prior'}",
                 f"- Severity: {entry.get('severity') or 'medium'}",
                 f"- Location: {location}",
+                f"- Side: {entry.get('side') or 'RIGHT'}",
             ]
         )
         if entry.get("fix_hint"):
@@ -1494,7 +1538,7 @@ def render_walkthrough(
             body.append(
                 "| "
                 f"{status_badge(meta)} | "
-                f"`{md_cell(finding.path)}:{finding.line}` | "
+                f"`{md_cell(finding.path)}:{finding.line}` ({finding.side}) | "
                 f"{md_cell(finding.title)} |"
             )
     else:
@@ -1525,7 +1569,7 @@ def render_walkthrough(
         for nitpick in nitpicks:
             body.append(
                 "| "
-                f"`{md_cell(nitpick.path)}:{nitpick.line}` | "
+                f"`{md_cell(nitpick.path)}:{nitpick.line}` ({nitpick.side}) | "
                 f"{md_cell(nitpick.title)} |"
             )
     else:
@@ -1601,6 +1645,7 @@ def merge_review_objects(reviews):
                 key = (
                     finding.get("path"),
                     finding.get("line"),
+                    str(finding.get("side", "RIGHT")).upper(),
                     finding.get("title"),
                 )
                 if key in seen_findings:
@@ -1798,6 +1843,7 @@ def inline_comment_contract_entry(comment):
         "severity": severity,
         "path": path,
         "line": line_number,
+        "side": str(comment.get("side") or "RIGHT").upper(),
         "title": title,
         "fix_hint": fix_hint,
         "repair_contract": contract,
@@ -1903,7 +1949,7 @@ def resolve_review_base(pr_num, requested_mode):
     )
     data = json.loads(pr.stdout)
     base_ref = os.environ.get("PR_BASE_REF") or data["baseRefName"]
-    head_sha = data["headRefOid"]
+    head_sha = os.environ.get("PR_HEAD_SHA") or data["headRefOid"]
     explicit_base = os.environ.get("DOTTORE_BASE_SHA")
     mode = requested_mode
     if explicit_base:
@@ -2010,7 +2056,7 @@ def produce_review(args):
         )
         triage += (
             "\n\nFocus on correctness, contracts, failure paths, tests, CI/deployment risks, "
-            "and architecture. Findings must point to changed diff lines. "
+            "and architecture. Findings must point to added/changed RIGHT lines or deleted LEFT lines. "
             "Attribute broad-segment notes in what_i_checked. "
             "If the packet is truncated or missing context for a potential issue, mention that "
             "limitation in what_i_checked rather than inventing certainty."
@@ -2148,7 +2194,7 @@ def render_review(args):
         {
             "path": f.path,
             "line": f.line,
-            "side": "RIGHT",
+            "side": f.side,
             "body": render_finding_body(f),
         }
         for f in inline_findings
@@ -2307,6 +2353,7 @@ def post_review(args):
         return
     payload = {
         "event": "COMMENT",
+        "commit_id": head_sha,
         "body": "Dottore Review — isolated defects from the specimen.",
         "comments": comments,
     }
