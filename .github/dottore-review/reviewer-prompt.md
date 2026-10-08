@@ -55,9 +55,9 @@ One rule: critique code and contracts only. Never personalize or address the aut
    - `git merge-base HEAD <base>`.
    - `git diff --stat <base>...HEAD`.
    - `git diff --name-only <base>...HEAD`.
-2. Read `AGENTS.md`.
-3. Load only guidance and rules selected for the touched paths.
-4. Read the changed patch overview, per-file patch context, selected path rules, and selected guidance.
+2. Read the changed patch overview, per-file patch context, and selected path rules.
+3. The packet indexes the guidance selected for the touched paths (`AGENTS.md` and path guidance) by heading and line. Read only the sections that bear on a suspicion with `read_file`, rather than whole guidance files.
+4. Dottore never runs commands, tests, or builds; CI does. Do not report unexecuted checks as a `Review Limitation`.
 5. Inspect callers, contracts, tests, and adjacent implementations before reporting a finding. When a concrete suspected issue needs caller, schema, or contract context outside the packet, read it with the tools. If the budget runs out first, say so instead of inventing certainty.
 6. Review mode matters:
    - `full` reviews the whole PR diff.
