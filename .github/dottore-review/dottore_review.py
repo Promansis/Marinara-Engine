@@ -31,6 +31,8 @@ MAX_SEARCH_FILE_BYTES = 250_000
 MAX_IDENTIFIER_CONTEXT_CHARS = 60_000
 MAX_IDENTIFIER_TERMS = 24
 MAX_IDENTIFIER_HITS_PER_TERM = 12
+# Agents read_file for wider context, so the diff carries only nearby lines.
+DIFF_CONTEXT_LINES = 25
 MAX_FILE_PATCH_CHARS = 55_000
 MAX_FILE_SUMMARY_CHARS = 9_000
 MAX_REVIEW_CHUNKS = 8
@@ -39,17 +41,20 @@ MAX_INLINE_COMMENT_CHARS = 1_200
 MAX_CONTRACT_STATE_ENTRIES = 12
 MAX_CONTRACT_STATE_TEXT_CHARS = 320
 MAX_CONTRACT_STATE_LIST_ITEMS = 3
-MODEL_REQUEST_TIMEOUT = 120
+# Long xhigh-effort calls can run several minutes; one retry still fits the review deadline.
+MODEL_REQUEST_TIMEOUT = 360
 MODEL_MAX_RETRIES = 1
 REVIEW_ROLES = ("broad", "skeptic", "verify")
 FINDER_ROLES = ("broad", "skeptic")
 SEGMENT_LABELS = {"broad": "Broad segment", "skeptic": "Skeptical segment"}
-FINDER_TOOL_BUDGET = 6
+FINDER_TOOL_BUDGET = 8
 VERIFIER_TOOL_BUDGET = 5
 MAX_SUBMIT_ATTEMPTS = 3
 MAX_TOOL_LINES = 300
 MAX_VERIFIED_CANDIDATES = 20
 MAX_OPEN_QUESTIONS = 2
+MAX_REVIEW_LIMITATIONS = 2
+MAX_GUIDANCE_HEADINGS = 40
 EVIDENCE_WINDOW = 3
 DEFAULT_CONCURRENCY = 4
 MAX_CONCURRENCY = 16
@@ -439,6 +444,19 @@ def select_guidance(files):
     return list(dict.fromkeys(guidance))
 
 
+def guidance_index(path):
+    """List a guidance file's size and headings so an agent can read_file just the section it needs."""
+    lines = _safe_path(path).read_text("utf-8", "replace").splitlines()
+    headings = [
+        f"  {number}: {line.strip()}"
+        for number, line in enumerate(lines, 1)
+        if re.match(r"#{1,3} ", line)
+    ]
+    if len(headings) > MAX_GUIDANCE_HEADINGS:
+        headings = headings[:MAX_GUIDANCE_HEADINGS] + ["  ..."]
+    return "\n".join([f"{path} ({len(lines)} lines)", *headings])
+
+
 def matching_path_rules(files):
     rules = load_rules()
     if not rules or "_load_error" in rules:
@@ -459,7 +477,7 @@ def matching_path_rules(files):
 
 def diff_for_path(base, path):
     return redact_for_model(
-        run_git_raw(["diff", "--find-renames", "--unified=80", f"{base}...HEAD", "--", path])
+        run_git_raw(["diff", "--find-renames", f"--unified={DIFF_CONTEXT_LINES}", f"{base}...HEAD", "--", path])
     )
 
 
@@ -490,7 +508,7 @@ def build_review_packet(base, mode, focus_files=None, include_full_patch=True):
         patch = (
             redact_for_model(
                 run_git_raw(
-                    diff_command(base, "--find-renames", "--unified=80", paths=files)
+                    diff_command(base, "--find-renames", f"--unified={DIFF_CONTEXT_LINES}", paths=files)
                 )
             )
             if files
@@ -498,13 +516,24 @@ def build_review_packet(base, mode, focus_files=None, include_full_patch=True):
         )
     else:
         patch = "\n".join(diff_for_path(base, path) for path in focus_files)
-    patch_body = patch
-    if len(patch_body) > MAX_SECTION_CHARS:
+    # Send the diff once: whole when it fits, otherwise per file, since every agent turn resends it.
+    if len(patch) <= MAX_SECTION_CHARS:
+        patch_body = patch
+        file_context = "The patch overview above holds every focus file's patch."
+    else:
         patch_body = (
-            "Full patch exceeded the inline packet limit; use the per-file patch sections "
-            "below and the file_diff tool for specific files if needed.\n\n"
-            + truncate(patch_body, MAX_SECTION_CHARS)
+            "Full patch exceeded the inline packet limit; see the per-file patch context below "
+            "and use the file_diff tool for a file summarized there."
         )
+        file_context = build_file_context(base, context_files)
+    # Guidance is indexed, not inlined, because every agent turn resends the packet.
+    # Agents read_file the sections that bear on a suspicion.
+    index = []
+    for path in select_guidance(files):
+        try:
+            index.append(guidance_index(path))
+        except Exception as exc:
+            index.append(f"{path}: could not read: {exc}")
     sections = [
         ("review mode", mode),
         ("git status", run_git(["status", "--short", "--branch"], 12_000)),
@@ -514,16 +543,13 @@ def build_review_packet(base, mode, focus_files=None, include_full_patch=True):
         ("changed files", "\n".join(files) or "No changed files reported."),
         ("numstat", run_git(diff_command(base, "--numstat", paths=files), 20_000) if files else "No included changes."),
         ("focus files", "\n".join(context_files) or "All changed files."),
-        ("patch overview", patch_body),
-        ("per-file patch context", build_file_context(base, context_files)),
-        ("changed identifier usage", build_identifier_context(patch)),
+        # Rules and guidance precede the diff so the packet limit trims the diff, not them.
         ("Dottore path rules", matching_path_rules(files)),
+        ("selected guidance index", "\n\n".join(index) or "No guidance selected."),
+        ("patch overview", patch_body),
+        ("per-file patch context", file_context),
+        ("changed identifier usage", build_identifier_context(patch)),
     ]
-    for path in select_guidance(files):
-        try:
-            sections.append((f"guidance: {path}", read_text(path, 30_000)))
-        except Exception as exc:
-            sections.append((f"guidance: {path}", f"Could not read: {exc}"))
 
     packet = "\n\n".join(
         f"## {title}\n```text\n{redact_for_model(body)}\n```" for title, body in sections
@@ -571,6 +597,7 @@ def add_usage(totals, usage):
     totals["prompt_tokens"] += usage_value(usage, "prompt_tokens")
     totals["completion_tokens"] += usage_value(usage, "completion_tokens")
     totals["total_tokens"] += usage_value(usage, "total_tokens")
+    totals["cached_tokens"] += usage_value(usage, "prompt_tokens_details", "cached_tokens")
     totals["reasoning_tokens"] += usage_value(
         usage, "completion_tokens_details", "reasoning_tokens"
     )
@@ -586,6 +613,7 @@ def build_stats(review_packet):
                 "model_calls": 0,
                 "tool_calls": 0,
                 "prompt_tokens": 0,
+                "cached_tokens": 0,
                 "completion_tokens": 0,
                 "reasoning_tokens": 0,
                 "total_tokens": 0,
@@ -599,7 +627,7 @@ def build_stats(review_packet):
 def print_telemetry(stats):
     elapsed = time.monotonic() - stats["started_at"]
     roles = stats["roles"]
-    counters = ("model_calls", "tool_calls", "prompt_tokens", "completion_tokens", "reasoning_tokens", "total_tokens")
+    counters = ("model_calls", "tool_calls", "prompt_tokens", "cached_tokens", "completion_tokens", "reasoning_tokens", "total_tokens")
     parts = [f"elapsed_s={elapsed:.1f}", f"review_packet_chars={stats['review_packet_chars']}"]
     parts += [f"{key}={sum(role[key] for role in roles.values())}" for key in counters]
     for name, role in roles.items():
@@ -940,7 +968,10 @@ def finder_instructions(role):
         "before anything is published, so report each concrete suspicion once, at its exact changed "
         "line, and do not pad. If prior Dottore contracts are included, first judge whether the current "
         "diff satisfies or leaves those contracts incomplete before issuing adjacent related findings. "
-        "Findings must point to added/changed RIGHT lines or deleted LEFT lines. Record what this segment "
+        "Findings must point to added/changed RIGHT lines or deleted LEFT lines; report one finding per "
+        "line, combining related concerns. Guidance is listed by heading in the selected guidance index; "
+        "read_file only the sections that bear on a suspicion. Dottore never runs commands, tests or "
+        "builds and CI does, so do not report unexecuted checks as a limitation. Record what this segment "
         "checked in what_i_checked, and name any limitation there instead of inventing certainty. "
         "Finish by calling submit_findings."
     )
@@ -982,10 +1013,11 @@ def as_list(value):
 def merge_segments(reports):
     """Stage 2: combine the segment reports without a model call."""
     merged = {key: [] for key in ("change_summary", "findings", "nitpicks", "open_questions")}
-    seen = set()
+    seen = {}
     checks = {}
     notes = []
     status_rank = {"fail": 0, "warn": 1, "unknown": 2, "pass": 3}
+    severity_rank = {"blocking": 0, "high": 1, "medium": 2, "low": 3}
     for role, report in reports:
         if role == "broad":
             merged["change_summary"].extend(str(item) for item in as_list(report.get("change_summary")))
@@ -993,16 +1025,22 @@ def merge_segments(reports):
             for item in as_list(report.get(key)):
                 if not isinstance(item, dict):
                     continue
+                # Segments word the same defect differently, so one line keeps one candidate: the most severe.
                 identity = (
                     key,
                     str(item.get("path", "")).strip(),
                     str(item.get("side") or "RIGHT").strip().upper(),
                     item.get("line"),
-                    " ".join(re.sub(r"[^\w\s]", " ", str(item.get("title", "")).lower()).split()),
                 )
+                entry = {**item, "segment": role}
                 if identity not in seen:
-                    seen.add(identity)
-                    merged[key].append({**item, "segment": role})
+                    seen[identity] = len(merged[key])
+                    merged[key].append(entry)
+                    continue
+                kept = merged[key][seen[identity]]
+                rank = severity_rank.get(str(item.get("severity", "")).lower(), 4)
+                if rank < severity_rank.get(str(kept.get("severity", "")).lower(), 4):
+                    merged[key][seen[identity]] = entry
         for check in as_list(report.get("pre_merge_checks")):
             if not isinstance(check, dict):
                 continue
@@ -1015,7 +1053,12 @@ def merge_segments(reports):
                 merged["open_questions"].append(question)
         label = SEGMENT_LABELS[role]
         notes.append([f"{label}: {note}" for note in as_list(report.get("what_i_checked"))])
-    merged["pre_merge_checks"] = list(checks.values())
+    limitations = [check for check in checks.values() if control_type(check) == "Review Limitation"]
+    merged["pre_merge_checks"] = [
+        check
+        for check in checks.values()
+        if control_type(check) != "Review Limitation" or check in limitations[:MAX_REVIEW_LIMITATIONS]
+    ]
     merged["nitpicks"] = merged["nitpicks"][:2]
     # Interleave the segments' notes so the rendered first few show both segments.
     merged["what_i_checked"] = [note for group in itertools.zip_longest(*notes) for note in group if note]
