@@ -5,7 +5,7 @@ import { chatSettingsDrawer, closeChatSettings, openChatSettingsTool } from "./c
 
 const version = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
-test("Roleplay Gallery and slash illustrate work without enabling automatic agents", async ({
+test("Roleplay Gallery illustrate, background and slash illustrate work without enabling automatic agents", async ({
   page,
   request,
 }, info) => {
@@ -70,8 +70,10 @@ test("Roleplay Gallery and slash illustrate work without enabling automatic agen
     await openGallery();
     await page.screenshot({ path: info.outputPath("manual-illustration-agents-disabled.png"), animations: "disabled" });
     const illustrate = chatSettingsDrawer(page, "gallery").getByRole("button", { name: "Illustrate", exact: true });
+    const background = chatSettingsDrawer(page, "gallery").getByRole("button", { name: "Background", exact: true });
     await expect(illustrate).toBeVisible();
     await expect(illustrate).toBeInViewport();
+    await expect(background).toBeVisible();
     await page.screenshot({ path: info.outputPath("manual-illustration-available.png"), animations: "disabled" });
     await illustrate.click();
     await expect.poll(() => calls.length).toBe(1);
@@ -94,10 +96,29 @@ test("Roleplay Gallery and slash illustrate work without enabling automatic agen
     await page.reload();
     await openGallery();
     await expect(illustrate).toHaveCount(0);
+    await expect(background).toHaveCount(0);
     await closeChatSettings(page);
     await input.fill("/illustrate");
     await expect(page.locator(".chat-input-container").getByRole("button", { name: /^\/illustrate\b/ })).toHaveCount(0);
     expect(calls).toHaveLength(2);
+
+    // Background is a one-off run like Illustrate: it needs Illustrator installed, not added to the chat.
+    packageInstalled = true;
+    await page.reload();
+    await openGallery();
+    await background.click();
+    await expect.poll(() => calls.length).toBe(3);
+    await expect(background).toBeEnabled();
+    expect(calls[2]).toMatchObject({
+      chatId: chat.id,
+      agentTypes: ["illustrator"],
+      agentPromptTemplateIds: { illustrator: "background" },
+      illustratorRetryTargets: ["background"],
+    });
+    const afterBackground = await (await request.get(`/api/chats/${chat.id}`)).json();
+    expect(
+      typeof afterBackground.metadata === "string" ? JSON.parse(afterBackground.metadata) : afterBackground.metadata,
+    ).toMatchObject(activation);
   } finally {
     await request.delete(`/api/chats/${chat.id}`);
     await request.delete(`/api/characters/${character.id}`);

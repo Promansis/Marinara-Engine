@@ -4,6 +4,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ## [Unreleased]
 
+- In Roleplay chats, the Gallery's **Background** button now shows whenever the **Illustrator** agent is installed, like **Illustrate**. You no longer need to add Illustrator to the chat or turn on agents to make a scene background, and using the button does not start automatic Illustrator runs.
 - With **Apply preset colors** on in **Chat widget style**, HTML in chat messages, such as an Immersive HTML card, now keeps the text colors it sets itself. Before, that text took the preset text color or your **Chat Chrome Text Color**, so black text on a light card could turn white or green. Text without a color of its own still follows the preset and Chat Chrome Text Color (#7296).
 - Professor Mari can now read every chat. About one chat in 4096 has an ID that starts with two dashes, and for those chats her chat and message lookups failed with a usage error. Searching chats for text that starts with two dashes failed the same way, and listing the chats of a character whose ID starts with two dashes showed every chat instead (#7289).
 - For contributors: the nightly browser tests and the **pnpm-validate** pull request check no longer fail while installing dependencies when api.nuget.org times out. They now skip onnxruntime-node's optional CUDA download, which the tests never use. Local embeddings still use the CPU build that ships with the package.
