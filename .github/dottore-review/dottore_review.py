@@ -50,13 +50,14 @@ MODEL_MAX_RETRIES = 1
 REVIEW_ROLES = ("broad", "skeptic", "lead", "scout", "verify")
 FINDER_ROLES = ("broad", "skeptic")
 SEGMENT_LABELS = {"broad": "Broad segment", "skeptic": "Skeptical segment", "lead": "Lead reviewer"}
-# "segments" runs the broad and skeptical finders with tools; "lead" has one reviewer read the packet
-# without tools and ask a cheaper scout to locate the code it needs, so the large packet is sent twice
-# instead of once per tool turn.
+# "segments" runs the broad and skeptical finders with tools, then a verifier per file; "lead" has one
+# reviewer read the packet without tools and ask a cheaper scout to locate the code it needs, so the large
+# packet is sent twice instead of once per tool turn, and its quoted evidence is checked in code instead
+# of by a verifier.
 PIPELINES = ("segments", "lead")
 MAX_SCOUT_REQUESTS = 6
-SCOUT_TOOL_BUDGET = 10
-SCOUT_TOOL_CHARS = 48_000
+SCOUT_TOOL_BUDGET = 20
+SCOUT_TOOL_CHARS = 64_000
 MAX_DOSSIER_CHARS = 32_000
 FINDER_TOOL_BUDGET = 5
 VERIFIER_TOOL_BUDGET = 5
@@ -75,6 +76,8 @@ MAX_OPEN_QUESTIONS = 2
 MAX_REVIEW_LIMITATIONS = 2
 MAX_GUIDANCE_HEADINGS = 40
 EVIDENCE_WINDOW = 3
+# The lead counts lines from diff hunks rather than numbered reads, so its quotes get a wider window.
+LEAD_EVIDENCE_WINDOW = 30
 DEFAULT_CONCURRENCY = 4
 MAX_CONCURRENCY = 16
 # The review step times out at 30 minutes; after this, agents submit and no new verifier starts.
@@ -779,6 +782,18 @@ REVIEW_ITEM = {
     },
     "required": ["path", "line", "title", "body"],
 }
+EVIDENCE = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string"},
+            "line": {"type": "integer"},
+            "snippet": {"type": "string"},
+        },
+        "required": ["path", "line", "snippet"],
+    },
+}
 SUBMIT_FINDINGS = function_tool(
     "submit_findings",
     "Submit this segment's candidate findings and notes. This ends the segment.",
@@ -804,6 +819,18 @@ SUBMIT_FINDINGS = function_tool(
     },
     ["change_summary", "findings", "nitpicks", "pre_merge_checks", "open_questions", "what_i_checked"],
 )
+# The lead pipeline has no verifier, so each lead finding carries the code that proves it.
+LEAD_FINDING = {
+    **REVIEW_ITEM,
+    "properties": {**REVIEW_ITEM["properties"], "evidence": EVIDENCE},
+    "required": [*REVIEW_ITEM["required"], "evidence"],
+}
+SUBMIT_LEAD_FINDINGS = function_tool(
+    "submit_findings",
+    "Submit your findings, each with the code that proves it, and notes. This ends the review.",
+    {**SUBMIT_FINDINGS["function"]["parameters"]["properties"], "findings": {"type": "array", "items": LEAD_FINDING}},
+    SUBMIT_FINDINGS["function"]["parameters"]["required"],
+)
 SUBMIT_VERDICTS = function_tool(
     "submit_verdicts",
     "Submit Dottore's verdict on each candidate finding. This ends the verification.",
@@ -816,18 +843,7 @@ SUBMIT_VERDICTS = function_tool(
                     "candidate": {"type": "integer"},
                     "verdict": {"type": "string", "enum": ["confirmed", "rejected", "uncertain"]},
                     "severity": {"type": "string", "enum": ["blocking", "high", "medium", "low"]},
-                    "evidence": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "path": {"type": "string"},
-                                "line": {"type": "integer"},
-                                "snippet": {"type": "string"},
-                            },
-                            "required": ["path", "line", "snippet"],
-                        },
-                    },
+                    "evidence": EVIDENCE,
                     "note": {"type": "string"},
                 },
                 "required": ["candidate", "verdict", "severity", "evidence", "note"],
@@ -1195,6 +1211,10 @@ def scout_dossier(ctx, requests):
     except Exception as exc:
         print(f"Dottore scout failed: {error_text(exc)}", flush=True)
         return "The scout failed, so no excerpts are available; review from the packet alone."
+    print(
+        f"Dottore scout: {len(requests)} request(s), {len(as_list(submitted.get('locations')))} location(s)",
+        flush=True,
+    )
     seen = set()
     sections = []
     for number, item in enumerate(requests, 1):
@@ -1232,11 +1252,13 @@ def run_lead(ctx, packet):
                 f"once with at most {MAX_SCOUT_REQUESTS} specific requests, each naming the symbols or files "
                 "you need (callers, guards, schemas, tests, or guidance sections from the index) and the "
                 "suspicion they would settle; a scout will return the excerpts and you then submit. "
-                f"{FINDING_RULES}"
+                f"{FINDING_RULES} No verifier runs after you: give every finding evidence, one to three "
+                "snippets of one to three lines each, copied exactly from the packet or the excerpts with the "
+                "file path and line number. A finding whose quotes do not match the code is withheld."
             ),
         },
     ]
-    tools = [REQUEST_CONTEXT, SUBMIT_FINDINGS]
+    tools = [REQUEST_CONTEXT, SUBMIT_LEAD_FINDINGS]
     name, arguments, messages, call_id = lead_call(ctx, base, tools, "required")
     if name == "submit_findings":
         return arguments
@@ -1249,7 +1271,7 @@ def run_lead(ctx, packet):
             "content": (
                 "The excerpts above are quoted verbatim from the repository at the cited lines; the scout "
                 "chose them and wrote the notes, which may be wrong, and a missing excerpt does not prove the "
-                "code is absent. Now call submit_findings."
+                "code is absent. Now call submit_findings, quoting each finding's evidence exactly."
             ),
         },
     ]
@@ -1348,7 +1370,7 @@ def evidence_snippet(text):
     return " ".join(" ".join(lines).split())
 
 
-def evidence_grounded(ctx, evidence):
+def evidence_grounded(ctx, evidence, span=EVIDENCE_WINDOW):
     """True when at least one quoted snippet appears near its cited line in the head or base file."""
     for item in evidence:
         snippet = evidence_snippet(item.get("snippet"))
@@ -1361,7 +1383,7 @@ def evidence_grounded(ctx, evidence):
             except Exception:
                 continue
             if isinstance(line, int) and not isinstance(line, bool) and line > 0:
-                lines = lines[max(0, line - 1 - EVIDENCE_WINDOW) : line + EVIDENCE_WINDOW]
+                lines = lines[max(0, line - 1 - span) : line + span]
             window = "\n".join(lines)
             if any(snippet in " ".join(text.split()) for text in (window, redact_for_model(window))):
                 return True
@@ -1471,6 +1493,34 @@ def verify_candidates(ctx, candidates, pool):
     return confirmed, hypotheses, counts
 
 
+def finding_key(item):
+    return (str(item.get("path", "")).strip(), item.get("line"), str(item.get("side") or "RIGHT").strip().upper())
+
+
+def ground_candidates(ctx, candidates, evidence_by_key):
+    """Lead pipeline: publish a candidate only when its own quoted evidence matches the code."""
+    counts = dict.fromkeys(("candidates", "confirmed", "rejected", "uncertain", "unverified", "failed"), 0)
+    counts["candidates"] = len(candidates)
+    confirmed, hypotheses = [], []
+    for candidate in candidates:
+        evidence = [item for item in evidence_by_key.get(finding_key(dataclasses.asdict(candidate)), []) if isinstance(item, dict)]
+        outcome = "confirmed" if evidence_grounded(ctx, evidence, LEAD_EVIDENCE_WINDOW) else "uncertain"
+        counts[outcome] += 1
+        print(
+            f"Dottore candidate: {outcome}; found_by={candidate.segment}; {candidate.severity}; "
+            f"{candidate.path}:{candidate.line}; {candidate.title[:120]}",
+            flush=True,
+        )
+        if outcome == "confirmed":
+            note = "Dottore matched the reviewer's quoted evidence to the code."
+            confirmed.append({**dataclasses.asdict(candidate), "verification": {"note": note, "evidence": evidence[:3]}})
+        else:
+            hypotheses.append(
+                f"{candidate.title} (`{candidate.path}:{candidate.line}`): its quoted evidence did not match the code."
+            )
+    return confirmed, hypotheses, counts
+
+
 def agentic_review(ctx, packets, mode, pool):
     """Find in parallel, merge, then let Dottore verify each candidate before it can be posted."""
     ctx.stats["pipeline"] = ctx.pipeline
@@ -1480,7 +1530,11 @@ def agentic_review(ctx, packets, mode, pool):
         {"findings": merged["findings"], "mode": mode}, ctx.base
     )
     merged["nitpicks"] = (merged["nitpicks"] + [dataclasses.asdict(item) for item in severity_nitpicks])[:2]
-    confirmed, hypotheses, counts = verify_candidates(ctx, candidates, pool)
+    if ctx.pipeline == "lead":
+        evidence_by_key = {finding_key(item): as_list(item.get("evidence")) for item in merged["findings"]}
+        confirmed, hypotheses, counts = ground_candidates(ctx, candidates, evidence_by_key)
+    else:
+        confirmed, hypotheses, counts = verify_candidates(ctx, candidates, pool)
     ctx.stats["verification"] = counts
     questions = hypotheses + merged["open_questions"]
     merged["findings"] = confirmed
