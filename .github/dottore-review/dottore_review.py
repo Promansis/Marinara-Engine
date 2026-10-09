@@ -1308,14 +1308,26 @@ FINDING_RULES = (
 )
 
 
+# ponytail: lab hypothesis that finders read the changed lines but skip edge inputs and failure paths;
+# keep it only if a multi-run recall test shows it surfaces those bugs.
+EDGE_INPUT_PASS = (
+    "Before submitting, walk every changed line that converts or defaults a value, migrates or carries "
+    "over stored settings, trims or caps to a budget, or awaits a call through these inputs: zero, empty "
+    "or missing; a string where a number is expected; a legacy, inactive or disabled item; an input at or "
+    "past the limit; and an await that rejects. Decide what the code then does. When the answer depends on "
+    "a helper or definition outside the packet, that open question is a concrete suspicion: read it."
+)
+
+
 def finder_instructions(role):
     return (
         f"{FINDER_FOCUS[role]} Treat the review packet as the specimen. Use the read-only tools only to "
         "settle a concrete suspicion that depends on code outside the packet, fetching just what it needs; "
         "do not browse, and when the packet is enough, submit without any tool calls. You have at most "
         f"{FINDER_TOOL_BUDGET} tool calls and {FINDER_TOOL_CHARS} characters of tool output, and repeating a "
-        f"call returns nothing new. Guidance is listed by heading in the selected guidance index; read_file "
-        f"only the sections that bear on a suspicion. {FINDING_RULES} Finish by calling submit_findings."
+        f"call returns nothing new. {EDGE_INPUT_PASS} Guidance is listed by heading in the selected guidance "
+        f"index; read_file only the sections that bear on a suspicion. {FINDING_RULES} Finish by calling "
+        "submit_findings."
     )
 
 
