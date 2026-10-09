@@ -148,7 +148,7 @@ jobs:
           DOTTORE_REASONING_EFFORT: ${{ vars.DOTTORE_REASONING_EFFORT }}
           # Optional JSON giving the broad, skeptic, lead, scout and verify roles their own model and effort.
           DOTTORE_MODELS: ${{ vars.DOTTORE_MODELS }}
-          # Optional finding pipeline: "segments" (default) or "lead".
+          # Optional finding pipeline: "segments" (default), "lead" or "leads".
           DOTTORE_PIPELINE: ${{ vars.DOTTORE_PIPELINE }}
           DOTTORE_CONCURRENCY: ${{ vars.DOTTORE_CONCURRENCY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
