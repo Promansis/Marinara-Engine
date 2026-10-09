@@ -49,12 +49,19 @@ MODEL_REQUEST_TIMEOUT = 360
 MODEL_MAX_RETRIES = 1
 REVIEW_ROLES = ("broad", "skeptic", "lead", "scout", "verify")
 FINDER_ROLES = ("broad", "skeptic")
-SEGMENT_LABELS = {"broad": "Broad segment", "skeptic": "Skeptical segment", "lead": "Lead reviewer"}
+SEGMENT_LABELS = {
+    "broad": "Broad segment",
+    "skeptic": "Skeptical segment",
+    "lead": "Lead reviewer",
+    "lead-broad": "Broad lead",
+    "lead-skeptic": "Skeptical lead",
+}
 # "segments" runs the broad and skeptical finders with tools, then a verifier per file; "lead" has one
 # reviewer read the packet without tools and ask a cheaper scout to locate the code it needs, so the large
 # packet is sent twice instead of once per tool turn, and its quoted evidence is checked in code instead
-# of by a verifier.
-PIPELINES = ("segments", "lead")
+# of by a verifier. "leads" runs a broad and a skeptical lead that share one scout.
+PIPELINES = ("segments", "lead", "leads")
+LEAD_TEAMS = {"lead": ("lead",), "leads": ("lead-broad", "lead-skeptic")}
 MAX_SCOUT_REQUESTS = 6
 SCOUT_TOOL_BUDGET = 20
 SCOUT_TOOL_CHARS = 64_000
@@ -1239,15 +1246,15 @@ def scout_dossier(ctx, requests):
     return truncate("\n\n".join(sections), MAX_DOSSIER_CHARS)
 
 
-def run_lead(ctx, packet):
-    """Stage 1, lead pipeline: read the packet, optionally get code from the scout, then submit findings."""
-    base = [
+def lead_messages(ctx, packet, name):
+    focus = LEAD_FOCUS if name == "lead" else FINDER_FOCUS[name.removeprefix("lead-")]
+    return [
         {"role": "system", "content": ctx.skill},
         {"role": "user", "content": packet},
         {
             "role": "user",
             "content": (
-                f"{LEAD_FOCUS} Treat the review packet as the specimen. You have no repository tools. If the "
+                f"{focus} Treat the review packet as the specimen. You have no repository tools. If the "
                 "packet settles every suspicion, call submit_findings now. Otherwise call request_context "
                 f"once with at most {MAX_SCOUT_REQUESTS} specific requests, each naming the symbols or files "
                 "you need (callers, guards, schemas, tests, or guidance sections from the index) and the "
@@ -1258,31 +1265,48 @@ def run_lead(ctx, packet):
             ),
         },
     ]
+
+
+def run_lead_team(ctx, packet, names):
+    """Stage 1, lead pipelines: each lead reads the packet, one scout serves all their requests, then each submits."""
     tools = [REQUEST_CONTEXT, SUBMIT_LEAD_FINDINGS]
-    name, arguments, messages, call_id = lead_call(ctx, base, tools, "required")
-    if name == "submit_findings":
-        return arguments
-    requests = [item for item in as_list(arguments.get("requests")) if isinstance(item, dict)]
-    dossier = scout_dossier(ctx, requests[:MAX_SCOUT_REQUESTS]) if requests else "No requests were made."
-    messages += [
-        {"role": "tool", "tool_call_id": call_id, "content": dossier},
-        {
-            "role": "user",
-            "content": (
-                "The excerpts above are quoted verbatim from the repository at the cited lines; the scout "
-                "chose them and wrote the notes, which may be wrong, and a missing excerpt does not prove the "
-                "code is absent. Now call submit_findings, quoting each finding's evidence exactly."
-            ),
-        },
-    ]
     submit = {"type": "function", "function": {"name": "submit_findings"}}
-    return lead_call(ctx, messages, tools, submit)[1]
+    # Its own pool: the review pool's workers may all be busy running lead teams.
+    with ThreadPoolExecutor(max_workers=len(names)) as team:
+        first = dict(zip(names, team.map(lambda name: lead_call(ctx, lead_messages(ctx, packet, name), tools, "required"), names)))
+        asked = {name: result for name, result in first.items() if result[0] == "request_context"}
+        requests, seen = [], set()
+        for _, arguments, _, _ in asked.values():
+            for item in [item for item in as_list(arguments.get("requests")) if isinstance(item, dict)][:MAX_SCOUT_REQUESTS]:
+                question = " ".join(str(item.get("question", "")).split()).lower()
+                if question and question not in seen:
+                    seen.add(question)
+                    requests.append(item)
+        dossier = scout_dossier(ctx, requests) if requests else "No requests were made."
+
+        def finish(name):
+            _, _, messages, call_id = asked[name]
+            messages = messages + [
+                {"role": "tool", "tool_call_id": call_id, "content": dossier},
+                {
+                    "role": "user",
+                    "content": (
+                        "The excerpts above are quoted verbatim from the repository at the cited lines; the scout "
+                        "chose them and wrote the notes, which may be wrong, and a missing excerpt does not prove "
+                        "the code is absent. Now call submit_findings, quoting each finding's evidence exactly."
+                    ),
+                },
+            ]
+            return lead_call(ctx, messages, tools, submit)[1]
+
+        finished = dict(zip(asked, team.map(finish, asked)))
+    return [(name, finished.get(name, first[name][1])) for name in names]
 
 
 def run_leads(ctx, packets, pool):
-    jobs = [pool.submit(run_lead, ctx, packet) for packet in packets]
+    jobs = [pool.submit(run_lead_team, ctx, packet, LEAD_TEAMS[ctx.pipeline]) for packet in packets]
     try:
-        return [("lead", future.result()) for future in jobs]
+        return [report for future in jobs for report in future.result()]
     except Exception:
         for future in jobs:
             future.cancel()
@@ -1318,7 +1342,7 @@ def merge_segments(reports):
     status_rank = {"fail": 0, "warn": 1, "unknown": 2, "pass": 3}
     severity_rank = {"blocking": 0, "high": 1, "medium": 2, "low": 3}
     for role, report in reports:
-        if role != "skeptic":
+        if role in {"broad", "lead", "lead-broad"}:
             merged["change_summary"].extend(str(item) for item in as_list(report.get("change_summary")))
         for key in ("findings", "nitpicks"):
             for item in as_list(report.get(key)):
@@ -1524,13 +1548,13 @@ def ground_candidates(ctx, candidates, evidence_by_key):
 def agentic_review(ctx, packets, mode, pool):
     """Find in parallel, merge, then let Dottore verify each candidate before it can be posted."""
     ctx.stats["pipeline"] = ctx.pipeline
-    finders = run_leads if ctx.pipeline == "lead" else run_finders
+    finders = run_finders if ctx.pipeline == "segments" else run_leads
     merged = merge_segments(finders(ctx, packets, pool))
     candidates, severity_nitpicks, withheld = validate_review_items(
         {"findings": merged["findings"], "mode": mode}, ctx.base
     )
     merged["nitpicks"] = (merged["nitpicks"] + [dataclasses.asdict(item) for item in severity_nitpicks])[:2]
-    if ctx.pipeline == "lead":
+    if ctx.pipeline != "segments":
         evidence_by_key = {finding_key(item): as_list(item.get("evidence")) for item in merged["findings"]}
         confirmed, hypotheses, counts = ground_candidates(ctx, candidates, evidence_by_key)
     else:
