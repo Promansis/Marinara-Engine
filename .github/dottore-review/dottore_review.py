@@ -308,7 +308,8 @@ def search_repo_with_python(pattern, code=False):
             if path.stat().st_size > MAX_SEARCH_FILE_BYTES:
                 continue
             rel = path.relative_to(REPO_ROOT)
-            if excluded_path(rel.as_posix()):
+            # rg skips hidden folders such as .agents/ (tooling, not product code); keep the tracer's seeds the same.
+            if excluded_path(rel.as_posix()) or (code and any(part.startswith(".") for part in rel.parts)):
                 continue
             text = path.read_text("utf-8", "replace")
         except Exception:
