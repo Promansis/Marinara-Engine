@@ -16,6 +16,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 REPO_ROOT = pathlib.Path.cwd().resolve()
 DOTTORE_MARKER = "<!-- dottore:walkthrough -->"
@@ -44,8 +45,13 @@ MAX_INLINE_COMMENT_CHARS = 1_200
 MAX_CONTRACT_STATE_ENTRIES = 12
 MAX_CONTRACT_STATE_TEXT_CHARS = 320
 MAX_CONTRACT_STATE_LIST_ITEMS = 3
-# Long xhigh-effort calls can run several minutes; one retry still fits the review deadline.
+# Replies stream, so these limit silence on the stream, not the reply: an attempt that sends nothing for
+# this long is retried. An agent's first call has nothing cached yet and has stalled for minutes in the
+# provider's queue, while a working one starts replying within about a minute, so it is retried sooner.
 MODEL_REQUEST_TIMEOUT = 360
+FIRST_CALL_TIMEOUT = 180
+# Caps one attempt that keeps streaming; such an attempt is not retried.
+MODEL_STREAM_LIMIT = 900
 MODEL_MAX_RETRIES = 1
 REVIEW_ROLES = ("broad", "skeptic", "lead", "scout", "verify")
 FINDER_ROLES = ("broad", "skeptic")
@@ -943,23 +949,66 @@ def run_tool(ctx, name, arguments):
     return redact_for_model(result)
 
 
+def read_stream(stream, started):
+    """Assemble a streamed reply; return (message, usage, seconds until the first chunk)."""
+    content, calls, usage, first_chunk = [], {}, None, None
+    for chunk in stream:
+        elapsed = time.monotonic() - started
+        if first_chunk is None:
+            first_chunk = elapsed
+        if elapsed > MODEL_STREAM_LIMIT:
+            raise TimeoutError(f"the reply was still streaming after {MODEL_STREAM_LIMIT}s")
+        usage = getattr(chunk, "usage", None) or usage
+        for choice in chunk.choices or []:
+            delta = choice.delta
+            content.append(delta.content or "")
+            for part in delta.tool_calls or []:
+                call = calls.setdefault(part.index, {"id": "", "name": "", "arguments": ""})
+                call["id"] = call["id"] or part.id or ""
+                if part.function:
+                    call["name"] = call["name"] or part.function.name or ""
+                    call["arguments"] += part.function.arguments or ""
+    tool_calls = [
+        SimpleNamespace(id=call["id"], function=SimpleNamespace(name=call["name"], arguments=call["arguments"]))
+        for _, call in sorted(calls.items())
+    ]
+    return SimpleNamespace(content="".join(content) or None, tool_calls=tool_calls or None), usage, first_chunk
+
+
 def chat(ctx, role, messages, tools, tool_choice):
+    import httpx
+
     settings = ctx.models[role]
+    first_call = not any(message.get("role") == "assistant" for message in messages)
     request = {
         "model": settings["model"],
         "messages": messages,
         "tools": tools,
         "tool_choice": tool_choice,
-        "timeout": MODEL_REQUEST_TIMEOUT,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+        "timeout": httpx.Timeout(FIRST_CALL_TIMEOUT if first_call else MODEL_REQUEST_TIMEOUT, connect=30),
     }
     if settings["effort"]:
         request["reasoning_effort"] = settings["effort"]
     if ctx.cache_key:
         # One key per review keeps its requests, which share long prefixes, on the same cache.
         request["extra_body"] = {"prompt_cache_key": ctx.cache_key}
-    started = time.monotonic()
-    response = ctx.client.chat.completions.create(**request)
-    usage = getattr(response, "usage", None)
+    # The client retries a request that fails before its stream opens; this retries one that stalls after.
+    for attempt in range(MODEL_MAX_RETRIES + 1):
+        started = time.monotonic()
+        try:
+            with ctx.client.chat.completions.create(**request) as stream:
+                message, usage, first_chunk = read_stream(stream, started)
+            break
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            print(
+                f"Dottore call retry: role={role}; attempt={attempt + 1}; after_s={time.monotonic() - started:.1f}; "
+                f"{error_text(exc)}",
+                flush=True,
+            )
+            if attempt == MODEL_MAX_RETRIES:
+                raise
     with ctx.lock:
         totals = ctx.stats["roles"][role]
         totals["model"] = settings["model"]
@@ -973,10 +1022,10 @@ def chat(ctx, role, messages, tools, tool_choice):
         f"cached_tokens={usage_value(usage, 'prompt_tokens_details', 'cached_tokens')}; "
         f"completion_tokens={usage_value(usage, 'completion_tokens')}; "
         f"reasoning_tokens={usage_value(usage, 'completion_tokens_details', 'reasoning_tokens')}; "
-        f"elapsed_s={time.monotonic() - started:.1f}",
+        f"first_chunk_s={first_chunk or 0:.1f}; elapsed_s={time.monotonic() - started:.1f}",
         flush=True,
     )
-    return response.choices[0].message
+    return message
 
 
 def tool_call_key(call):
