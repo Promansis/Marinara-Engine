@@ -54,12 +54,13 @@ FIRST_CALL_TIMEOUT = 180
 # Caps one attempt that keeps streaming; such an attempt is not retried.
 MODEL_STREAM_LIMIT = 900
 MODEL_MAX_RETRIES = 1
+# Waits before resending a call that hit a transient gateway error (unavailable, overloaded, cut stream).
+RETRY_DELAYS = (15, 45)
 REVIEW_ROLES = ("trace", "broad", "skeptic", "verify")
 FINDER_ROLES = ("broad", "skeptic")
 # A cheaper model traces the diff's blast radius before the finders run; the code quotes what it picks.
 # ponytail: lab default for the tracer A/B; DOTTORE_MODELS "trace" overrides it until it earns a setting.
 TRACE_MODEL = {"model": "gpt-6.1-sol", "effort": "medium"}
-TRACE_RETRY_DELAYS = (15, 45)
 TRACE_TOOL_BUDGET = 12
 TRACE_TOOL_CHARS = 48_000
 MAX_TRACE_SEEDS = 40
@@ -1144,25 +1145,29 @@ def chat(ctx, role, messages, tools, tool_choice):
     first_call = not any(message.get("role") == "assistant" for message in messages)
     read_timeout = FIRST_CALL_TIMEOUT if first_call else MODEL_REQUEST_TIMEOUT
     reply = claude_reply if settings["provider"] == "anthropic" else openai_reply
-    # The client retries a request that fails before its stream opens; this retries one that stalls after.
-    # The tracer also waits out transient gateway errors, since a review without its trace tests nothing.
-    delays = TRACE_RETRY_DELAYS if role == "trace" else (0,) * MODEL_MAX_RETRIES
-    for attempt in range(len(delays) + 1):
+    # The client retries a request that fails before its stream opens. This retries one that stalls after
+    # it at once, at most MODEL_MAX_RETRIES times since each stall has already used a read timeout, and
+    # waits out a transient gateway error, which can arrive mid-stream with a request to resend.
+    stalls = 0
+    for attempt in range(len(RETRY_DELAYS) + 1):
         started = time.monotonic()
         timing = {}
         try:
             message, usage = reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing)
             break
         except Exception as exc:
-            retry = isinstance(exc, StreamStalled) or (role == "trace" and transient_error(exc))
-            if not retry or attempt == len(delays):
+            stalled = isinstance(exc, StreamStalled)
+            stalls += stalled
+            retry = stalls <= MODEL_MAX_RETRIES if stalled else transient_error(exc)
+            if not retry or attempt == len(RETRY_DELAYS):
                 raise
+            wait = 0 if stalled else RETRY_DELAYS[attempt]
             print(
                 f"Dottore call retry: role={role}; attempt={attempt + 1}; after_s={time.monotonic() - started:.1f}; "
-                f"wait_s={delays[attempt]}; {error_text(exc)}",
+                f"wait_s={wait}; {error_text(exc)}",
                 flush=True,
             )
-            time.sleep(delays[attempt])
+            time.sleep(wait)
     with ctx.lock:
         totals = ctx.stats["roles"][role]
         totals["model"] = settings["model"]
