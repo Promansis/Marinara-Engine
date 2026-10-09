@@ -53,25 +53,12 @@ FIRST_CALL_TIMEOUT = 180
 # Caps one attempt that keeps streaming; such an attempt is not retried.
 MODEL_STREAM_LIMIT = 900
 MODEL_MAX_RETRIES = 1
-REVIEW_ROLES = ("broad", "skeptic", "lead", "scout", "verify")
+REVIEW_ROLES = ("broad", "skeptic", "verify")
 FINDER_ROLES = ("broad", "skeptic")
 SEGMENT_LABELS = {
     "broad": "Broad segment",
     "skeptic": "Skeptical segment",
-    "lead": "Lead reviewer",
-    "lead-broad": "Broad lead",
-    "lead-skeptic": "Skeptical lead",
 }
-# "segments" runs the broad and skeptical finders with tools, then a verifier per file; "lead" has one
-# reviewer read the packet without tools and ask a cheaper scout to locate the code it needs, so the large
-# packet is sent twice instead of once per tool turn, and its quoted evidence is checked in code instead
-# of by a verifier. "leads" runs a broad and a skeptical lead that share one scout.
-PIPELINES = ("segments", "lead", "leads")
-LEAD_TEAMS = {"lead": ("lead",), "leads": ("lead-broad", "lead-skeptic")}
-MAX_SCOUT_REQUESTS = 6
-SCOUT_TOOL_BUDGET = 20
-SCOUT_TOOL_CHARS = 64_000
-MAX_DOSSIER_CHARS = 32_000
 FINDER_TOOL_BUDGET = 5
 # The skeptic starts this long after the broad segment, so its first call can reuse the packet prefix
 # the broad call has just cached instead of both paying for it in full.
@@ -92,8 +79,12 @@ MAX_OPEN_QUESTIONS = 2
 MAX_REVIEW_LIMITATIONS = 2
 MAX_GUIDANCE_HEADINGS = 40
 EVIDENCE_WINDOW = 3
-# The lead counts lines from diff hunks rather than numbered reads, so its quotes get a wider window.
-LEAD_EVIDENCE_WINDOW = 30
+# Each role talks to OpenAI's Chat Completions format or Claude's Messages format; gateways such as
+# LinkAPI serve Claude only through the latter when tools are used.
+PROVIDERS = ("openai", "anthropic")
+# Claude requires an output cap; it covers thinking and the reply, and every current model allows it.
+CLAUDE_MAX_TOKENS = 32_000
+CACHE_BREAKPOINT = {"type": "ephemeral"}
 DEFAULT_CONCURRENCY = 4
 MAX_CONCURRENCY = 16
 # The review step times out at 30 minutes; after this, agents submit and no new verifier starts.
@@ -676,8 +667,6 @@ def print_telemetry(stats):
     roles = stats["roles"]
     counters = ("model_calls", "tool_calls", "prompt_tokens", "cached_tokens", "completion_tokens", "reasoning_tokens", "total_tokens")
     parts = [f"elapsed_s={elapsed:.1f}", f"review_packet_chars={stats['review_packet_chars']}"]
-    if stats.get("pipeline"):
-        parts.append(f"pipeline={stats['pipeline']}")
     parts += [f"{key}={sum(role[key] for role in roles.values())}" for key in counters]
     for name, role in roles.items():
         parts.append(f"{name}=" + ",".join(f"{key}:{value}" for key, value in role.items() if value))
@@ -686,7 +675,8 @@ def print_telemetry(stats):
 
 
 def role_models():
-    """Resolve each role's model and effort; DOTTORE_MODELS overrides the shared default per role."""
+    """Resolve each role's provider, model and effort; DOTTORE_MODELS overrides the shared defaults per role."""
+    default_provider = os.environ.get("DOTTORE_PROVIDER", "").strip().lower() or PROVIDERS[0]
     default_model = os.environ.get("LLM_MODEL", "").strip() or "gpt-5.5"
     default_effort = os.environ.get("DOTTORE_REASONING_EFFORT", "").strip()
     raw = os.environ.get("DOTTORE_MODELS", "").strip()
@@ -698,15 +688,44 @@ def role_models():
         role in REVIEW_ROLES and isinstance(value, dict) for role, value in overrides.items()
     ):
         raise ValueError(
-            'DOTTORE_MODELS must map "broad", "skeptic", "lead", "scout" or "verify" to {"model", "effort"} objects.'
+            'DOTTORE_MODELS must map "broad", "skeptic" or "verify" to {"provider", "model", "effort"} objects.'
         )
-    return {
+    models = {
         role: {
+            "provider": str(overrides.get(role, {}).get("provider") or default_provider).strip().lower(),
             "model": str(overrides.get(role, {}).get("model") or default_model).strip(),
             "effort": str(overrides.get(role, {}).get("effort") or default_effort).strip(),
         }
         for role in REVIEW_ROLES
     }
+    unknown = sorted({settings["provider"] for settings in models.values()} - set(PROVIDERS))
+    if unknown:
+        raise ValueError(f"Unknown Dottore provider {', '.join(unknown)}; use {' or '.join(PROVIDERS)}.")
+    return models
+
+
+def review_clients(models):
+    """One client per provider the roles use."""
+    providers = {settings["provider"] for settings in models.values()}
+    clients = {}
+    if "openai" in providers:
+        from openai import OpenAI
+
+        clients["openai"] = OpenAI(
+            api_key=os.environ["OPENAI_API_KEY"],
+            base_url=os.environ.get("LLM_BASE_URL") or None,
+            max_retries=MODEL_MAX_RETRIES,
+        )
+    if "anthropic" in providers:
+        from anthropic import Anthropic
+
+        # Gateways such as LinkAPI take one key for both formats, so the shared key is the fallback.
+        clients["anthropic"] = Anthropic(
+            api_key=os.environ.get("ANTHROPIC_API_KEY") or os.environ["OPENAI_API_KEY"],
+            base_url=os.environ.get("ANTHROPIC_BASE_URL") or "https://api.anthropic.com",
+            max_retries=MODEL_MAX_RETRIES,
+        )
+    return clients
 
 
 def review_concurrency():
@@ -718,18 +737,11 @@ def review_concurrency():
     return min(int(raw), MAX_CONCURRENCY)
 
 
-def review_pipeline():
-    raw = os.environ.get("DOTTORE_PIPELINE", "").strip() or PIPELINES[0]
-    if raw not in PIPELINES:
-        raise ValueError(f"DOTTORE_PIPELINE must be one of: {', '.join(PIPELINES)}.")
-    return raw
-
-
 @dataclass
 class ReviewRun:
-    """What every agent in one review shares: the client, models, telemetry and the diff scope."""
+    """What every agent in one review shares: the clients, models, telemetry and the diff scope."""
 
-    client: object
+    clients: dict
     skill: str
     models: dict
     stats: dict
@@ -737,7 +749,6 @@ class ReviewRun:
     merge_base: str
     files: frozenset
     deadline: float
-    pipeline: str = PIPELINES[0]
     cache_key: str = ""
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -835,18 +846,6 @@ SUBMIT_FINDINGS = function_tool(
         "what_i_checked": STRING_LIST,
     },
     ["change_summary", "findings", "nitpicks", "pre_merge_checks", "open_questions", "what_i_checked"],
-)
-# The lead pipeline has no verifier, so each lead finding carries the code that proves it.
-LEAD_FINDING = {
-    **REVIEW_ITEM,
-    "properties": {**REVIEW_ITEM["properties"], "evidence": EVIDENCE},
-    "required": [*REVIEW_ITEM["required"], "evidence"],
-}
-SUBMIT_LEAD_FINDINGS = function_tool(
-    "submit_findings",
-    "Submit your findings, each with the code that proves it, and notes. This ends the review.",
-    {**SUBMIT_FINDINGS["function"]["parameters"]["properties"], "findings": {"type": "array", "items": LEAD_FINDING}},
-    SUBMIT_FINDINGS["function"]["parameters"]["required"],
 )
 SUBMIT_VERDICTS = function_tool(
     "submit_verdicts",
@@ -949,15 +948,24 @@ def run_tool(ctx, name, arguments):
     return redact_for_model(result)
 
 
-def read_stream(stream, started):
-    """Assemble a streamed reply; return (message, usage, seconds until the first chunk)."""
-    content, calls, usage, first_chunk = [], {}, None, None
-    for chunk in stream:
+class StreamStalled(Exception):
+    """The connection went quiet or dropped after the reply stream opened."""
+
+
+def watched(stream, started, timing):
+    """Yield a stream's events, noting when the first arrived and stopping one that runs too long."""
+    for event in stream:
         elapsed = time.monotonic() - started
-        if first_chunk is None:
-            first_chunk = elapsed
+        timing.setdefault("first_chunk", elapsed)
         if elapsed > MODEL_STREAM_LIMIT:
             raise TimeoutError(f"the reply was still streaming after {MODEL_STREAM_LIMIT}s")
+        yield event
+
+
+def read_stream(stream, started, timing):
+    """Assemble a streamed Chat Completions reply; return (message, usage)."""
+    content, calls, usage = [], {}, None
+    for chunk in watched(stream, started, timing):
         usage = getattr(chunk, "usage", None) or usage
         for choice in chunk.choices or []:
             delta = choice.delta
@@ -972,14 +980,13 @@ def read_stream(stream, started):
         SimpleNamespace(id=call["id"], function=SimpleNamespace(name=call["name"], arguments=call["arguments"]))
         for _, call in sorted(calls.items())
     ]
-    return SimpleNamespace(content="".join(content) or None, tool_calls=tool_calls or None), usage, first_chunk
+    return SimpleNamespace(content="".join(content) or None, tool_calls=tool_calls or None), usage
 
 
-def chat(ctx, role, messages, tools, tool_choice):
+def openai_reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing):
     import httpx
+    import openai
 
-    settings = ctx.models[role]
-    first_call = not any(message.get("role") == "assistant" for message in messages)
     request = {
         "model": settings["model"],
         "messages": messages,
@@ -987,24 +994,128 @@ def chat(ctx, role, messages, tools, tool_choice):
         "tool_choice": tool_choice,
         "stream": True,
         "stream_options": {"include_usage": True},
-        "timeout": httpx.Timeout(FIRST_CALL_TIMEOUT if first_call else MODEL_REQUEST_TIMEOUT, connect=30),
+        "timeout": openai.Timeout(read_timeout, connect=30),
     }
     if settings["effort"]:
         request["reasoning_effort"] = settings["effort"]
     if ctx.cache_key:
         # One key per review keeps its requests, which share long prefixes, on the same cache.
         request["extra_body"] = {"prompt_cache_key": ctx.cache_key}
+    try:
+        with ctx.clients["openai"].chat.completions.create(**request) as stream:
+            return read_stream(stream, started, timing)
+    except (httpx.TimeoutException, httpx.TransportError) as exc:
+        raise StreamStalled(error_text(exc)) from exc
+
+
+def claude_messages(messages):
+    """Chat Completions messages as Claude's system blocks and turns, with cache breakpoints after the
+    system prompt, on the first message (the packet both finders share) and on the newest block."""
+    system, turns = [], []
+    for message in messages:
+        role, content = message["role"], message.get("content")
+        if role == "system":
+            system.append({"type": "text", "text": content})
+            continue
+        if role == "assistant":
+            # Claude's own blocks go back unchanged: thinking must be returned with its signature.
+            blocks = message.get("claude_blocks") or ([{"type": "text", "text": content}] if content else [])
+        elif role == "tool":
+            blocks = [{"type": "tool_result", "tool_use_id": message["tool_call_id"], "content": content}]
+        else:
+            blocks = [{"type": "text", "text": content}] if content else []
+        speaker = "assistant" if role == "assistant" else "user"
+        if not blocks:
+            continue
+        if turns and turns[-1]["role"] == speaker:
+            turns[-1]["content"].extend(blocks)
+        else:
+            turns.append({"role": speaker, "content": list(blocks)})
+    if system:
+        system[-1] = {**system[-1], "cache_control": CACHE_BREAKPOINT}
+    for blocks, index in ((turns[0]["content"], 0), (turns[-1]["content"], -1)) if turns else ():
+        blocks[index] = {**blocks[index], "cache_control": CACHE_BREAKPOINT}
+    return system, turns
+
+
+def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing):
+    """One streamed Claude Messages call, returned in the Chat Completions shape the agents use."""
+    import anthropic
+    import httpx2
+
+    system, turns = claude_messages(messages)
+    request = {
+        "model": settings["model"],
+        "max_tokens": CLAUDE_MAX_TOKENS,
+        "system": system,
+        "messages": turns,
+        "tools": [
+            {
+                "name": tool["function"]["name"],
+                "description": tool["function"]["description"],
+                "input_schema": tool["function"]["parameters"],
+            }
+            for tool in tools
+        ],
+        # Opus 5.5 and Sonnet 5.5 reject forced tool use, so the tool choice is always left to Claude;
+        # once a budget is spent, run_agent refuses every tool but the submit tool.
+        "tool_choice": {"type": "auto"},
+        "timeout": anthropic.Timeout(read_timeout, connect=30),
+    }
+    if settings["effort"]:
+        request["output_config"] = {"effort": settings["effort"]}
+    try:
+        with ctx.clients["anthropic"].messages.stream(**request) as stream:
+            for _ in watched(stream, started, timing):
+                pass
+            reply = stream.get_final_message()
+    except (httpx2.TimeoutException, httpx2.TransportError) as exc:
+        raise StreamStalled(error_text(exc)) from exc
+    if reply.stop_reason is None:
+        # A connection that closes mid-reply ends the stream without an error or a stop reason.
+        raise StreamStalled("the reply stream ended before Claude finished")
+    blocks, text, calls = [], [], []
+    for block in reply.content:
+        if block.type == "tool_use":
+            blocks.append({"type": "tool_use", "id": block.id, "name": block.name, "input": block.input})
+            calls.append(
+                SimpleNamespace(id=block.id, function=SimpleNamespace(name=block.name, arguments=json.dumps(block.input)))
+            )
+        elif block.type == "text":
+            text.append(block.text)
+            if block.text:
+                blocks.append({"type": "text", "text": block.text})
+        else:
+            blocks.append(block.model_dump(exclude_none=True))
+    cached = reply.usage.cache_read_input_tokens or 0
+    prompt = reply.usage.input_tokens + (reply.usage.cache_creation_input_tokens or 0) + cached
+    usage = {
+        "prompt_tokens": prompt,
+        "completion_tokens": reply.usage.output_tokens,
+        "total_tokens": prompt + reply.usage.output_tokens,
+        "prompt_tokens_details": {"cached_tokens": cached},
+        "completion_tokens_details": {"reasoning_tokens": usage_value(reply.usage, "output_tokens_details", "thinking_tokens")},
+    }
+    message = SimpleNamespace(content="".join(text) or None, tool_calls=calls or None, claude_blocks=blocks)
+    return message, usage
+
+
+def chat(ctx, role, messages, tools, tool_choice):
+    settings = ctx.models[role]
+    first_call = not any(message.get("role") == "assistant" for message in messages)
+    read_timeout = FIRST_CALL_TIMEOUT if first_call else MODEL_REQUEST_TIMEOUT
+    reply = claude_reply if settings["provider"] == "anthropic" else openai_reply
     # The client retries a request that fails before its stream opens; this retries one that stalls after.
     for attempt in range(MODEL_MAX_RETRIES + 1):
         started = time.monotonic()
+        timing = {}
         try:
-            with ctx.client.chat.completions.create(**request) as stream:
-                message, usage, first_chunk = read_stream(stream, started)
+            message, usage = reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing)
             break
-        except (httpx.TimeoutException, httpx.TransportError) as exc:
+        except StreamStalled as exc:
             print(
                 f"Dottore call retry: role={role}; attempt={attempt + 1}; after_s={time.monotonic() - started:.1f}; "
-                f"{error_text(exc)}",
+                f"{exc}",
                 flush=True,
             )
             if attempt == MODEL_MAX_RETRIES:
@@ -1022,10 +1133,16 @@ def chat(ctx, role, messages, tools, tool_choice):
         f"cached_tokens={usage_value(usage, 'prompt_tokens_details', 'cached_tokens')}; "
         f"completion_tokens={usage_value(usage, 'completion_tokens')}; "
         f"reasoning_tokens={usage_value(usage, 'completion_tokens_details', 'reasoning_tokens')}; "
-        f"first_chunk_s={first_chunk or 0:.1f}; elapsed_s={time.monotonic() - started:.1f}",
+        f"first_chunk_s={timing.get('first_chunk', 0):.1f}; elapsed_s={time.monotonic() - started:.1f}",
         flush=True,
     )
     return message
+
+
+def assistant_turn(message, **fields):
+    """The assistant message to keep in history, with Claude's original blocks when it sent them."""
+    blocks = getattr(message, "claude_blocks", None)
+    return {"role": "assistant", **fields, **({"claude_blocks": blocks} if blocks else {})}
 
 
 def tool_call_key(call):
@@ -1058,15 +1175,15 @@ def run_agent(ctx, role, messages, submit_tool, budget, output_budget):
         calls = list(message.tool_calls or [])
         if not calls:
             messages += [
-                {"role": "assistant", "content": message.content or ""},
+                assistant_turn(message, content=message.content or ""),
                 {"role": "user", "content": f"Call {submit} to finish."},
             ]
             continue
         messages.append(
-            {
-                "role": "assistant",
-                "content": message.content,
-                "tool_calls": [
+            assistant_turn(
+                message,
+                content=message.content,
+                tool_calls=[
                     {
                         "id": call.id,
                         "type": "function",
@@ -1074,7 +1191,7 @@ def run_agent(ctx, role, messages, submit_tool, budget, output_budget):
                     }
                     for call in calls
                 ],
-            }
+            )
         )
         for call in calls:
             if call.function.name == submit:
@@ -1184,211 +1301,6 @@ def run_finders(ctx, packets, pool):
         raise
 
 
-REQUEST_CONTEXT = function_tool(
-    "request_context",
-    "Ask the scout to locate repository code the packet does not show. You get one round of requests.",
-    {
-        "requests": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "question": {"type": "string", "description": "The code to locate, naming symbols and files."},
-                    "why": {"type": "string", "description": "The suspicion this code would settle."},
-                },
-                "required": ["question", "why"],
-            },
-        },
-    },
-    ["requests"],
-)
-SUBMIT_LOCATIONS = function_tool(
-    "submit_locations",
-    "Submit the code locations that answer the requests. This ends the search.",
-    {
-        "locations": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "request": {"type": "integer"},
-                    "path": {"type": "string"},
-                    "side": {"type": "string", "enum": ["head", "base"]},
-                    "start": {"type": "integer"},
-                    "end": {"type": "integer"},
-                    "note": {"type": "string"},
-                },
-                "required": ["request", "path", "start", "end"],
-            },
-        },
-    },
-    ["locations"],
-)
-LEAD_FOCUS = (
-    "Act as Dottore's lead reviewer, covering both segments' ground. Search widely for correctness, "
-    "contracts, failure paths, tests, security/privacy, CI/deployment risks, architecture, and "
-    "user-visible regressions, and record up to 2 concrete nitpicks when changed lines carry optional but "
-    "actionable polish. Then look skeptically for invariant mismatches the diff introduces: data collected "
-    "in a pre-scan but persisted after later filters, fallback behavior that diverges from validation, "
-    "rollback paths, partial writes, contract drift, and tests that prove only the happy path."
-)
-SCOUT_SYSTEM = (
-    "You are a code locator for a pull request reviewer. Use the read-only tools to find the code each "
-    "request asks for, then call submit_locations with the exact line range of every relevant excerpt "
-    "(at most 120 lines each; side 'base' for code the PR removed). Keep each note to one factual sentence "
-    "about what the excerpt contains. Do not judge the pull request. If you cannot find something, submit "
-    "no location for it rather than a guess."
-)
-
-
-def lead_call(ctx, messages, tools, choice):
-    """One lead turn that must end in one of its tools; return (tool name, arguments, messages)."""
-    names = {tool["function"]["name"] for tool in tools}
-    messages = list(messages)
-    for _ in range(MAX_SUBMIT_ATTEMPTS):
-        message = chat(ctx, "lead", messages, tools, choice)
-        calls = [call for call in message.tool_calls or [] if call.function.name in names]
-        for call in calls:
-            try:
-                arguments = json.loads(call.function.arguments or "{}")
-            except ValueError:
-                arguments = None
-            if isinstance(arguments, dict):
-                assistant = {
-                    "role": "assistant",
-                    "content": message.content,
-                    "tool_calls": [
-                        {
-                            "id": call.id,
-                            "type": "function",
-                            "function": {"name": call.function.name, "arguments": call.function.arguments},
-                        }
-                    ],
-                }
-                return call.function.name, arguments, [*messages, assistant], call.id
-        messages.append({"role": "user", "content": f"Call one of {', '.join(sorted(names))} with one JSON object."})
-    raise RuntimeError("The lead reviewer never called its tools.")
-
-
-def scout_dossier(ctx, requests):
-    """Let the scout locate code, then quote each location from the repository, not from the scout."""
-    listing = "\n".join(
-        f"{number}. {item.get('question', '')} (suspicion: {item.get('why', '')})"
-        for number, item in enumerate(requests, 1)
-    )
-    try:
-        submitted = run_agent(
-            ctx,
-            "scout",
-            [
-                {"role": "system", "content": SCOUT_SYSTEM},
-                {
-                    "role": "user",
-                    "content": f"Changed files:\n{chr(10).join(sorted(ctx.files))}\n\n# Requests\n{listing}",
-                },
-            ],
-            SUBMIT_LOCATIONS,
-            SCOUT_TOOL_BUDGET,
-            SCOUT_TOOL_CHARS,
-        )
-    except Exception as exc:
-        print(f"Dottore scout failed: {error_text(exc)}", flush=True)
-        return "The scout failed, so no excerpts are available; review from the packet alone."
-    print(
-        f"Dottore scout: {len(requests)} request(s), {len(as_list(submitted.get('locations')))} location(s)",
-        flush=True,
-    )
-    seen = set()
-    sections = []
-    for number, item in enumerate(requests, 1):
-        found = []
-        for location in as_list(submitted.get("locations")):
-            if not isinstance(location, dict) or location.get("request") != number:
-                continue
-            side = "base" if location.get("side") == "base" else "head"
-            key = (str(location.get("path")), side, location.get("start"), location.get("end"))
-            if key in seen:
-                found.append(f"### {key[0]} ({side}) — already quoted above")
-                continue
-            seen.add(key)
-            try:
-                text = head_file_text(key[0]) if side == "head" else base_file_text(ctx, key[0])
-                lines = numbered_lines(text, location.get("start"), location.get("end"))
-            except Exception as exc:
-                lines = f"refused: {exc}"
-            note = " ".join(str(location.get("note") or "").split())
-            found.append(f"### {key[0]} ({side}){f' — scout note: {note}' if note else ''}\n{redact_for_model(lines)}")
-        sections.append(f"## Request {number}: {item.get('question', '')}\n" + ("\n\n".join(found) or "The scout found nothing."))
-    return truncate("\n\n".join(sections), MAX_DOSSIER_CHARS)
-
-
-def lead_messages(ctx, packet, name):
-    focus = LEAD_FOCUS if name == "lead" else FINDER_FOCUS[name.removeprefix("lead-")]
-    return [
-        {"role": "system", "content": ctx.skill},
-        {"role": "user", "content": packet},
-        {
-            "role": "user",
-            "content": (
-                f"{focus} Treat the review packet as the specimen. You have no repository tools. If the "
-                "packet settles every suspicion, call submit_findings now. Otherwise call request_context "
-                f"once with at most {MAX_SCOUT_REQUESTS} specific requests, each naming the symbols or files "
-                "you need (callers, guards, schemas, tests, or guidance sections from the index) and the "
-                "suspicion they would settle; a scout will return the excerpts and you then submit. "
-                f"{FINDING_RULES} No verifier runs after you: give every finding evidence, one to three "
-                "snippets of one to three lines each, copied exactly from the packet or the excerpts with the "
-                "file path and line number. A finding whose quotes do not match the code is withheld."
-            ),
-        },
-    ]
-
-
-def run_lead_team(ctx, packet, names):
-    """Stage 1, lead pipelines: each lead reads the packet, one scout serves all their requests, then each submits."""
-    tools = [REQUEST_CONTEXT, SUBMIT_LEAD_FINDINGS]
-    submit = {"type": "function", "function": {"name": "submit_findings"}}
-    # Its own pool: the review pool's workers may all be busy running lead teams.
-    with ThreadPoolExecutor(max_workers=len(names)) as team:
-        first = dict(zip(names, team.map(lambda name: lead_call(ctx, lead_messages(ctx, packet, name), tools, "required"), names)))
-        asked = {name: result for name, result in first.items() if result[0] == "request_context"}
-        requests, seen = [], set()
-        for _, arguments, _, _ in asked.values():
-            for item in [item for item in as_list(arguments.get("requests")) if isinstance(item, dict)][:MAX_SCOUT_REQUESTS]:
-                question = " ".join(str(item.get("question", "")).split()).lower()
-                if question and question not in seen:
-                    seen.add(question)
-                    requests.append(item)
-        dossier = scout_dossier(ctx, requests) if requests else "No requests were made."
-
-        def finish(name):
-            _, _, messages, call_id = asked[name]
-            messages = messages + [
-                {"role": "tool", "tool_call_id": call_id, "content": dossier},
-                {
-                    "role": "user",
-                    "content": (
-                        "The excerpts above are quoted verbatim from the repository at the cited lines; the scout "
-                        "chose them and wrote the notes, which may be wrong, and a missing excerpt does not prove "
-                        "the code is absent. Now call submit_findings, quoting each finding's evidence exactly."
-                    ),
-                },
-            ]
-            return lead_call(ctx, messages, tools, submit)[1]
-
-        finished = dict(zip(asked, team.map(finish, asked)))
-    return [(name, finished.get(name, first[name][1])) for name in names]
-
-
-def run_leads(ctx, packets, pool):
-    jobs = [pool.submit(run_lead_team, ctx, packet, LEAD_TEAMS[ctx.pipeline]) for packet in packets]
-    try:
-        return [report for future in jobs for report in future.result()]
-    except Exception:
-        for future in jobs:
-            future.cancel()
-        raise
-
-
 def as_list(value):
     return value if isinstance(value, list) else []
 
@@ -1418,7 +1330,7 @@ def merge_segments(reports):
     status_rank = {"fail": 0, "warn": 1, "unknown": 2, "pass": 3}
     severity_rank = {"blocking": 0, "high": 1, "medium": 2, "low": 3}
     for role, report in reports:
-        if role in {"broad", "lead", "lead-broad"}:
+        if role == "broad":
             merged["change_summary"].extend(str(item) for item in as_list(report.get("change_summary")))
         for key in ("findings", "nitpicks"):
             for item in as_list(report.get(key)):
@@ -1470,7 +1382,7 @@ def evidence_snippet(text):
     return " ".join(" ".join(lines).split())
 
 
-def evidence_grounded(ctx, evidence, span=EVIDENCE_WINDOW):
+def evidence_grounded(ctx, evidence):
     """True when at least one quoted snippet appears near its cited line in the head or base file."""
     for item in evidence:
         snippet = evidence_snippet(item.get("snippet"))
@@ -1483,7 +1395,7 @@ def evidence_grounded(ctx, evidence, span=EVIDENCE_WINDOW):
             except Exception:
                 continue
             if isinstance(line, int) and not isinstance(line, bool) and line > 0:
-                lines = lines[max(0, line - 1 - span) : line + span]
+                lines = lines[max(0, line - 1 - EVIDENCE_WINDOW) : line + EVIDENCE_WINDOW]
             window = "\n".join(lines)
             if any(snippet in " ".join(text.split()) for text in (window, redact_for_model(window))):
                 return True
@@ -1593,48 +1505,14 @@ def verify_candidates(ctx, candidates, pool):
     return confirmed, hypotheses, counts
 
 
-def finding_key(item):
-    return (str(item.get("path", "")).strip(), item.get("line"), str(item.get("side") or "RIGHT").strip().upper())
-
-
-def ground_candidates(ctx, candidates, evidence_by_key):
-    """Lead pipeline: publish a candidate only when its own quoted evidence matches the code."""
-    counts = dict.fromkeys(("candidates", "confirmed", "rejected", "uncertain", "unverified", "failed"), 0)
-    counts["candidates"] = len(candidates)
-    confirmed, hypotheses = [], []
-    for candidate in candidates:
-        evidence = [item for item in evidence_by_key.get(finding_key(dataclasses.asdict(candidate)), []) if isinstance(item, dict)]
-        outcome = "confirmed" if evidence_grounded(ctx, evidence, LEAD_EVIDENCE_WINDOW) else "uncertain"
-        counts[outcome] += 1
-        print(
-            f"Dottore candidate: {outcome}; found_by={candidate.segment}; {candidate.severity}; "
-            f"{candidate.path}:{candidate.line}; {candidate.title[:120]}",
-            flush=True,
-        )
-        if outcome == "confirmed":
-            note = "Dottore matched the reviewer's quoted evidence to the code."
-            confirmed.append({**dataclasses.asdict(candidate), "verification": {"note": note, "evidence": evidence[:3]}})
-        else:
-            hypotheses.append(
-                f"{candidate.title} (`{candidate.path}:{candidate.line}`): its quoted evidence did not match the code."
-            )
-    return confirmed, hypotheses, counts
-
-
 def agentic_review(ctx, packets, mode, pool):
     """Find in parallel, merge, then let Dottore verify each candidate before it can be posted."""
-    ctx.stats["pipeline"] = ctx.pipeline
-    finders = run_finders if ctx.pipeline == "segments" else run_leads
-    merged = merge_segments(finders(ctx, packets, pool))
+    merged = merge_segments(run_finders(ctx, packets, pool))
     candidates, severity_nitpicks, withheld = validate_review_items(
         {"findings": merged["findings"], "mode": mode}, ctx.base
     )
     merged["nitpicks"] = (merged["nitpicks"] + [dataclasses.asdict(item) for item in severity_nitpicks])[:2]
-    if ctx.pipeline != "segments":
-        evidence_by_key = {finding_key(item): as_list(item.get("evidence")) for item in merged["findings"]}
-        confirmed, hypotheses, counts = ground_candidates(ctx, candidates, evidence_by_key)
-    else:
-        confirmed, hypotheses, counts = verify_candidates(ctx, candidates, pool)
+    confirmed, hypotheses, counts = verify_candidates(ctx, candidates, pool)
     ctx.stats["verification"] = counts
     questions = hypotheses + merged["open_questions"]
     merged["findings"] = confirmed
@@ -2910,13 +2788,6 @@ def produce_review(args):
 
     chunks = chunk_changed_files(base, files)
 
-    from openai import OpenAI
-
-    client = OpenAI(
-        api_key=os.environ["OPENAI_API_KEY"],
-        base_url=os.environ.get("LLM_BASE_URL"),
-        max_retries=MODEL_MAX_RETRIES,
-    )
     skill = dottore_prompt_path().read_text("utf-8")
     prior_contract_state = prior_review_contract_state(pr_num)
     prior_contract_context = (
@@ -2953,16 +2824,16 @@ def produce_review(args):
             finder_packet(review_target, "Review the full current diff.", prior_contract_context, review_packet)
         ]
     try:
+        models = role_models()
         ctx = ReviewRun(
-            client=client,
+            clients=review_clients(models),
             skill=skill,
-            models=role_models(),
+            models=models,
             stats=stats,
             base=base,
             merge_base=run(["git", "merge-base", base, "HEAD"], check=True).stdout.strip(),
             files=frozenset(files),
             deadline=stats["started_at"] + REVIEW_DEADLINE_SECONDS,
-            pipeline=review_pipeline(),
             cache_key=f"dottore-{os.environ.get('GITHUB_REPOSITORY', 'local')}-{pr_num or head_sha[:12]}",
         )
         with ThreadPoolExecutor(max_workers=review_concurrency()) as pool:
