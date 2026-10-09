@@ -124,6 +124,10 @@ jobs:
       - name: Install trusted reviewer dependencies
         run: pip install -r /tmp/dottore-review-tool/requirements.txt
 
+      # Repository search uses rg; without it the reviewer falls back to a slower Python walk.
+      - name: Install ripgrep
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ripgrep
+
       - name: Fetch review specimen without executing it
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -144,7 +148,7 @@ jobs:
             -f description="The specimen is on Dottore's observation table. Examination in progress." >/dev/null
 
       - name: Run Dottore review
-        timeout-minutes: 30
+        timeout-minutes: 35
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}

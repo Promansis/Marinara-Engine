@@ -80,14 +80,14 @@ SEGMENT_LABELS = {
     "broad": "Broad segment",
     "skeptic": "Skeptical segment",
 }
-FINDER_TOOL_BUDGET = 5
+FINDER_TOOL_BUDGET = 20
 # The skeptic starts this long after the broad segment, so its first call can reuse the packet prefix
 # the broad call has just cached instead of both paying for it in full.
 FINDER_STAGGER_SECONDS = 8
 VERIFIER_TOOL_BUDGET = 5
 # Each agent also has a tool-output budget, since every later turn resends its tool results.
 # Verifiers get their own, so finders can never starve verification.
-FINDER_TOOL_CHARS = 24_000
+FINDER_TOOL_CHARS = 96_000
 VERIFIER_TOOL_CHARS = 20_000
 VERIFIER_TOOL_CHARS_PER_EXTRA = 6_000
 MAX_SUBMIT_ATTEMPTS = 3
@@ -108,8 +108,8 @@ CLAUDE_MAX_TOKENS = 32_000
 CACHE_BREAKPOINT = {"type": "ephemeral"}
 DEFAULT_CONCURRENCY = 4
 MAX_CONCURRENCY = 16
-# The review step times out at 30 minutes; after this, agents submit and no new verifier starts.
-REVIEW_DEADLINE_SECONDS = 20 * 60
+# The review step times out at 35 minutes; after this, agents submit and no new verifier starts.
+REVIEW_DEADLINE_SECONDS = 25 * 60
 SECRET_VALUE_RE = re.compile(
     r"(?i)(api[_-]?key|token|secret|password|passwd|authorization|bearer|client[_-]?secret)"
     r"(\s*[:=]\s*|\s+)([^\s'\"`;&|]+)"
