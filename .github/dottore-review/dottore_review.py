@@ -58,7 +58,7 @@ REVIEW_ROLES = ("trace", "broad", "skeptic", "verify")
 FINDER_ROLES = ("broad", "skeptic")
 # A cheaper model traces the diff's blast radius before the finders run; the code quotes what it picks.
 # ponytail: lab default for the tracer A/B; DOTTORE_MODELS "trace" overrides it until it earns a setting.
-TRACE_MODEL = {"model": "gpt-6-luna", "effort": "high"}
+TRACE_MODEL = {"model": "gpt-6.1-sol", "effort": "medium"}
 TRACE_RETRY_DELAYS = (15, 45)
 TRACE_TOOL_BUDGET = 12
 TRACE_TOOL_CHARS = 48_000
