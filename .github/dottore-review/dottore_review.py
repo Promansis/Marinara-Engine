@@ -36,12 +36,6 @@ MAX_IDENTIFIER_TERMS = 24
 MAX_IDENTIFIER_HITS_PER_TERM = 12
 # Agents read_file for wider context, so the diff carries only nearby lines.
 DIFF_CONTEXT_LINES = 25
-# Every agent turn resends the packet, so it shows docs and tests with less unchanged context around
-# their changes; changed lines stay whole, and file_diff still returns DIFF_CONTEXT_LINES.
-DOCS_CONTEXT_LINES = 3
-TEST_CONTEXT_LINES = 8
-DOCS_PATH_RE = re.compile(r"(?i)(^|/)(CHANGELOG|README)[^/]*\.md$|^docs/")
-TEST_PATH_RE = re.compile(r"(^|/)(e2e|tests?|__tests__|regressions?)/|\.(test|spec|e2e|regression)\.[cm]?[jt]sx?$")
 MAX_FILE_PATCH_CHARS = 55_000
 MAX_FILE_SUMMARY_CHARS = 9_000
 MAX_REVIEW_CHUNKS = 8
@@ -528,31 +522,10 @@ def diff_for_path(base, path):
     )
 
 
-def packet_context_lines(path):
-    if DOCS_PATH_RE.search(path):
-        return DOCS_CONTEXT_LINES
-    if TEST_PATH_RE.search(path):
-        return TEST_CONTEXT_LINES
-    return DIFF_CONTEXT_LINES
-
-
-def packet_diff(base, paths):
-    """The patch as the packet shows it: code with full context, docs and tests with less."""
-    groups = {}
-    for path in paths:
-        groups.setdefault(packet_context_lines(path), []).append(path)
-    return redact_for_model(
-        "".join(
-            run_git_raw(diff_command(base, "--find-renames", f"--unified={lines}", paths=group))
-            for lines, group in groups.items()
-        )
-    )
-
-
 def build_file_context(base, files):
     sections = []
     for path in files:
-        patch = packet_diff(base, [path])
+        patch = diff_for_path(base, path)
         if not patch:
             continue
         if len(patch) <= MAX_FILE_PATCH_CHARS:
@@ -573,9 +546,17 @@ def build_review_packet(base, mode, focus_files=None, include_full_patch=True):
     files = changed_files(base)
     context_files = focus_files or files
     if focus_files is None or include_full_patch:
-        patch = packet_diff(base, files) if files else ""
+        patch = (
+            redact_for_model(
+                run_git_raw(
+                    diff_command(base, "--find-renames", f"--unified={DIFF_CONTEXT_LINES}", paths=files)
+                )
+            )
+            if files
+            else ""
+        )
     else:
-        patch = packet_diff(base, focus_files)
+        patch = "\n".join(diff_for_path(base, path) for path in focus_files)
     # Send the diff once: whole when it fits, otherwise per file, since every agent turn resends it.
     if len(patch) <= MAX_SECTION_CHARS:
         patch_body = patch
@@ -1112,9 +1093,7 @@ def finder_instructions(role):
         "settle a concrete suspicion that depends on code outside the packet, fetching just what it needs; "
         "do not browse, and when the packet is enough, submit without any tool calls. You have at most "
         f"{FINDER_TOOL_BUDGET} tool calls and {FINDER_TOOL_CHARS} characters of tool output, and repeating a "
-        f"call returns nothing new. Docs and test changes are shown with only {TEST_CONTEXT_LINES} or fewer "
-        "unchanged lines around them; file_diff shows a file with more. Guidance is listed by heading in "
-        "the selected guidance index; read_file "
+        f"call returns nothing new. Guidance is listed by heading in the selected guidance index; read_file "
         f"only the sections that bear on a suspicion. {FINDING_RULES} Finish by calling submit_findings."
     )
 
