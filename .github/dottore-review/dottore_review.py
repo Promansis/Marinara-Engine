@@ -36,6 +36,12 @@ MAX_IDENTIFIER_TERMS = 24
 MAX_IDENTIFIER_HITS_PER_TERM = 12
 # Agents read_file for wider context, so the diff carries only nearby lines.
 DIFF_CONTEXT_LINES = 25
+# Every agent turn resends the packet, so it shows docs and tests with less unchanged context around
+# their changes; changed lines stay whole, and file_diff still returns DIFF_CONTEXT_LINES.
+DOCS_CONTEXT_LINES = 3
+TEST_CONTEXT_LINES = 8
+DOCS_PATH_RE = re.compile(r"(?i)(^|/)(CHANGELOG|README)[^/]*\.md$|^docs/")
+TEST_PATH_RE = re.compile(r"(^|/)(e2e|tests?|__tests__|regressions?)/|\.(test|spec|e2e|regression)\.[cm]?[jt]sx?$")
 MAX_FILE_PATCH_CHARS = 55_000
 MAX_FILE_SUMMARY_CHARS = 9_000
 MAX_REVIEW_CHUNKS = 8
@@ -67,6 +73,9 @@ SCOUT_TOOL_BUDGET = 20
 SCOUT_TOOL_CHARS = 64_000
 MAX_DOSSIER_CHARS = 32_000
 FINDER_TOOL_BUDGET = 5
+# The skeptic starts this long after the broad segment, so its first call can reuse the packet prefix
+# the broad call has just cached instead of both paying for it in full.
+FINDER_STAGGER_SECONDS = 8
 VERIFIER_TOOL_BUDGET = 5
 # Each agent also has a tool-output budget, since every later turn resends its tool results.
 # Verifiers get their own, so finders can never starve verification.
@@ -519,10 +528,31 @@ def diff_for_path(base, path):
     )
 
 
+def packet_context_lines(path):
+    if DOCS_PATH_RE.search(path):
+        return DOCS_CONTEXT_LINES
+    if TEST_PATH_RE.search(path):
+        return TEST_CONTEXT_LINES
+    return DIFF_CONTEXT_LINES
+
+
+def packet_diff(base, paths):
+    """The patch as the packet shows it: code with full context, docs and tests with less."""
+    groups = {}
+    for path in paths:
+        groups.setdefault(packet_context_lines(path), []).append(path)
+    return redact_for_model(
+        "".join(
+            run_git_raw(diff_command(base, "--find-renames", f"--unified={lines}", paths=group))
+            for lines, group in groups.items()
+        )
+    )
+
+
 def build_file_context(base, files):
     sections = []
     for path in files:
-        patch = diff_for_path(base, path)
+        patch = packet_diff(base, [path])
         if not patch:
             continue
         if len(patch) <= MAX_FILE_PATCH_CHARS:
@@ -543,17 +573,9 @@ def build_review_packet(base, mode, focus_files=None, include_full_patch=True):
     files = changed_files(base)
     context_files = focus_files or files
     if focus_files is None or include_full_patch:
-        patch = (
-            redact_for_model(
-                run_git_raw(
-                    diff_command(base, "--find-renames", f"--unified={DIFF_CONTEXT_LINES}", paths=files)
-                )
-            )
-            if files
-            else ""
-        )
+        patch = packet_diff(base, files) if files else ""
     else:
-        patch = "\n".join(diff_for_path(base, path) for path in focus_files)
+        patch = packet_diff(base, focus_files)
     # Send the diff once: whole when it fits, otherwise per file, since every agent turn resends it.
     if len(patch) <= MAX_SECTION_CHARS:
         patch_body = patch
@@ -729,6 +751,7 @@ class ReviewRun:
     files: frozenset
     deadline: float
     pipeline: str = PIPELINES[0]
+    cache_key: str = ""
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -950,12 +973,28 @@ def chat(ctx, role, messages, tools, tool_choice):
     }
     if settings["effort"]:
         request["reasoning_effort"] = settings["effort"]
+    if ctx.cache_key:
+        # One key per review keeps its requests, which share long prefixes, on the same cache.
+        request["extra_body"] = {"prompt_cache_key": ctx.cache_key}
+    started = time.monotonic()
     response = ctx.client.chat.completions.create(**request)
+    usage = getattr(response, "usage", None)
     with ctx.lock:
         totals = ctx.stats["roles"][role]
         totals["model"] = settings["model"]
         totals["model_calls"] += 1
-        add_usage(totals, getattr(response, "usage", None))
+        add_usage(totals, usage)
+    # request_chars lets the provider's token counts be compared with what was actually sent.
+    print(
+        f"Dottore call: role={role}; messages={len(messages)}; "
+        f"request_chars={len(json.dumps([messages, tools], ensure_ascii=False))}; "
+        f"prompt_tokens={usage_value(usage, 'prompt_tokens')}; "
+        f"cached_tokens={usage_value(usage, 'prompt_tokens_details', 'cached_tokens')}; "
+        f"completion_tokens={usage_value(usage, 'completion_tokens')}; "
+        f"reasoning_tokens={usage_value(usage, 'completion_tokens_details', 'reasoning_tokens')}; "
+        f"elapsed_s={time.monotonic() - started:.1f}",
+        flush=True,
+    )
     return response.choices[0].message
 
 
@@ -1073,9 +1112,16 @@ def finder_instructions(role):
         "settle a concrete suspicion that depends on code outside the packet, fetching just what it needs; "
         "do not browse, and when the packet is enough, submit without any tool calls. You have at most "
         f"{FINDER_TOOL_BUDGET} tool calls and {FINDER_TOOL_CHARS} characters of tool output, and repeating a "
-        f"call returns nothing new. Guidance is listed by heading in the selected guidance index; read_file "
+        f"call returns nothing new. Docs and test changes are shown with only {TEST_CONTEXT_LINES} or fewer "
+        "unchanged lines around them; file_diff shows a file with more. Guidance is listed by heading in "
+        "the selected guidance index; read_file "
         f"only the sections that bear on a suspicion. {FINDING_RULES} Finish by calling submit_findings."
     )
+
+
+def staggered(delay, function, *args):
+    time.sleep(delay)
+    return function(*args)
 
 
 def run_finders(ctx, packets, pool):
@@ -1084,6 +1130,8 @@ def run_finders(ctx, packets, pool):
         (
             role,
             pool.submit(
+                staggered,
+                FINDER_STAGGER_SECONDS * FINDER_ROLES.index(role),
                 run_agent,
                 ctx,
                 role,
@@ -2887,6 +2935,7 @@ def produce_review(args):
             files=frozenset(files),
             deadline=stats["started_at"] + REVIEW_DEADLINE_SECONDS,
             pipeline=review_pipeline(),
+            cache_key=f"dottore-{os.environ.get('GITHUB_REPOSITORY', 'local')}-{pr_num or head_sha[:12]}",
         )
         with ThreadPoolExecutor(max_workers=review_concurrency()) as pool:
             review_obj = agentic_review(ctx, packets, effective_mode, pool)
