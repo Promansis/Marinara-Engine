@@ -54,8 +54,20 @@ FIRST_CALL_TIMEOUT = 180
 # Caps one attempt that keeps streaming; such an attempt is not retried.
 MODEL_STREAM_LIMIT = 900
 MODEL_MAX_RETRIES = 1
-REVIEW_ROLES = ("broad", "skeptic", "verify")
+REVIEW_ROLES = ("trace", "broad", "skeptic", "verify")
 FINDER_ROLES = ("broad", "skeptic")
+# A cheaper model traces the diff's blast radius before the finders run; the code quotes what it picks.
+# ponytail: lab default for the tracer A/B; DOTTORE_MODELS "trace" overrides it until it earns a setting.
+TRACE_MODEL = {"model": "gpt-6-luna", "effort": "high"}
+TRACE_TOOL_BUDGET = 12
+TRACE_TOOL_CHARS = 48_000
+MAX_TRACE_SEEDS = 40
+MAX_SEED_HITS_PER_NAME = 10
+MAX_SEED_CHARS = 12_000
+MAX_TRACE_LOCATIONS = 12
+MAX_TRACE_LOCATION_LINES = 60
+MAX_BLAST_RADIUS_CHARS = 24_000
+CODE_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".rs", ".go", ".java", ".kt", ".swift")
 SEGMENT_LABELS = {
     "broad": "Broad segment",
     "skeptic": "Skeptical segment",
@@ -219,16 +231,18 @@ def read_text(path, limit=MAX_SECTION_CHARS):
     return truncate(p.read_text(encoding="utf-8", errors="replace"), limit)
 
 
-def search_repo(pattern):
+def search_repo(pattern, code=False):
+    """Literal search; code=True matches whole identifiers in code files, sorted by path so the tracer's seeds repeat."""
     if not pattern or len(pattern) > 120:
         return "refused: search pattern must be 1-120 characters"
     if not shutil.which("rg"):
-        return search_repo_with_python(pattern)
+        return search_repo_with_python(pattern, code)
     rg = run(
         [
             "rg",
             "--fixed-strings",
             "--line-number",
+            *(["--word-regexp", "--sort=path", "--glob", "*.{" + ",".join(s[1:] for s in CODE_SUFFIXES) + "}"] if code else []),
             "--glob",
             "!node_modules",
             "--glob",
@@ -262,8 +276,9 @@ def search_repo(pattern):
     return "\n".join(lines) or "no matches"
 
 
-def search_repo_with_python(pattern):
+def search_repo_with_python(pattern, code=False):
     hits = []
+    whole = re.compile(rf"(?<!\w){re.escape(pattern)}(?!\w)")
     ignored_parts = {
         ".git",
         "node_modules",
@@ -274,12 +289,12 @@ def search_repo_with_python(pattern):
         "coverage",
         "playwright-report",
     }
-    for path in REPO_ROOT.rglob("*"):
+    for path in sorted(REPO_ROOT.rglob("*")) if code else REPO_ROOT.rglob("*"):
         if len(hits) >= MAX_SEARCH_HITS:
             break
         if any(part in ignored_parts for part in path.parts):
             continue
-        if not path.is_file():
+        if not path.is_file() or (code and not path.name.endswith(CODE_SUFFIXES)):
             continue
         try:
             if path.stat().st_size > MAX_SEARCH_FILE_BYTES:
@@ -293,7 +308,7 @@ def search_repo_with_python(pattern):
         if "\0" in text[:8_000]:
             continue
         for line_no, line in enumerate(text.splitlines(), 1):
-            if pattern in line and len(line) <= MAX_SEARCH_LINE_CHARS:
+            if (whole.search(line) if code else pattern in line) and len(line) <= MAX_SEARCH_LINE_CHARS:
                 hits.append(f"{rel}:{line_no}: {line.strip()[:220]}")
                 if len(hits) >= MAX_SEARCH_HITS:
                     break
@@ -695,13 +710,15 @@ def role_models():
         role in REVIEW_ROLES and isinstance(value, dict) for role, value in overrides.items()
     ):
         raise ValueError(
-            'DOTTORE_MODELS must map "broad", "skeptic" or "verify" to {"provider", "model", "effort"} objects.'
+            'DOTTORE_MODELS must map "trace", "broad", "skeptic" or "verify" to {"provider", "model", "effort"} objects.'
         )
+    defaults = {role: {"model": default_model, "effort": default_effort} for role in REVIEW_ROLES}
+    defaults["trace"] = TRACE_MODEL
     models = {
         role: {
             "provider": str(overrides.get(role, {}).get("provider") or default_provider).strip().lower(),
-            "model": str(overrides.get(role, {}).get("model") or default_model).strip(),
-            "effort": str(overrides.get(role, {}).get("effort") or default_effort).strip(),
+            "model": str(overrides.get(role, {}).get("model") or defaults[role]["model"]).strip(),
+            "effort": str(overrides.get(role, {}).get("effort") or defaults[role]["effort"]).strip(),
         }
         for role in REVIEW_ROLES
     }
@@ -1306,6 +1323,225 @@ def run_finders(ctx, packets, pool):
         for _, future in jobs:
             future.cancel()
         raise
+
+
+# ponytail: line-based declaration patterns, not a parser. An unnamed callback or an unusual signature
+# yields no seed, and the tracer still has the diff and its tools; move to tree-sitter if seeds miss.
+NAMED_BLOCK_RES = (
+    re.compile(r"\b(?:function\*?|class|def)\s+([A-Za-z_$][\w$]*)"),
+    re.compile(
+        r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(?:async\s+)?(?:function\b|"
+        r"(?:React\.)?use(?:Callback|Memo)\(|(?:\([^()]*\)|[A-Za-z_$][\w$]*)\s*(?::[^=]+?)?=>|\([^()]*$)"
+    ),
+    # Object-literal and class methods; their callers reach them through an object, so search the repo.
+    re.compile(r"^\s*([A-Za-z_$][\w$]*)\s*:\s*(?:async\s+)?(?:function\b|\([^()]*\)\s*(?::[^=]+?)?=>)"),
+    re.compile(
+        r"^\s*(?:(?:export|default|public|private|protected|static|async|readonly|override|get|set)\s+)*"
+        r"\*?([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\((?!.*\bfunction\b)[^=]*\)\s*(?::[^{=]+)?\{\s*$"
+    ),
+)
+DECLARED_RE = re.compile(
+    r"\b(?:const|let|var|function\*?|class|def)\s+([A-Za-z_$][\w$]*)"
+    r"|^\s*(?:export\s+)?(?:declare\s+)?(?:interface|type|enum)\s+([A-Za-z_$][\w$]*)"
+)
+TEST_PATH_RE = re.compile(r"(^|/)(tests?|e2e|__tests__|regressions?)/|\.(test|spec|regression|e2e)\.")
+NOT_NAMES = {"if", "for", "while", "switch", "catch", "return", "function", "else", "do", "try", "with", "new", "constructor"}
+
+
+def enclosing_block(lines, number):
+    """The named function, method or class whose declaration encloses a line, by indentation: (name, line, kind, text)."""
+    limit = None
+    for index in range(number - 1, -1, -1):
+        text = lines[index]
+        stripped = text.strip()
+        depth = len(text) - len(text.lstrip())
+        if not stripped or (limit is not None and depth >= limit):
+            continue
+        for kind, pattern in enumerate(NAMED_BLOCK_RES):
+            match = pattern.search(text)
+            if match and match.group(1) not in NOT_NAMES:
+                return match.group(1), index + 1, kind, text
+        # A closing bracket ends a multi-line signature, so the declaration can still be above at this depth.
+        if not stripped.startswith((")", "]", "}")):
+            limit = depth
+    return None
+
+
+def private_name(path, kind, declaration):
+    """True when only its own file can use a name: an unexported JS/TS function or const. Methods and
+    Python names are reached from other files, so those are searched across the repository."""
+    return kind < 2 and "export" not in declaration and not path.endswith(".py")
+
+
+def name_uses(path, name, local, touched):
+    """Whole-word uses of a name outside the diff: in its own file when local, otherwise across the repository."""
+    if local:
+        pattern = re.compile(rf"(?<![\w$]){re.escape(name)}(?![\w$])")
+        hits = [
+            f"{path}:{number}: {line.strip()[:220]}"
+            for number, line in enumerate(head_file_text(path).splitlines(), 1)
+            if pattern.search(line) and len(line) <= MAX_SEARCH_LINE_CHARS
+        ]
+    else:
+        found = search_repo(name, code=True)
+        hits = [] if found == "no matches" or found.startswith("refused:") else found.splitlines()
+    outside = []
+    for hit in hits:
+        hit_path, line_no, _ = hit.split(":", 2)
+        if line_no.isdigit() and int(line_no) in touched.get(hit_path, {}).get("RIGHT", ()):
+            continue
+        outside.append(hit)
+    return outside[:MAX_SEED_HITS_PER_NAME]
+
+
+def trace_seeds(touched):
+    """Where each changed function and each name declared on a changed line is used outside the diff."""
+    blocks = {}
+    declared = {}
+    for path, sides in sorted(touched.items()):
+        if not path.endswith(CODE_SUFFIXES) or not sides["RIGHT"]:
+            continue
+        try:
+            lines = head_file_text(path).splitlines()
+        except Exception:
+            continue
+        for number in sorted(sides["RIGHT"]):
+            if number > len(lines):
+                continue
+            text = lines[number - 1]
+            # Only module-level names: a local's uses sit in its enclosing block, and a file-wide search
+            # for a short local name such as `start` mostly finds unrelated variables.
+            if not text[:1].isspace() and not text.startswith(("//", "*", "/*", "#")):
+                for match in DECLARED_RE.finditer(text):
+                    declared.setdefault((path, match.group(1) or match.group(2)), (number, private_name(path, 0, text)))
+            block = enclosing_block(lines, number)
+            if block:
+                name, line, kind, decl = block
+                blocks.setdefault((path, name), (line, private_name(path, kind, decl)))
+    seeds = [(key, value, "changed lines inside it") for key, value in blocks.items()]
+    seeds += [(key, value, "declared on a changed line") for key, value in declared.items() if key not in blocks]
+    # Production code first, so the seed limit trims tests.
+    seeds.sort(key=lambda seed: bool(TEST_PATH_RE.search(seed[0][0])))
+    sections = []
+    for (path, name), (line, local), why in seeds[:MAX_TRACE_SEEDS]:
+        uses = [hit for hit in name_uses(path, name, local, touched) if not hit.startswith(f"{path}:{line}:")]
+        scope = "uses in this file" if local else "uses in the repository"
+        sections.append(
+            f"### {name} ({why}; declared at {path}:{line}; {scope})\n"
+            + ("\n".join(uses) or "Every use is inside the diff.")
+        )
+    return truncate("\n\n".join(sections), MAX_SEED_CHARS), len(seeds)
+
+
+SUBMIT_TRACE = function_tool(
+    "submit_trace",
+    "Submit the code ranges the reviewers need beyond the diff. This ends the trace.",
+    {
+        "locations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": PATH_PARAM,
+                    **LINE_RANGE,
+                    "symbol": {"type": "string", "description": "The changed function or value this range connects to."},
+                    "connection": {
+                        "type": "string",
+                        "description": "One factual sentence on how this code uses, feeds or constrains the change.",
+                    },
+                },
+                "required": ["path", "start", "end", "symbol", "connection"],
+            },
+        },
+    },
+    ["locations"],
+)
+TRACE_SYSTEM = (
+    "You trace the blast radius of a pull request for the reviewers who read it after you. They see the diff; "
+    "you find the code outside the diff that decides whether the change is correct. Do not judge the change "
+    "or describe bugs; the reviewers do that.\n\n"
+    "Work from the seeds, which list where each changed function, and each name declared on a changed line, "
+    "is used outside the diff. For each changed behavior:\n"
+    "1. Read the call sites and consumers that depend on what changed.\n"
+    "2. At each one, follow the values the changed result is combined with (the other operands of a condition, "
+    "the filters or sets applied beside it, the arguments passed with it) back to where they are produced: "
+    "search for the definition, then read_file its lines.\n"
+    "3. Find where the inputs the changed code now relies on come from, and any parallel path that handles "
+    "the same data but did not change.\n\n"
+    f"Batch independent reads in one turn; you have at most {TRACE_TOOL_BUDGET} tool calls. Finish by calling "
+    f"submit_trace with at most {MAX_TRACE_LOCATIONS} ranges at the PR head, at most "
+    f"{MAX_TRACE_LOCATION_LINES} lines each, most important first. Prefer code the diff does not show, and give "
+    "each range one factual sentence on how it connects to the change."
+)
+BLAST_RADIUS_NOTE = (
+    "Code outside the diff that the change uses or affects, chosen by a tracer model and quoted verbatim from "
+    "the PR head at the cited lines. Each heading names the changed symbol it connects to and how. The tracer "
+    "did not judge the change; treat this as evidence, not as findings."
+)
+
+
+def quote_trace(locations):
+    """Quote each traced range from the PR head; the tracer's own words supply only the heading."""
+    sections = []
+    quoted = []
+    for location in locations[:MAX_TRACE_LOCATIONS]:
+        if not isinstance(location, dict):
+            continue
+        try:
+            path = tool_path(location.get("path"))
+            start = max(1, int(location.get("start") or 1))
+            end = min(max(start, int(location.get("end") or start)), start + MAX_TRACE_LOCATION_LINES - 1)
+            lines = numbered_lines(head_file_text(path), start, end)
+        except Exception as exc:
+            print(f"Dottore trace: skipped {location.get('path')}: {error_text(exc)}", flush=True)
+            continue
+        if f"{path}:{start}-{end}" in quoted or lines.startswith("No lines in that range"):
+            continue
+        quoted.append(f"{path}:{start}-{end}")
+        symbol = " ".join(str(location.get("symbol") or "").split())[:120]
+        connection = " ".join(str(location.get("connection") or "").split())[:300]
+        sections.append(f"## {path}:{start}-{end} ({symbol}): {connection}\n```text\n{redact_for_model(lines)}\n```")
+    return truncate("\n\n".join(sections), MAX_BLAST_RADIUS_CHARS), quoted
+
+
+def trace_blast_radius(ctx):
+    """Stage 0: a cheaper model maps the code outside the diff that the change touches; the code quotes it."""
+    files = sorted(ctx.files)
+    if not any(path.endswith(CODE_SUFFIXES) for path in files):
+        print("Dottore trace: skipped; no changed code", flush=True)
+        return ""
+    try:
+        seeds, seed_count = trace_seeds(touched_lines(ctx.base))
+        patch = truncate(
+            redact_for_model(run_git_raw(diff_command(ctx.base, "--find-renames", "--unified=3", paths=files))),
+            MAX_SECTION_CHARS,
+        )
+        submitted = run_agent(
+            ctx,
+            "trace",
+            [
+                {"role": "system", "content": TRACE_SYSTEM},
+                {
+                    "role": "user",
+                    "content": f"# Changed files\n{chr(10).join(files)}\n\n# Seeds\n{seeds or 'No named changes found.'}"
+                    f"\n\n# Diff\n```diff\n{patch}\n```",
+                },
+            ],
+            SUBMIT_TRACE,
+            TRACE_TOOL_BUDGET,
+            TRACE_TOOL_CHARS,
+        )
+    except Exception as exc:
+        print(f"Dottore trace failed: {error_text(exc)}", flush=True)
+        return ""
+    locations = as_list(submitted.get("locations"))
+    section, quoted = quote_trace(locations)
+    print(
+        f"Dottore trace: seeds={seed_count}; seed_chars={len(seeds)}; locations={len(locations)}; "
+        f"section_chars={len(section)}; quoted={', '.join(quoted) or 'none'}",
+        flush=True,
+    )
+    return section
 
 
 def as_list(value):
@@ -2843,6 +3079,10 @@ def produce_review(args):
             deadline=stats["started_at"] + REVIEW_DEADLINE_SECONDS,
             cache_key=f"dottore-{os.environ.get('GITHUB_REPOSITORY', 'local')}-{pr_num or head_sha[:12]}",
         )
+        # ponytail: one trace covers every chunk and is appended to each; trace per chunk if large PRs need it.
+        blast_radius = trace_blast_radius(ctx)
+        if blast_radius:
+            packets = [f"{packet}\n\n# Blast Radius\n{BLAST_RADIUS_NOTE}\n\n{blast_radius}" for packet in packets]
         with ThreadPoolExecutor(max_workers=review_concurrency()) as pool:
             review_obj = agentic_review(ctx, packets, effective_mode, pool)
     except Exception as exc:
