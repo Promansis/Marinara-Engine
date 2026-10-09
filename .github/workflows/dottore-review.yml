@@ -42,6 +42,10 @@ on:
         required: true
       LLM_BASE_URL:
         required: false
+      ANTHROPIC_API_KEY:
+        required: false
+      ANTHROPIC_BASE_URL:
+        required: false
 
 permissions:
   contents: read
@@ -144,12 +148,13 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+          # Model settings; .github/dottore-review/README.md describes each one.
+          DOTTORE_PROVIDER: ${{ vars.DOTTORE_PROVIDER }}
           LLM_MODEL: ${{ vars.DOTTORE_MODEL || 'gpt-5.5' }}
           DOTTORE_REASONING_EFFORT: ${{ vars.DOTTORE_REASONING_EFFORT }}
-          # Optional JSON giving the broad, skeptic, lead, scout and verify roles their own model and effort.
           DOTTORE_MODELS: ${{ vars.DOTTORE_MODELS }}
-          # Optional finding pipeline: "segments" (default), "lead" or "leads".
-          DOTTORE_PIPELINE: ${{ vars.DOTTORE_PIPELINE }}
           DOTTORE_CONCURRENCY: ${{ vars.DOTTORE_CONCURRENCY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python /tmp/dottore-review-tool/dottore_review.py produce
