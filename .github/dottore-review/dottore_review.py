@@ -69,6 +69,12 @@ MAX_SEED_CHARS = 12_000
 MAX_TRACE_LOCATIONS = 12
 MAX_TRACE_LOCATION_LINES = 60
 MAX_BLAST_RADIUS_CHARS = 24_000
+# Definitions of the local values the change reads, quoted by code so the finders always see them.
+MAX_DEFINITIONS = 40
+MAX_DEFINITION_LINES = 8
+MAX_DEFINITION_CHARS = 10_000
+DEFINITION_HOPS = 2
+SITE_LINES_AFTER = 2
 CODE_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".rs", ".go", ".java", ".kt", ".swift")
 SEGMENT_LABELS = {
     "broad": "Broad segment",
@@ -1372,9 +1378,11 @@ TEST_PATH_RE = re.compile(r"(^|/)(tests?|e2e|__tests__|regressions?)/|\.(test|sp
 NOT_NAMES = {"if", "for", "while", "switch", "catch", "return", "function", "else", "do", "try", "with", "new", "constructor"}
 
 
-def enclosing_block(lines, number):
-    """The named function, method or class whose declaration encloses a line, by indentation: (name, line, kind, text)."""
-    limit = None
+def enclosing_block(lines, number, limit=None):
+    """The named function, method or class whose declaration encloses a line, by indentation: (name, line, kind, text).
+
+    With limit, only a declaration indented less than limit counts, which finds the block around a declaration.
+    """
     for index in range(number - 1, -1, -1):
         text = lines[index]
         stripped = text.strip()
@@ -1447,14 +1455,119 @@ def trace_seeds(touched):
     # Production code first, so the seed limit trims tests.
     seeds.sort(key=lambda seed: bool(TEST_PATH_RE.search(seed[0][0])))
     sections = []
+    sites = []
     for (path, name), (line, local), why in seeds[:MAX_TRACE_SEEDS]:
         uses = [hit for hit in name_uses(path, name, local, touched) if not hit.startswith(f"{path}:{line}:")]
+        sites += [(hit_path, int(line_no)) for hit_path, line_no, _ in (hit.split(":", 2) for hit in uses) if line_no.isdigit()]
         scope = "uses in this file" if local else "uses in the repository"
         sections.append(
             f"### {name} ({why}; declared at {path}:{line}; {scope})\n"
             + ("\n".join(uses) or "Every use is inside the diff.")
         )
-    return truncate("\n\n".join(sections), MAX_SEED_CHARS), len(seeds)
+    return truncate("\n\n".join(sections), MAX_SEED_CHARS), len(seeds), sites
+
+
+# ponytail: simple `const|let|var name =` declarations only, scoped to the nearest earlier one at the same or
+# lower indentation that sits at module level or in a named function enclosing the reader. Destructuring and
+# shadowing in an unnamed sibling block are missed or misread; a language server would resolve them properly.
+VALUE_DECL_RE = re.compile(r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=(?![=>])")
+READ_NAME_RE = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]{2,})")
+
+
+def statement_end(lines, start):
+    """The last line of the statement starting at a 1-based line, by bracket balance, within MAX_DEFINITION_LINES."""
+    last = min(len(lines), start + MAX_DEFINITION_LINES - 1)
+    depth = 0
+    for number in range(start, last + 1):
+        text = lines[number - 1]
+        depth += sum(text.count(char) for char in "([{") - sum(text.count(char) for char in ")]}")
+        if depth <= 0:
+            return number
+    return last
+
+
+def enclosing_chain(lines, number):
+    """Declaration lines of every named block enclosing a line, innermost first."""
+    chain = []
+    block = enclosing_block(lines, number)
+    while block:
+        chain.append(block[1])
+        depth = len(block[3]) - len(block[3].lstrip())
+        block = enclosing_block(lines, block[1] - 1, limit=depth) if depth and block[1] > 1 else None
+    return chain
+
+
+def value_definitions(touched, sites):
+    """Quote where each local value read at the change is defined, then where that definition's inputs are.
+
+    The change is read on its changed lines and at the call sites of changed functions, where a condition
+    often continues on the next lines. A bug there can sit in how a value it combines with was built, such
+    as a set filtered for a whole audience, which the diff names but does not show.
+    """
+    readers = {}
+    for path, sides in touched.items():
+        readers.setdefault(path, []).extend(sorted(sides["RIGHT"]))
+    for path, line in sites:
+        readers.setdefault(path, []).extend(range(line, line + SITE_LINES_AFTER + 1))
+    found = []
+    for path, numbers in sorted(readers.items()):
+        if not path.endswith(CODE_SUFFIXES) or TEST_PATH_RE.search(path):
+            continue
+        try:
+            lines = head_file_text(path).splitlines()
+        except Exception:
+            continue
+        declared = {}
+        for number, text in enumerate(lines, 1):
+            match = VALUE_DECL_RE.match(text)
+            if match:
+                declared.setdefault(match.group(1), []).append((number, len(text) - len(text.lstrip())))
+        owners = {}
+
+        def owner(line):
+            if line not in owners:
+                block = enclosing_block(lines, line - 1, limit=len(lines[line - 1]) - len(lines[line - 1].lstrip())) if line > 1 else None
+                owners[line] = block[1] if block else None
+            return owners[line]
+
+        changed = touched.get(path, {}).get("RIGHT", set())
+        # The packet's diff already shows these lines, so a definition here is followed but not quoted again.
+        shown = {line + offset for line in changed for offset in range(-DIFF_CONTEXT_LINES, DIFF_CONTEXT_LINES + 1)}
+        visited = set()
+        frontier = [(number, 1) for number in dict.fromkeys(numbers) if number <= len(lines)]
+        while frontier:
+            number, hop = frontier.pop(0)
+            text = lines[number - 1]
+            indent = len(text) - len(text.lstrip())
+            # A definition counts only at module level or inside a function that encloses the reader;
+            # otherwise the name is a parameter, and an earlier function's variable of that name is unrelated.
+            scopes = {None, *enclosing_chain(lines, number)}
+            for name in dict.fromkeys(READ_NAME_RE.findall(text.split("//")[0])):
+                earlier = [
+                    line
+                    for line, depth in declared.get(name, ())
+                    if line < number and depth <= indent and owner(line) in scopes
+                ]
+                if not earlier or (start := max(earlier)) in visited:
+                    continue
+                visited.add(start)
+                end = statement_end(lines, start)
+                if start not in shown:
+                    found.append((path, start, end, name, number))
+                if hop < DEFINITION_HOPS:
+                    frontier += [(line, hop + 1) for line in range(start, end + 1)]
+    sections = [
+        f"## {path}:{start}-{end} (`{name}`, read at line {read_at})\n```text\n"
+        + redact_for_model(numbered_lines(head_file_text(path), start, end))
+        + "\n```"
+        for path, start, end, name, read_at in found[:MAX_DEFINITIONS]
+    ]
+    print(
+        f"Dottore definitions: found={len(found)}; quoted="
+        + (", ".join(f"{path}:{start}-{end}({name})" for path, start, end, name, _ in found[:MAX_DEFINITIONS]) or "none"),
+        flush=True,
+    )
+    return truncate("\n\n".join(sections), MAX_DEFINITION_CHARS)
 
 
 SUBMIT_TRACE = function_tool(
@@ -1502,6 +1615,11 @@ BLAST_RADIUS_NOTE = (
     "the PR head at the cited lines. Each heading names the changed symbol it connects to and how. The tracer "
     "did not judge the change; treat this as evidence, not as findings."
 )
+DEFINITIONS_NOTE = (
+    "Where local values read by the changed lines, or at call sites of changed functions, are defined, and "
+    "where those definitions' inputs are defined, quoted by code from the PR head. Each heading names the "
+    "value and the line that reads it. This is evidence, not findings."
+)
 
 
 def quote_trace(locations):
@@ -1529,13 +1647,20 @@ def quote_trace(locations):
 
 
 def trace_blast_radius(ctx):
-    """Stage 0: a cheaper model maps the code outside the diff that the change touches; the code quotes it."""
+    """Stage 0: code quotes the definitions the change reads, then a cheaper model maps the code outside the
+    diff that the change touches, which code quotes too. Returns the packet sections to append."""
     files = sorted(ctx.files)
     if not any(path.endswith(CODE_SUFFIXES) for path in files):
         print("Dottore trace: skipped; no changed code", flush=True)
         return ""
     try:
-        seeds, seed_count = trace_seeds(touched_lines(ctx.base))
+        touched = touched_lines(ctx.base)
+        seeds, seed_count, sites = trace_seeds(touched)
+        try:
+            definitions = value_definitions(touched, sites)
+        except Exception as exc:
+            print(f"Dottore definitions failed: {error_text(exc)}", flush=True)
+            definitions = ""
         patch = truncate(
             redact_for_model(run_git_raw(diff_command(ctx.base, "--find-renames", "--unified=3", paths=files))),
             MAX_SECTION_CHARS,
@@ -1567,7 +1692,12 @@ def trace_blast_radius(ctx):
         f"section_chars={len(section)}; quoted={', '.join(quoted) or 'none'}",
         flush=True,
     )
-    return section
+    sections = []
+    if definitions:
+        sections.append(f"# Value Definitions\n{DEFINITIONS_NOTE}\n\n{definitions}")
+    if section:
+        sections.append(f"# Blast Radius\n{BLAST_RADIUS_NOTE}\n\n{section}")
+    return "\n\n".join(sections)
 
 
 def as_list(value):
@@ -3108,7 +3238,7 @@ def produce_review(args):
         # ponytail: one trace covers every chunk and is appended to each; trace per chunk if large PRs need it.
         blast_radius = trace_blast_radius(ctx)
         if blast_radius:
-            packets = [f"{packet}\n\n# Blast Radius\n{BLAST_RADIUS_NOTE}\n\n{blast_radius}" for packet in packets]
+            packets = [f"{packet}\n\n{blast_radius}" for packet in packets]
         with ThreadPoolExecutor(max_workers=review_concurrency()) as pool:
             review_obj = agentic_review(ctx, packets, effective_mode, pool)
     except Exception as exc:
