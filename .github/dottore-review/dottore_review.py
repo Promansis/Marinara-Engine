@@ -32,11 +32,12 @@ MAX_SEARCH_HITS = 30
 # fallback still skips files over MAX_SEARCH_FILE_BYTES.
 MAX_SEARCH_FILE_BYTES = 5_000_000
 MAX_SEARCH_LINE_CHARS = 1_000
-MAX_IDENTIFIER_CONTEXT_CHARS = 60_000
-MAX_IDENTIFIER_TERMS = 24
-MAX_IDENTIFIER_HITS_PER_TERM = 12
-# Agents read_file for wider context, so the diff carries only nearby lines.
-DIFF_CONTEXT_LINES = 25
+# Every finder turn resends the packet, so it carries the change, a few nearby lines and a short
+# usage sample; agents read_file and search_repo for more. Wider context mostly diluted the change.
+MAX_IDENTIFIER_CONTEXT_CHARS = 12_000
+MAX_IDENTIFIER_TERMS = 12
+MAX_IDENTIFIER_HITS_PER_TERM = 6
+DIFF_CONTEXT_LINES = 8
 MAX_FILE_PATCH_CHARS = 55_000
 MAX_FILE_SUMMARY_CHARS = 9_000
 MAX_REVIEW_CHUNKS = 8
@@ -382,7 +383,8 @@ def excluded_path(path):
     return any(fnmatch.fnmatchcase(path, pattern) for pattern in load_rules().get("exclude_paths", []))
 
 
-def changed_files(base):
+def changed_files(base, excluded=False):
+    """Changed paths the review reads, or with excluded=True the changed paths rules.json excludes."""
     names = run_git(["diff", "--find-renames", "--name-status", f"{base}...HEAD"])
     patterns = load_rules().get("exclude_paths", [])
     paths = []
@@ -391,7 +393,7 @@ def changed_files(base):
         if len(fields) < 2:
             continue
         changed = fields[1:] if fields[0].startswith("R") else fields[1:2]
-        if not any(fnmatch.fnmatchcase(path, pattern) for path in changed for pattern in patterns):
+        if any(fnmatch.fnmatchcase(path, pattern) for path in changed for pattern in patterns) == excluded:
             paths.extend(changed)
     return list(dict.fromkeys(paths))
 
@@ -579,6 +581,11 @@ def build_review_packet(base, mode, focus_files=None, include_full_patch=True):
         ("merge base", run_git(["merge-base", "HEAD", base], 4_000)),
         ("diff stat", run_git(diff_command(base, "--stat", paths=files), 20_000) if files else "No included changes."),
         ("changed files", "\n".join(files) or "No changed files reported."),
+        # Listed so a finder does not mistake an excluded file, such as a rebuilt bundle, for one the PR forgot.
+        (
+            "changed but excluded from review (generated or excluded by the review rules; not shown)",
+            "\n".join(changed_files(base, excluded=True)) or "None.",
+        ),
         ("numstat", run_git(diff_command(base, "--numstat", paths=files), 20_000) if files else "No included changes."),
         ("focus files", "\n".join(context_files) or "All changed files."),
         # Rules and guidance precede the diff so the packet limit trims the diff, not them.
