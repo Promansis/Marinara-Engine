@@ -59,6 +59,7 @@ FINDER_ROLES = ("broad", "skeptic")
 # A cheaper model traces the diff's blast radius before the finders run; the code quotes what it picks.
 # ponytail: lab default for the tracer A/B; DOTTORE_MODELS "trace" overrides it until it earns a setting.
 TRACE_MODEL = {"model": "gpt-6-luna", "effort": "high"}
+TRACE_RETRY_DELAYS = (15, 45)
 TRACE_TOOL_BUDGET = 12
 TRACE_TOOL_CHARS = 48_000
 MAX_TRACE_SEEDS = 40
@@ -1124,26 +1125,44 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
     return message, usage
 
 
+def transient_error(exc):
+    """A gateway error worth retrying: unavailable, overloaded, rate limited, or a dropped connection.
+
+    A gateway can report these inside the reply stream, as a bare APIError the client never retries.
+    """
+    if isinstance(exc, StreamStalled):
+        return True
+    import openai
+
+    if isinstance(exc, openai.APIStatusError):
+        return exc.status_code == 429 or exc.status_code >= 500
+    return isinstance(exc, openai.APIError)
+
+
 def chat(ctx, role, messages, tools, tool_choice):
     settings = ctx.models[role]
     first_call = not any(message.get("role") == "assistant" for message in messages)
     read_timeout = FIRST_CALL_TIMEOUT if first_call else MODEL_REQUEST_TIMEOUT
     reply = claude_reply if settings["provider"] == "anthropic" else openai_reply
     # The client retries a request that fails before its stream opens; this retries one that stalls after.
-    for attempt in range(MODEL_MAX_RETRIES + 1):
+    # The tracer also waits out transient gateway errors, since a review without its trace tests nothing.
+    delays = TRACE_RETRY_DELAYS if role == "trace" else (0,) * MODEL_MAX_RETRIES
+    for attempt in range(len(delays) + 1):
         started = time.monotonic()
         timing = {}
         try:
             message, usage = reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing)
             break
-        except StreamStalled as exc:
+        except Exception as exc:
+            retry = isinstance(exc, StreamStalled) or (role == "trace" and transient_error(exc))
+            if not retry or attempt == len(delays):
+                raise
             print(
                 f"Dottore call retry: role={role}; attempt={attempt + 1}; after_s={time.monotonic() - started:.1f}; "
-                f"{exc}",
+                f"wait_s={delays[attempt]}; {error_text(exc)}",
                 flush=True,
             )
-            if attempt == MODEL_MAX_RETRIES:
-                raise
+            time.sleep(delays[attempt])
     with ctx.lock:
         totals = ctx.stats["roles"][role]
         totals["model"] = settings["model"]
@@ -1532,8 +1551,10 @@ def trace_blast_radius(ctx):
             TRACE_TOOL_CHARS,
         )
     except Exception as exc:
+        # ponytail: the lab A/B stops here, since a review without the trace tests nothing and still costs
+        # the finders; a shipped tracer would log this and review without the section instead.
         print(f"Dottore trace failed: {error_text(exc)}", flush=True)
-        return ""
+        raise RuntimeError(f"The blast-radius tracer failed, so the review stopped: {error_text(exc)}") from exc
     locations = as_list(submitted.get("locations"))
     section, quoted = quote_trace(locations)
     print(
