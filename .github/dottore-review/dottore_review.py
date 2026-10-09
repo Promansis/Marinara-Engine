@@ -1235,12 +1235,7 @@ FINDER_FOCUS = {
         "introduced by the diff: data collected in a pre-scan but persisted after later filters, parent "
         "metadata derived from rows that are not imported as children, fallback behavior that diverges "
         "from validation, rollback paths, partial writes, contract drift, and tests that prove only the "
-        "happy path. When the diff changes a default, threshold, weight, scale, scope filter or "
-        "classifying predicate, follow it to where it combines with other values and test the boundaries: "
-        "whether the best result each preset or mode can produce still clears a new threshold, whether "
-        "counts, denominators and lookups use the same scope as the items they rank or filter, and whether "
-        "a predicate handles mixed or compound inputs as well as the pure case. Leave nitpicks to the broad "
-        "segment."
+        "happy path. Leave nitpicks to the broad segment."
     ),
 }
 
