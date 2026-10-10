@@ -4,6 +4,7 @@ Dottore reviews pull requests in three roles:
 
 - **`broad`** and **`skeptic`** are the two finders. Each reads the diff and proposes problems.
 - **`verify`** checks every proposed problem against the code before anything is posted.
+- **`scout`** reads code for the finders when they ask, on a cheaper model (`gpt-6-luna` through `responses` by default).
 
 The models and providers that run these roles are set with repository settings, under **Settings → Secrets and variables → Actions**, so changing them needs no code change. A new value applies from the next review. In Marinara-Agents, set them in the Agents repository: its wrapper workflow passes its own secrets and variables to the shared review.
 
@@ -12,7 +13,7 @@ The models and providers that run these roles are set with repository settings, 
 | Variable | What it sets | Default |
 | --- | --- | --- |
 | `DOTTORE_MODEL` | Model for every role | `gpt-5.5` |
-| `DOTTORE_PROVIDER` | API format for every role: `openai` or `anthropic` | `openai` |
+| `DOTTORE_PROVIDER` | API format for every role: `openai` (Chat Completions), `responses` (OpenAI Responses) or `anthropic` | `openai` |
 | `DOTTORE_REASONING_EFFORT` | Reasoning effort for every role, such as `medium`, `high` or `xhigh` | The provider's default |
 | `DOTTORE_MODELS` | Per-role overrides as JSON (see below) | None |
 | `DOTTORE_BASE_REFS` | Comma-separated base branches that get reviewed | `refactor,main,staging` |

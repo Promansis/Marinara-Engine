@@ -63,8 +63,8 @@ FINDER_ROLES = ("broad", "skeptic")
 TRACE_MODEL = {"model": "gpt-6.1-sol", "effort": "medium"}
 # ponytail: lab hypothesis that a cheaper model can do the finders' reading for them, so the strong model
 # reads a short quoted report instead of every file; keep it only if recall holds and cost falls.
-# LinkAPI refuses function tools with reasoning for gpt-6-luna on Chat Completions unless effort is "none".
-SCOUT_MODEL = {"model": "gpt-6-luna", "effort": "none"}
+# LinkAPI refuses function tools with reasoning for gpt-6-luna on Chat Completions, so it uses Responses.
+SCOUT_MODEL = {"provider": "responses", "model": "gpt-6-luna", "effort": "medium"}
 SCOUT_TOOL_BUDGET = 40
 SCOUT_TOOL_CHARS = 160_000
 SCOUT_DEADLINE_SECONDS = 5 * 60
@@ -119,7 +119,7 @@ MAX_GUIDANCE_HEADINGS = 40
 EVIDENCE_WINDOW = 3
 # Each role talks to OpenAI's Chat Completions format or Claude's Messages format; gateways such as
 # LinkAPI serve Claude only through the latter when tools are used.
-PROVIDERS = ("openai", "anthropic")
+PROVIDERS = ("openai", "anthropic", "responses")
 # Claude requires an output cap; it covers thinking and the reply, and every current model allows it.
 CLAUDE_MAX_TOKENS = 32_000
 CACHE_BREAKPOINT = {"type": "ephemeral"}
@@ -751,7 +751,11 @@ def role_models():
     defaults["scout"] = SCOUT_MODEL
     models = {
         role: {
-            "provider": str(overrides.get(role, {}).get("provider") or default_provider).strip().lower(),
+            "provider": str(
+                overrides.get(role, {}).get("provider") or defaults[role].get("provider") or default_provider
+            )
+            .strip()
+            .lower(),
             "model": str(overrides.get(role, {}).get("model") or defaults[role]["model"]).strip(),
             "effort": str(overrides.get(role, {}).get("effort") or defaults[role]["effort"]).strip(),
         }
@@ -767,7 +771,7 @@ def review_clients(models):
     """One client per provider the roles use."""
     providers = {settings["provider"] for settings in models.values()}
     clients = {}
-    if "openai" in providers:
+    if providers & {"openai", "responses"}:
         from openai import OpenAI
 
         clients["openai"] = OpenAI(
@@ -1181,6 +1185,92 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
     return message, usage
 
 
+def responses_input(messages):
+    """Chat Completions messages as Responses instructions and input items. An assistant turn's reasoning
+    goes back before its calls, so the model keeps its train of thought between turns."""
+    instructions, items = [], []
+    for message in messages:
+        role, content = message["role"], message.get("content")
+        if role == "system":
+            instructions.append(content)
+        elif role == "tool":
+            items.append({"type": "function_call_output", "call_id": message["tool_call_id"], "output": content})
+        elif role == "assistant":
+            items.extend(message.get("reasoning_items") or [])
+            if content:
+                items.append({"role": "assistant", "content": content})
+            items.extend(
+                {
+                    "type": "function_call",
+                    "call_id": call["id"],
+                    "name": call["function"]["name"],
+                    "arguments": call["function"]["arguments"],
+                }
+                for call in message.get("tool_calls") or []
+            )
+        elif content:
+            items.append({"role": "user", "content": content})
+    return "\n\n".join(instructions), items
+
+
+def responses_reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing):
+    """One streamed Responses call, returned in the Chat Completions shape the agents use."""
+    import httpx
+    import openai
+
+    instructions, items = responses_input(messages)
+    request = {
+        "model": settings["model"],
+        "input": items,
+        "tools": [{"type": "function", "strict": False, **tool["function"]} for tool in tools],
+        "tool_choice": tool_choice if tool_choice == "auto" else {"type": "function", "name": tool_choice["function"]["name"]},
+        # Nothing is kept on the provider; the encrypted reasoning comes back so the next turn can resend it.
+        "store": False,
+        "include": ["reasoning.encrypted_content"],
+        "stream": True,
+        "timeout": openai.Timeout(read_timeout, connect=30),
+    }
+    if instructions:
+        request["instructions"] = instructions
+    if settings["effort"]:
+        request["reasoning"] = {"effort": settings["effort"]}
+    if ctx.cache_key:
+        request["extra_body"] = {"prompt_cache_key": ctx.cache_key}
+    response = None
+    try:
+        with ctx.clients["openai"].responses.create(**request) as stream:
+            for event in watched(stream, started, timing):
+                if event.type in ("response.completed", "response.incomplete"):
+                    response = event.response
+                elif event.type in ("response.failed", "error"):
+                    detail = getattr(getattr(event, "response", None), "error", None) or getattr(event, "message", "")
+                    raise StreamStalled(f"the response failed: {detail}")
+    except (httpx.TimeoutException, httpx.TransportError) as exc:
+        raise StreamStalled(error_text(exc)) from exc
+    if response is None:
+        raise StreamStalled("the reply stream ended before the response completed")
+    text, calls, reasoning = [], [], []
+    for item in response.output or []:
+        if item.type == "message":
+            text += [part.text for part in item.content or [] if getattr(part, "type", "") == "output_text"]
+        elif item.type == "function_call":
+            calls.append(SimpleNamespace(id=item.call_id, function=SimpleNamespace(name=item.name, arguments=item.arguments)))
+        elif item.type == "reasoning" and getattr(item, "encrypted_content", None):
+            reasoning.append(item.model_dump(exclude_none=True))
+    usage = response.usage
+    prompt = usage_value(usage, "input_tokens")
+    output = usage_value(usage, "output_tokens")
+    usage = {
+        "prompt_tokens": prompt,
+        "completion_tokens": output,
+        "total_tokens": prompt + output,
+        "prompt_tokens_details": {"cached_tokens": usage_value(usage, "input_tokens_details", "cached_tokens")},
+        "completion_tokens_details": {"reasoning_tokens": usage_value(usage, "output_tokens_details", "reasoning_tokens")},
+    }
+    message = SimpleNamespace(content="".join(text) or None, tool_calls=calls or None, reasoning_items=reasoning)
+    return message, usage
+
+
 def transient_error(exc):
     """A gateway error worth retrying: unavailable, overloaded, rate limited, or a dropped connection.
 
@@ -1199,7 +1289,7 @@ def chat(ctx, role, messages, tools, tool_choice):
     settings = ctx.models[role]
     first_call = not any(message.get("role") == "assistant" for message in messages)
     read_timeout = FIRST_CALL_TIMEOUT if first_call else MODEL_REQUEST_TIMEOUT
-    reply = claude_reply if settings["provider"] == "anthropic" else openai_reply
+    reply = {"anthropic": claude_reply, "responses": responses_reply}.get(settings["provider"], openai_reply)
     # The client retries a request that fails before its stream opens. This retries one that stalls after
     # it at once, at most MODEL_MAX_RETRIES times since each stall has already used a read timeout, and
     # waits out a transient gateway error, which can arrive mid-stream with a request to resend.
@@ -1243,9 +1333,10 @@ def chat(ctx, role, messages, tools, tool_choice):
 
 
 def assistant_turn(message, **fields):
-    """The assistant message to keep in history, with Claude's original blocks when it sent them."""
-    blocks = getattr(message, "claude_blocks", None)
-    return {"role": "assistant", **fields, **({"claude_blocks": blocks} if blocks else {})}
+    """The assistant message to keep in history, with Claude's original blocks or the Responses reasoning
+    when the provider sent them."""
+    kept = {key: getattr(message, key, None) for key in ("claude_blocks", "reasoning_items")}
+    return {"role": "assistant", **fields, **{key: value for key, value in kept.items() if value}}
 
 
 def tool_call_key(call):
