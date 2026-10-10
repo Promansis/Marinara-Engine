@@ -2,7 +2,7 @@
 
 Dottore reviews pull requests in three roles:
 
-- **`broad`** and **`skeptic`** are the two finders. Each reads the diff and proposes problems.
+- **`finder`** reads each part of the diff and proposes problems. The lab can split that work between two finders, **`broad`** and **`skeptic`**, instead.
 - **`verify`** checks every proposed problem against the code before anything is posted.
 - **`scout`** reads code for the finders when they ask, on a cheaper model (`gpt-6-luna` through `responses` by default).
 
@@ -23,8 +23,7 @@ The models and providers that run these roles are set with repository settings, 
 
 ```json
 {
-  "broad": { "model": "gpt-6.1-sol", "effort": "high" },
-  "skeptic": { "model": "gpt-6.1-sol", "effort": "high" },
+  "finder": { "model": "gpt-6.1-sol", "effort": "high" },
   "verify": { "provider": "anthropic", "model": "claude-opus-5-5", "effort": "high" }
 }
 ```

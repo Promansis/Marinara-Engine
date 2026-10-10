@@ -56,8 +56,10 @@ MODEL_STREAM_LIMIT = 900
 MODEL_MAX_RETRIES = 1
 # Waits before resending a call that hit a transient gateway error (unavailable, overloaded, cut stream).
 RETRY_DELAYS = (15, 45)
-REVIEW_ROLES = ("trace", "broad", "skeptic", "verify", "scout")
-FINDER_ROLES = ("broad", "skeptic")
+REVIEW_ROLES = ("trace", "finder", "broad", "skeptic", "verify", "scout")
+# ponytail: lab hypothesis that one finder per packet, covering both segments' focus, keeps recall at half the
+# finder cost, since every packet's finders are most of a review's spend; ("broad", "skeptic") restores two.
+FINDER_ROLES = ("finder",)
 # A cheaper model traces the diff's blast radius before the finders run; the code quotes what it picks.
 # ponytail: lab default for the tracer A/B; DOTTORE_MODELS "trace" overrides it until it earns a setting. It
 # runs on the scout's cheap model, since the code quotes its picks and every cent counts against the $0.25 bar.
@@ -117,6 +119,7 @@ DEFINITION_HOPS = 2
 SITE_LINES_AFTER = 2
 CODE_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".rs", ".go", ".java", ".kt", ".swift")
 SEGMENT_LABELS = {
+    "finder": "Finder",
     "broad": "Broad segment",
     "skeptic": "Skeptical segment",
 }
@@ -778,7 +781,7 @@ def role_models():
         role in REVIEW_ROLES and isinstance(value, dict) for role, value in overrides.items()
     ):
         raise ValueError(
-            'DOTTORE_MODELS must map "trace", "broad", "skeptic", "verify" or "scout" to {"provider", "model", "effort"} objects.'
+            'DOTTORE_MODELS must map "trace", "finder", "broad", "skeptic", "verify" or "scout" to {"provider", "model", "effort"} objects.'
         )
     defaults = {role: {"model": default_model, "effort": default_effort} for role in REVIEW_ROLES}
     defaults["trace"] = TRACE_MODEL
@@ -1689,6 +1692,15 @@ def run_scout(ctx, arguments, deadline):
 
 
 FINDER_FOCUS = {
+    "finder": (
+        "Act as the only finder for this packet, doing both the broad and the skeptical segment's work. "
+        "Broadly, search for correctness, contracts, failure paths, tests, security/privacy, CI/deployment "
+        "risks, architecture, and user-visible regressions, and record up to 2 concrete nitpicks when changed "
+        "lines carry optional but actionable polish. Skeptically, look for invariant mismatches introduced by "
+        "the diff: data collected in a pre-scan but persisted after later filters, parent metadata derived "
+        "from rows that are not imported as children, fallback behavior that diverges from validation, "
+        "rollback paths, partial writes, contract drift, and tests that prove only the happy path."
+    ),
     "broad": (
         "Act as the broad segment. Search widely for correctness, contracts, failure paths, tests, "
         "security/privacy, CI/deployment risks, architecture, and user-visible regressions, and record "
@@ -2181,7 +2193,7 @@ def merge_segments(reports):
     status_rank = {"fail": 0, "warn": 1, "unknown": 2, "pass": 3}
     severity_rank = {"blocking": 0, "high": 1, "medium": 2, "low": 3}
     for role, report in reports:
-        if role == "broad":
+        if role == FINDER_ROLES[0]:
             merged["change_summary"].extend(str(item) for item in as_list(report.get("change_summary")))
         for key in ("findings", "nitpicks"):
             for item in as_list(report.get(key)):
