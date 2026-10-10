@@ -120,6 +120,9 @@ MAX_SEED_HITS_PER_NAME = 10
 MAX_SEED_CHARS = 12_000
 MAX_TRACE_LOCATIONS = 12
 MAX_TRACE_LOCATION_LINES = 60
+# Questions the tracer raises where the change meets code it did not change; the finder settles each one.
+MAX_TRACE_CHECKS = 8
+MAX_TRACE_CHECK_CHARS = 400
 MAX_BLAST_RADIUS_CHARS = 24_000
 # Definitions of the local values the change reads, quoted by code so the finders always see them.
 MAX_DEFINITIONS = 40
@@ -1864,6 +1867,12 @@ EDGE_INPUT_PASS = (
 )
 
 
+TRACER_CHECKS_PASS = (
+    "Settle every tracer check about your focus files: report it as a finding when the code shows a problem, "
+    "and otherwise say in what_i_checked why it holds."
+)
+
+
 def finder_instructions(role):
     return (
         f"{FINDER_FOCUS[role]} Treat the review packet as the specimen. When a concrete suspicion depends on "
@@ -1876,7 +1885,7 @@ def finder_instructions(role):
         "about the same code into one question rather than several small ones. Ask only to settle suspicions, "
         "not for tours of the code, and when the packet is enough, submit without any tool calls. "
         f"Keep direct reads for checking an exact line or guidance section yourself; you have {FINDER_READ_BUDGET}. "
-        f"Repeating a call returns nothing new. {EDGE_INPUT_PASS} Guidance is listed "
+        f"Repeating a call returns nothing new. {EDGE_INPUT_PASS} {TRACER_CHECKS_PASS} Guidance is listed "
         "by heading in the selected guidance index; read only the sections that bear on a suspicion. "
         f"{FINDING_RULES} Finish by calling submit_findings."
     )
@@ -2154,7 +2163,8 @@ def value_definitions(touched, sites):
 
 SUBMIT_TRACE = function_tool(
     "submit_trace",
-    "Submit the code ranges the reviewers need beyond the diff. This ends the trace.",
+    "Submit the code ranges the reviewers need beyond the diff and the checks they must settle. This ends "
+    "the trace.",
     {
         "locations": {
             "type": "array",
@@ -2172,13 +2182,28 @@ SUBMIT_TRACE = function_tool(
                 "required": ["path", "start", "end", "symbol", "connection"],
             },
         },
+        "checks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": PATH_PARAM,
+                    "line": {"type": "integer", "description": "The line at the PR head the question is about."},
+                    "question": {
+                        "type": "string",
+                        "description": "One question naming the exact case that could break.",
+                    },
+                },
+                "required": ["path", "line", "question"],
+            },
+        },
     },
     ["locations"],
 )
 TRACE_SYSTEM = (
     "You trace the blast radius of a pull request for the reviewers who read it after you. They see the diff; "
-    "you find the code outside the diff that decides whether the change is correct. Do not judge the change "
-    "or describe bugs; the reviewers do that.\n\n"
+    "you find the code outside the diff that decides whether the change is correct. Do not decide whether the "
+    "change is correct; the reviewers do that.\n\n"
     "Work from the seeds, which list where each changed function, and each name declared on a changed line, "
     "is used outside the diff. For each changed behavior:\n"
     "1. Read the call sites and consumers that depend on what changed.\n"
@@ -2190,12 +2215,23 @@ TRACE_SYSTEM = (
     f"Batch independent reads in one turn; you have at most {TRACE_TOOL_BUDGET} tool calls. Finish by calling "
     f"submit_trace with at most {MAX_TRACE_LOCATIONS} ranges at the PR head, at most "
     f"{MAX_TRACE_LOCATION_LINES} lines each, most important first. Prefer code the diff does not show, and give "
-    "each range one factual sentence on how it connects to the change."
+    "each range one factual sentence on how it connects to the change.\n\n"
+    "Also submit checks, the questions the reviewers must settle. Find each place where the changed code meets "
+    "code it did not change: a condition, filter, set or default combined with the changed result; a caller "
+    "that still assumes the old behavior; a parallel path that handles the same data but did not change. For "
+    "each, ask one question that cites the line and names the exact case where the two could disagree: an "
+    "input, item, user, reader or state. For example: \"`parseLimit` now returns 0 for an empty string; does "
+    "the caller at this line, which treats 0 as unlimited, then send everything?\" Ask, do not answer. At "
+    f"most {MAX_TRACE_CHECKS} checks, most consequential first."
 )
 BLAST_RADIUS_NOTE = (
     "Code outside the diff that the change uses or affects, chosen by a tracer model and quoted verbatim from "
     "the PR head at the cited lines. Each heading names the changed symbol it connects to and how. The tracer "
     "did not judge the change; treat this as evidence, not as findings."
+)
+TRACE_CHECKS_NOTE = (
+    "Questions the tracer model raised where the change meets code it did not change. They are questions, not "
+    "findings, and the tracer is a cheaper model that may be wrong; settle each one from the code."
 )
 DEFINITIONS_NOTE = (
     "Where local values read by the changed lines, or at call sites of changed functions, are defined, and "
@@ -2226,6 +2262,28 @@ def quote_trace(locations):
         connection = " ".join(str(location.get("connection") or "").split())[:300]
         sections.append(f"## {path}:{start}-{end} ({symbol}): {connection}\n```text\n{redact_for_model(lines)}\n```")
     return truncate("\n\n".join(sections), MAX_BLAST_RADIUS_CHARS), quoted
+
+
+def trace_checks(checks):
+    """The tracer's valid checks as (path, line, question); invalid ones are dropped."""
+    kept = []
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        try:
+            path = tool_path(check.get("path"))
+        except ValueError:
+            continue
+        line = check.get("line")
+        question = " ".join(redact_for_model(str(check.get("question") or "")).split())[:MAX_TRACE_CHECK_CHARS]
+        if isinstance(line, bool) or not isinstance(line, int) or line <= 0 or not question:
+            continue
+        if not head_line_exists(path, line):
+            continue
+        kept.append((path, line, question))
+        if len(kept) == MAX_TRACE_CHECKS:
+            break
+    return kept
 
 
 def trace_blast_radius(ctx):
@@ -2269,16 +2327,22 @@ def trace_blast_radius(ctx):
         raise RuntimeError(f"The blast-radius tracer failed, so the review stopped: {error_text(exc)}") from exc
     locations = as_list(submitted.get("locations"))
     section, quoted = quote_trace(locations)
+    checks = trace_checks(as_list(submitted.get("checks")))
     print(
         f"Dottore trace: seeds={seed_count}; seed_chars={len(seeds)}; locations={len(locations)}; "
-        f"section_chars={len(section)}; quoted={', '.join(quoted) or 'none'}",
+        f"section_chars={len(section)}; checks={len(checks)}; quoted={', '.join(quoted) or 'none'}",
         flush=True,
     )
+    for path, line, question in checks:
+        print(f"Dottore trace check: {path}:{line}; {question}", flush=True)
     sections = []
     if definitions:
         sections.append(f"# Value Definitions\n{DEFINITIONS_NOTE}\n\n{definitions}")
     if section:
         sections.append(f"# Blast Radius\n{BLAST_RADIUS_NOTE}\n\n{section}")
+    if checks:
+        listed = "\n".join(f"- `{path}:{line}`: {question}" for path, line, question in checks)
+        sections.append(f"# Tracer Checks\n{TRACE_CHECKS_NOTE}\n\n{listed}")
     return "\n\n".join(sections)
 
 
