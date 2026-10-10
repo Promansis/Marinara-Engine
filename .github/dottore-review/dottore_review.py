@@ -3907,6 +3907,15 @@ def produce_review(args):
         )
         # ponytail: one trace covers every chunk and is appended to each; trace per chunk if large PRs need it.
         blast_radius = trace_blast_radius(ctx)
+        if os.environ.get("DOTTORE_LAB_STAGE", "").strip().lower() == "trace":
+            # ponytail: lab stage that measures the Luna tracer alone, for pennies; remove it with the lab.
+            write_skipped_review(
+                "Lab Trace Only",
+                "DOTTORE_LAB_STAGE=trace: the tracer ran and the review stopped before the finders.",
+                metadata={"head_sha": head_sha, "review_base": base, "base_ref": base_ref, "mode": effective_mode},
+            )
+            print_telemetry(stats)
+            return
         if blast_radius:
             packets = [f"{packet}\n\n{blast_radius}" for packet in packets]
         with ThreadPoolExecutor(max_workers=review_concurrency()) as pool:

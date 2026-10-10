@@ -160,6 +160,8 @@ jobs:
           DOTTORE_REASONING_EFFORT: ${{ vars.DOTTORE_REASONING_EFFORT }}
           DOTTORE_MODELS: ${{ vars.DOTTORE_MODELS }}
           DOTTORE_CONCURRENCY: ${{ vars.DOTTORE_CONCURRENCY }}
+          # Lab only: `trace` stops each review after the tracer, before any finder runs.
+          DOTTORE_LAB_STAGE: ${{ vars.DOTTORE_LAB_STAGE }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python /tmp/dottore-review-tool/dottore_review.py produce
 
