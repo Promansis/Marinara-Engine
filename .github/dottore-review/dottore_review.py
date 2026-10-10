@@ -86,6 +86,20 @@ SCOUT_RETRY_DELAYS = (5, 10, 20, 40)
 SCOUT_OUTAGE_FAILURES = 3
 MAX_SCOUT_REPORT_CHARS = 10_000
 FINDER_READ_BUDGET = 12
+# Every finder turn resends the packet and reasons at the strong model's price, so a scouting finder asks in
+# one turn, follows up in a second and then must submit; the scout does the reading in between.
+FINDER_TURNS = 2
+# ponytail: lab spending ceiling. A review that costs more than CodeRabbit's $0.25 a PR is no replacement, so
+# once a review has spent this much every further model call is refused (calls already in flight still
+# finish). Prices are LinkAPI's per 1M tokens in CNY (input, cached input, output); an unpriced model counts at
+# the dearest input rate. A shipped ceiling would take its limit and prices from configuration.
+REVIEW_COST_LIMIT_USD = 0.25
+CNY_PER_USD = 7.0
+MODEL_PRICES_CNY = {
+    "gpt-6-astra": (3.0, 0.3, 15.0),
+    "gpt-6.1-sol": (2.0, 0.08, 8.0),
+    "gpt-6-luna": (0.0375, 0.003, 0.15),
+}
 TRACE_TOOL_BUDGET = 12
 TRACE_TOOL_CHARS = 48_000
 MAX_TRACE_SEEDS = 40
@@ -835,6 +849,7 @@ class ReviewRun:
     lock: threading.Lock = field(default_factory=threading.Lock)
     scouts: threading.Semaphore = field(default_factory=lambda: threading.Semaphore(SCOUTS_IN_FLIGHT))
     scout_streak: int = 0
+    spent_usd: float = 0.0
 
 
 def function_tool(name, description, properties, required):
@@ -1388,7 +1403,24 @@ def transient_error(exc):
     return isinstance(exc, openai.APIError)
 
 
+class CostLimitReached(Exception):
+    """The review has spent its ceiling, so no further model call is made."""
+
+
+def call_cost_usd(model, usage):
+    rates = MODEL_PRICES_CNY.get(model) or max(MODEL_PRICES_CNY.values())
+    prompt = usage_value(usage, "prompt_tokens")
+    cached = usage_value(usage, "prompt_tokens_details", "cached_tokens")
+    output = usage_value(usage, "completion_tokens")
+    return ((prompt - cached) * rates[0] + cached * rates[1] + output * rates[2]) / 1e6 / CNY_PER_USD
+
+
 def chat(ctx, role, messages, tools, tool_choice):
+    if ctx.spent_usd >= REVIEW_COST_LIMIT_USD:
+        raise CostLimitReached(
+            f"the review has spent ${ctx.spent_usd:.3f}, past its ${REVIEW_COST_LIMIT_USD:.2f} ceiling, "
+            "so it makes no more model calls"
+        )
     settings = ctx.models[role]
     first_call = not any(message.get("role") == "assistant" for message in messages)
     read_timeout = FIRST_CALL_TIMEOUT if first_call else MODEL_REQUEST_TIMEOUT
@@ -1422,6 +1454,7 @@ def chat(ctx, role, messages, tools, tool_choice):
         totals["model"] = settings["model"]
         totals["model_calls"] += 1
         add_usage(totals, usage)
+        ctx.spent_usd += call_cost_usd(settings["model"], usage)
     # request_chars lets the provider's token counts be compared with what was actually sent.
     print(
         f"Dottore call: role={role}; messages={len(messages)}; "
@@ -1430,7 +1463,8 @@ def chat(ctx, role, messages, tools, tool_choice):
         f"cached_tokens={usage_value(usage, 'prompt_tokens_details', 'cached_tokens')}; "
         f"completion_tokens={usage_value(usage, 'completion_tokens')}; "
         f"reasoning_tokens={usage_value(usage, 'completion_tokens_details', 'reasoning_tokens')}; "
-        f"first_chunk_s={timing.get('first_chunk', 0):.1f}; elapsed_s={time.monotonic() - started:.1f}",
+        f"first_chunk_s={timing.get('first_chunk', 0):.1f}; elapsed_s={time.monotonic() - started:.1f}; "
+        f"review_spent_usd={ctx.spent_usd:.3f}",
         flush=True,
     )
     return message
@@ -1631,6 +1665,8 @@ def run_scout(ctx, arguments, deadline):
                     min(deadline, started + SCOUT_DEADLINE_SECONDS),
                     turns=SCOUT_TURNS,
                 )
+        except CostLimitReached:
+            raise
         except Exception as exc:
             error = error_text(exc)
             print(f"Dottore scout failed: attempt={attempt + 1}; {error}", flush=True)
@@ -1690,7 +1726,7 @@ FINDING_RULES = (
 # ponytail: lab hypothesis that finders read the changed lines but skip edge inputs and failure paths;
 # keep it only if a multi-run recall test shows it surfaces those bugs.
 EDGE_INPUT_PASS = (
-    "Before submitting, walk every changed line that converts or defaults a value, migrates or carries "
+    "Before you ask, walk every changed line that converts or defaults a value, migrates or carries "
     "over stored settings, trims or caps to a budget, or awaits a call through these inputs: zero, empty "
     "or missing; a string where a number is expected; a legacy, inactive or disabled item; an input at or "
     "past the limit; and an await that rejects. Decide what the code then does. When the answer depends on "
@@ -1702,15 +1738,14 @@ def finder_instructions(role):
     return (
         f"{FINDER_FOCUS[role]} Treat the review packet as the specimen. When a concrete suspicion depends on "
         "code outside the packet, ask the scout, a cheaper model that reads the repository for you and returns "
-        "quoted evidence. Make each question self-contained (the file, symbol or line, and exactly what to find "
-        "out) and put everything you need about the same code into one question rather than several small "
-        "ones; ask questions about unrelated code in the same turn so they run in parallel, follow up with a "
-        "narrower question when an answer leaves the suspicion open, and ask again if a scout fails. Ask only "
-        "to settle suspicions, not for tours of the code, and when the packet is enough, submit without any "
-        "tool calls. "
+        f"quoted evidence. You have {FINDER_TURNS} turns of tool calls and then must submit: ask every question "
+        "you need in the first turn, together so they run in parallel, and use the second only for follow-ups "
+        "on answers that leave a suspicion open and for questions whose scout failed. Make each question "
+        "self-contained (the file, symbol or line, and exactly what to find out) and put everything you need "
+        "about the same code into one question rather than several small ones. Ask only to settle suspicions, "
+        "not for tours of the code, and when the packet is enough, submit without any tool calls. "
         f"Keep direct reads for checking an exact line or guidance section yourself; you have {FINDER_READ_BUDGET}. "
-        f"Scout questions and reads together are capped at {FINDER_TOOL_BUDGET} calls and {FINDER_TOOL_CHARS} "
-        f"characters of output, and repeating a call returns nothing new. {EDGE_INPUT_PASS} Guidance is listed "
+        f"Repeating a call returns nothing new. {EDGE_INPUT_PASS} Guidance is listed "
         "by heading in the selected guidance index; read only the sections that bear on a suspicion. "
         f"{FINDING_RULES} Finish by calling submit_findings."
     )
@@ -1746,6 +1781,7 @@ def run_finders(ctx, packets, pool):
                 FINDER_TOOL_CHARS,
                 deadline,
                 FINDER_READ_BUDGET,
+                FINDER_TURNS,
             ),
         )
         for packet in packets
