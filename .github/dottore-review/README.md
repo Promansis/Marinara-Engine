@@ -49,3 +49,5 @@ Effort values pass through unchanged, so use names the model accepts. Claude tak
 The prompt was tuned on GPT models. Before relying on a different model, run a few reviews on pull requests whose problems you already know and compare what Dottore finds.
 
 Each review logs a `Dottore call:` line per model call and a `Dottore telemetry:` line with totals by role. Use them to compare cost, caching and time between setups. Each call line also shows what the review has spent so far at LinkAPI's prices, and a review makes no further model calls once it has spent $0.25.
+
+When `gpt-6-luna` fails with a temporary gateway error or stalls, the same call goes at once to `gpt-5.6-luna`, and its call line ends with `fallback_model=gpt-5.6-luna`. If `gpt-5.6-luna` refuses a request, the rest of the review waits and retries `gpt-6-luna` as before.

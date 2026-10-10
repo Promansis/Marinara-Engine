@@ -112,7 +112,12 @@ MODEL_PRICES_CNY = {
     "gpt-6-astra": (3.0, 0.3, 15.0),
     "gpt-6.1-sol": (2.0, 0.08, 8.0),
     "gpt-6-luna": (0.0375, 0.003, 0.15),
+    # ponytail: provisional, priced as gpt-6-luna until LinkAPI's gpt-5.6-luna rate is confirmed.
+    "gpt-5.6-luna": (0.0375, 0.003, 0.15),
 }
+# When a model's gateway fails with a transient error, the same call goes at once to its fallback, an older model
+# of the same tier, instead of waiting out the outage. A fallback that refuses a request is not tried again.
+FALLBACK_MODELS = {"gpt-6-luna": "gpt-5.6-luna"}
 TRACE_TOOL_BUDGET = 12
 TRACE_TOOL_CHARS = 48_000
 MAX_TRACE_SEEDS = 40
@@ -757,6 +762,7 @@ def build_stats(review_packet):
                 "stop_time": 0,
                 "scout_asks": 0,
                 "follow_ups": 0,
+                "fallbacks": 0,
                 "retries": 0,
                 "failures": 0,
                 "prompt_tokens": 0,
@@ -873,6 +879,7 @@ class ReviewRun:
     # Each answered scout's conversation by id, so a follow-up goes to the scout that already read the code.
     scout_sessions: dict = field(default_factory=dict)
     scout_count: int = 0
+    dead_fallbacks: set = field(default_factory=set)
 
 
 def function_tool(name, description, properties, required):
@@ -1421,7 +1428,13 @@ def responses_reply(ctx, settings, messages, tools, tool_choice, read_timeout, s
         "prompt_tokens_details": {"cached_tokens": usage_value(usage, "input_tokens_details", "cached_tokens")},
         "completion_tokens_details": {"reasoning_tokens": usage_value(usage, "output_tokens_details", "reasoning_tokens")},
     }
-    message = SimpleNamespace(content="".join(text) or None, tool_calls=calls or None, reasoning_items=reasoning)
+    message = SimpleNamespace(
+        content="".join(text) or None,
+        tool_calls=calls or None,
+        reasoning_items=reasoning,
+        # Encrypted reasoning serves only the model that wrote it; see own_reasoning.
+        reasoning_model=settings["model"] if reasoning else None,
+    )
     return message, usage
 
 
@@ -1451,6 +1464,51 @@ def call_cost_usd(model, usage):
     return ((prompt - cached) * rates[0] + cached * rates[1] + output * rates[2]) / 1e6 / CNY_PER_USD
 
 
+def own_reasoning(messages, model):
+    """The messages without the reasoning another model wrote, which only the model that wrote it can read."""
+    return [
+        message
+        if message.get("reasoning_model", model) == model
+        else {key: value for key, value in message.items() if key not in ("reasoning_items", "reasoning_model")}
+        for message in messages
+    ]
+
+
+def reply_with_fallback(ctx, role, settings, messages, tools, tool_choice, read_timeout):
+    """One model call. When it fails with a transient error and the model has a usable fallback, the same call
+    goes to the fallback at once. Returns (message, usage, settings used, started, timing); when both fail, the
+    original model's error is raised so the caller's retry schedule applies."""
+    reply = {"anthropic": claude_reply, "responses": responses_reply}.get(settings["provider"], openai_reply)
+    fallback = FALLBACK_MODELS.get(settings["model"])
+    started = time.monotonic()
+    timing = {}
+    try:
+        own = own_reasoning(messages, settings["model"])
+        message, usage = reply(ctx, settings, own, tools, tool_choice, read_timeout, started, timing)
+        return message, usage, settings, started, timing
+    except Exception as exc:
+        if not fallback or fallback in ctx.dead_fallbacks or not transient_error(exc):
+            raise
+        failure = exc
+    print(
+        f"Dottore call fallback: role={role}; from={settings['model']}; to={fallback}; {error_text(failure)}",
+        flush=True,
+    )
+    alternate = {**settings, "model": fallback}
+    started = time.monotonic()
+    timing = {}
+    try:
+        own = own_reasoning(messages, fallback)
+        message, usage = reply(ctx, alternate, own, tools, tool_choice, read_timeout, started, timing)
+        return message, usage, alternate, started, timing
+    except Exception as exc:
+        if not transient_error(exc):
+            with ctx.lock:
+                ctx.dead_fallbacks.add(fallback)
+        print(f"Dottore call fallback failed: role={role}; model={fallback}; {error_text(exc)}", flush=True)
+    raise failure
+
+
 def chat(ctx, role, messages, tools, tool_choice):
     if ctx.spent_usd >= REVIEW_COST_LIMIT_USD:
         raise CostLimitReached(
@@ -1460,7 +1518,6 @@ def chat(ctx, role, messages, tools, tool_choice):
     settings = ctx.models[role]
     first_call = not any(message.get("role") == "assistant" for message in messages)
     read_timeout = FIRST_CALL_TIMEOUT if first_call else MODEL_REQUEST_TIMEOUT
-    reply = {"anthropic": claude_reply, "responses": responses_reply}.get(settings["provider"], openai_reply)
     # The client retries a request that fails before its stream opens. This retries one that stalls after
     # it at once, at most MODEL_MAX_RETRIES times since each stall has already used a read timeout, and
     # waits out a transient gateway error, which can arrive mid-stream with a request to resend.
@@ -1468,9 +1525,10 @@ def chat(ctx, role, messages, tools, tool_choice):
     delays = SCOUT_RETRY_DELAYS if role == "scout" else RETRY_DELAYS
     for attempt in range(len(delays) + 1):
         started = time.monotonic()
-        timing = {}
         try:
-            message, usage = reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing)
+            message, usage, used, started, timing = reply_with_fallback(
+                ctx, role, settings, messages, tools, tool_choice, read_timeout
+            )
             break
         except Exception as exc:
             stalled = isinstance(exc, StreamStalled)
@@ -1489,8 +1547,9 @@ def chat(ctx, role, messages, tools, tool_choice):
         totals = ctx.stats["roles"][role]
         totals["model"] = settings["model"]
         totals["model_calls"] += 1
+        totals["fallbacks"] += used is not settings
         add_usage(totals, usage)
-        ctx.spent_usd += call_cost_usd(settings["model"], usage)
+        ctx.spent_usd += call_cost_usd(used["model"], usage)
     # request_chars lets the provider's token counts be compared with what was actually sent.
     print(
         f"Dottore call: role={role}; messages={len(messages)}; "
@@ -1500,7 +1559,8 @@ def chat(ctx, role, messages, tools, tool_choice):
         f"completion_tokens={usage_value(usage, 'completion_tokens')}; "
         f"reasoning_tokens={usage_value(usage, 'completion_tokens_details', 'reasoning_tokens')}; "
         f"first_chunk_s={timing.get('first_chunk', 0):.1f}; elapsed_s={time.monotonic() - started:.1f}; "
-        f"review_spent_usd={ctx.spent_usd:.3f}",
+        f"review_spent_usd={ctx.spent_usd:.3f}"
+        + (f"; fallback_model={used['model']}" if used is not settings else ""),
         flush=True,
     )
     return message
@@ -1509,7 +1569,7 @@ def chat(ctx, role, messages, tools, tool_choice):
 def assistant_turn(message, **fields):
     """The assistant message to keep in history, with Claude's original blocks or the Responses reasoning
     when the provider sent them."""
-    kept = {key: getattr(message, key, None) for key in ("claude_blocks", "reasoning_items")}
+    kept = {key: getattr(message, key, None) for key in ("claude_blocks", "reasoning_items", "reasoning_model")}
     return {"role": "assistant", **fields, **{key: value for key, value in kept.items() if value}}
 
 
