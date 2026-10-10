@@ -70,9 +70,12 @@ SCOUT_TOOL_CHARS = 160_000
 SCOUT_DEADLINE_SECONDS = 5 * 60
 SCOUT_ATTEMPTS = 2
 SCOUT_CONCURRENCY = 4
-# Scouts in flight across both finders, and the short waits that ride out the scout model's rate limit.
-SCOUTS_IN_FLIGHT = 3
-SCOUT_RETRY_DELAYS = (3, 6, 12, 24)
+# Scouts in flight across both finders, and the waits that ride out the scout model's per-minute rate limit.
+SCOUTS_IN_FLIGHT = 2
+SCOUT_RETRY_DELAYS = (5, 10, 20, 40)
+# ponytail: lab circuit breaker. A review whose scouts are down tests nothing and still pays the finders, so
+# this many failed questions in a row stop it; a shipped scout would fall back to direct reads instead.
+SCOUT_OUTAGE_FAILURES = 3
 MAX_SCOUT_REPORT_CHARS = 10_000
 FINDER_READ_BUDGET = 12
 TRACE_TOOL_BUDGET = 12
@@ -822,6 +825,7 @@ class ReviewRun:
     cache_key: str = ""
     lock: threading.Lock = field(default_factory=threading.Lock)
     scouts: threading.Semaphore = field(default_factory=lambda: threading.Semaphore(SCOUTS_IN_FLIGHT))
+    scout_streak: int = 0
 
 
 def function_tool(name, description, properties, required):
@@ -1045,6 +1049,10 @@ class StreamStalled(Exception):
     """The connection went quiet or dropped after the reply stream opened."""
 
 
+class ResponseFailed(Exception):
+    """The provider reported a failed response inside the stream, such as an unavailable or rate-limited upstream."""
+
+
 def watched(stream, started, timing):
     """Yield a stream's events, noting when the first arrived and stopping one that runs too long."""
     for event in stream:
@@ -1252,7 +1260,7 @@ def responses_reply(ctx, settings, messages, tools, tool_choice, read_timeout, s
                     response = event.response
                 elif event.type in ("response.failed", "error"):
                     detail = getattr(getattr(event, "response", None), "error", None) or getattr(event, "message", "")
-                    raise StreamStalled(f"the response failed: {detail}")
+                    raise ResponseFailed(f"the response failed: {detail}")
     except (httpx.TimeoutException, httpx.TransportError) as exc:
         raise StreamStalled(error_text(exc)) from exc
     if response is None:
@@ -1284,7 +1292,7 @@ def transient_error(exc):
 
     A gateway can report these inside the reply stream, as a bare APIError the client never retries.
     """
-    if isinstance(exc, StreamStalled):
+    if isinstance(exc, (StreamStalled, ResponseFailed)):
         return True
     import openai
 
@@ -1449,6 +1457,11 @@ def run_agent(ctx, role, messages, submit_tool, budget, output_budget, deadline=
                 if not ok:
                     # A failed scout may be asked the same question again.
                     answered.pop(tool_call_key(call), None)
+            if ctx.scout_streak >= SCOUT_OUTAGE_FAILURES:
+                raise RuntimeError(
+                    f"the scout model failed {ctx.scout_streak} questions in a row, so the lab review stopped "
+                    "before the finders spent more without it"
+                )
         asked = {call.id for call in questions}
         for call in calls:
             reply = replies[call.id]
@@ -1499,6 +1512,8 @@ def run_scout(ctx, arguments, deadline):
         question = ""
     if not question:
         return "refused: scout needs one non-empty question string.", False
+    if ctx.scout_streak >= SCOUT_OUTAGE_FAILURES:
+        return "scout failed (the scout model is down).", False
     messages = [
         {"role": "system", "content": SCOUT_SYSTEM},
         {"role": "user", "content": f"# Changed files\n{chr(10).join(sorted(ctx.files))}\n\n# Question\n{question}"},
@@ -1533,9 +1548,12 @@ def run_scout(ctx, arguments, deadline):
             f"elapsed_s={time.monotonic() - started:.1f}",
             flush=True,
         )
+        with ctx.lock:
+            ctx.scout_streak = 0
         return report, True
     with ctx.lock:
         ctx.stats["roles"]["scout"]["failures"] += 1
+        ctx.scout_streak += 1
     return f"scout failed ({error or 'out of time'}); ask it again or narrow the question.", False
 
 
