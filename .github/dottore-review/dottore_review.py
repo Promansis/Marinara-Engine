@@ -88,6 +88,16 @@ SCOUT_RETRY_DELAYS = (5, 10, 20, 40)
 # this many failed questions in a row stop it; a shipped scout would fall back to direct reads instead.
 SCOUT_OUTAGE_FAILURES = 3
 MAX_SCOUT_REPORT_CHARS = 10_000
+# The scout model rarely plans or batches, so code does its first step: it reads the path:line references and
+# searches the backticked names in the question, and the scout starts from those leads.
+LEAD_REF_RE = re.compile(r"([\w./-]+\.\w+):(\d+)(?:\s*[-–]\s*(\d+))?")
+LEAD_NAME_RE = re.compile(r"[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*")
+LEAD_PATH_RE = re.compile(r"[\w.-]+\.\w{1,5}")
+MAX_LEAD_REFS = 3
+MAX_LEAD_NAMES = 4
+LEAD_LINES_BEFORE = 20
+LEAD_LINES_AFTER = 40
+MAX_LEAD_CHARS = 12_000
 FINDER_READ_BUDGET = 12
 # Every finder turn resends the packet and reasons at the strong model's price, so a scouting finder asks in
 # one turn, follows up in a second and then must submit; the scout does the reading in between.
@@ -743,6 +753,7 @@ def build_stats(review_packet):
                 "stop_chars": 0,
                 "stop_time": 0,
                 "scout_asks": 0,
+                "follow_ups": 0,
                 "retries": 0,
                 "failures": 0,
                 "prompt_tokens": 0,
@@ -856,6 +867,9 @@ class ReviewRun:
     scouts: threading.Semaphore = field(default_factory=lambda: threading.Semaphore(SCOUTS_IN_FLIGHT))
     scout_streak: int = 0
     spent_usd: float = 0.0
+    # Each answered scout's conversation by id, so a follow-up goes to the scout that already read the code.
+    scout_sessions: dict = field(default_factory=dict)
+    scout_count: int = 0
 
 
 def function_tool(name, description, properties, required):
@@ -999,11 +1013,17 @@ SCOUT_TOOL = function_tool(
     "scout",
     "Send a cheaper model to read the repository at the PR head and answer one self-contained question with "
     "quoted evidence. Put everything you need about the same code in one question; questions asked in the "
-    "same turn run in parallel.",
+    "same turn run in parallel. Cite code as path:line and put code names in backticks: Dottore reads and "
+    "searches those for the scout before it starts.",
     {
         "question": {
             "type": "string",
             "description": "Everything the scout needs on its own: the file, symbol or line, and exactly what to find out.",
+        },
+        "follow_up": {
+            "type": "string",
+            "description": "Optional: the id of an earlier scout, shown as 'Scout s3' on its report, to send this "
+            "question to that scout, which keeps everything it read.",
         },
     },
     ["question"],
@@ -1498,7 +1518,9 @@ def tool_call_key(call):
     return call.function.name, args
 
 
-def run_agent(ctx, role, messages, submit_tool, budget, output_budget, deadline=None, reads=None, turns=None):
+def run_agent(
+    ctx, role, messages, submit_tool, budget, output_budget, deadline=None, reads=None, turns=None, transcript=None
+):
     """Let one agent read with the tools until it calls its submit tool; return the submitted arguments.
 
     The budget counts tool calls, turns the turns that may call them (the budget by default), and
@@ -1506,7 +1528,8 @@ def run_agent(ctx, role, messages, submit_tool, budget, output_budget, deadline=
     any is spent, or the deadline (the review's by default) has passed, the model is made to call the
     submit tool, and a few malformed submissions are tolerated. Given reads, the agent also gets the scout
     tool and at most that many direct reads. The scout reads with batched tools. The role's stats record
-    which limit, if any, ended the run.
+    which limit, if any, ended the run. Given transcript, a list, it is filled with the conversation up to and
+    including the submitting turn.
     """
     submit = submit_tool["function"]["name"]
     scouting = reads is not None
@@ -1566,6 +1589,8 @@ def run_agent(ctx, role, messages, submit_tool, budget, output_budget, deadline=
                 if isinstance(submitted, dict):
                     with ctx.lock:
                         ctx.stats["roles"][role][f"stop_{limits[0] if limits else 'own'}"] += 1
+                    if transcript is not None:
+                        transcript[:] = messages
                     return submitted
                 replies[call.id] = f"refused: {submit} needs one JSON object as its arguments; call it again."
                 continue
@@ -1615,7 +1640,10 @@ def run_agent(ctx, role, messages, submit_tool, budget, output_budget, deadline=
 
 SCOUT_SYSTEM = (
     "You scout code for a pull request reviewer. The reviewer has the diff and sends you one question about "
-    "code it has not read. Answer it from the repository at the PR head with the read-only tools. You have "
+    "code it has not read. Answer it from the repository at the PR head with the read-only tools. The question "
+    "may come with leads: the lines it cites and searches for the names it mentions, already run for you, so "
+    "start from them and do not repeat them. The reviewer may later send a follow-up; answer it the same way, "
+    "reusing what you have already read. For each question you have "
     f"{SCOUT_TURNS} turns of tool calls before you must report, and every turn resends everything read so "
     "far, so plan first and fetch in as few turns as possible: make every search you need in one turn (each "
     "shows a few lines around its first hits), then one read_files call with every range that decides the "
@@ -1628,9 +1656,63 @@ SCOUT_SYSTEM = (
 )
 
 
-def scout_report(ctx, submitted):
+def scout_leads(ctx, question):
+    """The scout's first step, done in code: read the path:line references and search the backticked names."""
+    ranges, seen = [], set()
+    for path, start, end in LEAD_REF_RE.findall(question):
+        try:
+            path = tool_path(path)
+        except ValueError:
+            continue
+        if not (REPO_ROOT / path).is_file():
+            # Models often cite a changed file by its name alone.
+            matches = [changed for changed in ctx.files if changed.endswith(f"/{path}")]
+            if len(matches) != 1:
+                continue
+            path = matches[0]
+        start, end = int(start), int(end or start)
+        if (path, start) in seen:
+            continue
+        seen.add((path, start))
+        ranges.append(
+            {"path": path, "start": max(1, start - LEAD_LINES_BEFORE), "end": max(start, end) + LEAD_LINES_AFTER}
+        )
+        if len(ranges) == MAX_LEAD_REFS:
+            break
+    parts = [f"## Cited lines\n{run_tool(ctx, 'read_files', json.dumps({'ranges': ranges}))}"] if ranges else []
+    names = []
+    # Splitting on backticks pairs them; the odd parts are the code spans.
+    for span in question.split("`")[1::2]:
+        name = LEAD_NAME_RE.match(span.strip())
+        if "/" in span or "\n" in span or LEAD_PATH_RE.fullmatch(span.strip()) or not name:
+            continue
+        name = name.group(0)
+        if len(name) >= 3 and name not in NOT_NAMES and name not in names:
+            names.append(name)
+    for name in names[:MAX_LEAD_NAMES]:
+        parts.append(f"## search {name}\n{run_tool(ctx, 'search', json.dumps({'literal': name}), True)}")
+    return truncate("\n\n".join(parts), MAX_LEAD_CHARS)
+
+
+def closed_transcript(transcript, submit):
+    """A finished scout conversation with every call of its last turn answered, ready for a follow-up."""
+    last = transcript[-1] if transcript else {}
+    replies = [
+        {
+            "role": "tool",
+            "tool_call_id": call["id"],
+            "content": "Report delivered."
+            if call["function"]["name"] == submit
+            else "Not run: the report was already submitted.",
+        }
+        for call in last.get("tool_calls") or []
+    ]
+    return [*transcript, *replies]
+
+
+def scout_report(ctx, submitted, scout_id):
     """Format a scout's submission for the finder, flagging quotes that are not at their cited lines."""
-    lines = [f"Answer: {submitted.get('answer') or 'none'}"]
+    lines = [f"Scout {scout_id}", f"Answer: {submitted.get('answer') or 'none'}"]
     for item in as_list(submitted.get("evidence")):
         if not isinstance(item, dict):
             continue
@@ -1647,17 +1729,37 @@ def run_scout(ctx, arguments, deadline):
 
     Returns the report and whether the scout succeeded."""
     try:
-        question = str(json.loads(arguments or "{}").get("question") or "").strip()
+        args = json.loads(arguments or "{}")
+        question = str(args.get("question") or "").strip()
+        follow_up = str(args.get("follow_up") or "").strip()
     except (ValueError, AttributeError):
-        question = ""
+        question = follow_up = ""
     if not question:
         return "refused: scout needs one non-empty question string.", False
     if ctx.scout_streak >= SCOUT_OUTAGE_FAILURES:
         return "scout failed (the scout model is down).", False
-    messages = [
-        {"role": "system", "content": SCOUT_SYSTEM},
-        {"role": "user", "content": f"# Changed files\n{chr(10).join(sorted(ctx.files))}\n\n# Question\n{question}"},
-    ]
+    with ctx.lock:
+        earlier = ctx.scout_sessions.get(follow_up)
+        if earlier:
+            scout_id = follow_up
+            ctx.stats["roles"]["scout"]["follow_ups"] += 1
+        else:
+            # An unknown id is answered by a fresh scout, whose report names its own id.
+            ctx.scout_count += 1
+            scout_id = f"s{ctx.scout_count}"
+    if earlier:
+        leads = ""
+        messages = [*earlier, {"role": "user", "content": f"# Follow-up question\n{question}"}]
+    else:
+        leads = scout_leads(ctx, question)
+        messages = [
+            {"role": "system", "content": SCOUT_SYSTEM},
+            {
+                "role": "user",
+                "content": f"# Changed files\n{chr(10).join(sorted(ctx.files))}\n\n# Question\n{question}"
+                + (f"\n\n# Leads\n{leads}" if leads else ""),
+            },
+        ]
     error = ""
     for attempt in range(SCOUT_ATTEMPTS):
         if attempt:
@@ -1668,6 +1770,7 @@ def run_scout(ctx, arguments, deadline):
         try:
             with ctx.scouts:
                 started = time.monotonic()
+                transcript = []
                 submitted = run_agent(
                     ctx,
                     "scout",
@@ -1677,6 +1780,7 @@ def run_scout(ctx, arguments, deadline):
                     SCOUT_TOOL_CHARS,
                     min(deadline, started + SCOUT_DEADLINE_SECONDS),
                     turns=SCOUT_TURNS,
+                    transcript=transcript,
                 )
         except CostLimitReached:
             raise
@@ -1684,15 +1788,18 @@ def run_scout(ctx, arguments, deadline):
             error = error_text(exc)
             print(f"Dottore scout failed: attempt={attempt + 1}; {error}", flush=True)
             continue
-        report = scout_report(ctx, submitted)
+        report = scout_report(ctx, submitted, scout_id)
         print(
-            f"Dottore scout: attempt={attempt + 1}; question_chars={len(question)}; report_chars={len(report)}; "
+            f"Dottore scout: id={scout_id}; follow_up={'yes' if earlier else 'no'}; attempt={attempt + 1}; "
+            f"question_chars={len(question)}; leads_chars={len(leads)}; report_chars={len(report)}; "
             f"evidence={len(as_list(submitted.get('evidence')))}; unconfirmed={report.count('; unconfirmed)')}; "
-            f"elapsed_s={time.monotonic() - started:.1f}",
+            f"elapsed_s={time.monotonic() - started:.1f}; "
+            f"question={json.dumps(' '.join(redact_for_model(question).split())[:200])}",
             flush=True,
         )
         with ctx.lock:
             ctx.scout_streak = 0
+            ctx.scout_sessions[scout_id] = closed_transcript(transcript, SUBMIT_REPORT["function"]["name"])
         return report, True
     with ctx.lock:
         ctx.stats["roles"]["scout"]["failures"] += 1
@@ -1763,7 +1870,8 @@ def finder_instructions(role):
         "code outside the packet, ask the scout, a cheaper model that reads the repository for you and returns "
         f"quoted evidence. You have {FINDER_TURNS} turns of tool calls and then must submit: ask every question "
         "you need in the first turn, together so they run in parallel, and use the second only for follow-ups "
-        "on answers that leave a suspicion open and for questions whose scout failed. Make each question "
+        "on answers that leave a suspicion open and for questions whose scout failed. Send a follow-up to the "
+        "scout that gave the answer by passing its id as follow_up; it keeps what it read. Make each question "
         "self-contained (the file, symbol or line, and exactly what to find out) and put everything you need "
         "about the same code into one question rather than several small ones. Ask only to settle suspicions, "
         "not for tours of the code, and when the packet is enough, submit without any tool calls. "
