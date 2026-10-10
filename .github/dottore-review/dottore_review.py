@@ -80,7 +80,11 @@ SEGMENT_LABELS = {
     "broad": "Broad segment",
     "skeptic": "Skeptical segment",
 }
-FINDER_TOOL_BUDGET = 20
+# ponytail: lab hypothesis that the call cap stops finders before they find the bug. MAX_TOOL_LINES and
+# MAX_TOOL_CHARS bound each read; the call count is nominal, the time box keeps the checker's share of
+# the review deadline, and the character total only guards the context window.
+FINDER_TOOL_BUDGET = 100
+FINDER_DEADLINE_SECONDS = 15 * 60
 # The skeptic starts this long after the broad segment, so its first call can reuse the packet prefix
 # the broad call has just cached instead of both paying for it in full.
 FINDER_STAGGER_SECONDS = 8
@@ -89,7 +93,7 @@ FINDER_STAGGER_SECONDS = 8
 VERIFIER_TOOL_BUDGET = 20
 # Each agent also has a tool-output budget, since every later turn resends its tool results.
 # Verifiers get their own, so finders can never starve verification.
-FINDER_TOOL_CHARS = 96_000
+FINDER_TOOL_CHARS = 400_000
 VERIFIER_TOOL_CHARS = 96_000
 VERIFIER_TOOL_CHARS_PER_EXTRA = 6_000
 MAX_SUBMIT_ATTEMPTS = 3
@@ -683,6 +687,11 @@ def build_stats(review_packet):
                 "model": "",
                 "model_calls": 0,
                 "tool_calls": 0,
+                "tool_chars": 0,
+                "stop_own": 0,
+                "stop_calls": 0,
+                "stop_chars": 0,
+                "stop_time": 0,
                 "prompt_tokens": 0,
                 "cached_tokens": 0,
                 "completion_tokens": 0,
@@ -1210,12 +1219,13 @@ def tool_call_key(call):
     return call.function.name, args
 
 
-def run_agent(ctx, role, messages, submit_tool, budget, output_budget):
+def run_agent(ctx, role, messages, submit_tool, budget, output_budget, deadline=None):
     """Let one agent read with the tools until it calls its submit tool; return the submitted arguments.
 
     The budget counts read-tool calls and output_budget their characters; a repeated call is answered
-    from the earlier result for free. Once either budget is spent, or the review deadline has passed,
-    the model is made to call the submit tool, and a few malformed submissions are tolerated.
+    from the earlier result for free. Once either budget is spent, or the deadline (the review's by
+    default) has passed, the model is made to call the submit tool, and a few malformed submissions are
+    tolerated. The role's stats record which limit, if any, ended the run.
     """
     submit = submit_tool["function"]["name"]
     tools = [*READ_TOOLS, submit_tool]
@@ -1223,10 +1233,18 @@ def run_agent(ctx, role, messages, submit_tool, budget, output_budget):
     used = 0
     spent = 0
     answered = {}
+    deadline = deadline or ctx.deadline
     for turn in range(budget + MAX_SUBMIT_ATTEMPTS):
-        forced = (
-            used >= budget or spent >= output_budget or turn >= budget or time.monotonic() > ctx.deadline
-        )
+        limits = [
+            name
+            for name, hit in (
+                ("calls", used >= budget or turn >= budget),
+                ("chars", spent >= output_budget),
+                ("time", time.monotonic() > deadline),
+            )
+            if hit
+        ]
+        forced = bool(limits)
         choice = {"type": "function", "function": {"name": submit}} if forced else "auto"
         message = chat(ctx, role, messages, tools, choice)
         calls = list(message.tool_calls or [])
@@ -1257,6 +1275,8 @@ def run_agent(ctx, role, messages, submit_tool, budget, output_budget):
                 except ValueError:
                     submitted = None
                 if isinstance(submitted, dict):
+                    with ctx.lock:
+                        ctx.stats["roles"][role][f"stop_{limits[0] if limits else 'own'}"] += 1
                     return submitted
                 reply = f"refused: {submit} needs one JSON object as its arguments; call it again."
             elif tool_call_key(call) in answered:
@@ -1266,10 +1286,11 @@ def run_agent(ctx, role, messages, submit_tool, budget, output_budget):
             else:
                 used += 1
                 answered[tool_call_key(call)] = used
-                with ctx.lock:
-                    ctx.stats["roles"][role]["tool_calls"] += 1
                 reply = truncate(run_tool(ctx, call.function.name, call.function.arguments), output_budget - spent)
                 spent += len(reply)
+                with ctx.lock:
+                    ctx.stats["roles"][role]["tool_calls"] += 1
+                    ctx.stats["roles"][role]["tool_chars"] += len(reply)
             messages.append({"role": "tool", "tool_call_id": call.id, "content": reply})
     raise RuntimeError(f"The {role} agent never called {submit}.")
 
@@ -1357,6 +1378,7 @@ def run_finders(ctx, packets, pool):
                 SUBMIT_FINDINGS,
                 FINDER_TOOL_BUDGET,
                 FINDER_TOOL_CHARS,
+                min(ctx.deadline, ctx.stats["started_at"] + FINDER_DEADLINE_SECONDS),
             ),
         )
         for packet in packets
