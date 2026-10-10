@@ -63,7 +63,8 @@ FINDER_ROLES = ("broad", "skeptic")
 TRACE_MODEL = {"model": "gpt-6.1-sol", "effort": "medium"}
 # ponytail: lab hypothesis that a cheaper model can do the finders' reading for them, so the strong model
 # reads a short quoted report instead of every file; keep it only if recall holds and cost falls.
-SCOUT_MODEL = {"model": "gpt-6-luna", "effort": "medium"}
+# LinkAPI refuses function tools with reasoning for gpt-6-luna on Chat Completions unless effort is "none".
+SCOUT_MODEL = {"model": "gpt-6-luna", "effort": "none"}
 SCOUT_TOOL_BUDGET = 40
 SCOUT_TOOL_CHARS = 160_000
 SCOUT_DEADLINE_SECONDS = 5 * 60
