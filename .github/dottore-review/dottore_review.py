@@ -84,11 +84,13 @@ FINDER_TOOL_BUDGET = 20
 # The skeptic starts this long after the broad segment, so its first call can reuse the packet prefix
 # the broad call has just cached instead of both paying for it in full.
 FINDER_STAGGER_SECONDS = 8
-VERIFIER_TOOL_BUDGET = 5
+# The checker gets the finders' ceilings: it stops once it has a verdict, so the cap only guards against
+# runaway reads, and a tight one left real bugs uncertain when their cause spanned several sections.
+VERIFIER_TOOL_BUDGET = 20
 # Each agent also has a tool-output budget, since every later turn resends its tool results.
 # Verifiers get their own, so finders can never starve verification.
 FINDER_TOOL_CHARS = 96_000
-VERIFIER_TOOL_CHARS = 20_000
+VERIFIER_TOOL_CHARS = 96_000
 VERIFIER_TOOL_CHARS_PER_EXTRA = 6_000
 MAX_SUBMIT_ATTEMPTS = 3
 # Every later turn resends a tool result, so reads are kept to a section.
