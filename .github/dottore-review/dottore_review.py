@@ -112,8 +112,7 @@ MODEL_PRICES_CNY = {
     "gpt-6-astra": (3.0, 0.3, 15.0),
     "gpt-6.1-sol": (2.0, 0.08, 8.0),
     "gpt-6-luna": (0.0375, 0.003, 0.15),
-    # ponytail: provisional, priced as gpt-6-luna until LinkAPI's gpt-5.6-luna rate is confirmed.
-    "gpt-5.6-luna": (0.0375, 0.003, 0.15),
+    "gpt-5.6-luna": (0.075, 0.006, 0.36),
 }
 # When a model's gateway fails with a transient error, the same call goes at once to its fallback, an older model
 # of the same tier, instead of waiting out the outage. A fallback that refuses a request is not tried again.
