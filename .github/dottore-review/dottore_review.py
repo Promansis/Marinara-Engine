@@ -59,12 +59,13 @@ RETRY_DELAYS = (15, 45)
 REVIEW_ROLES = ("trace", "broad", "skeptic", "verify", "scout")
 FINDER_ROLES = ("broad", "skeptic")
 # A cheaper model traces the diff's blast radius before the finders run; the code quotes what it picks.
-# ponytail: lab default for the tracer A/B; DOTTORE_MODELS "trace" overrides it until it earns a setting.
-TRACE_MODEL = {"model": "gpt-6.1-sol", "effort": "medium"}
+# ponytail: lab default for the tracer A/B; DOTTORE_MODELS "trace" overrides it until it earns a setting. It
+# runs on the scout's cheap model, since the code quotes its picks and every cent counts against the $0.25 bar.
 # ponytail: lab hypothesis that a cheaper model can do the finders' reading for them, so the strong model
 # reads a short quoted report instead of every file; keep it only if recall holds and cost falls.
 # LinkAPI refuses function tools with reasoning for gpt-6-luna on Chat Completions, so it uses Responses.
 SCOUT_MODEL = {"provider": "responses", "model": "gpt-6-luna", "effort": "medium"}
+TRACE_MODEL = SCOUT_MODEL
 SCOUT_TOOL_BUDGET = 40
 SCOUT_TOOL_CHARS = 160_000
 # Every scout turn resends all it has read, so it reads in few turns with large batched calls: read_files takes
