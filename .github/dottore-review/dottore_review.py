@@ -56,11 +56,21 @@ MODEL_STREAM_LIMIT = 900
 MODEL_MAX_RETRIES = 1
 # Waits before resending a call that hit a transient gateway error (unavailable, overloaded, cut stream).
 RETRY_DELAYS = (15, 45)
-REVIEW_ROLES = ("trace", "broad", "skeptic", "verify")
+REVIEW_ROLES = ("trace", "broad", "skeptic", "verify", "scout")
 FINDER_ROLES = ("broad", "skeptic")
 # A cheaper model traces the diff's blast radius before the finders run; the code quotes what it picks.
 # ponytail: lab default for the tracer A/B; DOTTORE_MODELS "trace" overrides it until it earns a setting.
 TRACE_MODEL = {"model": "gpt-6.1-sol", "effort": "medium"}
+# ponytail: lab hypothesis that a cheaper model can do the finders' reading for them, so the strong model
+# reads a short quoted report instead of every file; keep it only if recall holds and cost falls.
+SCOUT_MODEL = {"model": "gpt-6-luna", "effort": "medium"}
+SCOUT_TOOL_BUDGET = 40
+SCOUT_TOOL_CHARS = 160_000
+SCOUT_DEADLINE_SECONDS = 5 * 60
+SCOUT_ATTEMPTS = 2
+SCOUT_CONCURRENCY = 4
+MAX_SCOUT_REPORT_CHARS = 10_000
+FINDER_READ_BUDGET = 12
 TRACE_TOOL_BUDGET = 12
 TRACE_TOOL_CHARS = 48_000
 MAX_TRACE_SEEDS = 40
@@ -692,6 +702,9 @@ def build_stats(review_packet):
                 "stop_calls": 0,
                 "stop_chars": 0,
                 "stop_time": 0,
+                "scout_asks": 0,
+                "retries": 0,
+                "failures": 0,
                 "prompt_tokens": 0,
                 "cached_tokens": 0,
                 "completion_tokens": 0,
@@ -730,10 +743,11 @@ def role_models():
         role in REVIEW_ROLES and isinstance(value, dict) for role, value in overrides.items()
     ):
         raise ValueError(
-            'DOTTORE_MODELS must map "trace", "broad", "skeptic" or "verify" to {"provider", "model", "effort"} objects.'
+            'DOTTORE_MODELS must map "trace", "broad", "skeptic", "verify" or "scout" to {"provider", "model", "effort"} objects.'
         )
     defaults = {role: {"model": default_model, "effort": default_effort} for role in REVIEW_ROLES}
     defaults["trace"] = TRACE_MODEL
+    defaults["scout"] = SCOUT_MODEL
     models = {
         role: {
             "provider": str(overrides.get(role, {}).get("provider") or default_provider).strip().lower(),
@@ -911,6 +925,28 @@ SUBMIT_VERDICTS = function_tool(
         },
     },
     ["verdicts"],
+)
+SCOUT_TOOL = function_tool(
+    "scout",
+    "Send a cheaper model to read the repository at the PR head and answer one self-contained question with "
+    "quoted evidence. Questions asked in the same turn run in parallel.",
+    {
+        "question": {
+            "type": "string",
+            "description": "Everything the scout needs on its own: the file, symbol or line, and exactly what to find out.",
+        },
+    },
+    ["question"],
+)
+SUBMIT_REPORT = function_tool(
+    "submit_report",
+    "Submit the answer to the reviewer's question. This ends the scouting.",
+    {
+        "answer": {"type": "string", "description": "The facts that answer the question, without judging the change."},
+        "evidence": EVIDENCE,
+        "unresolved": {"type": "string", "description": "What the code did not settle, or empty."},
+    },
+    ["answer", "evidence", "unresolved"],
 )
 
 
@@ -1219,18 +1255,21 @@ def tool_call_key(call):
     return call.function.name, args
 
 
-def run_agent(ctx, role, messages, submit_tool, budget, output_budget, deadline=None):
+def run_agent(ctx, role, messages, submit_tool, budget, output_budget, deadline=None, reads=None):
     """Let one agent read with the tools until it calls its submit tool; return the submitted arguments.
 
-    The budget counts read-tool calls and output_budget their characters; a repeated call is answered
-    from the earlier result for free. Once either budget is spent, or the deadline (the review's by
-    default) has passed, the model is made to call the submit tool, and a few malformed submissions are
-    tolerated. The role's stats record which limit, if any, ended the run.
+    The budget counts tool calls and output_budget their characters; a repeated call is answered from
+    the earlier result for free. Once either budget is spent, or the deadline (the review's by default)
+    has passed, the model is made to call the submit tool, and a few malformed submissions are
+    tolerated. Given reads, the agent also gets the scout tool and at most that many direct reads. The
+    role's stats record which limit, if any, ended the run.
     """
     submit = submit_tool["function"]["name"]
-    tools = [*READ_TOOLS, submit_tool]
+    scouting = reads is not None
+    tools = [*READ_TOOLS, *([SCOUT_TOOL] if scouting else []), submit_tool]
     messages = list(messages)
     used = 0
+    read = 0
     spent = 0
     answered = {}
     deadline = deadline or ctx.deadline
@@ -1268,7 +1307,11 @@ def run_agent(ctx, role, messages, submit_tool, budget, output_budget, deadline=
                 ],
             )
         )
+        replies = {}
+        outputs = set()
+        questions = []
         for call in calls:
+            key = tool_call_key(call)
             if call.function.name == submit:
                 try:
                     submitted = json.loads(call.function.arguments or "{}")
@@ -1278,21 +1321,120 @@ def run_agent(ctx, role, messages, submit_tool, budget, output_budget, deadline=
                     with ctx.lock:
                         ctx.stats["roles"][role][f"stop_{limits[0] if limits else 'own'}"] += 1
                     return submitted
-                reply = f"refused: {submit} needs one JSON object as its arguments; call it again."
-            elif tool_call_key(call) in answered:
-                reply = f"Already returned above as tool call {answered[tool_call_key(call)]}; reuse that result."
-            elif forced or used >= budget or spent >= output_budget:
-                reply = f"refused: the tool budget is spent; call {submit} now."
+                replies[call.id] = f"refused: {submit} needs one JSON object as its arguments; call it again."
+                continue
+            if key in answered:
+                replies[call.id] = f"Already returned above as tool call {answered[key]}; reuse that result."
+                continue
+            if forced or used >= budget or spent >= output_budget:
+                replies[call.id] = f"refused: the tool budget is spent; call {submit} now."
+                continue
+            if scouting and call.function.name == "scout":
+                questions.append(call)
+            elif scouting and read >= reads:
+                replies[call.id] = "refused: your direct reads are spent; ask the scout."
+                continue
             else:
-                used += 1
-                answered[tool_call_key(call)] = used
-                reply = truncate(run_tool(ctx, call.function.name, call.function.arguments), output_budget - spent)
+                read += 1
+                replies[call.id] = run_tool(ctx, call.function.name, call.function.arguments)
+            used += 1
+            answered[key] = used
+            outputs.add(call.id)
+        if questions:
+            with ThreadPoolExecutor(max_workers=min(SCOUT_CONCURRENCY, len(questions))) as scouts:
+                results = list(scouts.map(lambda call: run_scout(ctx, call.function.arguments, deadline), questions))
+            for call, (report, ok) in zip(questions, results):
+                replies[call.id] = report
+                if not ok:
+                    # A failed scout may be asked the same question again.
+                    answered.pop(tool_call_key(call), None)
+        asked = {call.id for call in questions}
+        for call in calls:
+            reply = replies[call.id]
+            if call.id in outputs:
+                reply = truncate(reply, output_budget - spent)
                 spent += len(reply)
                 with ctx.lock:
-                    ctx.stats["roles"][role]["tool_calls"] += 1
-                    ctx.stats["roles"][role]["tool_chars"] += len(reply)
+                    totals = ctx.stats["roles"][role]
+                    totals["scout_asks" if call.id in asked else "tool_calls"] += 1
+                    totals["tool_chars"] += len(reply)
             messages.append({"role": "tool", "tool_call_id": call.id, "content": reply})
     raise RuntimeError(f"The {role} agent never called {submit}.")
+
+
+SCOUT_SYSTEM = (
+    "You scout code for a pull request reviewer. The reviewer has the diff and sends you one question about "
+    "code it has not read. Answer it from the repository at the PR head with the read-only tools: search for "
+    "names, read_file the lines that decide the answer, and use file_diff or base_version for a changed file's "
+    "diff or its text before the change. Batch independent reads in one turn and stop reading once the "
+    "question is answered. Report facts, not opinions on whether the change is correct; the reviewer judges "
+    "that. Quote evidence verbatim with its path and line number, the exact lines that settle each fact, so "
+    "the reviewer can rely on it without rereading. When the code does not settle something, say so in "
+    "unresolved instead of guessing. Finish by calling submit_report."
+)
+
+
+def scout_report(ctx, submitted):
+    """Format a scout's submission for the finder, flagging quotes that are not at their cited lines."""
+    lines = [f"Answer: {submitted.get('answer') or 'none'}"]
+    for item in as_list(submitted.get("evidence")):
+        if not isinstance(item, dict):
+            continue
+        flag = "" if evidence_grounded(ctx, [item]) else " (not found at this line; unconfirmed)"
+        snippet = "\n".join(f"    {line}" for line in str(item.get("snippet") or "").splitlines())
+        lines.append(f"- {item.get('path')}:{item.get('line')}{flag}\n{snippet}")
+    if str(submitted.get("unresolved") or "").strip():
+        lines.append(f"Unresolved: {submitted['unresolved']}")
+    return truncate(redact_for_model("\n".join(lines)), MAX_SCOUT_REPORT_CHARS)
+
+
+def run_scout(ctx, arguments, deadline):
+    """Answer one finder question with the scout model, retrying a failed run while time remains.
+
+    Returns the report and whether the scout succeeded."""
+    try:
+        question = str(json.loads(arguments or "{}").get("question") or "").strip()
+    except (ValueError, AttributeError):
+        question = ""
+    if not question:
+        return "refused: scout needs one non-empty question string.", False
+    messages = [
+        {"role": "system", "content": SCOUT_SYSTEM},
+        {"role": "user", "content": f"# Changed files\n{chr(10).join(sorted(ctx.files))}\n\n# Question\n{question}"},
+    ]
+    error = ""
+    for attempt in range(SCOUT_ATTEMPTS):
+        if attempt:
+            if time.monotonic() > deadline:
+                break
+            with ctx.lock:
+                ctx.stats["roles"]["scout"]["retries"] += 1
+        started = time.monotonic()
+        try:
+            submitted = run_agent(
+                ctx,
+                "scout",
+                messages,
+                SUBMIT_REPORT,
+                SCOUT_TOOL_BUDGET,
+                SCOUT_TOOL_CHARS,
+                min(deadline, started + SCOUT_DEADLINE_SECONDS),
+            )
+        except Exception as exc:
+            error = error_text(exc)
+            print(f"Dottore scout failed: attempt={attempt + 1}; {error}", flush=True)
+            continue
+        report = scout_report(ctx, submitted)
+        print(
+            f"Dottore scout: attempt={attempt + 1}; question_chars={len(question)}; report_chars={len(report)}; "
+            f"evidence={len(as_list(submitted.get('evidence')))}; unconfirmed={report.count('; unconfirmed)')}; "
+            f"elapsed_s={time.monotonic() - started:.1f}",
+            flush=True,
+        )
+        return report, True
+    with ctx.lock:
+        ctx.stats["roles"]["scout"]["failures"] += 1
+    return f"scout failed ({error or 'out of time'}); ask it again or narrow the question.", False
 
 
 FINDER_FOCUS = {
@@ -1338,19 +1480,23 @@ EDGE_INPUT_PASS = (
     "over stored settings, trims or caps to a budget, or awaits a call through these inputs: zero, empty "
     "or missing; a string where a number is expected; a legacy, inactive or disabled item; an input at or "
     "past the limit; and an await that rejects. Decide what the code then does. When the answer depends on "
-    "a helper or definition outside the packet, that open question is a concrete suspicion: read it."
+    "a helper or definition outside the packet, that open question is a concrete suspicion: settle it."
 )
 
 
 def finder_instructions(role):
     return (
-        f"{FINDER_FOCUS[role]} Treat the review packet as the specimen. Use the read-only tools only to "
-        "settle a concrete suspicion that depends on code outside the packet, fetching just what it needs; "
-        "do not browse, and when the packet is enough, submit without any tool calls. You have at most "
-        f"{FINDER_TOOL_BUDGET} tool calls and {FINDER_TOOL_CHARS} characters of tool output, and repeating a "
-        f"call returns nothing new. {EDGE_INPUT_PASS} Guidance is listed by heading in the selected guidance "
-        f"index; read_file only the sections that bear on a suspicion. {FINDING_RULES} Finish by calling "
-        "submit_findings."
+        f"{FINDER_FOCUS[role]} Treat the review packet as the specimen. When a concrete suspicion depends on "
+        "code outside the packet, ask the scout, a cheaper model that reads the repository for you and returns "
+        "quoted evidence. Make each question self-contained (the file, symbol or line, and exactly what to find "
+        "out), ask independent questions in the same turn so they run in parallel, follow up with a narrower "
+        "question when an answer leaves the suspicion open, and ask again if a scout fails. Ask only to settle "
+        "suspicions, not for tours of the code, and when the packet is enough, submit without any tool calls. "
+        f"Keep direct reads for checking an exact line or guidance section yourself; you have {FINDER_READ_BUDGET}. "
+        f"Scout questions and reads together are capped at {FINDER_TOOL_BUDGET} calls and {FINDER_TOOL_CHARS} "
+        f"characters of output, and repeating a call returns nothing new. {EDGE_INPUT_PASS} Guidance is listed "
+        "by heading in the selected guidance index; read only the sections that bear on a suspicion. "
+        f"{FINDING_RULES} Finish by calling submit_findings."
     )
 
 
@@ -1379,6 +1525,7 @@ def run_finders(ctx, packets, pool):
                 FINDER_TOOL_BUDGET,
                 FINDER_TOOL_CHARS,
                 min(ctx.deadline, ctx.stats["started_at"] + FINDER_DEADLINE_SECONDS),
+                FINDER_READ_BUDGET,
             ),
         )
         for packet in packets
