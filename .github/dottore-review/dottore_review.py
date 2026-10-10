@@ -67,6 +67,14 @@ TRACE_MODEL = {"model": "gpt-6.1-sol", "effort": "medium"}
 SCOUT_MODEL = {"provider": "responses", "model": "gpt-6-luna", "effort": "medium"}
 SCOUT_TOOL_BUDGET = 40
 SCOUT_TOOL_CHARS = 160_000
+# Every scout turn resends all it has read, so it reads in few turns with large batched calls: read_files takes
+# several ranges at once, and its search shows a few lines around the first hits so most need no follow-up read.
+SCOUT_TURNS = 5
+SCOUT_READ_LINES = 400
+SCOUT_READ_CHARS = 30_000
+MAX_READ_RANGES = 8
+SEARCH_CONTEXT_LINES = 3
+MAX_CONTEXT_HITS = 12
 SCOUT_DEADLINE_SECONDS = 5 * 60
 SCOUT_ATTEMPTS = 2
 SCOUT_CONCURRENCY = 4
@@ -711,6 +719,7 @@ def build_stats(review_packet):
                 "tool_chars": 0,
                 "stop_own": 0,
                 "stop_calls": 0,
+                "stop_turns": 0,
                 "stop_chars": 0,
                 "stop_time": 0,
                 "scout_asks": 0,
@@ -870,6 +879,28 @@ READ_TOOLS = [
         ["path"],
     ),
 ]
+SCOUT_READ_TOOLS = [
+    function_tool(
+        "read_files",
+        f"Read numbered lines of repository files at the PR head: up to {MAX_READ_RANGES} ranges from any files in "
+        f"one call, {SCOUT_READ_LINES} lines in total. Ask for every range you need in the same call.",
+        {
+            "ranges": {
+                "type": "array",
+                "items": {"type": "object", "properties": {"path": PATH_PARAM, **LINE_RANGE}, "required": ["path"]},
+            },
+        },
+        ["ranges"],
+    ),
+    function_tool(
+        "search",
+        f"Find literal text in the repository at the PR head; returns up to {MAX_SEARCH_HITS} hits, the first "
+        f"{MAX_CONTEXT_HITS} with {SEARCH_CONTEXT_LINES} lines either side.",
+        {"literal": {"type": "string", "description": "Exact text to find, 1-120 characters."}},
+        ["literal"],
+    ),
+    *READ_TOOLS[2:],
+]
 STRING_LIST = {"type": "array", "items": {"type": "string"}}
 REVIEW_ITEM = {
     "type": "object",
@@ -946,7 +977,8 @@ SUBMIT_VERDICTS = function_tool(
 SCOUT_TOOL = function_tool(
     "scout",
     "Send a cheaper model to read the repository at the PR head and answer one self-contained question with "
-    "quoted evidence. Questions asked in the same turn run in parallel.",
+    "quoted evidence. Put everything you need about the same code in one question; questions asked in the "
+    "same turn run in parallel.",
     {
         "question": {
             "type": "string",
@@ -1002,14 +1034,65 @@ def base_file_text(ctx, path):
     return readable_text(tool_path(path), shown.stdout)
 
 
-def numbered_lines(text, start=None, end=None):
+def numbered_lines(text, start=None, end=None, max_lines=MAX_TOOL_LINES, max_chars=MAX_TOOL_CHARS):
     lines = text.splitlines()
     first = max(1, int(start or 1))
-    last = min(len(lines), int(end or first + MAX_TOOL_LINES - 1), first + MAX_TOOL_LINES - 1)
+    last = min(len(lines), int(end or first + max_lines - 1), first + max_lines - 1)
     if first > last:
         return f"No lines in that range; the file has {len(lines)} lines."
     body = "\n".join(f"{number}: {lines[number - 1]}" for number in range(first, last + 1))
-    return truncate(body, MAX_TOOL_CHARS)
+    return truncate(body, max_chars)
+
+
+def read_ranges(ranges):
+    """Read several head-file ranges in one call; they share SCOUT_READ_LINES and SCOUT_READ_CHARS in order."""
+    if not isinstance(ranges, list) or not ranges:
+        raise ValueError("ranges must be a non-empty list of {path, start, end} objects")
+    lines_left, chars_left, parts = SCOUT_READ_LINES, SCOUT_READ_CHARS, []
+    for item in ranges[:MAX_READ_RANGES]:
+        path = item.get("path") if isinstance(item, dict) else None
+        if lines_left <= 0 or chars_left <= 0:
+            body = "skipped: this call's line or character limit is used; read it in another call."
+        else:
+            try:
+                body = numbered_lines(head_file_text(path), item.get("start"), item.get("end"), lines_left, chars_left)
+                lines_left -= body.count("\n") + 1
+            except Exception as exc:
+                body = f"refused: {exc}"
+        parts.append(f"## {path}\n{body}")
+        chars_left -= len(parts[-1])
+    if len(ranges) > MAX_READ_RANGES:
+        parts.append(f"skipped {len(ranges) - MAX_READ_RANGES} ranges past the {MAX_READ_RANGES}-range limit.")
+    return "\n\n".join(parts)
+
+
+def search_context(hits):
+    """Show the first search hits with a few lines either side, merging overlapping windows within a file."""
+    found = [re.match(r"([^:]+):(\d+): ", hit) for hit in hits]
+    if not all(found):
+        return "\n".join(hits)
+    windows = {}
+    for match in found[:MAX_CONTEXT_HITS]:
+        windows.setdefault(match[1], []).append(int(match[2]))
+    parts = []
+    for path, numbers in windows.items():
+        try:
+            text = head_file_text(path)
+        except Exception:
+            parts.append("\n".join(hit for hit in hits[:MAX_CONTEXT_HITS] if hit.startswith(f"{path}:")))
+            continue
+        spans = []
+        for number in sorted(numbers):
+            first, last = max(1, number - SEARCH_CONTEXT_LINES), number + SEARCH_CONTEXT_LINES
+            if spans and first <= spans[-1][1] + 1:
+                spans[-1][1] = last
+            else:
+                spans.append([first, last])
+        shown = (numbered_lines(text, first, last, last - first + 1, MAX_TOOL_CHARS) for first, last in spans)
+        parts.append(f"## {path}\n" + "\n...\n".join(shown))
+    if hits[MAX_CONTEXT_HITS:]:
+        parts.append("More hits:\n" + "\n".join(hits[MAX_CONTEXT_HITS:]))
+    return truncate("\n\n".join(parts), SCOUT_READ_CHARS)
 
 
 def searchable_hit(hit):
@@ -1020,14 +1103,18 @@ def searchable_hit(hit):
     return True
 
 
-def run_tool(ctx, name, arguments):
-    """Run one read-only tool call; every result is redacted and every failure becomes a refusal."""
+def run_tool(ctx, name, arguments, context=False):
+    """Run one read-only tool call; every result is redacted and every failure becomes a refusal.
+
+    With context, search shows lines around its first hits, as the scout's search tool promises."""
     try:
         args = json.loads(arguments or "{}")
         if not isinstance(args, dict):
             raise ValueError("arguments must be a JSON object")
         if name == "read_file":
             result = numbered_lines(head_file_text(args.get("path")), args.get("start"), args.get("end"))
+        elif name == "read_files":
+            result = read_ranges(args.get("ranges"))
         elif name == "base_version":
             result = numbered_lines(base_file_text(ctx, args.get("path")), args.get("start"), args.get("end"))
         elif name == "file_diff":
@@ -1036,8 +1123,8 @@ def run_tool(ctx, name, arguments):
                 raise ValueError(f"{path} is not a changed file; use read_file")
             result = truncate(diff_for_path(ctx.base, path), MAX_FILE_PATCH_CHARS)
         elif name == "search":
-            hits = search_repo(str(args.get("literal") or "")).splitlines()
-            result = "\n".join(hit for hit in hits if searchable_hit(hit)) or "no matches"
+            hits = [hit for hit in search_repo(str(args.get("literal") or "")).splitlines() if searchable_hit(hit)]
+            result = (search_context(hits) if context else "\n".join(hits)) if hits else "no matches"
         else:
             raise ValueError(f"unknown tool {name}")
     except Exception as exc:
@@ -1364,29 +1451,32 @@ def tool_call_key(call):
     return call.function.name, args
 
 
-def run_agent(ctx, role, messages, submit_tool, budget, output_budget, deadline=None, reads=None):
+def run_agent(ctx, role, messages, submit_tool, budget, output_budget, deadline=None, reads=None, turns=None):
     """Let one agent read with the tools until it calls its submit tool; return the submitted arguments.
 
-    The budget counts tool calls and output_budget their characters; a repeated call is answered from
-    the earlier result for free. Once either budget is spent, or the deadline (the review's by default)
-    has passed, the model is made to call the submit tool, and a few malformed submissions are
-    tolerated. Given reads, the agent also gets the scout tool and at most that many direct reads. The
-    role's stats record which limit, if any, ended the run.
+    The budget counts tool calls, turns the turns that may call them (the budget by default), and
+    output_budget their characters; a repeated call is answered from the earlier result for free. Once
+    any is spent, or the deadline (the review's by default) has passed, the model is made to call the
+    submit tool, and a few malformed submissions are tolerated. Given reads, the agent also gets the scout
+    tool and at most that many direct reads. The scout reads with batched tools. The role's stats record
+    which limit, if any, ended the run.
     """
     submit = submit_tool["function"]["name"]
     scouting = reads is not None
-    tools = [*READ_TOOLS, *([SCOUT_TOOL] if scouting else []), submit_tool]
+    tools = [*(SCOUT_READ_TOOLS if role == "scout" else READ_TOOLS), *([SCOUT_TOOL] if scouting else []), submit_tool]
     messages = list(messages)
     used = 0
     read = 0
     spent = 0
     answered = {}
     deadline = deadline or ctx.deadline
-    for turn in range(budget + MAX_SUBMIT_ATTEMPTS):
+    turns = min(turns or budget, budget)
+    for turn in range(turns + MAX_SUBMIT_ATTEMPTS):
         limits = [
             name
             for name, hit in (
-                ("calls", used >= budget or turn >= budget),
+                ("calls", used >= budget),
+                ("turns", turn >= turns),
                 ("chars", spent >= output_budget),
                 ("time", time.monotonic() > deadline),
             )
@@ -1445,7 +1535,7 @@ def run_agent(ctx, role, messages, submit_tool, budget, output_budget, deadline=
                 continue
             else:
                 read += 1
-                replies[call.id] = run_tool(ctx, call.function.name, call.function.arguments)
+                replies[call.id] = run_tool(ctx, call.function.name, call.function.arguments, role == "scout")
             used += 1
             answered[key] = used
             outputs.add(call.id)
@@ -1478,13 +1568,16 @@ def run_agent(ctx, role, messages, submit_tool, budget, output_budget, deadline=
 
 SCOUT_SYSTEM = (
     "You scout code for a pull request reviewer. The reviewer has the diff and sends you one question about "
-    "code it has not read. Answer it from the repository at the PR head with the read-only tools: search for "
-    "names, read_file the lines that decide the answer, and use file_diff or base_version for a changed file's "
-    "diff or its text before the change. Batch independent reads in one turn and stop reading once the "
-    "question is answered. Report facts, not opinions on whether the change is correct; the reviewer judges "
-    "that. Quote evidence verbatim with its path and line number, the exact lines that settle each fact, so "
-    "the reviewer can rely on it without rereading. When the code does not settle something, say so in "
-    "unresolved instead of guessing. Finish by calling submit_report."
+    "code it has not read. Answer it from the repository at the PR head with the read-only tools. You have "
+    f"{SCOUT_TURNS} turns of tool calls before you must report, and every turn resends everything read so "
+    "far, so plan first and fetch in as few turns as possible: make every search you need in one turn (each "
+    "shows a few lines around its first hits), then one read_files call with every range that decides the "
+    "answer, whole functions rather than slices. Use file_diff or base_version for a changed file's diff or "
+    "its text before the change. Stop reading once the question is answered. Report facts, not opinions on "
+    "whether the change is correct; the reviewer judges that. Quote evidence verbatim with its path and line "
+    "number, the exact lines that settle each fact, so the reviewer can rely on it without rereading. When "
+    "the code does not settle something, say so in unresolved instead of guessing. Finish by calling "
+    "submit_report."
 )
 
 
@@ -1536,6 +1629,7 @@ def run_scout(ctx, arguments, deadline):
                     SCOUT_TOOL_BUDGET,
                     SCOUT_TOOL_CHARS,
                     min(deadline, started + SCOUT_DEADLINE_SECONDS),
+                    turns=SCOUT_TURNS,
                 )
         except Exception as exc:
             error = error_text(exc)
@@ -1609,9 +1703,11 @@ def finder_instructions(role):
         f"{FINDER_FOCUS[role]} Treat the review packet as the specimen. When a concrete suspicion depends on "
         "code outside the packet, ask the scout, a cheaper model that reads the repository for you and returns "
         "quoted evidence. Make each question self-contained (the file, symbol or line, and exactly what to find "
-        "out), ask independent questions in the same turn so they run in parallel, follow up with a narrower "
-        "question when an answer leaves the suspicion open, and ask again if a scout fails. Ask only to settle "
-        "suspicions, not for tours of the code, and when the packet is enough, submit without any tool calls. "
+        "out) and put everything you need about the same code into one question rather than several small "
+        "ones; ask questions about unrelated code in the same turn so they run in parallel, follow up with a "
+        "narrower question when an answer leaves the suspicion open, and ask again if a scout fails. Ask only "
+        "to settle suspicions, not for tours of the code, and when the packet is enough, submit without any "
+        "tool calls. "
         f"Keep direct reads for checking an exact line or guidance section yourself; you have {FINDER_READ_BUDGET}. "
         f"Scout questions and reads together are capped at {FINDER_TOOL_BUDGET} calls and {FINDER_TOOL_CHARS} "
         f"characters of output, and repeating a call returns nothing new. {EDGE_INPUT_PASS} Guidance is listed "
