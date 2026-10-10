@@ -127,6 +127,10 @@ DEFAULT_CONCURRENCY = 4
 MAX_CONCURRENCY = 16
 # The review step times out at 35 minutes; after this, agents submit and no new verifier starts.
 REVIEW_DEADLINE_SECONDS = 25 * 60
+# The checker always gets this long after the finders, within a hard limit that leaves the 35-minute step
+# time to finish.
+VERIFY_RESERVE_SECONDS = 5 * 60
+REVIEW_HARD_LIMIT_SECONDS = 30 * 60
 SECRET_VALUE_RE = re.compile(
     r"(?i)(api[_-]?key|token|secret|password|passwd|authorization|bearer|client[_-]?secret)"
     r"(\s*[:=]\s*|\s+)([^\s'\"`;&|]+)"
@@ -1472,7 +1476,7 @@ def scout_report(ctx, submitted):
     for item in as_list(submitted.get("evidence")):
         if not isinstance(item, dict):
             continue
-        flag = "" if evidence_grounded(ctx, [item]) else " (not found at this line; unconfirmed)"
+        flag = "" if evidence_grounded(ctx, [item], whole=True) else " (not found at this line; unconfirmed)"
         snippet = "\n".join(f"    {line}" for line in str(item.get("snippet") or "").splitlines())
         lines.append(f"- {item.get('path')}:{item.get('line')}{flag}\n{snippet}")
     if str(submitted.get("unresolved") or "").strip():
@@ -2057,10 +2061,13 @@ def evidence_snippet(text):
     return " ".join(" ".join(lines).split())
 
 
-def evidence_grounded(ctx, evidence):
-    """True when at least one quoted snippet appears near its cited line in the head or base file."""
+def evidence_grounded(ctx, evidence, whole=False):
+    """True when at least one quoted snippet appears near its cited line in the head or base file.
+
+    With whole, the window also covers the snippet's own length, so a long quote starting at its line counts."""
     for item in evidence:
         snippet = evidence_snippet(item.get("snippet"))
+        extra = len(str(item.get("snippet") or "").splitlines()) if whole else 0
         if len(snippet) < 3:
             continue
         line = item.get("line")
@@ -2070,7 +2077,7 @@ def evidence_grounded(ctx, evidence):
             except Exception:
                 continue
             if isinstance(line, int) and not isinstance(line, bool) and line > 0:
-                lines = lines[max(0, line - 1 - EVIDENCE_WINDOW) : line + EVIDENCE_WINDOW]
+                lines = lines[max(0, line - 1 - EVIDENCE_WINDOW) : line + EVIDENCE_WINDOW + extra]
             window = "\n".join(lines)
             if any(snippet in " ".join(text.split()) for text in (window, redact_for_model(window))):
                 return True
@@ -2183,6 +2190,11 @@ def verify_candidates(ctx, candidates, pool):
 def agentic_review(ctx, packets, mode, pool):
     """Find in parallel, merge, then let Dottore verify each candidate before it can be posted."""
     merged = merge_segments(run_finders(ctx, packets, pool))
+    # A slow last finder turn must not leave the checker without time, since unverified findings are withheld.
+    ctx.deadline = max(
+        ctx.deadline,
+        min(time.monotonic() + VERIFY_RESERVE_SECONDS, ctx.stats["started_at"] + REVIEW_HARD_LIMIT_SECONDS),
+    )
     candidates, severity_nitpicks, withheld = validate_review_items(
         {"findings": merged["findings"], "mode": mode}, ctx.base
     )
