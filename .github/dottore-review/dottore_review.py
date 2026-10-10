@@ -70,6 +70,9 @@ SCOUT_TOOL_CHARS = 160_000
 SCOUT_DEADLINE_SECONDS = 5 * 60
 SCOUT_ATTEMPTS = 2
 SCOUT_CONCURRENCY = 4
+# Scouts in flight across both finders, and the short waits that ride out the scout model's rate limit.
+SCOUTS_IN_FLIGHT = 3
+SCOUT_RETRY_DELAYS = (3, 6, 12, 24)
 MAX_SCOUT_REPORT_CHARS = 10_000
 FINDER_READ_BUDGET = 12
 TRACE_TOOL_BUDGET = 12
@@ -818,6 +821,7 @@ class ReviewRun:
     deadline: float
     cache_key: str = ""
     lock: threading.Lock = field(default_factory=threading.Lock)
+    scouts: threading.Semaphore = field(default_factory=lambda: threading.Semaphore(SCOUTS_IN_FLIGHT))
 
 
 def function_tool(name, description, properties, required):
@@ -1298,7 +1302,8 @@ def chat(ctx, role, messages, tools, tool_choice):
     # it at once, at most MODEL_MAX_RETRIES times since each stall has already used a read timeout, and
     # waits out a transient gateway error, which can arrive mid-stream with a request to resend.
     stalls = 0
-    for attempt in range(len(RETRY_DELAYS) + 1):
+    delays = SCOUT_RETRY_DELAYS if role == "scout" else RETRY_DELAYS
+    for attempt in range(len(delays) + 1):
         started = time.monotonic()
         timing = {}
         try:
@@ -1308,9 +1313,9 @@ def chat(ctx, role, messages, tools, tool_choice):
             stalled = isinstance(exc, StreamStalled)
             stalls += stalled
             retry = stalls <= MODEL_MAX_RETRIES if stalled else transient_error(exc)
-            if not retry or attempt == len(RETRY_DELAYS):
+            if not retry or attempt == len(delays):
                 raise
-            wait = 0 if stalled else RETRY_DELAYS[attempt]
+            wait = 0 if stalled else delays[attempt]
             print(
                 f"Dottore call retry: role={role}; attempt={attempt + 1}; after_s={time.monotonic() - started:.1f}; "
                 f"wait_s={wait}; {error_text(exc)}",
@@ -1505,17 +1510,18 @@ def run_scout(ctx, arguments, deadline):
                 break
             with ctx.lock:
                 ctx.stats["roles"]["scout"]["retries"] += 1
-        started = time.monotonic()
         try:
-            submitted = run_agent(
-                ctx,
-                "scout",
-                messages,
-                SUBMIT_REPORT,
-                SCOUT_TOOL_BUDGET,
-                SCOUT_TOOL_CHARS,
-                min(deadline, started + SCOUT_DEADLINE_SECONDS),
-            )
+            with ctx.scouts:
+                started = time.monotonic()
+                submitted = run_agent(
+                    ctx,
+                    "scout",
+                    messages,
+                    SUBMIT_REPORT,
+                    SCOUT_TOOL_BUDGET,
+                    SCOUT_TOOL_CHARS,
+                    min(deadline, started + SCOUT_DEADLINE_SECONDS),
+                )
         except Exception as exc:
             error = error_text(exc)
             print(f"Dottore scout failed: attempt={attempt + 1}; {error}", flush=True)
@@ -1602,7 +1608,11 @@ def staggered(delay, function, *args):
 
 
 def run_finders(ctx, packets, pool):
-    """Stage 1: run the broad and skeptical segments over every packet concurrently."""
+    """Stage 1: run the broad and skeptical segments over every packet concurrently.
+
+    The time box starts with the finders, and a finder that fails leaves a review limitation instead of
+    failing the review, unless every finder fails."""
+    deadline = min(ctx.deadline, time.monotonic() + FINDER_DEADLINE_SECONDS)
     jobs = [
         (
             role,
@@ -1620,19 +1630,30 @@ def run_finders(ctx, packets, pool):
                 SUBMIT_FINDINGS,
                 FINDER_TOOL_BUDGET,
                 FINDER_TOOL_CHARS,
-                min(ctx.deadline, ctx.stats["started_at"] + FINDER_DEADLINE_SECONDS),
+                deadline,
                 FINDER_READ_BUDGET,
             ),
         )
         for packet in packets
         for role in FINDER_ROLES
     ]
-    try:
-        return [(role, future.result()) for role, future in jobs]
-    except Exception:
-        for _, future in jobs:
-            future.cancel()
-        raise
+    reports, errors = [], []
+    for role, future in jobs:
+        try:
+            reports.append((role, future.result()))
+        except Exception as exc:
+            print(f"Dottore finder failed: role={role}; {error_text(exc)}", flush=True)
+            errors.append(exc)
+            check = {
+                "name": f"{SEGMENT_LABELS[role]} Coverage",
+                "status": "warn",
+                "type": "Review Limitation",
+                "detail": f"The {role} finder failed ({error_text(exc)}), so its candidates are missing from this review.",
+            }
+            reports.append((role, {"pre_merge_checks": [check]}))
+    if len(errors) == len(jobs):
+        raise errors[0]
+    return reports
 
 
 # ponytail: line-based declaration patterns, not a parser. An unnamed callback or an unusual signature
