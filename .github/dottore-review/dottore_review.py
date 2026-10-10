@@ -187,6 +187,8 @@ class Finding:
     repair_contract: dict | None = None
     side: str = "RIGHT"
     segment: str = ""
+    # A defect on an unchanged line of a changed file: reported in the walkthrough, not inline.
+    outside_diff: bool = False
 
 
 def _safe_path(rel: str) -> pathlib.Path:
@@ -1046,6 +1048,13 @@ def head_file_text(path):
     return readable_text(relative, full.read_text("utf-8", "replace"))
 
 
+def head_line_exists(path, line):
+    try:
+        return line <= len(head_file_text(path).splitlines())
+    except Exception:
+        return False
+
+
 def base_file_text(ctx, path):
     shown = run(["git", "show", f"{ctx.merge_base}:{tool_path(path)}"], timeout=60)
     if shown.returncode != 0:
@@ -1727,12 +1736,13 @@ def finder_packet(review_target, focus_note, prior_contracts, review_packet):
 
 FINDING_RULES = (
     "Dottore verifies every candidate against the code before anything is published, so report each "
-    "concrete suspicion once, at its exact changed line, and do not pad. If prior Dottore contracts are "
-    "included, first judge whether the current diff satisfies or leaves those contracts incomplete before "
-    "issuing adjacent related findings. Findings must point to added/changed RIGHT lines or deleted LEFT "
-    "lines; report one finding per line, combining related concerns. Dottore never runs commands, tests "
-    "or builds and CI does, so do not report unexecuted checks as a limitation. Record what you checked "
-    "in what_i_checked, and name any limitation there instead of inventing certainty."
+    "concrete suspicion once and do not pad. If prior Dottore contracts are included, first judge whether "
+    "the current diff satisfies or leaves those contracts incomplete before issuing adjacent related "
+    "findings. Point each finding at the added/changed RIGHT line or deleted LEFT line that causes it; only "
+    "when the defect itself sits on an unchanged line of a changed file, cite that line, and Dottore reports "
+    "it outside the diff. Report one finding per line, combining related concerns. Dottore never runs "
+    "commands, tests or builds and CI does, so do not report unexecuted checks as a limitation. Record what "
+    "you checked in what_i_checked, and name any limitation there instead of inventing certainty."
 )
 
 
@@ -2277,6 +2287,7 @@ def verification_prompt(ctx, candidates):
                 for key, value in dataclasses.asdict(candidate).items()
                 if key in {"severity", "path", "line", "side", "title", "body", "fix_hint"}
             },
+            **({"outside_diff": True} if candidate.outside_diff else {}),
         }
         for number, candidate in enumerate(candidates, 1)
     ]
@@ -2538,11 +2549,19 @@ def validate_review_items(review_obj, base):
             )
             continue
         if finding.line not in allowed[finding.path].get(finding.side, set()):
-            invalid.append(
-                f"{finding.severity} '{finding.title or '<untitled>'}' at "
-                f"{finding.path}:{finding.line}: line is not a changed {finding.side} diff line"
-            )
-            continue
+            if finding.side == "LEFT" or not head_line_exists(finding.path, finding.line):
+                reason = (
+                    "line is not a deleted LEFT diff line"
+                    if finding.side == "LEFT"
+                    else "line does not exist at the PR head"
+                )
+                invalid.append(
+                    f"{finding.severity} '{finding.title or '<untitled>'}' at "
+                    f"{finding.path}:{finding.line}: {reason}"
+                )
+                continue
+            # Like CodeRabbit's outside-diff comments: kept, verified, and reported in the walkthrough.
+            finding.outside_diff = True
         if not finding.title or not finding.body:
             invalid.append(f"{finding.path}:{finding.line}: missing title/body")
             continue
@@ -3198,9 +3217,16 @@ def render_walkthrough(
             body.append(
                 "| "
                 f"{status_badge(meta)} | "
-                f"`{md_cell(finding.path)}:{finding.line}` ({finding.side}) | "
+                f"`{md_cell(finding.path)}:{finding.line}` ({finding.side})"
+                f"{' · outside diff' if finding.outside_diff else ''} | "
                 f"{md_cell(finding.title)} |"
             )
+        outside = [finding for finding in findings if finding.outside_diff]
+        if outside:
+            # GitHub only takes inline comments on diff lines, so these are shown in full here.
+            body.extend(["", "<details>", f"<summary>⚠️ Outside the diff ({len(outside)})</summary>", ""])
+            body.extend(item for finding in outside for item in (render_finding_body(finding), ""))
+            body.append("</details>")
     else:
         if has_failed_review_check(pre_merge):
             body.extend(
@@ -3797,7 +3823,7 @@ def render_review(args):
         prior_contracts=review_obj.get("_prior_dottore_contract_state") or [],
     )
     pathlib.Path("review.md").write_text(walkthrough, "utf-8")
-    inline_findings = findings_for_inline_comments(findings)
+    inline_findings = findings_for_inline_comments([f for f in findings if not f.outside_diff])
     inline = [
         {
             "path": f.path,
