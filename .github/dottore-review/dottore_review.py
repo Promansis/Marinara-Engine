@@ -2909,8 +2909,16 @@ def raise_claims(ctx, packets, chunks, pool):
             continue
         drafts = pass_claims(lens, first)
         claims = pass_claims(lens, resolved or {})
-        spots = {(claim["path"], claim["line"]) for claim in claims}
-        missing = [draft for draft in drafts if (draft["path"], draft["line"]) not in spots]
+        # The resolve step moves a claim a line or two as it settles it, so a draft that near a resolved claim in the
+        # same file counts as kept; the checker examines that spot either way.
+        missing = [
+            draft
+            for draft in drafts
+            if not any(
+                claim["path"] == draft["path"] and abs(claim["line"] - draft["line"]) <= NEARBY_LINES
+                for claim in claims
+            )
+        ]
         print(
             f"Dottore claim pass: lens={lens}; packet={index}; drafted={len(drafts)}; "
             f"resolved={len(claims) if resolved else 'failed'}; drafts_restored={len(missing)}",
@@ -2942,6 +2950,47 @@ def raise_claims(ctx, packets, chunks, pool):
         flush=True,
     )
     return kept
+
+
+# ponytail: lab hypothesis that the claim pass finds the right spot but names the wrong failure (7239's allowed() veto
+# was claimed at 3379-3382 in 4 of 4 runs, each time as another failure), so a checker that re-diagnoses each spot
+# turns those near misses into hits; keep it only if a multi-run test shows that at a checker cost under the bar. A
+# re-diagnosed confirmation keeps the claim's title, so publishing one would take its defect from the note.
+CLAIM_CHECK = (
+    "# Claim Check\n"
+    "These candidates come from a cheaper model's claim pass. Its line is often at or near a real defect while its "
+    "failure is wrong, hedged or about the wrong input, so judge the spot, not only the wording. For each candidate, "
+    "read the cited line and the code its outcome runs through: the functions it calls, the values it reads and the "
+    "callers that reach it, changed or not. Try the claimed input first, then the other inputs that reach the line, "
+    "such as strings or legacy values where numbers are expected, empty or missing values, calls that reject or "
+    "throw, and repeated, reset or reordered events. When the claimed failure does not happen but this PR "
+    "introduces another defect that shows at the candidate's line or a few lines from it, even one caused inside "
+    "code that line calls, confirm the candidate and write the defect you found in `note`: the input and what the "
+    "code then does wrong. For these candidates this replaces \"do not raise new findings\". Reject a candidate "
+    "only when its spot has no defect this PR introduced; several candidates may share one defect, and each that "
+    "does is confirmed."
+)
+
+
+def check_claims(ctx, claims, mode, pool):
+    """Lab stage: the checker examines each kept claim's spot and says what, if anything, is wrong there."""
+    reserve_verify_time(ctx)
+    findings = [
+        {
+            "severity": "medium",
+            "path": claim["path"],
+            "line": claim["line"],
+            "title": claim["failure"],
+            "body": f"Triggered by: {claim['input']}",
+            "segment": claim["id"],
+        }
+        for claim in claims
+    ]
+    candidates, _, invalid = validate_review_items({"findings": findings, "mode": mode}, ctx.base)
+    for reason in invalid:
+        print(f"Dottore claim not checked: {reason}", flush=True)
+    _, _, counts = verify_candidates(ctx, candidates, pool, CLAIM_CHECK)
+    ctx.stats["verification"] = counts
 
 
 def as_list(value):
@@ -3048,7 +3097,7 @@ def evidence_grounded(ctx, evidence, whole=False):
     return False
 
 
-def verification_prompt(ctx, candidates):
+def verification_prompt(ctx, candidates, instructions=""):
     claims = [
         {
             "candidate": number,
@@ -3066,7 +3115,8 @@ def verification_prompt(ctx, candidates):
         f"Verify these {len(claims)} candidate finding(s) in {path} before publication, following the "
         f"Verification section. You have at most {verifier_budget(candidates)} tool calls. Finish by "
         "calling submit_verdicts with one verdict per candidate number."
-        f"\n\n# Candidates\n{json.dumps(claims, indent=2)}"
+        + (f"\n\n{instructions}" if instructions else "")
+        + f"\n\n# Candidates\n{json.dumps(claims, indent=2)}"
         f"\n\n# Path Rules\n{matching_path_rules([path])}"
         f"\n\n# Diff of {path}\n{truncate(diff_for_path(ctx.base, path), MAX_CONTEXT_FILE_CHARS)}"
     )
@@ -3094,7 +3144,7 @@ def judge(ctx, candidate, verdict):
     return outcome, candidate, note, evidence
 
 
-def verify_file(ctx, candidates):
+def verify_file(ctx, candidates, instructions=""):
     """Stage 3: Dottore checks one file's candidates against the code in a single agent run."""
     if time.monotonic() > ctx.deadline:
         return [("unverified", candidate, "", []) for candidate in candidates]
@@ -3103,7 +3153,7 @@ def verify_file(ctx, candidates):
         "verify",
         [
             {"role": "system", "content": ctx.skill},
-            {"role": "user", "content": verification_prompt(ctx, candidates)},
+            {"role": "user", "content": verification_prompt(ctx, candidates, instructions)},
         ],
         SUBMIT_VERDICTS,
         verifier_budget(candidates),
@@ -3116,13 +3166,14 @@ def verify_file(ctx, candidates):
     return [judge(ctx, candidate, by_number.get(number)) for number, candidate in enumerate(candidates, 1)]
 
 
-def verify_candidates(ctx, candidates, pool):
-    """Verify the highest-severity candidates, one agent per file in parallel, and sort them by outcome."""
+def verify_candidates(ctx, candidates, pool, instructions=""):
+    """Verify the highest-severity candidates, one agent per file in parallel, and sort them by outcome. Given
+    instructions, every verification request carries them."""
     chosen = candidates[:MAX_VERIFIED_CANDIDATES]
     groups = {}
     for candidate in chosen:
         groups.setdefault(candidate.path, []).append(candidate)
-    futures = {path: pool.submit(verify_file, ctx, group) for path, group in groups.items()}
+    futures = {path: pool.submit(verify_file, ctx, group, instructions) for path, group in groups.items()}
     counts = dict.fromkeys(("candidates", "confirmed", "rejected", "uncertain", "unverified", "failed"), 0)
     counts["candidates"] = len(candidates)
     counts["unverified"] = len(candidates) - len(chosen)
@@ -3142,7 +3193,7 @@ def verify_candidates(ctx, candidates, pool):
         counts[outcome] += 1
         print(
             f"Dottore candidate: {outcome}; found_by={finding.segment}; {finding.severity}; "
-            f"{finding.path}:{finding.line}; {finding.title[:120]}",
+            f"{finding.path}:{finding.line}; {finding.title[:120]}; note={note}",
             flush=True,
         )
         if outcome == "confirmed":
@@ -3152,14 +3203,18 @@ def verify_candidates(ctx, candidates, pool):
     return confirmed, hypotheses, counts
 
 
-def agentic_review(ctx, packets, mode, pool):
-    """Find in parallel, merge, then let Dottore verify each candidate before it can be posted."""
-    merged = merge_segments(run_finders(ctx, packets, pool))
-    # A slow last finder turn must not leave the checker without time, since unverified findings are withheld.
+def reserve_verify_time(ctx):
+    """A slow last finder turn must not leave the checker without time, since unverified findings are withheld."""
     ctx.deadline = max(
         ctx.deadline,
         min(time.monotonic() + VERIFY_RESERVE_SECONDS, ctx.stats["started_at"] + REVIEW_HARD_LIMIT_SECONDS),
     )
+
+
+def agentic_review(ctx, packets, mode, pool):
+    """Find in parallel, merge, then let Dottore verify each candidate before it can be posted."""
+    merged = merge_segments(run_finders(ctx, packets, pool))
+    reserve_verify_time(ctx)
     candidates, severity_nitpicks, withheld = validate_review_items(
         {"findings": merged["findings"], "mode": mode}, ctx.base
     )
@@ -4507,7 +4562,7 @@ def produce_review(args):
         lab_stage = os.environ.get("DOTTORE_LAB_STAGE", "").strip().lower()
         # ponytail: one trace covers every chunk and is appended to each; trace per chunk if large PRs need it.
         # The claim passes get only what code builds, with no tracer model before them.
-        blast_radius = trace_blast_radius(ctx, llm=lab_stage != "hypo")
+        blast_radius = trace_blast_radius(ctx, llm=lab_stage not in ("hypo", "check"))
         if lab_stage == "trace":
             # ponytail: lab stage that measures the Luna tracer alone, for pennies; remove it with the lab.
             write_skipped_review(
@@ -4519,14 +4574,18 @@ def produce_review(args):
             return
         if blast_radius:
             packets = [f"{packet}\n\n{blast_radius}" for packet in packets]
-        if lab_stage == "hypo":
-            # ponytail: lab stage that measures the cheap claim passes alone, before any checker; remove it with
-            # the lab.
+        if lab_stage in ("hypo", "check"):
+            # ponytail: lab stages that measure the cheap claim passes alone ("hypo") or with the checker
+            # re-diagnosing their spots ("check"), with nothing published; remove them with the lab.
             with ThreadPoolExecutor(max_workers=review_concurrency()) as pool:
-                raise_claims(ctx, packets, chunks if len(chunks) > 1 else [files], pool)
+                claims = raise_claims(ctx, packets, chunks if len(chunks) > 1 else [files], pool)
+                if lab_stage == "check":
+                    check_claims(ctx, claims, effective_mode, pool)
             write_skipped_review(
                 "Lab Claims Only",
-                "DOTTORE_LAB_STAGE=hypo: the code preflight and the claim passes ran and the review stopped before the finders.",
+                f"DOTTORE_LAB_STAGE={lab_stage}: the code preflight and the claim passes ran"
+                + (" and the checker examined each claim" if lab_stage == "check" else "")
+                + "; the review stopped before the finders.",
                 metadata={"head_sha": head_sha, "review_base": base, "base_ref": base_ref, "mode": effective_mode},
             )
             print_telemetry(stats)
