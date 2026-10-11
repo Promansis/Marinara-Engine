@@ -153,6 +153,9 @@ MAX_CLAIM_CHARS = 400
 # The resolve step's reads, after the claim pass has formed its claims.
 RESOLVE_TOOL_BUDGET = 8
 RESOLVE_TOOL_CHARS = 40_000
+# Unchanged same-file functions the changed lines call, quoted for the resolve step.
+MAX_HELPER_CALLS = 12
+MAX_HELPER_CHARS = 24_000
 MAX_BLAST_RADIUS_CHARS = 24_000
 # The changed code the tracer reads before its first tool call, quoted by code so its view of the change does not
 # depend on which reads it chooses: each changed line with the lines around it, each short named block containing
@@ -2332,6 +2335,57 @@ def trace_seeds(touched):
 CALL_NAME_RE = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(")
 
 
+def declared_names(lines):
+    """Each named block's first declaration line, by name."""
+    declared = {}
+    for number, text in enumerate(lines, 1):
+        for pattern in NAMED_BLOCK_RES:
+            match = pattern.search(text)
+            if match and match.group(1) not in NOT_NAMES:
+                declared.setdefault(match.group(1), number)
+                break
+    return declared
+
+
+def helper_calls(touched, paths):
+    """The same-file functions that the changed production lines in paths call and the PR left unchanged, each quoted
+    with its calling lines, within MAX_HELPER_CALLS and MAX_HELPER_CHARS."""
+    found, size = [], 0
+    for path in sorted(paths):
+        sides = touched.get(path)
+        if not path.endswith(CODE_SUFFIXES) or TEST_PATH_RE.search(path) or not sides or not sides["RIGHT"]:
+            continue
+        try:
+            lines = head_file_text(path).splitlines()
+        except Exception:
+            continue
+        changed = sorted(number for number in sides["RIGHT"] if number <= len(lines))
+        declared = declared_names(lines)
+        callers = {}
+        for number in changed:
+            for match in CALL_NAME_RE.finditer(lines[number - 1]):
+                if match.group(1) in declared:
+                    callers.setdefault(match.group(1), []).append(number)
+        for name, numbers in sorted(callers.items(), key=lambda item: item[1][0]):
+            start = declared[name]
+            end = statement_end(lines, start, MAX_CALLEE_LINES)
+            # ponytail: a function longer than MAX_CALLEE_LINES counts as unchanged when its change sits past the
+            # quoted lines; the enclosing block's real end would settle it.
+            if any(start <= number <= end for number in changed):
+                continue
+            body = "\n".join(f"{number}: {lines[number - 1]}" for number in range(start, end + 1))
+            entry = (
+                f"## `{name}`, {path}:{start}-{end}, called from "
+                + ", ".join(f"{path}:{number}" for number in sorted(set(numbers)))
+                + f"\n```text\n{redact_for_model(body)}\n```"
+            )
+            if len(found) == MAX_HELPER_CALLS or size + len(entry) > MAX_HELPER_CHARS:
+                return found
+            found.append(entry)
+            size += len(entry)
+    return found
+
+
 def changed_code(touched):
     """The changed code and what surrounds it, quoted from the PR head: each changed line with CHANGED_CODE_WINDOW
     lines either side, the named block around it in full when that block is short, and the same-file functions
@@ -2353,13 +2407,7 @@ def changed_code(touched):
                 end = statement_end(lines, block[1], MAX_CHANGED_BLOCK_LINES + 1)
                 if number <= end < block[1] + MAX_CHANGED_BLOCK_LINES:
                     ranges.append((block[1], end))
-        declared = {}
-        for number, text in enumerate(lines, 1):
-            for pattern in NAMED_BLOCK_RES:
-                match = pattern.search(text)
-                if match and match.group(1) not in NOT_NAMES:
-                    declared.setdefault(match.group(1), number)
-                    break
+        declared = declared_names(lines)
         called = {match.group(1) for number in changed for match in CALL_NAME_RE.finditer(lines[number - 1])}
         for name in sorted(called & declared.keys()):
             start = declared[name]
@@ -2751,8 +2799,18 @@ HYPO_RESOLVE = (
     "the packet does not show it. Follow the claim's input through that code, then rewrite the failure as what the "
     "code actually does with that input: where the failure says if, may or could, or asks the checker to inspect "
     "code, replace that with what the code does. When the code handles that input but fails in another way at the "
-    "same line, claim that failure instead. Keep every claim, in its order, and call submit_claims with the "
-    "complete list."
+    "same line, claim that failure instead. Keep every claim, and call submit_claims with the complete list, most "
+    "likely first."
+)
+# ponytail: lab hypothesis that the misses sit where changed code hands a new input to an unchanged helper whose body
+# the claim pass never sees; quoting the same-file ones makes the resolve step check them. Calls reached only
+# through unchanged code (7265's visibilityTranscript, 7239's allowed()) are not listed; follow values if they matter.
+HYPO_HELPERS = (
+    "The changed lines also call the functions quoted below, which the PR did not change and the packet does not "
+    "show. After settling the claims, take each call in turn: work out what the changed code now passes to the "
+    "function, or the changed state it now runs in, and follow that through the function's code, including its "
+    "trimming, filtering, type checks, fallbacks and what happens when it throws or rejects. Add a claim at the "
+    "calling line for each input the function mishandles."
 )
 
 
@@ -2797,9 +2855,10 @@ def merge_claims(passes):
     return kept
 
 
-def claim_packet(ctx, index, packet, deadline):
-    """One broad claim pass on a packet, then the resolve step with the same packet and the pass's claims. Returns
-    the first submission and the resolved one, which is None when the resolve step failed."""
+def claim_packet(ctx, index, packet, helpers, deadline):
+    """One broad claim pass on a packet, then the resolve step with the same packet, the pass's claims and the
+    quoted helper calls. Returns the first submission and the resolved one, which is None when the resolve step
+    failed."""
     system = {"role": "system", "content": HYPO_SYSTEM}
     first = run_agent(
         ctx,
@@ -2817,7 +2876,10 @@ def claim_packet(ctx, index, packet, deadline):
     )
     if not claims:
         return first, None
-    resolve = [system, {"role": "user", "content": packet}, {"role": "user", "content": f"{HYPO_RESOLVE}\n\n# Claims\n{claims}"}]
+    request = f"{HYPO_RESOLVE}\n\n# Claims\n{claims}"
+    if helpers:
+        request += f"\n\n# Calls Into Unchanged Functions\n{HYPO_HELPERS}\n\n" + "\n\n".join(helpers)
+    resolve = [system, {"role": "user", "content": packet}, {"role": "user", "content": request}]
     try:
         return first, run_agent(ctx, "hypo", resolve, SUBMIT_CLAIMS, RESOLVE_TOOL_BUDGET, RESOLVE_TOOL_CHARS, deadline)
     except CostLimitReached:
@@ -2827,13 +2889,16 @@ def claim_packet(ctx, index, packet, deadline):
         return first, None
 
 
-def raise_claims(ctx, packets, pool):
-    """Lab stage: one broad cheap-model pass and its resolve turn per packet, before checker verification."""
+def raise_claims(ctx, packets, chunks, pool):
+    """Lab stage: one broad cheap-model pass and its resolve step per packet, before checker verification. chunks
+    holds each packet's files."""
     deadline = min(ctx.deadline, time.monotonic() + FINDER_DEADLINE_SECONDS)
-    jobs = [
-        (index, "broad", pool.submit(claim_packet, ctx, index, packet, deadline))
-        for index, packet in enumerate(packets, 1)
-    ]
+    touched = touched_lines(ctx.base)
+    jobs = []
+    for index, (packet, paths) in enumerate(zip(packets, chunks), 1):
+        helpers = helper_calls(touched, paths)
+        print(f"Dottore claim helpers: packet={index}; quoted={len(helpers)}", flush=True)
+        jobs.append((index, "broad", pool.submit(claim_packet, ctx, index, packet, helpers, deadline)))
     passes, failed = [], 0
     for index, lens, future in jobs:
         try:
@@ -2844,9 +2909,11 @@ def raise_claims(ctx, packets, pool):
             continue
         drafts = pass_claims(lens, first)
         claims = pass_claims(lens, resolved or {})
+        spots = {(claim["path"], claim["line"]) for claim in claims}
+        missing = [draft for draft in drafts if (draft["path"], draft["line"]) not in spots]
         print(
             f"Dottore claim pass: lens={lens}; packet={index}; drafted={len(drafts)}; "
-            f"resolved={len(claims) if resolved else 'failed'}",
+            f"resolved={len(claims) if resolved else 'failed'}; drafts_restored={len(missing)}",
             flush=True,
         )
         for rank, claim in enumerate(drafts, 1):
@@ -2855,8 +2922,9 @@ def raise_claims(ctx, packets, pool):
                 f"input={claim['input']}; failure={claim['failure']}",
                 flush=True,
             )
-        # A resolve turn that failed or kept nothing leaves the first submission's claims.
-        claims = claims or drafts
+        # The resolve step may drop or merge claims; a draft it left out follows its claims, as does every draft
+        # when it failed.
+        claims = (claims + missing)[:MAX_PASS_CLAIMS]
         for rank, claim in enumerate(claims, 1):
             claim["id"] = f"{lens}/p{index}#{rank}"
         passes.append(claims)
@@ -4455,7 +4523,7 @@ def produce_review(args):
             # ponytail: lab stage that measures the cheap claim passes alone, before any checker; remove it with
             # the lab.
             with ThreadPoolExecutor(max_workers=review_concurrency()) as pool:
-                raise_claims(ctx, packets, pool)
+                raise_claims(ctx, packets, chunks if len(chunks) > 1 else [files], pool)
             write_skipped_review(
                 "Lab Claims Only",
                 "DOTTORE_LAB_STAGE=hypo: the code preflight and the claim passes ran and the review stopped before the finders.",
