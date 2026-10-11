@@ -150,12 +150,6 @@ MAX_TRACE_CHECK_CHARS = 400
 MAX_PASS_CLAIMS = 24
 MAX_CLAIMS = 12
 MAX_CLAIM_CHARS = 400
-# The resolve step's reads, after the claim pass has formed its claims.
-RESOLVE_TOOL_BUDGET = 8
-RESOLVE_TOOL_CHARS = 40_000
-# Unchanged same-file functions the changed lines call, quoted for the resolve step.
-MAX_HELPER_CALLS = 12
-MAX_HELPER_CHARS = 24_000
 MAX_BLAST_RADIUS_CHARS = 24_000
 # The changed code the tracer reads before its first tool call, quoted by code so its view of the change does not
 # depend on which reads it chooses: each changed line with the lines around it, each short named block containing
@@ -208,9 +202,6 @@ PROVIDERS = ("openai", "anthropic", "responses")
 # Claude requires an output cap; it covers thinking and the reply, and every current model allows it.
 CLAUDE_MAX_TOKENS = 32_000
 CACHE_BREAKPOINT = {"type": "ephemeral"}
-# A Claude request whose prompt passes 100k tokens is billed at five times the rate. Once a reply leaves the
-# conversation past this, the agent must submit, which leaves room for that last turn.
-CLAUDE_CONTEXT_GUARD = 80_000
 DEFAULT_CONCURRENCY = 4
 MAX_CONCURRENCY = 16
 # The review step times out at 35 minutes; after this, agents submit and no new verifier starts.
@@ -798,7 +789,6 @@ def build_stats(review_packet):
                 "stop_turns": 0,
                 "stop_chars": 0,
                 "stop_time": 0,
-                "stop_context": 0,
                 "scout_asks": 0,
                 "follow_ups": 0,
                 "fallbacks": 0,
@@ -1459,12 +1449,7 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         "prompt_tokens_details": {"cached_tokens": cached},
         "completion_tokens_details": {"reasoning_tokens": usage_value(reply.usage, "output_tokens_details", "thinking_tokens")},
     }
-    message = SimpleNamespace(
-        content="".join(text) or None,
-        tool_calls=calls or None,
-        claude_blocks=blocks,
-        context_tokens=prompt + reply.usage.output_tokens,
-    )
+    message = SimpleNamespace(content="".join(text) or None, tool_calls=calls or None, claude_blocks=blocks)
     return message, usage
 
 
@@ -1710,8 +1695,8 @@ def run_agent(
 
     The budget counts tool calls, turns the turns that may call them (the budget by default), and
     output_budget their characters; a repeated call is answered from the earlier result for free. Once
-    any is spent, the deadline (the review's by default) has passed or a Claude conversation nears the
-    long-context rate, the model is made to call the submit tool, and a few malformed submissions are tolerated. Given reads, the agent also gets the scout
+    any is spent, or the deadline (the review's by default) has passed, the model is made to call the
+    submit tool, and a few malformed submissions are tolerated. Given reads, the agent also gets the scout
     tool and at most that many direct reads. The scout reads with batched tools. The role's stats record
     which limit, if any, ended the run. Given transcript, a list, it is filled with the conversation up to and
     including the submitting turn.
@@ -1724,7 +1709,6 @@ def run_agent(
     used = 0
     read = 0
     spent = 0
-    context = 0
     answered = {}
     deadline = deadline or ctx.deadline
     turns = min(turns or budget, budget)
@@ -1736,14 +1720,12 @@ def run_agent(
                 ("turns", turn >= turns),
                 ("chars", spent >= output_budget),
                 ("time", time.monotonic() > deadline),
-                ("context", context >= CLAUDE_CONTEXT_GUARD),
             )
             if hit
         ]
         forced = bool(limits)
         choice = {"type": "function", "function": {"name": submit}} if forced else "auto"
         message = chat(ctx, role, messages, tools, choice)
-        context = getattr(message, "context_tokens", 0)
         calls = list(message.tool_calls or [])
         if not calls:
             messages += [
@@ -1797,9 +1779,9 @@ def run_agent(
             else:
                 read += 1
                 replies[call.id] = run_tool(ctx, call.function.name, call.function.arguments, role == "scout")
-                if role == "hypo":
+                if role == "verify":
                     print(
-                        f"Dottore claim read: {call.function.name} "
+                        f"Dottore verify read: {call.function.name} "
                         f"{redact_for_model(call.function.arguments or '')[:200]}; chars={len(replies[call.id])}",
                         flush=True,
                     )
@@ -2335,57 +2317,6 @@ def trace_seeds(touched):
 CALL_NAME_RE = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(")
 
 
-def declared_names(lines):
-    """Each named block's first declaration line, by name."""
-    declared = {}
-    for number, text in enumerate(lines, 1):
-        for pattern in NAMED_BLOCK_RES:
-            match = pattern.search(text)
-            if match and match.group(1) not in NOT_NAMES:
-                declared.setdefault(match.group(1), number)
-                break
-    return declared
-
-
-def helper_calls(touched, paths):
-    """The same-file functions that the changed production lines in paths call and the PR left unchanged, each quoted
-    with its calling lines, within MAX_HELPER_CALLS and MAX_HELPER_CHARS."""
-    found, size = [], 0
-    for path in sorted(paths):
-        sides = touched.get(path)
-        if not path.endswith(CODE_SUFFIXES) or TEST_PATH_RE.search(path) or not sides or not sides["RIGHT"]:
-            continue
-        try:
-            lines = head_file_text(path).splitlines()
-        except Exception:
-            continue
-        changed = sorted(number for number in sides["RIGHT"] if number <= len(lines))
-        declared = declared_names(lines)
-        callers = {}
-        for number in changed:
-            for match in CALL_NAME_RE.finditer(lines[number - 1]):
-                if match.group(1) in declared:
-                    callers.setdefault(match.group(1), []).append(number)
-        for name, numbers in sorted(callers.items(), key=lambda item: item[1][0]):
-            start = declared[name]
-            end = statement_end(lines, start, MAX_CALLEE_LINES)
-            # ponytail: a function longer than MAX_CALLEE_LINES counts as unchanged when its change sits past the
-            # quoted lines; the enclosing block's real end would settle it.
-            if any(start <= number <= end for number in changed):
-                continue
-            body = "\n".join(f"{number}: {lines[number - 1]}" for number in range(start, end + 1))
-            entry = (
-                f"## `{name}`, {path}:{start}-{end}, called from "
-                + ", ".join(f"{path}:{number}" for number in sorted(set(numbers)))
-                + f"\n```text\n{redact_for_model(body)}\n```"
-            )
-            if len(found) == MAX_HELPER_CALLS or size + len(entry) > MAX_HELPER_CHARS:
-                return found
-            found.append(entry)
-            size += len(entry)
-    return found
-
-
 def changed_code(touched):
     """The changed code and what surrounds it, quoted from the PR head: each changed line with CHANGED_CODE_WINDOW
     lines either side, the named block around it in full when that block is short, and the same-file functions
@@ -2407,7 +2338,13 @@ def changed_code(touched):
                 end = statement_end(lines, block[1], MAX_CHANGED_BLOCK_LINES + 1)
                 if number <= end < block[1] + MAX_CHANGED_BLOCK_LINES:
                     ranges.append((block[1], end))
-        declared = declared_names(lines)
+        declared = {}
+        for number, text in enumerate(lines, 1):
+            for pattern in NAMED_BLOCK_RES:
+                match = pattern.search(text)
+                if match and match.group(1) not in NOT_NAMES:
+                    declared.setdefault(match.group(1), number)
+                    break
         called = {match.group(1) for number in changed for match in CALL_NAME_RE.finditer(lines[number - 1])}
         for name in sorted(called & declared.keys()):
             start = declared[name]
@@ -2787,31 +2724,6 @@ HYPO_BROAD = (
     "Report one claim for one underlying defect; combine scenarios only when they cause the same wrong behavior, "
     "and keep distinct failure causes separate. For code outside this packet, state what the checker should inspect."
 )
-# ponytail: lab hypothesis that the pass hedges because it does not find the code a claim depends on (a resolve turn
-# without reads called the in-packet visibilityTranscript and normalizePositiveInteger absent), and that a fresh
-# conversation with a few reads settles each claim; keep it only if a multi-run test turns those near misses into
-# hits without losing the hits. Fresh, it does not resend the pass's thinking, and the cached packet is reused.
-HYPO_RESOLVE = (
-    "The claim pass submitted the claims below for this packet. Settle each one against the code before the pass "
-    "ends. Unlike the claim pass, this step can read the repository at the PR head, with at most "
-    f"{RESOLVE_TOOL_BUDGET} tool calls. For each claim, find the code its outcome runs through, such as a function "
-    "it calls, a definition it reads or the statements after an await: look in the packet first, and read it when "
-    "the packet does not show it. Follow the claim's input through that code, then rewrite the failure as what the "
-    "code actually does with that input: where the failure says if, may or could, or asks the checker to inspect "
-    "code, replace that with what the code does. When the code handles that input but fails in another way at the "
-    "same line, claim that failure instead. Keep every claim, and call submit_claims with the complete list, most "
-    "likely first."
-)
-# ponytail: lab hypothesis that the misses sit where changed code hands a new input to an unchanged helper whose body
-# the claim pass never sees; quoting the same-file ones makes the resolve step check them. Calls reached only
-# through unchanged code (7265's visibilityTranscript, 7239's allowed()) are not listed; follow values if they matter.
-HYPO_HELPERS = (
-    "The changed lines also call the functions quoted below, which the PR did not change and the packet does not "
-    "show. After settling the claims, take each call in turn: work out what the changed code now passes to the "
-    "function, or the changed state it now runs in, and follow that through the function's code, including its "
-    "trimming, filtering, type checks, fallbacks and what happens when it throws or rejects. Add a claim at the "
-    "calling line for each input the function mishandles."
-)
 
 
 def pass_claims(lens, submitted):
@@ -2855,86 +2767,47 @@ def merge_claims(passes):
     return kept
 
 
-def claim_packet(ctx, index, packet, helpers, deadline):
-    """One broad claim pass on a packet, then the resolve step with the same packet, the pass's claims and the
-    quoted helper calls. Returns the first submission and the resolved one, which is None when the resolve step
-    failed."""
-    system = {"role": "system", "content": HYPO_SYSTEM}
-    first = run_agent(
-        ctx,
-        "hypo",
-        [system, {"role": "user", "content": packet}, {"role": "user", "content": HYPO_BROAD}],
-        SUBMIT_CLAIMS,
-        # No reads: while reading, the passes browsed without forming suspicions and then claimed little.
-        0,
-        0,
-        deadline,
-    )
-    claims = "\n".join(
-        f"{rank}. `{claim['path']}:{claim['line']}`\n   Input: {claim['input']}\n   Failure: {claim['failure']}"
-        for rank, claim in enumerate(pass_claims("broad", first), 1)
-    )
-    if not claims:
-        return first, None
-    request = f"{HYPO_RESOLVE}\n\n# Claims\n{claims}"
-    if helpers:
-        request += f"\n\n# Calls Into Unchanged Functions\n{HYPO_HELPERS}\n\n" + "\n\n".join(helpers)
-    resolve = [system, {"role": "user", "content": packet}, {"role": "user", "content": request}]
-    try:
-        return first, run_agent(ctx, "hypo", resolve, SUBMIT_CLAIMS, RESOLVE_TOOL_BUDGET, RESOLVE_TOOL_CHARS, deadline)
-    except CostLimitReached:
-        raise
-    except Exception as exc:
-        print(f"Dottore claim resolve failed: packet={index}; {error_text(exc)}", flush=True)
-        return first, None
-
-
-def raise_claims(ctx, packets, chunks, pool):
-    """Lab stage: one broad cheap-model pass and its resolve step per packet, before checker verification. chunks
-    holds each packet's files."""
+def raise_claims(ctx, packets, pool):
+    """Lab stage: one broad cheap-model call per packet, before checker verification."""
     deadline = min(ctx.deadline, time.monotonic() + FINDER_DEADLINE_SECONDS)
-    touched = touched_lines(ctx.base)
-    jobs = []
-    for index, (packet, paths) in enumerate(zip(packets, chunks), 1):
-        helpers = helper_calls(touched, paths)
-        print(f"Dottore claim helpers: packet={index}; quoted={len(helpers)}", flush=True)
-        jobs.append((index, "broad", pool.submit(claim_packet, ctx, index, packet, helpers, deadline)))
+    jobs = [
+        (
+            index,
+            "broad",
+            pool.submit(
+                run_agent,
+                ctx,
+                "hypo",
+                [
+                    {"role": "system", "content": HYPO_SYSTEM},
+                    {"role": "user", "content": packet},
+                    {"role": "user", "content": HYPO_BROAD},
+                ],
+                SUBMIT_CLAIMS,
+                # No reads: while reading, the passes browsed without forming suspicions and then claimed little.
+                0,
+                0,
+                deadline,
+            ),
+        )
+        for index, packet in enumerate(packets, 1)
+    ]
     passes, failed = [], 0
     for index, lens, future in jobs:
         try:
-            first, resolved = future.result()
+            submitted = future.result()
         except Exception as exc:
             failed += 1
             print(f"Dottore claim pass failed: lens={lens}; packet={index}; {error_text(exc)}", flush=True)
             continue
-        drafts = pass_claims(lens, first)
-        claims = pass_claims(lens, resolved or {})
-        # The resolve step moves a claim a line or two as it settles it, so a draft that near a resolved claim in the
-        # same file counts as kept; the checker examines that spot either way.
-        missing = [
-            draft
-            for draft in drafts
-            if not any(
-                claim["path"] == draft["path"] and abs(claim["line"] - draft["line"]) <= NEARBY_LINES
-                for claim in claims
-            )
-        ]
-        print(
-            f"Dottore claim pass: lens={lens}; packet={index}; drafted={len(drafts)}; "
-            f"resolved={len(claims) if resolved else 'failed'}; drafts_restored={len(missing)}",
-            flush=True,
-        )
-        for rank, claim in enumerate(drafts, 1):
-            print(
-                f"Dottore claim draft: {lens}/p{index}#{rank}; {claim['path']}:{claim['line']}; "
-                f"input={claim['input']}; failure={claim['failure']}",
-                flush=True,
-            )
-        # The resolve step may drop or merge claims; a draft it left out follows its claims, as does every draft
-        # when it failed.
-        claims = (claims + missing)[:MAX_PASS_CLAIMS]
+        claims = pass_claims(lens, submitted)
         for rank, claim in enumerate(claims, 1):
             claim["id"] = f"{lens}/p{index}#{rank}"
+        print(
+            f"Dottore claim pass: lens={lens}; packet={index}; "
+            f"submitted={len(as_list(submitted.get('claims')))}; valid={len(claims)}",
+            flush=True,
+        )
         passes.append(claims)
     if failed == len(jobs):
         raise RuntimeError(f"all {failed} claim passes failed")
@@ -2952,23 +2825,28 @@ def raise_claims(ctx, packets, chunks, pool):
     return kept
 
 
-# ponytail: lab hypothesis that the claim pass finds the right spot but names the wrong failure (7239's allowed() veto
-# was claimed at 3379-3382 in 4 of 4 runs, each time as another failure), so a checker that re-diagnoses each spot
-# turns those near misses into hits; keep it only if a multi-run test shows that at a checker cost under the bar. A
-# re-diagnosed confirmation keeps the claim's title, so publishing one would take its defect from the note.
+# ponytail: lab hypothesis that the claim pass finds the right spot but names the wrong failure, so a checker that
+# re-diagnoses each spot turns those near misses into hits. 7239's allowed() veto (CodeRabbit 3382) is claimed at
+# 3379-3382 in every run; the PR's some() rule there is intended, and the defect is the unchanged allowed() at 3470
+# filtering what it admits, which a check bounded to the line and its callees rejected. Keep this only if a multi-run
+# test shows it at a checker cost under the bar. A re-diagnosed confirmation keeps the claim's title, so publishing
+# one would take its defect from the note.
 CLAIM_CHECK = (
     "# Claim Check\n"
     "These candidates come from a cheaper model's claim pass. Its line is often at or near a real defect while its "
     "failure is wrong, hedged or about the wrong input, so judge the spot, not only the wording. For each candidate, "
-    "read the cited line and the code its outcome runs through: the functions it calls, the values it reads and the "
-    "callers that reach it, changed or not. Try the claimed input first, then the other inputs that reach the line, "
-    "such as strings or legacy values where numbers are expected, empty or missing values, calls that reject or "
-    "throw, and repeated, reset or reordered events. When the claimed failure does not happen but this PR "
-    "introduces another defect that shows at the candidate's line or a few lines from it, even one caused inside "
-    "code that line calls, confirm the candidate and write the defect you found in `note`: the input and what the "
-    "code then does wrong. For these candidates this replaces \"do not raise new findings\". Reject a candidate "
-    "only when its spot has no defect this PR introduced; several candidates may share one defect, and each that "
-    "does is confirmed."
+    "read the cited line and follow what it produces: the functions it calls, the values it reads, the callers that "
+    "reach it, and where its result goes next, through each later filter, check or transform until it reaches the "
+    "output, changed or not. A line the PR changed on purpose can be right on its own while older code that uses "
+    "its result still assumes the old behavior, so check that code against the new behavior; a defect counts as "
+    "introduced by this PR when the PR's change makes older code produce the wrong result. Try the claimed input "
+    "first, then the other inputs that reach the line, such as strings or legacy values where numbers are expected, "
+    "empty or missing values, calls that reject or throw, and repeated, reset or reordered events. When the claimed "
+    "failure does not happen but this PR introduces another defect along that path, at the candidate's line, in code "
+    "it calls or in code that uses its result, confirm the candidate and write the defect you found in `note`: the "
+    "input, the line where it goes wrong and what the code then does wrong. For these candidates this replaces "
+    "\"do not raise new findings\". Reject a candidate only when its path has no defect this PR introduced; several "
+    "candidates may share one defect, and each that does is confirmed."
 )
 
 
@@ -4578,7 +4456,7 @@ def produce_review(args):
             # ponytail: lab stages that measure the cheap claim passes alone ("hypo") or with the checker
             # re-diagnosing their spots ("check"), with nothing published; remove them with the lab.
             with ThreadPoolExecutor(max_workers=review_concurrency()) as pool:
-                claims = raise_claims(ctx, packets, chunks if len(chunks) > 1 else [files], pool)
+                claims = raise_claims(ctx, packets, pool)
                 if lab_stage == "check":
                     check_claims(ctx, claims, effective_mode, pool)
             write_skipped_review(
