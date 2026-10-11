@@ -823,6 +823,7 @@ def role_models():
             .lower(),
             "model": str(overrides.get(role, {}).get("model") or defaults[role]["model"]).strip(),
             "effort": str(overrides.get(role, {}).get("effort") or defaults[role]["effort"]).strip(),
+            "endpoint": role if any(role_endpoint(role)) else "",
         }
         for role in REVIEW_ROLES
     }
@@ -832,28 +833,58 @@ def role_models():
     return models
 
 
+def role_endpoint(role):
+    """A role's own endpoint, from the DOTTORE_<ROLE>_BASE_URL and DOTTORE_<ROLE>_API_KEY secrets; either one left
+    empty falls back to the shared value for the role's provider."""
+    prefix = f"DOTTORE_{role.upper()}_"
+    return os.environ.get(prefix + "BASE_URL", "").strip(), os.environ.get(prefix + "API_KEY", "").strip()
+
+
 def review_clients(models):
-    """One client per provider the roles use."""
-    providers = {settings["provider"] for settings in models.values()}
+    """One client per API family and endpoint the roles use: "openai" or "anthropic" for the shared endpoint, and
+    "openai:<role>" or "anthropic:<role>" for a role with its own."""
     clients = {}
-    if providers & {"openai", "responses"}:
-        from openai import OpenAI
+    for role, settings in models.items():
+        family = "anthropic" if settings["provider"] == "anthropic" else "openai"
+        key = f"{family}:{settings['endpoint']}" if settings["endpoint"] else family
+        if key in clients:
+            continue
+        base_url, api_key = role_endpoint(role) if settings["endpoint"] else ("", "")
+        if family == "openai":
+            from openai import OpenAI
 
-        clients["openai"] = OpenAI(
-            api_key=os.environ["OPENAI_API_KEY"],
-            base_url=os.environ.get("LLM_BASE_URL") or None,
-            max_retries=MODEL_MAX_RETRIES,
-        )
-    if "anthropic" in providers:
-        from anthropic import Anthropic
+            clients[key] = OpenAI(
+                api_key=api_key or os.environ["OPENAI_API_KEY"],
+                base_url=base_url or os.environ.get("LLM_BASE_URL") or None,
+                max_retries=MODEL_MAX_RETRIES,
+            )
+        else:
+            from anthropic import Anthropic
 
-        # Gateways such as LinkAPI take one key for both formats, so the shared key is the fallback.
-        clients["anthropic"] = Anthropic(
-            api_key=os.environ.get("ANTHROPIC_API_KEY") or os.environ["OPENAI_API_KEY"],
-            base_url=os.environ.get("ANTHROPIC_BASE_URL") or "https://api.anthropic.com",
-            max_retries=MODEL_MAX_RETRIES,
-        )
+            # Gateways such as LinkAPI take one key for both formats, so the shared key is the fallback.
+            clients[key] = Anthropic(
+                api_key=api_key or os.environ.get("ANTHROPIC_API_KEY") or os.environ["OPENAI_API_KEY"],
+                base_url=base_url or os.environ.get("ANTHROPIC_BASE_URL") or "https://api.anthropic.com",
+                max_retries=MODEL_MAX_RETRIES,
+            )
     return clients
+
+
+def endpoint_summary(models):
+    """Which roles have their own endpoint and which of its values they set, never the values themselves."""
+    own = [
+        f"{role}=own " + "+".join(name for name, value in zip(("base_url", "api_key"), role_endpoint(role)) if value)
+        for role, settings in models.items()
+        if settings["endpoint"]
+    ]
+    return "; ".join(own) or "shared"
+
+
+def role_client(ctx, family, settings):
+    """The client for a call: the role's own endpoint when it has one, else the shared one. A fallback model keeps
+    its role's endpoint."""
+    endpoint = settings.get("endpoint")
+    return ctx.clients[f"{family}:{endpoint}" if endpoint else family]
 
 
 def review_concurrency():
@@ -1254,7 +1285,7 @@ def openai_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         # One key per review keeps its requests, which share long prefixes, on the same cache.
         request["extra_body"] = {"prompt_cache_key": ctx.cache_key}
     try:
-        with ctx.clients["openai"].chat.completions.create(**request) as stream:
+        with role_client(ctx, "openai", settings).chat.completions.create(**request) as stream:
             return read_stream(stream, started, timing)
     except (httpx.TimeoutException, httpx.TransportError) as exc:
         raise StreamStalled(error_text(exc)) from exc
@@ -1317,7 +1348,7 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
     if settings["effort"]:
         request["output_config"] = {"effort": settings["effort"]}
     try:
-        with ctx.clients["anthropic"].messages.stream(**request) as stream:
+        with role_client(ctx, "anthropic", settings).messages.stream(**request) as stream:
             for _ in watched(stream, started, timing):
                 pass
             reply = stream.get_final_message()
@@ -1405,7 +1436,7 @@ def responses_reply(ctx, settings, messages, tools, tool_choice, read_timeout, s
         request["extra_body"] = {"prompt_cache_key": ctx.cache_key}
     response = None
     try:
-        with ctx.clients["openai"].responses.create(**request) as stream:
+        with role_client(ctx, "openai", settings).responses.create(**request) as stream:
             for event in watched(stream, started, timing):
                 if event.type in ("response.completed", "response.incomplete"):
                     response = event.response
@@ -4017,6 +4048,7 @@ def produce_review(args):
         ]
     try:
         models = role_models()
+        print(f"Dottore endpoints: {endpoint_summary(models)}", flush=True)
         ctx = ReviewRun(
             clients=review_clients(models),
             skill=skill,

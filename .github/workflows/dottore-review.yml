@@ -46,6 +46,30 @@ on:
         required: false
       ANTHROPIC_BASE_URL:
         required: false
+      DOTTORE_TRACE_BASE_URL:
+        required: false
+      DOTTORE_TRACE_API_KEY:
+        required: false
+      DOTTORE_FINDER_BASE_URL:
+        required: false
+      DOTTORE_FINDER_API_KEY:
+        required: false
+      DOTTORE_BROAD_BASE_URL:
+        required: false
+      DOTTORE_BROAD_API_KEY:
+        required: false
+      DOTTORE_SKEPTIC_BASE_URL:
+        required: false
+      DOTTORE_SKEPTIC_API_KEY:
+        required: false
+      DOTTORE_VERIFY_BASE_URL:
+        required: false
+      DOTTORE_VERIFY_API_KEY:
+        required: false
+      DOTTORE_SCOUT_BASE_URL:
+        required: false
+      DOTTORE_SCOUT_API_KEY:
+        required: false
 
 permissions:
   contents: read
@@ -154,6 +178,19 @@ jobs:
           LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+          # Optional per-role endpoints; an empty one falls back to the shared value above.
+          DOTTORE_TRACE_BASE_URL: ${{ secrets.DOTTORE_TRACE_BASE_URL }}
+          DOTTORE_TRACE_API_KEY: ${{ secrets.DOTTORE_TRACE_API_KEY }}
+          DOTTORE_FINDER_BASE_URL: ${{ secrets.DOTTORE_FINDER_BASE_URL }}
+          DOTTORE_FINDER_API_KEY: ${{ secrets.DOTTORE_FINDER_API_KEY }}
+          DOTTORE_BROAD_BASE_URL: ${{ secrets.DOTTORE_BROAD_BASE_URL }}
+          DOTTORE_BROAD_API_KEY: ${{ secrets.DOTTORE_BROAD_API_KEY }}
+          DOTTORE_SKEPTIC_BASE_URL: ${{ secrets.DOTTORE_SKEPTIC_BASE_URL }}
+          DOTTORE_SKEPTIC_API_KEY: ${{ secrets.DOTTORE_SKEPTIC_API_KEY }}
+          DOTTORE_VERIFY_BASE_URL: ${{ secrets.DOTTORE_VERIFY_BASE_URL }}
+          DOTTORE_VERIFY_API_KEY: ${{ secrets.DOTTORE_VERIFY_API_KEY }}
+          DOTTORE_SCOUT_BASE_URL: ${{ secrets.DOTTORE_SCOUT_BASE_URL }}
+          DOTTORE_SCOUT_API_KEY: ${{ secrets.DOTTORE_SCOUT_API_KEY }}
           # Model settings; .github/dottore-review/README.md describes each one.
           DOTTORE_PROVIDER: ${{ vars.DOTTORE_PROVIDER }}
           LLM_MODEL: ${{ vars.DOTTORE_MODEL || 'gpt-5.5' }}

@@ -19,6 +19,16 @@ The models and providers that run these roles are set with repository settings, 
 | `DOTTORE_BASE_REFS` | Comma-separated base branches that get reviewed | `refactor,main,staging` |
 | `DOTTORE_CONCURRENCY` | Model calls run at once | `4` |
 
+Each model call belongs to one role:
+
+| Role | What it does | Default model |
+| --- | --- | --- |
+| `trace` | Maps the code outside the diff that the change touches, and raises checks for the finder, before any finder runs | `gpt-6-luna` (`responses`) |
+| `finder` | Reviews each packet of the diff and proposes findings | `DOTTORE_MODEL` |
+| `broad`, `skeptic` | Two finders per packet instead of one; unused while one finder reviews each packet | `DOTTORE_MODEL` |
+| `scout` | Reads code for the finder, answering one question per report | `gpt-6-luna` (`responses`) |
+| `verify` | Checks each proposed finding against the code before it is posted | `DOTTORE_MODEL` |
+
 `DOTTORE_MODELS` maps a role to any of `provider`, `model` and `effort`. A role or field it leaves out uses the defaults above. For example, GPT finders with a Claude checker:
 
 ```json
@@ -38,6 +48,10 @@ The models and providers that run these roles are set with repository settings, 
 | `ANTHROPIC_BASE_URL` | The endpoint for `anthropic` roles, without `/v1`, such as `https://linkapi.ai`. Empty means Anthropic |
 
 A gateway such as LinkAPI serves both formats with one key, so only the two base URLs need setting.
+
+Any role can use its own endpoint through the secrets `DOTTORE_<ROLE>_BASE_URL` and `DOTTORE_<ROLE>_API_KEY`, such as `DOTTORE_SCOUT_BASE_URL` and `DOTTORE_SCOUT_API_KEY`. Either one left unset falls back to the shared value for that role's provider, so a role can use another key on the same gateway by setting only its key. A role's fallback model is called on the role's endpoint. Each review logs a `Dottore endpoints:` line naming the roles with their own endpoint, and never the values.
+
+The $0.25 ceiling prices calls by model name at LinkAPI's rates, so a role moved to an endpoint with different prices is counted at LinkAPI's.
 
 ## Choosing a provider
 
