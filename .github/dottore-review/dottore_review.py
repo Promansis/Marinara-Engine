@@ -2581,9 +2581,10 @@ def trace_checks(checks):
     return kept
 
 
-def trace_blast_radius(ctx):
+def trace_blast_radius(ctx, llm=True):
     """Stage 0: code quotes the definitions the change reads, then a cheaper model maps the code outside the
-    diff that the change touches, which code quotes too. Returns the packet sections to append."""
+    diff that the change touches, which code quotes too. Returns the packet sections to append. Without llm,
+    only the code's definitions are returned and no model is called."""
     files = sorted(ctx.files)
     if not any(path.endswith(CODE_SUFFIXES) for path in files):
         print("Dottore trace: skipped; no changed code", flush=True)
@@ -2596,6 +2597,9 @@ def trace_blast_radius(ctx):
         except Exception as exc:
             print(f"Dottore definitions failed: {error_text(exc)}", flush=True)
             definitions = ""
+        if not llm:
+            print(f"Dottore trace: code only; seeds={seed_count}; definitions_chars={len(definitions)}", flush=True)
+            return f"# Value Definitions\n{DEFINITIONS_NOTE}\n\n{definitions}" if definitions else ""
         try:
             code = changed_code(touched)
         except Exception as exc:
@@ -2679,10 +2683,10 @@ HYPO_SYSTEM = (
     "more than a claim it refutes, but each claim costs it a check: claim only what you can make concrete. A "
     "claim names the line at the PR head where the defect sits, the concrete input, item, reader, state or "
     "sequence of events that triggers it, and what the code then does wrong.\n\n"
-    "Read the review packet first. It holds the diff with the code around each change, definitions and code "
-    "outside the diff that the change uses, and questions a tracer model raised; claim a tracer question when "
-    "you can name its input and failure. Use the read-only tools to follow a suspicion into code the packet "
-    "does not show: the callers, definitions and parallel paths it depends on. You have "
+    "Read the review packet first. It holds the diff with the code around each change, where the changed names "
+    "are used, and the definitions of values the changed lines read. Use the read-only tools to follow a "
+    "suspicion into code the packet does not show: the callers, definitions and parallel paths it depends on. "
+    "You have "
     f"{HYPO_TURNS} turns of tool calls and every turn resends everything read so far, so make every search "
     "and read you need for a turn in that turn. Do not claim style, naming, comments, missing tests or "
     f"documentation. At most {MAX_PASS_CLAIMS} claims, most likely first. Finish by calling submit_claims."
@@ -4379,9 +4383,10 @@ def produce_review(args):
             deadline=stats["started_at"] + REVIEW_DEADLINE_SECONDS,
             cache_key=f"dottore-{os.environ.get('GITHUB_REPOSITORY', 'local')}-{pr_num or head_sha[:12]}",
         )
-        # ponytail: one trace covers every chunk and is appended to each; trace per chunk if large PRs need it.
-        blast_radius = trace_blast_radius(ctx)
         lab_stage = os.environ.get("DOTTORE_LAB_STAGE", "").strip().lower()
+        # ponytail: one trace covers every chunk and is appended to each; trace per chunk if large PRs need it.
+        # The claim passes get only what code builds, with no tracer model before them.
+        blast_radius = trace_blast_radius(ctx, llm=lab_stage != "hypo")
         if lab_stage == "trace":
             # ponytail: lab stage that measures the Luna tracer alone, for pennies; remove it with the lab.
             write_skipped_review(
@@ -4400,7 +4405,7 @@ def produce_review(args):
                 raise_claims(ctx, packets, pool)
             write_skipped_review(
                 "Lab Claims Only",
-                "DOTTORE_LAB_STAGE=hypo: the tracer and the claim passes ran and the review stopped before the finders.",
+                "DOTTORE_LAB_STAGE=hypo: the code preflight and the claim passes ran and the review stopped before the finders.",
                 metadata={"head_sha": head_sha, "review_base": base, "base_ref": base_ref, "mode": effective_mode},
             )
             print_telemetry(stats)
