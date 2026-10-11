@@ -143,8 +143,8 @@ MAX_TRACE_LOCATION_LINES = 60
 # Questions the tracer raises where the change meets code it did not change; the finder settles each one.
 MAX_TRACE_CHECKS = 8
 MAX_TRACE_CHECK_CHARS = 400
-# Cheap claim passes (DOTTORE_LAB_STAGE=hypo): each reads the code-built packet with one lens and claims defects.
-MAX_PASS_CLAIMS = 8
+# Broad Luna claim pass (DOTTORE_LAB_STAGE=hypo): preserve the former three-lens claim budget per packet.
+MAX_PASS_CLAIMS = 24
 MAX_CLAIMS = 12
 MAX_CLAIM_CHARS = 400
 # Claims on the same file within this many lines are one claim.
@@ -2669,11 +2669,10 @@ SUBMIT_CLAIMS = function_tool(
     },
     ["claims"],
 )
-# ponytail: lab hypothesis that a few cheap passes, each with one lens, raise more of the bugs than one strong
-# finder, so the strong model only has to judge their claims; the lab stage measures the claims before any
-# checker sees them.
+# ponytail: lab hypothesis that one broad cheap-model pass per packet can replace three overlapping lens calls;
+# the lab stage measures candidates before the strong checker sees them.
 HYPO_SYSTEM = (
-    "You list suspected defects in a pull request through one lens; other passes use other lenses. You do not "
+    "You are the broad finder for this pull request. You do not "
     "decide whether a suspicion is real: a stronger model checks every claim against the code before anything "
     "is published and discards the wrong ones, so a real defect you leave out is the only costly mistake. "
     "Claim every suspicion you can tie to a line, including ones you are unsure of, and aim for 4 to "
@@ -2686,30 +2685,17 @@ HYPO_SYSTEM = (
     "claim style, naming, comments, missing tests or "
     f"documentation. Rank the claims most likely first, at most {MAX_PASS_CLAIMS}. Finish by calling submit_claims."
 )
-HYPO_LENSES = {
-    "edges": (
-        "Your lens: inputs and failure paths. Walk every changed line that converts, parses or defaults a value, "
-        "migrates or carries over stored settings, trims or caps to a budget, or awaits a call, through these "
-        "inputs: zero, empty or missing; a string where a number is expected; a legacy, inactive or disabled "
-        "item; an input at or past the limit; and a call that rejects or throws partway through. Claim each "
-        "case where the code then does the wrong thing."
-    ),
-    "contracts": (
-        "Your lens: what the unchanged code around the change assumes. For each changed function, value, type "
-        "or setting, find what depends on it: callers and consumers, and the conditions, filters, sets or "
-        "defaults combined with its result. Claim each place where the two disagree for some input, item, user "
-        "or reader: a caller that still assumes the old behavior, stored data written in the old shape, a "
-        "condition combined with the new result that no longer matches it, or a parallel path that handles "
-        "the same data but did not change."
-    ),
-    "state": (
-        "Your lens: state over time. Follow each piece of state the change reads or writes (component state, "
-        "stored records, caches, queues, pending requests, running jobs) through sequences of events: an action "
-        "repeated or arriving while another is in progress, responses arriving out of order, a value replaced, "
-        "reset or restored, a retry, a reload, or an error partway through. Claim each sequence that leaves "
-        "the state wrong, lost or stale."
-    ),
-}
+HYPO_BROAD = (
+    "Review every changed behavior from all three perspectives, in the same pass:\n"
+    "- Inputs and failure paths: missing, empty, legacy or disabled values; type/boundary cases; budget limits; "
+    "and calls that reject or fail partway through.\n"
+    "- Unchanged contracts: callers, consumers, stored shapes, defaults, filters, and parallel paths that still "
+    "assume the old behavior.\n"
+    "- State over time: repeated or overlapping actions, out-of-order responses, replacement, reset, restore, "
+    "retry, reload, or partial failure.\n"
+    "Report one claim for one underlying defect; combine scenarios only when they cause the same wrong behavior, "
+    "and keep distinct failure causes separate. For code outside this packet, state what the checker should inspect."
+)
 
 
 def pass_claims(lens, submitted):
@@ -2758,13 +2744,12 @@ def merge_claims(passes):
 
 
 def raise_claims(ctx, packets, pool):
-    """Lab stage: every lens reads every packet with the cheap model; log each claim and return the merged ones.
-    A failed pass is logged and the rest go on, unless every pass fails."""
+    """Lab stage: one broad cheap-model call per packet, before checker verification."""
     deadline = min(ctx.deadline, time.monotonic() + FINDER_DEADLINE_SECONDS)
     jobs = [
         (
             index,
-            lens,
+            "broad",
             pool.submit(
                 run_agent,
                 ctx,
@@ -2772,7 +2757,7 @@ def raise_claims(ctx, packets, pool):
                 [
                     {"role": "system", "content": HYPO_SYSTEM},
                     {"role": "user", "content": packet},
-                    {"role": "user", "content": instruction},
+                    {"role": "user", "content": HYPO_BROAD},
                 ],
                 SUBMIT_CLAIMS,
                 # No reads: while reading, the passes browsed without forming suspicions and then claimed little.
@@ -2782,7 +2767,6 @@ def raise_claims(ctx, packets, pool):
             ),
         )
         for index, packet in enumerate(packets, 1)
-        for lens, instruction in HYPO_LENSES.items()
     ]
     passes, failed = [], 0
     for index, lens, future in jobs:
@@ -2811,7 +2795,7 @@ def raise_claims(ctx, packets, pool):
             flush=True,
         )
     print(
-        f"Dottore claims: passes={len(jobs)}; failed={failed}; valid={sum(map(len, passes))}; kept={len(kept)}",
+        f"Dottore claims: packets={len(jobs)}; failed={failed}; valid={sum(map(len, passes))}; kept={len(kept)}",
         flush=True,
     )
     return kept
