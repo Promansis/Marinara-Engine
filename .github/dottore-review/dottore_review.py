@@ -129,6 +129,8 @@ MODEL_PRICES_CNY = {
     "gpt-6.1-sol": (2.0, 0.08, 8.0),
     "gpt-6-luna": (0.0375, 0.003, 0.15),
     "gpt-5.6-luna": (0.075, 0.006, 0.36),
+    # OpenRouter's Luna slug, priced in USD at $0.10 / $0.01 / $0.50 per 1M, converted at CNY_PER_USD.
+    "openai/gpt-6-luna": (0.70, 0.07, 3.50),
 }
 # When a model's gateway fails with a transient error, the same call goes at once to its fallback, an older model
 # of the same tier, instead of waiting out the outage. A fallback that refuses a request is not tried again.
