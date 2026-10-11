@@ -56,7 +56,7 @@ MODEL_STREAM_LIMIT = 900
 MODEL_MAX_RETRIES = 1
 # Waits before resending a call that hit a transient gateway error (unavailable, overloaded, cut stream).
 RETRY_DELAYS = (15, 45)
-REVIEW_ROLES = ("trace", "finder", "broad", "skeptic", "verify", "scout")
+REVIEW_ROLES = ("trace", "finder", "broad", "skeptic", "verify", "scout", "hypo")
 # ponytail: lab hypothesis that one finder per packet, covering both segments' focus, keeps recall at half the
 # finder cost, since every packet's finders are most of a review's spend; ("broad", "skeptic") restores two.
 FINDER_ROLES = ("finder",)
@@ -73,6 +73,8 @@ SCOUT_TOOL_CHARS = 160_000
 # Every scout turn resends all it has read, so it reads in few turns with large batched calls: read_files takes
 # several ranges at once, and its search shows a few lines around the first hits so most need no follow-up read.
 SCOUT_TURNS = 5
+# Cheap roles that read with the scout's batched tools.
+BATCH_READ_ROLES = ("scout", "hypo")
 SCOUT_READ_LINES = 400
 SCOUT_READ_CHARS = 30_000
 MAX_READ_RANGES = 8
@@ -141,6 +143,15 @@ MAX_TRACE_LOCATION_LINES = 60
 # Questions the tracer raises where the change meets code it did not change; the finder settles each one.
 MAX_TRACE_CHECKS = 8
 MAX_TRACE_CHECK_CHARS = 400
+# Cheap claim passes (DOTTORE_LAB_STAGE=hypo): each reads the finder's packet with one lens and claims defects.
+HYPO_TURNS = 4
+HYPO_TOOL_BUDGET = 16
+HYPO_TOOL_CHARS = 60_000
+MAX_PASS_CLAIMS = 8
+MAX_CLAIMS = 12
+MAX_CLAIM_CHARS = 400
+# Claims on the same file within this many lines are one claim.
+CLAIM_SPREAD = 3
 MAX_BLAST_RADIUS_CHARS = 24_000
 # The changed code the tracer reads before its first tool call, quoted by code so its view of the change does not
 # depend on which reads it chooses: each changed line with the lines around it, each short named block containing
@@ -823,11 +834,12 @@ def role_models():
         role in REVIEW_ROLES and isinstance(value, dict) for role, value in overrides.items()
     ):
         raise ValueError(
-            'DOTTORE_MODELS must map "trace", "finder", "broad", "skeptic", "verify" or "scout" to {"provider", "model", "effort"} objects.'
+            'DOTTORE_MODELS must map "trace", "finder", "broad", "skeptic", "verify", "scout" or "hypo" to {"provider", "model", "effort"} objects.'
         )
     defaults = {role: {"model": default_model, "effort": default_effort} for role in REVIEW_ROLES}
     defaults["trace"] = TRACE_MODEL
     defaults["scout"] = SCOUT_MODEL
+    defaults["hypo"] = SCOUT_MODEL
     models = {
         role: {
             "provider": str(
@@ -1687,7 +1699,7 @@ def run_agent(
     submit = submit_tool["function"]["name"]
     scouting = reads is not None
     scout_tool = SCOUT_LOCATE_TOOL if SCOUT_LOCATES else SCOUT_TOOL
-    tools = [*(SCOUT_READ_TOOLS if role == "scout" else READ_TOOLS), *([scout_tool] if scouting else []), submit_tool]
+    tools = [*(SCOUT_READ_TOOLS if role in BATCH_READ_ROLES else READ_TOOLS), *([scout_tool] if scouting else []), submit_tool]
     messages = list(messages)
     used = 0
     read = 0
@@ -1761,7 +1773,7 @@ def run_agent(
                 continue
             else:
                 read += 1
-                replies[call.id] = run_tool(ctx, call.function.name, call.function.arguments, role == "scout")
+                replies[call.id] = run_tool(ctx, call.function.name, call.function.arguments, role in BATCH_READ_ROLES)
             used += 1
             answered[key] = used
             outputs.add(call.id)
@@ -2631,6 +2643,178 @@ def trace_blast_radius(ctx):
         listed = "\n".join(f"- `{path}:{line}`: {question}" for path, line, question in checks)
         sections.append(f"# Tracer Checks\n{TRACE_CHECKS_NOTE}\n\n{listed}")
     return "\n\n".join(sections)
+
+
+SUBMIT_CLAIMS = function_tool(
+    "submit_claims",
+    "Submit the defects you suspect, most likely first. This ends the pass.",
+    {
+        "claims": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": PATH_PARAM,
+                    "line": {"type": "integer", "description": "The line at the PR head where the defect sits."},
+                    "input": {
+                        "type": "string",
+                        "description": "The concrete input, item, reader, state or sequence of events that triggers it.",
+                    },
+                    "failure": {"type": "string", "description": "What the code then does wrong, in one or two sentences."},
+                },
+                "required": ["path", "line", "input", "failure"],
+            },
+        },
+    },
+    ["claims"],
+)
+# ponytail: lab hypothesis that a few cheap passes, each with one lens, raise more of the bugs than one strong
+# finder, so the strong model only has to judge their claims; the lab stage measures the claims before any
+# checker sees them.
+HYPO_SYSTEM = (
+    "You look for defects in a pull request through one lens; other passes use other lenses. A stronger model "
+    "checks every claim against the code before anything is published, so a real defect you leave out costs "
+    "more than a claim it refutes, but each claim costs it a check: claim only what you can make concrete. A "
+    "claim names the line at the PR head where the defect sits, the concrete input, item, reader, state or "
+    "sequence of events that triggers it, and what the code then does wrong.\n\n"
+    "Read the review packet first. It holds the diff with the code around each change, definitions and code "
+    "outside the diff that the change uses, and questions a tracer model raised; claim a tracer question when "
+    "you can name its input and failure. Use the read-only tools to follow a suspicion into code the packet "
+    "does not show: the callers, definitions and parallel paths it depends on. You have "
+    f"{HYPO_TURNS} turns of tool calls and every turn resends everything read so far, so make every search "
+    "and read you need for a turn in that turn. Do not claim style, naming, comments, missing tests or "
+    f"documentation. At most {MAX_PASS_CLAIMS} claims, most likely first. Finish by calling submit_claims."
+)
+HYPO_LENSES = {
+    "edges": (
+        "Your lens: inputs and failure paths. Walk every changed line that converts, parses or defaults a value, "
+        "migrates or carries over stored settings, trims or caps to a budget, or awaits a call, through these "
+        "inputs: zero, empty or missing; a string where a number is expected; a legacy, inactive or disabled "
+        "item; an input at or past the limit; and a call that rejects or throws partway through. Claim each "
+        "case where the code then does the wrong thing."
+    ),
+    "contracts": (
+        "Your lens: what the unchanged code around the change assumes. For each changed function, value, type "
+        "or setting, find what depends on it: callers and consumers, and the conditions, filters, sets or "
+        "defaults combined with its result. Claim each place where the two disagree for some input, item, user "
+        "or reader: a caller that still assumes the old behavior, stored data written in the old shape, a "
+        "condition combined with the new result that no longer matches it, or a parallel path that handles "
+        "the same data but did not change."
+    ),
+    "state": (
+        "Your lens: state over time. Follow each piece of state the change reads or writes (component state, "
+        "stored records, caches, queues, pending requests, running jobs) through sequences of events: an action "
+        "repeated or arriving while another is in progress, responses arriving out of order, a value replaced, "
+        "reset or restored, a retry, a reload, or an error partway through. Claim each sequence that leaves "
+        "the state wrong, lost or stale."
+    ),
+}
+
+
+def pass_claims(lens, submitted):
+    """A pass's valid claims, at most MAX_PASS_CLAIMS; a claim without a line at the PR head or text is dropped."""
+    kept = []
+    for claim in as_list(submitted.get("claims")):
+        if not isinstance(claim, dict):
+            continue
+        try:
+            path = tool_path(claim.get("path"))
+        except ValueError:
+            continue
+        line = claim.get("line")
+        text = [
+            " ".join(redact_for_model(str(claim.get(key) or "")).split())[:MAX_CLAIM_CHARS]
+            for key in ("input", "failure")
+        ]
+        if isinstance(line, bool) or not isinstance(line, int) or line <= 0 or not all(text):
+            continue
+        if not head_line_exists(path, line):
+            continue
+        kept.append({"lens": lens, "path": path, "line": line, "input": text[0], "failure": text[1]})
+        if len(kept) == MAX_PASS_CLAIMS:
+            break
+    return kept
+
+
+def merge_claims(passes):
+    """Take the passes' claims in turn, each pass's most likely first, drop repeats of a kept claim and keep at
+    most MAX_CLAIMS. Every claim records its fate for the log."""
+    kept = []
+    for claim in itertools.chain.from_iterable(itertools.zip_longest(*passes)):
+        if claim is None:
+            continue
+        twin = next(
+            (k for k in kept if k["path"] == claim["path"] and abs(k["line"] - claim["line"]) <= CLAIM_SPREAD), None
+        )
+        if twin:
+            claim["fate"] = f"repeat of {twin['id']}"
+        elif len(kept) >= MAX_CLAIMS:
+            claim["fate"] = "over cap"
+        else:
+            claim["fate"] = "kept"
+            kept.append(claim)
+    return kept
+
+
+def raise_claims(ctx, packets, pool):
+    """Lab stage: every lens reads every packet with the cheap model; log each claim and return the merged ones.
+    A failed pass is logged and the rest go on, unless every pass fails."""
+    deadline = min(ctx.deadline, time.monotonic() + FINDER_DEADLINE_SECONDS)
+    jobs = [
+        (
+            index,
+            lens,
+            pool.submit(
+                run_agent,
+                ctx,
+                "hypo",
+                [
+                    {"role": "system", "content": HYPO_SYSTEM},
+                    {"role": "user", "content": packet},
+                    {"role": "user", "content": instruction},
+                ],
+                SUBMIT_CLAIMS,
+                HYPO_TOOL_BUDGET,
+                HYPO_TOOL_CHARS,
+                deadline,
+                None,
+                HYPO_TURNS,
+            ),
+        )
+        for index, packet in enumerate(packets, 1)
+        for lens, instruction in HYPO_LENSES.items()
+    ]
+    passes, failed = [], 0
+    for index, lens, future in jobs:
+        try:
+            submitted = future.result()
+        except Exception as exc:
+            failed += 1
+            print(f"Dottore claim pass failed: lens={lens}; packet={index}; {error_text(exc)}", flush=True)
+            continue
+        claims = pass_claims(lens, submitted)
+        for rank, claim in enumerate(claims, 1):
+            claim["id"] = f"{lens}/p{index}#{rank}"
+        print(
+            f"Dottore claim pass: lens={lens}; packet={index}; "
+            f"submitted={len(as_list(submitted.get('claims')))}; valid={len(claims)}",
+            flush=True,
+        )
+        passes.append(claims)
+    if failed == len(jobs):
+        raise RuntimeError(f"all {failed} claim passes failed")
+    kept = merge_claims(passes)
+    for claim in itertools.chain.from_iterable(passes):
+        print(
+            f"Dottore claim: {claim['id']}; {claim['fate']}; {claim['path']}:{claim['line']}; "
+            f"input={claim['input']}; failure={claim['failure']}",
+            flush=True,
+        )
+    print(
+        f"Dottore claims: passes={len(jobs)}; failed={failed}; valid={sum(map(len, passes))}; kept={len(kept)}",
+        flush=True,
+    )
+    return kept
 
 
 def as_list(value):
@@ -4195,7 +4379,8 @@ def produce_review(args):
         )
         # ponytail: one trace covers every chunk and is appended to each; trace per chunk if large PRs need it.
         blast_radius = trace_blast_radius(ctx)
-        if os.environ.get("DOTTORE_LAB_STAGE", "").strip().lower() == "trace":
+        lab_stage = os.environ.get("DOTTORE_LAB_STAGE", "").strip().lower()
+        if lab_stage == "trace":
             # ponytail: lab stage that measures the Luna tracer alone, for pennies; remove it with the lab.
             write_skipped_review(
                 "Lab Trace Only",
@@ -4206,6 +4391,18 @@ def produce_review(args):
             return
         if blast_radius:
             packets = [f"{packet}\n\n{blast_radius}" for packet in packets]
+        if lab_stage == "hypo":
+            # ponytail: lab stage that measures the cheap claim passes alone, before any checker; remove it with
+            # the lab.
+            with ThreadPoolExecutor(max_workers=review_concurrency()) as pool:
+                raise_claims(ctx, packets, pool)
+            write_skipped_review(
+                "Lab Claims Only",
+                "DOTTORE_LAB_STAGE=hypo: the tracer and the claim passes ran and the review stopped before the finders.",
+                metadata={"head_sha": head_sha, "review_base": base, "base_ref": base_ref, "mode": effective_mode},
+            )
+            print_telemetry(stats)
+            return
         with ThreadPoolExecutor(max_workers=review_concurrency()) as pool:
             review_obj = agentic_review(ctx, packets, effective_mode, pool)
     except Exception as exc:

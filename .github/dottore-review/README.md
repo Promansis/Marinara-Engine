@@ -27,6 +27,7 @@ Each model call belongs to one role:
 | `finder` | Reviews each packet of the diff and proposes findings | `DOTTORE_MODEL` |
 | `broad`, `skeptic` | Two finders per packet instead of one; unused while one finder reviews each packet | `DOTTORE_MODEL` |
 | `scout` | Finds the code that settles one finder question; Dottore quotes it verbatim | `gpt-6-luna` (`responses`) |
+| `hypo` | Lab only (`DOTTORE_LAB_STAGE=hypo`): cheap passes that each claim defects through one lens, before any checker | `gpt-6-luna` (`responses`) |
 | `verify` | Checks each proposed finding against the code before it is posted | `DOTTORE_MODEL` |
 
 `DOTTORE_MODELS` maps a role to any of `provider`, `model` and `effort`. A role or field it leaves out uses the defaults above. For example, GPT finders with a Claude checker:
