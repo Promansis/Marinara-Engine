@@ -1794,6 +1794,12 @@ def run_agent(
             else:
                 read += 1
                 replies[call.id] = run_tool(ctx, call.function.name, call.function.arguments, role == "scout")
+                if role == "hypo":
+                    print(
+                        f"Dottore claim read: {call.function.name} "
+                        f"{redact_for_model(call.function.arguments or '')[:200]}; chars={len(replies[call.id])}",
+                        flush=True,
+                    )
             used += 1
             answered[key] = used
             outputs.add(call.id)
