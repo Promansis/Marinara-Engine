@@ -2081,13 +2081,16 @@ FINDING_RULES = (
 
 
 # ponytail: lab hypothesis that finders read the changed lines but skip edge inputs and failure paths;
-# keep it only if a multi-run recall test shows it surfaces those bugs.
+# keep it only if a multi-run recall test shows it surfaces those bugs. The claim pass walks the same inputs.
+EDGE_INPUT_WALK = (
+    "walk every changed line that converts or defaults a value, migrates or carries over stored settings, "
+    "trims or caps to a budget, or awaits a call through these inputs: zero, empty or missing; a string where "
+    "a number is expected; a legacy, inactive or disabled item; an input at or past the limit; and an await "
+    "that rejects. Decide what the code then does."
+)
 EDGE_INPUT_PASS = (
-    "Before you ask, walk every changed line that converts or defaults a value, migrates or carries "
-    "over stored settings, trims or caps to a budget, or awaits a call through these inputs: zero, empty "
-    "or missing; a string where a number is expected; a legacy, inactive or disabled item; an input at or "
-    "past the limit; and an await that rejects. Decide what the code then does. When the answer depends on "
-    "a helper or definition outside the packet, that open question is a concrete suspicion: settle it."
+    f"Before you ask, {EDGE_INPUT_WALK} When the answer depends on a helper or definition outside the packet, "
+    "that open question is a concrete suspicion: settle it."
 )
 
 
@@ -2687,8 +2690,13 @@ HYPO_SYSTEM = (
     "claim style, naming, comments, missing tests or "
     f"documentation. Rank the claims most likely first, at most {MAX_PASS_CLAIMS}. Finish by calling submit_claims."
 )
+# ponytail: lab hypothesis that the claim pass finds the right line but names the wrong failure because it gets
+# edge inputs only as a topic list, while the finders caught 7304's "0" by walking them; keep the walk only if a
+# multi-run recall test shows it names those failures.
 HYPO_BROAD = (
-    "Review every changed behavior from all three perspectives, in the same pass:\n"
+    f"Before you claim, {EDGE_INPUT_WALK} Claim every input the code then mishandles; when the outcome depends on "
+    "code outside this packet, claim it and say what that code would have to do.\n"
+    "Then review every changed behavior from all three perspectives, in the same pass:\n"
     "- Inputs and failure paths: missing, empty, legacy or disabled values; type/boundary cases; budget limits; "
     "and calls that reject or fail partway through.\n"
     "- Unchanged contracts: callers, consumers, stored shapes, defaults, filters, and parallel paths that still "
