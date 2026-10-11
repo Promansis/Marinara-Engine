@@ -128,6 +128,13 @@ MAX_TRACE_LOCATION_LINES = 60
 MAX_TRACE_CHECKS = 8
 MAX_TRACE_CHECK_CHARS = 400
 MAX_BLAST_RADIUS_CHARS = 24_000
+# The changed code the tracer reads before its first tool call, quoted by code so its view of the change does not
+# depend on which reads it chooses: each changed line with the lines around it, each short named block containing
+# a change in full, and the same-file functions the changed lines call.
+CHANGED_CODE_WINDOW = 20
+MAX_CHANGED_BLOCK_LINES = 150
+MAX_CALLEE_LINES = 60
+MAX_CHANGED_CODE_CHARS = 150_000
 # Definitions of the local values the change reads, quoted by code so the finders always see them.
 MAX_DEFINITIONS = 40
 MAX_DEFINITION_LINES = 8
@@ -2117,6 +2124,54 @@ def trace_seeds(touched):
     return truncate("\n\n".join(sections), MAX_SEED_CHARS), len(seeds), sites
 
 
+CALL_NAME_RE = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(")
+
+
+def changed_code(touched):
+    """The changed code and what surrounds it, quoted from the PR head: each changed line with CHANGED_CODE_WINDOW
+    lines either side, the named block around it in full when that block is short, and the same-file functions
+    the changed lines call. Production files come first, so the limit trims tests."""
+    sections = []
+    for path, sides in sorted(touched.items(), key=lambda item: (bool(TEST_PATH_RE.search(item[0])), item[0])):
+        if not path.endswith(CODE_SUFFIXES) or not sides["RIGHT"]:
+            continue
+        try:
+            lines = head_file_text(path).splitlines()
+        except Exception:
+            continue
+        changed = sorted(number for number in sides["RIGHT"] if number <= len(lines))
+        ranges = []
+        for number in changed:
+            ranges.append((max(1, number - CHANGED_CODE_WINDOW), min(len(lines), number + CHANGED_CODE_WINDOW)))
+            block = enclosing_block(lines, number)
+            if block:
+                end = statement_end(lines, block[1], MAX_CHANGED_BLOCK_LINES + 1)
+                if number <= end < block[1] + MAX_CHANGED_BLOCK_LINES:
+                    ranges.append((block[1], end))
+        declared = {}
+        for number, text in enumerate(lines, 1):
+            for pattern in NAMED_BLOCK_RES:
+                match = pattern.search(text)
+                if match and match.group(1) not in NOT_NAMES:
+                    declared.setdefault(match.group(1), number)
+                    break
+        called = {match.group(1) for number in changed for match in CALL_NAME_RE.finditer(lines[number - 1])}
+        for name in sorted(called & declared.keys()):
+            start = declared[name]
+            if not any(low <= start <= high for low, high in ranges):
+                ranges.append((start, statement_end(lines, start, MAX_CALLEE_LINES)))
+        merged = []
+        for low, high in sorted(ranges):
+            if merged and low <= merged[-1][1] + 1:
+                merged[-1] = (merged[-1][0], max(high, merged[-1][1]))
+            else:
+                merged.append((low, high))
+        for low, high in merged:
+            body = "\n".join(f"{number}: {lines[number - 1]}" for number in range(low, high + 1))
+            sections.append(f"## {path}:{low}-{high}\n```text\n{redact_for_model(body)}\n```")
+    return truncate("\n\n".join(sections), MAX_CHANGED_CODE_CHARS)
+
+
 # ponytail: simple `const|let|var name =` declarations only, scoped to the nearest earlier one at the same or
 # lower indentation that sits at module level or in a named function enclosing the reader. Destructuring and
 # shadowing in an unnamed sibling block are missed or misread; a language server would resolve them properly.
@@ -2124,9 +2179,9 @@ VALUE_DECL_RE = re.compile(r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\
 READ_NAME_RE = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]{2,})")
 
 
-def statement_end(lines, start):
-    """The last line of the statement starting at a 1-based line, by bracket balance, within MAX_DEFINITION_LINES."""
-    last = min(len(lines), start + MAX_DEFINITION_LINES - 1)
+def statement_end(lines, start, limit=MAX_DEFINITION_LINES):
+    """The last line of the statement starting at a 1-based line, by bracket balance, within limit lines."""
+    last = min(len(lines), start + limit - 1)
     depth = 0
     for number in range(start, last + 1):
         text = lines[number - 1]
@@ -2263,8 +2318,10 @@ TRACE_SYSTEM = (
     "You trace the blast radius of a pull request for the reviewers who read it after you. They see the diff; "
     "you find the code outside the diff that decides whether the change is correct. Do not decide whether the "
     "change is correct; the reviewers do that.\n\n"
-    "Work from the seeds, which list where each changed function, and each name declared on a changed line, "
-    "is used outside the diff. For each changed behavior:\n"
+    f"Changed Code quotes the change in place: each changed line with the {CHANGED_CODE_WINDOW} lines around it, "
+    "each short function containing a change in full, and the same-file functions the changed lines call. Read "
+    "it first and do not fetch it again. The seeds list where each changed function, and each name declared on "
+    "a changed line, is used outside the diff. For each changed behavior:\n"
     "1. Read the call sites and consumers that depend on what changed.\n"
     "2. At each one, follow the values the changed result is combined with (the other operands of a condition, "
     "the filters or sets applied beside it, the arguments passed with it) back to where they are produced: "
@@ -2277,7 +2334,8 @@ TRACE_SYSTEM = (
     "each range one factual sentence on how it connects to the change.\n\n"
     "Also submit checks, the questions the reviewers must settle. Find each place where the changed code meets "
     "code it did not change: a condition, filter, set or default combined with the changed result; a caller "
-    "that still assumes the old behavior; a parallel path that handles the same data but did not change. For "
+    "that still assumes the old behavior; a parallel path that handles the same data but did not change. Start "
+    "with the unchanged lines and called functions Changed Code shows beside each change. For "
     "each, ask one question that cites the line and names the exact case where the two could disagree: an "
     "input, item, user, reader or state. For example: \"`parseLimit` now returns 0 for an empty string; does "
     "the caller at this line, which treats 0 as unlimited, then send everything?\" Ask, do not answer. At "
@@ -2360,6 +2418,11 @@ def trace_blast_radius(ctx):
         except Exception as exc:
             print(f"Dottore definitions failed: {error_text(exc)}", flush=True)
             definitions = ""
+        try:
+            code = changed_code(touched)
+        except Exception as exc:
+            print(f"Dottore changed code failed: {error_text(exc)}", flush=True)
+            code = ""
         patch = truncate(
             redact_for_model(run_git_raw(diff_command(ctx.base, "--find-renames", "--unified=3", paths=files))),
             MAX_SECTION_CHARS,
@@ -2372,7 +2435,7 @@ def trace_blast_radius(ctx):
                 {
                     "role": "user",
                     "content": f"# Changed files\n{chr(10).join(files)}\n\n# Seeds\n{seeds or 'No named changes found.'}"
-                    f"\n\n# Diff\n```diff\n{patch}\n```",
+                    f"\n\n# Diff\n```diff\n{patch}\n```\n\n# Changed Code\n{code or 'No changed code could be quoted.'}",
                 },
             ],
             SUBMIT_TRACE,
@@ -2388,7 +2451,8 @@ def trace_blast_radius(ctx):
     section, quoted = quote_trace(locations)
     checks = trace_checks(as_list(submitted.get("checks")))
     print(
-        f"Dottore trace: seeds={seed_count}; seed_chars={len(seeds)}; locations={len(locations)}; "
+        f"Dottore trace: seeds={seed_count}; seed_chars={len(seeds)}; changed_code_chars={len(code)}; "
+        f"locations={len(locations)}; "
         f"section_chars={len(section)}; checks={len(checks)}; quoted={', '.join(quoted) or 'none'}",
         flush=True,
     )
