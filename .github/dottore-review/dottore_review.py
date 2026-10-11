@@ -150,6 +150,9 @@ MAX_TRACE_CHECK_CHARS = 400
 MAX_PASS_CLAIMS = 24
 MAX_CLAIMS = 12
 MAX_CLAIM_CHARS = 400
+# The resolve step's reads, after the claim pass has formed its claims.
+RESOLVE_TOOL_BUDGET = 8
+RESOLVE_TOOL_CHARS = 40_000
 MAX_BLAST_RADIUS_CHARS = 24_000
 # The changed code the tracer reads before its first tool call, quoted by code so its view of the change does not
 # depend on which reads it chooses: each changed line with the lines around it, each short named block containing
@@ -202,6 +205,9 @@ PROVIDERS = ("openai", "anthropic", "responses")
 # Claude requires an output cap; it covers thinking and the reply, and every current model allows it.
 CLAUDE_MAX_TOKENS = 32_000
 CACHE_BREAKPOINT = {"type": "ephemeral"}
+# A Claude request whose prompt passes 100k tokens is billed at five times the rate. Once a reply leaves the
+# conversation past this, the agent must submit, which leaves room for that last turn.
+CLAUDE_CONTEXT_GUARD = 80_000
 DEFAULT_CONCURRENCY = 4
 MAX_CONCURRENCY = 16
 # The review step times out at 35 minutes; after this, agents submit and no new verifier starts.
@@ -789,6 +795,7 @@ def build_stats(review_packet):
                 "stop_turns": 0,
                 "stop_chars": 0,
                 "stop_time": 0,
+                "stop_context": 0,
                 "scout_asks": 0,
                 "follow_ups": 0,
                 "fallbacks": 0,
@@ -1449,7 +1456,12 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         "prompt_tokens_details": {"cached_tokens": cached},
         "completion_tokens_details": {"reasoning_tokens": usage_value(reply.usage, "output_tokens_details", "thinking_tokens")},
     }
-    message = SimpleNamespace(content="".join(text) or None, tool_calls=calls or None, claude_blocks=blocks)
+    message = SimpleNamespace(
+        content="".join(text) or None,
+        tool_calls=calls or None,
+        claude_blocks=blocks,
+        context_tokens=prompt + reply.usage.output_tokens,
+    )
     return message, usage
 
 
@@ -1695,8 +1707,8 @@ def run_agent(
 
     The budget counts tool calls, turns the turns that may call them (the budget by default), and
     output_budget their characters; a repeated call is answered from the earlier result for free. Once
-    any is spent, or the deadline (the review's by default) has passed, the model is made to call the
-    submit tool, and a few malformed submissions are tolerated. Given reads, the agent also gets the scout
+    any is spent, the deadline (the review's by default) has passed or a Claude conversation nears the
+    long-context rate, the model is made to call the submit tool, and a few malformed submissions are tolerated. Given reads, the agent also gets the scout
     tool and at most that many direct reads. The scout reads with batched tools. The role's stats record
     which limit, if any, ended the run. Given transcript, a list, it is filled with the conversation up to and
     including the submitting turn.
@@ -1709,6 +1721,7 @@ def run_agent(
     used = 0
     read = 0
     spent = 0
+    context = 0
     answered = {}
     deadline = deadline or ctx.deadline
     turns = min(turns or budget, budget)
@@ -1720,12 +1733,14 @@ def run_agent(
                 ("turns", turn >= turns),
                 ("chars", spent >= output_budget),
                 ("time", time.monotonic() > deadline),
+                ("context", context >= CLAUDE_CONTEXT_GUARD),
             )
             if hit
         ]
         forced = bool(limits)
         choice = {"type": "function", "function": {"name": submit}} if forced else "auto"
         message = chat(ctx, role, messages, tools, choice)
+        context = getattr(message, "context_tokens", 0)
         calls = list(message.tool_calls or [])
         if not calls:
             messages += [
@@ -1881,7 +1896,7 @@ def scout_leads(ctx, question):
 
 
 def closed_transcript(transcript, submit):
-    """A finished agent conversation with every call of its last turn answered, ready for a follow-up."""
+    """A finished scout conversation with every call of its last turn answered, ready for a follow-up."""
     last = transcript[-1] if transcript else {}
     replies = [
         {
@@ -2718,17 +2733,20 @@ HYPO_BROAD = (
     "Report one claim for one underlying defect; combine scenarios only when they cause the same wrong behavior, "
     "and keep distinct failure causes separate. For code outside this packet, state what the checker should inspect."
 )
-# ponytail: lab hypothesis that the pass lands on the defect's line but still hedges the failure ("if it trims from
-# the end") with that code in the packet, and that one focused turn in the same conversation settles it; keep the
-# turn only if a multi-run test turns those near misses into hits without losing the hits.
+# ponytail: lab hypothesis that the pass hedges because it does not find the code a claim depends on (a resolve turn
+# without reads called the in-packet visibilityTranscript and normalizePositiveInteger absent), and that a fresh
+# conversation with a few reads settles each claim; keep it only if a multi-run test turns those near misses into
+# hits without losing the hits. Fresh, it does not resend the pass's thinking, and the cached packet is reused.
 HYPO_RESOLVE = (
-    "Now settle each claim against the code before the pass ends. For each claim, find in the packet the code its "
-    "outcome runs through, such as a function it calls, a definition it reads or the statements after an await, "
-    "and follow the claim's input through that code. Then rewrite the failure as what the code actually does with "
-    "that input: where the failure says if, may or could, or asks the checker to inspect code the packet shows, "
-    "replace that with what the code does. When the code handles that input but fails in another way at the same "
-    "line, claim that failure instead. Leave a failure conditional only when the code it depends on is not in the "
-    "packet. Keep every claim, in its order, and call submit_claims with the complete list."
+    "The claim pass submitted the claims below for this packet. Settle each one against the code before the pass "
+    "ends. Unlike the claim pass, this step can read the repository at the PR head, with at most "
+    f"{RESOLVE_TOOL_BUDGET} tool calls. For each claim, find the code its outcome runs through, such as a function "
+    "it calls, a definition it reads or the statements after an await: look in the packet first, and read it when "
+    "the packet does not show it. Follow the claim's input through that code, then rewrite the failure as what the "
+    "code actually does with that input: where the failure says if, may or could, or asks the checker to inspect "
+    "code, replace that with what the code does. When the code handles that input but fails in another way at the "
+    "same line, claim that failure instead. Keep every claim, in its order, and call submit_claims with the "
+    "complete list."
 )
 
 
@@ -2774,27 +2792,28 @@ def merge_claims(passes):
 
 
 def claim_packet(ctx, index, packet, deadline):
-    """One broad claim pass on a packet, then the resolve turn in the same conversation. Returns the first
-    submission and the resolved one, which is None when the resolve turn failed."""
-    transcript = []
+    """One broad claim pass on a packet, then the resolve step with the same packet and the pass's claims. Returns
+    the first submission and the resolved one, which is None when the resolve step failed."""
+    system = {"role": "system", "content": HYPO_SYSTEM}
     first = run_agent(
         ctx,
         "hypo",
-        [
-            {"role": "system", "content": HYPO_SYSTEM},
-            {"role": "user", "content": packet},
-            {"role": "user", "content": HYPO_BROAD},
-        ],
+        [system, {"role": "user", "content": packet}, {"role": "user", "content": HYPO_BROAD}],
         SUBMIT_CLAIMS,
         # No reads: while reading, the passes browsed without forming suspicions and then claimed little.
         0,
         0,
         deadline,
-        transcript=transcript,
     )
-    resolve = closed_transcript(transcript, SUBMIT_CLAIMS["function"]["name"])
+    claims = "\n".join(
+        f"{rank}. `{claim['path']}:{claim['line']}`\n   Input: {claim['input']}\n   Failure: {claim['failure']}"
+        for rank, claim in enumerate(pass_claims("broad", first), 1)
+    )
+    if not claims:
+        return first, None
+    resolve = [system, {"role": "user", "content": packet}, {"role": "user", "content": f"{HYPO_RESOLVE}\n\n# Claims\n{claims}"}]
     try:
-        return first, run_agent(ctx, "hypo", [*resolve, {"role": "user", "content": HYPO_RESOLVE}], SUBMIT_CLAIMS, 0, 0, deadline)
+        return first, run_agent(ctx, "hypo", resolve, SUBMIT_CLAIMS, RESOLVE_TOOL_BUDGET, RESOLVE_TOOL_CHARS, deadline)
     except CostLimitReached:
         raise
     except Exception as exc:
