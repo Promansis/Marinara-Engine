@@ -102,6 +102,10 @@ FINDER_READ_BUDGET = 12
 # Every finder turn resends the packet and reasons at the strong model's price, so a scouting finder asks in
 # one turn, follows up in a second and then must submit; the scout does the reading in between.
 FINDER_TURNS = 2
+# ponytail: lab hypothesis that the finder misses bugs it would catch by reading the code itself, because the
+# scout's reports drop the details that reveal them. False lets it read directly within FINDER_TOOL_BUDGET,
+# FINDER_TOOL_CHARS and the time box, as in the uncapped-finder round; True restores the scout.
+FINDER_SCOUTS = False
 # ponytail: lab spending ceiling. A review that costs more than CodeRabbit's $0.25 a PR is no replacement, so
 # once a review has spent this much every further model call is refused (calls already in flight still
 # finish). Prices are LinkAPI's per 1M tokens in CNY (input, cached input, output); an unpriced model counts at
@@ -1971,6 +1975,16 @@ TRACER_CHECKS_PASS = (
 
 
 def finder_instructions(role):
+    if not FINDER_SCOUTS:
+        return (
+            f"{FINDER_FOCUS[role]} Treat the review packet as the specimen. Use the read-only tools only to "
+            "settle a concrete suspicion that depends on code outside the packet, fetching just what it needs; "
+            "do not browse, and when the packet is enough, submit without any tool calls. You have at most "
+            f"{FINDER_TOOL_BUDGET} tool calls and {FINDER_TOOL_CHARS} characters of tool output, and repeating a "
+            f"call returns nothing new. {EDGE_INPUT_PASS} {TRACER_CHECKS_PASS} Guidance is listed by heading in "
+            f"the selected guidance index; read only the sections that bear on a suspicion. {FINDING_RULES} "
+            "Finish by calling submit_findings."
+        )
     return (
         f"{FINDER_FOCUS[role]} Treat the review packet as the specimen. When a concrete suspicion depends on "
         "code outside the packet, ask the scout, a cheaper model that reads the repository for you and returns "
@@ -2017,8 +2031,8 @@ def run_finders(ctx, packets, pool):
                 FINDER_TOOL_BUDGET,
                 FINDER_TOOL_CHARS,
                 deadline,
-                FINDER_READ_BUDGET,
-                FINDER_TURNS,
+                FINDER_READ_BUDGET if FINDER_SCOUTS else None,
+                FINDER_TURNS if FINDER_SCOUTS else None,
             ),
         )
         for packet in packets
