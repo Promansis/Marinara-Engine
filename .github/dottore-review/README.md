@@ -49,7 +49,7 @@ Each model call belongs to one role:
 
 A gateway such as LinkAPI serves both formats with one key, so only the two base URLs need setting.
 
-Any role can use its own endpoint through the secrets `DOTTORE_<ROLE>_BASE_URL` and `DOTTORE_<ROLE>_API_KEY`, such as `DOTTORE_SCOUT_BASE_URL` and `DOTTORE_SCOUT_API_KEY`. Either one left unset falls back to the shared value for that role's provider, so a role can use another key on the same gateway by setting only its key. A role's fallback model is called on the role's endpoint. Each review logs a `Dottore endpoints:` line naming the roles with their own endpoint, and never the values.
+Any role can use its own endpoint through the secrets `DOTTORE_<ROLE>_BASE_URL` and `DOTTORE_<ROLE>_API_KEY`, such as `DOTTORE_SCOUT_BASE_URL` and `DOTTORE_SCOUT_API_KEY`. Either one left unset falls back to the shared value for that role's provider, so a role can use another key on the same gateway by setting only its key. GitHub does not accept an empty secret, so a placeholder with no letters or digits, such as `.`, also counts as unset. A role's fallback model is called on the role's endpoint. Each review logs a `Dottore endpoints:` line naming the roles with their own endpoint, and never the values.
 
 The $0.25 ceiling prices calls by model name at LinkAPI's rates, so a role moved to an endpoint with different prices is counted at LinkAPI's.
 

@@ -847,9 +847,11 @@ def role_models():
 
 def role_endpoint(role):
     """A role's own endpoint, from the DOTTORE_<ROLE>_BASE_URL and DOTTORE_<ROLE>_API_KEY secrets; either one left
-    empty falls back to the shared value for the role's provider."""
+    empty falls back to the shared value for the role's provider. GitHub refuses an empty secret, so a placeholder
+    without a letter or digit, such as ".", counts as empty."""
     prefix = f"DOTTORE_{role.upper()}_"
-    return os.environ.get(prefix + "BASE_URL", "").strip(), os.environ.get(prefix + "API_KEY", "").strip()
+    values = (os.environ.get(prefix + name, "").strip() for name in ("BASE_URL", "API_KEY"))
+    return tuple(value if re.search(r"[A-Za-z0-9]", value) else "" for value in values)
 
 
 def review_clients(models):
