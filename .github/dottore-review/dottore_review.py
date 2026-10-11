@@ -2699,9 +2699,15 @@ HYPO_SYSTEM = (
 # ponytail: lab hypothesis that the claim pass finds the right line but names the wrong failure because it gets
 # edge inputs only as a topic list, while the finders caught 7304's "0" by walking them; keep the walk only if a
 # multi-run recall test shows it names those failures.
+# ponytail: lab hypothesis that the pass then guesses what code the packet shows does (7265's visibilityTranscript
+# sat 15 lines above a claim that called it unseen); keep the follow-the-code sentence only if a multi-run test
+# turns those near misses into hits.
 HYPO_BROAD = (
-    f"Before you claim, {EDGE_INPUT_WALK} Claim every input the code then mishandles; when the outcome depends on "
-    "code outside this packet, claim it and say what that code would have to do.\n"
+    f"Before you claim, {EDGE_INPUT_WALK} Claim every input the code then mishandles, judging from the "
+    "code itself: when the outcome runs through a function, a definition or the statements after an await that the "
+    "packet shows, find that code in the packet and follow the input through it before you name the failure, "
+    "and claim what it actually does. Only for code the packet does not show, claim it and say what that code "
+    "would have to do.\n"
     "Then review every changed behavior from all three perspectives, in the same pass:\n"
     "- Inputs and failure paths: missing, empty, legacy or disabled values; type/boundary cases; budget limits; "
     "and calls that reject or fail partway through.\n"
