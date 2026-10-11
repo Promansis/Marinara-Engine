@@ -1409,6 +1409,9 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         "timeout": anthropic.Timeout(read_timeout, connect=30),
     }
     if settings["effort"]:
+        # OpenRouter passes effort to Claude unchanged only beside a thinking field. Alone, it becomes OpenRouter's
+        # own reasoning setting, under which Haiku thought until the output cap on every first call.
+        request["thinking"] = {"type": "adaptive"}
         request["output_config"] = {"effort": settings["effort"]}
     try:
         with role_client(ctx, "anthropic", settings).messages.stream(**request) as stream:
