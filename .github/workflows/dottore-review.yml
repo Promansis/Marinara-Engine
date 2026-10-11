@@ -70,6 +70,10 @@ on:
         required: false
       DOTTORE_SCOUT_API_KEY:
         required: false
+      DOTTORE_HYPO_BASE_URL:
+        required: false
+      DOTTORE_HYPO_API_KEY:
+        required: false
 
 permissions:
   contents: read
@@ -191,6 +195,8 @@ jobs:
           DOTTORE_VERIFY_API_KEY: ${{ secrets.DOTTORE_VERIFY_API_KEY }}
           DOTTORE_SCOUT_BASE_URL: ${{ secrets.DOTTORE_SCOUT_BASE_URL }}
           DOTTORE_SCOUT_API_KEY: ${{ secrets.DOTTORE_SCOUT_API_KEY }}
+          DOTTORE_HYPO_BASE_URL: ${{ secrets.DOTTORE_HYPO_BASE_URL }}
+          DOTTORE_HYPO_API_KEY: ${{ secrets.DOTTORE_HYPO_API_KEY }}
           # Model settings; .github/dottore-review/README.md describes each one.
           DOTTORE_PROVIDER: ${{ vars.DOTTORE_PROVIDER }}
           LLM_MODEL: ${{ vars.DOTTORE_MODEL || 'gpt-5.5' }}
