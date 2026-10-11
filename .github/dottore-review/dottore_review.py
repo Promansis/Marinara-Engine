@@ -105,7 +105,15 @@ FINDER_TURNS = 2
 # ponytail: lab hypothesis that the finder misses bugs it would catch by reading the code itself, because the
 # scout's reports drop the details that reveal them. False lets it read directly within FINDER_TOOL_BUDGET,
 # FINDER_TOOL_CHARS and the time box, as in the uncapped-finder round; True restores the scout.
-FINDER_SCOUTS = False
+FINDER_SCOUTS = True
+# ponytail: lab hypothesis that the scout's answers and its choice of lines drop the details that reveal a bug.
+# True has the scout only find the code: it submits lines, and code quotes the whole named block around each
+# (or the lines around it in a long one), so the finder reads the code itself; False restores the answers.
+SCOUT_LOCATES = True
+MAX_LOCATIONS = 6
+LOCATED_BLOCK_LINES = 150
+LOCATED_WINDOW = 40
+MAX_LOCATED_CHARS = 24_000
 # ponytail: lab spending ceiling. A review that costs more than CodeRabbit's $0.25 a PR is no replacement, so
 # once a review has spent this much every further model call is refused (calls already in flight still
 # finish). Prices are LinkAPI's per 1M tokens in CNY (input, cached input, output); an unpriced model counts at
@@ -1089,6 +1097,43 @@ SUBMIT_REPORT = function_tool(
     },
     ["answer", "evidence", "unresolved"],
 )
+SCOUT_LOCATE_TOOL = function_tool(
+    "scout",
+    "Send a cheaper model to find the code at the PR head that settles one self-contained question; Dottore "
+    "quotes each place it finds verbatim, the whole function where it is short. Put everything you need about "
+    "the same code in one question; questions asked in the same turn run in parallel. Cite code as path:line "
+    "and put code names in backticks: Dottore reads and searches those for the scout before it starts.",
+    SCOUT_TOOL["function"]["parameters"]["properties"],
+    ["question"],
+)
+SUBMIT_LOCATIONS = function_tool(
+    "submit_locations",
+    "Submit where the code that settles the reviewer's question is. Dottore quotes the whole function around "
+    "each line verbatim for the reviewer. This ends the scouting.",
+    {
+        "locations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": PATH_PARAM,
+                    "line": {"type": "integer", "description": "A line at the PR head inside the code that settles the question."},
+                    "what": {
+                        "type": "string",
+                        "description": "A few words naming this code, such as the function and what it does with the "
+                        "value asked about, without judging the change.",
+                    },
+                },
+                "required": ["path", "line", "what"],
+            },
+        },
+        "not_found": {
+            "type": "string",
+            "description": "What you searched for and did not find, such as no other callers, or empty.",
+        },
+    },
+    ["locations", "not_found"],
+)
 
 
 def tool_path(path):
@@ -1637,7 +1682,8 @@ def run_agent(
     """
     submit = submit_tool["function"]["name"]
     scouting = reads is not None
-    tools = [*(SCOUT_READ_TOOLS if role == "scout" else READ_TOOLS), *([SCOUT_TOOL] if scouting else []), submit_tool]
+    scout_tool = SCOUT_LOCATE_TOOL if SCOUT_LOCATES else SCOUT_TOOL
+    tools = [*(SCOUT_READ_TOOLS if role == "scout" else READ_TOOLS), *([scout_tool] if scouting else []), submit_tool]
     messages = list(messages)
     used = 0
     read = 0
@@ -1758,6 +1804,21 @@ SCOUT_SYSTEM = (
     "the code does not settle something, say so in unresolved instead of guessing. Finish by calling "
     "submit_report."
 )
+SCOUT_LOCATE_SYSTEM = (
+    "You find code for a pull request reviewer. The reviewer has the diff and sends you one question about "
+    "code it has not read. Find the code at the PR head that settles it with the read-only tools, then submit "
+    f"where it is: up to {MAX_LOCATIONS} lines, one inside each function or block that settles the question, "
+    "such as each caller or each writer it asks about. Dottore quotes the whole function around each line "
+    "verbatim for the reviewer, who reads the code and judges the change, so do not explain the code or judge "
+    "the change. The question may come with leads: the lines it cites and searches for the names it mentions, "
+    "already run for you, so start from them and do not repeat them. The reviewer may later send a follow-up; "
+    f"answer it the same way, reusing what you have already read. For each question you have {SCOUT_TURNS} "
+    "turns of tool calls before you must submit, and every turn resends everything read so far, so plan first "
+    "and fetch in as few turns as possible: make every search you need in one turn (each shows a few lines "
+    "around its first hits), then read only what you need to be sure the lines are the right ones. Locations "
+    "are lines at the PR head; use file_diff or base_version only to find them. Say in not_found what you "
+    "searched for and did not find. Finish by calling submit_locations."
+)
 
 
 def scout_leads(ctx, question):
@@ -1828,6 +1889,50 @@ def scout_report(ctx, submitted, scout_id):
     return truncate(redact_for_model("\n".join(lines)), MAX_SCOUT_REPORT_CHARS)
 
 
+def located_report(submitted, scout_id):
+    """Quote each place a locating scout found from the PR head: the named block around the line in full when it
+    is short, else the lines around it. Overlapping places merge; the scout's words supply only the headings."""
+    found, skipped = {}, []
+    for item in as_list(submitted.get("locations"))[:MAX_LOCATIONS]:
+        if not isinstance(item, dict):
+            continue
+        try:
+            path = tool_path(item.get("path"))
+            lines = head_file_text(path).splitlines()
+            number = int(item.get("line"))
+            if not 1 <= number <= len(lines):
+                raise ValueError(f"line {number} is not in the file")
+        except Exception as exc:
+            skipped.append(f"{item.get('path')}:{item.get('line')} ({error_text(exc)})")
+            continue
+        low, high = max(1, number - LOCATED_WINDOW), min(len(lines), number + LOCATED_WINDOW)
+        block = enclosing_block(lines, number)
+        if block:
+            end = statement_end(lines, block[1], LOCATED_BLOCK_LINES + 1)
+            if number <= end < block[1] + LOCATED_BLOCK_LINES:
+                low, high = block[1], end
+        what = " ".join(str(item.get("what") or "").split())[:200]
+        found.setdefault(path, (lines, []))[1].append((low, high, what))
+    parts = [f"Scout {scout_id}: the code it found, quoted verbatim by Dottore from the PR head"]
+    for path, (lines, ranges) in found.items():
+        merged = []
+        for low, high, what in sorted(ranges):
+            if merged and low <= merged[-1][1] + 1:
+                merged[-1] = (merged[-1][0], max(high, merged[-1][1]), f"{merged[-1][2]}; {what}")
+            else:
+                merged.append((low, high, what))
+        for low, high, what in merged:
+            body = "\n".join(f"{number}: {lines[number - 1]}" for number in range(low, high + 1))
+            parts.append(f"## {path}:{low}-{high} ({what})\n```text\n{body}\n```")
+    if not found:
+        parts.append("No code found.")
+    if str(submitted.get("not_found") or "").strip():
+        parts.append(f"Searched and not found: {submitted['not_found']}")
+    if skipped:
+        parts.append(f"Skipped invalid locations: {', '.join(skipped)}")
+    return truncate(redact_for_model("\n\n".join(parts)), MAX_LOCATED_CHARS)
+
+
 def run_scout(ctx, arguments, deadline):
     """Answer one finder question with the scout model, retrying a failed run while time remains.
 
@@ -1857,7 +1962,7 @@ def run_scout(ctx, arguments, deadline):
     else:
         leads = scout_leads(ctx, question)
         messages = [
-            {"role": "system", "content": SCOUT_SYSTEM},
+            {"role": "system", "content": SCOUT_LOCATE_SYSTEM if SCOUT_LOCATES else SCOUT_SYSTEM},
             {
                 "role": "user",
                 "content": f"# Changed files\n{chr(10).join(sorted(ctx.files))}\n\n# Question\n{question}"
@@ -1879,7 +1984,7 @@ def run_scout(ctx, arguments, deadline):
                     ctx,
                     "scout",
                     messages,
-                    SUBMIT_REPORT,
+                    SUBMIT_LOCATIONS if SCOUT_LOCATES else SUBMIT_REPORT,
                     SCOUT_TOOL_BUDGET,
                     SCOUT_TOOL_CHARS,
                     min(deadline, started + SCOUT_DEADLINE_SECONDS),
@@ -1892,18 +1997,20 @@ def run_scout(ctx, arguments, deadline):
             error = error_text(exc)
             print(f"Dottore scout failed: attempt={attempt + 1}; {error}", flush=True)
             continue
-        report = scout_report(ctx, submitted, scout_id)
+        report = located_report(submitted, scout_id) if SCOUT_LOCATES else scout_report(ctx, submitted, scout_id)
         print(
             f"Dottore scout: id={scout_id}; follow_up={'yes' if earlier else 'no'}; attempt={attempt + 1}; "
             f"question_chars={len(question)}; leads_chars={len(leads)}; report_chars={len(report)}; "
-            f"evidence={len(as_list(submitted.get('evidence')))}; unconfirmed={report.count('; unconfirmed)')}; "
+            f"evidence={len(as_list(submitted.get('locations' if SCOUT_LOCATES else 'evidence')))}; unconfirmed={report.count('; unconfirmed)')}; "
             f"elapsed_s={time.monotonic() - started:.1f}; "
             f"question={json.dumps(' '.join(redact_for_model(question).split())[:200])}",
             flush=True,
         )
         with ctx.lock:
             ctx.scout_streak = 0
-            ctx.scout_sessions[scout_id] = closed_transcript(transcript, SUBMIT_REPORT["function"]["name"])
+            ctx.scout_sessions[scout_id] = closed_transcript(
+                transcript, (SUBMIT_LOCATIONS if SCOUT_LOCATES else SUBMIT_REPORT)["function"]["name"]
+            )
         return report, True
     with ctx.lock:
         ctx.stats["roles"]["scout"]["failures"] += 1
@@ -1974,6 +2081,13 @@ TRACER_CHECKS_PASS = (
 )
 
 
+SCOUT_REPORT_NOTE = "a cheaper model that reads the repository for you and returns quoted evidence."
+SCOUT_LOCATE_NOTE = (
+    "a cheaper model that finds the code that settles your question; Dottore quotes back each place it found "
+    "verbatim, the whole function where it is short, so you read the code itself and judge it."
+)
+
+
 def finder_instructions(role):
     if not FINDER_SCOUTS:
         return (
@@ -1987,8 +2101,8 @@ def finder_instructions(role):
         )
     return (
         f"{FINDER_FOCUS[role]} Treat the review packet as the specimen. When a concrete suspicion depends on "
-        "code outside the packet, ask the scout, a cheaper model that reads the repository for you and returns "
-        f"quoted evidence. You have {FINDER_TURNS} turns of tool calls and then must submit: ask every question "
+        f"code outside the packet, ask the scout, {SCOUT_LOCATE_NOTE if SCOUT_LOCATES else SCOUT_REPORT_NOTE} "
+        f"You have {FINDER_TURNS} turns of tool calls and then must submit: ask every question "
         "you need in the first turn, together so they run in parallel, and use the second only for follow-ups "
         "on answers that leave a suspicion open and for questions whose scout failed. Send a follow-up to the "
         "scout that gave the answer by passing its id as follow_up; it keeps what it read. Make each question "

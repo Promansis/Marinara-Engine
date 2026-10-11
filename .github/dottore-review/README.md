@@ -4,7 +4,7 @@ Dottore reviews pull requests in three roles:
 
 - **`finder`** reads each part of the diff and proposes problems. The lab can split that work between two finders, **`broad`** and **`skeptic`**, instead.
 - **`verify`** checks every proposed problem against the code before anything is posted.
-- **`scout`** reads code for the finders when they ask, on a cheaper model (`gpt-6-luna` through `responses` by default). The lab currently has the finder read the code itself, so the scout is unused.
+- **`scout`** finds code for the finders when they ask, on a cheaper model (`gpt-6-luna` through `responses` by default). It submits the lines it found, and Dottore quotes the whole function around each one verbatim, so the finder reads the code itself rather than the scout's summary.
 
 The models and providers that run these roles are set with repository settings, under **Settings → Secrets and variables → Actions**, so changing them needs no code change. A new value applies from the next review. In Marinara-Agents, set them in the Agents repository: its wrapper workflow passes its own secrets and variables to the shared review.
 
@@ -26,7 +26,7 @@ Each model call belongs to one role:
 | `trace` | Maps the code outside the diff that the change touches, and raises checks for the finder, before any finder runs | `gpt-6-luna` (`responses`) |
 | `finder` | Reviews each packet of the diff and proposes findings | `DOTTORE_MODEL` |
 | `broad`, `skeptic` | Two finders per packet instead of one; unused while one finder reviews each packet | `DOTTORE_MODEL` |
-| `scout` | Reads code for the finder, answering one question per report; unused while the finder reads the code itself | `gpt-6-luna` (`responses`) |
+| `scout` | Finds the code that settles one finder question; Dottore quotes it verbatim | `gpt-6-luna` (`responses`) |
 | `verify` | Checks each proposed finding against the code before it is posted | `DOTTORE_MODEL` |
 
 `DOTTORE_MODELS` maps a role to any of `provider`, `model` and `effort`. A role or field it leaves out uses the defaults above. For example, GPT finders with a Claude checker:
