@@ -150,8 +150,6 @@ MAX_TRACE_CHECK_CHARS = 400
 MAX_PASS_CLAIMS = 24
 MAX_CLAIMS = 12
 MAX_CLAIM_CHARS = 400
-# Claims on the same file within this many lines are one claim.
-CLAIM_SPREAD = 3
 MAX_BLAST_RADIUS_CHARS = 24_000
 # The changed code the tracer reads before its first tool call, quoted by code so its view of the change does not
 # depend on which reads it chooses: each changed line with the lines around it, each short named block containing
@@ -2735,18 +2733,14 @@ def pass_claims(lens, submitted):
 
 
 def merge_claims(passes):
-    """Take the passes' claims in turn, each pass's most likely first, drop repeats of a kept claim and keep at
-    most MAX_CLAIMS. Every claim records its fate for the log."""
+    """Take the passes' claims in turn, each pass's most likely first, and keep at most MAX_CLAIMS. Packets never
+    share a file, and claims a few lines apart in one pass were found to be different defects, so none is dropped
+    as a repeat. Every claim records its fate for the log."""
     kept = []
     for claim in itertools.chain.from_iterable(itertools.zip_longest(*passes)):
         if claim is None:
             continue
-        twin = next(
-            (k for k in kept if k["path"] == claim["path"] and abs(k["line"] - claim["line"]) <= CLAIM_SPREAD), None
-        )
-        if twin:
-            claim["fate"] = f"repeat of {twin['id']}"
-        elif len(kept) >= MAX_CLAIMS:
+        if len(kept) >= MAX_CLAIMS:
             claim["fate"] = "over cap"
         else:
             claim["fate"] = "kept"
