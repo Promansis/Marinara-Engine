@@ -75,8 +75,6 @@ SCOUT_TOOL_CHARS = 160_000
 # Every scout turn resends all it has read, so it reads in few turns with large batched calls: read_files takes
 # several ranges at once, and its search shows a few lines around the first hits so most need no follow-up read.
 SCOUT_TURNS = 5
-# Cheap roles that read with the scout's batched tools.
-BATCH_READ_ROLES = ("scout", "hypo")
 SCOUT_READ_LINES = 400
 SCOUT_READ_CHARS = 30_000
 MAX_READ_RANGES = 8
@@ -145,10 +143,7 @@ MAX_TRACE_LOCATION_LINES = 60
 # Questions the tracer raises where the change meets code it did not change; the finder settles each one.
 MAX_TRACE_CHECKS = 8
 MAX_TRACE_CHECK_CHARS = 400
-# Cheap claim passes (DOTTORE_LAB_STAGE=hypo): each reads the finder's packet with one lens and claims defects.
-HYPO_TURNS = 4
-HYPO_TOOL_BUDGET = 16
-HYPO_TOOL_CHARS = 60_000
+# Cheap claim passes (DOTTORE_LAB_STAGE=hypo): each reads the code-built packet with one lens and claims defects.
 MAX_PASS_CLAIMS = 8
 MAX_CLAIMS = 12
 MAX_CLAIM_CHARS = 400
@@ -1701,7 +1696,7 @@ def run_agent(
     submit = submit_tool["function"]["name"]
     scouting = reads is not None
     scout_tool = SCOUT_LOCATE_TOOL if SCOUT_LOCATES else SCOUT_TOOL
-    tools = [*(SCOUT_READ_TOOLS if role in BATCH_READ_ROLES else READ_TOOLS), *([scout_tool] if scouting else []), submit_tool]
+    tools = [*(SCOUT_READ_TOOLS if role == "scout" else READ_TOOLS), *([scout_tool] if scouting else []), submit_tool]
     messages = list(messages)
     used = 0
     read = 0
@@ -1775,7 +1770,7 @@ def run_agent(
                 continue
             else:
                 read += 1
-                replies[call.id] = run_tool(ctx, call.function.name, call.function.arguments, role in BATCH_READ_ROLES)
+                replies[call.id] = run_tool(ctx, call.function.name, call.function.arguments, role == "scout")
             used += 1
             answered[key] = used
             outputs.add(call.id)
@@ -2684,12 +2679,11 @@ HYPO_SYSTEM = (
     "Claim every suspicion you can tie to a line, including ones you are unsure of, and aim for 4 to "
     f"{MAX_PASS_CLAIMS} claims. A claim names the line at the PR head where the defect would sit, the input, "
     "item, reader, state or sequence of events that would trigger it, and what the code would then do wrong.\n\n"
-    "Read the review packet first. It holds the diff with the code around each change, where the changed names "
-    "are used, and the definitions of values the changed lines read. Use the read-only tools to follow a "
-    "suspicion into code the packet does not show: the callers, definitions and parallel paths it depends on. "
-    "You have "
-    f"{HYPO_TURNS} turns of tool calls and every turn resends everything read so far, so make every search "
-    "and read you need for a turn in that turn. Do not claim style, naming, comments, missing tests or "
+    "Claim from the review packet; you have no tools. It holds the diff with the code around each change, where "
+    "the changed names are used, and the definitions of values the changed lines read. When a suspicion depends "
+    "on code the packet does not show, such as a caller, a definition or a parallel path, claim it anyway and "
+    "say in the failure what that code would have to do for the defect to happen; the checker reads it. Do not "
+    "claim style, naming, comments, missing tests or "
     f"documentation. Rank the claims most likely first, at most {MAX_PASS_CLAIMS}. Finish by calling submit_claims."
 )
 HYPO_LENSES = {
@@ -2781,11 +2775,10 @@ def raise_claims(ctx, packets, pool):
                     {"role": "user", "content": instruction},
                 ],
                 SUBMIT_CLAIMS,
-                HYPO_TOOL_BUDGET,
-                HYPO_TOOL_CHARS,
+                # No reads: while reading, the passes browsed without forming suspicions and then claimed little.
+                0,
+                0,
                 deadline,
-                None,
-                HYPO_TURNS,
             ),
         )
         for index, packet in enumerate(packets, 1)
