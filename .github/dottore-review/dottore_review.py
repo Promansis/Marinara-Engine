@@ -1425,6 +1425,10 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         raise StreamStalled("the reply stream ended before Claude finished")
     blocks, text, calls = [], [], []
     for block in reply.content:
+        if block.type == "tool_use" and reply.stop_reason == "max_tokens":
+            # The cap cut this call off partway through its input, which would otherwise be taken as a short
+            # submission; without it, run_agent asks for the call again.
+            continue
         if block.type == "tool_use":
             blocks.append({"type": "tool_use", "id": block.id, "name": block.name, "input": block.input})
             calls.append(
