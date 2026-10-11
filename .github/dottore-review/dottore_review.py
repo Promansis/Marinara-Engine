@@ -114,6 +114,8 @@ MAX_LOCATIONS = 6
 LOCATED_BLOCK_LINES = 150
 LOCATED_WINDOW = 40
 MAX_LOCATED_CHARS = 24_000
+# The ranges a located report quotes, logged per scout so a miss can be traced to the scout or the finder.
+LOCATED_RANGE_RE = re.compile(r"^## (\S+:\d+-\d+) \(", re.M)
 # ponytail: lab spending ceiling. A review that costs more than CodeRabbit's $0.25 a PR is no replacement, so
 # once a review has spent this much every further model call is refused (calls already in flight still
 # finish). Prices are LinkAPI's per 1M tokens in CNY (input, cached input, output); an unpriced model counts at
@@ -2005,7 +2007,8 @@ def run_scout(ctx, arguments, deadline):
             f"question_chars={len(question)}; leads_chars={len(leads)}; report_chars={len(report)}; "
             f"evidence={len(as_list(submitted.get('locations' if SCOUT_LOCATES else 'evidence')))}; unconfirmed={report.count('; unconfirmed)')}; "
             f"elapsed_s={time.monotonic() - started:.1f}; "
-            f"question={json.dumps(' '.join(redact_for_model(question).split())[:200])}",
+            + (f"located={','.join(LOCATED_RANGE_RE.findall(report)) or 'none'}; " if SCOUT_LOCATES else "")
+            + f"question={json.dumps(' '.join(redact_for_model(question).split())[:200])}",
             flush=True,
         )
         with ctx.lock:
