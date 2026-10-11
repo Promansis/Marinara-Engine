@@ -68,6 +68,8 @@ FINDER_ROLES = ("finder",)
 # LinkAPI refuses function tools with reasoning for gpt-6-luna on Chat Completions, so it uses Responses.
 SCOUT_MODEL = {"provider": "responses", "model": "gpt-6-luna", "effort": "medium"}
 TRACE_MODEL = SCOUT_MODEL
+# The claim passes judge where the change can break, so they reason at the cheap model's highest effort.
+HYPO_MODEL = {**SCOUT_MODEL, "effort": "xhigh"}
 SCOUT_TOOL_BUDGET = 40
 SCOUT_TOOL_CHARS = 160_000
 # Every scout turn resends all it has read, so it reads in few turns with large batched calls: read_files takes
@@ -839,7 +841,7 @@ def role_models():
     defaults = {role: {"model": default_model, "effort": default_effort} for role in REVIEW_ROLES}
     defaults["trace"] = TRACE_MODEL
     defaults["scout"] = SCOUT_MODEL
-    defaults["hypo"] = SCOUT_MODEL
+    defaults["hypo"] = HYPO_MODEL
     models = {
         role: {
             "provider": str(
