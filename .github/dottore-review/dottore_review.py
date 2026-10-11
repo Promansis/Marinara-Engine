@@ -2678,18 +2678,19 @@ SUBMIT_CLAIMS = function_tool(
 # finder, so the strong model only has to judge their claims; the lab stage measures the claims before any
 # checker sees them.
 HYPO_SYSTEM = (
-    "You look for defects in a pull request through one lens; other passes use other lenses. A stronger model "
-    "checks every claim against the code before anything is published, so a real defect you leave out costs "
-    "more than a claim it refutes, but each claim costs it a check: claim only what you can make concrete. A "
-    "claim names the line at the PR head where the defect sits, the concrete input, item, reader, state or "
-    "sequence of events that triggers it, and what the code then does wrong.\n\n"
+    "You list suspected defects in a pull request through one lens; other passes use other lenses. You do not "
+    "decide whether a suspicion is real: a stronger model checks every claim against the code before anything "
+    "is published and discards the wrong ones, so a real defect you leave out is the only costly mistake. "
+    "Claim every suspicion you can tie to a line, including ones you are unsure of, and aim for 4 to "
+    f"{MAX_PASS_CLAIMS} claims. A claim names the line at the PR head where the defect would sit, the input, "
+    "item, reader, state or sequence of events that would trigger it, and what the code would then do wrong.\n\n"
     "Read the review packet first. It holds the diff with the code around each change, where the changed names "
     "are used, and the definitions of values the changed lines read. Use the read-only tools to follow a "
     "suspicion into code the packet does not show: the callers, definitions and parallel paths it depends on. "
     "You have "
     f"{HYPO_TURNS} turns of tool calls and every turn resends everything read so far, so make every search "
     "and read you need for a turn in that turn. Do not claim style, naming, comments, missing tests or "
-    f"documentation. At most {MAX_PASS_CLAIMS} claims, most likely first. Finish by calling submit_claims."
+    f"documentation. Rank the claims most likely first, at most {MAX_PASS_CLAIMS}. Finish by calling submit_claims."
 )
 HYPO_LENSES = {
     "edges": (
