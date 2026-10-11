@@ -199,9 +199,8 @@ EVIDENCE_WINDOW = 3
 # Each role talks to OpenAI's Chat Completions format or Claude's Messages format; gateways such as
 # LinkAPI serve Claude only through the latter when tools are used.
 PROVIDERS = ("openai", "anthropic", "responses")
-# Claude requires an output cap; it covers thinking and the reply, and every current model allows it. At 32k,
-# Haiku's thinking used the whole cap on every first call and it answered only when asked again.
-CLAUDE_MAX_TOKENS = 64_000
+# Claude requires an output cap; it covers thinking and the reply, and every current model allows it.
+CLAUDE_MAX_TOKENS = 32_000
 CACHE_BREAKPOINT = {"type": "ephemeral"}
 DEFAULT_CONCURRENCY = 4
 MAX_CONCURRENCY = 16
