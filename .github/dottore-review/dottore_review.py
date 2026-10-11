@@ -1881,7 +1881,7 @@ def scout_leads(ctx, question):
 
 
 def closed_transcript(transcript, submit):
-    """A finished scout conversation with every call of its last turn answered, ready for a follow-up."""
+    """A finished agent conversation with every call of its last turn answered, ready for a follow-up."""
     last = transcript[-1] if transcript else {}
     replies = [
         {
@@ -2718,6 +2718,18 @@ HYPO_BROAD = (
     "Report one claim for one underlying defect; combine scenarios only when they cause the same wrong behavior, "
     "and keep distinct failure causes separate. For code outside this packet, state what the checker should inspect."
 )
+# ponytail: lab hypothesis that the pass lands on the defect's line but still hedges the failure ("if it trims from
+# the end") with that code in the packet, and that one focused turn in the same conversation settles it; keep the
+# turn only if a multi-run test turns those near misses into hits without losing the hits.
+HYPO_RESOLVE = (
+    "Now settle each claim against the code before the pass ends. For each claim, find in the packet the code its "
+    "outcome runs through, such as a function it calls, a definition it reads or the statements after an await, "
+    "and follow the claim's input through that code. Then rewrite the failure as what the code actually does with "
+    "that input: where the failure says if, may or could, or asks the checker to inspect code the packet shows, "
+    "replace that with what the code does. When the code handles that input but fails in another way at the same "
+    "line, claim that failure instead. Leave a failure conditional only when the code it depends on is not in the "
+    "packet. Keep every claim, in its order, and call submit_claims with the complete list."
+)
 
 
 def pass_claims(lens, submitted):
@@ -2761,47 +2773,67 @@ def merge_claims(passes):
     return kept
 
 
+def claim_packet(ctx, index, packet, deadline):
+    """One broad claim pass on a packet, then the resolve turn in the same conversation. Returns the first
+    submission and the resolved one, which is None when the resolve turn failed."""
+    transcript = []
+    first = run_agent(
+        ctx,
+        "hypo",
+        [
+            {"role": "system", "content": HYPO_SYSTEM},
+            {"role": "user", "content": packet},
+            {"role": "user", "content": HYPO_BROAD},
+        ],
+        SUBMIT_CLAIMS,
+        # No reads: while reading, the passes browsed without forming suspicions and then claimed little.
+        0,
+        0,
+        deadline,
+        transcript=transcript,
+    )
+    resolve = closed_transcript(transcript, SUBMIT_CLAIMS["function"]["name"])
+    try:
+        return first, run_agent(ctx, "hypo", [*resolve, {"role": "user", "content": HYPO_RESOLVE}], SUBMIT_CLAIMS, 0, 0, deadline)
+    except CostLimitReached:
+        raise
+    except Exception as exc:
+        print(f"Dottore claim resolve failed: packet={index}; {error_text(exc)}", flush=True)
+        return first, None
+
+
 def raise_claims(ctx, packets, pool):
-    """Lab stage: one broad cheap-model call per packet, before checker verification."""
+    """Lab stage: one broad cheap-model pass and its resolve turn per packet, before checker verification."""
     deadline = min(ctx.deadline, time.monotonic() + FINDER_DEADLINE_SECONDS)
     jobs = [
-        (
-            index,
-            "broad",
-            pool.submit(
-                run_agent,
-                ctx,
-                "hypo",
-                [
-                    {"role": "system", "content": HYPO_SYSTEM},
-                    {"role": "user", "content": packet},
-                    {"role": "user", "content": HYPO_BROAD},
-                ],
-                SUBMIT_CLAIMS,
-                # No reads: while reading, the passes browsed without forming suspicions and then claimed little.
-                0,
-                0,
-                deadline,
-            ),
-        )
+        (index, "broad", pool.submit(claim_packet, ctx, index, packet, deadline))
         for index, packet in enumerate(packets, 1)
     ]
     passes, failed = [], 0
     for index, lens, future in jobs:
         try:
-            submitted = future.result()
+            first, resolved = future.result()
         except Exception as exc:
             failed += 1
             print(f"Dottore claim pass failed: lens={lens}; packet={index}; {error_text(exc)}", flush=True)
             continue
-        claims = pass_claims(lens, submitted)
-        for rank, claim in enumerate(claims, 1):
-            claim["id"] = f"{lens}/p{index}#{rank}"
+        drafts = pass_claims(lens, first)
+        claims = pass_claims(lens, resolved or {})
         print(
-            f"Dottore claim pass: lens={lens}; packet={index}; "
-            f"submitted={len(as_list(submitted.get('claims')))}; valid={len(claims)}",
+            f"Dottore claim pass: lens={lens}; packet={index}; drafted={len(drafts)}; "
+            f"resolved={len(claims) if resolved else 'failed'}",
             flush=True,
         )
+        for rank, claim in enumerate(drafts, 1):
+            print(
+                f"Dottore claim draft: {lens}/p{index}#{rank}; {claim['path']}:{claim['line']}; "
+                f"input={claim['input']}; failure={claim['failure']}",
+                flush=True,
+            )
+        # A resolve turn that failed or kept nothing leaves the first submission's claims.
+        claims = claims or drafts
+        for rank, claim in enumerate(claims, 1):
+            claim["id"] = f"{lens}/p{index}#{rank}"
         passes.append(claims)
     if failed == len(jobs):
         raise RuntimeError(f"all {failed} claim passes failed")
