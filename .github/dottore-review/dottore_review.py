@@ -1407,6 +1407,11 @@ def claude_messages(messages):
     return system, turns
 
 
+def shows_thinking(settings):
+    """A budgeted Claude role, or a thinking one under a lab output cap, logs a summary of its thinking."""
+    return bool(settings.get("task_budget") or (settings.get("effort") and settings.get("max_tokens")))
+
+
 def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing):
     """One streamed Claude Messages call, returned in the Chat Completions shape the agents use."""
     import anthropic
@@ -1436,9 +1441,10 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         # own reasoning setting, under which Haiku thought until the output cap on every first call.
         request["thinking"] = {"type": "adaptive"}
         request["output_config"] = {"effort": settings["effort"]}
-    if settings.get("task_budget"):
+    if shows_thinking(settings):
         # Summarized thinking costs the same as omitted, Opus 5.5's default, and shows in the log what a budgeted
-        # pass's tokens went on. Anthropic's own task budget is not sent: LinkAPI accepted one under its minimum.
+        # pass's or capped call's tokens went on. Anthropic's own task budget is not sent: LinkAPI accepted one under
+        # its minimum.
         request["thinking"] = {"type": "adaptive", "display": "summarized"}
     try:
         with role_client(ctx, "anthropic", settings).messages.stream(**request) as stream:
@@ -1709,7 +1715,7 @@ def chat(ctx, role, messages, tools, tool_choice):
         + (f"; fallback_model={used['model']}" if used is not settings else ""),
         flush=True,
     )
-    if settings.get("task_budget"):
+    if shows_thinking(settings) and getattr(message, "claude_blocks", None) is not None:
         thought = " ".join(
             " ".join(block["thinking"].split())
             for block in getattr(message, "claude_blocks", None) or []
