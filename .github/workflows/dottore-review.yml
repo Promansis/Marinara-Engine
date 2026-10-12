@@ -141,6 +141,8 @@ jobs:
           git fetch --force origin "$BASE:refs/remotes/origin/$BASE"
           mkdir -p /tmp/dottore-review-tool
           cp .dottore-tooling/.github/dottore-review/{dottore_review.py,requirements.txt,reviewer-prompt.md} /tmp/dottore-review-tool/
+          # Lab only: logged claims for DOTTORE_LAB_STAGE=replay.
+          cp .dottore-tooling/.github/dottore-review/lab-claims.json /tmp/dottore-review-tool/ 2>/dev/null || true
           # Caller-specific rules are trusted base content, never PR-head content.
           git show "origin/$BASE:.github/dottore-review/rules.json" > /tmp/dottore-review-tool/rules.json
           rm -rf .dottore-tooling

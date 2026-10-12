@@ -132,6 +132,11 @@ MODEL_PRICES_CNY = {
     # OpenRouter's Luna and Haiku slugs, both priced in USD at $0.10 / $0.01 / $0.50 per 1M, converted at CNY_PER_USD.
     "openai/gpt-6-luna": (0.70, 0.07, 3.50),
     "anthropic/claude-haiku-5.5": (0.70, 0.07, 3.50),
+    # Claude on LinkAPI's Anthropic endpoint; the fourth rate is a 5-minute cache write, which Claude bills above
+    # plain input. Haiku's over-100k-token rate is not modelled.
+    "claude-haiku-5-5": (0.23, 0.023, 1.15, 0.2875),
+    "claude-sonnet-5-5": (4.6, 0.23, 23.0, 5.75),
+    "claude-opus-5-5": (9.2, 0.46, 46.0, 11.5),
 }
 # When a model's gateway fails with a transient error, the same call goes at once to its fallback, an older model
 # of the same tier, instead of waiting out the outage. A fallback that refuses a request is not tried again.
@@ -1441,12 +1446,13 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         else:
             blocks.append(block.model_dump(exclude_none=True))
     cached = reply.usage.cache_read_input_tokens or 0
-    prompt = reply.usage.input_tokens + (reply.usage.cache_creation_input_tokens or 0) + cached
+    written = reply.usage.cache_creation_input_tokens or 0
+    prompt = reply.usage.input_tokens + written + cached
     usage = {
         "prompt_tokens": prompt,
         "completion_tokens": reply.usage.output_tokens,
         "total_tokens": prompt + reply.usage.output_tokens,
-        "prompt_tokens_details": {"cached_tokens": cached},
+        "prompt_tokens_details": {"cached_tokens": cached, "cache_write_tokens": written},
         "completion_tokens_details": {"reasoning_tokens": usage_value(reply.usage, "output_tokens_details", "thinking_tokens")},
     }
     message = SimpleNamespace(content="".join(text) or None, tool_calls=calls or None, claude_blocks=blocks)
@@ -1567,8 +1573,12 @@ def call_cost_usd(model, usage):
     rates = MODEL_PRICES_CNY.get(model) or max(MODEL_PRICES_CNY.values())
     prompt = usage_value(usage, "prompt_tokens")
     cached = usage_value(usage, "prompt_tokens_details", "cached_tokens")
+    written = usage_value(usage, "prompt_tokens_details", "cache_write_tokens")
     output = usage_value(usage, "completion_tokens")
-    return ((prompt - cached) * rates[0] + cached * rates[1] + output * rates[2]) / 1e6 / CNY_PER_USD
+    write_rate = rates[3] if len(rates) > 3 else rates[0]
+    return (
+        (prompt - cached - written) * rates[0] + cached * rates[1] + written * write_rate + output * rates[2]
+    ) / 1e6 / CNY_PER_USD
 
 
 def own_reasoning(messages, model):
@@ -1663,6 +1673,7 @@ def chat(ctx, role, messages, tools, tool_choice):
         f"request_chars={len(json.dumps([messages, tools], ensure_ascii=False))}; "
         f"prompt_tokens={usage_value(usage, 'prompt_tokens')}; "
         f"cached_tokens={usage_value(usage, 'prompt_tokens_details', 'cached_tokens')}; "
+        f"cache_write_tokens={usage_value(usage, 'prompt_tokens_details', 'cache_write_tokens')}; "
         f"completion_tokens={usage_value(usage, 'completion_tokens')}; "
         f"reasoning_tokens={usage_value(usage, 'completion_tokens_details', 'reasoning_tokens')}; "
         f"first_chunk_s={timing.get('first_chunk', 0):.1f}; elapsed_s={time.monotonic() - started:.1f}; "
@@ -2871,6 +2882,16 @@ def check_claims(ctx, claims, mode, pool):
         print(f"Dottore claim not checked: {reason}", flush=True)
     _, _, counts = verify_candidates(ctx, candidates, pool, CLAIM_CHECK)
     ctx.stats["verification"] = counts
+
+
+def replayed_claims(head_sha):
+    """Lab stage: the kept claims an earlier check run logged for this head, so another checker judges the same
+    claims and the comparison is free of claim-pass variance."""
+    claims = json.loads(pathlib.Path(__file__).with_name("lab-claims.json").read_text("utf-8")).get(head_sha)
+    if not claims:
+        raise RuntimeError(f"lab-claims.json has no claims for {head_sha}")
+    print(f"Dottore claims replayed: {len(claims)} from run {claims[0]['source_run']}", flush=True)
+    return claims
 
 
 def as_list(value):
@@ -4442,7 +4463,7 @@ def produce_review(args):
         lab_stage = os.environ.get("DOTTORE_LAB_STAGE", "").strip().lower()
         # ponytail: one trace covers every chunk and is appended to each; trace per chunk if large PRs need it.
         # The claim passes get only what code builds, with no tracer model before them.
-        blast_radius = trace_blast_radius(ctx, llm=lab_stage not in ("hypo", "check"))
+        blast_radius = trace_blast_radius(ctx, llm=lab_stage not in ("hypo", "check", "replay"))
         if lab_stage == "trace":
             # ponytail: lab stage that measures the Luna tracer alone, for pennies; remove it with the lab.
             write_skipped_review(
@@ -4454,17 +4475,18 @@ def produce_review(args):
             return
         if blast_radius:
             packets = [f"{packet}\n\n{blast_radius}" for packet in packets]
-        if lab_stage in ("hypo", "check"):
-            # ponytail: lab stages that measure the cheap claim passes alone ("hypo") or with the checker
-            # re-diagnosing their spots ("check"), with nothing published; remove them with the lab.
+        if lab_stage in ("hypo", "check", "replay"):
+            # ponytail: lab stages that measure the cheap claim passes alone ("hypo"), with the checker
+            # re-diagnosing their spots ("check"), or a checker on an earlier run's logged claims ("replay"), with
+            # nothing published; remove them with the lab.
             with ThreadPoolExecutor(max_workers=review_concurrency()) as pool:
-                claims = raise_claims(ctx, packets, pool)
-                if lab_stage == "check":
+                claims = replayed_claims(head_sha) if lab_stage == "replay" else raise_claims(ctx, packets, pool)
+                if lab_stage in ("check", "replay"):
                     check_claims(ctx, claims, effective_mode, pool)
             write_skipped_review(
                 "Lab Claims Only",
                 f"DOTTORE_LAB_STAGE={lab_stage}: the code preflight and the claim passes ran"
-                + (" and the checker examined each claim" if lab_stage == "check" else "")
+                + (" and the checker examined each claim" if lab_stage in ("check", "replay") else "")
                 + "; the review stopped before the finders.",
                 metadata={"head_sha": head_sha, "review_base": base, "base_ref": base_ref, "mode": effective_mode},
             )

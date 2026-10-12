@@ -1,0 +1,380 @@
+{
+ "f481e3248b309689a4abae0f5603370ae0360dbc": [
+  {
+   "id": "broad/p1#1",
+   "path": "packages/client/src/components/chat/ChatSettingsDrawer.tsx",
+   "line": 4625,
+   "input": "A Roleplay chat with Advanced Memory on and at least one problem scene, so the sr-only span renders with localizeUi(\"chat.advancedMemory.fix.scenesNeedAttention\").",
+   "failure": "Every other key in this drawer passed to localizeUi uses the \"ui.chat...\" namespace. The new \"chat.advancedMemory...\" key is probably not resolved by that helper, so screen readers may get a raw key or empty text. The key should go through t() like the other chat.advancedMemory strings. The checker should confirm what localizeUi does with non-ui keys.",
+   "source_run": "38224305480"
+  },
+  {
+   "id": "broad/p1#2",
+   "path": "packages/client/src/components/chat/ChatSettingsDrawer.tsx",
+   "line": 3715,
+   "input": "Advanced Memory has problems that are not scenes, such as a knowledge-confirmation blocker or a stopped job, so problems.blockers is non-empty and fixSceneIds and reviewSceneIds are both empty.",
+   "failure": "advancedMemoryNeedsReview ignores blockers and stopped, so the Access memories dot and aria description are missing. The bubble (useAdvancedMemoryAttention) still shows its dot for the same state, which breaks the documented promise that the drawer shows the same dot. The Fix box also stays hidden, so the dot has no explanation in Chat Settings.",
+   "source_run": "38224305480"
+  },
+  {
+   "id": "broad/p1#3",
+   "path": "packages/client/src/components/chat/AdvancedMemorySettings.tsx",
+   "line": 138,
+   "input": "The user clicks the notice's Fix action (openAdvancedMemory with fix:true) while canFix is false, for example because a job is already running, or knowledgeBlocked is true.",
+   "failure": "The effect reads the store, clears advancedMemoryRequest, and then skips fix() because canFix is false. The request is consumed without starting anything, so the click does nothing and no message explains why.",
+   "source_run": "38224305480"
+  },
+  {
+   "id": "broad/p1#4",
+   "path": "packages/client/src/components/chat/AdvancedMemorySettings.tsx",
+   "line": 263,
+   "input": "The server returns a warning string that is not a key in warningKeys (for example a new or unknown warning), or a warning from before this change.",
+   "failure": "The list now filters out every unmapped warning and calls t() without a defaultValue. The previous code showed unknown warnings as raw text, so those warnings are now silently dropped and the user never sees them.",
+   "source_run": "38224305480"
+  },
+  {
+   "id": "broad/p1#5",
+   "path": "packages/client/src/components/chat/AdvancedMemorySettings.tsx",
+   "line": 133,
+   "input": "A scene id that contains a space, while the drawer builds problemKey with join(\" \") and later splits it with split(\" \").",
+   "failure": "markAdvancedMemoryNotified stores fragments of the id, not the id. The attention hook's notified(chatId, id) check then fails for the real id, so the same problem notice repeats. The attention hook uses a \\0 separator, so the two sides disagree on the format.",
+   "source_run": "38224305480"
+  },
+  {
+   "id": "broad/p1#6",
+   "path": "packages/client/src/hooks/use-advanced-memory.ts",
+   "line": 135,
+   "input": "Chat Settings is open in a popped-out section, so the bubble's open flag is false while the drawer's open is true (windowOpen || sectionsPoppedOut).",
+   "failure": "settingsOpen is false, so the problem notice (toast) appears while the same problems are already visible in Chat Settings. The drawer also marks them as notified only if the Memory Recall section mounts, so the toast can repeat or show when it should not.",
+   "source_run": "38224305480"
+  },
+  {
+   "id": "broad/p2#1",
+   "path": "packages/shared/src/types/advanced-memory.ts",
+   "line": 193,
+   "input": "A hand-edited (manualOverride) scene whose recorded boundaries or visibility no longer match, with a fresh (non-stale) embedding and no reviewRecordId. The server's Fix path adds it to review (`review.add(scene.id)`) and keeps it, and the job's fixResult.reviewSceneIds lists it.",
+   "failure": "advancedMemoryProblems only flags manual records when embeddingStatus is stale or the record is the job's reviewRecordId. After Fix finishes, the shared problem list (used by the badge, notice and Fix box) omits that scene, so the user is told it needs review in the report but sees no flag to act on it. The shared list and the server's report disagree.",
+   "source_run": "38224305480"
+  },
+  {
+   "id": "broad/p2#2",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 2251,
+   "input": "Fix run (fixAll) on a scene with no usable previous record (a missing summary, e.g. previousScene undefined or previousRecord.content empty) where the helper's answer is unclear (result.audienceIssue set).",
+   "failure": "The fixAll clamp only applies when previousRecord?.content exists. Otherwise candidate.audienceCharacterIds takes result.audienceCharacterIds unclamped, so an unclear answer can grant access to every visible character, which violates the 'Fix never widens access on an unclear answer' rule. The checker should confirm what summarize returns for an unclear answer.",
+   "source_run": "38224305480"
+  },
+  {
+   "id": "broad/p2#3",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 2292,
+   "input": "Fix run on a legacy or recheck scene where the audience-only helper call returns a clear answer that names a character who cannot see any message in the source (for example, hidden from that character).",
+   "failure": "The clear-answer path assigns result.audienceCharacterIds directly with no eligibleAudience clamp, unlike the unclear path. Access can be granted to a character that the source does not show them, so Fix can widen access on a clear answer. The checker should confirm whether summarize already clamps to visibility.",
+   "source_run": "38224305480"
+  },
+  {
+   "id": "broad/p2#4",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 2324,
+   "input": "Fix run where the audience check fails for many scenes, for example the provider is unreachable or the connection is misconfigured, so every scene's participant check throws.",
+   "failure": "The swallow path logs one logger.warn per scene with no rate limiting. A long Fix run can emit many warnings, and the repository's logging rules call for repeated failures to be rate limited and provider-side error text kept at debug.",
+   "source_run": "38224305480"
+  },
+  {
+   "id": "broad/p2#5",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 2067,
+   "input": "Fix run that starts by setting fixResult: null on the job, then stops with an error or an early return (needs_confirmation, correctionReviewError, reviewRecordId path) before the success block at around line 2410.",
+   "failure": "The previous Fix report is cleared and no new fixResult is written, so the client never gets a completed report for the scenes Fix repaired before the stop. The user sees only the error.",
+   "source_run": "38224305480"
+  },
+  {
+   "id": "broad/p2#6",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 2560,
+   "input": "Fix requested (fixAll: true) while another memory operation for the same chat is already running, for example automatic maintenance or Prepare.",
+   "failure": "The fourth argument to runMemoryOperation is now false for Fix, which the comment describes as waiting and then running. If runMemoryOperation does not serialize operations behind the running one, Fix can run concurrently with it and both can write the same scene records. The checker should inspect runMemoryOperation's lock behavior.",
+   "source_run": "38224305480"
+  }
+ ],
+ "11a0693e1ae9bf40a15a98128677953a490b5f46": [
+  {
+   "id": "broad/p1#1",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 3323,
+   "input": "A conditional summary whose private section for one character (for example Maukie) contains a short private fact of three or fewer words, such as \"Maukie hid it.\", or a private sentence that the combining helper paraphrases or shortens while moving it into shared text.",
+   "failure": "The leak check skips sentences shorter than four words and only matches verbatim text. The combined summary is accepted and saved, so the private fact becomes readable by the other characters in the group. This breaks the privacy guarantee the new combine path is meant to enforce.",
+   "source_run": "38224328454"
+  },
+  {
+   "id": "broad/p1#2",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 3396,
+   "input": "The combining helper copies a private sentence out of its conditional section into plain text that sits outside any {{#if}} block, while keeping the original private section unchanged.",
+   "failure": "The leak check compares only the keyed conditional sections (via sections()). If the callback in scopeCharacterSummary does not fire for unconditioned text, the copied sentence is never compared, the key sets still match, and the result is saved. The checker should confirm whether scopeCharacterSummary reports plain segments to the callback.",
+   "source_run": "38224328454"
+  },
+  {
+   "id": "broad/p1#3",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 3369,
+   "input": "Shared or merged group chats (ctx.individual false). Conditional summaries with private sections are combined; groupTokens counts the full conditional content, while viewTokens for the empty-audience view ('') excludes private sections that no narrator-only render shows.",
+   "failure": "The target is constantBudget * groupTokens / viewTokens[''], which is inflated relative to the budget that was actually exceeded. The compaction then shortens to a larger length than the Summary and recall budget intends, so the constant share can stay above its limit.",
+   "source_run": "38224328454"
+  },
+  {
+   "id": "broad/p1#4",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 3400,
+   "input": "A combined constant group is rejected by the leak check on every reply that crosses the threshold. The rejected output is cached, so no new model call happens, but the leak check still runs on each pass.",
+   "failure": "logger.warn fires on every generation while the same rejection persists. This is repeated warn-level noise with no rate limit, which the server logging rules disallow for repeated failures.",
+   "source_run": "38224328454"
+  },
+  {
+   "id": "broad/p1#5",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 3400,
+   "input": "The diff calls logger.warn in advanced-memory.ts, and the packet's hunks show no logger import added for this file.",
+   "failure": "If the file does not already import the shared Pino logger, the rejection path throws a ReferenceError inside the compaction loop. The checker should confirm the logger import exists at the PR head.",
+   "source_run": "38224328454"
+  },
+  {
+   "id": "broad/p1#6",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 3345,
+   "input": "An automated conditional summary that the user toggled off and back on, so its updatedAt differs from createdAt.",
+   "failure": "The eligibility check excludes it permanently from combining, so it never joins a compacted group. The comment says this is intentional, but the summary now silently never gets compacted, and the check is a proxy for edits rather than a real edit record.",
+   "source_run": "38224328454"
+  },
+  {
+   "id": "broad/p1#7",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 3305,
+   "input": "Two characters in the chat share a name, or a private section names no current character, so its readers array is empty and its key is \"[]\".",
+   "failure": "Sections are keyed by reader names. Duplicate names merge the keys for different characters, and an empty key makes leaks() reject any combination that copies its sentence anywhere. The check can therefore both miss a real leak and reject a valid combination.",
+   "source_run": "38224328454"
+  },
+  {
+   "id": "broad/p1#8",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 3384,
+   "input": "A group is combined once with combine=true (the keepConditions prompt and scoped inputs), then reruns with the same entries after the prompt or leak-check behavior changes.",
+   "failure": "The cache id is built only from the entries' dependencies and target, not from the combine flag or the keepConditions prompt. A cached result produced under the old rules is reused, so the stale output is saved under the new rules.",
+   "source_run": "38224328454"
+  }
+ ],
+ "5263deed6ad5aba02ff74173c6dc1bcf91a04572": [
+  {
+   "id": "broad/p1#1",
+   "path": "packages/server/src/routes/generate.routes.ts",
+   "line": 13724,
+   "input": "Regenerate a reply whose trackers wrote no row for the new swipe, while the user has a Tracker Panel edit on an earlier swipe. The post-generation block computes editedBase via applyManualEdits and passes it as the in-memory baseSnapshot to updateByMessage.",
+   "failure": "updateField re-reads baseSnapshot by id (game-state.storage.ts ~547) because a re-read drops the overlay. If updateByMessage does the same, the overlay is discarded and the regenerated swipe is written from the unedited base, so the edit is lost. The same happens when editedBase has id \"\" (emptyGameStateRow). The checker must confirm how updateByMessage reads options.baseSnapshot and whether it co",
+   "source_run": "38224352881"
+  },
+  {
+   "id": "broad/p1#2",
+   "path": "packages/server/src/services/storage/game-state.storage.ts",
+   "line": 120,
+   "input": "A Tracker Panel edit through the create path (updateByMessage body, recordManualEdits(manualOverrides, clonedState, baseState)). clonedState and baseState are parsed objects, so presentCharacters, worldCustomFields and playerStats are arrays and objects, not JSON strings.",
+   "failure": "manualEditValue and storedPlayerStats call parseSnapshotJson on these objects. If parseSnapshotJson only parses strings and returns the fallback otherwise, the before and after fingerprints are both hash(null). Edits to characters, custom fields and playerStats keys are then never recorded on this path, and regeneration ignores them. The checker must read parseSnapshotJson.",
+   "source_run": "38224352881"
+  },
+  {
+   "id": "broad/p1#3",
+   "path": "packages/server/src/services/storage/game-state.storage.ts",
+   "line": 685,
+   "input": "A manual edit through the create path (updateByMessage body) on a swipe whose row already has a manualOverrides record. The record covers only the fields changed in this edit, so the new record is non-empty.",
+   "failure": "create uses manualOverrides ?? parseStored(replaced.manualOverrides), so the non-empty new record replaces the swipe's earlier record. Earlier edits such as location stop being laid over regenerations and next messages, even though their values remain on the row. The checker must confirm whether this path runs for existing rows or only for missing ones.",
+   "source_run": "38224352881"
+  },
+  {
+   "id": "broad/p1#4",
+   "path": "packages/server/src/services/storage/game-state.storage.ts",
+   "line": 331,
+   "input": "Swipe 0 of reply A2 has a user location edit (Right place). A later regeneration on swipe 2 has a tracker change location to Generated place. The next regeneration then uses swipe 2 as its sibling base.",
+   "failure": "applyManualEdits checks only the row being scanned (the edit still matches swipe 0's own row), so swipe 0's stale edit overrides swipe 2's tracker-written value. This contradicts the comment that a later tracker run that changes the field retires the edit, and it hides the newer tracker result from the trackers.",
+   "source_run": "38224352881"
+  },
+  {
+   "id": "broad/p1#5",
+   "path": "packages/server/src/services/storage/game-state.storage.ts",
+   "line": 318,
+   "input": "Regeneration when there is no earlier game state (selected is null) but the regenerated message has a manual edit on one of its swipes. applyManualEdits(chatId, excludeMessageId, null) runs.",
+   "failure": "edited ??= { ...(base ?? emptyGameStateRow(chatId)) } fabricates a state with null date and location, empty presentCharacters and worldCustomFields, and null playerStats. getForGeneration then returns this non-null state where it used to return null, and the post-generation block can persist it as a new snapshot row. Downstream trackers and prompts see a state that never existed.",
+   "source_run": "38224352881"
+  },
+  {
+   "id": "broad/p1#6",
+   "path": "packages/server/src/services/storage/game-state.storage.ts",
+   "line": 711,
+   "input": "A user clears a Tracker Panel field (for example location to empty) through _applyUpdate, or edits a JSON field or playerStats key. recordManualEdits compares before and after row values and records fingerprints or text.",
+   "failure": "The record now stores the empty or fingerprint value for any changed key, including cleared fields. Consumers that read manualOverrides as text, such as game.routes.ts:14942, now get hash strings for presentCharacters, personaStats and playerStats keys. Clearing a field also makes every later regeneration lay null over the base. The checker must confirm no other consumer of manualOverrides expects",
+   "source_run": "38224352881"
+  },
+  {
+   "id": "broad/p1#7",
+   "path": "packages/server/src/routes/game.routes.ts",
+   "line": 14942,
+   "input": "A snapshot whose manualOverrides now includes keys such as presentCharacters, personaStats, playerStats.<key> or location with fingerprint or cleared values, as written by recordManualEdits.",
+   "failure": "This consumer reads manualOverrides as Record<string,string> and deletes only location. Code outside the packet that treats any manualOverrides key as a text override, or that writes record values back into fields, would apply a 16-character hash as a value. The checker should grep all readers of manualOverrides.",
+   "source_run": "38224352881"
+  },
+  {
+   "id": "broad/p1#8",
+   "path": "packages/server/src/routes/generate.routes.ts",
+   "line": 13716,
+   "input": "Manual-trackers chat (or a failed tracker run). The user regenerates reply M, which has a sibling swipe with tracker-written values. No tracker writes the new swipe's row.",
+   "failure": "The new swipe's base is baseGameStateSnapshot, which comes from getForGeneration with M excluded (the state before M). The tracker base for regeneration is the sibling row (line 11844), so the new swipe drops values the sibling wrote that the user did not edit. Before this change no row was written for that case. The checker should confirm which base the regenerated swipe should start from.",
+   "source_run": "38224352881"
+  },
+  {
+   "id": "broad/p1#9",
+   "path": "packages/server/src/routes/generate.routes.ts",
+   "line": 13728,
+   "input": "applyManualEdits or updateByMessage throws in the post-generation block, for example a DB error. The catch logs it.",
+   "failure": "The error is logged with logger.warn, not logger.error, and the request still succeeds. The user's Tracker Panel edit is silently not carried into the regenerated swipe or the next message, which is a fake-success path. The Dottore rule wants errors logged with logger.error(err, msg).",
+   "source_run": "38224352881"
+  },
+  {
+   "id": "broad/p1#10",
+   "path": "packages/server/src/services/storage/game-state.storage.ts",
+   "line": 304,
+   "input": "The user edits the Tracker Panel on the latest reply A2, which is uncommitted and not the visible anchor. The user then sends a normal new message, so excludeMessageId is undefined and getForGeneration is called without it.",
+   "failure": "selected becomes latestCommitted (A1), and applyManualEdits runs only for regenerations. A2's edit is not applied to the next message's base, which contradicts the changelog's claim that the next reply starts from the corrected values. The checker must confirm that the client always sends a visibleAnchor or that A2 is committed.",
+   "source_run": "38224352881"
+  },
+  {
+   "id": "broad/p1#11",
+   "path": "packages/server/src/services/storage/game-state.storage.ts",
+   "line": 112,
+   "input": "Any call to storedPlayerStats or parseSnapshotJson with a value that is already a parsed object, as used for before and after in recordManualEdits.",
+   "failure": "If parseSnapshotJson does not return an already-parsed value, the playerStats key set and per-key fingerprints from the before and after objects collapse to empty or null. Playerstats edits are then missed or misattributed. Same root cause as the parseSnapshotJson claim above; the checker should confirm the helper's behavior.",
+   "source_run": "38224352881"
+  }
+ ],
+ "accf6790ea062ccdeb60779228c7ff2565566cb8": [
+  {
+   "id": "broad/p1#1",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 3382,
+   "input": "A merged group chat (ctx.individual false) with two or more present characters, where one character remembers a scene whose source messages are hidden from another present character via hiddenFromAICharacterIds, and the scene is not fully eligible for that other reader.",
+   "failure": "recallAudienceMatches now uses characters.some(...), so the scene passes the audience check for the other character. Its summary, which can state the hidden content, is then recalled into the other character's merged reply. The per-audience message filter does not stop this, because only the excerpt path is filtered. The checker should confirm whether hasCurrentSceneVisibility(ctx, record) blocks ",
+   "source_run": "38188011101"
+  },
+  {
+   "id": "broad/p1#2",
+   "path": "packages/shared/src/utils/macro-engine.ts",
+   "line": 2559,
+   "input": "scopeCharacterSummary is called with a mark callback, for example from renderEntry in a merged chat, with a character name that contains {{ or }}, such as a card named \"{{user}}\" or \"{{random::a::b}}\".",
+   "failure": "The delimiter guard is skipped whenever mark is set. The name is written unescaped into the \"[Known only to ...]\" label, and renderEntry then passes the result to resolveMacros, which expands it. The name becomes a live macro in the prompt.",
+   "source_run": "38188011101"
+  },
+  {
+   "id": "broad/p1#3",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 1692,
+   "input": "A merged group with several present characters renders a constant chat summary or scene recap whose text contains a bare {{char}} inside a part that only one character knows, for example a Maukie-only part. The audience list is sorted by ID, so the first ID can be the newcomer, such as aaa-newcomer.",
+   "failure": "The mark path only rewrites conditional blocks. Bare {{char}} and other non-conditional character macros are still resolved against names[0] in the subsequent resolveMacros call, so one character's private memory is rendered as another character's name. This is the same wrong-character bug the PR is meant to fix, and the code comment defers it without a guard.",
+   "source_run": "38188011101"
+  },
+  {
+   "id": "broad/p1#4",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 3883,
+   "input": "A merged reply whose recalled scenes include ones known to different subsets of characters, with the reservation loop choosing which scenes fit the budget. Sizes are computed from sceneHeading, which depends on the rememberers of each scene.",
+   "failure": "The heading is computed inside the reservation loop and again in the excerpt planning loop at about line 3957, with the same rememberers logic. The budget check for scene text (recalledTokens + tokenSize(text) > recallBudget) therefore depends on a heading that can differ between the two passes. The checker should verify whether the budget used at reservation matches the text actually emitted.",
+   "source_run": "38188011101"
+  },
+  {
+   "id": "broad/p1#5",
+   "path": "packages/shared/src/utils/macro-engine.ts",
+   "line": 2578,
+   "input": "scopeCharacterSummary is called with mark set and nesting at depth MAX_MACRO_RESOLUTION_DEPTH (16), so the depth guard returns wrap(input) with the raw, unflattened input.",
+   "failure": "The raw {{#if char == \"Maukie\"}} blocks are wrapped as one marked part. resolveMacros then evaluates those leftover conditions against names[0] of the rendered audience, so one character's private text can be shown to another reader. This needs unusually deep nesting, so the risk is low.",
+   "source_run": "38188011101"
+  },
+  {
+   "id": "broad/p1#6",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 3676,
+   "input": "A merged group where a recalled scene's rememberers subset of the readers is exactly the readers list, or where a scene's audienceCharacterIds contains a character that has since left the chat.",
+   "failure": "sceneHeading compares known.length to readers.length by count. If audienceCharacterIds contains IDs no longer in the chat, they are not counted, so the heading can say \"known only to X\" or drop the label incorrectly. The label then no longer matches who actually remembers the scene. The checker should confirm this with the test fixtures.",
+   "source_run": "38188011101"
+  },
+  {
+   "id": "broad/p1#7",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 1688,
+   "input": "renderEntry is called with an audience argument that is a rememberers subset of length 2 or more, for example [maukie, pantalone] inside a merged group with readers [maukie, pantalone, aaa-newcomer]. This path is called from recall.",
+   "failure": "mergedReaders is recomputed from the subset, so marks are scoped to the subset, not the full readers list. The inline mark text and the scene heading can then disagree about who is marked as knowing the memory. The checker should compare the heading and the inline labels for this case.",
+   "source_run": "38188011101"
+  },
+  {
+   "id": "broad/p1#8",
+   "path": "scripts/regressions/advanced-memory-audience.regression.ts",
+   "line": 623,
+   "input": "The regression script runs the new Cara-joins merged-group block, which calls createChatSummaryEntry. The diff adds no import for that name.",
+   "failure": "If the file does not already import createChatSummaryEntry, the script throws a ReferenceError before the merged assertions run. The checker should confirm the import at the top of the file.",
+   "source_run": "38188011101"
+  },
+  {
+   "id": "broad/p1#9",
+   "path": "scripts/regressions/advanced-memory-audience.regression.ts",
+   "line": 255,
+   "input": "The merged-mode expectation changed to [...assigned, at(0)] for the mixed group [maukie, pantalone, narrator]. assert.deepEqual compares the ordered recalledSceneIds.",
+   "failure": "at(0) is appended after the assigned scenes. If recall returns scenes in chronological order, at(0) may sort first and the assertion fails, or the expectation may not match what at(0) represents. The checker should confirm the ordering and what at(0) is.",
+   "source_run": "38188011101"
+  }
+ ],
+ "ebb2187eddb461a59dc64c13a5ae3b50d4d61d11": [
+  {
+   "id": "broad/p1#1",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 1275,
+   "input": "A Decision-model presence score for a candidate who is actually absent comes back in the uncertain middle, for example 0.5 to 0.7, after the question is changed to ask whether the character cannot see the message. The threshold passed into hiddenFromScores is not shown in this diff.",
+   "failure": "The new `score >= threshold` test hides the message for any score at or above the threshold. If that threshold is a typical midpoint such as 0.5, unsure answers hide messages, which contradicts the new 'hide only when confident' rule. The checker should confirm the threshold value at the call site and that it sits high enough.",
+   "source_run": "38213640097"
+  },
+  {
+   "id": "broad/p1#2",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 1275,
+   "input": "A whisper or aside excludes a character, and the Decision model is unsure whether that character is shut out. The score lands below the threshold.",
+   "failure": "The message stays visible to a character who was meant to be shut out of a private whisper or aside. The fail-open default now runs on the privacy-sensitive path, and the change does not state this trade-off for whispers.",
+   "source_run": "38213640097"
+  },
+  {
+   "id": "broad/p1#3",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 202,
+   "input": "The helper path (no Decision connection) gets the reworded VISIBILITY_PROMPT, which says to mark a candidate true when unsure. Its answers are converted into scores that are then fed to hiddenFromScores. That conversion is not shown in the packet.",
+   "failure": "If the helper's present:true answers are mapped to a high score, the inverted `>= threshold` comparison hides characters who are present. The checker should verify that the helper's present:false maps to a high score and present:true to a low score, so polarity matches the new comparison.",
+   "source_run": "38213640097"
+  },
+  {
+   "id": "broad/p1#4",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 1220,
+   "input": "A new scene opens at message N, and no saved scene range contains the first undecided message. sceneStart then falls back to first minus VISIBILITY_CONTEXT, so `scene` reaches back into the previous scene.",
+   "failure": "recentlyActive still lists characters who spoke only in the previous scene, although the docs and the regression assertion say the list is scene-only. Those characters are then treated as present in the new scene, which can hide or show messages wrongly for them.",
+   "source_run": "38213640097"
+  },
+  {
+   "id": "broad/p1#5",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 1217,
+   "input": "A new scene's first message has fewer than 4 scene messages before it, so the min-context rule pulls up to 4 messages from the previous scene into `shown`. Those messages may sit before an archived or summarized scene boundary.",
+   "failure": "Earlier-scene content and its speakers enter the presence transcript for the new scene. The Decision model can then judge a character as present in the new scene from events that belong to the old one. The checker should confirm this is intended and that the extra context does not push the target messages out of the token [REDACTED]",
+   "source_run": "38213640097"
+  },
+  {
+   "id": "broad/p1#6",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 1228,
+   "input": "The transcript now carries up to 4 extra earlier messages, and visibilityTranscript(plan, budget) applies a token [REDACTED] that is not shown in the packet.",
+   "failure": "If the budget trims from the end or drops the newest entries first, the messages that need a visibility decision can be cut, and their candidates get no score and stay visible. The checker should confirm the truncation direction in visibilityTranscript.",
+   "source_run": "38213640097"
+  }
+ ]
+}
