@@ -2828,9 +2828,10 @@ def raise_claims(ctx, packets, pool):
 # ponytail: lab hypothesis that the claim pass finds the right spot but names the wrong failure, so a checker that
 # re-diagnoses each spot turns those near misses into hits. 7239's allowed() veto (CodeRabbit 3382) is claimed at
 # 3379-3382 in every run; the PR's some() rule there is intended, and the defect is the unchanged allowed() at 3470
-# filtering what it admits, which a check bounded to the line and its callees rejected. Keep this only if a multi-run
-# test shows it at a checker cost under the bar. A re-diagnosed confirmation keeps the claim's title, so publishing
-# one would take its defect from the note.
+# filtering what it admits, which a check bounded to the line and its callees rejected; following the result, the
+# checker read allowed() but never tried sources one present reader may see and another may not, hence the
+# members-differ input. Keep this only if a multi-run test shows it at a checker cost under the bar. A re-diagnosed
+# confirmation keeps the claim's title, so publishing one would take its defect from the note.
 CLAIM_CHECK = (
     "# Claim Check\n"
     "These candidates come from a cheaper model's claim pass. Its line is often at or near a real defect while its "
@@ -2840,8 +2841,9 @@ CLAIM_CHECK = (
     "output, changed or not. A line the PR changed on purpose can be right on its own while older code that uses "
     "its result still assumes the old behavior, so check that code against the new behavior; a defect counts as "
     "introduced by this PR when the PR's change makes older code produce the wrong result. Try the claimed input "
-    "first, then the other inputs that reach the line, such as strings or legacy values where numbers are expected, "
-    "empty or missing values, calls that reject or throw, and repeated, reset or reordered events. When the claimed "
+    "first, then the other inputs that reach the line, such as a group whose members differ (one present member may "
+    "read, own or pass something another may not), strings or legacy values where numbers are expected, empty or "
+    "missing values, calls that reject or throw, and repeated, reset or reordered events. When the claimed "
     "failure does not happen but this PR introduces another defect along that path, at the candidate's line, in code "
     "it calls or in code that uses its result, confirm the candidate and write the defect you found in `note`: the "
     "input, the line where it goes wrong and what the code then does wrong. For these candidates this replaces "
