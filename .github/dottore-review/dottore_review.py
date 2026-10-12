@@ -208,6 +208,8 @@ PROVIDERS = ("openai", "anthropic", "responses")
 CLAUDE_MAX_TOKENS = 32_000
 TASK_BUDGET_BETA = "task-budgets-2026-03-13"
 MAX_THINKING_LOG_CHARS = 8_000
+# A budgeted pass's reads are counted at this many characters a token, a little high for code.
+CHARS_PER_TOKEN = 3
 CACHE_BREAKPOINT = {"type": "ephemeral"}
 DEFAULT_CONCURRENCY = 4
 MAX_CONCURRENCY = 16
@@ -858,7 +860,7 @@ def role_models():
             # own secrets through the shared endpoint instead (the claim pass's are OpenRouter's, the shared Anthropic
             # ones LinkAPI's), and "max_tokens" caps one Claude call's output; a call that reaches its own cap, or ends
             # without a tool call, fails instead of being asked again, so a capped role never pays twice for one turn.
-            # "task_budget" gives a Claude role an advisory token budget across its calls (see claude_reply).
+            # "task_budget" gives a Claude role a token budget across its calls that it is told about (see run_agent).
             # A shipped version would take these from its endpoint configuration.
             "endpoint": role if any(role_endpoint(role)) and overrides.get(role, {}).get("endpoint") != "shared" else "",
             "max_tokens": int(overrides.get(role, {}).get("max_tokens") or 0),
@@ -1433,12 +1435,9 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         request["thinking"] = {"type": "adaptive"}
         request["output_config"] = {"effort": settings["effort"]}
     if settings.get("task_budget"):
-        # Claude sees what remains of the budget across the pass's calls and paces its thinking to it; max_tokens
-        # stays the hard cap per call. The budget never changes between calls, so the cached prefix holds. Summarized
-        # thinking costs the same as omitted, Opus 5.5's default, and shows in the log what the tokens went on.
+        # Summarized thinking costs the same as omitted, Opus 5.5's default, and shows in the log what a budgeted
+        # pass's tokens went on. Anthropic's own task budget is not sent: LinkAPI accepted one under its minimum.
         request["thinking"] = {"type": "adaptive", "display": "summarized"}
-        request.setdefault("output_config", {})["task_budget"] = {"type": "tokens", "total": settings["task_budget"]}
-        request["extra_headers"] = {"anthropic-beta": TASK_BUDGET_BETA}
     try:
         with role_client(ctx, "anthropic", settings).messages.stream(**request) as stream:
             for _ in watched(stream, started, timing):
@@ -1481,6 +1480,7 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         tool_calls=calls or None,
         claude_blocks=blocks,
         capped=reply.stop_reason == "max_tokens" and bool(settings.get("max_tokens")),
+        usage=usage,
     )
     return message, usage
 
@@ -1746,7 +1746,8 @@ def run_agent(
     submit tool, and a few malformed submissions are tolerated. Given reads, the agent also gets the scout
     tool and at most that many direct reads. The scout reads with batched tools. The role's stats record
     which limit, if any, ended the run. Given transcript, a list, it is filled with the conversation up to and
-    including the submitting turn.
+    including the submitting turn. A role with a task_budget is told after each read how many tokens it has used,
+    its output (thinking included) and the code it read, and is made to submit once they reach the budget.
     """
     submit = submit_tool["function"]["name"]
     scouting = reads is not None
@@ -1760,6 +1761,8 @@ def run_agent(
     read = 0
     spent = 0
     answered = {}
+    tokens = ctx.models[role].get("task_budget")
+    counted = 0
     deadline = deadline or ctx.deadline
     turns = min(turns or budget, budget)
     for turn in range(turns + MAX_SUBMIT_ATTEMPTS):
@@ -1769,6 +1772,7 @@ def run_agent(
                 ("calls", used >= budget),
                 ("turns", turn >= turns),
                 ("chars", spent >= output_budget),
+                ("tokens", bool(tokens) and counted >= tokens),
                 ("time", time.monotonic() > deadline),
             )
             if hit
@@ -1777,13 +1781,20 @@ def run_agent(
         choice = {"type": "function", "function": {"name": submit}} if forced else "auto"
         if forced and ctx.models[role].get("max_tokens") and messages[-1]["role"] == "tool":
             # Claude cannot be made to submit, so it is told; its reads stay offered so the cached prefix holds.
+            what = "token budget is" if "tokens" in limits else "reads are"
             messages.append(
-                {"role": "user", "content": f"Your reads are spent and further reads are refused. Call {submit} now."}
+                {"role": "user", "content": f"Your {what} spent and further reads are refused. Call {submit} now."}
+            )
+        elif tokens and not forced and messages[-1]["role"] == "tool":
+            # Notes are only ever appended, so the cached prefix holds.
+            messages.append(
+                {"role": "user", "content": f"Token budget: {counted:,} of {tokens:,} used; {tokens - counted:,} remain."}
             )
         message = chat(ctx, role, messages, tools, choice)
         calls = list(message.tool_calls or [])
         capped = getattr(message, "capped", False)
-        # A budgeted pass may wrap up in text as its budget runs out; it is asked again, under a fresh budget.
+        counted += usage_value(getattr(message, "usage", None), "completion_tokens")
+        # A budgeted pass may wrap up in text as its budget runs out; it is asked again.
         if not calls and ctx.models[role].get("max_tokens") and (capped or not ctx.models[role].get("task_budget")):
             raise RuntimeError(
                 f"the reply reached the role's {ctx.models[role]['max_tokens']}-token output cap"
@@ -1874,6 +1885,7 @@ def run_agent(
                     totals = ctx.stats["roles"][role]
                     totals["scout_asks" if call.id in asked else "tool_calls"] += 1
                     totals["tool_chars"] += len(reply)
+            counted += len(reply) // CHARS_PER_TOKEN
             messages.append({"role": "tool", "tool_call_id": call.id, "content": reply})
         if forced and ctx.models[role].get("max_tokens"):
             # Claude cannot be made to submit, so a capped role that reads past its last turn is not asked again.
@@ -2822,15 +2834,18 @@ JUDGE_READS = (
 )
 # ponytail: lab hypothesis that Opus ran past its output cap on 7239, 7265 and 7288 because it cannot see the cap and
 # settled in thought what it could not read (7265 found visibilityTranscript but never read its body), so a token
-# budget it can see, with reads it is told to use instead of guessing, lets it finish and name those bugs at a cost
-# under the bar. Chosen with DOTTORE_MODELS {"hypo": {"prompt": "judge", "reads": N, "task_budget": T}}; keep it only
+# budget it is told about, with reads it is told to use instead of guessing, lets it finish and name those bugs at a
+# cost under the bar. The count is the harness's, since LinkAPI drops Anthropic's task budget, so Claude sees it only
+# between calls. Chosen with DOTTORE_MODELS {"hypo": {"prompt": "judge", "reads": N, "task_budget": T}}; keep it only
 # if a multi-PR test shows that.
 JUDGE_BUDGET = (
     "When a suspicion depends on code the packet does not show, such as a callee, a definition, a caller or a "
     "parallel path, read that code instead of working out what it might do, then follow the input through it before "
     "you name the failure. Ask for every read a reply needs at once: at most {reads} reads in up to {turns} replies, "
-    "after which reads are refused. This task has a token budget and you see what remains of it; spend it reading "
-    "the code that decides your strongest suspicions, and claim before it runs out."
+    "after which reads are refused. This pass has a budget of {budget:,} tokens, counting your output, thinking "
+    "included, and the code you read, but not this packet; after each read you are told how much remains, and once "
+    "it is spent reads are refused. Spend it reading the code that decides your strongest suspicions, and claim "
+    "before it runs out."
 )
 CLAIM_READ_TURNS = 3
 CLAIM_BUDGET_TURNS = 8
@@ -2886,33 +2901,43 @@ def merge_claims(passes):
 
 
 TASK_BUDGET_CHECK_TOTAL = 1_000
+# ponytail: lab diagnostic, to drop once known. Each request carries one setting Anthropic refuses; a refusal that
+# names it shows the gateway forwards that setting, and an accepted request shows the gateway drops it.
+GATEWAY_PROBES = (
+    ("unknown body field", "dottore_probe", {"extra_body": {"dottore_probe": 1}}),
+    ("effort", "effort", {"output_config": {"effort": "dottore_probe"}}),
+    ("thinking display", "display", {"thinking": {"type": "adaptive", "display": "dottore_probe"}}),
+    (
+        "task budget with its beta in the body",
+        "task_budget",
+        {
+            "output_config": {"task_budget": {"type": "tokens", "total": TASK_BUDGET_CHECK_TOTAL}},
+            "extra_body": {"anthropic_beta": [TASK_BUDGET_BETA]},
+        },
+    ),
+)
 
 
-def check_task_budget(ctx, role):
-    """Lab check, before the pass spends anything, that the role's gateway passes the task budget and its beta header
-    on to Claude. Anthropic refuses a budget under its 20,000-token minimum, so a gateway that forwards both refuses
-    this one too; one that dropped either would accept it, and the pass would run without its budget."""
+def probe_gateway(ctx, role):
+    """Log which of Claude's settings the role's gateway forwards, before the pass spends anything. Never fails."""
     import anthropic
 
     settings = ctx.models[role]
-    try:
-        role_client(ctx, "anthropic", settings).messages.create(
-            model=settings["model"],
-            max_tokens=1024,
-            messages=[{"role": "user", "content": "Reply with OK."}],
-            output_config={"task_budget": {"type": "tokens", "total": TASK_BUDGET_CHECK_TOTAL}},
-            extra_headers={"anthropic-beta": TASK_BUDGET_BETA},
-        )
-    except anthropic.BadRequestError as exc:
-        text = error_text(exc)
-        if "task_budget" in text and re.search(r"20,?000|minimum|at least|greater than", text):
-            print(f"Dottore task budget: forwarded; a {TASK_BUDGET_CHECK_TOTAL}-token budget was refused: {text[:300]}")
-            return
-        raise RuntimeError(f"the task budget check was refused for another reason: {text[:500]}") from exc
-    raise RuntimeError(
-        f"the gateway accepted a {TASK_BUDGET_CHECK_TOTAL}-token task budget, under Anthropic's minimum, so it drops "
-        "the budget or its beta header"
-    )
+    for name, field, request in GATEWAY_PROBES:
+        try:
+            reply = role_client(ctx, "anthropic", settings).messages.create(
+                model=settings["model"],
+                max_tokens=1024,
+                messages=[{"role": "user", "content": "Reply with OK."}],
+                **request,
+            )
+            result = f"dropped; accepted with output_tokens={reply.usage.output_tokens}"
+        except anthropic.BadRequestError as exc:
+            text = error_text(exc)
+            result = f"{'forwarded' if field in text else 'refused for another reason'}: {text[:300]}"
+        except Exception as exc:
+            result = f"failed: {error_text(exc)[:300]}"
+        print(f"Dottore gateway probe: {name}: {result}", flush=True)
 
 
 def raise_claims(ctx, packets, pool):
@@ -2926,10 +2951,14 @@ def raise_claims(ctx, packets, pool):
     if budgeted and not reads:
         raise ValueError('DOTTORE_MODELS "task_budget" for the claim pass needs "reads".')
     turns = CLAIM_BUDGET_TURNS if budgeted else CLAIM_READ_TURNS
-    source = (JUDGE_BUDGET if budgeted else JUDGE_READS).format(reads=reads, turns=turns) if reads else JUDGE_NO_READS
+    source = (
+        (JUDGE_BUDGET if budgeted else JUDGE_READS).format(reads=reads, turns=turns, budget=budgeted)
+        if reads
+        else JUDGE_NO_READS
+    )
     system, ask = (HYPO_JUDGE_SYSTEM.format(source=source), HYPO_JUDGE) if judging else (HYPO_SYSTEM, HYPO_BROAD)
     if budgeted:
-        check_task_budget(ctx, "hypo")
+        probe_gateway(ctx, "hypo")
     jobs = [
         (
             index,
