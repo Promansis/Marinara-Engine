@@ -2781,14 +2781,16 @@ HYPO_JUDGE_SYSTEM = (
 )
 JUDGE_NO_READS = "You have no tools."
 # ponytail: lab hypothesis that Opus stalls on 7239, 7265 and 7288 for want of unchanged code next to the change (it
-# asked for 2-4 reads when it could), so one batch of reads lets it finish and name those bugs. Chosen with
-# DOTTORE_MODELS {"hypo": {"prompt": "judge", "reads": N}}; keep it only if a test shows that at a cost under the bar.
+# asked for 2-4 reads when it could), so a few read rounds let it finish and name those bugs. With one round, 7265
+# thought only 2.4k + 3.8k but asked to follow up its searches. Chosen with DOTTORE_MODELS
+# {"hypo": {"prompt": "judge", "reads": N}}; keep it only if a test shows that at a cost under the bar.
 JUDGE_READS = (
-    "Before you claim you may read once: in a single reply, ask for up to {reads} reads of code the packet does not "
-    "show that decides whether a suspicion is real, such as a callee, a definition, a caller or a parallel path. "
-    "Reads after that reply are refused, so ask for everything you need at once, then claim."
+    "Before you claim you may read code the packet does not show that decides whether a suspicion is real, such as a "
+    "callee, a definition, a caller or a parallel path: at most {reads} reads in up to {turns} replies. Ask for "
+    "everything a reply needs at once; once the reads or replies are spent, reads are refused and you must claim."
 )
-CLAIM_READ_CHARS = 40_000
+CLAIM_READ_TURNS = 3
+CLAIM_READ_CHARS = 60_000
 HYPO_JUDGE = (
     "Changes break most often where a value is converted or defaulted (zero, empty, missing, a string where a number "
     "is expected), stored settings are migrated or carried over (legacy, inactive or disabled items), something is "
@@ -2846,7 +2848,7 @@ def raise_claims(ctx, packets, pool):
     reads = ctx.models["hypo"]["reads"]
     if reads and not judging:
         raise ValueError('DOTTORE_MODELS "reads" for the claim pass needs "prompt": "judge".')
-    source = JUDGE_READS.format(reads=reads) if reads else JUDGE_NO_READS
+    source = JUDGE_READS.format(reads=reads, turns=CLAIM_READ_TURNS) if reads else JUDGE_NO_READS
     system, ask = (HYPO_JUDGE_SYSTEM.format(source=source), HYPO_JUDGE) if judging else (HYPO_SYSTEM, HYPO_BROAD)
     jobs = [
         (
@@ -2863,11 +2865,11 @@ def raise_claims(ctx, packets, pool):
                 ],
                 SUBMIT_CLAIMS,
                 # No reads by default: while reading, the cheap passes browsed without forming suspicions and then
-                # claimed little. A judging pass may get one batch of reads (one read turn, then submit).
+                # claimed little. A judging pass may get a few read turns, then submits.
                 reads,
                 CLAIM_READ_CHARS if reads else 0,
                 deadline,
-                turns=1 if reads else None,
+                turns=CLAIM_READ_TURNS if reads else None,
             ),
         )
         for index, packet in enumerate(packets, 1)
