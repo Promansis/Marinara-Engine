@@ -206,6 +206,8 @@ EVIDENCE_WINDOW = 3
 PROVIDERS = ("openai", "anthropic", "responses")
 # Claude requires an output cap; it covers thinking and the reply, and every current model allows it.
 CLAUDE_MAX_TOKENS = 32_000
+TASK_BUDGET_BETA = "task-budgets-2026-03-13"
+MAX_THINKING_LOG_CHARS = 8_000
 CACHE_BREAKPOINT = {"type": "ephemeral"}
 DEFAULT_CONCURRENCY = 4
 MAX_CONCURRENCY = 16
@@ -856,11 +858,13 @@ def role_models():
             # own secrets through the shared endpoint instead (the claim pass's are OpenRouter's, the shared Anthropic
             # ones LinkAPI's), and "max_tokens" caps one Claude call's output; a call that reaches its own cap, or ends
             # without a tool call, fails instead of being asked again, so a capped role never pays twice for one turn.
-            # A shipped version would take both from its endpoint configuration.
+            # "task_budget" gives a Claude role an advisory token budget across its calls (see claude_reply).
+            # A shipped version would take these from its endpoint configuration.
             "endpoint": role if any(role_endpoint(role)) and overrides.get(role, {}).get("endpoint") != "shared" else "",
             "max_tokens": int(overrides.get(role, {}).get("max_tokens") or 0),
             "prompt": str(overrides.get(role, {}).get("prompt") or "").strip(),
             "reads": int(overrides.get(role, {}).get("reads") or 0),
+            "task_budget": int(overrides.get(role, {}).get("task_budget") or 0),
         }
         for role in REVIEW_ROLES
     }
@@ -1428,6 +1432,13 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         # own reasoning setting, under which Haiku thought until the output cap on every first call.
         request["thinking"] = {"type": "adaptive"}
         request["output_config"] = {"effort": settings["effort"]}
+    if settings.get("task_budget"):
+        # Claude sees what remains of the budget across the pass's calls and paces its thinking to it; max_tokens
+        # stays the hard cap per call. The budget never changes between calls, so the cached prefix holds. Summarized
+        # thinking costs the same as omitted, Opus 5.5's default, and shows in the log what the tokens went on.
+        request["thinking"] = {"type": "adaptive", "display": "summarized"}
+        request.setdefault("output_config", {})["task_budget"] = {"type": "tokens", "total": settings["task_budget"]}
+        request["extra_headers"] = {"anthropic-beta": TASK_BUDGET_BETA}
     try:
         with role_client(ctx, "anthropic", settings).messages.stream(**request) as stream:
             for _ in watched(stream, started, timing):
@@ -1696,6 +1707,16 @@ def chat(ctx, role, messages, tools, tool_choice):
         + (f"; fallback_model={used['model']}" if used is not settings else ""),
         flush=True,
     )
+    if settings.get("task_budget"):
+        thought = " ".join(
+            " ".join(block["thinking"].split())
+            for block in getattr(message, "claude_blocks", None) or []
+            if block.get("type") == "thinking" and block.get("thinking")
+        )
+        print(
+            f"Dottore {role} thinking: chars={len(thought)}; {redact_for_model(thought)[:MAX_THINKING_LOG_CHARS]}",
+            flush=True,
+        )
     return message
 
 
@@ -1754,12 +1775,19 @@ def run_agent(
         ]
         forced = bool(limits)
         choice = {"type": "function", "function": {"name": submit}} if forced else "auto"
+        if forced and ctx.models[role].get("max_tokens") and messages[-1]["role"] == "tool":
+            # Claude cannot be made to submit, so it is told; its reads stay offered so the cached prefix holds.
+            messages.append(
+                {"role": "user", "content": f"Your reads are spent and further reads are refused. Call {submit} now."}
+            )
         message = chat(ctx, role, messages, tools, choice)
         calls = list(message.tool_calls or [])
-        if not calls and ctx.models[role].get("max_tokens"):
+        capped = getattr(message, "capped", False)
+        # A budgeted pass may wrap up in text as its budget runs out; it is asked again, under a fresh budget.
+        if not calls and ctx.models[role].get("max_tokens") and (capped or not ctx.models[role].get("task_budget")):
             raise RuntimeError(
                 f"the reply reached the role's {ctx.models[role]['max_tokens']}-token output cap"
-                if getattr(message, "capped", False)
+                if capped
                 else "the reply ended without a tool call"
             )
         if not calls:
@@ -2768,18 +2796,20 @@ HYPO_BROAD = (
 # DOTTORE_MODELS {"hypo": {"prompt": "judge"}}; keep it only if a six-PR test shows the recall at a cost under the bar.
 MAX_JUDGED_CLAIMS = 5
 HYPO_JUDGE_SYSTEM = (
-    "You are the finder for this pull request. Report only defects you would defend to its author: a stronger model "
-    "checks each claim against the code before anything is published, and every claim costs a check, so a guess you "
-    f"cannot trace is a cost, not a safeguard. Claim at most {MAX_JUDGED_CLAIMS} defects, most likely first, and none "
-    "when you find none. A claim names the line at the PR head where the defect sits, the input, item, reader, state "
-    "or sequence of events that triggers it, and what the code then does wrong.\n\n"
+    "You are the finder for this pull request. Report only defects you would defend to its author: each claim is "
+    "checked against the code before anything is published, and every check costs, so claim what the code shows, not "
+    f"every possibility. Claim at most {MAX_JUDGED_CLAIMS} defects, most likely first, and none when you find none. A "
+    "claim names the line at the PR head where the defect sits, the input, item, reader, state or sequence of events "
+    "that triggers it, and what the code then does wrong.\n\n"
     "Judge from the review packet. It holds the diff with the code around each change, where the changed names are "
-    "used, and the definitions of values the changed lines read. {source} Follow the input through the code before "
-    "you name the failure. When a defect depends on code you have not seen, claim it only if the packet makes it "
-    "likely, and say what that code would have to do. Do not claim style, naming, comments, missing tests or "
-    "documentation. Finish by calling submit_claims."
+    "used, and the definitions of values the changed lines read. {source} Do not claim style, naming, comments, "
+    "missing tests or documentation. Finish by calling submit_claims."
 )
-JUDGE_NO_READS = "You have no tools."
+JUDGE_UNSEEN = (
+    "Follow the input through the code before you name the failure. When a defect depends on code you have not seen, "
+    "claim it only if the packet makes it likely, and say what that code would have to do."
+)
+JUDGE_NO_READS = f"You have no tools. {JUDGE_UNSEEN}"
 # ponytail: lab hypothesis that Opus stalls on 7239, 7265 and 7288 for want of unchanged code next to the change (it
 # asked for 2-4 reads when it could), so a few read rounds let it finish and name those bugs. With one round, 7265
 # thought only 2.4k + 3.8k but asked to follow up its searches. Chosen with DOTTORE_MODELS
@@ -2787,9 +2817,23 @@ JUDGE_NO_READS = "You have no tools."
 JUDGE_READS = (
     "Before you claim you may read code the packet does not show that decides whether a suspicion is real, such as a "
     "callee, a definition, a caller or a parallel path: at most {reads} reads in up to {turns} replies. Ask for "
-    "everything a reply needs at once; once the reads or replies are spent, reads are refused and you must claim."
+    "everything a reply needs at once; once the reads or replies are spent, reads are refused and you must claim. "
+    + JUDGE_UNSEEN
+)
+# ponytail: lab hypothesis that Opus ran past its output cap on 7239, 7265 and 7288 because it cannot see the cap and
+# settled in thought what it could not read (7265 found visibilityTranscript but never read its body), so a token
+# budget it can see, with reads it is told to use instead of guessing, lets it finish and name those bugs at a cost
+# under the bar. Chosen with DOTTORE_MODELS {"hypo": {"prompt": "judge", "reads": N, "task_budget": T}}; keep it only
+# if a multi-PR test shows that.
+JUDGE_BUDGET = (
+    "When a suspicion depends on code the packet does not show, such as a callee, a definition, a caller or a "
+    "parallel path, read that code instead of working out what it might do, then follow the input through it before "
+    "you name the failure. Ask for every read a reply needs at once: at most {reads} reads in up to {turns} replies, "
+    "after which reads are refused. This task has a token budget and you see what remains of it; spend it reading "
+    "the code that decides your strongest suspicions, and claim before it runs out."
 )
 CLAIM_READ_TURNS = 3
+CLAIM_BUDGET_TURNS = 8
 CLAIM_READ_CHARS = 60_000
 HYPO_JUDGE = (
     "Changes break most often where a value is converted or defaulted (zero, empty, missing, a string where a number "
@@ -2841,15 +2885,51 @@ def merge_claims(passes):
     return kept
 
 
+TASK_BUDGET_CHECK_TOTAL = 1_000
+
+
+def check_task_budget(ctx, role):
+    """Lab check, before the pass spends anything, that the role's gateway passes the task budget and its beta header
+    on to Claude. Anthropic refuses a budget under its 20,000-token minimum, so a gateway that forwards both refuses
+    this one too; one that dropped either would accept it, and the pass would run without its budget."""
+    import anthropic
+
+    settings = ctx.models[role]
+    try:
+        role_client(ctx, "anthropic", settings).messages.create(
+            model=settings["model"],
+            max_tokens=1024,
+            messages=[{"role": "user", "content": "Reply with OK."}],
+            output_config={"task_budget": {"type": "tokens", "total": TASK_BUDGET_CHECK_TOTAL}},
+            extra_headers={"anthropic-beta": TASK_BUDGET_BETA},
+        )
+    except anthropic.BadRequestError as exc:
+        text = error_text(exc)
+        if "task_budget" in text and re.search(r"20,?000|minimum|at least|greater than", text):
+            print(f"Dottore task budget: forwarded; a {TASK_BUDGET_CHECK_TOTAL}-token budget was refused: {text[:300]}")
+            return
+        raise RuntimeError(f"the task budget check was refused for another reason: {text[:500]}") from exc
+    raise RuntimeError(
+        f"the gateway accepted a {TASK_BUDGET_CHECK_TOTAL}-token task budget, under Anthropic's minimum, so it drops "
+        "the budget or its beta header"
+    )
+
+
 def raise_claims(ctx, packets, pool):
     """Lab stage: one broad cheap-model call per packet, before checker verification."""
     deadline = min(ctx.deadline, time.monotonic() + FINDER_DEADLINE_SECONDS)
     judging = ctx.models["hypo"]["prompt"] == "judge"
     reads = ctx.models["hypo"]["reads"]
+    budgeted = ctx.models["hypo"].get("task_budget")
     if reads and not judging:
         raise ValueError('DOTTORE_MODELS "reads" for the claim pass needs "prompt": "judge".')
-    source = JUDGE_READS.format(reads=reads, turns=CLAIM_READ_TURNS) if reads else JUDGE_NO_READS
+    if budgeted and not reads:
+        raise ValueError('DOTTORE_MODELS "task_budget" for the claim pass needs "reads".')
+    turns = CLAIM_BUDGET_TURNS if budgeted else CLAIM_READ_TURNS
+    source = (JUDGE_BUDGET if budgeted else JUDGE_READS).format(reads=reads, turns=turns) if reads else JUDGE_NO_READS
     system, ask = (HYPO_JUDGE_SYSTEM.format(source=source), HYPO_JUDGE) if judging else (HYPO_SYSTEM, HYPO_BROAD)
+    if budgeted:
+        check_task_budget(ctx, "hypo")
     jobs = [
         (
             index,
@@ -2869,7 +2949,7 @@ def raise_claims(ctx, packets, pool):
                 reads,
                 CLAIM_READ_CHARS if reads else 0,
                 deadline,
-                turns=CLAIM_READ_TURNS if reads else None,
+                turns=turns if reads else None,
             ),
         )
         for index, packet in enumerate(packets, 1)
