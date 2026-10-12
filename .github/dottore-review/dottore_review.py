@@ -1747,7 +1747,9 @@ def run_agent(
     tool and at most that many direct reads. The scout reads with batched tools. The role's stats record
     which limit, if any, ended the run. Given transcript, a list, it is filled with the conversation up to and
     including the submitting turn. A role with a task_budget is told after each read how many tokens it has used,
-    its output (thinking included) and the code it read, and is made to submit once they reach the budget.
+    its output (thinking included) and the code it read. A submission it makes beside reads is recorded and the reads
+    run; once any limit is reached, or a reply reaches its output cap, it gets no further reply and its last recorded
+    submission stands (an empty one if it recorded none).
     """
     submit = submit_tool["function"]["name"]
     scouting = reads is not None
@@ -1763,8 +1765,18 @@ def run_agent(
     answered = {}
     tokens = ctx.models[role].get("task_budget")
     counted = 0
+    drafted = None
     deadline = deadline or ctx.deadline
     turns = min(turns or budget, budget)
+
+    def ended(reason):
+        print(f"Dottore {role} pass ended: {reason}; recorded={'yes' if drafted else 'no'}", flush=True)
+        with ctx.lock:
+            ctx.stats["roles"][role][f"stop_{reason}"] += 1
+        if transcript is not None:
+            transcript[:] = messages
+        return drafted or {}
+
     for turn in range(turns + MAX_SUBMIT_ATTEMPTS):
         limits = [
             name
@@ -1778,14 +1790,17 @@ def run_agent(
             if hit
         ]
         forced = bool(limits)
+        if forced and tokens:
+            # Opus asked for a final submission thought to its output cap without making one, so a budgeted pass gets
+            # no final reply.
+            return ended(limits[0])
         choice = {"type": "function", "function": {"name": submit}} if forced else "auto"
         if forced and ctx.models[role].get("max_tokens") and messages[-1]["role"] == "tool":
             # Claude cannot be made to submit, so it is told; its reads stay offered so the cached prefix holds.
-            what = "token budget is" if "tokens" in limits else "reads are"
             messages.append(
-                {"role": "user", "content": f"Your {what} spent and further reads are refused. Call {submit} now."}
+                {"role": "user", "content": f"Your reads are spent and further reads are refused. Call {submit} now."}
             )
-        elif tokens and not forced and messages[-1]["role"] == "tool":
+        elif tokens and messages[-1]["role"] == "tool":
             # Notes are only ever appended, so the cached prefix holds.
             messages.append(
                 {"role": "user", "content": f"Token budget: {counted:,} of {tokens:,} used; {tokens - counted:,} remain."}
@@ -1794,6 +1809,8 @@ def run_agent(
         calls = list(message.tool_calls or [])
         capped = getattr(message, "capped", False)
         counted += usage_value(getattr(message, "usage", None), "completion_tokens")
+        if not calls and capped and drafted:
+            return ended("cap")
         # A budgeted pass may wrap up in text as its budget runs out; it is asked again.
         if not calls and ctx.models[role].get("max_tokens") and (capped or not ctx.models[role].get("task_budget")):
             raise RuntimeError(
@@ -1824,6 +1841,7 @@ def run_agent(
         replies = {}
         outputs = set()
         questions = []
+        recording = bool(tokens) and any(call.function.name != submit for call in calls)
         for call in calls:
             key = tool_call_key(call)
             if call.function.name == submit:
@@ -1831,6 +1849,10 @@ def run_agent(
                     submitted = json.loads(call.function.arguments or "{}")
                 except ValueError:
                     submitted = None
+                if isinstance(submitted, dict) and recording:
+                    drafted = submitted
+                    replies[call.id] = f"Recorded; it stands unless a later {submit} call replaces it."
+                    continue
                 if isinstance(submitted, dict):
                     with ctx.lock:
                         ctx.stats["roles"][role][f"stop_{limits[0] if limits else 'own'}"] += 1
@@ -2764,6 +2786,14 @@ SUBMIT_CLAIMS = function_tool(
     },
     ["claims"],
 )
+# The budgeted claim pass records its claims as it reads (see JUDGE_BUDGET).
+RECORD_CLAIMS = function_tool(
+    "submit_claims",
+    "Record the defects you suspect, most likely first; each call replaces the last. Called without reads, it ends "
+    "the pass.",
+    SUBMIT_CLAIMS["function"]["parameters"]["properties"],
+    ["claims"],
+)
 # ponytail: lab hypothesis that one broad cheap-model pass per packet can replace three overlapping lens calls;
 # the lab stage measures candidates before the strong checker sees them.
 HYPO_SYSTEM = (
@@ -2832,20 +2862,21 @@ JUDGE_READS = (
     "everything a reply needs at once; once the reads or replies are spent, reads are refused and you must claim. "
     + JUDGE_UNSEEN
 )
-# ponytail: lab hypothesis that Opus ran past its output cap on 7239, 7265 and 7288 because it cannot see the cap and
-# settled in thought what it could not read (7265 found visibilityTranscript but never read its body), so a token
-# budget it is told about, with reads it is told to use instead of guessing, lets it finish and name those bugs at a
-# cost under the bar. The count is the harness's, since LinkAPI drops Anthropic's task budget, so Claude sees it only
-# between calls. Chosen with DOTTORE_MODELS {"hypo": {"prompt": "judge", "reads": N, "task_budget": T}}; keep it only
-# if a multi-PR test shows that.
+# ponytail: lab hypothesis that Opus runs past its output cap on 7239, 7265 and 7288 in the one reply where it must
+# commit to its claims: on 7265, with reads and a token countdown, it read for $0.19 in 8 replies, then thought to the
+# 24k cap on the reply asked to submit. Recording claims beside its reads, with no final reply, lets it finish under
+# the bar. The count is the harness's, since LinkAPI drops Anthropic's task budget. Chosen with DOTTORE_MODELS
+# {"hypo": {"prompt": "judge", "reads": N, "task_budget": T}}; keep it only if a multi-PR test shows that.
 JUDGE_BUDGET = (
     "When a suspicion depends on code the packet does not show, such as a callee, a definition, a caller or a "
     "parallel path, read that code instead of working out what it might do, then follow the input through it before "
-    "you name the failure. Ask for every read a reply needs at once: at most {reads} reads in up to {turns} replies, "
-    "after which reads are refused. This pass has a budget of {budget:,} tokens, counting your output, thinking "
-    "included, and the code you read, but not this packet; after each read you are told how much remains, and once "
-    "it is spent reads are refused. Spend it reading the code that decides your strongest suspicions, and claim "
-    "before it runs out."
+    "you name the failure. Ask for every read a reply needs at once: at most {reads} reads in up to {turns} replies. "
+    "This pass has a budget of {budget:,} tokens, counting your output, thinking included, and the code you read, but "
+    "not this packet; after each read you are told how much remains. Record your claims as you go: whenever what you "
+    "have read changes them, call submit_claims with all your current claims in the same reply as your next reads; "
+    "each call replaces the last. Call submit_claims alone when you have nothing left to read. Once the reads, "
+    "replies or budget are spent, the pass ends without another reply and your last recorded claims stand, so record "
+    "a claim as soon as the code shows it."
 )
 CLAIM_READ_TURNS = 3
 CLAIM_BUDGET_TURNS = 8
@@ -2972,7 +3003,7 @@ def raise_claims(ctx, packets, pool):
                     {"role": "user", "content": packet},
                     {"role": "user", "content": ask},
                 ],
-                SUBMIT_CLAIMS,
+                RECORD_CLAIMS if budgeted else SUBMIT_CLAIMS,
                 # No reads by default: while reading, the cheap passes browsed without forming suspicions and then
                 # claimed little. A judging pass may get a few read turns, then submits.
                 reads,
