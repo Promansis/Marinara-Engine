@@ -852,7 +852,12 @@ def role_models():
             .lower(),
             "model": str(overrides.get(role, {}).get("model") or defaults[role]["model"]).strip(),
             "effort": str(overrides.get(role, {}).get("effort") or defaults[role]["effort"]).strip(),
-            "endpoint": role if any(role_endpoint(role)) else "",
+            # ponytail: lab overrides, set only through DOTTORE_MODELS. "endpoint": "shared" sends a role that has its
+            # own secrets through the shared endpoint instead (the claim pass's are OpenRouter's, the shared Anthropic
+            # ones LinkAPI's), and "max_tokens" caps one Claude call's output; a call that reaches its own cap fails
+            # instead of being asked again. A shipped version would take both from its endpoint configuration.
+            "endpoint": role if any(role_endpoint(role)) and overrides.get(role, {}).get("endpoint") != "shared" else "",
+            "max_tokens": int(overrides.get(role, {}).get("max_tokens") or 0),
         }
         for role in REVIEW_ROLES
     }
@@ -1397,7 +1402,7 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
     system, turns = claude_messages(messages)
     request = {
         "model": settings["model"],
-        "max_tokens": CLAUDE_MAX_TOKENS,
+        "max_tokens": settings.get("max_tokens") or CLAUDE_MAX_TOKENS,
         "system": system,
         "messages": turns,
         "tools": [
@@ -1455,7 +1460,12 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         "prompt_tokens_details": {"cached_tokens": cached, "cache_write_tokens": written},
         "completion_tokens_details": {"reasoning_tokens": usage_value(reply.usage, "output_tokens_details", "thinking_tokens")},
     }
-    message = SimpleNamespace(content="".join(text) or None, tool_calls=calls or None, claude_blocks=blocks)
+    message = SimpleNamespace(
+        content="".join(text) or None,
+        tool_calls=calls or None,
+        claude_blocks=blocks,
+        capped=reply.stop_reason == "max_tokens" and bool(settings.get("max_tokens")),
+    )
     return message, usage
 
 
@@ -1738,6 +1748,8 @@ def run_agent(
         choice = {"type": "function", "function": {"name": submit}} if forced else "auto"
         message = chat(ctx, role, messages, tools, choice)
         calls = list(message.tool_calls or [])
+        if not calls and getattr(message, "capped", False):
+            raise RuntimeError(f"the reply reached the role's {ctx.models[role]['max_tokens']}-token output cap")
         if not calls:
             messages += [
                 assistant_turn(message, content=message.content or ""),
