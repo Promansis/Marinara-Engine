@@ -1851,6 +1851,7 @@ def run_agent(
                     submitted = None
                 if isinstance(submitted, dict) and recording:
                     drafted = submitted
+                    print(f"Dottore {role} recorded: claims={len(as_list(submitted.get('claims')))}", flush=True)
                     replies[call.id] = f"Recorded; it stands unless a later {submit} call replaces it."
                     continue
                 if isinstance(submitted, dict):
