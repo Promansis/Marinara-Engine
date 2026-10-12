@@ -2708,9 +2708,6 @@ HYPO_SYSTEM = (
 # ponytail: lab hypothesis that the pass then guesses what code the packet shows does (7265's visibilityTranscript
 # sat 15 lines above a claim that called it unseen); keep the follow-the-code sentence only if a multi-run test
 # turns those near misses into hits.
-# ponytail: lab hypothesis that the pass misses 7239's 3382 because every claim on the widened some() rule argues a
-# leak, while the defect is the opposite direction (an older any-member filter drops what the rule admits); keep the
-# both-directions sentence only if repeated claim-only runs state that direction without losing hits.
 HYPO_BROAD = (
     f"Before you claim, {EDGE_INPUT_WALK} Claim every input the code then mishandles, judging from the "
     "code itself: when the outcome runs through a function, a definition or the statements after an await that the "
@@ -2721,9 +2718,7 @@ HYPO_BROAD = (
     "- Inputs and failure paths: missing, empty, legacy or disabled values; type/boundary cases; budget limits; "
     "and calls that reject or fail partway through.\n"
     "- Unchanged contracts: callers, consumers, stored shapes, defaults, filters, and parallel paths that still "
-    "assume the old behavior. When a change widens or narrows who or what passes a check, claim both directions: "
-    "what the new rule lets through that it should not, and what a later unchanged filter or check still removes "
-    "or blocks under the old rule, losing what the new rule admits.\n"
+    "assume the old behavior.\n"
     "- State over time: repeated or overlapping actions, out-of-order responses, replacement, reset, restore, "
     "retry, reload, or partial failure.\n"
     "Report one claim for one underlying defect; combine scenarios only when they cause the same wrong behavior, "
