@@ -798,6 +798,8 @@ def build_stats(review_packet):
                 "stop_turns": 0,
                 "stop_chars": 0,
                 "stop_time": 0,
+                "stop_tokens": 0,
+                "stop_cap": 0,
                 "scout_asks": 0,
                 "follow_ups": 0,
                 "fallbacks": 0,
