@@ -1844,6 +1844,10 @@ def run_agent(
         outputs = set()
         questions = []
         recording = bool(tokens) and any(call.function.name != submit for call in calls)
+        # A budgeted pass's reads run only beside a recording of its claims.
+        unrecorded = recording and all(call.function.name != submit for call in calls)
+        if unrecorded:
+            print(f"Dottore {role} reads refused: no {submit} beside them", flush=True)
         for call in calls:
             key = tool_call_key(call)
             if call.function.name == submit:
@@ -1863,6 +1867,12 @@ def run_agent(
                         transcript[:] = messages
                     return submitted
                 replies[call.id] = f"refused: {submit} needs one JSON object as its arguments; call it again."
+                continue
+            if unrecorded:
+                replies[call.id] = (
+                    f"refused: call {submit} with your current claims, an empty list if none, in the same reply as "
+                    "your reads."
+                )
                 continue
             if key in answered:
                 replies[call.id] = f"Already returned above as tool call {answered[key]}; reuse that result."
@@ -2840,10 +2850,19 @@ HYPO_BROAD = (
 # Opus past 16k tokens of thinking on 7239, 7265 and 7288 and sends the checker 12 claims a PR. Chosen with
 # DOTTORE_MODELS {"hypo": {"prompt": "judge"}}; keep it only if a six-PR test shows the recall at a cost under the bar.
 MAX_JUDGED_CLAIMS = 5
+JUDGE_BAR = (
+    "Report only defects you would defend to its author: each claim is checked against the code before anything is "
+    "published, and every check costs, so claim what the code shows, not every possibility."
+)
+# The budgeted pass's bar. Under JUDGE_BAR Opus named a suspicion and dropped it: on 7265 a constant answer that now
+# hides everyone, on 7288 a stale override key that a tracker rewrite keeps (CodeRabbit's 7288 bug).
+JUDGE_RECORD_BAR = (
+    "Claim every defect you can name an input for: each claim is checked against the code before anything is "
+    "published, so a claim the code clears costs little, and a defect you leave unclaimed is lost."
+)
 HYPO_JUDGE_SYSTEM = (
-    "You are the finder for this pull request. Report only defects you would defend to its author: each claim is "
-    "checked against the code before anything is published, and every check costs, so claim what the code shows, not "
-    f"every possibility. Claim at most {MAX_JUDGED_CLAIMS} defects, most likely first, and none when you find none. A "
+    "You are the finder for this pull request. {bar} "
+    f"Claim at most {MAX_JUDGED_CLAIMS} defects, most likely first, and none when you find none. A "
     "claim names the line at the PR head where the defect sits, the input, item, reader, state or sequence of events "
     "that triggers it, and what the code then does wrong.\n\n"
     "Judge from the review packet. It holds the diff with the code around each change, where the changed names are "
@@ -2868,18 +2887,20 @@ JUDGE_READS = (
 # ponytail: lab hypothesis that Opus runs past its output cap on 7239, 7265 and 7288 in the one reply where it must
 # commit to its claims: on 7265, with reads and a token countdown, it read for $0.19 in 8 replies, then thought to the
 # 24k cap on the reply asked to submit. Recording claims beside its reads, with no final reply, lets it finish under
-# the bar. The count is the harness's, since LinkAPI drops Anthropic's task budget. Chosen with DOTTORE_MODELS
+# the bar. Asked to record when its claims change, it never did (7265, 7288), so every reading reply must record.
+# The count is the harness's, since LinkAPI drops Anthropic's task budget. Chosen with DOTTORE_MODELS
 # {"hypo": {"prompt": "judge", "reads": N, "task_budget": T}}; keep it only if a multi-PR test shows that.
 JUDGE_BUDGET = (
     "When a suspicion depends on code the packet does not show, such as a callee, a definition, a caller or a "
     "parallel path, read that code instead of working out what it might do, then follow the input through it before "
     "you name the failure. Ask for every read a reply needs at once: at most {reads} reads in up to {turns} replies. "
     "This pass has a budget of {budget:,} tokens, counting your output, thinking included, and the code you read, but "
-    "not this packet; after each read you are told how much remains. Record your claims as you go: whenever what you "
-    "have read changes them, call submit_claims with all your current claims in the same reply as your next reads; "
-    "each call replaces the last. Call submit_claims alone when you have nothing left to read. Once the reads, "
-    "replies or budget are spent, the pass ends without another reply and your last recorded claims stand, so record "
-    "a claim as soon as the code shows it."
+    "not this packet; after each read you are told how much remains. Every reply that reads must also call "
+    "submit_claims with all your current claims, an empty list if you have none yet; reads without it are refused. "
+    "Each call replaces the last, so record a suspicion as soon as you can name the input that triggers it and what "
+    "goes wrong, and drop it in a later call once the code you read clears it. Call submit_claims alone when you have "
+    "nothing left to read. Once the reads, replies or budget are spent, the pass ends without another reply and your "
+    "last recorded claims stand."
 )
 CLAIM_READ_TURNS = 3
 CLAIM_BUDGET_TURNS = 8
@@ -2990,7 +3011,8 @@ def raise_claims(ctx, packets, pool):
         if reads
         else JUDGE_NO_READS
     )
-    system, ask = (HYPO_JUDGE_SYSTEM.format(source=source), HYPO_JUDGE) if judging else (HYPO_SYSTEM, HYPO_BROAD)
+    bar = JUDGE_RECORD_BAR if budgeted else JUDGE_BAR
+    system, ask = (HYPO_JUDGE_SYSTEM.format(bar=bar, source=source), HYPO_JUDGE) if judging else (HYPO_SYSTEM, HYPO_BROAD)
     if budgeted:
         probe_gateway(ctx, "hypo")
     jobs = [
