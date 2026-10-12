@@ -859,9 +859,12 @@ def role_models():
             # A shipped version would take both from its endpoint configuration.
             "endpoint": role if any(role_endpoint(role)) and overrides.get(role, {}).get("endpoint") != "shared" else "",
             "max_tokens": int(overrides.get(role, {}).get("max_tokens") or 0),
+            "prompt": str(overrides.get(role, {}).get("prompt") or "").strip(),
         }
         for role in REVIEW_ROLES
     }
+    if any(settings["prompt"] not in ("", "judge") for settings in models.values()):
+        raise ValueError('DOTTORE_MODELS "prompt" must be "judge" or absent.')
     unknown = sorted({settings["provider"] for settings in models.values()} - set(PROVIDERS))
     if unknown:
         raise ValueError(f"Unknown Dottore provider {', '.join(unknown)}; use {' or '.join(PROVIDERS)}.")
@@ -2755,6 +2758,30 @@ HYPO_BROAD = (
     "Report one claim for one underlying defect; combine scenarios only when they cause the same wrong behavior, "
     "and keep distinct failure causes separate. For code outside this packet, state what the checker should inspect."
 )
+# ponytail: lab hypothesis that a strong claimer asked to judge (a few defects it can trace, none it would not defend)
+# finishes within its output cap and still names the tracked bugs, where the claim-everything procedure above took
+# Opus past 16k tokens of thinking on 7239, 7265 and 7288 and sends the checker 12 claims a PR. Chosen with
+# DOTTORE_MODELS {"hypo": {"prompt": "judge"}}; keep it only if a six-PR test shows the recall at a cost under the bar.
+MAX_JUDGED_CLAIMS = 5
+HYPO_JUDGE_SYSTEM = (
+    "You are the finder for this pull request. Report only defects you would defend to its author: a stronger model "
+    "checks each claim against the code before anything is published, and every claim costs a check, so a guess you "
+    f"cannot trace is a cost, not a safeguard. Claim at most {MAX_JUDGED_CLAIMS} defects, most likely first, and none "
+    "when you find none. A claim names the line at the PR head where the defect sits, the input, item, reader, state "
+    "or sequence of events that triggers it, and what the code then does wrong.\n\n"
+    "Judge from the review packet; you have no tools. It holds the diff with the code around each change, where the "
+    "changed names are used, and the definitions of values the changed lines read. Follow the input through the code "
+    "the packet shows before you name the failure. When a defect depends on code the packet does not show, claim it "
+    "only if the packet makes it likely, and say what that code would have to do. Do not claim style, naming, "
+    "comments, missing tests or documentation. Finish by calling submit_claims."
+)
+HYPO_JUDGE = (
+    "Changes break most often where a value is converted or defaulted (zero, empty, missing, a string where a number "
+    "is expected), stored settings are migrated or carried over (legacy, inactive or disabled items), something is "
+    "trimmed or capped to a budget (an input at or past the limit), an await rejects partway through, state is "
+    "replaced, reset or repeated, or a caller or parallel path still assumes the old behavior. Spend your effort on "
+    "the few places where a real input breaks this change, and report one claim per underlying defect."
+)
 
 
 def pass_claims(lens, submitted):
@@ -2801,6 +2828,8 @@ def merge_claims(passes):
 def raise_claims(ctx, packets, pool):
     """Lab stage: one broad cheap-model call per packet, before checker verification."""
     deadline = min(ctx.deadline, time.monotonic() + FINDER_DEADLINE_SECONDS)
+    judging = ctx.models["hypo"]["prompt"] == "judge"
+    system, ask = (HYPO_JUDGE_SYSTEM, HYPO_JUDGE) if judging else (HYPO_SYSTEM, HYPO_BROAD)
     jobs = [
         (
             index,
@@ -2810,9 +2839,9 @@ def raise_claims(ctx, packets, pool):
                 ctx,
                 "hypo",
                 [
-                    {"role": "system", "content": HYPO_SYSTEM},
+                    {"role": "system", "content": system},
                     {"role": "user", "content": packet},
-                    {"role": "user", "content": HYPO_BROAD},
+                    {"role": "user", "content": ask},
                 ],
                 SUBMIT_CLAIMS,
                 # No reads: while reading, the passes browsed without forming suspicions and then claimed little.
@@ -2831,7 +2860,7 @@ def raise_claims(ctx, packets, pool):
             failed += 1
             print(f"Dottore claim pass failed: lens={lens}; packet={index}; {error_text(exc)}", flush=True)
             continue
-        claims = pass_claims(lens, submitted)
+        claims = pass_claims(lens, submitted)[: MAX_JUDGED_CLAIMS if judging else None]
         for rank, claim in enumerate(claims, 1):
             claim["id"] = f"{lens}/p{index}#{rank}"
         print(
