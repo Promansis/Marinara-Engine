@@ -854,8 +854,9 @@ def role_models():
             "effort": str(overrides.get(role, {}).get("effort") or defaults[role]["effort"]).strip(),
             # ponytail: lab overrides, set only through DOTTORE_MODELS. "endpoint": "shared" sends a role that has its
             # own secrets through the shared endpoint instead (the claim pass's are OpenRouter's, the shared Anthropic
-            # ones LinkAPI's), and "max_tokens" caps one Claude call's output; a call that reaches its own cap fails
-            # instead of being asked again. A shipped version would take both from its endpoint configuration.
+            # ones LinkAPI's), and "max_tokens" caps one Claude call's output; a call that reaches its own cap, or ends
+            # without a tool call, fails instead of being asked again, so a capped role never pays twice for one turn.
+            # A shipped version would take both from its endpoint configuration.
             "endpoint": role if any(role_endpoint(role)) and overrides.get(role, {}).get("endpoint") != "shared" else "",
             "max_tokens": int(overrides.get(role, {}).get("max_tokens") or 0),
         }
@@ -1725,7 +1726,10 @@ def run_agent(
     submit = submit_tool["function"]["name"]
     scouting = reads is not None
     scout_tool = SCOUT_LOCATE_TOOL if SCOUT_LOCATES else SCOUT_TOOL
-    tools = [*(SCOUT_READ_TOOLS if role == "scout" else READ_TOOLS), *([scout_tool] if scouting else []), submit_tool]
+    # A pass without a tool budget gets only its submit tool: Claude's tool choice cannot be forced, so Opus called
+    # the reads it was offered and, refused, thought to its output cap on the next call.
+    reading = [*(SCOUT_READ_TOOLS if role == "scout" else READ_TOOLS), *([scout_tool] if scouting else [])]
+    tools = [*(reading if budget or scouting else []), submit_tool]
     messages = list(messages)
     used = 0
     read = 0
@@ -1748,8 +1752,12 @@ def run_agent(
         choice = {"type": "function", "function": {"name": submit}} if forced else "auto"
         message = chat(ctx, role, messages, tools, choice)
         calls = list(message.tool_calls or [])
-        if not calls and getattr(message, "capped", False):
-            raise RuntimeError(f"the reply reached the role's {ctx.models[role]['max_tokens']}-token output cap")
+        if not calls and ctx.models[role].get("max_tokens"):
+            raise RuntimeError(
+                f"the reply reached the role's {ctx.models[role]['max_tokens']}-token output cap"
+                if getattr(message, "capped", False)
+                else "the reply ended without a tool call"
+            )
         if not calls:
             messages += [
                 assistant_turn(message, content=message.content or ""),
