@@ -860,6 +860,7 @@ def role_models():
             "endpoint": role if any(role_endpoint(role)) and overrides.get(role, {}).get("endpoint") != "shared" else "",
             "max_tokens": int(overrides.get(role, {}).get("max_tokens") or 0),
             "prompt": str(overrides.get(role, {}).get("prompt") or "").strip(),
+            "reads": int(overrides.get(role, {}).get("reads") or 0),
         }
         for role in REVIEW_ROLES
     }
@@ -1813,9 +1814,9 @@ def run_agent(
             else:
                 read += 1
                 replies[call.id] = run_tool(ctx, call.function.name, call.function.arguments, role == "scout")
-                if role == "verify":
+                if role in ("verify", "hypo"):
                     print(
-                        f"Dottore verify read: {call.function.name} "
+                        f"Dottore {role} read: {call.function.name} "
                         f"{redact_for_model(call.function.arguments or '')[:200]}; chars={len(replies[call.id])}",
                         flush=True,
                     )
@@ -1846,6 +1847,9 @@ def run_agent(
                     totals["scout_asks" if call.id in asked else "tool_calls"] += 1
                     totals["tool_chars"] += len(reply)
             messages.append({"role": "tool", "tool_call_id": call.id, "content": reply})
+        if forced and ctx.models[role].get("max_tokens"):
+            # Claude cannot be made to submit, so a capped role that reads past its last turn is not asked again.
+            raise RuntimeError(f"the reply asked for tools after its last read turn instead of calling {submit}")
     raise RuntimeError(f"The {role} agent never called {submit}.")
 
 
@@ -2769,12 +2773,22 @@ HYPO_JUDGE_SYSTEM = (
     f"cannot trace is a cost, not a safeguard. Claim at most {MAX_JUDGED_CLAIMS} defects, most likely first, and none "
     "when you find none. A claim names the line at the PR head where the defect sits, the input, item, reader, state "
     "or sequence of events that triggers it, and what the code then does wrong.\n\n"
-    "Judge from the review packet; you have no tools. It holds the diff with the code around each change, where the "
-    "changed names are used, and the definitions of values the changed lines read. Follow the input through the code "
-    "the packet shows before you name the failure. When a defect depends on code the packet does not show, claim it "
-    "only if the packet makes it likely, and say what that code would have to do. Do not claim style, naming, "
-    "comments, missing tests or documentation. Finish by calling submit_claims."
+    "Judge from the review packet. It holds the diff with the code around each change, where the changed names are "
+    "used, and the definitions of values the changed lines read. {source} Follow the input through the code before "
+    "you name the failure. When a defect depends on code you have not seen, claim it only if the packet makes it "
+    "likely, and say what that code would have to do. Do not claim style, naming, comments, missing tests or "
+    "documentation. Finish by calling submit_claims."
 )
+JUDGE_NO_READS = "You have no tools."
+# ponytail: lab hypothesis that Opus stalls on 7239, 7265 and 7288 for want of unchanged code next to the change (it
+# asked for 2-4 reads when it could), so one batch of reads lets it finish and name those bugs. Chosen with
+# DOTTORE_MODELS {"hypo": {"prompt": "judge", "reads": N}}; keep it only if a test shows that at a cost under the bar.
+JUDGE_READS = (
+    "Before you claim you may read once: in a single reply, ask for up to {reads} reads of code the packet does not "
+    "show that decides whether a suspicion is real, such as a callee, a definition, a caller or a parallel path. "
+    "Reads after that reply are refused, so ask for everything you need at once, then claim."
+)
+CLAIM_READ_CHARS = 40_000
 HYPO_JUDGE = (
     "Changes break most often where a value is converted or defaulted (zero, empty, missing, a string where a number "
     "is expected), stored settings are migrated or carried over (legacy, inactive or disabled items), something is "
@@ -2829,7 +2843,11 @@ def raise_claims(ctx, packets, pool):
     """Lab stage: one broad cheap-model call per packet, before checker verification."""
     deadline = min(ctx.deadline, time.monotonic() + FINDER_DEADLINE_SECONDS)
     judging = ctx.models["hypo"]["prompt"] == "judge"
-    system, ask = (HYPO_JUDGE_SYSTEM, HYPO_JUDGE) if judging else (HYPO_SYSTEM, HYPO_BROAD)
+    reads = ctx.models["hypo"]["reads"]
+    if reads and not judging:
+        raise ValueError('DOTTORE_MODELS "reads" for the claim pass needs "prompt": "judge".')
+    source = JUDGE_READS.format(reads=reads) if reads else JUDGE_NO_READS
+    system, ask = (HYPO_JUDGE_SYSTEM.format(source=source), HYPO_JUDGE) if judging else (HYPO_SYSTEM, HYPO_BROAD)
     jobs = [
         (
             index,
@@ -2844,10 +2862,12 @@ def raise_claims(ctx, packets, pool):
                     {"role": "user", "content": ask},
                 ],
                 SUBMIT_CLAIMS,
-                # No reads: while reading, the passes browsed without forming suspicions and then claimed little.
-                0,
-                0,
+                # No reads by default: while reading, the cheap passes browsed without forming suspicions and then
+                # claimed little. A judging pass may get one batch of reads (one read turn, then submit).
+                reads,
+                CLAIM_READ_CHARS if reads else 0,
                 deadline,
+                turns=1 if reads else None,
             ),
         )
         for index, packet in enumerate(packets, 1)
