@@ -167,90 +167,90 @@
   {
    "id": "broad/p1#1",
    "path": "packages/server/src/routes/generate.routes.ts",
-   "line": 13724,
-   "input": "Regenerate a reply whose trackers wrote no row for the new swipe, while the user has a Tracker Panel edit on an earlier swipe. The post-generation block computes editedBase via applyManualEdits and passes it as the in-memory baseSnapshot to updateByMessage.",
-   "failure": "updateField re-reads baseSnapshot by id (game-state.storage.ts ~547) because a re-read drops the overlay. If updateByMessage does the same, the overlay is discarded and the regenerated swipe is written from the unedited base, so the edit is lost. The same happens when editedBase has id \"\" (emptyGameStateRow). The checker must confirm how updateByMessage reads options.baseSnapshot and whether it co",
-   "source_run": "38224352881"
+   "line": 13719,
+   "input": "Manual trackers are on, the user edited a reply's Tracker Panel values, and the user regenerates that reply. No tracker writes the new swipe row, so editedBase is built from applyManualEdits and passed to gameStateStore.updateByMessage as baseSnapshot.",
+   "failure": "The call passes editedBase, whose id is the stored base row's id. If updateByMessage re-reads the base by that id (as updateFieldByMessage does with getById, per its own comment), the Tracker Panel edits are dropped and the new swipe is copied from the unedited base. The checker should confirm how updateByMessage uses options.baseSnapshot; the regression's manual-tracker section depends on it keep",
+   "source_run": "38141916872"
   },
   {
    "id": "broad/p1#2",
    "path": "packages/server/src/services/storage/game-state.storage.ts",
-   "line": 120,
-   "input": "A Tracker Panel edit through the create path (updateByMessage body, recordManualEdits(manualOverrides, clonedState, baseState)). clonedState and baseState are parsed objects, so presentCharacters, worldCustomFields and playerStats are arrays and objects, not JSON strings.",
-   "failure": "manualEditValue and storedPlayerStats call parseSnapshotJson on these objects. If parseSnapshotJson only parses strings and returns the fallback otherwise, the before and after fingerprints are both hash(null). Edits to characters, custom fields and playerStats keys are then never recorded on this path, and regeneration ignores them. The checker must read parseSnapshotJson.",
-   "source_run": "38224352881"
+   "line": 711,
+   "input": "The user clears a Tracker Panel field such as location (sets it to empty or null) through the manual _applyUpdate path, and a later regeneration or swipe of that reply runs with the sibling swipe's tracker-filled value.",
+   "failure": "recordManualEdits stores an empty-string override. applyManualEdits then lays that empty value over the sibling base on every regeneration, so the trackers see a blank field and cannot refill it. The previous code removed the override when a field was cleared, so the agent could update it again. This changes an existing contract.",
+   "source_run": "38141916872"
   },
   {
    "id": "broad/p1#3",
    "path": "packages/server/src/services/storage/game-state.storage.ts",
-   "line": 685,
-   "input": "A manual edit through the create path (updateByMessage body) on a swipe whose row already has a manualOverrides record. The record covers only the fields changed in this edit, so the new record is non-empty.",
-   "failure": "create uses manualOverrides ?? parseStored(replaced.manualOverrides), so the non-empty new record replaces the swipe's earlier record. Earlier edits such as location stop being laid over regenerations and next messages, even though their values remain on the row. The checker must confirm whether this path runs for existing rows or only for missing ones.",
-   "source_run": "38224352881"
+   "line": 684,
+   "input": "A row already exists for a message and swipe, and the user makes a Tracker Panel edit through the manual create path (the one that calls this.create with the overrides). Earlier edits are already recorded in that row's manualOverrides, for example location.",
+   "failure": "The create path starts from an empty record that covers only this edit. The create function uses that record in place of the replaced row's record (manualOverrides ?? parseStoredManualOverrides(replaced)), so the earlier location override is dropped from the record. The location value stays on the row, but later regenerations no longer lay it over the reply's other swipes.",
+   "source_run": "38141916872"
   },
   {
    "id": "broad/p1#4",
    "path": "packages/server/src/services/storage/game-state.storage.ts",
-   "line": 331,
-   "input": "Swipe 0 of reply A2 has a user location edit (Right place). A later regeneration on swipe 2 has a tracker change location to Generated place. The next regeneration then uses swipe 2 as its sibling base.",
-   "failure": "applyManualEdits checks only the row being scanned (the edit still matches swipe 0's own row), so swipe 0's stale edit overrides swipe 2's tracker-written value. This contradicts the comment that a later tracker run that changes the field retires the edit, and it hides the newer tracker result from the trackers.",
-   "source_run": "38224352881"
+   "line": 516,
+   "input": "A user edit to location on swipe 0 of a reply is recorded as A. A tracker run then rewrites swipe 0 with B (the record is carried over but retired), and a later tracker run writes A again on that row.",
+   "failure": "The carried-over record counts again because the row holds A, so the old edit is revived. Regenerations of that reply then start from A even though the user's edit was superseded by B. Checker: confirm the value check in applyManualEdits runs only against the current row, with no tombstone for retired edits.",
+   "source_run": "38141916872"
   },
   {
    "id": "broad/p1#5",
-   "path": "packages/server/src/services/storage/game-state.storage.ts",
-   "line": 318,
-   "input": "Regeneration when there is no earlier game state (selected is null) but the regenerated message has a manual edit on one of its swipes. applyManualEdits(chatId, excludeMessageId, null) runs.",
-   "failure": "edited ??= { ...(base ?? emptyGameStateRow(chatId)) } fabricates a state with null date and location, empty presentCharacters and worldCustomFields, and null playerStats. getForGeneration then returns this non-null state where it used to return null, and the post-generation block can persist it as a new snapshot row. Downstream trackers and prompts see a state that never existed.",
-   "source_run": "38224352881"
+   "path": "packages/server/src/routes/generate.routes.ts",
+   "line": 11845,
+   "input": "The user edits swipe 0 of a reply (location Right place). The trackers then write Generated place on swipe 1, and the user regenerates swipe 2. The sibling base is swipe 1, with applyManualEdits lying edits from every swipe of the message over it.",
+   "failure": "The trackers for swipe 2 are shown Right place, while the Tracker Panel for swipe 1 shows Generated place. An edit on one swipe overrides the tracker output on another swipe, which contradicts the CHANGELOG line 'Each swipe keeps its own values'. The checker should decide whether this is intended, since the regression asserts the same behavior.",
+   "source_run": "38141916872"
   },
   {
    "id": "broad/p1#6",
    "path": "packages/server/src/services/storage/game-state.storage.ts",
-   "line": 711,
-   "input": "A user clears a Tracker Panel field (for example location to empty) through _applyUpdate, or edits a JSON field or playerStats key. recordManualEdits compares before and after row values and records fingerprints or text.",
-   "failure": "The record now stores the empty or fingerprint value for any changed key, including cleared fields. Consumers that read manualOverrides as text, such as game.routes.ts:14942, now get hash strings for presentCharacters, personaStats and playerStats keys. Clearing a field also makes every later regeneration lay null over the base. The checker must confirm no other consumer of manualOverrides expects",
-   "source_run": "38224352881"
+   "line": 330,
+   "input": "Existing persisted rows from before this change carry manualOverrides written under the old one-shot rules, for example {location: V} on swipe 0, and the row still holds V. Swipe 1 of the same message holds a tracker value W.",
+   "failure": "applyManualEdits now treats the legacy record as a live edit. It lays V over the base for regenerations and swipes of that reply, and the swipe's own W is ignored. Behavior for existing user data changes without a migration.",
+   "source_run": "38141916872"
   },
   {
    "id": "broad/p1#7",
-   "path": "packages/server/src/routes/game.routes.ts",
-   "line": 14942,
-   "input": "A snapshot whose manualOverrides now includes keys such as presentCharacters, personaStats, playerStats.<key> or location with fingerprint or cleared values, as written by recordManualEdits.",
-   "failure": "This consumer reads manualOverrides as Record<string,string> and deletes only location. Code outside the packet that treats any manualOverrides key as a text override, or that writes record values back into fields, would apply a 16-character hash as a value. The checker should grep all readers of manualOverrides.",
-   "source_run": "38224352881"
+   "path": "packages/server/src/services/storage/game-state.storage.ts",
+   "line": 334,
+   "input": "Two swipes of one reply both hold an edit to the same key, for example swipe 0 edited location to A and then swipe 1 edited location to B, with B recorded later.",
+   "failure": "The loop walks rows in ascending swipeIndex and overwrites, so the higher swipe always wins, whichever edit was made most recently. The user's newest Tracker Panel edit can lose to an older one. The code comment marks this as a known limitation, so the checker should weigh the impact.",
+   "source_run": "38141916872"
   },
   {
    "id": "broad/p1#8",
    "path": "packages/server/src/routes/generate.routes.ts",
-   "line": 13716,
-   "input": "Manual-trackers chat (or a failed tracker run). The user regenerates reply M, which has a sibling swipe with tracker-written values. No tracker writes the new swipe's row.",
-   "failure": "The new swipe's base is baseGameStateSnapshot, which comes from getForGeneration with M excluded (the state before M). The tracker base for regeneration is the sibling row (line 11844), so the new swipe drops values the sibling wrote that the user did not edit. Before this change no row was written for that case. The checker should confirm which base the regenerated swipe should start from.",
-   "source_run": "38224352881"
+   "line": 13729,
+   "input": "The regenerated swipe has no tracker row, and applyManualEdits or updateByMessage throws. Examples: a missing baseSnapshot row, or a base id that is the empty id of emptyGameStateRow.",
+   "failure": "The catch logs the error at warn and the generation continues and completes as success. The user's edits silently disappear from the new swipe, and the level is warn where the server convention expects an error-level log.",
+   "source_run": "38141916872"
   },
   {
    "id": "broad/p1#9",
-   "path": "packages/server/src/routes/generate.routes.ts",
-   "line": 13728,
-   "input": "applyManualEdits or updateByMessage throws in the post-generation block, for example a DB error. The catch logs it.",
-   "failure": "The error is logged with logger.warn, not logger.error, and the request still succeeds. The user's Tracker Panel edit is silently not carried into the regenerated swipe or the next message, which is a fake-success path. The Dottore rule wants errors logged with logger.error(err, msg).",
-   "source_run": "38224352881"
+   "path": "packages/server/src/services/storage/game-state.storage.ts",
+   "line": 309,
+   "input": "Regenerating the first reply of a chat, where getForGeneration finds no selected snapshot (selected is null) but the excluded reply's swipes hold Tracker Panel edits.",
+   "failure": "applyManualEdits builds its result from emptyGameStateRow, which has id '' and messageId ''. The generate route then passes that object as baseSnapshot. getById('') finds nothing, so updateByMessage either throws or writes a row with no base. The edits are lost, and a synthetic row without a real id leaks into callers.",
+   "source_run": "38141916872"
   },
   {
    "id": "broad/p1#10",
-   "path": "packages/server/src/services/storage/game-state.storage.ts",
-   "line": 304,
-   "input": "The user edits the Tracker Panel on the latest reply A2, which is uncommitted and not the visible anchor. The user then sends a normal new message, so excludeMessageId is undefined and getForGeneration is called without it.",
-   "failure": "selected becomes latestCommitted (A1), and applyManualEdits runs only for regenerations. A2's edit is not applied to the next message's base, which contradicts the changelog's claim that the next reply starts from the corrected values. The checker must confirm that the client always sends a visibleAnchor or that A2 is committed.",
-   "source_run": "38224352881"
+   "path": "packages/server/src/routes/generate.routes.ts",
+   "line": 13704,
+   "input": "A game-mode chat has an edited reply, and the user regenerates it.",
+   "failure": "The new block is skipped for chatMode 'game', but getForGeneration and the sibling-base path still apply the edits for game mode. The base the trackers see includes the user's edits, while the regenerated swipe does not keep them, so the panel and the prompt can disagree in game mode.",
+   "source_run": "38141916872"
   },
   {
    "id": "broad/p1#11",
    "path": "packages/server/src/services/storage/game-state.storage.ts",
-   "line": 112,
-   "input": "Any call to storedPlayerStats or parseSnapshotJson with a value that is already a parsed object, as used for before and after in recordManualEdits.",
-   "failure": "If parseSnapshotJson does not return an already-parsed value, the playerStats key set and per-key fingerprints from the before and after objects collapse to empty or null. Playerstats edits are then missed or misattributed. Same root cause as the parseSnapshotJson claim above; the checker should confirm the helper's behavior.",
-   "source_run": "38224352881"
+   "line": 119,
+   "input": "The create path (updateByMessage's manual branch) calls recordManualEdits with clonedState and baseState, which hold in-memory objects and arrays for presentCharacters, worldCustomFields, personaStats and playerStats, not JSON strings.",
+   "failure": "manualEditValue calls parseSnapshotJson on these object values. If parseSnapshotJson only parses strings and returns null for anything else, every object-valued field fingerprints to the same hash before and after the edit, so no edit is recorded and the edit is lost. Checker: confirm parseSnapshotJson's handling of non-string input.",
+   "source_run": "38141916872"
   }
  ],
  "accf6790ea062ccdeb60779228c7ff2565566cb8": [
