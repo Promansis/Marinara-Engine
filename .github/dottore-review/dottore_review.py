@@ -3099,8 +3099,9 @@ CLAIM_CHECK = (
 )
 
 
-def check_claims(ctx, claims, mode, pool):
-    """Lab stage: the checker examines each kept claim's spot and says what, if anything, is wrong there."""
+def check_claims(ctx, claims, mode, pool, at_once=False):
+    """Lab stage: the checker examines each kept claim's spot and says what, if anything, is wrong there (at once: in
+    one call without reads, see at_once_prompt)."""
     reserve_verify_time(ctx)
     findings = [
         {
@@ -3116,7 +3117,7 @@ def check_claims(ctx, claims, mode, pool):
     candidates, _, invalid = validate_review_items({"findings": findings, "mode": mode}, ctx.base)
     for reason in invalid:
         print(f"Dottore claim not checked: {reason}", flush=True)
-    _, _, counts = verify_candidates(ctx, candidates, pool, CLAIM_CHECK)
+    _, _, counts = verify_candidates(ctx, candidates, pool, CLAIM_CHECK, at_once)
     ctx.stats["verification"] = counts
 
 
@@ -3234,8 +3235,8 @@ def evidence_grounded(ctx, evidence, whole=False):
     return False
 
 
-def verification_prompt(ctx, candidates, instructions=""):
-    claims = [
+def candidate_claims(candidates):
+    return [
         {
             "candidate": number,
             **{
@@ -3247,6 +3248,10 @@ def verification_prompt(ctx, candidates, instructions=""):
         }
         for number, candidate in enumerate(candidates, 1)
     ]
+
+
+def verification_prompt(ctx, candidates, instructions=""):
+    claims = candidate_claims(candidates)
     path = candidates[0].path
     return (
         f"Verify these {len(claims)} candidate finding(s) in {path} before publication, following the "
@@ -3256,6 +3261,55 @@ def verification_prompt(ctx, candidates, instructions=""):
         + f"\n\n# Candidates\n{json.dumps(claims, indent=2)}"
         f"\n\n# Path Rules\n{matching_path_rules([path])}"
         f"\n\n# Diff of {path}\n{truncate(diff_for_path(ctx.base, path), MAX_CONTEXT_FILE_CHARS)}"
+    )
+
+
+# ponytail: lab hypothesis that Claude judges claims within the bar when it cannot read. As the reading checker,
+# Sonnet (7275, twice) and Opus (7288) spent the $0.25 ceiling before any verdict, while Opus without reads answered
+# in one call. So one call gets every claim with the diffs and the head code around each cited line. Keep it only if
+# a test shows the verdicts at a cost under the bar; remove it with the lab.
+JUDGE_CONTEXT_LINES = 120
+
+
+def claim_excerpts(candidates):
+    """The head code within JUDGE_CONTEXT_LINES of each cited line, overlapping windows merged per file."""
+    windows = {}
+    for candidate in candidates:
+        line = candidate.line or 1
+        windows.setdefault(candidate.path, []).append([max(1, line - JUDGE_CONTEXT_LINES), line + JUDGE_CONTEXT_LINES])
+    parts = []
+    for path, spans in windows.items():
+        spans.sort()
+        merged = [spans[0]]
+        for start, end in spans[1:]:
+            if start <= merged[-1][1] + 1:
+                merged[-1][1] = max(merged[-1][1], end)
+            else:
+                merged.append([start, end])
+        text = head_file_text(path)
+        length = len(text.splitlines())
+        for start, end in merged:
+            body = numbered_lines(text, start, end, end - start + 1, MAX_CONTEXT_FILE_CHARS * 2)
+            parts.append(f"## {path}:{start}-{min(end, length)}\n{body}")
+    return "\n\n".join(parts)
+
+
+def at_once_prompt(ctx, candidates, instructions=""):
+    claims = candidate_claims(candidates)
+    paths = list(dict.fromkeys(candidate.path for candidate in candidates))
+    diffs = "".join(
+        f"\n\n# Diff of {path}\n{truncate(diff_for_path(ctx.base, path), MAX_CONTEXT_FILE_CHARS)}" for path in paths
+    )
+    return (
+        f"Verify these {len(claims)} candidate finding(s) before publication, following the Verification section. "
+        "You cannot read the repository: each file's diff and the head code around each cited line are below, so "
+        "trace in them. Mark a candidate uncertain only when the code its verdict depends on is not shown. Finish by "
+        "calling submit_verdicts once with one verdict per candidate number."
+        + (f"\n\n{instructions}" if instructions else "")
+        + f"\n\n# Candidates\n{json.dumps(claims, indent=2)}"
+        f"\n\n# Path Rules\n{matching_path_rules(paths)}"
+        + diffs
+        + f"\n\n# Code at the PR head\n{claim_excerpts(candidates)}"
     )
 
 
@@ -3281,8 +3335,9 @@ def judge(ctx, candidate, verdict):
     return outcome, candidate, note, evidence
 
 
-def verify_file(ctx, candidates, instructions=""):
-    """Stage 3: Dottore checks one file's candidates against the code in a single agent run."""
+def verify_file(ctx, candidates, instructions="", at_once=False):
+    """Stage 3: Dottore checks one file's candidates against the code in a single agent run. At once, it gets every
+    file's candidates with the code around each, no reads, and answers in one call."""
     if time.monotonic() > ctx.deadline:
         return [("unverified", candidate, "", []) for candidate in candidates]
     submitted = run_agent(
@@ -3290,11 +3345,14 @@ def verify_file(ctx, candidates, instructions=""):
         "verify",
         [
             {"role": "system", "content": ctx.skill},
-            {"role": "user", "content": verification_prompt(ctx, candidates, instructions)},
+            {
+                "role": "user",
+                "content": (at_once_prompt if at_once else verification_prompt)(ctx, candidates, instructions),
+            },
         ],
         SUBMIT_VERDICTS,
-        verifier_budget(candidates),
-        VERIFIER_TOOL_CHARS + VERIFIER_TOOL_CHARS_PER_EXTRA * (len(candidates) - 1),
+        0 if at_once else verifier_budget(candidates),
+        0 if at_once else VERIFIER_TOOL_CHARS + VERIFIER_TOOL_CHARS_PER_EXTRA * (len(candidates) - 1),
     )
     by_number = {}
     for verdict in as_list(submitted.get("verdicts")):
@@ -3303,14 +3361,14 @@ def verify_file(ctx, candidates, instructions=""):
     return [judge(ctx, candidate, by_number.get(number)) for number, candidate in enumerate(candidates, 1)]
 
 
-def verify_candidates(ctx, candidates, pool, instructions=""):
-    """Verify the highest-severity candidates, one agent per file in parallel, and sort them by outcome. Given
-    instructions, every verification request carries them."""
+def verify_candidates(ctx, candidates, pool, instructions="", at_once=False):
+    """Verify the highest-severity candidates, one agent per file in parallel (at once, one call for all), and sort
+    them by outcome. Given instructions, every verification request carries them."""
     chosen = candidates[:MAX_VERIFIED_CANDIDATES]
     groups = {}
     for candidate in chosen:
-        groups.setdefault(candidate.path, []).append(candidate)
-    futures = {path: pool.submit(verify_file, ctx, group, instructions) for path, group in groups.items()}
+        groups.setdefault("every file" if at_once else candidate.path, []).append(candidate)
+    futures = {path: pool.submit(verify_file, ctx, group, instructions, at_once) for path, group in groups.items()}
     counts = dict.fromkeys(("candidates", "confirmed", "rejected", "uncertain", "unverified", "failed"), 0)
     counts["candidates"] = len(candidates)
     counts["unverified"] = len(candidates) - len(chosen)
@@ -4699,7 +4757,7 @@ def produce_review(args):
         lab_stage = os.environ.get("DOTTORE_LAB_STAGE", "").strip().lower()
         # ponytail: one trace covers every chunk and is appended to each; trace per chunk if large PRs need it.
         # The claim passes get only what code builds, with no tracer model before them.
-        blast_radius = trace_blast_radius(ctx, llm=lab_stage not in ("hypo", "check", "replay"))
+        blast_radius = trace_blast_radius(ctx, llm=lab_stage not in ("hypo", "check", "replay", "judge"))
         if lab_stage == "trace":
             # ponytail: lab stage that measures the Luna tracer alone, for pennies; remove it with the lab.
             write_skipped_review(
@@ -4711,18 +4769,19 @@ def produce_review(args):
             return
         if blast_radius:
             packets = [f"{packet}\n\n{blast_radius}" for packet in packets]
-        if lab_stage in ("hypo", "check", "replay"):
+        if lab_stage in ("hypo", "check", "replay", "judge"):
             # ponytail: lab stages that measure the cheap claim passes alone ("hypo"), with the checker
-            # re-diagnosing their spots ("check"), or a checker on an earlier run's logged claims ("replay"), with
-            # nothing published; remove them with the lab.
+            # re-diagnosing their spots ("check"), or a checker on an earlier run's logged claims, reading
+            # ("replay") or in one call without reads ("judge"), with nothing published; remove them with the lab.
             with ThreadPoolExecutor(max_workers=review_concurrency()) as pool:
-                claims = replayed_claims(head_sha) if lab_stage == "replay" else raise_claims(ctx, packets, pool)
-                if lab_stage in ("check", "replay"):
-                    check_claims(ctx, claims, effective_mode, pool)
+                replay = lab_stage in ("replay", "judge")
+                claims = replayed_claims(head_sha) if replay else raise_claims(ctx, packets, pool)
+                if lab_stage != "hypo":
+                    check_claims(ctx, claims, effective_mode, pool, lab_stage == "judge")
             write_skipped_review(
                 "Lab Claims Only",
                 f"DOTTORE_LAB_STAGE={lab_stage}: the code preflight and the claim passes ran"
-                + (" and the checker examined each claim" if lab_stage in ("check", "replay") else "")
+                + (" and the checker examined each claim" if lab_stage != "hypo" else "")
                 + "; the review stopped before the finders.",
                 metadata={"head_sha": head_sha, "review_base": base, "base_ref": base_ref, "mode": effective_mode},
             )
