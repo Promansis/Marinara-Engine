@@ -1375,7 +1375,8 @@ def openai_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         "model": settings["model"],
         "messages": messages,
         "tools": tools,
-        "tool_choice": tool_choice,
+        # Claude rejects forced tool use through a gateway's OpenAI-format endpoint too (see claude_reply).
+        "tool_choice": "auto" if settings["model"].startswith("claude") else tool_choice,
         "stream": True,
         "stream_options": {"include_usage": True},
         "timeout": openai.Timeout(read_timeout, connect=30),
