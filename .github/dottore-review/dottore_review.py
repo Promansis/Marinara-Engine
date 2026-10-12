@@ -163,6 +163,9 @@ MAX_DEFINITIONS = 40
 MAX_DEFINITION_LINES = 8
 MAX_DEFINITION_CHARS = 10_000
 DEFINITION_HOPS = 2
+# Unchanged same-file functions those definitions call, quoted once each after them.
+MAX_DEFINITION_CALLEES = 8
+MAX_DEFINITION_CALLEE_CHARS = 12_000
 SITE_LINES_AFTER = 2
 CODE_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".rs", ".go", ".java", ".kt", ".swift")
 SEGMENT_LABELS = {
@@ -2317,6 +2320,18 @@ def trace_seeds(touched):
 CALL_NAME_RE = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(")
 
 
+def declared_names(lines):
+    """Each named block's first declaration line, by name."""
+    declared = {}
+    for number, text in enumerate(lines, 1):
+        for pattern in NAMED_BLOCK_RES:
+            match = pattern.search(text)
+            if match and match.group(1) not in NOT_NAMES:
+                declared.setdefault(match.group(1), number)
+                break
+    return declared
+
+
 def changed_code(touched):
     """The changed code and what surrounds it, quoted from the PR head: each changed line with CHANGED_CODE_WINDOW
     lines either side, the named block around it in full when that block is short, and the same-file functions
@@ -2338,13 +2353,7 @@ def changed_code(touched):
                 end = statement_end(lines, block[1], MAX_CHANGED_BLOCK_LINES + 1)
                 if number <= end < block[1] + MAX_CHANGED_BLOCK_LINES:
                     ranges.append((block[1], end))
-        declared = {}
-        for number, text in enumerate(lines, 1):
-            for pattern in NAMED_BLOCK_RES:
-                match = pattern.search(text)
-                if match and match.group(1) not in NOT_NAMES:
-                    declared.setdefault(match.group(1), number)
-                    break
+        declared = declared_names(lines)
         called = {match.group(1) for number in changed for match in CALL_NAME_RE.finditer(lines[number - 1])}
         for name in sorted(called & declared.keys()):
             start = declared[name]
@@ -2404,7 +2413,7 @@ def value_definitions(touched, sites):
         readers.setdefault(path, []).extend(sorted(sides["RIGHT"]))
     for path, line in sites:
         readers.setdefault(path, []).extend(range(line, line + SITE_LINES_AFTER + 1))
-    found = []
+    found, callees = [], []
     for path, numbers in sorted(readers.items()):
         if not path.endswith(CODE_SUFFIXES) or TEST_PATH_RE.search(path):
             continue
@@ -2428,7 +2437,8 @@ def value_definitions(touched, sites):
         changed = touched.get(path, {}).get("RIGHT", set())
         # The packet's diff already shows these lines, so a definition here is followed but not quoted again.
         shown = {line + offset for line in changed for offset in range(-DIFF_CONTEXT_LINES, DIFF_CONTEXT_LINES + 1)}
-        visited = set()
+        visited, callee_heads = set(), set()
+        followed = []
         frontier = [(number, 1) for number in dict.fromkeys(numbers) if number <= len(lines)]
         while frontier:
             number, hop = frontier.pop(0)
@@ -2447,22 +2457,51 @@ def value_definitions(touched, sites):
                     continue
                 visited.add(start)
                 end = statement_end(lines, start)
+                followed.append((start, end))
                 if start not in shown:
                     found.append((path, start, end, name, number))
                 if hop < DEFINITION_HOPS:
                     frontier += [(line, hop + 1) for line in range(start, end + 1)]
+        # ponytail: lab hypothesis that the claim pass guesses what a value's unchanged builder does (7239's
+        # `eligible = allowed(...)` hid that allowed() filters for the whole audience); one hop, same file. Keep it
+        # only if a multi-run test shows the pass then claims what that function does.
+        blocks = declared_names(lines)
+        for start, end in followed:
+            for number in range(start, end + 1):
+                for match in CALL_NAME_RE.finditer(lines[number - 1].split("//")[0]):
+                    head = blocks.get(match.group(1))
+                    if head is None or head in callee_heads or any(low <= head <= high for low, high in followed):
+                        continue
+                    callee_heads.add(head)
+                    tail = statement_end(lines, head, MAX_CALLEE_LINES)
+                    # A changed function's change is in the diff, so only unchanged ones are quoted.
+                    if not any(head <= line <= tail for line in changed):
+                        callees.append((path, head, tail, match.group(1), number))
     sections = [
         f"## {path}:{start}-{end} (`{name}`, read at line {read_at})\n```text\n"
         + redact_for_model(numbered_lines(head_file_text(path), start, end))
         + "\n```"
         for path, start, end, name, read_at in found[:MAX_DEFINITIONS]
     ]
+    called, size = [], 0
+    for path, start, end, name, call_at in callees[:MAX_DEFINITION_CALLEES]:
+        entry = (
+            f"## {path}:{start}-{end} (function `{name}`, called at line {call_at})\n```text\n"
+            + redact_for_model(numbered_lines(head_file_text(path), start, end))
+            + "\n```"
+        )
+        if size + len(entry) > MAX_DEFINITION_CALLEE_CHARS:
+            break
+        called.append(entry)
+        size += len(entry)
     print(
         f"Dottore definitions: found={len(found)}; quoted="
-        + (", ".join(f"{path}:{start}-{end}({name})" for path, start, end, name, _ in found[:MAX_DEFINITIONS]) or "none"),
+        + (", ".join(f"{path}:{start}-{end}({name})" for path, start, end, name, _ in found[:MAX_DEFINITIONS]) or "none")
+        + f"; callees={len(callees)}; called="
+        + (", ".join(f"{path}:{start}-{end}({name})" for path, start, end, name, _ in callees[: len(called)]) or "none"),
         flush=True,
     )
-    return truncate("\n\n".join(sections), MAX_DEFINITION_CHARS)
+    return "\n\n".join(part for part in (truncate("\n\n".join(sections), MAX_DEFINITION_CHARS), *called) if part)
 
 
 SUBMIT_TRACE = function_tool(
@@ -2542,8 +2581,9 @@ TRACE_CHECKS_NOTE = (
 )
 DEFINITIONS_NOTE = (
     "Where local values read by the changed lines, or at call sites of changed functions, are defined, and "
-    "where those definitions' inputs are defined, quoted by code from the PR head. Each heading names the "
-    "value and the line that reads it. This is evidence, not findings."
+    "where those definitions' inputs are defined, quoted by code from the PR head, followed by the unchanged "
+    "functions those definitions call. Each heading names the value or function and the line that reads or "
+    "calls it. This is evidence, not findings."
 )
 
 
