@@ -1333,10 +1333,11 @@ def watched(stream, started, timing):
 
 def read_stream(stream, started, timing):
     """Assemble a streamed Chat Completions reply; return (message, usage)."""
-    content, calls, usage = [], {}, None
+    content, calls, usage, finish = [], {}, None, None
     for chunk in watched(stream, started, timing):
         usage = getattr(chunk, "usage", None) or usage
         for choice in chunk.choices or []:
+            finish = choice.finish_reason or finish
             delta = choice.delta
             content.append(delta.content or "")
             for part in delta.tool_calls or []:
@@ -1345,11 +1346,14 @@ def read_stream(stream, started, timing):
                 if part.function:
                     call["name"] = call["name"] or part.function.name or ""
                     call["arguments"] += part.function.arguments or ""
+    # A reply cut off by its output cap may end partway through a call's arguments, so it counts as no call.
+    capped = finish == "length"
     tool_calls = [
         SimpleNamespace(id=call["id"], function=SimpleNamespace(name=call["name"], arguments=call["arguments"]))
         for _, call in sorted(calls.items())
+        if not capped
     ]
-    return SimpleNamespace(content="".join(content) or None, tool_calls=tool_calls or None), usage
+    return SimpleNamespace(content="".join(content) or None, tool_calls=tool_calls or None, capped=capped), usage
 
 
 def openai_reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing):
@@ -1367,6 +1371,9 @@ def openai_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
     }
     if settings["effort"]:
         request["reasoning_effort"] = settings["effort"]
+    if settings.get("max_tokens"):
+        # ponytail: lab cap for Claude through a gateway's OpenAI-format endpoint; see the DOTTORE_MODELS comment.
+        request["max_tokens"] = settings["max_tokens"]
     if ctx.cache_key:
         # One key per review keeps its requests, which share long prefixes, on the same cache.
         request["extra_body"] = {"prompt_cache_key": ctx.cache_key}
