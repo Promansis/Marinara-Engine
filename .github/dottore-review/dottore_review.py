@@ -2708,27 +2708,19 @@ HYPO_SYSTEM = (
 # ponytail: lab hypothesis that the pass then guesses what code the packet shows does (7265's visibilityTranscript
 # sat 15 lines above a claim that called it unseen); keep the follow-the-code sentence only if a multi-run test
 # turns those near misses into hits.
-# ponytail: lab hypothesis that the pass misses 7265's 1228 and 7239's 3382 because each claim there names a failure
-# other than the one that breaks a promise the PR states in a comment ("never fewer than a few earlier messages",
-# "recalls what any present character remembers"); keep the stated-promises perspective only if repeated claim-only
-# runs name that promise's breakage without losing hits.
 HYPO_BROAD = (
     f"Before you claim, {EDGE_INPUT_WALK} Claim every input the code then mishandles, judging from the "
     "code itself: when the outcome runs through a function, a definition or the statements after an await that the "
     "packet shows, find that code in the packet and follow the input through it before you name the failure, "
     "and claim what it actually does. Only for code the packet does not show, claim it and say what that code "
     "would have to do.\n"
-    "Then review every changed behavior from all four perspectives, in the same pass:\n"
+    "Then review every changed behavior from all three perspectives, in the same pass:\n"
     "- Inputs and failure paths: missing, empty, legacy or disabled values; type/boundary cases; budget limits; "
     "and calls that reject or fail partway through.\n"
     "- Unchanged contracts: callers, consumers, stored shapes, defaults, filters, and parallel paths that still "
     "assume the old behavior.\n"
     "- State over time: repeated or overlapping actions, out-of-order responses, replacement, reset, restore, "
     "retry, reload, or partial failure.\n"
-    "- Stated promises: for each promise the PR's new comments, docs or changelog make about behavior, such as "
-    "'never fewer than', 'always', 'any' or 'only', find the code that runs after it, including unchanged functions "
-    "it calls, and claim where that code can still break the promise. Claim the code, not the comment, and quote "
-    "the promise in the failure.\n"
     "Report one claim for one underlying defect; combine scenarios only when they cause the same wrong behavior, "
     "and keep distinct failure causes separate. For code outside this packet, state what the checker should inspect."
 )
