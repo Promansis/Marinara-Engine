@@ -869,9 +869,14 @@ def role_models():
             "prompt": str(overrides.get(role, {}).get("prompt") or "").strip(),
             "reads": int(overrides.get(role, {}).get("reads") or 0),
             "task_budget": int(overrides.get(role, {}).get("task_budget") or 0),
+            # "key": "anthropic" sends an OpenAI-format role with the shared Anthropic key, for a gateway that takes
+            # one key for both formats, so Claude can be tried through its OpenAI-format endpoint.
+            "key": str(overrides.get(role, {}).get("key") or "").strip().lower(),
         }
         for role in REVIEW_ROLES
     }
+    if any(settings["key"] not in ("", "anthropic") for settings in models.values()):
+        raise ValueError('DOTTORE_MODELS "key" must be "anthropic" or absent.')
     if any(settings["prompt"] not in ("", "judge") for settings in models.values()):
         raise ValueError('DOTTORE_MODELS "prompt" must be "judge" or absent.')
     unknown = sorted({settings["provider"] for settings in models.values()} - set(PROVIDERS))
@@ -895,15 +900,16 @@ def review_clients(models):
     clients = {}
     for role, settings in models.items():
         family = "anthropic" if settings["provider"] == "anthropic" else "openai"
-        key = f"{family}:{settings['endpoint']}" if settings["endpoint"] else family
+        key = client_key(family, settings)
         if key in clients:
             continue
         base_url, api_key = role_endpoint(role) if settings["endpoint"] else ("", "")
         if family == "openai":
             from openai import OpenAI
 
+            shared_key = "ANTHROPIC_API_KEY" if settings["key"] == "anthropic" else "OPENAI_API_KEY"
             clients[key] = OpenAI(
-                api_key=api_key or os.environ["OPENAI_API_KEY"],
+                api_key=api_key or os.environ[shared_key],
                 base_url=base_url or os.environ.get("LLM_BASE_URL") or None,
                 max_retries=MODEL_MAX_RETRIES,
             )
@@ -929,11 +935,16 @@ def endpoint_summary(models):
     return "; ".join(own) or "shared"
 
 
+def client_key(family, settings):
+    endpoint = settings.get("endpoint")
+    key = f"{family}:{endpoint}" if endpoint else family
+    return f"{key}+anthropic-key" if family == "openai" and settings.get("key") == "anthropic" else key
+
+
 def role_client(ctx, family, settings):
     """The client for a call: the role's own endpoint when it has one, else the shared one. A fallback model keeps
     its role's endpoint."""
-    endpoint = settings.get("endpoint")
-    return ctx.clients[f"{family}:{endpoint}" if endpoint else family]
+    return ctx.clients[client_key(family, settings)]
 
 
 def review_concurrency():
