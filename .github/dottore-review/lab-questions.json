@@ -1,0 +1,302 @@
+{
+ "f481e3248b309689a4abae0f5603370ae0360dbc": [
+  {
+   "id": "ask#1",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 2253,
+   "input": "Fix runs (fixAll) in a group chat on a scene that has no earlier saved summary, so previousRecord is undefined and audience is []. The helper's reply names no matched participant, so summarize returns an audienceIssue and its audienceCharacterIds is the helper's fallback for an unclear answer.",
+   "expected": "The comment at line 2248 says Fix never widens access on an unclear answer, and the changed CHANGELOG and docs/agents/memory.md text says Fix never gives a character access on an unclear answer. A new summary's audience should therefore not gain characters from an unclear answer.",
+   "question": "What audienceCharacterIds does the candidate record end up with in this case, given the ternary at lines 2249-2253 and the fallback used when there is no previousRecord.content?",
+   "source_run": "38407445179"
+  },
+  {
+   "id": "ask#2",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 2410,
+   "input": "Fix runs with fixAll. The first two scenes are re-summarized and saved, then put() rejects on the third scene (for example 'Memory sources or summary corrections changed during preparation; retry'). The error propagates out of initializeImpl.",
+   "expected": "The docs say work already done is kept and that after an error the user presses Resume processing or Fix again. The 'When Fix finishes' result (Fixed N scenes / need your review) is described only for a finished run.",
+   "question": "After this rejection, what does job.fixResult hold in the stored metadata, and which step of the run is skipped because of the throw?",
+   "source_run": "38407445179"
+  },
+  {
+   "id": "ask#3",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 2559,
+   "input": "A chat whose state has stage 'compacting' and status 'error' from an earlier failure. The user presses Fix, which calls initialize with fixAll: true. The resumed updateConstantSummariesAfterGeneration call then rejects again.",
+   "expected": "The changed comment at line 2558 says Fix finishes a stopped continuity update first and then repairs every scene. The docs say Fix resumes memory work that stopped with an error.",
+   "question": "In this sequence, which scenes are visited by initializeImpl, and what happens to the Fix request's remaining work when the continuity step throws?",
+   "source_run": "38407445179"
+  },
+  {
+   "id": "ask#4",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 2109,
+   "input": "Fix runs on a chat where a hand-edited (manualOverride) scene's messages no longer match its start and end IDs. Scene 2 is that scene and its message range overlaps the next scene, scene 3.",
+   "expected": "The docs say Fix never rewrites a hand-edited summary and that it leaves it under need your review, then carries on with the other scenes. The Fix run should keep the user's text and still process scenes that do not overlap it.",
+   "question": "Which scene IDs are added to the skipped set for this input, and which scenes does the loop still summarize?",
+   "source_run": "38407445179"
+  },
+  {
+   "id": "ask#5",
+   "path": "packages/client/src/hooks/use-advanced-memory.ts",
+   "line": 122,
+   "input": "Chat Settings is closed. A Fix run finishes and leaves scene 3 for review (hand-edited, not repaired). The status now has sceneKey = 'scene-3'. The user later opens Chat Settings and closes it again without changing anything.",
+   "expected": "The changed comment says Problems Fix reports are not announced again as new ones, and the docs say each set of problems is announced once while the dot stays until they are settled.",
+   "question": "After the Fix result is marked, does the notice for scene 3 appear again, and does the attention dot still show from the same status?",
+   "source_run": "38407445179"
+  },
+  {
+   "id": "ask#6",
+   "path": "packages/client/src/components/chat/AdvancedMemorySettings.tsx",
+   "line": 128,
+   "input": "Chat Settings is opened from the notice's Fix action while status is loaded and one scene needs fixing, but the chat's knowledge is not confirmed. The effect at lines 138-145 runs on every render and sees request.fix set.",
+   "expected": "The changed comment at lines 139-140 says the notice's Fix starts Fix once memory has loaded, and the Fix button is disabled while knowledge is unconfirmed, which the 409 route rule also enforces.",
+   "question": "Under this condition, what does the effect do with the request, and does fix() reach the server?",
+   "source_run": "38407445179"
+  }
+ ],
+ "accf6790ea062ccdeb60779228c7ff2565566cb8": [
+  {
+   "id": "ask#1",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 3665,
+   "input": "Merged Roleplay group chat. Mira was the only character present when scene S was prepared, so S's saved SCENE_VISIBILITY revision was computed with Mira as the reader. Kaito joins later. S contains a message hidden from Kaito, so eligibleIds does not cover every messageId, and the group's recall depends on hasCurrentSceneVisibility(ctx, record).",
+   "expected": "The PR description says characters joining a merged group chat no longer hide earlier memories from the others. The docs (memory.md) say an old recap is withheld from partial readers only when source visibility or character names change. Adding Kaito to the chat should not, by itself, withhold S from the group.",
+   "question": "Trace hasCurrentSceneVisibility for S after Kaito joins. Does the saved revision still match the current sceneVisibility revision, so that S is recalled for the group?",
+   "source_run": "38407478041"
+  },
+  {
+   "id": "ask#2",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 3639,
+   "input": "Merged group with present characters Kaito and Mira. A scene S has a Kaito-only record that the user disabled (enabled=false, audience [Kaito]). Mira's record for S is enabled. Both records are in the available list for the same sceneId.",
+   "expected": "Before this change, recallAudienceMatches required every present character to be in the record's audience, so a Kaito-only disabled record never matched the group and did not block it. The new rule says recall includes what at least one character remembers, and each character still recalls only their own memories in individual mode.",
+   "question": "With the new some() matching, does the disabled Kaito-only record add S to disabledSceneIds and suppress S for the merged group, or does Mira's enabled memory still get recalled?",
+   "source_run": "38407478041"
+  },
+  {
+   "id": "ask#3",
+   "path": "packages/shared/src/utils/macro-engine.ts",
+   "line": 1693,
+   "input": "Summary text `{{#if char == \"Kaito\"}}Kaito's secret{{/if}} The festival started.` rendered by renderEntry for a merged group whose readers are Kaito and Mira (readers.length is 2).",
+   "expected": "Per the changed comment and docs, Kaito's private part is marked with who knows it, e.g. \"[Known only to Kaito: Kaito's secret]\", and the shared sentence stays unmarked. The text should not be resolved with char = Kaito for everyone.",
+   "question": "What text does renderEntry produce for this summary, and is the shared sentence left unmarked?",
+   "source_run": "38407478041"
+  },
+  {
+   "id": "ask#4",
+   "path": "packages/shared/src/utils/macro-engine.ts",
+   "line": 2601,
+   "input": "scopeCharacterSummary called with mark, input `{{#if char == \"Kaito\"}}A{{else}}B{{/if}}` and readers [Kaito, Mira], as reached from renderEntry in a merged group.",
+   "expected": "The changed doc comment says each part goes to mark(text, itsReaders) and parts no reader knows are dropped. A should be labelled as known only to Kaito, and B as known only to Mira (the remaining reader), with neither part passed through unlabelled.",
+   "question": "Walk the characterOnly else branch: which readers does each branch get, what does mark receive for A and for B, and what is the output?",
+   "source_run": "38407478041"
+  },
+  {
+   "id": "ask#5",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 3676,
+   "input": "Merged group with present characters Kaito, Mira and Pat (readers.length 3). Scene S is recalled and its audience is [Kaito, Mira]. Pat has no access to S.",
+   "expected": "The changed heading logic should label the scene as known only to the characters who remember it, so the heading names Kaito and Mira and does not read as a scene everyone knows. The docs say a scene that not every character knows is marked with who does.",
+   "question": "What heading does sceneHeading produce for S, and what does renderMemoryRecord place under it?",
+   "source_run": "38407478041"
+  }
+ ],
+ "ebb2187eddb461a59dc64c13a5ae3b50d4d61d11": [
+  {
+   "id": "ask#1",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 1275,
+   "input": "Decision-model presence answers for one candidate, where the cannot-see score equals backend.calibration.defaultThreshold exactly, and another where it is just below the threshold. The same calibration value is passed here as before the change.",
+   "expected": "The changed comment says only a confident 'cannot see or hear' hides and an unsure score keeps the message visible. Before the change, the same threshold was compared with a 'present' score, and a score below it hid the message.",
+   "question": "With the question now asking whether the character cannot see the message, which of these two candidates is hidden, and does the threshold keep meaning the same level of confidence it meant before the flip?",
+   "source_run": "38407512712"
+  },
+  {
+   "id": "ask#2",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 1216,
+   "input": "A new scene whose first decided message is at index 20, with no earlier messages in that scene (so scene.filter(index < first) is empty). Messages 0 through 19 are ordinary roleplay messages with content.",
+   "expected": "Changelog and docs: the opening message of a new scene comes with the last few messages before it, and the model always gets at least the last few earlier messages. Before the change, the transcript held only the decided message.",
+   "question": "What slice of earlier messages goes into shown, and so into the presence transcript, for this opening message?",
+   "source_run": "38407512712"
+  },
+  {
+   "id": "ask#3",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 1228,
+   "input": "A user whisper at index 18 addressed only to character Alice, with Bob also in the chat and in the same scene. Then a later normal message at index 19 is decided for Bob, who is not a whisper recipient.",
+   "expected": "The new presence prompt says a character is marked false only when 'shut out of a private whisper or aside', and the docs say a whisper's recipient who isn't in the scene still gets the whisper. The transcript row for the whisper should show Bob that the whisper was private.",
+   "question": "What does the transcript row for the whisper contain for the Decision model, and can the model tell that Bob was left out of it?",
+   "source_run": "38407512712"
+  },
+  {
+   "id": "ask#4",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 1217,
+   "input": "The first decided message is at index 7, and its saved scene starts at index 5. So scene.filter(index < first) has two entries (indexes 5 and 6). Before that, actual has indexes 0 through 6.",
+   "expected": "Per the changed code and the docs, the transcript is the scene so far, with at least VISIBILITY_MIN_CONTEXT earlier messages, capped at VISIBILITY_CONTEXT.",
+   "question": "How many earlier messages are shown, and which indexes do they come from, given that the scene itself contributes only two earlier messages?",
+   "source_run": "38407512712"
+  }
+ ],
+ "11a0693e1ae9bf40a15a98128677953a490b5f46": [
+  {
+   "id": "ask#1",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 3315,
+   "input": "A conditional summary has an Alice-only section whose text includes a macro, for example {{#if char == \"Alice\"}}{{user}} hid the letter under the bed.{{/if}}. The helper's output for the group keeps a section keyed \"{{\" that contains the same sentence, and the other section keys are unchanged.",
+   "expected": "Comment at line 3397-3398 says no private sentence may reach more readers, and the PR description says the helper must keep each private part for exactly the characters who knew it. Otherwise the output is rejected and the originals are kept.",
+   "question": "In `leaks`, the \"{{\" key is skipped on both the before and after sides. What does the check return for this input, and is the Alice-only sentence still detected when it moves into a \"{{\"-keyed section?",
+   "source_run": "38407552139"
+  },
+  {
+   "id": "ask#2",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 3345,
+   "input": "An automated Chat Summary entry (origin \"automated\", no hand edit) is created, then the user turns it off and back on. Turning it on sets updatedAt to a later time than createdAt, and the entry has no other change.",
+   "expected": "The docs at memory.md say only \"Summaries you wrote or edited yourself\" stay unchanged, so an automated summary that was only toggled should still be combined. The comment at line 3343-3344 acknowledges that any updatedAt change counts as an edit.",
+   "question": "For this entry, does the `continue` at line 3345 skip it from combining, and does that match the docs' rule for which summaries stay unchanged?",
+   "source_run": "38407552139"
+  },
+  {
+   "id": "ask#3",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 3400,
+   "input": "A combined group has a private section for Bob in its input. The helper returns a shortened summary that drops Bob's private section entirely and keeps every other private section for the same readers, with no sentence moved to a wider audience.",
+   "expected": "The docs say a result is not saved only if it would change who can read a private part, and that the other summaries are then shortened. Removing a part does not give anyone new access.",
+   "question": "Does `after.size !== before.size` (or the key checks) reject this output, and what is then saved for the group?",
+   "source_run": "38407552139"
+  },
+  {
+   "id": "ask#4",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 3406,
+   "input": "A group of two entries is queued: one conditional entry C with an Alice-only section and one plain entry P. The helper's combined output moves a private sentence to a wider audience, so the leak check fails.",
+   "expected": "The changed comment says that when a combined result is rejected, the plain entries are compacted separately and the conditional entry stays as it is. The docs say those summaries stay as they are and only the others are shortened.",
+   "question": "What does the fallback at line 3406 queue, with which combine flag, and is the conditional entry C left unchanged in the saved metadata?",
+   "source_run": "38407552139"
+  },
+  {
+   "id": "ask#5",
+   "path": "packages/server/src/services/advanced-memory.ts",
+   "line": 1433,
+   "input": "A combined group contains a single conditional entry, so `summarize` is called with one input and keepConditions = true.",
+   "expected": "The keepConditions text is appended to the combine prompt (lines 1433-1437), which the docs describe as the instruction that keeps each fact inside its original condition.",
+   "question": "With one input, does the `combinePrompt` built here reach the helper's request, and is the keepConditions sentence included in it?",
+   "source_run": "38407552139"
+  }
+ ],
+ "5263deed6ad5aba02ff74173c6dc1bcf91a04572": [
+  {
+   "id": "ask#1",
+   "path": "packages/server/src/services/storage/game-state.storage.ts",
+   "line": 333,
+   "input": "A reply M3 has swipe 0 where the user edited location to \"Pier\" in the Tracker Panel, so swipe 0 holds location \"Pier\" with a record for location. The user then regenerates M3: swipe 1 is written by the trackers with location \"Forest\" and no edit record. The user regenerates again, creating swipe 2, so the sibling base is swipe 1.",
+   "expected": "Changelog: \"An edit stays with its reply\" and \"Each swipe keeps its own values\". The code comment at lines 327-330 only mentions same-value conflicts between swipes. Before the change, the regenerated reply started from the previous reply's trackers, with no per-swipe edit carried over.",
+   "question": "For swipe 2's base, what location does applyManualEdits give when it walks all rows of M3 in swipeIndex order, given that swipe 0's record still matches its row and swipe 1 has no record?",
+   "source_run": "38407586726"
+  },
+  {
+   "id": "ask#2",
+   "path": "packages/server/src/services/storage/game-state.storage.ts",
+   "line": 309,
+   "input": "The first reply of a chat has no earlier game-state rows. The user sets location to \"Pier\" in the Tracker Panel on that reply, then regenerates it. So getLatestExcludingMessage returns null for the excluded message, and selected is null.",
+   "expected": "Changelog: the next reply starts from the user's corrected values, also when regenerating. Before the change, getForGeneration returned null when no earlier state existed, so the agents got no game state.",
+   "question": "What does getForGeneration return in this case, and what id and messageId does the returned object carry (it is built from emptyGameStateRow)?",
+   "source_run": "38407586726"
+  },
+  {
+   "id": "ask#3",
+   "path": "packages/server/src/routes/generate.routes.ts",
+   "line": 13704,
+   "input": "A game-mode chat with manual trackers. The user edits a value in the Tracker Panel on the reply, then regenerates it. No tracker writes the regenerated swipe row, so the block at 13702 runs.",
+   "expected": "Changelog: \"In chats where you run trackers yourself, the regenerated swipe keeps your edits too.\" The PR description and docs say the edit carries to the next reply, with no game-mode exception.",
+   "question": "What does this block do for a game-mode chat, and does the regenerated swipe keep the user's edit?",
+   "source_run": "38407586726"
+  },
+  {
+   "id": "ask#4",
+   "path": "packages/server/src/services/storage/game-state.storage.ts",
+   "line": 711,
+   "input": "Sequence on one swipe row: (1) the user sets location to \"Pier\" in the Tracker Panel, so the row gets a record location=\"Pier\". (2) The trackers rewrite the row with location \"Forest\", which keeps the old record (the create path falls back to the replaced row's record). (3) The user sets location to \"Forest\" in the Tracker Panel.",
+   "expected": "Changelog: \"A value you change by hand in the Tracker Panel is now what the next reply starts from\". Each saved edit should be what the reply starts from. Before the change, manual overrides were one-shot per edit.",
+   "question": "After step 3, what does the row's manualOverrides record hold for location, and does applyManualEdits count the user's \"Forest\" edit as an edit?",
+   "source_run": "38407586726"
+  },
+  {
+   "id": "ask#5",
+   "path": "packages/server/src/services/storage/game-state.storage.ts",
+   "line": 308,
+   "input": "preferLatestVisible is set with visibleAnchor = previous reply M2 swipe 0, and excludeMessageId = M3 (a regeneration of M3). M2 has a stored row, and M3 has a Tracker Panel edit on another swipe.",
+   "expected": "Before the change, a visible row was returned as is. The changelog says a regeneration starts from the edits made on the replaced reply, and that a branch made from an earlier message does not get them.",
+   "question": "Does the code return the visible M2 row unchanged, or lay M3's edits over it, and what changes if the visible row is M3's own row?",
+   "source_run": "38407586726"
+  }
+ ],
+ "d9cda66136256f57e502d54ab6cf07f18d54f136": [
+  {
+   "id": "ask#1",
+   "path": "packages/server/src/services/generation/agent-cadence.ts",
+   "line": 18,
+   "input": "Illustrator with a chat override of 0 (metadata.illustratorRunInterval = 0). applyIllustratorChatRunInterval returns settings with runInterval 0, and the cadence check reads that value through this parser.",
+   "expected": "The PR says 0 means the Illustrator only runs when the user asks (chat-level help text, the changed comment in shared types, and the docs). Automatic runs should be skipped for this chat.",
+   "question": "What does this parser return for runInterval 0, and what does the automatic-run decision in shouldSkipAgentByMessageInterval do with that result for an Illustrator chat?",
+   "source_run": "38407608868"
+  },
+  {
+   "id": "ask#2",
+   "path": "packages/server/src/services/generation/agent-cadence.ts",
+   "line": 29,
+   "input": "A chat with illustratorRunInterval 2, and an agent default of 5 in the Illustrator's stored settings.",
+   "expected": "The chat's value (2) should replace the agent default for this chat, per the PR description and the changed doc comment on applyIllustratorChatRunInterval.",
+   "question": "What runInterval does the returned settings object carry when this function is called with that chat metadata?",
+   "source_run": "38407608868"
+  },
+  {
+   "id": "ask#3",
+   "path": "packages/server/src/routes/generate.routes.ts",
+   "line": 2024,
+   "input": "A chat with illustratorRunInterval 2 in its metadata, where the Illustrator is resolved in the generation pipeline. chatMeta at line 1506 is produced by roomGenerationMetadata(parseExtra(chat.metadata)), not the raw metadata.",
+   "expected": "The chat's Run Interval (2) should apply to every generation path that resolves Illustrator settings, as the PR describes for per-chat values.",
+   "question": "Does roomGenerationMetadata keep illustratorRunInterval in chatMeta, so that resolveEffectiveAgentSettings sees the chat's value at this call?",
+   "source_run": "38407608868"
+  },
+  {
+   "id": "ask#4",
+   "path": "packages/server/src/services/generation/agent-resolution.ts",
+   "line": 667,
+   "input": "Illustrator built-in settings resolved through this call for a chat with illustratorRunInterval 2 and an agent default of 5.",
+   "expected": "Per the PR, the chat's value overrides the agent default wherever Illustrator's effective settings are computed.",
+   "question": "Does this call pass the chat metadata into resolveEffectiveAgentSettings, and if so, what runInterval does builtInSettings carry?",
+   "source_run": "38407608868"
+  },
+  {
+   "id": "ask#5",
+   "path": "packages/server/src/routes/chats.routes.ts",
+   "line": 1446,
+   "input": "A PATCH body with illustratorRunInterval set to the number -3.",
+   "expected": "The comment on this line says numbers clamp to 0-100 and anything else returns the chat to the agent's Run Interval. The help text says 0 means only when you ask.",
+   "question": "What value is stored for illustratorRunInterval, and does the Illustrator then run automatically in that chat?",
+   "source_run": "38407608868"
+  },
+  {
+   "id": "ask#6",
+   "path": "packages/client/src/components/chat/AgentAddSetupFields.tsx",
+   "line": 473,
+   "input": "Adding the Illustrator to a chat from the add window. The agent default is 5 and the chat has no override. The user keeps the value at 5 and confirms.",
+   "expected": "The docs say the add window 'saves your choice to that chat only', so the chat should keep 5 as its own value.",
+   "question": "What is written to the chat metadata for illustratorRunInterval, and what happens to this chat if the Agent Editor default later changes to 3?",
+   "source_run": "38407608868"
+  },
+  {
+   "id": "ask#7",
+   "path": "packages/client/src/components/chat/ChatSettingsDrawer.tsx",
+   "line": 2249,
+   "input": "A chat with no override, where the effective Run Interval shows 5 from the agent default. The user types 5 into the field and the field commits.",
+   "expected": "The PR says the value you pick is saved to that chat. The changed comment only intends that leaving the field unchanged must not write a chat value.",
+   "question": "Does this commit write illustratorRunInterval to the chat, and what happens to the chat when the agent default later changes?",
+   "source_run": "38407608868"
+  }
+ ]
+}
