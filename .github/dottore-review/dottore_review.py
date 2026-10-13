@@ -5315,6 +5315,7 @@ def produce_review(args):
         with ThreadPoolExecutor(max_workers=review_concurrency()) as pool:
             review_obj = agentic_review(ctx, packets, effective_mode, pool)
     except Exception as exc:
+        print(f"Dottore review failed: {model_failure_detail(exc)}", flush=True)
         write_skipped_review(
             "Review Failed",
             model_failure_detail(exc),
