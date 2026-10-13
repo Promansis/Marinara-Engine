@@ -173,7 +173,7 @@ jobs:
       # --max-budget-usd counts at Anthropic list prices, about 3x LinkAPI's, so 1.50 stops near $0.50 at LinkAPI.
       - name: Lab Claude Code review
         if: vars.DOTTORE_LAB_STAGE == 'claudecode'
-        timeout-minutes: 30
+        timeout-minutes: 32
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
@@ -185,7 +185,7 @@ jobs:
           CC_MODEL: claude-opus-5-5
           CC_EFFORT: medium
           CC_BUDGET_LIST_USD: "1.50"
-          CC_TIMEOUT: 25m
+          CC_TIMEOUT: 23m
         run: |
           npm install -g --no-fund --no-audit @anthropic-ai/claude-code@2.1.296 >/dev/null
           echo "Dottore lab claude version: $(claude --version)"
@@ -205,31 +205,46 @@ jobs:
             }
           }
           JSON
-          # Print each event as it arrives (the log's timestamps show the pace) and stop Claude Code before the step
-          # limit, so a slow or stuck run still leaves its transcript and per-message usage in the log.
-          set +e
-          timeout -k 30s "$CC_TIMEOUT" claude -p "/code-review origin/$PR_BASE_REF...HEAD" --restricted --strict-mcp-config --tools Read,Grep,Glob,Bash \
-            --model "$CC_MODEL" --effort "$CC_EFFORT" --max-budget-usd "$CC_BUDGET_LIST_USD" --permission-mode dontAsk \
-            --settings "$RUNNER_TEMP/cc-settings.json" --output-format stream-json --verbose --no-session-persistence < /dev/null \
-            | tee "$RUNNER_TEMP/cc-stream.jsonl" | jq -R -r --unbuffered '. as $line | (try fromjson catch {type: "raw", raw: $line}) |
-              (if .parent_tool_use_id then "CC[sub] " else "CC " end) as $p |
-              if .type == "raw" then $p + "raw: " + (.raw | .[0:300])
-              elif .type == "system" and .subtype == "init" then $p + "system: init model=" + (.model // "") + " tools=" + ((.tools // []) | join(","))
-              elif .type == "system" then $p + "system: " + (del(.tools, .mcp_servers, .slash_commands, .agents, .skills, .plugins) | tostring | .[0:400])
-              elif .type == "assistant" then
-                (.message.content[]? |
-                  if .type == "text" then $p + "text: " + .text
-                  elif .type == "tool_use" then $p + "tool: " + .name + " " + (.input | tostring | .[0:400])
-                  else empty end),
-                (.message | select(.usage) | $p + "usage: " + (.id // "") + " " + (.model // "")
-                  + " " + (.usage | {input_tokens, cache_read_input_tokens, cache_creation_input_tokens, output_tokens} | tostring))
-              elif .type == "user" then (.message.content[]? | select(type == "object" and .type == "tool_result" and .is_error == true)
-                | $p + "tool error: " + (.content | tostring | .[0:300]))
-              elif .type == "result" then "CC result: " + (del(.result) | tostring) + "\nCC final:\n" + (.result // "")
-              else empty end'
-          codes=("${PIPESTATUS[@]}")
-          set -e
-          echo "Dottore lab claude exit=${codes[0]} jq=${codes[2]} lines=$(wc -l < "$RUNNER_TEMP/cc-stream.jsonl")"
+          # Each event is printed as it arrives (the log's timestamps show the pace), with per-message usage, so a slow
+          # or stuck run still leaves its transcript and cost in the log.
+          cat > "$RUNNER_TEMP/cc-filter.jq" <<'JQ'
+          . as $line | (try fromjson catch {type: "raw", raw: $line}) |
+          ($tag + (if .parent_tool_use_id then "[sub] " else " " end)) as $p |
+          if .type == "raw" then $p + "raw: " + (.raw | .[0:300])
+          elif .type == "system" and .subtype == "init" then $p + "system: init model=" + (.model // "") + " tools=" + ((.tools // []) | join(","))
+          elif .type == "system" then $p + "system: " + (del(.tools, .mcp_servers, .slash_commands, .agents, .skills, .plugins) | tostring | .[0:400])
+          elif .type == "assistant" then
+            (.message.content[]? |
+              if .type == "text" then $p + "text: " + .text
+              elif .type == "tool_use" then $p + "tool: " + .name + " " + (.input | tostring | .[0:400])
+              else empty end),
+            (.message | select(.usage) | $p + "usage: " + (.id // "") + " " + (.model // "")
+              + " " + (.usage | {input_tokens, cache_read_input_tokens, cache_creation_input_tokens, output_tokens} | tostring))
+          elif .type == "user" then (.message.content[]? | select(type == "object" and .type == "tool_result" and .is_error == true)
+            | $p + "tool error: " + (.content | tostring | .[0:300]))
+          elif .type == "result" then $tag + " result: " + (del(.result) | tostring) + "\n" + $tag + " final:\n" + (.result // "")
+          else empty end
+          JQ
+          # $1 log tag, $2 time limit, $3 list-price budget, $4 seconds to wait for response headers, $5 retries, $6 prompt.
+          # Claude Code waits 10 minutes for headers and retries 10 times by default, so a gateway that never answers
+          # would hold the step silently; the header wait applies only until the stream starts, not to long answers.
+          cc() {
+            set +e
+            API_TIMEOUT_MS=$(( $4 * 1000 )) CLAUDE_CODE_MAX_RETRIES=$5 timeout -k 30s "$2" claude -p "$6" --restricted --strict-mcp-config \
+              --tools Read,Grep,Glob,Bash --model "$CC_MODEL" --effort "$CC_EFFORT" --max-budget-usd "$3" --permission-mode dontAsk \
+              --settings "$RUNNER_TEMP/cc-settings.json" --output-format stream-json --verbose --no-session-persistence < /dev/null \
+              | tee "$RUNNER_TEMP/$1.jsonl" | jq -R -r --unbuffered --arg tag "$1" -f "$RUNNER_TEMP/cc-filter.jq"
+            local codes=("${PIPESTATUS[@]}")
+            set -e
+            echo "Dottore lab claude $1 exit=${codes[0]} jq=${codes[2]} lines=$(wc -l < "$RUNNER_TEMP/$1.jsonl")"
+          }
+          # Preflight with the review's request shape: if the endpoint can't answer one line, skip the review.
+          cc PRE 4m 0.10 60 1 "Reply with the single word OK."
+          if ! jq -e -s 'any(.[]; .type == "result" and .is_error == false)' "$RUNNER_TEMP/PRE.jsonl" >/dev/null 2>&1; then
+            echo "Dottore lab claude preflight failed: review skipped"
+            exit 0
+          fi
+          cc CC "$CC_TIMEOUT" "$CC_BUDGET_LIST_USD" 180 3 "/code-review origin/$PR_BASE_REF...HEAD"
 
       - name: Mark Dottore status in progress
         if: vars.DOTTORE_LAB_STAGE != 'claudecode'
