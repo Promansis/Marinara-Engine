@@ -153,7 +153,8 @@ MAX_TRACE_CHECKS = 8
 MAX_TRACE_CHECK_CHARS = 400
 # Broad Luna claim pass (DOTTORE_LAB_STAGE=hypo): preserve the former three-lens claim budget per packet.
 MAX_PASS_CLAIMS = 24
-MAX_CLAIMS = 12
+# The checker's thinking grows with each claim it judges (Opus: about 2-3k tokens a claim), so it gets at most these.
+MAX_CLAIMS = 7
 MAX_CLAIM_CHARS = 400
 MAX_BLAST_RADIUS_CHARS = 24_000
 # The changed code the tracer reads before its first tool call, quoted by code so its view of the change does not
@@ -2968,20 +2969,31 @@ def pass_claims(lens, submitted):
     return kept
 
 
+# ponytail: lab hypothesis that the checker can judge fewer claims without losing the tracked bugs when claims in tests
+# or docs are dropped and claims that defer to code the packet does not show (the forms the claim prompts ask for: a
+# failure opening with "If", or what "the checker should" read) queue behind the claims stated from the code shown.
+# On the 75 saved Haiku claim sets this kept every tracked-bug claim and sent 6.3 claims a review instead of 9.0. The
+# markers are wording, so a claim-prompt change can weaken the order unnoticed; a claim field is the upgrade path.
+DEFERRED_CLAIM_RE = re.compile(r"^\s*If\b|\bchecker should\b", re.IGNORECASE)
+
+
 def merge_claims(passes):
-    """Take the passes' claims in turn, each pass's most likely first, and keep at most MAX_CLAIMS. Packets never
-    share a file, and claims a few lines apart in one pass were found to be different defects, so none is dropped
-    as a repeat. Every claim records its fate for the log."""
-    kept = []
+    """Take the passes' claims in turn, each pass's most likely first, and keep at most MAX_CLAIMS: claims in tests or
+    docs are dropped, and claims that defer to unseen code come after the rest. Packets never share a file, and claims
+    a few lines apart in one pass were found to be different defects, so none is dropped as a repeat. Every claim
+    records its fate for the log."""
+    queue = []
     for claim in itertools.chain.from_iterable(itertools.zip_longest(*passes)):
         if claim is None:
             continue
-        if len(kept) >= MAX_CLAIMS:
-            claim["fate"] = "over cap"
+        if TEST_PATH_RE.search(claim["path"]) or claim["path"].endswith(".md"):
+            claim["fate"] = "test or docs"
         else:
-            claim["fate"] = "kept"
-            kept.append(claim)
-    return kept
+            queue.append(claim)
+    queue.sort(key=lambda claim: bool(DEFERRED_CLAIM_RE.search(claim["failure"])))
+    for index, claim in enumerate(queue):
+        claim["fate"] = "kept" if index < MAX_CLAIMS else "over cap"
+    return queue[:MAX_CLAIMS]
 
 
 TASK_BUDGET_CHECK_TOTAL = 1_000
