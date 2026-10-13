@@ -3331,12 +3331,73 @@ def verification_prompt(ctx, candidates, instructions=""):
 JUDGE_CONTEXT_LINES = 120
 
 
-def claim_excerpts(candidates):
-    """The head code within JUDGE_CONTEXT_LINES of each cited line, overlapping windows merged per file."""
+def claim_windows(candidates):
     windows = {}
     for candidate in candidates:
         line = candidate.line or 1
         windows.setdefault(candidate.path, []).append([max(1, line - JUDGE_CONTEXT_LINES), line + JUDGE_CONTEXT_LINES])
+    return windows
+
+
+# ponytail: lab hypothesis that the judge rejects a real bug like 7288's 518 because it cannot see what feeds the cited
+# function: Opus called the revival "not the ordinary flow", while the tracker rewrite that causes it sits 4,000 lines
+# from the cited line. So the judge also gets the calls, in the cited files, to the named function holding each cited
+# line. Functions are found by indentation and calls by name alone, so a same-named method of another object in those
+# files comes along (galleryStore.create on 7288) and callers in other files do not; a language parser is the upgrade.
+# Keep it only if a test confirms 518 without new false positives; remove it with the lab.
+JUDGE_CALLER_LINES = 25
+FUNCTION_NAME = r"([A-Za-z_$][\w$]*)"
+FUNCTION_HEADERS = (
+    re.compile(r"^(\s*)(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\s*\*?|def|async)\s+" + FUNCTION_NAME + r"\s*(?:<[^>]*>)?\s*\("),
+    re.compile(r"^(\s*)(?:(?:public|private|protected|static|get|set)\s+)*" + FUNCTION_NAME + r"\s*(?:<[^>]*>)?\s*\([^=]*\)\s*(?::[^={]+)?\{\s*$"),
+    re.compile(r"^(\s*)(?:export\s+)?(?:const|let|var)\s+" + FUNCTION_NAME + r"\s*(?::[^=]+)?=\s*(?:async\s*)?(?:function\b|\(.*=>|[\w$]+\s*=>)"),
+)
+NOT_FUNCTIONS = {"if", "for", "while", "switch", "catch", "return", "with", "elif"}
+
+
+def enclosing_function(lines, line):
+    """(line, name) of the nearest named function whose body holds `line`: every line between is indented deeper."""
+    floor = len(lines[line - 1]) - len(lines[line - 1].lstrip())
+    for number in range(line - 1, 0, -1):
+        text = lines[number - 1]
+        indent = len(text) - len(text.lstrip())
+        if not text.strip() or indent >= floor:
+            continue
+        match = next(filter(None, (header.match(text) for header in FUNCTION_HEADERS)), None)
+        if match and match.group(2) not in NOT_FUNCTIONS:
+            return number, match.group(2)
+        if not text.lstrip().startswith(")"):  # a multi-line parameter list closes at its header's indent
+            floor = indent
+    return None
+
+
+def caller_windows(candidates):
+    """The head code within JUDGE_CALLER_LINES of each call, in the cited files, to a function holding a cited line,
+    leaving out the calls that the cited lines' own windows already show."""
+    shown = claim_windows(candidates)
+    lines = {path: head_file_text(path).splitlines() for path in shown}
+    headers = {}
+    for candidate in candidates:
+        if candidate.line and candidate.line <= len(lines[candidate.path]):
+            found = enclosing_function(lines[candidate.path], candidate.line)
+            if found:
+                headers.setdefault(found[1], set()).add((candidate.path, found[0]))
+    windows = {}
+    for name, defined in headers.items():
+        call = re.compile(rf"(?<![\w$]){re.escape(name)}\s*\(")
+        for path, text in lines.items():
+            for number, code in enumerate(text, 1):
+                if (path, number) in defined or not call.search(code):
+                    continue
+                if not any(start <= number <= end for start, end in shown[path]):
+                    windows.setdefault(path, []).append(
+                        [max(1, number - JUDGE_CALLER_LINES), number + JUDGE_CALLER_LINES]
+                    )
+    return windows
+
+
+def excerpts(windows):
+    """The head code of each file's windows, overlapping windows merged."""
     parts = []
     for path, spans in windows.items():
         spans.sort()
@@ -3360,16 +3421,19 @@ def at_once_prompt(ctx, candidates, instructions=""):
     diffs = "".join(
         f"\n\n# Diff of {path}\n{truncate(diff_for_path(ctx.base, path), MAX_CONTEXT_FILE_CHARS)}" for path in paths
     )
+    calls = caller_windows(candidates)
     return (
         f"Verify these {len(claims)} candidate finding(s) before publication, following the Verification section. "
-        "You cannot read the repository: each file's diff and the head code around each cited line are below, so "
-        "trace in them. Mark a candidate uncertain only when the code its verdict depends on is not shown. Finish by "
-        "calling submit_verdicts once with one verdict per candidate number."
+        "You cannot read the repository: each file's diff, the head code around each cited line and the calls in "
+        "those files to the functions holding the cited lines are below, so trace in them. Mark a candidate uncertain "
+        "only when the code its verdict depends on is not shown. Finish by calling submit_verdicts once with one "
+        "verdict per candidate number."
         + (f"\n\n{instructions}" if instructions else "")
         + f"\n\n# Candidates\n{json.dumps(claims, indent=2)}"
         f"\n\n# Path Rules\n{matching_path_rules(paths)}"
         + diffs
-        + f"\n\n# Code at the PR head\n{claim_excerpts(candidates)}"
+        + f"\n\n# Code at the PR head\n{excerpts(claim_windows(candidates))}"
+        + (f"\n\n# Calls to the functions holding the cited lines\n{excerpts(calls)}" if calls else "")
     )
 
 
