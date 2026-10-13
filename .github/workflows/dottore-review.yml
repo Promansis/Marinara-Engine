@@ -168,9 +168,9 @@ jobs:
           git checkout --detach "$HEAD_SHA"
           echo "PR_HEAD_SHA=$HEAD_SHA" >> "$GITHUB_ENV"
 
-      # Lab only: Anthropic's built-in /code-review in an unmodified Claude Code CLI, read-only, through the shared
-      # ANTHROPIC_* endpoint (LinkAPI). It prints the transcript and cost to the log and skips Dottore's own steps.
-      # --max-budget-usd counts at Anthropic list prices, about 3x LinkAPI's, so 1.50 stops near $0.50 at LinkAPI.
+      # Lab only: Anthropic's built-in /code-review prompt in an unmodified Claude Code CLI, read-only, through the
+      # shared ANTHROPIC_* endpoint (LinkAPI). It prints the transcript and cost to the log and skips Dottore's own steps.
+      # --max-budget-usd counts at Anthropic list prices, about 4x LinkAPI's claudecode rates, so 1.50 stops near $0.40.
       - name: Lab Claude Code review
         if: vars.DOTTORE_LAB_STAGE == 'claudecode'
         timeout-minutes: 32
@@ -238,13 +238,45 @@ jobs:
             set -e
             echo "Dottore lab claude $1 exit=${codes[0]} jq=${codes[2]} lines=$(wc -l < "$RUNNER_TEMP/$1.jsonl")"
           }
+          # /code-review hands the review to a forked subagent that ignores --max-budget-usd and prints nothing until it
+          # ends. Capture the exact prompt it gives that subagent, from a local stub (no model call, no real key), and
+          # run it on the main thread instead, where the budget is checked every turn and each step streams to the log.
+          cat > "$RUNNER_TEMP/cc-stub.py" <<'PY'
+          import http.server, json, sys
+          class H(http.server.BaseHTTPRequestHandler):
+              def log_message(self, *a): pass
+              def do_POST(self):
+                  self.rfile.read(int(self.headers.get("content-length") or 0))
+                  self.send_response(200); self.send_header("content-type", "text/event-stream"); self.end_headers()
+                  for t, d in [("message_start", {"message": {"id": "stub", "type": "message", "role": "assistant", "model": "stub", "content": [],
+                                                              "stop_reason": None, "usage": {"input_tokens": 0, "output_tokens": 0}}}),
+                               ("content_block_start", {"index": 0, "content_block": {"type": "text", "text": ""}}),
+                               ("content_block_delta", {"index": 0, "delta": {"type": "text_delta", "text": "[]"}}),
+                               ("content_block_stop", {"index": 0}),
+                               ("message_delta", {"delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 1}}),
+                               ("message_stop", {})]:
+                      self.wfile.write(f"event: {t}\ndata: {json.dumps({'type': t, **d})}\n\n".encode())
+          http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+          PY
+          python3 -I "$RUNNER_TEMP/cc-stub.py" 18765 & stub=$!
+          sleep 1
+          ANTHROPIC_API_KEY=stub ANTHROPIC_BASE_URL=http://127.0.0.1:18765 timeout 60s claude -p "/code-review origin/$PR_BASE_REF...HEAD" \
+            --restricted --strict-mcp-config --tools Read,Grep,Glob,Bash --model "$CC_MODEL" --effort "$CC_EFFORT" --permission-mode dontAsk \
+            --settings "$RUNNER_TEMP/cc-settings.json" --output-format stream-json --verbose --no-session-persistence < /dev/null \
+            | jq -r 'select(.type == "system" and .subtype == "task_started") | .prompt // empty' > "$RUNNER_TEMP/cc-review-prompt.txt" || true
+          kill "$stub" || true
+          if [ ! -s "$RUNNER_TEMP/cc-review-prompt.txt" ]; then
+            echo "Dottore lab claude: could not capture the /code-review prompt; review skipped"
+            exit 0
+          fi
+          echo "Dottore lab claude review prompt: $(wc -c < "$RUNNER_TEMP/cc-review-prompt.txt") chars: $(head -3 "$RUNNER_TEMP/cc-review-prompt.txt" | tr '\n' ' ')"
           # Preflight with the review's request shape: if the endpoint can't answer one line, skip the review.
           cc PRE 4m 0.10 60 1 "Reply with the single word OK."
           if ! jq -e -s 'any(.[]; .type == "result" and .is_error == false)' "$RUNNER_TEMP/PRE.jsonl" >/dev/null 2>&1; then
             echo "Dottore lab claude preflight failed: review skipped"
             exit 0
           fi
-          cc CC "$CC_TIMEOUT" "$CC_BUDGET_LIST_USD" 180 3 "/code-review origin/$PR_BASE_REF...HEAD"
+          cc CC "$CC_TIMEOUT" "$CC_BUDGET_LIST_USD" 180 3 "$(cat "$RUNNER_TEMP/cc-review-prompt.txt")"
 
       - name: Mark Dottore status in progress
         if: vars.DOTTORE_LAB_STAGE != 'claudecode'
