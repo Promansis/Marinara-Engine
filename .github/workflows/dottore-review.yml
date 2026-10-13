@@ -185,6 +185,7 @@ jobs:
           CC_MODEL: claude-opus-5-5
           CC_EFFORT: medium
           CC_BUDGET_LIST_USD: "1.50"
+          CC_TIMEOUT: 25m
         run: |
           npm install -g --no-fund --no-audit @anthropic-ai/claude-code@2.1.296 >/dev/null
           echo "Dottore lab claude version: $(claude --version)"
@@ -204,21 +205,31 @@ jobs:
             }
           }
           JSON
-          rc=0
-          claude -p "/code-review origin/$PR_BASE_REF...HEAD" --restricted --strict-mcp-config --tools Read,Grep,Glob,Bash --model "$CC_MODEL" --effort "$CC_EFFORT" \
-            --max-budget-usd "$CC_BUDGET_LIST_USD" --permission-mode dontAsk --settings "$RUNNER_TEMP/cc-settings.json" \
-            --output-format stream-json --verbose --no-session-persistence > "$RUNNER_TEMP/cc-stream.jsonl" || rc=$?
-          echo "Dottore lab claude exit=$rc lines=$(wc -l < "$RUNNER_TEMP/cc-stream.jsonl")"
-          jq -r '(if .parent_tool_use_id then "CC[sub] " else "CC " end) as $p |
-            if .type == "system" then $p + "system: " + (.subtype // "") + " model=" + (.model // "") + " tools=" + ((.tools // []) | join(","))
-            elif .type == "assistant" then (.message.content[]? |
-              if .type == "text" then $p + "text: " + .text
-              elif .type == "tool_use" then $p + "tool: " + .name + " " + (.input | tostring | .[0:400])
-              else empty end)
-            elif .type == "user" then (.message.content[]? | select(type == "object" and .type == "tool_result" and .is_error == true)
-              | $p + "tool error: " + (.content | tostring | .[0:300]))
-            elif .type == "result" then "CC result: " + (del(.result) | tostring) + "\nCC final:\n" + (.result // "")
-            else empty end' "$RUNNER_TEMP/cc-stream.jsonl" || true
+          # Print each event as it arrives (the log's timestamps show the pace) and stop Claude Code before the step
+          # limit, so a slow or stuck run still leaves its transcript and per-message usage in the log.
+          set +e
+          timeout -k 30s "$CC_TIMEOUT" claude -p "/code-review origin/$PR_BASE_REF...HEAD" --restricted --strict-mcp-config --tools Read,Grep,Glob,Bash \
+            --model "$CC_MODEL" --effort "$CC_EFFORT" --max-budget-usd "$CC_BUDGET_LIST_USD" --permission-mode dontAsk \
+            --settings "$RUNNER_TEMP/cc-settings.json" --output-format stream-json --verbose --no-session-persistence < /dev/null \
+            | tee "$RUNNER_TEMP/cc-stream.jsonl" | jq -R -r --unbuffered '. as $line | (try fromjson catch {type: "raw", raw: $line}) |
+              (if .parent_tool_use_id then "CC[sub] " else "CC " end) as $p |
+              if .type == "raw" then $p + "raw: " + (.raw | .[0:300])
+              elif .type == "system" and .subtype == "init" then $p + "system: init model=" + (.model // "") + " tools=" + ((.tools // []) | join(","))
+              elif .type == "system" then $p + "system: " + (del(.tools, .mcp_servers, .slash_commands, .agents, .skills, .plugins) | tostring | .[0:400])
+              elif .type == "assistant" then
+                (.message.content[]? |
+                  if .type == "text" then $p + "text: " + .text
+                  elif .type == "tool_use" then $p + "tool: " + .name + " " + (.input | tostring | .[0:400])
+                  else empty end),
+                (.message | select(.usage) | $p + "usage: " + (.id // "") + " " + (.model // "")
+                  + " " + (.usage | {input_tokens, cache_read_input_tokens, cache_creation_input_tokens, output_tokens} | tostring))
+              elif .type == "user" then (.message.content[]? | select(type == "object" and .type == "tool_result" and .is_error == true)
+                | $p + "tool error: " + (.content | tostring | .[0:300]))
+              elif .type == "result" then "CC result: " + (del(.result) | tostring) + "\nCC final:\n" + (.result // "")
+              else empty end'
+          codes=("${PIPESTATUS[@]}")
+          set -e
+          echo "Dottore lab claude exit=${codes[0]} jq=${codes[2]} lines=$(wc -l < "$RUNNER_TEMP/cc-stream.jsonl")"
 
       - name: Mark Dottore status in progress
         if: vars.DOTTORE_LAB_STAGE != 'claudecode'
