@@ -2543,12 +2543,13 @@ def enclosing_chain(lines, number):
     return chain
 
 
-def value_definitions(touched, sites):
+def value_definitions(touched, sites, spans=None):
     """Quote where each local value read at the change is defined, then where that definition's inputs are.
 
     The change is read on its changed lines and at the call sites of changed functions, where a condition
     often continues on the next lines. A bug there can sit in how a value it combines with was built, such
-    as a set filtered for a whole audience, which the diff names but does not show.
+    as a set filtered for a whole audience, which the diff names but does not show. With spans, every
+    definition found is also appended to it as (path, start, end, name, read_at).
     """
     readers = {}
     for path, sides in touched.items():
@@ -2619,6 +2620,8 @@ def value_definitions(touched, sites):
                     # A changed function's change is in the diff, so only unchanged ones are quoted.
                     if not any(head <= line <= tail for line in changed):
                         callees.append((path, head, tail, match.group(1), number))
+    if spans is not None:
+        spans.extend(found)
     sections = [
         f"## {path}:{start}-{end} (`{name}`, read at line {read_at})\n```text\n"
         + redact_for_model(numbered_lines(head_file_text(path), start, end))
@@ -2644,6 +2647,147 @@ def value_definitions(touched, sites):
         flush=True,
     )
     return "\n\n".join(part for part in (truncate("\n\n".join(sections), MAX_DEFINITION_CHARS), *called) if part)
+
+
+# ponytail: lab hypothesis (DOTTORE_LAB_STAGE=ask/answer) that code, not a model, can put in view what decides each
+# tracked bug: the change with the blocks around it, the values it reads, and the same-file functions those call, two
+# calls deep and through methods (7239's allowed() -> selectAdvancedMemoryMessages, 7288's store.applyManualEdits).
+# Same-file and by name only; a language server would resolve imports and overloads. Remove it with the lab.
+QUESTION_WINDOW = DIFF_CONTEXT_LINES
+QUESTION_CALL_HOPS = 2
+MAX_QUESTION_CODE_CHARS = 160_000
+MAX_PR_DESCRIPTION_CHARS = 4_000
+# Unlike CALL_NAME_RE, a call through an object (`store.applyManualEdits(`) counts, matched to a same-file name.
+CALLED_NAME_RE = re.compile(r"(?<![\w$])([A-Za-z_$][\w$]*)\s*\(")
+QUESTION_CODE_NOTE = (
+    "Quoted by code from the PR head, one section per stretch of a file. Lines marked `+` after the number are added "
+    "or changed by the PR, the others are unchanged, and unnumbered lines starting `-` are the PR's removed lines, "
+    "shown where they stood. Each stretch holds changed lines with the code around them, the "
+    "function around a change when it is short, where values the change reads are defined, and the same-file "
+    "functions that code calls, two calls deep; a heading names the values and functions it was quoted for. Test "
+    "files are not quoted."
+)
+
+
+def removed_lines(base):
+    """The PR's removed lines by path and the head line they stood before: {path: {line: [text, ...]}}."""
+    removed, path, line = {}, None, None
+    for text in run_git_raw(["diff", "--find-renames", "--unified=0", f"{base}...HEAD"]).splitlines():
+        if text.startswith("diff --git "):
+            path = line = None
+        elif line is None and text.startswith("+++ "):
+            path = text.removeprefix("+++ b/") if text.startswith("+++ b/") else None
+        elif match := re.match(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", text):
+            # A hunk that adds nothing names the head line before the removal.
+            line = int(match.group(1)) + (match.group(2) == "0")
+        elif path and line is not None and text.startswith("-"):
+            removed.setdefault(path, {}).setdefault(line, []).append(text[1:])
+        elif line is not None and text.startswith("+"):
+            line += 1
+    return removed
+
+
+def question_code(touched, sites, removed):
+    """The production code a question needs, quoted per file from the PR head with changed lines marked: each change
+    with QUESTION_WINDOW lines either side and its short enclosing block, the definitions value_definitions follows,
+    and the same-file functions any of that calls, QUESTION_CALL_HOPS deep. Files in path order, cut at the limit."""
+    found = []
+    try:
+        value_definitions(touched, sites, found)
+    except Exception as exc:
+        print(f"Dottore definitions failed: {error_text(exc)}", flush=True)
+    definitions = {}
+    for path, start, end, name, read_at in found:
+        definitions.setdefault(path, []).append((start, end, f"`{name}` defined, read at line {read_at}"))
+    sections, callees = [], 0
+    for path in sorted(set(touched) | set(definitions)):
+        if not path.endswith(CODE_SUFFIXES) or TEST_PATH_RE.search(path):
+            continue
+        try:
+            lines = head_file_text(path).splitlines()
+        except Exception:
+            continue
+        changed = {number for number in touched.get(path, {}).get("RIGHT", ()) if number <= len(lines)}
+        gone = removed.get(path, {})
+        ranges = list(definitions.get(path, ()))
+        for number in sorted(changed | {line for line in gone if line <= len(lines)}):
+            ranges.append((max(1, number - QUESTION_WINDOW), min(len(lines), number + QUESTION_WINDOW), ""))
+            block = enclosing_block(lines, number)
+            if block:
+                end = statement_end(lines, block[1], MAX_CHANGED_BLOCK_LINES + 1)
+                if number <= end < block[1] + MAX_CHANGED_BLOCK_LINES:
+                    ranges.append((block[1], end, ""))
+        if not ranges:
+            continue
+        declared = declared_names(lines)
+        frontier = [(low, high) for low, high, _ in ranges]
+        for _ in range(QUESTION_CALL_HOPS):
+            calls = []
+            for low, high in frontier:
+                for number in range(low, high + 1):
+                    for match in CALLED_NAME_RE.finditer(lines[number - 1].split("//")[0]):
+                        head = declared.get(match.group(1))
+                        if head is None or any(start <= head <= end for start, end, _ in ranges):
+                            continue
+                        end = statement_end(lines, head, MAX_CALLEE_LINES)
+                        ranges.append((head, end, f"`{match.group(1)}`, called at line {number}"))
+                        calls.append((head, end))
+            callees += len(calls)
+            frontier = calls
+        merged = []
+        for low, high, label in sorted(ranges):
+            if merged and low <= merged[-1][1] + 1:
+                merged[-1][1] = max(high, merged[-1][1])
+                merged[-1][2].append(label)
+            else:
+                merged.append([low, high, [label]])
+        for low, high, labels in merged:
+            named = list(dict.fromkeys(label for label in labels if label))
+            heading = f" ({'; '.join(named[:4])}{'; ...' if len(named) > 4 else ''})" if named else ""
+            body = "\n".join(
+                "".join(f"-    {text}\n" for text in gone.get(number, ()))
+                + f"{number}{'+' if number in changed else ':'} {lines[number - 1]}"
+                for number in range(low, high + 1)
+            )
+            sections.append(f"## {path}:{low}-{high}{heading}\n```text\n{redact_for_model(body)}\n```")
+    code = "\n\n".join(sections)
+    print(
+        f"Dottore question code: sections={len(sections)}; definitions={len(found)}; callees={callees}; "
+        f"chars={len(code)}" + ("; cut at the limit" if len(code) > MAX_QUESTION_CODE_CHARS else ""),
+        flush=True,
+    )
+    return truncate(code, MAX_QUESTION_CODE_CHARS)
+
+
+def pr_description(pr_num):
+    """The PR's title and description, or "" when gh cannot read them."""
+    if not pr_num:
+        return ""
+    result = run_gh(["pr", "view", pr_num, "--json", "title,body", "--jq", '.title + "\n\n" + .body'])
+    return truncate(redact_for_model(result.stdout.strip()), MAX_PR_DESCRIPTION_CHARS) if result.returncode == 0 else ""
+
+
+def question_bundle(base, pr_num):
+    """Lab stage: everything the question and answer passes read, built by code: the PR's description, the diff of
+    its files other than code and tests (docs, changelog, strings), the production code that decides it with its
+    changes marked (question_code), and where changed names are used."""
+    files = changed_files(base)
+    tests = [path for path in files if TEST_PATH_RE.search(path)]
+    touched = touched_lines(base)
+    seeds, _, sites = trace_seeds(touched)
+    other = [path for path in files if path not in tests and not path.endswith(CODE_SUFFIXES)]
+    patch = redact_for_model(run_git_raw(diff_command(base, "--find-renames", "--unified=3", paths=other))) if other else ""
+    description = pr_description(pr_num)
+    return (
+        f"# Pull Request\n{description or 'No description could be read.'}"
+        f"\n\n# Changed Files\n{chr(10).join(files)}"
+        + (f"\n\nTest files ({len(tests)}) are listed but not shown." if tests else "")
+        + (f"\n\n# Diff of Files Other Than Code\n```diff\n{truncate(patch, MAX_SECTION_CHARS)}\n```" if patch else "")
+        + f"\n\n# Code at the PR Head\n{QUESTION_CODE_NOTE}\n\n"
+        f"{question_code(touched, sites, removed_lines(base)) or 'No code could be quoted.'}"
+        f"\n\n# Uses Outside the Diff\nWhere each changed function, and each name declared on a changed line, is "
+        f"used outside the diff.\n\n{seeds or 'No named changes found.'}"
+    )
 
 
 SUBMIT_TRACE = function_tool(
@@ -3221,12 +3365,266 @@ def compare_routes(ctx):
         ctx.models[role] = base
 
 
-def replayed_claims(head_sha):
-    """Lab stage: the kept claims an earlier check run logged for this head, so another checker judges the same
-    claims and the comparison is free of claim-pass variance."""
-    claims = json.loads(pathlib.Path(__file__).with_name("lab-claims.json").read_text("utf-8")).get(head_sha)
+# ponytail: lab hypothesis (DOTTORE_LAB_STAGE=ask, then answer) that Haiku asks well and answers badly, and Opus
+# answers well when it is asked the right question with the deciding code in view. Haiku found 3382's line in every
+# run and never its outcome; claims anchored every checker to Haiku's failure. So code builds the bundle
+# (question_bundle), Haiku writes neutral questions with no verdict, each tied to what the PR promises, and Opus
+# traces each one, outcome first, in a few cached calls. Keep it only if a six-PR test shows the recall at a cost
+# under the bar; remove it with the lab.
+MAX_QUESTIONS = 8
+MAX_QUESTION_CHARS = 400
+MAX_ANSWER_GROUP = 4
+# Later groups wait for the first call to write the bundle into Claude's prompt cache, then read it.
+ANSWER_STAGGER_SECONDS = 20
+SUBMIT_QUESTIONS = function_tool(
+    "submit_questions",
+    "Submit the check questions, most consequential first. This ends the pass.",
+    {
+        "questions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": PATH_PARAM,
+                    "line": {
+                        "type": "integer",
+                        "description": "The line at the PR head where the input meets the code to check.",
+                    },
+                    "input": {
+                        "type": "string",
+                        "description": "One concrete input, item, reader, state or sequence of events to trace.",
+                    },
+                    "expected": {
+                        "type": "string",
+                        "description": "What should happen for that input and where that is promised: the PR "
+                        "description, a changed comment, a docs or changelog line, or the behavior before the change.",
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": "One neutral question asking what the code does for that input.",
+                    },
+                },
+                "required": ["path", "line", "input", "expected", "question"],
+            },
+        },
+    },
+    ["questions"],
+)
+ASK_SYSTEM = (
+    "You write the check questions for this pull request. A stronger model answers each one by tracing the code in "
+    "the bundle; you do not answer them, and a place you leave unasked is a defect nobody checks. You have no tools. "
+    "The bundle holds the PR's description, the diff of its files other than code, its production code quoted from "
+    "the PR head with changed lines marked, the definitions and same-file functions that code reads and calls, and "
+    "where changed names are used.\n\n"
+    f"Write at most {MAX_QUESTIONS} questions, most consequential first. Each names:\n"
+    "- path and line: the line at the PR head where the input meets the code to check, often unchanged code that the "
+    "change now feeds or relies on;\n"
+    "- input: one concrete input, item, reader, state or sequence of events;\n"
+    "- expected: what should happen for that input and where that is promised: cite the PR description, a changed "
+    "comment, a docs or changelog line, or say what the code did before the change;\n"
+    "- question: what the code does for that input, asked neutrally. Do not say or hint whether it is wrong.\n\n"
+    "Ask where changes break most often:\n"
+    "- a value converted, parsed or defaulted: zero, empty, missing, a string where a number is expected, a legacy or "
+    "disabled value;\n"
+    "- a promise in the description or a changed comment, docs or changelog line, at its boundary: the smallest or "
+    "largest input, an input at or past a limit or budget;\n"
+    "- a group whose members differ: one reader, character or item may see, own or pass what another may not;\n"
+    "- stored state that is replaced, reset, retried, reordered or repeated, such as A, then B, then A again;\n"
+    "- an await that rejects partway through, and what is then left undone;\n"
+    "- a caller, filter, check or parallel path, changed or not, that combines with the changed result or still "
+    "assumes the old behavior.\n"
+    "One question per place and input. Do not ask about tests, style, naming or wording. Finish by calling "
+    "submit_questions."
+)
+SUBMIT_ANSWERS = function_tool(
+    "submit_answers",
+    "Submit an answer to every question. This ends the pass.",
+    {
+        "answers": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "integer"},
+                    "outcome": {
+                        "type": "string",
+                        "description": "What the code does for the input, traced with line numbers to what the "
+                        "user, caller or stored state finally gets.",
+                    },
+                    "verdict": {"type": "string", "enum": ["defect", "fine", "uncertain"]},
+                    "severity": {"type": "string", "enum": ["blocking", "high", "medium", "low"]},
+                    "note": {
+                        "type": "string",
+                        "description": "For a defect: the input, the line where it goes wrong and what the code then "
+                        "does wrong. Otherwise why the outcome is right, or which code the answer needs.",
+                    },
+                    "evidence": EVIDENCE,
+                },
+                "required": ["question", "outcome", "verdict", "severity", "note", "evidence"],
+            },
+        },
+    },
+    ["answers"],
+)
+ANSWER_SYSTEM = (
+    "You answer check questions about a pull request by tracing its code. The bundle holds the PR's description, the "
+    "diff of its files other than code, and its production code quoted from the PR head with line numbers, changed "
+    "lines marked `+` and removed lines `-`, with the definitions and same-file functions that code reads and calls. "
+    "A cheaper model wrote the questions; each names a place, an input and what should happen. You have no tools; "
+    "trace in the bundle.\n\n"
+    "For each question:\n"
+    "1. Trace the input from the cited line through each call, condition and filter it reaches, changed or not, to "
+    "what the user, caller or stored state finally gets. Write that outcome first, citing lines.\n"
+    "2. Compare the outcome with what the PR promises (its description or a changed comment, docs or changelog line) "
+    "or, where it promises nothing, with what the code did before. A defect is a wrong outcome this PR introduces, "
+    "or one its change produces through older code, for a real input.\n"
+    "3. Give the verdict. defect: the trace shows such a wrong outcome, at the cited line or anywhere along the path; "
+    "write in `note` the input, the line where it goes wrong and what happens. fine: the outcome matches. uncertain: "
+    "only when the deciding code is not in the bundle; name it in `note`.\n\n"
+    "The question may expect the wrong thing or point near the problem rather than at it: answer what the code does, "
+    "not what the question suggests, and try the inputs next to the one asked, such as another member of the group, "
+    "the value one past a limit, or the call that rejects. A real defect counts even when it is minor or rare: give "
+    "it low severity rather than calling it fine. Severity: high for lost or leaked data or a broken core flow, "
+    "medium for wrong behavior a user would notice, low for minor or rare. For evidence, quote one to three lines "
+    "exactly as the bundle shows them, without the line-number prefix, with their path and line. Answer every "
+    "question, then call submit_answers once."
+)
+VERDICT_OF_ANSWER = {"defect": "confirmed", "fine": "rejected", "uncertain": "uncertain"}
+
+
+def pass_questions(submitted):
+    """The pass's valid questions, at most MAX_QUESTIONS; one without a line at the PR head or text is dropped."""
+    kept = []
+    for question in as_list(submitted.get("questions")):
+        if not isinstance(question, dict):
+            continue
+        try:
+            path = tool_path(question.get("path"))
+        except ValueError:
+            continue
+        line = question.get("line")
+        text = {
+            key: " ".join(redact_for_model(str(question.get(key) or "")).split())[:MAX_QUESTION_CHARS]
+            for key in ("input", "expected", "question")
+        }
+        if isinstance(line, bool) or not isinstance(line, int) or line <= 0 or not all(text.values()):
+            continue
+        if not head_line_exists(path, line):
+            continue
+        kept.append({"id": f"ask#{len(kept) + 1}", "path": path, "line": line, **text})
+        if len(kept) == MAX_QUESTIONS:
+            break
+    return kept
+
+
+def ask_questions(ctx, bundle):
+    """Lab stage: one cheap-model call writes the check questions from the bundle."""
+    submitted = run_agent(
+        ctx,
+        "hypo",
+        [{"role": "system", "content": ASK_SYSTEM}, {"role": "user", "content": f"# Bundle\n{bundle}"}],
+        SUBMIT_QUESTIONS,
+        0,
+        0,
+    )
+    questions = pass_questions(submitted)
+    for question in questions:
+        print(
+            f"Dottore question: {question['id']}; {question['path']}:{question['line']}; input={question['input']}; "
+            f"expected={question['expected']}; question={question['question']}",
+            flush=True,
+        )
+    print(
+        f"Dottore questions: submitted={len(as_list(submitted.get('questions')))}; valid={len(questions)}", flush=True
+    )
+    return questions
+
+
+def answer_group(ctx, bundle, group):
+    """One call answers a group of (number, candidate) questions after the bundle; returns {number: answer}."""
+    listed = "\n\n".join(
+        f"## Question {number}: `{candidate.path}:{candidate.line}`\n{candidate.body}\nQuestion: {candidate.title}"
+        for number, candidate in group
+    )
+    submitted = run_agent(
+        ctx,
+        "verify",
+        [
+            {"role": "system", "content": ANSWER_SYSTEM},
+            {"role": "user", "content": f"# Bundle\n{bundle}"},
+            {"role": "user", "content": f"# Questions\n{listed}"},
+        ],
+        SUBMIT_ANSWERS,
+        0,
+        0,
+    )
+    answers = {}
+    for answer in as_list(submitted.get("answers")):
+        if isinstance(answer, dict) and isinstance(answer.get("question"), int):
+            answers.setdefault(answer["question"], answer)
+    return answers
+
+
+def answer_questions(ctx, bundle, questions, mode, pool):
+    """Lab stage: the checker answers the questions in groups of at most MAX_ANSWER_GROUP, one call each, every call
+    reading the same cached bundle. Answers are logged like the checker's verdicts, a defect as confirmed."""
+    reserve_verify_time(ctx)
+    findings = [
+        {
+            "severity": "medium",
+            "path": question["path"],
+            "line": question["line"],
+            "title": question["question"],
+            "body": f"Input: {question['input']}\nExpected: {question['expected']}",
+            "segment": question["id"],
+        }
+        for question in questions
+    ]
+    candidates, _, invalid = validate_review_items({"findings": findings, "mode": mode}, ctx.base)
+    for reason in invalid:
+        print(f"Dottore question not answered: {reason}", flush=True)
+    numbered = list(enumerate(candidates, 1))
+    size = -(-len(numbered) // -(-len(numbered) // MAX_ANSWER_GROUP)) if numbered else 1
+    groups = [numbered[start : start + size] for start in range(0, len(numbered), size)]
+    futures = [
+        pool.submit(staggered, ANSWER_STAGGER_SECONDS if index else 0, answer_group, ctx, bundle, group)
+        for index, group in enumerate(groups)
+    ]
+    counts = dict.fromkeys(("candidates", "confirmed", "rejected", "uncertain", "unverified", "failed"), 0)
+    counts["candidates"] = len(candidates)
+    for group, future in zip(groups, futures):
+        try:
+            answers = future.result()
+        except Exception as exc:
+            print(f"Dottore answer group failed: questions={[number for number, _ in group]}; {error_text(exc)}", flush=True)
+            counts["failed"] += len(group)
+            continue
+        for number, candidate in group:
+            answer = answers.get(number)
+            if not isinstance(answer, dict):
+                outcome, finding, note = "unverified", candidate, ""
+            else:
+                verdict = {**answer, "verdict": VERDICT_OF_ANSWER.get(str(answer.get("verdict", "")).strip().lower(), "")}
+                outcome, finding, note, _ = judge(ctx, candidate, verdict)
+                print(
+                    f"Dottore answer: q{number}; {finding.segment}; outcome={' '.join(str(answer.get('outcome') or '').split())}",
+                    flush=True,
+                )
+            counts[outcome] += 1
+            print(
+                f"Dottore candidate: {outcome}; found_by={finding.segment}; {finding.severity}; "
+                f"{finding.path}:{finding.line}; {finding.title[:120]}; note={note}",
+                flush=True,
+            )
+    ctx.stats["verification"] = counts
+
+
+def replayed_claims(head_sha, name="lab-claims.json"):
+    """Lab stage: the kept claims (or, from lab-questions.json, questions) an earlier run logged for this head, so
+    another checker judges the same ones and the comparison is free of claim-pass variance."""
+    claims = json.loads(pathlib.Path(__file__).with_name(name).read_text("utf-8")).get(head_sha)
     if not claims:
-        raise RuntimeError(f"lab-claims.json has no claims for {head_sha}")
+        raise RuntimeError(f"{name} has no entries for {head_sha}")
     print(f"Dottore claims replayed: {len(claims)} from run {claims[0]['source_run']}", flush=True)
     return claims
 
@@ -4860,6 +5258,24 @@ def produce_review(args):
             write_skipped_review(
                 "Lab Routes Only",
                 "DOTTORE_LAB_STAGE=routes: one small prompt went through each Claude route; nothing was reviewed.",
+                metadata={"head_sha": head_sha, "review_base": base, "base_ref": base_ref, "mode": effective_mode},
+            )
+            print_telemetry(stats)
+            return
+        if lab_stage in ("ask", "answer", "askanswer"):
+            # ponytail: lab stages for the question design: Haiku's questions alone ("ask"), Opus answering an earlier
+            # run's questions from lab-questions.json ("answer"), or both ("askanswer"); nothing is published.
+            bundle = question_bundle(base, pr_num)
+            print(f"Dottore bundle: chars={len(bundle)}", flush=True)
+            with ThreadPoolExecutor(max_workers=review_concurrency()) as pool:
+                questions = (
+                    replayed_claims(head_sha, "lab-questions.json") if lab_stage == "answer" else ask_questions(ctx, bundle)
+                )
+                if lab_stage != "ask":
+                    answer_questions(ctx, bundle, questions, effective_mode, pool)
+            write_skipped_review(
+                "Lab Questions Only",
+                f"DOTTORE_LAB_STAGE={lab_stage}: the code-built bundle and the question stages ran; nothing was published.",
                 metadata={"head_sha": head_sha, "review_base": base, "base_ref": base_ref, "mode": effective_mode},
             )
             print_telemetry(stats)
