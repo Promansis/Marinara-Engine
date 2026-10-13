@@ -3107,9 +3107,7 @@ def raise_claims(ctx, packets, pool):
 # filtering what it admits, which a check bounded to the line and its callees rejected; following the result, the
 # checker read allowed() but never tried sources one present reader may see and another may not, hence the
 # members-differ input. Keep this only if a multi-run test shows it at a checker cost under the bar. A re-diagnosed
-# confirmation keeps the claim's title, so publishing one would take its defect from the note. The validity/severity
-# paragraph tests whether Opus stops rejecting a mechanism it agrees is real as intended or minor: it named 7288's
-# 518 mechanism and rejected it in five judge runs, citing the documented rule or calling it inert.
+# confirmation keeps the claim's title, so publishing one would take its defect from the note.
 CLAIM_CHECK = (
     "# Claim Check\n"
     "These candidates come from a cheaper model's claim pass. Its line is often at or near a real defect while its "
@@ -3126,14 +3124,7 @@ CLAIM_CHECK = (
     "it calls or in code that uses its result, confirm the candidate and write the defect you found in `note`: the "
     "input, the line where it goes wrong and what the code then does wrong. For these candidates this replaces "
     "\"do not raise new findings\". Reject a candidate only when its path has no defect this PR introduced; several "
-    "candidates may share one defect, and each that does is confirmed.\n\n"
-    "Validity and severity are separate questions. A candidate whose failure can happen for some input or sequence "
-    "of events a user or caller can produce is confirmed, with severity `low` when the harm is small, rare or "
-    "recoverable; reject it only when the code shows the failure cannot happen. A code comment, docstring or "
-    "CHANGELOG line that describes the behavior records the author's intent, not that the behavior is right, so it "
-    "never rejects a candidate by itself; a path rule can. Before calling a real mechanism harmless, follow it "
-    "through the next event that reads its result, such as a later regeneration, swipe, edit or reload, and confirm "
-    "it when that event shows the user a wrong or stale value."
+    "candidates may share one defect, and each that does is confirmed."
 )
 
 
