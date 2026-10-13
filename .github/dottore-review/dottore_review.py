@@ -3107,10 +3107,7 @@ def raise_claims(ctx, packets, pool):
 # filtering what it admits, which a check bounded to the line and its callees rejected; following the result, the
 # checker read allowed() but never tried sources one present reader may see and another may not, hence the
 # members-differ input. Keep this only if a multi-run test shows it at a checker cost under the bar. A re-diagnosed
-# confirmation keeps the claim's title, so publishing one would take its defect from the note. The stated-intent
-# paragraph tests whether Opus confirms a break of the PR's own promise: 7288's applyManualEdits docstring says a
-# tracker run that changes a field retires the edit, yet A->B->A revives it (518), and Opus read the value-matching
-# implementation as the rule in six judge runs. A rule discounting comments instead confirmed intended behavior.
+# confirmation keeps the claim's title, so publishing one would take its defect from the note.
 CLAIM_CHECK = (
     "# Claim Check\n"
     "These candidates come from a cheaper model's claim pass. Its line is often at or near a real defect while its "
@@ -3127,13 +3124,7 @@ CLAIM_CHECK = (
     "it calls or in code that uses its result, confirm the candidate and write the defect you found in `note`: the "
     "input, the line where it goes wrong and what the code then does wrong. For these candidates this replaces "
     "\"do not raise new findings\". Reject a candidate only when its path has no defect this PR introduced; several "
-    "candidates may share one defect, and each that does is confirmed.\n\n"
-    "The PR's stated intent is the spec: the CHANGELOG lines, docstrings and comments shown for the changed code, "
-    "including a limit it declares on purpose, such as a `ponytail:` comment. Read each stated rule for what it "
-    "promises, not for how the code implements it. Confirm a candidate when some input or sequence of events a user "
-    "or caller can produce makes the code break that promise, even when the code's own mechanism explains how; a "
-    "real deviation with small harm is still confirmed, with severity `low`. Reject a candidate whose behavior is "
-    "what the stated intent describes."
+    "candidates may share one defect, and each that does is confirmed."
 )
 
 
