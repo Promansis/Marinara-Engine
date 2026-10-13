@@ -1381,6 +1381,8 @@ def openai_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         "stream_options": {"include_usage": True},
         "timeout": openai.Timeout(read_timeout, connect=30),
     }
+    if not tools:
+        del request["tools"], request["tool_choice"]
     if settings["effort"]:
         request["reasoning_effort"] = settings["effort"]
     if settings.get("max_tokens"):
@@ -1455,6 +1457,8 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         "tool_choice": {"type": "auto"},
         "timeout": anthropic.Timeout(read_timeout, connect=30),
     }
+    if not tools:
+        del request["tools"], request["tool_choice"]
     if settings["effort"]:
         # OpenRouter passes effort to Claude unchanged only beside a thinking field. Alone, it becomes OpenRouter's
         # own reasoning setting, under which Haiku thought until the output cap on every first call.
@@ -3146,6 +3150,37 @@ def check_claims(ctx, claims, mode, pool, at_once=False):
     ctx.stats["verification"] = counts
 
 
+# ponytail: lab stage (DOTTORE_LAB_STAGE=routes) for whether a gateway inflates Claude's thinking. On LinkAPI, Opus
+# thought 20-24k tokens on one judge call at low and medium effort, more than the user has seen from Claude Code at
+# xhigh. One small question goes through each route the roles name (LinkAPI's Claude format as verify, its OpenAI
+# format as finder, OpenRouter as hypo) at each effort; the call log records tokens and timing. Remove with the lab.
+ROUTE_ROLES = ("verify", "finder", "hypo")
+ROUTE_EFFORTS = ("low", "high")
+ROUTE_PROMPT = (
+    "def last_n(items, n):\n    return items[-n:]\n\n"
+    "What does last_n([1, 2, 3], 0) return, and why? Answer in two sentences."
+)
+
+
+def compare_routes(ctx):
+    """Lab stage: the small prompt through each route at each effort, logging each answer."""
+    for role in ROUTE_ROLES:
+        base = ctx.models[role]
+        for effort in ROUTE_EFFORTS:
+            ctx.models[role] = {**base, "effort": effort}
+            try:
+                message = chat(ctx, role, [{"role": "user", "content": ROUTE_PROMPT}], [], "auto")
+                answer = " ".join((message.content or "").split())[:300]
+                print(
+                    f"Dottore route: role={role}; provider={base['provider']}; model={base['model']}; "
+                    f"effort={effort}; capped={getattr(message, 'capped', False)}; answer={answer}",
+                    flush=True,
+                )
+            except Exception as exc:
+                print(f"Dottore route failed: role={role}; effort={effort}; {error_text(exc)[:300]}", flush=True)
+        ctx.models[role] = base
+
+
 def replayed_claims(head_sha):
     """Lab stage: the kept claims an earlier check run logged for this head, so another checker judges the same
     claims and the comparison is free of claim-pass variance."""
@@ -4780,6 +4815,15 @@ def produce_review(args):
             cache_key=f"dottore-{os.environ.get('GITHUB_REPOSITORY', 'local')}-{pr_num or head_sha[:12]}",
         )
         lab_stage = os.environ.get("DOTTORE_LAB_STAGE", "").strip().lower()
+        if lab_stage == "routes":
+            compare_routes(ctx)
+            write_skipped_review(
+                "Lab Routes Only",
+                "DOTTORE_LAB_STAGE=routes: one small prompt went through each Claude route; nothing was reviewed.",
+                metadata={"head_sha": head_sha, "review_base": base, "base_ref": base_ref, "mode": effective_mode},
+            )
+            print_telemetry(stats)
+            return
         # ponytail: one trace covers every chunk and is appended to each; trace per chunk if large PRs need it.
         # The claim passes get only what code builds, with no tracer model before them.
         blast_radius = trace_blast_radius(ctx, llm=lab_stage not in ("hypo", "check", "replay", "judge"))
