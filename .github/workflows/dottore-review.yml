@@ -168,7 +168,60 @@ jobs:
           git checkout --detach "$HEAD_SHA"
           echo "PR_HEAD_SHA=$HEAD_SHA" >> "$GITHUB_ENV"
 
+      # Lab only: Anthropic's built-in /code-review in an unmodified Claude Code CLI, read-only, through the shared
+      # ANTHROPIC_* endpoint (LinkAPI). It prints the transcript and cost to the log and skips Dottore's own steps.
+      # --max-budget-usd counts at Anthropic list prices, about 3x LinkAPI's, so 1.50 stops near $0.50 at LinkAPI.
+      - name: Lab Claude Code review
+        if: vars.DOTTORE_LAB_STAGE == 'claudecode'
+        timeout-minutes: 30
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+          ANTHROPIC_DEFAULT_OPUS_MODEL: claude-opus-5-5
+          ANTHROPIC_DEFAULT_SONNET_MODEL: claude-sonnet-5-5
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: claude-haiku-5-5
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+          DISABLE_AUTOUPDATER: "1"
+          CC_MODEL: claude-opus-5-5
+          CC_EFFORT: medium
+          CC_BUDGET_LIST_USD: "1.50"
+        run: |
+          npm install -g --no-fund --no-audit @anthropic-ai/claude-code@2.1.296 >/dev/null
+          echo "Dottore lab claude version: $(claude --version)"
+          # Read-only: --restricted ignores settings files and project hooks and confines file tools to the checkout;
+          # --tools leaves Read, Grep, Glob and Bash, and dontAsk refuses any command not listed (git inspection only).
+          cat > "$RUNNER_TEMP/cc-settings.json" <<'JSON'
+          {
+            "permissions": {
+              "allow": ["Read", "Grep", "Glob",
+                "Bash(git diff)", "Bash(git diff *)", "Bash(git log)", "Bash(git log *)", "Bash(git show *)",
+                "Bash(git merge-base *)", "Bash(git rev-parse *)", "Bash(git blame *)",
+                "Bash(git status)", "Bash(git status *)", "Bash(git ls-files *)"],
+              "deny": ["Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch",
+                "Bash(git diff --no-index *)", "Bash(git diff --output*)", "Bash(git log --output*)",
+                "Read(//proc/**)", "Read(//sys/**)", "Read(//etc/**)", "Read(//tmp/**)",
+                "Read(//home/runner/.*)", "Read(//home/runner/.*/**)", "Read(//home/runner/work/_temp/**)"]
+            }
+          }
+          JSON
+          rc=0
+          claude -p "/code-review origin/$PR_BASE_REF...HEAD" --restricted --strict-mcp-config --tools Read,Grep,Glob,Bash --model "$CC_MODEL" --effort "$CC_EFFORT" \
+            --max-budget-usd "$CC_BUDGET_LIST_USD" --permission-mode dontAsk --settings "$RUNNER_TEMP/cc-settings.json" \
+            --output-format stream-json --verbose --no-session-persistence > "$RUNNER_TEMP/cc-stream.jsonl" || rc=$?
+          echo "Dottore lab claude exit=$rc lines=$(wc -l < "$RUNNER_TEMP/cc-stream.jsonl")"
+          jq -r '(if .parent_tool_use_id then "CC[sub] " else "CC " end) as $p |
+            if .type == "system" then $p + "system: " + (.subtype // "") + " model=" + (.model // "") + " tools=" + ((.tools // []) | join(","))
+            elif .type == "assistant" then (.message.content[]? |
+              if .type == "text" then $p + "text: " + .text
+              elif .type == "tool_use" then $p + "tool: " + .name + " " + (.input | tostring | .[0:400])
+              else empty end)
+            elif .type == "user" then (.message.content[]? | select(type == "object" and .type == "tool_result" and .is_error == true)
+              | $p + "tool error: " + (.content | tostring | .[0:300]))
+            elif .type == "result" then "CC result: " + (del(.result) | tostring) + "\nCC final:\n" + (.result // "")
+            else empty end' "$RUNNER_TEMP/cc-stream.jsonl" || true
+
       - name: Mark Dottore status in progress
+        if: vars.DOTTORE_LAB_STAGE != 'claudecode'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -178,6 +231,7 @@ jobs:
             -f description="The specimen is on Dottore's observation table. Examination in progress." >/dev/null
 
       - name: Run Dottore review
+        if: vars.DOTTORE_LAB_STAGE != 'claudecode'
         timeout-minutes: 35
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -211,17 +265,19 @@ jobs:
         run: python /tmp/dottore-review-tool/dottore_review.py produce
 
       - name: Render review
+        if: vars.DOTTORE_LAB_STAGE != 'claudecode'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python /tmp/dottore-review-tool/dottore_review.py render
 
       - name: Post the review
+        if: vars.DOTTORE_LAB_STAGE != 'claudecode'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python /tmp/dottore-review-tool/dottore_review.py post
 
       - name: Complete Dottore status
-        if: always()
+        if: always() && vars.DOTTORE_LAB_STAGE != 'claudecode'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           JOB_STATUS: ${{ job.status }}
