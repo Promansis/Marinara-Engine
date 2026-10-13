@@ -208,7 +208,9 @@ PROVIDERS = ("openai", "anthropic", "responses")
 # Claude requires an output cap; it covers thinking and the reply, and every current model allows it.
 CLAUDE_MAX_TOKENS = 32_000
 TASK_BUDGET_BETA = "task-budgets-2026-03-13"
-MAX_THINKING_LOG_CHARS = 8_000
+# ponytail: lab diagnostic that logs a thinking role's whole summary to see what the claim pass thinks about;
+# drop it with the summarized display below once that is answered.
+MAX_THINKING_LOG_CHARS = 400_000
 # A budgeted pass's reads are counted at this many characters a token, a little high for code.
 CHARS_PER_TOKEN = 3
 CACHE_BREAKPOINT = {"type": "ephemeral"}
@@ -1430,8 +1432,8 @@ def claude_messages(messages):
 
 
 def shows_thinking(settings):
-    """A budgeted Claude role, or a thinking one under a lab output cap, logs a summary of its thinking."""
-    return bool(settings.get("task_budget") or (settings.get("effort") and settings.get("max_tokens")))
+    """Every thinking Claude role logs a summary of its thinking (lab diagnostic; see MAX_THINKING_LOG_CHARS)."""
+    return bool(settings.get("task_budget") or settings.get("effort"))
 
 
 def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing):
