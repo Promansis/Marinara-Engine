@@ -32,11 +32,6 @@ MAX_SEARCH_HITS = 30
 # fallback still skips files over MAX_SEARCH_FILE_BYTES.
 MAX_SEARCH_FILE_BYTES = 5_000_000
 MAX_SEARCH_LINE_CHARS = 1_000
-# Every finder turn resends the packet, so it carries the change, a few nearby lines and a short
-# usage sample; agents read_file and search_repo for more. Wider context mostly diluted the change.
-MAX_IDENTIFIER_CONTEXT_CHARS = 12_000
-MAX_IDENTIFIER_TERMS = 12
-MAX_IDENTIFIER_HITS_PER_TERM = 6
 DIFF_CONTEXT_LINES = 8
 MAX_FILE_PATCH_CHARS = 55_000
 MAX_FILE_SUMMARY_CHARS = 9_000
@@ -56,46 +51,59 @@ MODEL_STREAM_LIMIT = 900
 MODEL_MAX_RETRIES = 1
 # Waits before resending a call that hit a transient gateway error (unavailable, overloaded, cut stream).
 RETRY_DELAYS = (15, 45)
-REVIEW_ROLES = ("trace", "broad", "skeptic", "verify")
-FINDER_ROLES = ("broad", "skeptic")
-# A cheaper model traces the diff's blast radius before the finders run; the code quotes what it picks.
-# ponytail: lab default for the tracer A/B; DOTTORE_MODELS "trace" overrides it until it earns a setting.
-TRACE_MODEL = {"model": "gpt-6.1-sol", "effort": "medium"}
-TRACE_TOOL_BUDGET = 12
-TRACE_TOOL_CHARS = 48_000
-MAX_TRACE_SEEDS = 40
+# The finder proposes claims at changed lines, the asker proposes check questions from the bundle alone, and the
+# checker ("verify") judges both against the code.
+REVIEW_ROLES = ("finder", "asker", "verify")
 MAX_SEED_HITS_PER_NAME = 10
+MAX_TRACE_SEEDS = 40
 MAX_SEED_CHARS = 12_000
-MAX_TRACE_LOCATIONS = 12
-MAX_TRACE_LOCATION_LINES = 60
-MAX_BLAST_RADIUS_CHARS = 24_000
-# Definitions of the local values the change reads, quoted by code so the finders always see them.
+# Definitions of the local values the change reads, quoted by code.
 MAX_DEFINITIONS = 40
 MAX_DEFINITION_LINES = 8
-MAX_DEFINITION_CHARS = 10_000
 DEFINITION_HOPS = 2
 SITE_LINES_AFTER = 2
 CODE_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".rs", ".go", ".java", ".kt", ".swift")
-SEGMENT_LABELS = {
-    "broad": "Broad segment",
-    "skeptic": "Skeptical segment",
+# The bundle quotes, per packet, each change with this many lines either side, the named block around it in full when
+# it is short, the definitions it reads and the same-file functions that code calls, CALL_HOPS deep.
+BUNDLE_WINDOW = DIFF_CONTEXT_LINES
+BUNDLE_CALL_HOPS = 2
+MAX_CHANGED_BLOCK_LINES = 150
+MAX_CALLEE_LINES = 60
+MAX_BUNDLE_CODE_CHARS = 160_000
+MAX_PR_DESCRIPTION_CHARS = 4_000
+# Per-role defaults; DOTTORE_MODELS overrides any of them (README.md). The finder's reads are nominal: MAX_TOOL_LINES and
+# MAX_TOOL_CHARS bound each read, the time box keeps the checker's share of the review deadline, and the character
+# total only guards the context window. The checker stops once it has a verdict, so its cap only guards runaway reads.
+ROLE_DEFAULTS = {
+    "finder": {"reads": 100, "chars": 400_000, "minutes": 15, "max_tokens": 32_000},
+    "asker": {"effort": "low", "reads": 0, "chars": 0, "minutes": 10, "max_tokens": 32_000, "questions": 8},
+    "verify": {"reads": 20, "chars": 96_000, "max_tokens": 32_000},
 }
-# ponytail: lab hypothesis that the call cap stops finders before they find the bug. MAX_TOOL_LINES and
-# MAX_TOOL_CHARS bound each read; the call count is nominal, the time box keeps the checker's share of
-# the review deadline, and the character total only guards the context window.
-FINDER_TOOL_BUDGET = 100
-FINDER_DEADLINE_SECONDS = 15 * 60
-# The skeptic starts this long after the broad segment, so its first call can reuse the packet prefix
-# the broad call has just cached instead of both paying for it in full.
+# DOTTORE_COST_LIMIT_USD stops a review's model calls once it has spent that much (calls in flight still finish).
+# Prices are per 1M tokens in USD: input, cached input, output and, for Claude, a 5-minute cache write. A model not
+# listed counts at the dearest rates, so an unknown model reaches the limit early rather than late.
+# ponytail: LinkAPI's and OpenRouter's lab prices; a maintainer on other endpoints would set their own table.
+MODEL_PRICES_USD = {
+    "gpt-6-astra": (0.4286, 0.04286, 2.143),
+    "gpt-6.1-sol": (0.2857, 0.01143, 1.143),
+    "gpt-6-luna": (0.005357, 0.0004286, 0.02143),
+    "anthropic/claude-haiku-5.5": (0.10, 0.01, 0.50),
+    "claude-haiku-5-5": (0.03286, 0.003286, 0.1643, 0.04107),
+    "claude-sonnet-5-5": (0.6571, 0.03286, 3.286, 0.8214),
+    "claude-opus-5-5": (1.314, 0.06571, 6.571, 1.643),
+}
+# A checker judging several candidates gets this much more per extra candidate.
+VERIFIER_READS_PER_EXTRA = 1
+VERIFIER_CHARS_PER_EXTRA = 6_000
+# The last part of the review deadline belongs to the checker: finders submit before it starts.
+CHECKER_RESERVE_SECONDS = 8 * 60
+# A second finder per packet starts this long after the first, so its first call can reuse the prefix the first has
+# just cached instead of both paying for it in full.
 FINDER_STAGGER_SECONDS = 8
-# The checker gets the finders' ceilings: it stops once it has a verdict, so the cap only guards against
-# runaway reads, and a tight one left real bugs uncertain when their cause spanned several sections.
-VERIFIER_TOOL_BUDGET = 20
-# Each agent also has a tool-output budget, since every later turn resends its tool results.
-# Verifiers get their own, so finders can never starve verification.
-FINDER_TOOL_CHARS = 400_000
-VERIFIER_TOOL_CHARS = 96_000
-VERIFIER_TOOL_CHARS_PER_EXTRA = 6_000
+MAX_FINDERS = 2
+MAX_QUESTION_CHARS = 400
+# A role whose calls fail this many times in a row stops the review before it spends more.
+MAX_ROLE_FAILURES = 3
 MAX_SUBMIT_ATTEMPTS = 3
 # Every later turn resends a tool result, so reads are kept to a section.
 MAX_TOOL_LINES = 120
@@ -109,8 +117,6 @@ EVIDENCE_WINDOW = 3
 # Each role talks to OpenAI's Chat Completions format or Claude's Messages format; gateways such as
 # LinkAPI serve Claude only through the latter when tools are used.
 PROVIDERS = ("openai", "anthropic")
-# Claude requires an output cap; it covers thinking and the reply, and every current model allows it.
-CLAUDE_MAX_TOKENS = 32_000
 CACHE_BREAKPOINT = {"type": "ephemeral"}
 DEFAULT_CONCURRENCY = 4
 MAX_CONCURRENCY = 16
@@ -140,6 +146,11 @@ class Finding:
     repair_contract: dict | None = None
     side: str = "RIGHT"
     segment: str = ""
+    # "claim" from the finder or "question" from the asker; the checker settles both.
+    kind: str = "claim"
+    # A confirmed defect the checker placed on a line the PR did not change: walkthrough only, never inline.
+    outside_diff: bool = False
+    packet: int = 0
 
 
 def _safe_path(rel: str) -> pathlib.Path:
@@ -246,7 +257,7 @@ def read_text(path, limit=MAX_SECTION_CHARS):
 
 
 def search_repo(pattern, code=False):
-    """Literal search; code=True matches whole identifiers in code files, sorted by path so the tracer's seeds repeat."""
+    """Literal search; code=True matches whole identifiers in code files, sorted by path so the bundle repeats."""
     if not pattern or len(pattern) > 120:
         return "refused: search pattern must be 1-120 characters"
     if not shutil.which("rg"):
@@ -314,7 +325,7 @@ def search_repo_with_python(pattern, code=False):
             if path.stat().st_size > MAX_SEARCH_FILE_BYTES:
                 continue
             rel = path.relative_to(REPO_ROOT)
-            # rg skips hidden folders such as .agents/ (tooling, not product code); keep the tracer's seeds the same.
+            # rg skips hidden folders such as .agents/ (tooling, not product code); keep the bundle the same.
             if excluded_path(rel.as_posix()) or (code and any(part.startswith(".") for part in rel.parts)):
                 continue
             text = path.read_text("utf-8", "replace")
@@ -330,79 +341,9 @@ def search_repo_with_python(pattern, code=False):
     return "\n".join(hits) or "no matches"
 
 
-def search_repo_hits(pattern, max_hits):
-    result = search_repo(pattern)
-    if result == "no matches" or result.startswith("refused:"):
-        return []
-    return result.splitlines()[:max_hits]
-
-
-def extract_changed_identifiers(patch):
-    stop_words = {
-        "true",
-        "false",
-        "null",
-        "none",
-        "some",
-        "string",
-        "value",
-        "json",
-        "expect",
-        "should",
-        "test",
-        "result",
-        "state",
-        "data",
-        "content",
-        "message",
-        "messages",
-        "chat",
-        "chats",
-        "role",
-        "rows",
-        "row",
-        "import",
-        "imported",
-        "storage",
-        "create",
-        "get",
-        "list",
-        "id",
-    }
-    counts = {}
-    for line in patch.splitlines():
-        if not line.startswith(("+", "-")) or line.startswith(("+++", "---")):
-            continue
-        for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]{3,}", line):
-            if token.lower() in stop_words:
-                continue
-            counts[token] = counts.get(token, 0) + 1
-    preferred = sorted(
-        counts,
-        key=lambda token: (
-            not any(char.isupper() for char in token) and "_" not in token,
-            -counts[token],
-            token.lower(),
-        ),
-    )
-    return preferred[:MAX_IDENTIFIER_TERMS]
-
-
-def build_identifier_context(patch):
-    terms = extract_changed_identifiers(patch)
-    sections = []
-    for term in terms:
-        hits = search_repo_hits(term, MAX_IDENTIFIER_HITS_PER_TERM)
-        if not hits:
-            continue
-        sections.append(f"### {term}\n" + "\n".join(hits))
-    if not sections:
-        return "No changed identifier usage context found."
-    return truncate("\n\n".join(sections), MAX_IDENTIFIER_CONTEXT_CHARS)
-
-
 def diff_command(base, *options, paths=None):
-    command = ["diff", *options, f"{base}...HEAD"]
+    """A git diff from the review base, a commit HEAD descends from or one built by own_changes_base, to HEAD."""
+    command = ["diff", *options, base, "HEAD"]
     if paths is not None:
         command.extend(["--", *paths])
     return command
@@ -415,7 +356,7 @@ def excluded_path(path):
 
 def changed_files(base, excluded=False):
     """Changed paths the review reads, or with excluded=True the changed paths rules.json excludes."""
-    names = run_git(["diff", "--find-renames", "--name-status", f"{base}...HEAD"])
+    names = run_git(diff_command(base, "--find-renames", "--name-status"))
     patterns = load_rules().get("exclude_paths", [])
     paths = []
     for line in names.splitlines():
@@ -547,91 +488,162 @@ def matching_path_rules(files):
 
 def diff_for_path(base, path):
     return redact_for_model(
-        run_git_raw(["diff", "--find-renames", f"--unified={DIFF_CONTEXT_LINES}", f"{base}...HEAD", "--", path])
+        run_git_raw(diff_command(base, "--find-renames", f"--unified={DIFF_CONTEXT_LINES}", paths=[path]))
     )
 
 
-def build_file_context(base, files):
-    sections = []
-    for path in files:
-        patch = diff_for_path(base, path)
-        if not patch:
-            continue
-        if len(patch) <= MAX_FILE_PATCH_CHARS:
-            sections.append(f"### {path}\n```diff\n{patch}\n```")
-            continue
-        sections.append(
-            "### "
-            + path
-            + "\n```text\n"
-            + truncate(run_git(diff_command(base, "--stat", paths=[path]), 2_000), 2_000)
-            + truncate(patch, MAX_FILE_SUMMARY_CHARS)
-            + "\n```"
-        )
-    return "\n\n".join(sections) or "No per-file patch context found."
+BUNDLE_NOTE = (
+    "Built by code from the PR head. It holds the PR description; the changed files, the diff stat, the path rules "
+    "and a guidance index by heading; the production code with changed lines marked `+` after the line number and "
+    "removed lines shown unnumbered with `-` where they stood, each change with the code around it and its enclosing "
+    "function when short, where the values the changed lines read are defined, and the same-file functions that code "
+    "calls, two calls deep; where each changed function and each name declared on a changed line is used outside the "
+    "diff; and the diff of files other than code (docs, changelog, strings). Test files are listed, not shown."
+)
 
 
-def build_review_packet(base, mode, focus_files=None, include_full_patch=True):
-    files = changed_files(base)
-    context_files = focus_files or files
-    if focus_files is None or include_full_patch:
-        patch = (
-            redact_for_model(
-                run_git_raw(
-                    diff_command(base, "--find-renames", f"--unified={DIFF_CONTEXT_LINES}", paths=files)
-                )
+def pr_description(pr_num):
+    """The PR's title and description, or "" when gh cannot read them."""
+    if not pr_num:
+        return ""
+    result = run_gh(["pr", "view", pr_num, "--json", "title,body", "--jq", '.title + "\\n\\n" + .body'])
+    return truncate(redact_for_model(result.stdout.strip()), MAX_PR_DESCRIPTION_CHARS) if result.returncode == 0 else ""
+
+
+def removed_lines(base):
+    """The PR's removed lines by path and the head line they stood before: {path: {line: [text, ...]}}."""
+    removed, path, line = {}, None, None
+    for text in run_git_raw(diff_command(base, "--find-renames", "--unified=0")).splitlines():
+        if text.startswith("diff --git "):
+            path = line = None
+        elif line is None and text.startswith("+++ "):
+            path = text.removeprefix("+++ b/") if text.startswith("+++ b/") else None
+        elif match := re.match(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", text):
+            # A hunk that adds nothing names the head line before the removal.
+            line = int(match.group(1)) + (match.group(2) == "0")
+        elif path and line is not None and text.startswith("-"):
+            removed.setdefault(path, {}).setdefault(line, []).append(text[1:])
+        elif line is not None and text.startswith("+"):
+            line += 1
+    return removed
+
+
+# ponytail: same-file and by name only. A call through an import or an overload is not followed; the finder and the
+# checker read those with their tools, and a language server would resolve them properly.
+def bundle_code(touched, sites, removed):
+    """The production code that decides the change, quoted per file from the PR head with changed lines marked: each
+    change with BUNDLE_WINDOW lines either side and its short enclosing block, the definitions value_definitions
+    follows, and the same-file functions any of that calls, BUNDLE_CALL_HOPS deep. Files in path order, cut at the
+    limit."""
+    try:
+        found = value_definitions(touched, sites)
+    except Exception as exc:
+        print(f"Dottore definitions failed: {error_text(exc)}", flush=True)
+        found = []
+    definitions = {}
+    for path, start, end, name, read_at in found:
+        definitions.setdefault(path, []).append((start, end, f"`{name}` defined, read at line {read_at}"))
+    sections, callees = [], 0
+    for path in sorted(set(touched) | set(definitions)):
+        if not path.endswith(CODE_SUFFIXES) or TEST_PATH_RE.search(path):
+            continue
+        try:
+            lines = head_file_text(path).splitlines()
+        except Exception:
+            continue
+        changed = {number for number in touched.get(path, {}).get("RIGHT", ()) if number <= len(lines)}
+        gone = removed.get(path, {})
+        ranges = list(definitions.get(path, ()))
+        for number in sorted(changed | {line for line in gone if line <= len(lines)}):
+            ranges.append((max(1, number - BUNDLE_WINDOW), min(len(lines), number + BUNDLE_WINDOW), ""))
+            block = enclosing_block(lines, number)
+            if block:
+                end = statement_end(lines, block[1], MAX_CHANGED_BLOCK_LINES + 1)
+                if number <= end < block[1] + MAX_CHANGED_BLOCK_LINES:
+                    ranges.append((block[1], end, ""))
+        if not ranges:
+            continue
+        declared = declared_names(lines)
+        frontier = [(low, high) for low, high, _ in ranges]
+        for _ in range(BUNDLE_CALL_HOPS):
+            calls = []
+            for low, high in frontier:
+                for number in range(low, high + 1):
+                    for match in CALLED_NAME_RE.finditer(lines[number - 1].split("//")[0]):
+                        head = declared.get(match.group(1))
+                        if head is None or any(start <= head <= end for start, end, _ in ranges):
+                            continue
+                        end = statement_end(lines, head, MAX_CALLEE_LINES)
+                        ranges.append((head, end, f"`{match.group(1)}`, called at line {number}"))
+                        calls.append((head, end))
+            callees += len(calls)
+            frontier = calls
+        merged = []
+        for low, high, label in sorted(ranges):
+            if merged and low <= merged[-1][1] + 1:
+                merged[-1][1] = max(high, merged[-1][1])
+                merged[-1][2].append(label)
+            else:
+                merged.append([low, high, [label]])
+        for low, high, labels in merged:
+            named = list(dict.fromkeys(label for label in labels if label))
+            heading = f" ({'; '.join(named[:4])}{'; ...' if len(named) > 4 else ''})" if named else ""
+            body = "\n".join(
+                "".join(f"-    {text}\n" for text in gone.get(number, ()))
+                + f"{number}{'+' if number in changed else ':'} {lines[number - 1]}"
+                for number in range(low, high + 1)
             )
-            if files
-            else ""
-        )
-    else:
-        patch = "\n".join(diff_for_path(base, path) for path in focus_files)
-    # Send the diff once: whole when it fits, otherwise per file, since every agent turn resends it.
-    if len(patch) <= MAX_SECTION_CHARS:
-        patch_body = patch
-        file_context = "The patch overview above holds every focus file's patch."
-    else:
-        patch_body = (
-            "Full patch exceeded the inline packet limit; see the per-file patch context below "
-            "and use the file_diff tool for a file summarized there."
-        )
-        file_context = build_file_context(base, context_files)
-    # Guidance is indexed, not inlined, because every agent turn resends the packet.
-    # Agents read_file the sections that bear on a suspicion.
+            sections.append(f"## {path}:{low}-{high}{heading}\n```text\n{redact_for_model(body)}\n```")
+    code = "\n\n".join(sections)
+    print(
+        f"Dottore bundle code: sections={len(sections)}; definitions={len(found)}; callees={callees}; "
+        f"chars={len(code)}" + ("; cut at the limit" if len(code) > MAX_BUNDLE_CODE_CHARS else ""),
+        flush=True,
+    )
+    return truncate(code, MAX_BUNDLE_CODE_CHARS)
+
+
+def build_bundle(base, focus, description):
+    """One packet's bundle, everything its finder, asker and checker share, built by code: the PR description, the
+    changed files and path rules, the guidance index, the production code that decides the change with its changes
+    marked (bundle_code), where changed names are used outside the diff, and the diff of files other than code."""
+    files = changed_files(base)
+    tests = [path for path in focus if TEST_PATH_RE.search(path)]
+    every = touched_lines(base)
+    touched = {path: sides for path, sides in every.items() if path in focus}
+    seeds, _, sites = trace_seeds(touched, every)
+    other = [path for path in focus if path not in tests and not path.endswith(CODE_SUFFIXES)]
+    patch = redact_for_model(run_git_raw(diff_command(base, "--find-renames", "--unified=3", paths=other))) if other else ""
+    # Guidance is indexed, not inlined; readers read_file the sections that bear on a suspicion.
     index = []
-    for path in select_guidance(files):
+    for path in select_guidance(focus):
         try:
             index.append(guidance_index(path))
         except Exception as exc:
             index.append(f"{path}: could not read: {exc}")
-    sections = [
-        ("review mode", mode),
-        ("git status", run_git(["status", "--short", "--branch"], 12_000)),
-        ("repo root", run_git(["rev-parse", "--show-toplevel"], 4_000)),
-        ("merge base", run_git(["merge-base", "HEAD", base], 4_000)),
-        ("diff stat", run_git(diff_command(base, "--stat", paths=files), 20_000) if files else "No included changes."),
-        ("changed files", "\n".join(files) or "No changed files reported."),
-        # Listed so a finder does not mistake an excluded file, such as a rebuilt bundle, for one the PR forgot.
-        (
-            "changed but excluded from review (generated or excluded by the review rules; not shown)",
-            "\n".join(changed_files(base, excluded=True)) or "None.",
-        ),
-        ("numstat", run_git(diff_command(base, "--numstat", paths=files), 20_000) if files else "No included changes."),
-        ("focus files", "\n".join(context_files) or "All changed files."),
-        # Rules and guidance precede the diff so the packet limit trims the diff, not them.
-        ("Dottore path rules", matching_path_rules(files)),
-        ("selected guidance index", "\n\n".join(index) or "No guidance selected."),
-        ("patch overview", patch_body),
-        ("per-file patch context", file_context),
-        ("changed identifier usage", build_identifier_context(patch)),
-    ]
-
-    packet = "\n\n".join(
-        f"## {title}\n```text\n{redact_for_model(body)}\n```" for title, body in sections
+    elsewhere = [path for path in files if path not in focus]
+    listed = "\n".join(focus) + (
+        f"\n\nChanged files reviewed in other packets ({len(elsewhere)}):\n" + "\n".join(elsewhere) if elsewhere else ""
     )
-    if len(packet) > MAX_REVIEW_PACKET_CHARS:
-        packet = truncate(packet, MAX_REVIEW_PACKET_CHARS)
-    return packet
+    sections = [
+        ("Pull Request", description or "No description could be read."),
+        ("Changed Files", listed + (f"\n\nTest files ({len(tests)}) are listed but not shown." if tests else "")),
+        # Listed so a reader does not mistake an excluded file, such as a rebuilt bundle, for one the PR forgot.
+        ("Changed but Excluded From Review", "\n".join(changed_files(base, excluded=True)) or "None."),
+        ("Diff Stat", run_git(diff_command(base, "--stat", paths=focus), 20_000) if focus else "No included changes."),
+        ("Path Rules", matching_path_rules(focus)),
+        ("Guidance Index", "\n\n".join(index) or "No guidance selected."),
+        ("Code at the PR Head", bundle_code(touched, sites, removed_lines(base)) or "No code could be quoted."),
+        (
+            "Uses Outside the Diff",
+            "Where each changed function, and each name declared on a changed line, is used outside the diff.\n\n"
+            + (seeds or "No named changes found."),
+        ),
+    ]
+    if patch:
+        sections.append(("Diff of Files Other Than Code", f"```diff\n{truncate(patch, MAX_SECTION_CHARS)}\n```"))
+    bundle = f"# Bundle\n{BUNDLE_NOTE}\n\n" + "\n\n".join(f"# {title}\n{redact_for_model(body)}" for title, body in sections)
+    return truncate(bundle, MAX_REVIEW_PACKET_CHARS)
 
 
 def chunk_changed_files(base, files):
@@ -692,6 +704,7 @@ def build_stats(review_packet):
                 "stop_calls": 0,
                 "stop_chars": 0,
                 "stop_time": 0,
+                "stop_box": 0,
                 "prompt_tokens": 0,
                 "cached_tokens": 0,
                 "completion_tokens": 0,
@@ -716,8 +729,13 @@ def print_telemetry(stats):
     print("Dottore telemetry: " + "; ".join(parts), flush=True)
 
 
+ROLE_SETTINGS = ("provider", "model", "effort", "max_tokens", "reads", "chars", "minutes", "questions")
+
+
 def role_models():
-    """Resolve each role's provider, model and effort; DOTTORE_MODELS overrides the shared defaults per role."""
+    """Resolve each role's settings: provider, model and effort from the shared variables, the rest from ROLE_DEFAULTS,
+    and DOTTORE_MODELS overriding any of them per role. A role whose DOTTORE_<ROLE>_BASE_URL or _API_KEY secret is set
+    uses that endpoint; an empty one falls back to the shared value for its provider."""
     default_provider = os.environ.get("DOTTORE_PROVIDER", "").strip().lower() or PROVIDERS[0]
     default_model = os.environ.get("LLM_MODEL", "").strip() or "gpt-5.5"
     default_effort = os.environ.get("DOTTORE_REASONING_EFFORT", "").strip()
@@ -727,49 +745,99 @@ def role_models():
     except ValueError as exc:
         raise ValueError(f"DOTTORE_MODELS is not valid JSON: {exc}") from exc
     if not isinstance(overrides, dict) or not all(
-        role in REVIEW_ROLES and isinstance(value, dict) for role, value in overrides.items()
+        role in REVIEW_ROLES and isinstance(value, dict) and set(value) <= set(ROLE_SETTINGS)
+        for role, value in overrides.items()
     ):
         raise ValueError(
-            'DOTTORE_MODELS must map "trace", "broad", "skeptic" or "verify" to {"provider", "model", "effort"} objects.'
+            f"DOTTORE_MODELS must map {', '.join(REVIEW_ROLES)} to objects of {', '.join(ROLE_SETTINGS)}."
         )
-    defaults = {role: {"model": default_model, "effort": default_effort} for role in REVIEW_ROLES}
-    defaults["trace"] = TRACE_MODEL
-    models = {
-        role: {
-            "provider": str(overrides.get(role, {}).get("provider") or default_provider).strip().lower(),
-            "model": str(overrides.get(role, {}).get("model") or defaults[role]["model"]).strip(),
-            "effort": str(overrides.get(role, {}).get("effort") or defaults[role]["effort"]).strip(),
+    models = {}
+    for role in REVIEW_ROLES:
+        settings = {
+            "provider": default_provider,
+            "model": default_model,
+            "effort": default_effort,
+            **ROLE_DEFAULTS[role],
+            **{key: value for key, value in overrides.get(role, {}).items() if value not in (None, "")},
         }
-        for role in REVIEW_ROLES
-    }
+        for key in ("provider", "model", "effort"):
+            settings[key] = str(settings.get(key) or "").strip()
+        settings["provider"] = settings["provider"].lower()
+        for key in ("max_tokens", "reads", "chars", "minutes", "questions"):
+            value = settings.get(key, 0)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"DOTTORE_MODELS {role}.{key} must be a whole number.")
+        settings["endpoint"] = role if any(role_endpoint(role)) else ""
+        models[role] = settings
     unknown = sorted({settings["provider"] for settings in models.values()} - set(PROVIDERS))
     if unknown:
         raise ValueError(f"Unknown Dottore provider {', '.join(unknown)}; use {' or '.join(PROVIDERS)}.")
     return models
 
 
+def finder_count():
+    raw = os.environ.get("DOTTORE_FINDERS", "").strip() or "1"
+    if raw not in {str(count) for count in range(1, MAX_FINDERS + 1)}:
+        raise ValueError(f"DOTTORE_FINDERS must be a whole number from 1 to {MAX_FINDERS}.")
+    return int(raw)
+
+
+def cost_limit():
+    raw = os.environ.get("DOTTORE_COST_LIMIT_USD", "").strip()
+    try:
+        return float(raw) if raw else 0.0
+    except ValueError as exc:
+        raise ValueError("DOTTORE_COST_LIMIT_USD must be a number of dollars.") from exc
+
+
+def role_endpoint(role):
+    """A role's own endpoint, from the DOTTORE_<ROLE>_BASE_URL and DOTTORE_<ROLE>_API_KEY secrets. GitHub refuses an
+    empty secret, so a placeholder without a letter or digit, such as ".", counts as empty."""
+    prefix = f"DOTTORE_{role.upper()}_"
+    values = (os.environ.get(prefix + name, "").strip() for name in ("BASE_URL", "API_KEY"))
+    return tuple(value if re.search(r"[A-Za-z0-9]", value) else "" for value in values)
+
+
+def client_key(settings):
+    return f"{settings['provider']}:{settings['endpoint']}" if settings["endpoint"] else settings["provider"]
+
+
 def review_clients(models):
-    """One client per provider the roles use."""
-    providers = {settings["provider"] for settings in models.values()}
+    """One client per provider and endpoint the roles use."""
     clients = {}
-    if "openai" in providers:
-        from openai import OpenAI
+    for role, settings in models.items():
+        key = client_key(settings)
+        if key in clients:
+            continue
+        base_url, api_key = role_endpoint(role) if settings["endpoint"] else ("", "")
+        if settings["provider"] == "openai":
+            from openai import OpenAI
 
-        clients["openai"] = OpenAI(
-            api_key=os.environ["OPENAI_API_KEY"],
-            base_url=os.environ.get("LLM_BASE_URL") or None,
-            max_retries=MODEL_MAX_RETRIES,
-        )
-    if "anthropic" in providers:
-        from anthropic import Anthropic
+            clients[key] = OpenAI(
+                api_key=api_key or os.environ["OPENAI_API_KEY"],
+                base_url=base_url or os.environ.get("LLM_BASE_URL") or None,
+                max_retries=MODEL_MAX_RETRIES,
+            )
+        else:
+            from anthropic import Anthropic
 
-        # Gateways such as LinkAPI take one key for both formats, so the shared key is the fallback.
-        clients["anthropic"] = Anthropic(
-            api_key=os.environ.get("ANTHROPIC_API_KEY") or os.environ["OPENAI_API_KEY"],
-            base_url=os.environ.get("ANTHROPIC_BASE_URL") or "https://api.anthropic.com",
-            max_retries=MODEL_MAX_RETRIES,
-        )
+            # Gateways such as LinkAPI take one key for both formats, so the shared key is the fallback.
+            clients[key] = Anthropic(
+                api_key=api_key or os.environ.get("ANTHROPIC_API_KEY") or os.environ["OPENAI_API_KEY"],
+                base_url=base_url or os.environ.get("ANTHROPIC_BASE_URL") or "https://api.anthropic.com",
+                max_retries=MODEL_MAX_RETRIES,
+            )
     return clients
+
+
+def call_cost_usd(model, usage):
+    rates = MODEL_PRICES_USD.get(model) or tuple(max(column) for column in zip(*(r[:3] for r in MODEL_PRICES_USD.values())))
+    prompt = usage_value(usage, "prompt_tokens")
+    cached = usage_value(usage, "prompt_tokens_details", "cached_tokens")
+    written = usage_value(usage, "prompt_tokens_details", "cache_write_tokens")
+    output = usage_value(usage, "completion_tokens")
+    write_rate = rates[3] if len(rates) > 3 else rates[0]
+    return ((prompt - cached - written) * rates[0] + cached * rates[1] + written * write_rate + output * rates[2]) / 1e6
 
 
 def review_concurrency():
@@ -786,14 +854,20 @@ class ReviewRun:
     """What every agent in one review shares: the clients, models, telemetry and the diff scope."""
 
     clients: dict
-    skill: str
+    prompts: dict
+    system: str
+    packets: list
+    cache_key: str
+    allowed: dict
     models: dict
     stats: dict
     base: str
     merge_base: str
     files: frozenset
     deadline: float
-    cache_key: str = ""
+    cost_limit: float = 0.0
+    spent_usd: float = 0.0
+    failures: dict = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -868,7 +942,7 @@ EVIDENCE = {
 }
 SUBMIT_FINDINGS = function_tool(
     "submit_findings",
-    "Submit this segment's candidate findings and notes. This ends the segment.",
+    "Submit the candidate findings and notes. This ends the pass.",
     {
         "change_summary": STRING_LIST,
         "findings": {"type": "array", "items": REVIEW_ITEM},
@@ -893,7 +967,7 @@ SUBMIT_FINDINGS = function_tool(
 )
 SUBMIT_VERDICTS = function_tool(
     "submit_verdicts",
-    "Submit Dottore's verdict on each candidate finding. This ends the verification.",
+    "Submit a verdict on each candidate. This ends the check.",
     {
         "verdicts": {
             "type": "array",
@@ -905,6 +979,8 @@ SUBMIT_VERDICTS = function_tool(
                     "severity": {"type": "string", "enum": ["blocking", "high", "medium", "low"]},
                     "evidence": EVIDENCE,
                     "note": {"type": "string"},
+                    "same_as": {"type": "integer", "description": "The candidate number this one shares a defect with."},
+                    **{key: REVIEW_ITEM["properties"][key] for key in ("path", "line", "title", "body", "fix_hint", "repair_contract")},
                 },
                 "required": ["candidate", "verdict", "severity", "evidence", "note"],
             },
@@ -1027,26 +1103,30 @@ def read_stream(stream, started, timing):
     return SimpleNamespace(content="".join(content) or None, tool_calls=tool_calls or None), usage
 
 
-def openai_reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing):
+def openai_reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing, cache_key):
     import httpx
     import openai
 
+    claude = "claude" in settings["model"]
     request = {
         "model": settings["model"],
         "messages": messages,
-        "tools": tools,
-        "tool_choice": tool_choice,
         "stream": True,
         "stream_options": {"include_usage": True},
         "timeout": openai.Timeout(read_timeout, connect=30),
     }
+    if tools:
+        # Claude rejects forced tool use through a gateway's OpenAI-format endpoint too (see claude_reply).
+        request.update(tools=tools, tool_choice="auto" if claude else tool_choice)
     if settings["effort"]:
         request["reasoning_effort"] = settings["effort"]
-    if ctx.cache_key:
-        # One key per review keeps its requests, which share long prefixes, on the same cache.
-        request["extra_body"] = {"prompt_cache_key": ctx.cache_key}
+    if claude and settings["max_tokens"]:
+        request["max_tokens"] = settings["max_tokens"]
+    if cache_key:
+        # One key per packet keeps the finder's and checker's requests, which share the bundle, on the same cache.
+        request["extra_body"] = {"prompt_cache_key": cache_key}
     try:
-        with ctx.clients["openai"].chat.completions.create(**request) as stream:
+        with ctx.clients[client_key(settings)].chat.completions.create(**request) as stream:
             return read_stream(stream, started, timing)
     except (httpx.TimeoutException, httpx.TransportError) as exc:
         raise StreamStalled(error_text(exc)) from exc
@@ -1082,7 +1162,7 @@ def claude_messages(messages):
     return system, turns
 
 
-def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing):
+def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing, cache_key):
     """One streamed Claude Messages call, returned in the Chat Completions shape the agents use."""
     import anthropic
     import httpx2
@@ -1090,26 +1170,30 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
     system, turns = claude_messages(messages)
     request = {
         "model": settings["model"],
-        "max_tokens": CLAUDE_MAX_TOKENS,
+        "max_tokens": settings["max_tokens"] or ROLE_DEFAULTS["finder"]["max_tokens"],
         "system": system,
         "messages": turns,
-        "tools": [
+        "timeout": anthropic.Timeout(read_timeout, connect=30),
+    }
+    if tools:
+        request["tools"] = [
             {
                 "name": tool["function"]["name"],
                 "description": tool["function"]["description"],
                 "input_schema": tool["function"]["parameters"],
             }
             for tool in tools
-        ],
+        ]
         # Opus 5.5 and Sonnet 5.5 reject forced tool use, so the tool choice is always left to Claude;
         # once a budget is spent, run_agent refuses every tool but the submit tool.
-        "tool_choice": {"type": "auto"},
-        "timeout": anthropic.Timeout(read_timeout, connect=30),
-    }
+        request["tool_choice"] = {"type": "auto"}
     if settings["effort"]:
+        # OpenRouter passes effort to Claude unchanged only beside a thinking field. Alone, it becomes OpenRouter's
+        # own reasoning setting, under which Haiku thought until the output cap on every first call.
+        request["thinking"] = {"type": "adaptive"}
         request["output_config"] = {"effort": settings["effort"]}
     try:
-        with ctx.clients["anthropic"].messages.stream(**request) as stream:
+        with ctx.clients[client_key(settings)].messages.stream(**request) as stream:
             for _ in watched(stream, started, timing):
                 pass
             reply = stream.get_final_message()
@@ -1118,8 +1202,13 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
     if reply.stop_reason is None:
         # A connection that closes mid-reply ends the stream without an error or a stop reason.
         raise StreamStalled("the reply stream ended before Claude finished")
+    capped = reply.stop_reason == "max_tokens"
     blocks, text, calls = [], [], []
     for block in reply.content:
+        if block.type == "tool_use" and capped:
+            # The cap cut this call off partway through its input, which would otherwise be taken as a short
+            # submission.
+            continue
         if block.type == "tool_use":
             blocks.append({"type": "tool_use", "id": block.id, "name": block.name, "input": block.input})
             calls.append(
@@ -1132,15 +1221,16 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         else:
             blocks.append(block.model_dump(exclude_none=True))
     cached = reply.usage.cache_read_input_tokens or 0
-    prompt = reply.usage.input_tokens + (reply.usage.cache_creation_input_tokens or 0) + cached
+    written = reply.usage.cache_creation_input_tokens or 0
+    prompt = reply.usage.input_tokens + written + cached
     usage = {
         "prompt_tokens": prompt,
         "completion_tokens": reply.usage.output_tokens,
         "total_tokens": prompt + reply.usage.output_tokens,
-        "prompt_tokens_details": {"cached_tokens": cached},
+        "prompt_tokens_details": {"cached_tokens": cached, "cache_write_tokens": written},
         "completion_tokens_details": {"reasoning_tokens": usage_value(reply.usage, "output_tokens_details", "thinking_tokens")},
     }
-    message = SimpleNamespace(content="".join(text) or None, tool_calls=calls or None, claude_blocks=blocks)
+    message = SimpleNamespace(content="".join(text) or None, tool_calls=calls or None, claude_blocks=blocks, capped=capped)
     return message, usage
 
 
@@ -1158,26 +1248,40 @@ def transient_error(exc):
     return isinstance(exc, openai.APIError)
 
 
-def chat(ctx, role, messages, tools, tool_choice):
+class CostLimitReached(Exception):
+    """The review has spent its DOTTORE_COST_LIMIT_USD, so no further model call is made."""
+
+
+def chat(ctx, role, messages, tools, tool_choice, cache_key=""):
     settings = ctx.models[role]
+    with ctx.lock:
+        if ctx.cost_limit and ctx.spent_usd >= ctx.cost_limit:
+            raise CostLimitReached(
+                f"the review has spent ${ctx.spent_usd:.3f}, its ${ctx.cost_limit:.2f} limit, so it makes no more model calls"
+            )
+        if ctx.failures.get(role, 0) >= MAX_ROLE_FAILURES:
+            raise RuntimeError(f"the {role} role failed {MAX_ROLE_FAILURES} calls in a row, so it makes no more")
     first_call = not any(message.get("role") == "assistant" for message in messages)
     read_timeout = FIRST_CALL_TIMEOUT if first_call else MODEL_REQUEST_TIMEOUT
     reply = claude_reply if settings["provider"] == "anthropic" else openai_reply
     # The client retries a request that fails before its stream opens. This retries one that stalls after
     # it at once, at most MODEL_MAX_RETRIES times since each stall has already used a read timeout, and
-    # waits out a transient gateway error, which can arrive mid-stream with a request to resend.
+    # waits out a transient gateway error, which can arrive mid-stream with a request to resend. A role whose
+    # attempts fail MAX_ROLE_FAILURES times in a row, across its calls, stops: a dead endpoint costs no more.
     stalls = 0
     for attempt in range(len(RETRY_DELAYS) + 1):
         started = time.monotonic()
         timing = {}
         try:
-            message, usage = reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing)
+            message, usage = reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing, cache_key)
             break
         except Exception as exc:
+            with ctx.lock:
+                ctx.failures[role] = failures = ctx.failures.get(role, 0) + 1
             stalled = isinstance(exc, StreamStalled)
             stalls += stalled
             retry = stalls <= MODEL_MAX_RETRIES if stalled else transient_error(exc)
-            if not retry or attempt == len(RETRY_DELAYS):
+            if not retry or attempt == len(RETRY_DELAYS) or failures >= MAX_ROLE_FAILURES:
                 raise
             wait = 0 if stalled else RETRY_DELAYS[attempt]
             print(
@@ -1187,19 +1291,23 @@ def chat(ctx, role, messages, tools, tool_choice):
             )
             time.sleep(wait)
     with ctx.lock:
+        ctx.failures[role] = 0
         totals = ctx.stats["roles"][role]
         totals["model"] = settings["model"]
         totals["model_calls"] += 1
         add_usage(totals, usage)
+        ctx.spent_usd += call_cost_usd(settings["model"], usage)
     # request_chars lets the provider's token counts be compared with what was actually sent.
     print(
         f"Dottore call: role={role}; messages={len(messages)}; "
         f"request_chars={len(json.dumps([messages, tools], ensure_ascii=False))}; "
         f"prompt_tokens={usage_value(usage, 'prompt_tokens')}; "
         f"cached_tokens={usage_value(usage, 'prompt_tokens_details', 'cached_tokens')}; "
+        f"cache_write_tokens={usage_value(usage, 'prompt_tokens_details', 'cache_write_tokens')}; "
         f"completion_tokens={usage_value(usage, 'completion_tokens')}; "
         f"reasoning_tokens={usage_value(usage, 'completion_tokens_details', 'reasoning_tokens')}; "
-        f"first_chunk_s={timing.get('first_chunk', 0):.1f}; elapsed_s={time.monotonic() - started:.1f}",
+        f"first_chunk_s={timing.get('first_chunk', 0):.1f}; elapsed_s={time.monotonic() - started:.1f}; "
+        f"review_spent_usd={ctx.spent_usd:.3f}",
         flush=True,
     )
     return message
@@ -1219,35 +1327,49 @@ def tool_call_key(call):
     return call.function.name, args
 
 
-def run_agent(ctx, role, messages, submit_tool, budget, output_budget, deadline=None):
+def run_agent(ctx, role, messages, submit_tool, deadline=None, cache_key="", budget=None, output_budget=None):
     """Let one agent read with the tools until it calls its submit tool; return the submitted arguments.
 
-    The budget counts read-tool calls and output_budget their characters; a repeated call is answered
-    from the earlier result for free. Once either budget is spent, or the deadline (the review's by
-    default) has passed, the model is made to call the submit tool, and a few malformed submissions are
+    The role's reads count read-tool calls and its chars their characters (budget and output_budget override them);
+    a repeated call is answered from the earlier result for free. A role without reads is offered only its submit
+    tool. Once either budget is spent, or the deadline (the review's by default, and no later than the role's
+    minutes from now) has passed, the model is made to call the submit tool, and a few malformed submissions are
     tolerated. The role's stats record which limit, if any, ended the run.
     """
+    settings = ctx.models[role]
+    budget = settings["reads"] if budget is None else budget
+    output_budget = settings["chars"] if output_budget is None else output_budget
     submit = submit_tool["function"]["name"]
-    tools = [*READ_TOOLS, submit_tool]
+    # Claude's tool choice cannot be forced, so a role without reads is not offered them: Opus called the reads it
+    # was offered and, refused, thought to its output cap on the next call.
+    tools = [*READ_TOOLS, submit_tool] if budget else [submit_tool]
+    claude = settings["provider"] == "anthropic" or "claude" in settings["model"]
     messages = list(messages)
     used = 0
     spent = 0
     answered = {}
     deadline = deadline or ctx.deadline
+    box = time.monotonic() + settings["minutes"] * 60 if settings.get("minutes") else deadline
     for turn in range(budget + MAX_SUBMIT_ATTEMPTS):
         limits = [
             name
             for name, hit in (
-                ("calls", used >= budget or turn >= budget),
-                ("chars", spent >= output_budget),
+                ("calls", bool(budget) and (used >= budget or turn >= budget)),
+                ("chars", bool(budget) and spent >= output_budget),
                 ("time", time.monotonic() > deadline),
+                ("box", time.monotonic() > box),
             )
             if hit
         ]
-        forced = bool(limits)
+        forced = bool(limits) or not budget
         choice = {"type": "function", "function": {"name": submit}} if forced else "auto"
-        message = chat(ctx, role, messages, tools, choice)
+        if limits and claude and messages[-1]["role"] == "tool":
+            # Claude cannot be made to submit, so it is told; its reads stay offered so the cached prefix holds.
+            messages.append({"role": "user", "content": f"Your reads are spent and further reads are refused. Call {submit} now."})
+        message = chat(ctx, role, messages, tools, choice, cache_key)
         calls = list(message.tool_calls or [])
+        if not calls and getattr(message, "capped", False):
+            raise RuntimeError(f"the {role} reply reached its {settings['max_tokens']}-token output cap")
         if not calls:
             messages += [
                 assistant_turn(message, content=message.content or ""),
@@ -1295,105 +1417,203 @@ def run_agent(ctx, role, messages, submit_tool, budget, output_budget, deadline=
     raise RuntimeError(f"The {role} agent never called {submit}.")
 
 
-FINDER_FOCUS = {
-    "broad": (
-        "Act as the broad segment. Search widely for correctness, contracts, failure paths, tests, "
-        "security/privacy, CI/deployment risks, architecture, and user-visible regressions, and record "
-        "up to 2 concrete nitpicks when changed lines carry optional but actionable polish."
-    ),
-    "skeptic": (
-        "Act as the skeptical segment, independently of the broad segment. Focus on invariant mismatches "
-        "introduced by the diff: data collected in a pre-scan but persisted after later filters, parent "
-        "metadata derived from rows that are not imported as children, fallback behavior that diverges "
-        "from validation, rollback paths, partial writes, contract drift, and tests that prove only the "
-        "happy path. Leave nitpicks to the broad segment."
-    ),
-}
+def prompt_sections(text):
+    """The reviewer prompt split by its "## " headings; the text before the first one is under ""."""
+    text = re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.S)
+    sections, name = {"": []}, ""
+    for line in text.splitlines():
+        if line.startswith("## "):
+            name = line[3:].strip()
+            sections[name] = []
+        else:
+            sections[name].append(line)
+    return {name: "\n".join(lines).strip() for name, lines in sections.items()}
 
 
-def finder_packet(review_target, focus_note, prior_contracts, review_packet):
-    # Shared by both segments and placed before their instructions, so providers can cache it.
-    return (
-        f"{review_target} {focus_note}"
-        f"\n\n# Prior Dottore Repair Contracts\n{prior_contracts}"
-        f"\n\n# Review Packet\n{review_packet}"
+def role_prompt(ctx, name, **values):
+    """A role's section with the shared list of where changes break and its other placeholders filled."""
+    text = ctx.prompts[name].replace("{WHERE_CHANGES_BREAK}", ctx.prompts["Where Changes Break"])
+    for key, value in values.items():
+        text = text.replace("{" + key + "}", str(value))
+    return text
+
+
+def reviewer_system(prompts):
+    """The system prompt the finder and checker share, so their calls on a packet reuse one cached prefix."""
+    return "\n\n".join(
+        [prompts[""], *(f"## {name}\n\n{prompts[name]}" for name in ("Voice Contract", "Output Shape", "Verdict Shape"))]
     )
 
 
-FINDING_RULES = (
-    "Dottore verifies every candidate against the code before anything is published, so report each "
-    "concrete suspicion once, at its exact changed line, and do not pad. If prior Dottore contracts are "
-    "included, first judge whether the current diff satisfies or leaves those contracts incomplete before "
-    "issuing adjacent related findings. Findings must point to added/changed RIGHT lines or deleted LEFT "
-    "lines; report one finding per line, combining related concerns. Dottore never runs commands, tests "
-    "or builds and CI does, so do not report unexecuted checks as a limitation. Record what you checked "
-    "in what_i_checked, and name any limitation there instead of inventing certainty."
-)
+def finder_packet(review_target, focus_note, prior_contracts, bundle):
+    # Shared by the finder and the checker and placed before their instructions, so providers can cache it.
+    return f"{review_target} {focus_note}\n\n# Prior Dottore Repair Contracts\n{prior_contracts}\n\n{bundle}"
 
 
-# ponytail: lab hypothesis that finders read the changed lines but skip edge inputs and failure paths;
-# keep it only if a multi-run recall test shows it surfaces those bugs.
-EDGE_INPUT_PASS = (
-    "Before submitting, walk every changed line that converts or defaults a value, migrates or carries "
-    "over stored settings, trims or caps to a budget, or awaits a call through these inputs: zero, empty "
-    "or missing; a string where a number is expected; a legacy, inactive or disabled item; an input at or "
-    "past the limit; and an await that rejects. Decide what the code then does. When the answer depends on "
-    "a helper or definition outside the packet, that open question is a concrete suspicion: read it."
-)
-
-
-def finder_instructions(role):
+def finder_instructions(ctx):
+    settings = ctx.models["finder"]
     return (
-        f"{FINDER_FOCUS[role]} Treat the review packet as the specimen. Use the read-only tools only to "
-        "settle a concrete suspicion that depends on code outside the packet, fetching just what it needs; "
-        "do not browse, and when the packet is enough, submit without any tool calls. You have at most "
-        f"{FINDER_TOOL_BUDGET} tool calls and {FINDER_TOOL_CHARS} characters of tool output, and repeating a "
-        f"call returns nothing new. {EDGE_INPUT_PASS} Guidance is listed by heading in the selected guidance "
-        f"index; read_file only the sections that bear on a suspicion. {FINDING_RULES} Finish by calling "
-        "submit_findings."
+        f"{role_prompt(ctx, 'Finder')}\n\nPut independent reads in one turn. You have at most {settings['reads']} tool "
+        f"calls, {settings['chars']} characters of tool output and {settings['minutes']} minutes; a repeated call "
+        "returns nothing new. Finish by calling submit_findings."
     )
 
 
-def staggered(delay, function, *args):
+SUBMIT_QUESTIONS = function_tool(
+    "submit_questions",
+    "Submit the check questions, most consequential first. This ends the pass.",
+    {
+        "questions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": PATH_PARAM,
+                    "line": {
+                        "type": "integer",
+                        "description": "The line at the PR head where the input meets the code to check.",
+                    },
+                    "input": {
+                        "type": "string",
+                        "description": "One concrete input, item, reader, state or sequence of events.",
+                    },
+                    "expected": {
+                        "type": "string",
+                        "description": "What should happen for that input and where that is promised: the PR "
+                        "description, a changed comment, a docs or changelog line, or the behavior before the change.",
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": "One neutral question asking what the code does for that input.",
+                    },
+                },
+                "required": ["path", "line", "input", "expected", "question"],
+            },
+        },
+    },
+    ["questions"],
+)
+
+
+def head_line_exists(path, line):
+    try:
+        return line <= len(head_file_text(path).splitlines())
+    except Exception:
+        return False
+
+
+def pass_questions(submitted, limit):
+    """The asker's valid questions as candidates, at most limit; one without a line at the PR head or text is dropped."""
+    kept = []
+    for question in as_list(submitted.get("questions")):
+        if len(kept) == limit:
+            break
+        if not isinstance(question, dict):
+            continue
+        try:
+            path = tool_path(question.get("path"))
+        except ValueError:
+            continue
+        line = question.get("line")
+        text = {
+            key: " ".join(redact_for_model(str(question.get(key) or "")).split())[:MAX_QUESTION_CHARS]
+            for key in ("input", "expected", "question")
+        }
+        if isinstance(line, bool) or not isinstance(line, int) or line <= 0 or not all(text.values()):
+            continue
+        if not head_line_exists(path, line):
+            continue
+        kept.append(
+            Finding(
+                severity="medium",
+                path=path,
+                line=line,
+                title=text["question"],
+                body=f"Input: {text['input']}\nExpected: {text['expected']}",
+                fix_hint="",
+                segment="asker",
+                kind="question",
+            )
+        )
+    return kept
+
+
+def ask_questions(ctx, bundle, packet):
+    """One call, no tools: the asker writes check questions from the bundle. Returns question candidates."""
+    settings = ctx.models["asker"]
+    submitted = run_agent(
+        ctx,
+        "asker",
+        [
+            {"role": "system", "content": role_prompt(ctx, "Asker", questions=settings["questions"])},
+            {"role": "user", "content": bundle},
+        ],
+        SUBMIT_QUESTIONS,
+    )
+    questions = pass_questions(submitted, settings["questions"])
+    for question in questions:
+        question.packet = packet
+        print(f"Dottore question: {question.path}:{question.line}; {question.title}; {question.body!r}", flush=True)
+    print(f"Dottore questions: submitted={len(as_list(submitted.get('questions')))}; valid={len(questions)}", flush=True)
+    return questions
+
+
+def staggered(delay, function, *args, **kwargs):
     time.sleep(delay)
-    return function(*args)
+    return function(*args, **kwargs)
 
 
-def run_finders(ctx, packets, pool):
-    """Stage 1: run the broad and skeptical segments over every packet concurrently."""
-    jobs = [
+def run_finders(ctx, packets, bundles, pool):
+    """Stage 1: the finder copies and the asker run over every packet concurrently. Returns the finder reports
+    as (label, packet, report) and the asker's question candidates. A finder failure ends the review; an asker
+    failure is logged and the review goes on without its questions."""
+    copies = finder_count()
+    finders = [
         (
-            role,
+            "finder" if copy == 0 else f"finder-{copy + 1}",
+            index,
             pool.submit(
                 staggered,
-                FINDER_STAGGER_SECONDS * FINDER_ROLES.index(role),
+                FINDER_STAGGER_SECONDS * copy,
                 run_agent,
                 ctx,
-                role,
+                "finder",
                 [
-                    {"role": "system", "content": ctx.skill},
+                    {"role": "system", "content": ctx.system},
                     {"role": "user", "content": packet},
-                    {"role": "user", "content": finder_instructions(role)},
+                    {"role": "user", "content": finder_instructions(ctx)},
                 ],
                 SUBMIT_FINDINGS,
-                FINDER_TOOL_BUDGET,
-                FINDER_TOOL_CHARS,
-                min(ctx.deadline, ctx.stats["started_at"] + FINDER_DEADLINE_SECONDS),
+                deadline=ctx.deadline - CHECKER_RESERVE_SECONDS,
+                cache_key=f"{ctx.cache_key}-p{index}",
             ),
         )
-        for packet in packets
-        for role in FINDER_ROLES
+        for index, packet in enumerate(packets)
+        for copy in range(copies)
     ]
+    askers = (
+        [pool.submit(ask_questions, ctx, bundle, index) for index, bundle in enumerate(bundles)]
+        if ctx.models["asker"]["questions"]
+        else []
+    )
     try:
-        return [(role, future.result()) for role, future in jobs]
+        reports = [(label, index, future.result()) for label, index, future in finders]
     except Exception:
-        for _, future in jobs:
+        for future in [*(job[2] for job in finders), *askers]:
             future.cancel()
         raise
+    questions, failures = [], 0
+    for future in askers:
+        try:
+            questions += future.result()
+        except Exception as exc:
+            failures += 1
+            print(f"Dottore asker failed: {error_text(exc)}", flush=True)
+    return reports, questions, failures
 
 
 # ponytail: line-based declaration patterns, not a parser. An unnamed callback or an unusual signature
-# yields no seed, and the tracer still has the diff and its tools; move to tree-sitter if seeds miss.
+# yields no seed, and the finder still has the diff and its tools; move to tree-sitter if seeds miss.
 NAMED_BLOCK_RES = (
     re.compile(r"\b(?:function\*?|class|def)\s+([A-Za-z_$][\w$]*)"),
     re.compile(
@@ -1413,6 +1633,20 @@ DECLARED_RE = re.compile(
 )
 TEST_PATH_RE = re.compile(r"(^|/)(tests?|e2e|__tests__|regressions?)/|\.(test|spec|regression|e2e)\.")
 NOT_NAMES = {"if", "for", "while", "switch", "catch", "return", "function", "else", "do", "try", "with", "new", "constructor"}
+# A call by name, including through an object (`store.applyManualEdits(`), matched to a same-file declaration.
+CALLED_NAME_RE = re.compile(r"(?<![\w$])([A-Za-z_$][\w$]*)\s*\(")
+
+
+def declared_names(lines):
+    """Each named block's first declaration line, by name."""
+    declared = {}
+    for number, text in enumerate(lines, 1):
+        for pattern in NAMED_BLOCK_RES:
+            match = pattern.search(text)
+            if match and match.group(1) not in NOT_NAMES:
+                declared.setdefault(match.group(1), number)
+                break
+    return declared
 
 
 def enclosing_block(lines, number, limit=None):
@@ -1463,8 +1697,10 @@ def name_uses(path, name, local, touched):
     return outside[:MAX_SEED_HITS_PER_NAME]
 
 
-def trace_seeds(touched):
-    """Where each changed function and each name declared on a changed line is used outside the diff."""
+def trace_seeds(touched, every=None):
+    """Where each changed function and each name declared on a changed line in touched is used outside the diff
+    (every changed line of the PR, touched by default)."""
+    every = every or touched
     blocks = {}
     declared = {}
     for path, sides in sorted(touched.items()):
@@ -1494,7 +1730,7 @@ def trace_seeds(touched):
     sections = []
     sites = []
     for (path, name), (line, local), why in seeds[:MAX_TRACE_SEEDS]:
-        uses = [hit for hit in name_uses(path, name, local, touched) if not hit.startswith(f"{path}:{line}:")]
+        uses = [hit for hit in name_uses(path, name, local, every) if not hit.startswith(f"{path}:{line}:")]
         sites += [(hit_path, int(line_no)) for hit_path, line_no, _ in (hit.split(":", 2) for hit in uses) if line_no.isdigit()]
         scope = "uses in this file" if local else "uses in the repository"
         sections.append(
@@ -1511,9 +1747,9 @@ VALUE_DECL_RE = re.compile(r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\
 READ_NAME_RE = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]{2,})")
 
 
-def statement_end(lines, start):
-    """The last line of the statement starting at a 1-based line, by bracket balance, within MAX_DEFINITION_LINES."""
-    last = min(len(lines), start + MAX_DEFINITION_LINES - 1)
+def statement_end(lines, start, limit=MAX_DEFINITION_LINES):
+    """The last line of the statement starting at a 1-based line, by bracket balance, within limit lines."""
+    last = min(len(lines), start + limit - 1)
     depth = 0
     for number in range(start, last + 1):
         text = lines[number - 1]
@@ -1535,7 +1771,8 @@ def enclosing_chain(lines, number):
 
 
 def value_definitions(touched, sites):
-    """Quote where each local value read at the change is defined, then where that definition's inputs are.
+    """Where each local value read at the change is defined, then where that definition's inputs are, as
+    (path, start, end, name, read_at) spans.
 
     The change is read on its changed lines and at the call sites of changed functions, where a condition
     often continues on the next lines. A bug there can sit in how a value it combines with was built, such
@@ -1568,8 +1805,8 @@ def value_definitions(touched, sites):
             return owners[line]
 
         changed = touched.get(path, {}).get("RIGHT", set())
-        # The packet's diff already shows these lines, so a definition here is followed but not quoted again.
-        shown = {line + offset for line in changed for offset in range(-DIFF_CONTEXT_LINES, DIFF_CONTEXT_LINES + 1)}
+        # The bundle already quotes these lines around each change, so a definition here is followed but not listed.
+        shown = {line + offset for line in changed for offset in range(-BUNDLE_WINDOW, BUNDLE_WINDOW + 1)}
         visited = set()
         frontier = [(number, 1) for number in dict.fromkeys(numbers) if number <= len(lines)]
         while frontier:
@@ -1593,148 +1830,12 @@ def value_definitions(touched, sites):
                     found.append((path, start, end, name, number))
                 if hop < DEFINITION_HOPS:
                     frontier += [(line, hop + 1) for line in range(start, end + 1)]
-    sections = [
-        f"## {path}:{start}-{end} (`{name}`, read at line {read_at})\n```text\n"
-        + redact_for_model(numbered_lines(head_file_text(path), start, end))
-        + "\n```"
-        for path, start, end, name, read_at in found[:MAX_DEFINITIONS]
-    ]
     print(
         f"Dottore definitions: found={len(found)}; quoted="
         + (", ".join(f"{path}:{start}-{end}({name})" for path, start, end, name, _ in found[:MAX_DEFINITIONS]) or "none"),
         flush=True,
     )
-    return truncate("\n\n".join(sections), MAX_DEFINITION_CHARS)
-
-
-SUBMIT_TRACE = function_tool(
-    "submit_trace",
-    "Submit the code ranges the reviewers need beyond the diff. This ends the trace.",
-    {
-        "locations": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "path": PATH_PARAM,
-                    **LINE_RANGE,
-                    "symbol": {"type": "string", "description": "The changed function or value this range connects to."},
-                    "connection": {
-                        "type": "string",
-                        "description": "One factual sentence on how this code uses, feeds or constrains the change.",
-                    },
-                },
-                "required": ["path", "start", "end", "symbol", "connection"],
-            },
-        },
-    },
-    ["locations"],
-)
-TRACE_SYSTEM = (
-    "You trace the blast radius of a pull request for the reviewers who read it after you. They see the diff; "
-    "you find the code outside the diff that decides whether the change is correct. Do not judge the change "
-    "or describe bugs; the reviewers do that.\n\n"
-    "Work from the seeds, which list where each changed function, and each name declared on a changed line, "
-    "is used outside the diff. For each changed behavior:\n"
-    "1. Read the call sites and consumers that depend on what changed.\n"
-    "2. At each one, follow the values the changed result is combined with (the other operands of a condition, "
-    "the filters or sets applied beside it, the arguments passed with it) back to where they are produced: "
-    "search for the definition, then read_file its lines.\n"
-    "3. Find where the inputs the changed code now relies on come from, and any parallel path that handles "
-    "the same data but did not change.\n\n"
-    f"Batch independent reads in one turn; you have at most {TRACE_TOOL_BUDGET} tool calls. Finish by calling "
-    f"submit_trace with at most {MAX_TRACE_LOCATIONS} ranges at the PR head, at most "
-    f"{MAX_TRACE_LOCATION_LINES} lines each, most important first. Prefer code the diff does not show, and give "
-    "each range one factual sentence on how it connects to the change."
-)
-BLAST_RADIUS_NOTE = (
-    "Code outside the diff that the change uses or affects, chosen by a tracer model and quoted verbatim from "
-    "the PR head at the cited lines. Each heading names the changed symbol it connects to and how. The tracer "
-    "did not judge the change; treat this as evidence, not as findings."
-)
-DEFINITIONS_NOTE = (
-    "Where local values read by the changed lines, or at call sites of changed functions, are defined, and "
-    "where those definitions' inputs are defined, quoted by code from the PR head. Each heading names the "
-    "value and the line that reads it. This is evidence, not findings."
-)
-
-
-def quote_trace(locations):
-    """Quote each traced range from the PR head; the tracer's own words supply only the heading."""
-    sections = []
-    quoted = []
-    for location in locations[:MAX_TRACE_LOCATIONS]:
-        if not isinstance(location, dict):
-            continue
-        try:
-            path = tool_path(location.get("path"))
-            start = max(1, int(location.get("start") or 1))
-            end = min(max(start, int(location.get("end") or start)), start + MAX_TRACE_LOCATION_LINES - 1)
-            lines = numbered_lines(head_file_text(path), start, end)
-        except Exception as exc:
-            print(f"Dottore trace: skipped {location.get('path')}: {error_text(exc)}", flush=True)
-            continue
-        if f"{path}:{start}-{end}" in quoted or lines.startswith("No lines in that range"):
-            continue
-        quoted.append(f"{path}:{start}-{end}")
-        symbol = " ".join(str(location.get("symbol") or "").split())[:120]
-        connection = " ".join(str(location.get("connection") or "").split())[:300]
-        sections.append(f"## {path}:{start}-{end} ({symbol}): {connection}\n```text\n{redact_for_model(lines)}\n```")
-    return truncate("\n\n".join(sections), MAX_BLAST_RADIUS_CHARS), quoted
-
-
-def trace_blast_radius(ctx):
-    """Stage 0: code quotes the definitions the change reads, then a cheaper model maps the code outside the
-    diff that the change touches, which code quotes too. Returns the packet sections to append."""
-    files = sorted(ctx.files)
-    if not any(path.endswith(CODE_SUFFIXES) for path in files):
-        print("Dottore trace: skipped; no changed code", flush=True)
-        return ""
-    try:
-        touched = touched_lines(ctx.base)
-        seeds, seed_count, sites = trace_seeds(touched)
-        try:
-            definitions = value_definitions(touched, sites)
-        except Exception as exc:
-            print(f"Dottore definitions failed: {error_text(exc)}", flush=True)
-            definitions = ""
-        patch = truncate(
-            redact_for_model(run_git_raw(diff_command(ctx.base, "--find-renames", "--unified=3", paths=files))),
-            MAX_SECTION_CHARS,
-        )
-        submitted = run_agent(
-            ctx,
-            "trace",
-            [
-                {"role": "system", "content": TRACE_SYSTEM},
-                {
-                    "role": "user",
-                    "content": f"# Changed files\n{chr(10).join(files)}\n\n# Seeds\n{seeds or 'No named changes found.'}"
-                    f"\n\n# Diff\n```diff\n{patch}\n```",
-                },
-            ],
-            SUBMIT_TRACE,
-            TRACE_TOOL_BUDGET,
-            TRACE_TOOL_CHARS,
-        )
-    except Exception as exc:
-        # ponytail: the lab A/B stops here, since a review without the trace tests nothing and still costs
-        # the finders; a shipped tracer would log this and review without the section instead.
-        print(f"Dottore trace failed: {error_text(exc)}", flush=True)
-        raise RuntimeError(f"The blast-radius tracer failed, so the review stopped: {error_text(exc)}") from exc
-    locations = as_list(submitted.get("locations"))
-    section, quoted = quote_trace(locations)
-    print(
-        f"Dottore trace: seeds={seed_count}; seed_chars={len(seeds)}; locations={len(locations)}; "
-        f"section_chars={len(section)}; quoted={', '.join(quoted) or 'none'}",
-        flush=True,
-    )
-    sections = []
-    if definitions:
-        sections.append(f"# Value Definitions\n{DEFINITIONS_NOTE}\n\n{definitions}")
-    if section:
-        sections.append(f"# Blast Radius\n{BLAST_RADIUS_NOTE}\n\n{section}")
-    return "\n\n".join(sections)
+    return found[:MAX_DEFINITIONS]
 
 
 def as_list(value):
@@ -1759,23 +1860,23 @@ def same_spot(left, right):
 
 
 def merge_segments(reports):
-    """Stage 2: combine the segment reports without a model call."""
+    """Combine the finder reports without a model call."""
     merged = {key: [] for key in ("change_summary", "findings", "nitpicks", "open_questions")}
     checks = {}
     notes = []
     status_rank = {"fail": 0, "warn": 1, "unknown": 2, "pass": 3}
     severity_rank = {"blocking": 0, "high": 1, "medium": 2, "low": 3}
-    for role, report in reports:
-        if role == "broad":
+    for number, (role, packet, report) in enumerate(reports):
+        if number == 0 or role == "finder":
             merged["change_summary"].extend(str(item) for item in as_list(report.get("change_summary")))
         for key in ("findings", "nitpicks"):
             for item in as_list(report.get(key)):
                 if not isinstance(item, dict):
                     continue
-                # Segments word the same defect differently and cite neighbouring lines, so findings
+                # Finder copies word the same defect differently and cite neighbouring lines, so findings
                 # within a few lines of each other keep one candidate: the most severe. "segment"
-                # names every segment that reported it, for telemetry.
-                entry = {**item, "segment": role}
+                # names every finder that reported it, for telemetry.
+                entry = {**item, "segment": role, "packet": packet}
                 index = next(
                     (index for index, kept in enumerate(merged[key]) if same_spot(kept, entry)), None
                 )
@@ -1798,8 +1899,7 @@ def merge_segments(reports):
         for question in as_list(report.get("open_questions")):
             if question not in merged["open_questions"]:
                 merged["open_questions"].append(question)
-        label = SEGMENT_LABELS[role]
-        notes.append([f"{label}: {note}" for note in as_list(report.get("what_i_checked"))])
+        notes.append([f"{role.capitalize()}: {note}" for note in as_list(report.get("what_i_checked"))])
     limitations = [check for check in checks.values() if control_type(check) == "Review Limitation"]
     merged["pre_merge_checks"] = [
         check
@@ -1807,14 +1907,14 @@ def merge_segments(reports):
         if control_type(check) != "Review Limitation" or check in limitations[:MAX_REVIEW_LIMITATIONS]
     ]
     merged["nitpicks"] = merged["nitpicks"][:2]
-    # Interleave the segments' notes so the rendered first few show both segments.
+    # Interleave the reports' notes so the rendered first few show each of them.
     merged["what_i_checked"] = [note for group in itertools.zip_longest(*notes) for note in group if note]
     return merged
 
 
 def evidence_snippet(text):
-    # Models often copy the numbered or diff-marked lines the tools showed them.
-    lines = [re.sub(r"^\s*\d+: ?", "", re.sub(r"^[+-]", "", line)) for line in str(text or "").splitlines()]
+    # Models often copy the numbered or diff-marked lines the tools and the bundle showed them.
+    lines = [re.sub(r"^\s*\d+[:+] ?", "", re.sub(r"^[+-]", "", line)) for line in str(text or "").splitlines()]
     return " ".join(" ".join(lines).split())
 
 
@@ -1839,34 +1939,37 @@ def evidence_grounded(ctx, evidence):
 
 
 def verification_prompt(ctx, candidates):
-    claims = [
-        {
-            "candidate": number,
-            **{
-                key: value
-                for key, value in dataclasses.asdict(candidate).items()
-                if key in {"severity", "path", "line", "side", "title", "body", "fix_hint"}
-            },
-        }
-        for number, candidate in enumerate(candidates, 1)
-    ]
+    listed = []
+    for number, candidate in enumerate(candidates, 1):
+        if candidate.kind == "question":
+            entry = {"kind": "question", "path": candidate.path, "line": candidate.line, "question": candidate.title}
+            entry["input"], _, entry["expected"] = candidate.body.removeprefix("Input: ").partition("\nExpected: ")
+        else:
+            entry = {"kind": "claim", **{key: getattr(candidate, key) for key in ("severity", "path", "line", "side", "title", "body", "fix_hint")}}
+        listed.append({"candidate": number, **entry})
     path = candidates[0].path
+    reads, chars = verifier_budget(ctx, candidates)
     return (
-        f"Verify these {len(claims)} candidate finding(s) in {path} before publication, following the "
-        f"Verification section. You have at most {verifier_budget(candidates)} tool calls. Finish by "
-        "calling submit_verdicts with one verdict per candidate number."
-        f"\n\n# Candidates\n{json.dumps(claims, indent=2)}"
+        f"{role_prompt(ctx, 'Checker')}\n\nYou have at most {reads} tool calls and {chars} characters of tool output. "
+        "Finish by calling submit_verdicts with one verdict per candidate number."
+        f"\n\n# Candidates in {path}\n{json.dumps(listed, indent=2)}"
         f"\n\n# Path Rules\n{matching_path_rules([path])}"
-        f"\n\n# Diff of {path}\n{truncate(diff_for_path(ctx.base, path), MAX_CONTEXT_FILE_CHARS)}"
+        f"\n\n# Diff of {path}\n{truncate(diff_for_path(ctx.base, path), MAX_CONTEXT_FILE_CHARS) or 'Unchanged by this PR.'}"
     )
 
 
-def verifier_budget(candidates):
-    return VERIFIER_TOOL_BUDGET + len(candidates) - 1
+def verifier_budget(ctx, candidates):
+    settings = ctx.models["verify"]
+    extra = len(candidates) - 1
+    return settings["reads"] + VERIFIER_READS_PER_EXTRA * extra, settings["chars"] + VERIFIER_CHARS_PER_EXTRA * extra
+
+
+FINDING_FIELDS = ("title", "body", "fix_hint")
 
 
 def judge(ctx, candidate, verdict):
-    """Turn one submitted verdict into (outcome, finding, note, evidence)."""
+    """Turn one submitted verdict into (outcome, finding, note, evidence). A confirmation's finding text, when the
+    checker wrote one, replaces the candidate's; a confirmed question must have it."""
     if not isinstance(verdict, dict):
         return "unverified", candidate, "", []
     outcome = str(verdict.get("verdict", "")).strip().lower()
@@ -1877,52 +1980,92 @@ def judge(ctx, candidate, verdict):
     if outcome == "confirmed" and not evidence_grounded(ctx, evidence):
         outcome = "uncertain"
         note = f"The quoted evidence did not match the code. {note}".strip()
+    written = {key: str(verdict.get(key) or "").strip() for key in FINDING_FIELDS}
+    if outcome == "confirmed" and candidate.kind == "question" and not (written["title"] and written["body"]):
+        outcome = "uncertain"
+        note = f"The confirmation came without a finding to publish. {note}".strip()
+    if outcome != "confirmed":
+        return outcome, candidate, note, evidence
     severity = str(verdict.get("severity", "")).strip().lower()
-    if outcome == "confirmed" and severity in {"blocking", "high", "medium", "low"}:
-        candidate.severity = severity
-    return outcome, candidate, note, evidence
+    finding = dataclasses.replace(candidate)
+    if severity in {"blocking", "high", "medium", "low"}:
+        finding.severity = severity
+    if written["title"] and written["body"]:
+        finding.title, finding.body = written["title"], written["body"]
+        finding.fix_hint = written["fix_hint"] or finding.fix_hint
+        finding.repair_contract = normalize_repair_contract(verdict.get("repair_contract")) or finding.repair_contract
+    line = verdict.get("line")
+    if isinstance(line, int) and not isinstance(line, bool) and line > 0:
+        try:
+            path = tool_path(verdict.get("path") or finding.path)
+        except ValueError:
+            path = ""
+        if path and head_line_exists(path, line):
+            finding.path, finding.line, finding.side = path, line, "RIGHT"
+    # A defect the checker places outside the changed lines is published in the walkthrough, not inline.
+    finding.outside_diff = finding.line not in ctx.allowed.get(finding.path, {}).get(finding.side, set())
+    return outcome, finding, note, evidence
 
 
-def verify_file(ctx, candidates):
-    """Stage 3: Dottore checks one file's candidates against the code in a single agent run."""
+def verify_file(ctx, packet, candidates):
+    """Stage 2: the checker judges one file's candidates against the code in a single agent run, after the packet the
+    finder read, so the two share a cached prefix."""
     if time.monotonic() > ctx.deadline:
         return [("unverified", candidate, "", []) for candidate in candidates]
+    reads, chars = verifier_budget(ctx, candidates)
     submitted = run_agent(
         ctx,
         "verify",
         [
-            {"role": "system", "content": ctx.skill},
+            {"role": "system", "content": ctx.system},
+            {"role": "user", "content": ctx.packets[packet]},
             {"role": "user", "content": verification_prompt(ctx, candidates)},
         ],
         SUBMIT_VERDICTS,
-        verifier_budget(candidates),
-        VERIFIER_TOOL_CHARS + VERIFIER_TOOL_CHARS_PER_EXTRA * (len(candidates) - 1),
+        cache_key=f"{ctx.cache_key}-p{packet}",
+        budget=reads,
+        output_budget=chars,
     )
     by_number = {}
     for verdict in as_list(submitted.get("verdicts")):
         if isinstance(verdict, dict) and isinstance(verdict.get("candidate"), int):
             by_number.setdefault(verdict["candidate"], verdict)
-    return [judge(ctx, candidate, by_number.get(number)) for number, candidate in enumerate(candidates, 1)]
+    results = [judge(ctx, candidate, by_number.get(number)) for number, candidate in enumerate(candidates, 1)]
+    # A confirmation the checker marks as the same defect as another confirmed candidate publishes once.
+    for number, (outcome, finding, note, evidence) in enumerate(results, 1):
+        same = (by_number.get(number) or {}).get("same_as")
+        if (
+            outcome == "confirmed"
+            and isinstance(same, int)
+            and not isinstance(same, bool)
+            and same != number
+            and 0 < same <= len(results)
+            and results[same - 1][0] == "confirmed"
+        ):
+            results[number - 1] = ("same_as", finding, note, evidence)
+    return results
 
 
 def verify_candidates(ctx, candidates, pool):
-    """Verify the highest-severity candidates, one agent per file in parallel, and sort them by outcome."""
-    chosen = candidates[:MAX_VERIFIED_CANDIDATES]
+    """Check the finder's highest-severity claims and every question, one checker per packet and file in parallel,
+    and sort them by outcome."""
+    claims = [candidate for candidate in candidates if candidate.kind != "question"]
+    chosen = claims[:MAX_VERIFIED_CANDIDATES] + [candidate for candidate in candidates if candidate.kind == "question"]
     groups = {}
-    for candidate in chosen:
-        groups.setdefault(candidate.path, []).append(candidate)
-    futures = {path: pool.submit(verify_file, ctx, group) for path, group in groups.items()}
-    counts = dict.fromkeys(("candidates", "confirmed", "rejected", "uncertain", "unverified", "failed"), 0)
+    for candidate in sorted(chosen, key=lambda candidate: (candidate.packet, candidate.path, candidate.line or 0)):
+        groups.setdefault((candidate.packet, candidate.path), []).append(candidate)
+    futures = {key: pool.submit(verify_file, ctx, key[0], group) for key, group in groups.items()}
+    counts = dict.fromkeys(("candidates", "confirmed", "rejected", "uncertain", "same_as", "unverified", "failed"), 0)
     counts["candidates"] = len(candidates)
     counts["unverified"] = len(candidates) - len(chosen)
     results = {}
-    for path, future in futures.items():
+    for key, future in futures.items():
         try:
-            for result in future.result():
-                results[id(result[1])] = result
+            for candidate, result in zip(groups[key], future.result()):
+                results[id(candidate)] = result
         except Exception as exc:
-            print(f"Dottore verifier failed for {path}: {error_text(exc)}", flush=True)
-            counts["failed"] += len(groups[path])
+            print(f"Dottore checker failed for {key[1]}: {error_text(exc)}", flush=True)
+            counts["failed"] += len(groups[key])
     confirmed, hypotheses = [], []
     for candidate in chosen:
         if id(candidate) not in results:
@@ -1930,8 +2073,11 @@ def verify_candidates(ctx, candidates, pool):
         outcome, finding, note, evidence = results[id(candidate)]
         counts[outcome] += 1
         print(
-            f"Dottore candidate: {outcome}; found_by={finding.segment}; {finding.severity}; "
-            f"{finding.path}:{finding.line}; {finding.title[:120]}",
+            f"Dottore candidate: {outcome}; found_by={finding.segment}; kind={finding.kind}; {finding.severity}; "
+            f"{candidate.path}:{candidate.line}"
+            + (f" -> {finding.path}:{finding.line}" if (finding.path, finding.line) != (candidate.path, candidate.line) else "")
+            + (" (outside diff)" if outcome == "confirmed" and finding.outside_diff else "")
+            + f"; {finding.title[:120]}",
             flush=True,
         )
         if outcome == "confirmed":
@@ -1941,20 +2087,48 @@ def verify_candidates(ctx, candidates, pool):
     return confirmed, hypotheses, counts
 
 
-def agentic_review(ctx, packets, mode, pool):
-    """Find in parallel, merge, then let Dottore verify each candidate before it can be posted."""
-    merged = merge_segments(run_finders(ctx, packets, pool))
-    candidates, severity_nitpicks, withheld = validate_review_items(
+# ponytail: lab stage (DOTTORE_LAB_STAGE=recheck) for the checker prompt alone: it judges candidates recorded from
+# earlier runs, each labelled right or wrong, so a prompt change is measured without finder or asker variance. The
+# label rides in found_by on the candidate log line. Remove with the lab.
+def recheck(ctx, head_sha, chunks, pool):
+    recorded = json.loads(pathlib.Path(__file__).with_name("lab-recheck.json").read_text("utf-8")).get(head_sha)
+    if not recorded:
+        raise RuntimeError(f"lab-recheck.json has no entries for {head_sha}")
+    candidates = []
+    for item in recorded:
+        candidate = normalize_review_item(item, default_severity="medium")
+        candidate.segment = f"recheck:{item['label']}:{item.get('source', '')}"
+        candidate.packet = next((index for index, chunk in enumerate(chunks) if candidate.path in chunk), 0)
+        candidates.append(candidate)
+    print(f"Dottore recheck: candidates={len(candidates)}", flush=True)
+    _, _, counts = verify_candidates(ctx, candidates, pool)
+    ctx.stats["verification"] = counts
+
+
+def agentic_review(ctx, bundles, mode, pool):
+    """Find and ask in parallel, merge, then let the checker judge each candidate before it can be posted."""
+    reports, questions, asker_failures = run_finders(ctx, ctx.packets, bundles, pool)
+    merged = merge_segments(reports)
+    claims, severity_nitpicks, withheld = validate_review_items(
         {"findings": merged["findings"], "mode": mode}, ctx.base
     )
     merged["nitpicks"] = (merged["nitpicks"] + [dataclasses.asdict(item) for item in severity_nitpicks])[:2]
-    confirmed, hypotheses, counts = verify_candidates(ctx, candidates, pool)
+    confirmed, hypotheses, counts = verify_candidates(ctx, claims + questions, pool)
     ctx.stats["verification"] = counts
-    questions = hypotheses + merged["open_questions"]
+    open_questions = hypotheses + merged["open_questions"]
     merged["findings"] = confirmed
-    merged["open_questions"] = questions[:MAX_OPEN_QUESTIONS]
+    merged["open_questions"] = open_questions[:MAX_OPEN_QUESTIONS]
     merged["withheld_findings"] = withheld
     merged["verification"] = counts
+    if asker_failures:
+        merged["pre_merge_checks"].append(
+            {
+                "name": "Check Questions",
+                "status": "warn",
+                "type": "Review Limitation",
+                "detail": f"The asker failed on {asker_failures} packet(s), so those were reviewed from the finder's candidates alone.",
+            }
+        )
     unresolved = len(hypotheses) - MAX_OPEN_QUESTIONS
     if unresolved > 0:
         merged["pre_merge_checks"].append(
@@ -1972,7 +2146,7 @@ def agentic_review(ctx, packets, mode, pool):
                 "name": "Verification Coverage",
                 "status": "warn",
                 "type": "Review Limitation",
-                "detail": f"{unexamined} candidate(s) went unexamined ({counts['unverified']} past the {MAX_VERIFIED_CANDIDATES}-candidate cap, the time limit or without a verdict, {counts['failed']} after a verifier error), so they were withheld.",
+                "detail": f"{unexamined} candidate(s) went unexamined ({counts['unverified']} past the {MAX_VERIFIED_CANDIDATES}-claim cap, the time limit or without a verdict, {counts['failed']} after a checker error), so they were withheld.",
             }
         )
     return merged
@@ -1982,7 +2156,7 @@ def touched_lines(base):
     by_path: dict[str, dict[str, set[int]]] = {}
     old_path = new_path = None
     old_line = new_line = None
-    diff = run_git_raw(["diff", "--find-renames", "--unified=0", f"{base}...HEAD"])
+    diff = run_git_raw(diff_command(base, "--find-renames", "--unified=0"))
     for line in diff.splitlines():
         if line.startswith("diff --git "):
             old_path = new_path = None
@@ -2051,7 +2225,7 @@ def normalize_repair_contract(value):
     return contract or None
 
 
-def normalize_review_item(item, *, default_severity):
+def normalize_review_item(item, *, default_severity, outside_ok=False):
     side = str(item.get("side", "RIGHT")).strip().upper()
     if side not in {"LEFT", "RIGHT"}:
         raise ValueError("side must be LEFT or RIGHT")
@@ -2065,10 +2239,15 @@ def normalize_review_item(item, *, default_severity):
         repair_contract=normalize_repair_contract(item.get("repair_contract")),
         side=side,
         segment=str(item.get("segment", "")).strip(),
+        kind=str(item.get("kind") or "claim"),
+        outside_diff=outside_ok and item.get("outside_diff") is True,
+        packet=item.get("packet") if isinstance(item.get("packet"), int) else 0,
     )
 
 
-def validate_review_items(review_obj, base):
+def validate_review_items(review_obj, base, outside_ok=False):
+    """The findings and nitpicks whose diff locations hold. With outside_ok, a confirmed finding the checker placed
+    outside the changed lines keeps its place when that line exists at the head; the finder's never do."""
     allowed = touched_lines(base)
     findings = []
     nitpicks = []
@@ -2076,13 +2255,23 @@ def validate_review_items(review_obj, base):
     severities = {"blocking", "high", "medium", "low"}
     for item in review_obj.get("findings", []):
         try:
-            finding = normalize_review_item(item, default_severity="medium")
+            finding = normalize_review_item(item, default_severity="medium", outside_ok=outside_ok)
         except Exception as exc:
             invalid.append(f"Malformed finding skipped: {exc}")
             continue
         target = nitpicks if finding.severity == "nitpick" else findings
         if finding.severity not in severities:
             finding.severity = "nitpick" if target is nitpicks else "medium"
+        if finding.outside_diff and finding.side == "RIGHT":
+            try:
+                exists = isinstance(finding.line, int) and head_line_exists(tool_path(finding.path), finding.line)
+            except ValueError:
+                exists = False
+            if not exists or isinstance(finding.line, bool) or not finding.title or not finding.body:
+                invalid.append(f"{finding.severity} '{finding.title or '<untitled>'}' at {finding.path}: no such line at the head")
+                continue
+            target.append(finding)
+            continue
         if not finding.path or finding.path not in allowed:
             invalid.append(
                 f"{finding.severity} '{finding.title or '<untitled>'}' at "
@@ -2829,16 +3018,17 @@ def render_walkthrough(
         body.extend(["", "### ❓ Unresolved Hypotheses"])
         body.extend([f"- {line}" for line in questions[:2]])
     body.extend(["", "### 🧪 Observations"])
-    body.extend([f"- {line}" for line in checked[:3]] or ["- Review packet and diff context inspected."])
+    body.extend([f"- {line}" for line in checked[:3]] or ["- Bundle and diff context inspected."])
     verification = review_obj.get("verification") or {}
     if invalid_findings or verification:
         body.extend(["", "### 📝 Lab Notes"])
     if verification:
         unexamined = verification.get("unverified", 0) + verification.get("failed", 0)
         body.append(
-            f"- Dottore examined {verification.get('candidates', 0)} segment claim(s) against the code: "
+            f"- Dottore examined {verification.get('candidates', 0)} candidate(s) against the code: "
             f"{verification.get('confirmed', 0)} confirmed, {verification.get('rejected', 0)} rejected, "
             f"{verification.get('uncertain', 0)} unresolved"
+            + (f", {verification['same_as']} the same defect as another" if verification.get("same_as") else "")
             + (f", {unexamined} unexamined." if unexamined else ".")
         )
     if invalid_findings:
@@ -2846,7 +3036,7 @@ def render_walkthrough(
             [
                 "",
                 "> [!WARNING]",
-                f"> Withheld {len(invalid_findings)} model finding(s) because their diff locations failed validation.",
+                f"> Withheld {len(invalid_findings)} candidate(s) because their diff locations failed validation.",
             ]
         )
         body.extend([f"- {note}" for note in invalid_findings[:5]])
@@ -3164,6 +3354,35 @@ def resolve_review_base(pr_num, requested_mode):
     return f"origin/{base_ref}", base_ref, head_sha, "full"
 
 
+def git_out(args):
+    result = run(["git", *args])
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def review_base_commit(base, base_ref, mode):
+    """The commit the diff runs from, and the mode. A full review diffs from where the PR left its base branch. An
+    incremental one diffs from the last reviewed head; when the base branch was merged into the PR since, it diffs
+    from that head with the same base merged into it, so only the PR's own changes show. If that merge conflicts,
+    the review is full."""
+    target = f"origin/{base_ref}"
+    if mode != "incremental":
+        return git_out(["merge-base", base if mode == "custom" else target, "HEAD"]) or base, mode
+    now, then = git_out(["merge-base", target, "HEAD"]), git_out(["merge-base", target, base])
+    if not now or not then or now == then:
+        return base, mode
+    merged = run(["git", "merge-tree", "--write-tree", "--no-messages", now, base])
+    tree = merged.stdout.split("\n", 1)[0].strip()
+    if merged.returncode == 0 and tree:
+        commit = git_out(
+            ["-c", "user.name=Dottore", "-c", "user.email=dottore@localhost", "commit-tree", tree, "-p", base, "-p", now, "-m", "Dottore review base"]
+        )
+        if commit:
+            print(f"Dottore review base: {base[:12]} with {target} at {now[:12]} merged in", flush=True)
+            return commit, mode
+    print(f"Dottore review base: the base branch merged since {base[:12]} conflicts; reviewing in full", flush=True)
+    return git_out(["merge-base", target, "HEAD"]) or target, "full"
+
+
 def parse_command_mode():
     body = os.environ.get("DOTTORE_COMMENT_BODY", "")
     if "/dottore" not in body:
@@ -3188,6 +3407,7 @@ def produce_review(args):
     requested_mode = args.mode or parse_command_mode()
     base, base_ref, head_sha, effective_mode = resolve_review_base(pr_num, requested_mode)
     ensure_local_head(head_sha, pr_num)
+    base, effective_mode = review_base_commit(base, base_ref, effective_mode)
     patch_command_status_running(pr_num, head_sha, effective_mode)
     files = changed_files(base)
     if not files and effective_mode == "incremental":
@@ -3223,8 +3443,7 @@ def produce_review(args):
         return
 
     chunks = chunk_changed_files(base, files)
-
-    skill = dottore_prompt_path().read_text("utf-8")
+    prompts = prompt_sections(dottore_prompt_path().read_text("utf-8"))
     prior_contract_state = prior_review_contract_state(pr_num)
     prior_contract_context = (
         format_contract_entries_for_prompt(prior_contract_state)
@@ -3232,52 +3451,60 @@ def produce_review(args):
         else prior_review_contracts_context(pr_num)
     )
     review_target = (
-        f"Review this PR. The review base is '{base}' from target branch '{base_ref}', "
+        f"Review this PR. The review base is commit '{base}' on target branch '{base_ref}', "
         f"head is '{head_sha}', and mode is '{effective_mode}'."
     )
-
-    if len(chunks) > 1:
-        stats = build_stats("")
-        packets = []
-        for index, chunk in enumerate(chunks, 1):
-            review_packet = build_review_packet(
-                base,
-                effective_mode,
-                focus_files=chunk,
-                include_full_patch=False,
-            )
-            stats["review_packet_chars"] += len(review_packet)
-            focus_note = (
-                f"This is chunk {index} of {len(chunks)}. Review only these focus files: "
-                + ", ".join(chunk)
-                + "."
-            )
-            packets.append(finder_packet(review_target, focus_note, prior_contract_context, review_packet))
-    else:
-        review_packet = build_review_packet(base, effective_mode)
-        stats = build_stats(review_packet)
-        packets = [
-            finder_packet(review_target, "Review the full current diff.", prior_contract_context, review_packet)
-        ]
+    description = pr_description(pr_num)
+    bundles, packets = [], []
+    for index, chunk in enumerate(chunks, 1):
+        bundle = build_bundle(base, chunk, description)
+        focus_note = (
+            f"This is packet {index} of {len(chunks)}. Review only these focus files: {', '.join(chunk)}."
+            if len(chunks) > 1
+            else "Review the full current diff."
+        )
+        bundles.append(bundle)
+        packets.append(finder_packet(review_target, focus_note, prior_contract_context, bundle))
+    stats = build_stats("".join(bundles))
+    print(f"Dottore bundles: packets={len(bundles)}; chars={','.join(str(len(bundle)) for bundle in bundles)}", flush=True)
     try:
         models = role_models()
         ctx = ReviewRun(
             clients=review_clients(models),
-            skill=skill,
+            prompts=prompts,
+            system=reviewer_system(prompts),
+            packets=packets,
+            cache_key=f"dottore-{os.environ.get('GITHUB_REPOSITORY', 'local')}-{pr_num or head_sha[:12]}",
+            allowed=touched_lines(base),
             models=models,
             stats=stats,
             base=base,
-            merge_base=run(["git", "merge-base", base, "HEAD"], check=True).stdout.strip(),
+            merge_base=base,
             files=frozenset(files),
             deadline=stats["started_at"] + REVIEW_DEADLINE_SECONDS,
-            cache_key=f"dottore-{os.environ.get('GITHUB_REPOSITORY', 'local')}-{pr_num or head_sha[:12]}",
+            cost_limit=cost_limit(),
         )
-        # ponytail: one trace covers every chunk and is appended to each; trace per chunk if large PRs need it.
-        blast_radius = trace_blast_radius(ctx)
-        if blast_radius:
-            packets = [f"{packet}\n\n{blast_radius}" for packet in packets]
+        print(
+            "Dottore roles: "
+            + "; ".join(
+                f"{role}={settings['provider']}/{settings['model']}/{settings['effort'] or '-'}"
+                + (" (own endpoint)" if settings["endpoint"] else "")
+                for role, settings in models.items()
+            )
+            + f"; finders={finder_count()}; cost_limit_usd={ctx.cost_limit or '-'}",
+            flush=True,
+        )
         with ThreadPoolExecutor(max_workers=review_concurrency()) as pool:
-            review_obj = agentic_review(ctx, packets, effective_mode, pool)
+            if os.environ.get("DOTTORE_LAB_STAGE", "").strip().lower() == "recheck":
+                recheck(ctx, head_sha, chunks, pool)
+                write_skipped_review(
+                    "Lab Recheck Only",
+                    "DOTTORE_LAB_STAGE=recheck: the checker judged recorded candidates; nothing was published.",
+                    metadata={"head_sha": head_sha, "review_base": base, "base_ref": base_ref, "mode": effective_mode},
+                )
+                print_telemetry(stats)
+                return
+            review_obj = agentic_review(ctx, bundles, effective_mode, pool)
     except Exception as exc:
         write_skipped_review(
             "Review Failed",
@@ -3295,7 +3522,7 @@ def produce_review(args):
         return
     if len(chunks) > 1:
         review_obj["what_i_checked"].append(
-            f"Examined the PR in {len(chunks)} file chunk(s) so the large diff did not contaminate context retention."
+            f"Examined the PR in {len(chunks)} file packet(s) so the large diff did not contaminate context retention."
         )
     for key in ("findings", "nitpicks", "pre_merge_checks"):
         if review_obj.get(key) is None:
@@ -3310,7 +3537,7 @@ def produce_review(args):
         f"Selected review base `{base}` for target branch `{base_ref}` in `{effective_mode}` mode."
     )
     try:
-        valid_findings, _, _ = validate_review_items(review_obj, base)
+        valid_findings, _, _ = validate_review_items(review_obj, base, outside_ok=True)
         review_obj["resolved_since_last_review"] = resolved_contracts_since_last_review(
             prior_contract_state,
             valid_findings,
@@ -3349,7 +3576,7 @@ def render_review(args):
         pr_num = os.environ.get("PR_NUM", "")
         requested_mode = args.mode or parse_command_mode()
         base, _, _, _ = resolve_review_base(pr_num, requested_mode)
-    findings, nitpicks, invalid = validate_review_items(review_obj, base)
+    findings, nitpicks, invalid = validate_review_items(review_obj, base, outside_ok=True)
     # Candidates withheld before verification count with the ones withheld here.
     invalid = [*as_list(review_obj.get("withheld_findings")), *invalid]
     head_sha = review_obj.get("head_sha") or os.environ.get("DOTTORE_HEAD_SHA", "")
@@ -3362,7 +3589,7 @@ def render_review(args):
         prior_contracts=review_obj.get("_prior_dottore_contract_state") or [],
     )
     pathlib.Path("review.md").write_text(walkthrough, "utf-8")
-    inline_findings = findings_for_inline_comments(findings)
+    inline_findings = findings_for_inline_comments([finding for finding in findings if not finding.outside_diff])
     inline = [
         {
             "path": f.path,
@@ -3572,6 +3799,11 @@ def status_state(args):
     if any(not isinstance(item, dict) for item in pre_merge):
         print("state=failure")
         print("description=The control record is malformed; Dottore cannot certify this examination.")
+        return
+    counts = review_obj.get("verification") if isinstance(review_obj.get("verification"), dict) else {}
+    if any(isinstance(counts.get(key), int) and counts[key] > 0 for key in ("failed", "unverified")):
+        print("state=failure")
+        print("description=Some candidates went unexamined, so Dottore cannot certify this examination; rerun the review.")
         return
     if has_incomplete_review_check(pre_merge or []):
         print("state=failure")
