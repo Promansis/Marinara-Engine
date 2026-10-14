@@ -88,7 +88,7 @@ concurrency:
 jobs:
   review:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 70
     env:
       PR_NUM: ${{ inputs.pr_number }}
       DOTTORE_COMMENT_BODY: ${{ inputs.comment_body }}
@@ -174,7 +174,7 @@ jobs:
       # LinkAPI's claudecode rates, and is checked between turns: 0.30 on Haiku stops near $0.10 plus the turn in flight.
       - name: Lab Claude Code review
         if: vars.DOTTORE_LAB_STAGE == 'claudecode'
-        timeout-minutes: 32
+        timeout-minutes: 62
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
@@ -186,7 +186,7 @@ jobs:
           CC_MODEL: claude-haiku-5-5
           CC_EFFORT: medium
           CC_BUDGET_LIST_USD: "0.30"
-          CC_TIMEOUT: 23m
+          CC_TIMEOUT: 55m
         run: |
           npm install -g --no-fund --no-audit @anthropic-ai/claude-code@2.1.296 >/dev/null
           echo "Dottore lab claude version: $(claude --version)"
