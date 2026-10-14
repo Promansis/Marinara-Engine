@@ -2009,7 +2009,8 @@ def judge(ctx, candidate, verdict):
 
 def verify_file(ctx, packet, candidates):
     """Stage 2: the checker judges one file's candidates against the code in a single agent run, after the packet the
-    finder read, so the two share a cached prefix."""
+    finder read. Each file's run has its own cache key: checkers run in parallel, and conversations sharing a key past
+    the provider's per-key request rate are spread over machines that do not hold their earlier turns."""
     if time.monotonic() > ctx.deadline:
         return [("unverified", candidate, "", []) for candidate in candidates]
     reads, chars = verifier_budget(ctx, candidates)
@@ -2022,7 +2023,7 @@ def verify_file(ctx, packet, candidates):
             {"role": "user", "content": verification_prompt(ctx, candidates)},
         ],
         SUBMIT_VERDICTS,
-        cache_key=f"{ctx.cache_key}-p{packet}",
+        cache_key=f"{ctx.cache_key}-p{packet}-{hashlib.sha1(candidates[0].path.encode()).hexdigest()[:8]}",
         budget=reads,
         output_budget=chars,
     )
