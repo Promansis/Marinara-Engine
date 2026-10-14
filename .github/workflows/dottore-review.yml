@@ -170,7 +170,8 @@ jobs:
 
       # Lab only: Anthropic's built-in /code-review prompt in an unmodified Claude Code CLI, read-only, through the
       # shared ANTHROPIC_* endpoint (LinkAPI). It prints the transcript and cost to the log and skips Dottore's own steps.
-      # --max-budget-usd counts at Anthropic list prices, about 4x LinkAPI's claudecode rates, so 1.50 stops near $0.40.
+      # --max-budget-usd uses Claude Code's built-in prices (Opus 5.5 $4/$20 per M in/out, Haiku 5.5 $0.10/$0.50), about 3x
+      # LinkAPI's claudecode rates, and is checked between turns: 1.50 stops near $0.50 plus the turn in flight.
       - name: Lab Claude Code review
         if: vars.DOTTORE_LAB_STAGE == 'claudecode'
         timeout-minutes: 32
@@ -205,21 +206,28 @@ jobs:
             }
           }
           JSON
-          # Each event is printed as it arrives (the log's timestamps show the pace), with per-message usage, so a slow
-          # or stuck run still leaves its transcript and cost in the log.
+          # Each event is printed as it arrives (the log's timestamps show the pace), so a slow or stuck run still leaves
+          # its transcript and cost in the log. Per-message usage comes from the raw stream: an assistant event carries
+          # only the start-of-message snapshot (output_tokens 1); message_delta has the real output, thinking included.
           cat > "$RUNNER_TEMP/cc-filter.jq" <<'JQ'
           . as $line | (try fromjson catch {type: "raw", raw: $line}) |
           ($tag + (if .parent_tool_use_id then "[sub] " else " " end)) as $p |
           if .type == "raw" then $p + "raw: " + (.raw | .[0:300])
           elif .type == "system" and .subtype == "init" then $p + "system: init model=" + (.model // "") + " tools=" + ((.tools // []) | join(","))
+          elif .type == "system" and .subtype == "thinking_tokens" then
+            select((.estimated_tokens / 2000 | floor) > ((.estimated_tokens - .estimated_tokens_delta) / 2000 | floor))
+            | $p + "thinking: ~" + (.estimated_tokens | tostring) + " tokens so far (estimate)"
           elif .type == "system" then $p + "system: " + (del(.tools, .mcp_servers, .slash_commands, .agents, .skills, .plugins) | tostring | .[0:400])
+          elif .type == "stream_event" and .event.type == "message_start" then
+            $p + "msg start: " + (.event.message.id // "") + " " + (.event.message.model // "") + " "
+              + (.event.message.usage | {input_tokens, cache_read_input_tokens, cache_creation_input_tokens} | tostring)
+          elif .type == "stream_event" and .event.type == "message_delta" then
+            $p + "msg end: " + (.event.delta.stop_reason // "") + " " + (.event.usage | with_entries(select(.value | type == "number")) | tostring)
           elif .type == "assistant" then
-            (.message.content[]? |
+            .message.content[]? |
               if .type == "text" then $p + "text: " + .text
               elif .type == "tool_use" then $p + "tool: " + .name + " " + (.input | tostring | .[0:400])
-              else empty end),
-            (.message | select(.usage) | $p + "usage: " + (.id // "") + " " + (.model // "")
-              + " " + (.usage | {input_tokens, cache_read_input_tokens, cache_creation_input_tokens, output_tokens} | tostring))
+              else empty end
           elif .type == "user" then (.message.content[]? | select(type == "object" and .type == "tool_result" and .is_error == true)
             | $p + "tool error: " + (.content | tostring | .[0:300]))
           elif .type == "result" then $tag + " result: " + (del(.result) | tostring) + "\n" + $tag + " final:\n" + (.result // "")
@@ -232,8 +240,9 @@ jobs:
             set +e
             API_TIMEOUT_MS=$(( $4 * 1000 )) CLAUDE_CODE_MAX_RETRIES=$5 timeout -k 30s "$2" claude -p "$6" --restricted --strict-mcp-config \
               --tools Read,Grep,Glob,Bash --model "$CC_MODEL" --effort "$CC_EFFORT" --max-budget-usd "$3" --permission-mode dontAsk \
-              --settings "$RUNNER_TEMP/cc-settings.json" --output-format stream-json --verbose --no-session-persistence < /dev/null \
-              | tee "$RUNNER_TEMP/$1.jsonl" | jq -R -r --unbuffered --arg tag "$1" -f "$RUNNER_TEMP/cc-filter.jq"
+              --settings "$RUNNER_TEMP/cc-settings.json" --output-format stream-json --verbose --include-partial-messages \
+              --no-session-persistence < /dev/null | tee "$RUNNER_TEMP/$1.jsonl" \
+              | jq -R -r --unbuffered --arg tag "$1" -f "$RUNNER_TEMP/cc-filter.jq"
             local codes=("${PIPESTATUS[@]}")
             set -e
             echo "Dottore lab claude $1 exit=${codes[0]} jq=${codes[2]} lines=$(wc -l < "$RUNNER_TEMP/$1.jsonl")"
