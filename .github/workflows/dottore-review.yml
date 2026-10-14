@@ -171,7 +171,7 @@ jobs:
       # Lab only: Anthropic's built-in /code-review prompt in an unmodified Claude Code CLI, read-only, through the
       # shared ANTHROPIC_* endpoint (LinkAPI). It prints the transcript and cost to the log and skips Dottore's own steps.
       # --max-budget-usd uses Claude Code's built-in prices (Opus 5.5 $4/$20 per M in/out, Haiku 5.5 $0.10/$0.50), about 3x
-      # LinkAPI's claudecode rates, and is checked between turns: 1.50 stops near $0.50 plus the turn in flight.
+      # LinkAPI's claudecode rates, and is checked between turns: 0.30 on Haiku stops near $0.10 plus the turn in flight.
       - name: Lab Claude Code review
         if: vars.DOTTORE_LAB_STAGE == 'claudecode'
         timeout-minutes: 32
@@ -183,9 +183,9 @@ jobs:
           ANTHROPIC_DEFAULT_HAIKU_MODEL: claude-haiku-5-5
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
           DISABLE_AUTOUPDATER: "1"
-          CC_MODEL: claude-opus-5-5
+          CC_MODEL: claude-haiku-5-5
           CC_EFFORT: medium
-          CC_BUDGET_LIST_USD: "1.50"
+          CC_BUDGET_LIST_USD: "0.30"
           CC_TIMEOUT: 23m
         run: |
           npm install -g --no-fund --no-audit @anthropic-ai/claude-code@2.1.296 >/dev/null
@@ -279,9 +279,11 @@ jobs:
             exit 0
           fi
           echo "Dottore lab claude review prompt: $(wc -c < "$RUNNER_TEMP/cc-review-prompt.txt") chars: $(head -3 "$RUNNER_TEMP/cc-review-prompt.txt" | tr '\n' ' ')"
-          # Preflight with the review's request shape: if the endpoint can't answer one line, skip the review.
+          # Preflight with the review's request shape: if the endpoint can't answer one line, skip the review. The answer
+          # must be OK: a gateway that swaps the prompt for its own (billed 29 tokens, replied "你好") still returns success.
           cc PRE 4m 0.10 60 1 "Reply with the single word OK."
-          if ! jq -e -s 'any(.[]; .type == "result" and .is_error == false)' "$RUNNER_TEMP/PRE.jsonl" >/dev/null 2>&1; then
+          if ! jq -e -s 'any(.[]; .type == "result" and .is_error == false and ((.result // "") | test("^\\W*ok\\W*$"; "i")))' \
+               "$RUNNER_TEMP/PRE.jsonl" >/dev/null 2>&1; then
             echo "Dottore lab claude preflight failed: review skipped"
             exit 0
           fi
