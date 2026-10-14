@@ -3411,17 +3411,20 @@ SUBMIT_QUESTIONS = function_tool(
     ["questions"],
 )
 ASK_SYSTEM = (
-    "You write the check questions for this pull request. A stronger model answers each one by tracing the code in "
-    "the bundle; you do not answer them, and a place you leave unasked is a defect nobody checks. You have no tools. "
+    "You write the check questions for this pull request. Another model answers each one by tracing the code in the "
+    "bundle. You have no tools. "
     "The bundle holds the PR's description, the diff of its files other than code, its production code quoted from "
     "the PR head with changed lines marked, the definitions and same-file functions that code reads and calls, and "
     "where changed names are used.\n\n"
+    "Pick the places and inputs to check; do not work out whether the code handles them, since the answerer does "
+    "that. Once you see a place and an input worth checking, write the question and move on.\n\n"
     f"Write at most {MAX_QUESTIONS} questions, most consequential first. Each names:\n"
     "- path and line: the line at the PR head where the input meets the code to check, often unchanged code that the "
     "change now feeds or relies on;\n"
     "- input: one concrete input, item, reader, state or sequence of events;\n"
     "- expected: what should happen for that input and where that is promised: cite the PR description, a changed "
-    "comment, a docs or changelog line, or say what the code did before the change;\n"
+    "comment, or a docs or changelog line you have already read, or say what the code did before the change; do not "
+    "search for a promise;\n"
     "- question: what the code does for that input, asked neutrally. Do not say or hint whether it is wrong.\n\n"
     "Ask where changes break most often:\n"
     "- a value converted, parsed or defaulted: zero, empty, missing, a string where a number is expected, a legacy or "
