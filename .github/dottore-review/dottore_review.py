@@ -2099,6 +2099,7 @@ def recheck(ctx, head_sha, chunks, pool):
     for item in recorded:
         candidate = normalize_review_item(item, default_severity="medium")
         candidate.segment = f"recheck:{item['label']}:{item.get('source', '')}"
+        candidate.kind = item.get("kind", candidate.kind)
         candidate.packet = next((index for index, chunk in enumerate(chunks) if candidate.path in chunk), 0)
         candidates.append(candidate)
     print(f"Dottore recheck: candidates={len(candidates)}", flush=True)

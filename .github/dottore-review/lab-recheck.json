@@ -137,7 +137,20 @@
       "source": "A1r2#394"
     }
   ],
-  "f481e3248b309689a4abae0f5603370ae0360dbc": [
+  "11a0693e1ae9bf40a15a98128677953a490b5f46": [
+    {
+      "path": "packages/server/src/services/advanced-memory.ts",
+      "line": 3323,
+      "side": "RIGHT",
+      "severity": "high",
+      "title": "Private facts can escape through paraphrase",
+      "body": "How reassuringly literal: the privacy gate only recognizes an exact sentence copied into a wider audience section, and even then ignores every sentence shorter than four words. A helper can rephrase a private fact—or copy a short secret verbatim—while leaving an innocuous sentence under the original condition; the section keys still match, so line 3400 accepts and persists the leak for readers who were never meant to know it.",
+      "fix_hint": "Do not treat matching a few unchanged words as proof of unchanged access; reject unverified conditional rewrites or validate the facts in each reader scope before saving.",
+      "label": "tp-3400",
+      "source": "A1r2#393"
+    }
+  ],
+  "f481e3248b309689a4abae0f5603370ae0360dbc:p-set": [
     {
       "path": "packages/server/src/services/advanced-memory.ts",
       "line": 2251,
@@ -150,17 +163,30 @@
       "source": "A1r2#396"
     }
   ],
-  "11a0693e1ae9bf40a15a98128677953a490b5f46": [
+  "f481e3248b309689a4abae0f5603370ae0360dbc": [
     {
-      "path": "packages/server/src/services/advanced-memory.ts",
-      "line": 3323,
+      "path": "packages/client/src/components/chat/AdvancedMemorySettings.tsx",
+      "line": 141,
       "side": "RIGHT",
-      "severity": "high",
-      "title": "Private facts can escape through paraphrase",
-      "body": "How reassuringly literal: the privacy gate only recognizes an exact sentence copied into a wider audience section, and even then ignores every sentence shorter than four words. A helper can rephrase a private fact—or copy a short secret verbatim—while leaving an innocuous sentence under the original condition; the section keys still match, so line 3400 accepts and persists the leak for readers who were never meant to know it.",
-      "fix_hint": "Do not treat matching a few unchanged words as proof of unchanged access; reject unverified conditional rewrites or validate the facts in each reader scope before saving.",
-      "label": "tp-3400",
-      "source": "A1r2#393"
+      "severity": "medium",
+      "kind": "question",
+      "title": "What happens to the stored fix request in this case, and does a Fix run start?",
+      "body": "Input: The notice's Fix button is pressed while a preparation job is running (status \"running\"), so canFix is false. The effect runs on the next render with status.data loaded and request.fix true.\nExpected: canFix (line 126) disables the Fix button while running, so Fix should not start. The comment on line 139 says the notice's Fix button starts Fix once memory has loaded.",
+      "fix_hint": "",
+      "label": "q-147",
+      "source": "T1#439 run 38605464197"
+    },
+    {
+      "path": "packages/client/src/components/chat/AdvancedMemorySettings.tsx",
+      "line": 119,
+      "side": "RIGHT",
+      "severity": "medium",
+      "kind": "question",
+      "title": "What does the Fix box show for this flagged scene, and what happens when the notice's Fix action is pressed, given that numbered() drops ids without a scene number and the notice's fixable flag is computed from the unfiltered problems.fixSceneIds?",
+      "body": "Input: status.data.job has no running job. problems.fixSceneIds is [\"scene-x\"], but \"scene-x\" appears in neither status.records (as a scene) nor status.unpreparedScenes, so sceneNumbers has no number for it.\nExpected: The PR says Fix repairs every flagged scene in one run and the notice counts flagged scenes; the Fix box should list the flagged scene and the notice's Fix action should start Fix for it.",
+      "fix_hint": "",
+      "label": "q-119",
+      "source": "T1#439 run 38605464197"
     }
   ]
 }
