@@ -2077,7 +2077,7 @@ def verify_candidates(ctx, candidates, pool):
             f"{candidate.path}:{candidate.line}"
             + (f" -> {finding.path}:{finding.line}" if (finding.path, finding.line) != (candidate.path, candidate.line) else "")
             + (" (outside diff)" if outcome == "confirmed" and finding.outside_diff else "")
-            + f"; {finding.title[:120]}",
+            + f"; {finding.title[:120]}; note={note[:400]}",
             flush=True,
         )
         if outcome == "confirmed":

@@ -6,7 +6,7 @@
       "side": "RIGHT",
       "severity": "medium",
       "title": "Render retained private branches in their reader's macro context",
-      "body": "The guard is removed, but its reader's identity is left behind\u2014an entertaining way to manufacture false memories. With merged readers Cara, Maukie and Pantalone, `{{#if char == \"Maukie\"}}{{char}} hid the compass{{/if}}` becomes `[Known only to Maukie: Cara hid the compass]`, because the later `resolveMacros` still uses `names[0]`. A variable guard enclosing a character-private branch is instead retained wholesale, so that branch still disappears for the wrong primary character or appears without its knowledge label. The added literal-only regression cannot detect either failure.",
+      "body": "The guard is removed, but its reader's identity is left behind—an entertaining way to manufacture false memories. With merged readers Cara, Maukie and Pantalone, `{{#if char == \"Maukie\"}}{{char}} hid the compass{{/if}}` becomes `[Known only to Maukie: Cara hid the compass]`, because the later `resolveMacros` still uses `names[0]`. A variable guard enclosing a character-private branch is instead retained wholesale, so that branch still disappears for the wrong primary character or appears without its knowledge label. The added literal-only regression cannot detect either failure.",
       "fix_hint": "Resolve reader-dependent conditions and substitutions before combining and labelling their resulting text; the primary character must not impersonate another reader's memory.",
       "label": "tp-1689",
       "source": "A1r2#390"
@@ -28,7 +28,7 @@
       "side": "RIGHT",
       "severity": "medium",
       "title": "Context trimming can amputate a private fragment's attribution",
-      "body": "The new knowledge boundary exists only in a fragment's opening text, while constant-summary fitting still slices the compiled string into arbitrary head and tail excerpts. When a long shared prefix precedes a long `[Known only to Maukie: \u2026]` fragment, `fitText` can keep shared text at the head and private text at the tail while discarding the opening label. The final prompt then carries private facts without the attribution promised for merged replies; the generous 12,000-token regression never forces this path.",
+      "body": "The new knowledge boundary exists only in a fragment's opening text, while constant-summary fitting still slices the compiled string into arbitrary head and tail excerpts. When a long shared prefix precedes a long `[Known only to Maukie: …]` fragment, `fitText` can keep shared text at the head and private text at the tail while discarding the opening label. The final prompt then carries private facts without the attribution promised for merged replies; the generous 12,000-token regression never forces this path.",
       "fix_hint": "Fit annotated fragments as units, preserving their reader labels whenever any private content survives.",
       "label": "real-1693",
       "source": "A1r2#390"
@@ -148,6 +148,19 @@
       "fix_hint": "Apply the conservative audience rule to every unclear Fix result, using narrator-only access when no trustworthy prior audience exists.",
       "label": "wrong-2251-7184",
       "source": "A1r2#396"
+    }
+  ],
+  "11a0693e1ae9bf40a15a98128677953a490b5f46": [
+    {
+      "path": "packages/server/src/services/advanced-memory.ts",
+      "line": 3323,
+      "side": "RIGHT",
+      "severity": "high",
+      "title": "Private facts can escape through paraphrase",
+      "body": "How reassuringly literal: the privacy gate only recognizes an exact sentence copied into a wider audience section, and even then ignores every sentence shorter than four words. A helper can rephrase a private fact—or copy a short secret verbatim—while leaving an innocuous sentence under the original condition; the section keys still match, so line 3400 accepts and persists the leak for readers who were never meant to know it.",
+      "fix_hint": "Do not treat matching a few unchanged words as proof of unchanged access; reject unverified conditional rewrites or validate the facts in each reader scope before saving.",
+      "label": "tp-3400",
+      "source": "A1r2#393"
     }
   ]
 }
