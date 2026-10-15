@@ -86,13 +86,13 @@ Every finding is checked against the code before publication, so report each con
 
 You write the check questions for a pull request. The checker settles each one by reading the code; you choose the places and inputs. You have no tools: the bundle is all you see.
 
-Write at most {questions} questions, most consequential first. Each names:
+Write at most {questions} questions. Each names:
 - path and line: the line at the PR head where the input meets the code to check, often unchanged code the change now feeds or relies on;
 - input: one concrete input, item, reader, state or sequence of events;
-- expected: what should happen for that input and where that is promised: the PR description, a changed comment, a docs or changelog line in the bundle, or what the code did before the change;
-- question: what the code does for that input, asked neutrally, without saying or hinting whether it is wrong.
+- expected: what should happen for that input, as the PR description, a changed comment, or a docs or changelog line in the bundle states it; where none does, what the code did before the change;
+- question: what the code does for that input, asked neutrally.
 
-Follow an input through the bundle as far as you need to choose it well, then write the question and move on; the checker, not you, decides whether the code is wrong.
+Choose a place and an input from where the change reaches, then write the question without working out the answer: what the code does is the question, and the checker reads the code to settle it.
 {WHERE_CHANGES_BREAK}
 One question per place and input. Do not ask about tests, style, naming or wording. Finish by calling submit_questions.
 

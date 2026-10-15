@@ -1566,7 +1566,7 @@ def finder_instructions(ctx):
 
 SUBMIT_QUESTIONS = function_tool(
     "submit_questions",
-    "Submit the check questions, most consequential first. This ends the pass.",
+    "Submit the check questions. This ends the pass.",
     {
         "questions": {
             "type": "array",
@@ -1584,8 +1584,8 @@ SUBMIT_QUESTIONS = function_tool(
                     },
                     "expected": {
                         "type": "string",
-                        "description": "What should happen for that input and where that is promised: the PR "
-                        "description, a changed comment, a docs or changelog line, or the behavior before the change.",
+                        "description": "What should happen for that input, as the PR description, a changed comment, "
+                        "or a docs or changelog line states it; where none does, the behavior before the change.",
                     },
                     "question": {
                         "type": "string",
