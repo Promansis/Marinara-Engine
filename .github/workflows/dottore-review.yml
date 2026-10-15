@@ -54,10 +54,6 @@ on:
         required: false
       DOTTORE_FINDER_API_KEY:
         required: false
-      DOTTORE_ASKER_BASE_URL:
-        required: false
-      DOTTORE_ASKER_API_KEY:
-        required: false
       DOTTORE_VERIFY_BASE_URL:
         required: false
       DOTTORE_VERIFY_API_KEY:
@@ -186,8 +182,6 @@ jobs:
           DOTTORE_SCOUT_API_KEY: ${{ secrets.DOTTORE_SCOUT_API_KEY }}
           DOTTORE_FINDER_BASE_URL: ${{ secrets.DOTTORE_FINDER_BASE_URL }}
           DOTTORE_FINDER_API_KEY: ${{ secrets.DOTTORE_FINDER_API_KEY }}
-          DOTTORE_ASKER_BASE_URL: ${{ secrets.DOTTORE_ASKER_BASE_URL }}
-          DOTTORE_ASKER_API_KEY: ${{ secrets.DOTTORE_ASKER_API_KEY }}
           DOTTORE_VERIFY_BASE_URL: ${{ secrets.DOTTORE_VERIFY_BASE_URL }}
           DOTTORE_VERIFY_API_KEY: ${{ secrets.DOTTORE_VERIFY_API_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -10,11 +10,9 @@ small roles' job:
   shares, one scout per share, and the scouts run at once, so the reading takes one scout's time. Code quotes the places
   into the bundle. A scout names no defect. A failed scout is noted and its share keeps the code-built bundle.
 - **`finder`** makes one call with no tools on the bundle and claims defects at changed lines.
-- **`asker`** makes one call with no tools and writes check questions: a place, an input and what should happen. It runs
-  beside the finder and names no verdict. A failed asker is noted in the review; a failed finder fails the review.
-- **`verify`** (the checker) judges the finder's claims and the asker's questions together, one call per file, with the
-  bundle and the code around each candidate in view and a few reads for what is still out of reach. Only confirmed
-  findings are published, and a confirmed question carries the finding text the checker wrote.
+- **`verify`** (the checker) judges the finder's claims, one call per file, with the bundle and the code around each
+  candidate in view and a few reads for what is still out of reach. Only confirmed findings are published; a confirmed
+  claim whose defect differs from its wording carries the finding text the checker wrote.
 
 The finder and checker send the bundle about once each, so a review's cost is the bundle's size times the models'
 prices. A role given reads resends its whole conversation on every turn, so reads belong to the cheapest role that can
@@ -39,21 +37,19 @@ Agents repository: its wrapper workflow passes its own secrets and variables to 
 | `DOTTORE_BASE_REFS` | Comma-separated base branches that get reviewed | `refactor,main,staging` |
 | `DOTTORE_CONCURRENCY` | Model calls run at once | `4` |
 
-`DOTTORE_MODELS` maps `scout`, `finder`, `asker` or `verify` to any of these settings. A role or setting it leaves out
+`DOTTORE_MODELS` maps `scout`, `finder` or `verify` to any of these settings. A role or setting it leaves out
 uses the default.
 
-| Setting | Meaning | `scout` | `finder` | `asker` | `verify` |
-| --- | --- | --- | --- | --- | --- |
-| `provider`, `model` | API format and model | shared | shared | shared | shared |
-| `effort` | Reasoning effort | shared | shared | `low` | shared |
-| `reads` | Read-tool calls; `0` offers none | `10` per scout | `0` | `0` | `5`, plus 1 per extra candidate |
-| `chars` | Characters of tool output | `40000` per scout | `0` | `0` | `40000`, plus 4000 per extra candidate |
-| `minutes` | Time box, from the role's first call | `5` | `10` | `10` | the review's last 8 minutes |
-| `max_tokens` | Output cap per call, Claude models only | `16000` | `32000` | `32000` | `32000` |
-| `budget` | Task budget per call, Claude models only: a token ceiling the model sees and paces itself to; `0` is none, else at least `20000` | `0` | `0` | `0` | `0` |
-| `questions` | Questions per packet; `0` turns the asker off | – | – | `8` | – |
-| `places` | Places each scout keeps; `0` turns the scouts off | `6` | – | – | – |
-| `scouts` | Scouts per packet, each with a share of its changes; a PR split into packets runs more scouts than `DOTTORE_CONCURRENCY` in turn | `4` | – | – | – |
+| Setting | Meaning | `scout` | `finder` | `verify` |
+| --- | --- | --- | --- | --- |
+| `provider`, `model` | API format and model | shared | shared | shared |
+| `effort` | Reasoning effort | shared | shared | shared |
+| `reads` | Read-tool calls; `0` offers none | `10` per scout | `0` | `5`, plus 1 per extra candidate |
+| `chars` | Characters of tool output | `40000` per scout | `0` | `40000`, plus 4000 per extra candidate |
+| `minutes` | Time box, from the role's first call | `5` | `10` | the review's last 8 minutes |
+| `max_tokens` | Output cap per call, Claude models only | `16000` | `32000` | `32000` |
+| `places` | Places each scout keeps; `0` turns the scouts off | `6` | – | – |
+| `scouts` | Scouts per packet, each with a share of its changes; a PR split into packets runs more scouts than `DOTTORE_CONCURRENCY` in turn | `4` | – | – |
 
 Setting `reads` on the finder restores a reading finder, and setting `0` on the checker makes it judge from what is in
 view alone and answer uncertain otherwise.
@@ -61,14 +57,12 @@ view alone and answer uncertain otherwise.
 ## Models per role
 
 The shared model is the one the finder and checker use: they judge, so they take the most capable model available, and
-they make one call each, so its price is paid about once per bundle. The scout and the asker read or ask without
-judging, so a small fast model fits them; give a small model a higher effort (`high`) and a large one a low effort with a
-larger `max_tokens`. For example, GPT for the finder and checker and a small Claude model for the scout and asker:
+they make one call each, so its price is paid about once per bundle. The scout reads without judging, so a small fast
+model at a high effort fits it. For example, GPT for the finder and checker and a small Claude model for the scout:
 
 ```json
 {
-  "scout": { "provider": "anthropic", "model": "claude-haiku-5-5", "effort": "high" },
-  "asker": { "provider": "anthropic", "model": "claude-haiku-5-5", "effort": "high" }
+  "scout": { "provider": "anthropic", "model": "claude-haiku-5-5", "effort": "high" }
 }
 ```
 
@@ -80,7 +74,7 @@ larger `max_tokens`. For example, GPT for the finder and checker and a small Cla
 | `LLM_BASE_URL` | The endpoint for `openai` roles, such as `https://linkapi.ai/v1`. Empty means OpenAI |
 | `ANTHROPIC_API_KEY` | Optional key for `anthropic` roles |
 | `ANTHROPIC_BASE_URL` | The endpoint for `anthropic` roles, without `/v1`, such as `https://linkapi.ai`. Empty means Anthropic |
-| `DOTTORE_<ROLE>_BASE_URL`, `DOTTORE_<ROLE>_API_KEY` | Optional endpoint for one role (`SCOUT`, `FINDER`, `ASKER` or `VERIFY`); unset, the role uses the shared one for its provider. A value of `.` counts as unset |
+| `DOTTORE_<ROLE>_BASE_URL`, `DOTTORE_<ROLE>_API_KEY` | Optional endpoint for one role (`SCOUT`, `FINDER` or `VERIFY`); unset, the role uses the shared one for its provider. A value of `.` counts as unset |
 
 A gateway such as LinkAPI serves both formats with one key, so only the two base URLs need setting.
 

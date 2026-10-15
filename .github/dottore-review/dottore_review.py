@@ -53,9 +53,9 @@ MODEL_STREAM_LIMIT = 900
 MODEL_MAX_RETRIES = 1
 # Waits before resending a call that hit a transient gateway error (unavailable, overloaded, cut stream).
 RETRY_DELAYS = (15, 45)
-# The scout gathers the code the bundle builder could not follow, the finder proposes claims at changed lines and the
-# asker check questions, both from the bundle alone, and the checker ("verify") judges both against the code.
-REVIEW_ROLES = ("scout", "finder", "asker", "verify")
+# The scout gathers the code the bundle builder could not follow, the finder proposes claims at changed lines from the
+# bundle alone, and the checker ("verify") judges each claim against the code.
+REVIEW_ROLES = ("scout", "finder", "verify")
 MAX_SEED_HITS_PER_NAME = 10
 MAX_TRACE_SEEDS = 40
 MAX_SEED_CHARS = 12_000
@@ -86,7 +86,6 @@ MAX_SCOUT_CHARS = 40_000
 ROLE_DEFAULTS = {
     "scout": {"reads": 10, "chars": 40_000, "minutes": 5, "max_tokens": 16_000, "places": MAX_SCOUT_PLACES, "scouts": SCOUTS},
     "finder": {"reads": 0, "chars": 0, "minutes": 10, "max_tokens": 32_000},
-    "asker": {"effort": "low", "reads": 0, "chars": 0, "minutes": 10, "max_tokens": 32_000, "questions": 8},
     "verify": {"reads": 5, "chars": 40_000, "max_tokens": 32_000},
 }
 # DOTTORE_COST_LIMIT_USD stops a review's model calls once it has spent that much (calls in flight still finish).
@@ -111,7 +110,7 @@ CHECKER_RESERVE_SECONDS = 8 * 60
 # first has just cached instead of both paying for it in full.
 CACHE_STAGGER_SECONDS = 8
 MAX_FINDERS = 2
-MAX_QUESTION_CHARS = 400
+MAX_PLACE_WHY_CHARS = 400
 # A role whose calls fail this many times in a row stops the review before it spends more.
 MAX_ROLE_FAILURES = 3
 MAX_SUBMIT_ATTEMPTS = 3
@@ -157,8 +156,6 @@ class Finding:
     repair_contract: dict | None = None
     side: str = "RIGHT"
     segment: str = ""
-    # "claim" from the finder or "question" from the asker; the checker settles both.
-    kind: str = "claim"
     # A confirmed defect the checker placed on a line the PR did not change: walkthrough only, never inline.
     outside_diff: bool = False
     packet: int = 0
@@ -635,7 +632,7 @@ def shown_in(shown, path, start, end):
 
 
 def build_bundle(base, focus, description):
-    """One packet's bundle, everything its finder, asker and checker share, built by code: the PR description, the
+    """One packet's bundle, everything its finder and checker share, built by code: the PR description, the
     changed files and path rules, the guidance index, the production code that decides the change with its changes
     marked (bundle_code), where changed names are used outside the diff, and the diff of files other than code."""
     files = changed_files(base)
@@ -774,11 +771,7 @@ def print_telemetry(stats):
     print("Dottore telemetry: " + "; ".join(parts), flush=True)
 
 
-ROLE_SETTINGS = (
-    "provider", "model", "effort", "max_tokens", "budget", "reads", "chars", "minutes", "questions", "places", "scouts"
-)
-# The smallest task budget Claude accepts.
-MIN_TASK_BUDGET = 20_000
+ROLE_SETTINGS = ("provider", "model", "effort", "max_tokens", "reads", "chars", "minutes", "places", "scouts")
 
 
 def role_models():
@@ -812,12 +805,10 @@ def role_models():
         for key in ("provider", "model", "effort"):
             settings[key] = str(settings.get(key) or "").strip()
         settings["provider"] = settings["provider"].lower()
-        for key in ("max_tokens", "budget", "reads", "chars", "minutes", "questions", "places", "scouts"):
+        for key in ("max_tokens", "reads", "chars", "minutes", "places", "scouts"):
             value = settings.get(key, 0)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"DOTTORE_MODELS {role}.{key} must be a whole number.")
-        if settings.get("budget") and settings["budget"] < MIN_TASK_BUDGET:
-            raise ValueError(f"DOTTORE_MODELS {role}.budget must be 0 or at least {MIN_TASK_BUDGET}.")
         settings["endpoint"] = role if any(role_endpoint(role)) else ""
         models[role] = settings
     unknown = sorted({settings["provider"] for settings in models.values()} - set(PROVIDERS))
@@ -1247,15 +1238,8 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         # own reasoning setting, under which Haiku thought until the output cap on every first call.
         request["thinking"] = {"type": "adaptive"}
         request["output_config"] = {"effort": settings["effort"]}
-    messages_api = ctx.clients[client_key(settings)].messages
-    if settings.get("budget"):
-        # A task budget is a ceiling Claude sees and paces itself to, where max_tokens cuts a reply off unseen. Effort
-        # alone barely moved Haiku's thinking through LinkAPI (about 30k tokens at low and at high).
-        request.setdefault("output_config", {})["task_budget"] = {"type": "tokens", "total": settings["budget"]}
-        request["betas"] = ["task-budgets-2026-03-13"]
-        messages_api = ctx.clients[client_key(settings)].beta.messages
     try:
-        with messages_api.stream(**request) as stream:
+        with ctx.clients[client_key(settings)].messages.stream(**request) as stream:
             for _ in watched(stream, started, timing):
                 pass
             reply = stream.get_final_message()
@@ -1564,103 +1548,11 @@ def finder_instructions(ctx):
     return f"{role_prompt(ctx, 'Finder', TOOLS=tools_line(settings, 'the bundle is'))}\n\nFinish by calling submit_findings."
 
 
-SUBMIT_QUESTIONS = function_tool(
-    "submit_questions",
-    "Submit the check questions. This ends the pass.",
-    {
-        "questions": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "path": PATH_PARAM,
-                    "line": {
-                        "type": "integer",
-                        "description": "The line at the PR head where the input meets the code to check.",
-                    },
-                    "input": {
-                        "type": "string",
-                        "description": "One concrete input, item, reader, state or sequence of events.",
-                    },
-                    "expected": {
-                        "type": "string",
-                        "description": "What should happen for that input, as the PR description, a changed comment, "
-                        "or a docs or changelog line states it; where none does, the behavior before the change.",
-                    },
-                    "question": {
-                        "type": "string",
-                        "description": "One neutral question asking what the code does for that input.",
-                    },
-                },
-                "required": ["path", "line", "input", "expected", "question"],
-            },
-        },
-    },
-    ["questions"],
-)
-
-
 def head_line_exists(path, line):
     try:
         return line <= len(head_file_text(path).splitlines())
     except Exception:
         return False
-
-
-def pass_questions(submitted, limit):
-    """The asker's valid questions as candidates, at most limit; one without a line at the PR head or text is dropped."""
-    kept = []
-    for question in as_list(submitted.get("questions")):
-        if len(kept) == limit:
-            break
-        if not isinstance(question, dict):
-            continue
-        try:
-            path = tool_path(question.get("path"))
-        except ValueError:
-            continue
-        line = question.get("line")
-        text = {
-            key: " ".join(redact_for_model(str(question.get(key) or "")).split())[:MAX_QUESTION_CHARS]
-            for key in ("input", "expected", "question")
-        }
-        if isinstance(line, bool) or not isinstance(line, int) or line <= 0 or not all(text.values()):
-            continue
-        if not head_line_exists(path, line):
-            continue
-        kept.append(
-            Finding(
-                severity="medium",
-                path=path,
-                line=line,
-                title=text["question"],
-                body=f"Input: {text['input']}\nExpected: {text['expected']}",
-                fix_hint="",
-                segment="asker",
-                kind="question",
-            )
-        )
-    return kept
-
-
-def ask_questions(ctx, bundle, packet):
-    """One call, no tools: the asker writes check questions from the bundle. Returns question candidates."""
-    settings = ctx.models["asker"]
-    submitted = run_agent(
-        ctx,
-        "asker",
-        [
-            {"role": "system", "content": role_prompt(ctx, "Asker", questions=settings["questions"])},
-            {"role": "user", "content": bundle},
-        ],
-        SUBMIT_QUESTIONS,
-    )
-    questions = pass_questions(submitted, settings["questions"])
-    for question in questions:
-        question.packet = packet
-        print(f"Dottore question: {question.path}:{question.line}; {question.title}; {question.body!r}", flush=True)
-    print(f"Dottore questions: submitted={len(as_list(submitted.get('questions')))}; valid={len(questions)}", flush=True)
-    return questions
 
 
 KEEP_PLACES = function_tool(
@@ -1713,7 +1605,7 @@ def scout_places(ctx, submitted, shown, limit):
         if any(kept_path == path and kept_base == base and kept_start <= start and end <= kept_end
                for kept_path, kept_start, kept_end, _, kept_base in kept):
             continue
-        why = " ".join(redact_for_model(str(place.get("why") or "")).split())[:MAX_QUESTION_CHARS]
+        why = " ".join(redact_for_model(str(place.get("why") or "")).split())[:MAX_PLACE_WHY_CHARS]
         kept.append((path, start, end, why, base))
     return kept
 
@@ -1846,9 +1738,8 @@ def staggered(delay, function, *args, **kwargs):
 
 
 def run_finders(ctx, pool):
-    """Stage 1: the finder copies and the asker run over every packet concurrently. Returns the finder reports
-    as (label, packet, report) and the asker's question candidates. A finder failure ends the review; an asker
-    failure is logged and the review goes on without its questions."""
+    """Stage 1: the finder copies run over every packet concurrently. Returns the finder reports as (label, packet,
+    report). A finder failure ends the review."""
     copies = finder_count()
     finders = [
         (
@@ -1873,25 +1764,12 @@ def run_finders(ctx, pool):
         for index, packet in enumerate(ctx.packets)
         for copy in range(copies)
     ]
-    askers = (
-        [pool.submit(ask_questions, ctx, bundle, index) for index, bundle in enumerate(ctx.bundles)]
-        if ctx.models["asker"]["questions"]
-        else []
-    )
     try:
-        reports = [(label, index, future.result()) for label, index, future in finders]
+        return [(label, index, future.result()) for label, index, future in finders]
     except Exception:
-        for future in [*(job[2] for job in finders), *askers]:
+        for _, _, future in finders:
             future.cancel()
         raise
-    questions, failures = [], 0
-    for future in askers:
-        try:
-            questions += future.result()
-        except Exception as exc:
-            failures += 1
-            print(f"Dottore asker failed: {error_text(exc)}", flush=True)
-    return reports, questions, failures
 
 
 # ponytail: line-based declaration patterns, not a parser. An unnamed callback or an unusual signature
@@ -2223,11 +2101,7 @@ def evidence_grounded(ctx, evidence):
 def verification_prompt(ctx, candidates):
     listed = []
     for number, candidate in enumerate(candidates, 1):
-        if candidate.kind == "question":
-            entry = {"kind": "question", "path": candidate.path, "line": candidate.line, "question": candidate.title}
-            entry["input"], _, entry["expected"] = candidate.body.removeprefix("Input: ").partition("\nExpected: ")
-        else:
-            entry = {"kind": "claim", **{key: getattr(candidate, key) for key in ("severity", "path", "line", "side", "title", "body", "fix_hint")}}
+        entry = {key: getattr(candidate, key) for key in ("severity", "path", "line", "side", "title", "body", "fix_hint")}
         listed.append({"candidate": number, **entry})
     path = candidates[0].path
     reads, chars = verifier_budget(ctx, candidates)
@@ -2275,7 +2149,7 @@ FINDING_FIELDS = ("title", "body", "fix_hint")
 
 def judge(ctx, candidate, verdict):
     """Turn one submitted verdict into (outcome, finding, note, evidence). A confirmation's finding text, when the
-    checker wrote one, replaces the candidate's; a confirmed question must have it."""
+    checker wrote one, replaces the candidate's."""
     if not isinstance(verdict, dict):
         return "unverified", candidate, "", []
     outcome = str(verdict.get("verdict", "")).strip().lower()
@@ -2286,10 +2160,13 @@ def judge(ctx, candidate, verdict):
     if outcome == "confirmed" and not evidence_grounded(ctx, evidence):
         outcome = "uncertain"
         note = f"The quoted evidence did not match the code. {note}".strip()
+        for item in evidence[:3]:
+            print(
+                f"Dottore evidence unmatched: {candidate.path}:{candidate.line}; {item.get('path')}:{item.get('line')}; "
+                f"{evidence_snippet(item.get('snippet'))[:200]!r}",
+                flush=True,
+            )
     written = {key: str(verdict.get(key) or "").strip() for key in FINDING_FIELDS}
-    if outcome == "confirmed" and candidate.kind == "question" and not (written["title"] and written["body"]):
-        outcome = "uncertain"
-        note = f"The confirmation came without a finding to publish. {note}".strip()
     if outcome != "confirmed":
         return outcome, candidate, note, evidence
     severity = str(verdict.get("severity", "")).strip().lower()
@@ -2354,10 +2231,9 @@ def verify_file(ctx, packet, candidates):
 
 
 def verify_candidates(ctx, candidates, pool):
-    """Check the finder's highest-severity claims and every question, one checker per packet and file in parallel,
-    and sort them by outcome."""
-    claims = [candidate for candidate in candidates if candidate.kind != "question"]
-    chosen = claims[:MAX_VERIFIED_CANDIDATES] + [candidate for candidate in candidates if candidate.kind == "question"]
+    """Check the finder's highest-severity claims, one checker per packet and file in parallel, and sort them by
+    outcome."""
+    chosen = candidates[:MAX_VERIFIED_CANDIDATES]
     groups = {}
     for candidate in sorted(chosen, key=lambda candidate: (candidate.packet, candidate.path, candidate.line or 0)):
         groups.setdefault((candidate.packet, candidate.path), []).append(candidate)
@@ -2380,7 +2256,7 @@ def verify_candidates(ctx, candidates, pool):
         outcome, finding, note, evidence = results[id(candidate)]
         counts[outcome] += 1
         print(
-            f"Dottore candidate: {outcome}; found_by={finding.segment}; kind={finding.kind}; {finding.severity}; "
+            f"Dottore candidate: {outcome}; found_by={finding.segment}; {finding.severity}; "
             f"{candidate.path}:{candidate.line}"
             + (f" -> {finding.path}:{finding.line}" if (finding.path, finding.line) != (candidate.path, candidate.line) else "")
             + (" (outside diff)" if outcome == "confirmed" and finding.outside_diff else "")
@@ -2395,7 +2271,7 @@ def verify_candidates(ctx, candidates, pool):
 
 
 # ponytail: lab stage (DOTTORE_LAB_STAGE=recheck) for the checker prompt alone: it judges candidates recorded from
-# earlier runs, each labelled right or wrong, so a prompt change is measured without finder or asker variance. The
+# earlier runs, each labelled right or wrong, so a prompt change is measured without finder variance. The
 # label rides in found_by on the candidate log line. Remove with the lab.
 def recheck(ctx, head_sha, chunks, pool):
     recorded = json.loads(pathlib.Path(__file__).with_name("lab-recheck.json").read_text("utf-8")).get(head_sha)
@@ -2405,7 +2281,6 @@ def recheck(ctx, head_sha, chunks, pool):
     for item in recorded:
         candidate = normalize_review_item(item, default_severity="medium")
         candidate.segment = f"recheck:{item['label']}:{item.get('source', '')}"
-        candidate.kind = item.get("kind", candidate.kind)
         candidate.packet = next((index for index, chunk in enumerate(chunks) if candidate.path in chunk), 0)
         candidates.append(candidate)
     print(f"Dottore recheck: candidates={len(candidates)}", flush=True)
@@ -2414,15 +2289,15 @@ def recheck(ctx, head_sha, chunks, pool):
 
 
 def agentic_review(ctx, mode, pool):
-    """Scout, then find and ask in parallel, merge, then let the checker judge each candidate before it can be posted."""
+    """Scout, find, merge, then let the checker judge each candidate before it can be posted."""
     scout_failures, scouts = scout_bundles(ctx, pool)
-    reports, questions, asker_failures = run_finders(ctx, pool)
+    reports = run_finders(ctx, pool)
     merged = merge_segments(reports)
     claims, severity_nitpicks, withheld = validate_review_items(
         {"findings": merged["findings"], "mode": mode}, ctx.base
     )
     merged["nitpicks"] = (merged["nitpicks"] + [dataclasses.asdict(item) for item in severity_nitpicks])[:2]
-    confirmed, hypotheses, counts = verify_candidates(ctx, claims + questions, pool)
+    confirmed, hypotheses, counts = verify_candidates(ctx, claims, pool)
     ctx.stats["verification"] = counts
     open_questions = hypotheses + merged["open_questions"]
     merged["findings"] = confirmed
@@ -2436,15 +2311,6 @@ def agentic_review(ctx, mode, pool):
                 "status": "warn",
                 "type": "Review Limitation",
                 "detail": f"{scout_failures} of {scouts} scouts failed, so the code they would have gathered is missing from the bundle.",
-            }
-        )
-    if asker_failures:
-        merged["pre_merge_checks"].append(
-            {
-                "name": "Check Questions",
-                "status": "warn",
-                "type": "Review Limitation",
-                "detail": f"The asker failed on {asker_failures} packet(s), so those were reviewed from the finder's candidates alone.",
             }
         )
     unresolved = len(hypotheses) - MAX_OPEN_QUESTIONS
@@ -2557,7 +2423,6 @@ def normalize_review_item(item, *, default_severity, outside_ok=False):
         repair_contract=normalize_repair_contract(item.get("repair_contract")),
         side=side,
         segment=str(item.get("segment", "")).strip(),
-        kind=str(item.get("kind") or "claim"),
         outside_diff=outside_ok and item.get("outside_diff") is True,
         packet=item.get("packet") if isinstance(item.get("packet"), int) else 0,
     )
@@ -3815,17 +3680,6 @@ def produce_review(args):
             flush=True,
         )
         with ThreadPoolExecutor(max_workers=review_concurrency()) as pool:
-            if os.environ.get("DOTTORE_LAB_STAGE", "").strip().lower() == "asker":
-                scout_bundles(ctx, pool)
-                for future in [pool.submit(ask_questions, ctx, bundle, index) for index, bundle in enumerate(ctx.bundles)]:
-                    future.result()
-                write_skipped_review(
-                    "Lab Asker Only",
-                    "DOTTORE_LAB_STAGE=asker: the scouts and the asker ran; nothing was judged or published.",
-                    metadata={"head_sha": head_sha, "review_base": base, "base_ref": base_ref, "mode": effective_mode},
-                )
-                print_telemetry(stats)
-                return
             if os.environ.get("DOTTORE_LAB_STAGE", "").strip().lower() == "recheck":
                 recheck(ctx, head_sha, chunks, pool)
                 write_skipped_review(

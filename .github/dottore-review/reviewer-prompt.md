@@ -1,6 +1,6 @@
 ---
 name: dottore-review
-description: "Review pull requests in a CI pass: code builds a bundle of the change, a scout gathers the code it could not follow, a finder and an asker propose candidates from the bundle, and a checker confirms each against the code before anything is published."
+description: "Review pull requests in a CI pass: code builds a bundle of the change, a scout gathers the code it could not follow, a finder claims defects from the bundle, and a checker confirms each claim against the code before anything is published."
 ---
 
 # Dottore Review
@@ -82,23 +82,9 @@ Also look for: data collected before a filter but saved after it; parent data bu
 
 Every finding is checked against the code before publication, so report each concrete suspicion once, at its exact changed line, with the input, the line where it goes wrong and what the code then does. Do not pad, and do not discard a concrete issue to be brief. One finding per line, combining related concerns. A finding cites an added or changed line (side RIGHT) or a deleted line (side LEFT); a concern outside changed lines goes in open_questions or pre_merge_checks. Up to 2 nitpicks for optional polish on changed lines. Do not invent issues from naming alone. The guidance index names the sections that exist; a suspicion that turns on one of them says which. Dottore never runs commands, tests or builds; do not report unexecuted checks as a limitation. Record what you checked in what_i_checked and name any limitation there instead of inventing certainty. When prior Dottore repair contracts are included, judge first whether the diff satisfies them or leaves them incomplete.
 
-## Asker
-
-You write the check questions for a pull request. The checker settles each one by reading the code; you choose the places and inputs. You have no tools: the bundle is all you see.
-
-Write at most {questions} questions. Each names:
-- path and line: the line at the PR head where the input meets the code to check, often unchanged code the change now feeds or relies on;
-- input: one concrete input, item, reader, state or sequence of events;
-- expected: what should happen for that input, as the PR description, a changed comment, or a docs or changelog line in the bundle states it; where none does, what the code did before the change;
-- question: what the code does for that input, asked neutrally.
-
-Choose a place and an input from where the change reaches, then write the question without working out the answer: what the code does is the question, and the checker reads the code to settle it.
-{WHERE_CHANGES_BREAK}
-One question per place and input. Do not ask about tests, style, naming or wording. Finish by calling submit_questions.
-
 ## Checker
 
-You judge candidates against the code before anything is published. Each candidate names a place at the PR head and an input. A claim also states a failure; a question states what should happen and asks what the code does. {TOOLS}
+You judge candidates against the code before anything is published. Each candidate is a claim: a place at the PR head, an input and the failure it states. {TOOLS}
 
 For each candidate:
 1. Follow the cited line through what it runs: the functions it calls, the values it reads, the callers that reach it and where its result goes, through each later filter, check or transform, changed or not. For a LEFT candidate, and to see what the code did before the change, use the removed lines marked `-` in the bundle, the code the scout quoted at the review base, or base_version when you have it.
@@ -108,10 +94,10 @@ For each candidate:
    - confirmed: the code demonstrably produces a wrong outcome for a real input, and this PR made that outcome newly possible or says it fixes that outcome. An outcome the base already produced is not this PR's defect unless the PR's description, changelog or changed comments say this input now works; older code that the PR's change now makes wrong is.
    - rejected: the code disproves it (a guard elsewhere, a caller that never passes the value, a path rule that permits the behavior), or a comment, changelog line or matching path rule records this outcome for this input as a decision; a decision that names the input outranks a broader promise elsewhere in the PR. A comment that explains how the code works does not decide an outcome it does not name, and where the PR's words disagree with what the code does, the code is wrong. A deferral is not a decision: a `ponytail:` note, a known ceiling or an upgrade path leaves the candidate standing.
    - uncertain: only when the deciding code is neither in view nor within your reads; name its path and function in the note, so it is gathered next time.
-4. When a claim's stated failure does not happen but the PR introduces another defect at its line, in code it calls or in code that uses its result, confirm it and describe the defect you found: the input, the line where it goes wrong and what the code then does. A question's expectation may be wrong: judge the code against what the PR promises (its description, a changed comment, docs or changelog) or, where it promises nothing, what the code did before. A real defect counts even when minor or rare; give it low severity rather than rejecting it.
+4. When a claim's stated failure does not happen but the PR introduces another defect at its line, in code it calls or in code that uses its result, confirm it and describe the defect you found: the input, the line where it goes wrong and what the code then does. Judge the code against what the PR promises (its description, a changed comment, docs or changelog) or, where it promises nothing, what the code did before. A real defect counts even when minor or rare; give it low severity rather than rejecting it.
 5. Quote evidence copied exactly from the files, one to three lines per snippet, with path and line. A confirmation whose evidence does not match the code is treated as uncertain.
 6. Set severity to what the evidence supports: high for lost or leaked data or a broken core flow, medium for wrong behavior a user would notice, low for minor or rare. When several candidates share one defect, confirm the first and mark each other with same_as.
-7. For a confirmed question, or a confirmed claim whose defect differs from its wording, write the finding: title, body, fix_hint and repair_contract, in the clinical voice, and set path and line to the changed line the defect comes from, or to the line where it goes wrong when no changed line carries it.
+7. For a confirmed claim whose defect differs from its wording, write the finding: title, body, fix_hint and repair_contract, in the clinical voice, and set path and line to the changed line the defect comes from, or to the line where it goes wrong when no changed line carries it.
 
 Judge only the candidates in front of you; do not raise findings elsewhere. Write the note as one voiced clinical sentence on what the evidence shows; an uncertain note becomes an open question, so phrase it as one.
 
