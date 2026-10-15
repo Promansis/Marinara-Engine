@@ -128,8 +128,9 @@ PROVIDERS = ("openai", "anthropic")
 CACHE_BREAKPOINT = {"type": "ephemeral"}
 DEFAULT_CONCURRENCY = 4
 MAX_CONCURRENCY = 16
-# The review step times out at 35 minutes; after this, agents submit and no new verifier starts.
-REVIEW_DEADLINE_SECONDS = 25 * 60
+# The review step times out at 40 minutes; after this, agents submit and no new verifier starts. The scout, a
+# one-call finder thinking silently for minutes and the checker run in turn, so each needs its whole slot.
+REVIEW_DEADLINE_SECONDS = 30 * 60
 SECRET_VALUE_RE = re.compile(
     r"(?i)(api[_-]?key|token|secret|password|passwd|authorization|bearer|client[_-]?secret)"
     r"(\s*[:=]\s*|\s+)([^\s'\"`;&|]+)"

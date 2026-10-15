@@ -76,7 +76,7 @@ concurrency:
 jobs:
   review:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     env:
       PR_NUM: ${{ inputs.pr_number }}
       DOTTORE_COMMENT_BODY: ${{ inputs.comment_body }}
@@ -166,7 +166,7 @@ jobs:
             -f description="The specimen is on Dottore's observation table. Examination in progress." >/dev/null
 
       - name: Run Dottore review
-        timeout-minutes: 35
+        timeout-minutes: 40
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
