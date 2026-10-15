@@ -50,6 +50,7 @@ uses the default.
 | `chars` | Characters of tool output | `40000` per scout | `0` | `0` | `40000`, plus 4000 per extra candidate |
 | `minutes` | Time box, from the role's first call | `5` | `10` | `10` | the review's last 8 minutes |
 | `max_tokens` | Output cap per call, Claude models only | `16000` | `32000` | `32000` | `32000` |
+| `budget` | Task budget per call, Claude models only: a token ceiling the model sees and paces itself to; `0` is none, else at least `20000` | `0` | `0` | `0` | `0` |
 | `questions` | Questions per packet; `0` turns the asker off | – | – | `8` | – |
 | `places` | Places each scout keeps; `0` turns the scouts off | `6` | – | – | – |
 | `scouts` | Scouts per packet, each with a share of its changes; a PR split into packets runs more scouts than `DOTTORE_CONCURRENCY` in turn | `4` | – | – | – |

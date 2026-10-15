@@ -774,7 +774,11 @@ def print_telemetry(stats):
     print("Dottore telemetry: " + "; ".join(parts), flush=True)
 
 
-ROLE_SETTINGS = ("provider", "model", "effort", "max_tokens", "reads", "chars", "minutes", "questions", "places", "scouts")
+ROLE_SETTINGS = (
+    "provider", "model", "effort", "max_tokens", "budget", "reads", "chars", "minutes", "questions", "places", "scouts"
+)
+# The smallest task budget Claude accepts.
+MIN_TASK_BUDGET = 20_000
 
 
 def role_models():
@@ -808,10 +812,12 @@ def role_models():
         for key in ("provider", "model", "effort"):
             settings[key] = str(settings.get(key) or "").strip()
         settings["provider"] = settings["provider"].lower()
-        for key in ("max_tokens", "reads", "chars", "minutes", "questions", "places", "scouts"):
+        for key in ("max_tokens", "budget", "reads", "chars", "minutes", "questions", "places", "scouts"):
             value = settings.get(key, 0)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"DOTTORE_MODELS {role}.{key} must be a whole number.")
+        if settings.get("budget") and settings["budget"] < MIN_TASK_BUDGET:
+            raise ValueError(f"DOTTORE_MODELS {role}.budget must be 0 or at least {MIN_TASK_BUDGET}.")
         settings["endpoint"] = role if any(role_endpoint(role)) else ""
         models[role] = settings
     unknown = sorted({settings["provider"] for settings in models.values()} - set(PROVIDERS))
@@ -1241,8 +1247,15 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         # own reasoning setting, under which Haiku thought until the output cap on every first call.
         request["thinking"] = {"type": "adaptive"}
         request["output_config"] = {"effort": settings["effort"]}
+    messages_api = ctx.clients[client_key(settings)].messages
+    if settings.get("budget"):
+        # A task budget is a ceiling Claude sees and paces itself to, where max_tokens cuts a reply off unseen. Effort
+        # alone barely moved Haiku's thinking through LinkAPI (about 30k tokens at low and at high).
+        request.setdefault("output_config", {})["task_budget"] = {"type": "tokens", "total": settings["budget"]}
+        request["betas"] = ["task-budgets-2026-03-13"]
+        messages_api = ctx.clients[client_key(settings)].beta.messages
     try:
-        with ctx.clients[client_key(settings)].messages.stream(**request) as stream:
+        with messages_api.stream(**request) as stream:
             for _ in watched(stream, started, timing):
                 pass
             reply = stream.get_final_message()
@@ -3802,6 +3815,17 @@ def produce_review(args):
             flush=True,
         )
         with ThreadPoolExecutor(max_workers=review_concurrency()) as pool:
+            if os.environ.get("DOTTORE_LAB_STAGE", "").strip().lower() == "asker":
+                scout_bundles(ctx, pool)
+                for future in [pool.submit(ask_questions, ctx, bundle, index) for index, bundle in enumerate(ctx.bundles)]:
+                    future.result()
+                write_skipped_review(
+                    "Lab Asker Only",
+                    "DOTTORE_LAB_STAGE=asker: the scouts and the asker ran; nothing was judged or published.",
+                    metadata={"head_sha": head_sha, "review_base": base, "base_ref": base_ref, "mode": effective_mode},
+                )
+                print_telemetry(stats)
+                return
             if os.environ.get("DOTTORE_LAB_STAGE", "").strip().lower() == "recheck":
                 recheck(ctx, head_sha, chunks, pool)
                 write_skipped_review(
