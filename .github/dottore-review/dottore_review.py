@@ -73,8 +73,10 @@ MAX_CHANGED_BLOCK_LINES = 150
 MAX_CALLEE_LINES = 60
 MAX_BUNDLE_CODE_CHARS = 160_000
 MAX_PR_DESCRIPTION_CHARS = 4_000
-# The scout adds code the bundle builder could not follow by name: places it submits, quoted by code.
-MAX_SCOUT_PLACES = 24
+# Scouts add code the bundle builder could not follow by name: places they keep, quoted by code. Each scout of a
+# packet takes a share of its changed functions and they run at once, so the reading takes one scout's time.
+MAX_SCOUT_PLACES = 6
+SCOUTS = 4
 MAX_SCOUT_LINES = 80
 MAX_SCOUT_CHARS = 40_000
 # Per-role defaults; DOTTORE_MODELS overrides any of them (README.md). Reading is the scout's job, so the finder makes
@@ -82,7 +84,7 @@ MAX_SCOUT_CHARS = 40_000
 # reads for what is still out of reach. Cost then follows the bundle's size, not a model's appetite for reading:
 # every turn of a tool loop resends the whole conversation.
 ROLE_DEFAULTS = {
-    "scout": {"reads": 40, "chars": 160_000, "minutes": 8, "max_tokens": 16_000, "places": MAX_SCOUT_PLACES},
+    "scout": {"reads": 10, "chars": 40_000, "minutes": 5, "max_tokens": 16_000, "places": MAX_SCOUT_PLACES, "scouts": SCOUTS},
     "finder": {"reads": 0, "chars": 0, "minutes": 10, "max_tokens": 32_000},
     "asker": {"effort": "low", "reads": 0, "chars": 0, "minutes": 10, "max_tokens": 32_000, "questions": 8},
     "verify": {"reads": 5, "chars": 40_000, "max_tokens": 32_000},
@@ -105,9 +107,9 @@ VERIFIER_READS_PER_EXTRA = 1
 VERIFIER_CHARS_PER_EXTRA = 4_000
 # The last part of the review deadline belongs to the checker: finders submit before it starts.
 CHECKER_RESERVE_SECONDS = 8 * 60
-# A second finder per packet starts this long after the first, so its first call can reuse the prefix the first has
-# just cached instead of both paying for it in full.
-FINDER_STAGGER_SECONDS = 8
+# A second finder or scout on a packet starts this long after the first, so its first call can reuse the prefix the
+# first has just cached instead of both paying for it in full.
+CACHE_STAGGER_SECONDS = 8
 MAX_FINDERS = 2
 MAX_QUESTION_CHARS = 400
 # A role whose calls fail this many times in a row stops the review before it spends more.
@@ -507,12 +509,12 @@ BUNDLE_NOTE = (
     "removed lines shown unnumbered with `-` where they stood, each change with the code around it and its enclosing "
     "function when short, where the values the changed lines read are defined, and the same-file functions that code "
     "calls, two calls deep; where each changed function and each name declared on a changed line is used outside the "
-    "diff; the diff of files other than code (docs, changelog, strings); and, when a scout ran, the code it added "
+    "diff; the diff of files other than code (docs, changelog, strings); and, when scouts ran, the code they added "
     "from other files: callers, imported definitions and what the changed values flow into. Test files are listed, "
     "not shown."
 )
 SCOUT_NOTE = (
-    "Places the scout read and submitted, quoted by code from the PR head (or from the review base where marked), "
+    "Places the scouts read and kept, quoted by code from the PR head (or from the review base where marked), "
     "with the PR's changed lines marked `+`."
 )
 
@@ -772,7 +774,7 @@ def print_telemetry(stats):
     print("Dottore telemetry: " + "; ".join(parts), flush=True)
 
 
-ROLE_SETTINGS = ("provider", "model", "effort", "max_tokens", "reads", "chars", "minutes", "questions", "places")
+ROLE_SETTINGS = ("provider", "model", "effort", "max_tokens", "reads", "chars", "minutes", "questions", "places", "scouts")
 
 
 def role_models():
@@ -806,7 +808,7 @@ def role_models():
         for key in ("provider", "model", "effort"):
             settings[key] = str(settings.get(key) or "").strip()
         settings["provider"] = settings["provider"].lower()
-        for key in ("max_tokens", "reads", "chars", "minutes", "questions", "places"):
+        for key in ("max_tokens", "reads", "chars", "minutes", "questions", "places", "scouts"):
             value = settings.get(key, 0)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"DOTTORE_MODELS {role}.{key} must be a whole number.")
@@ -913,6 +915,8 @@ class ReviewRun:
     cost_limit: float = 0.0
     spent_usd: float = 0.0
     failures: dict = field(default_factory=dict)
+    # Each packet's changed files; empty means one packet of every changed file.
+    chunks: list = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -1379,7 +1383,16 @@ def tool_call_key(call):
     return call.function.name, args
 
 
-def run_agent(ctx, role, messages, submit_tool, deadline=None, cache_key="", budget=None, output_budget=None):
+def call_arguments(call):
+    """A tool call's arguments, or None when they are not one JSON object."""
+    try:
+        arguments = json.loads(call.function.arguments or "{}")
+    except ValueError:
+        return None
+    return arguments if isinstance(arguments, dict) else None
+
+
+def run_agent(ctx, role, messages, submit_tool, deadline=None, cache_key="", budget=None, output_budget=None, keep=None):
     """Let one agent read with the tools until it calls its submit tool; return the submitted arguments.
 
     The role's reads count read-tool calls and its chars their characters (budget and output_budget override them);
@@ -1387,6 +1400,10 @@ def run_agent(ctx, role, messages, submit_tool, deadline=None, cache_key="", bud
     tool. Once either budget is spent, or the deadline (the review's by default, and no later than the role's
     minutes from now) has passed, the model is made to call the submit tool, and a few malformed submissions are
     tolerated. The role's stats record which limit, if any, ended the run.
+
+    With keep, the name of the submit tool's list argument, the submit tool does not end the run: each call adds its
+    items, and the first turn that makes no read, or the turn after a limit, ends it with every item kept. No final
+    call restates them, and a limit loses only the reads not yet kept.
     """
     settings = ctx.models[role]
     budget = settings["reads"] if budget is None else budget
@@ -1397,6 +1414,7 @@ def run_agent(ctx, role, messages, submit_tool, deadline=None, cache_key="", bud
     tools = [*READ_TOOLS, submit_tool] if budget else [submit_tool]
     claude = settings["provider"] == "anthropic" or "claude" in settings["model"]
     messages = list(messages)
+    kept = []
     used = 0
     spent = 0
     answered = {}
@@ -1424,6 +1442,11 @@ def run_agent(ctx, role, messages, submit_tool, deadline=None, cache_key="", bud
             messages.append({"role": "user", "content": f"Your reads are spent and further reads are refused. Call {submit} now."})
         message = chat(ctx, role, messages, tools, choice, cache_key, until=min(deadline, box))
         calls = list(message.tool_calls or [])
+        if keep and (forced or all(call.function.name == submit for call in calls)):
+            kept += [item for call in calls if call.function.name == submit for item in as_list((call_arguments(call) or {}).get(keep))]
+            with ctx.lock:
+                ctx.stats["roles"][role][f"stop_{limits[0] if limits else 'own'}"] += 1
+            return {keep: kept}
         if not calls and getattr(message, "capped", False):
             raise RuntimeError(f"the {role} reply reached its {settings['max_tokens']}-token output cap")
         if not calls:
@@ -1447,12 +1470,13 @@ def run_agent(ctx, role, messages, submit_tool, deadline=None, cache_key="", bud
             )
         )
         for call in calls:
-            if call.function.name == submit:
-                try:
-                    submitted = json.loads(call.function.arguments or "{}")
-                except ValueError:
-                    submitted = None
-                if isinstance(submitted, dict):
+            if call.function.name == submit and keep:
+                added = as_list((call_arguments(call) or {}).get(keep))
+                kept += added
+                reply = f"Kept {len(added)}; {len(kept)} kept so far."
+            elif call.function.name == submit:
+                submitted = call_arguments(call)
+                if submitted is not None:
                     with ctx.lock:
                         ctx.stats["roles"][role][f"stop_{limits[0] if limits else 'own'}"] += 1
                     return submitted
@@ -1622,9 +1646,9 @@ def ask_questions(ctx, bundle, packet):
     return questions
 
 
-SUBMIT_PLACES = function_tool(
-    "submit_places",
-    "Submit the places whose code the reviewers need, most decisive first. This ends the pass.",
+KEEP_PLACES = function_tool(
+    "keep_places",
+    "Keep places whose code the reviewers need, as soon as you have read them. Each call adds to the places kept.",
     {
         "places": {
             "type": "array",
@@ -1695,60 +1719,108 @@ def scout_code(ctx, places):
     return truncate("\n\n".join(sections), MAX_SCOUT_CHARS), len(sections)
 
 
-def run_scout(ctx, index):
-    """One scout over one packet: it reads outward from the bundle and submits places; code quotes them."""
+def scout_shares(ctx, index, count):
+    """The packet's changed production code split into at most count shares of about equal size, each a run of
+    changed functions in path and line order: [[(path, name, first changed line, last, changed lines), ...], ...]."""
+    removed = removed_lines(ctx.base)
+    areas = []
+    for path in ctx.chunks[index] if ctx.chunks else sorted(ctx.allowed):
+        if not path.endswith(CODE_SUFFIXES) or TEST_PATH_RE.search(path):
+            continue
+        try:
+            lines = head_file_text(path).splitlines()
+        except Exception:
+            continue
+        blocks = {}
+        for number in sorted({*ctx.allowed.get(path, {}).get("RIGHT", ()), *removed.get(path, {})}):
+            block = enclosing_block(lines, min(number, len(lines))) if lines else None
+            blocks.setdefault((block[1], f"`{block[0]}`") if block else (0, "top-level code"), []).append(number)
+        areas += sorted(((path, name, numbers[0], numbers[-1], len(numbers)) for (_, name), numbers in blocks.items()), key=lambda area: area[2])
+    total = sum(area[4] for area in areas)
+    shares, done = [], 0
+    for area in areas:
+        if not shares or (len(shares) < count and done >= total * len(shares) / count):
+            shares.append([])
+        shares[-1].append(area)
+        done += area[4]
+    return shares
+
+
+def run_scout(ctx, index, share, scouts):
+    """One scout over one packet's share: it reads outward from the bundle and keeps places as it goes. Returns the
+    places it kept, unchecked."""
     settings = ctx.models["scout"]
-    bundle = ctx.bundles[index]
-    submitted = run_agent(
+    messages = [
+        {
+            "role": "system",
+            "content": role_prompt(ctx, "Scout", places=settings["places"], lines=MAX_SCOUT_LINES, TOOLS=tools_line(settings, "the bundle is")),
+        },
+        {"role": "user", "content": ctx.bundles[index]},
+    ]
+    if scouts > 1:
+        # After the bundle, so every scout on the packet reuses its cached prefix.
+        messages.append(
+            {
+                "role": "user",
+                "content": "# Your Share\nOther scouts gather for the rest of the change at the same time. Gather for these changes:\n"
+                + "\n".join(
+                    f"- {name} in {path}: " + (f"{count} changed lines from {first} to {last}" if last > first else f"changed line {first}")
+                    for path, name, first, last, count in share
+                ),
+            }
+        )
+    kept = run_agent(
         ctx,
         "scout",
-        [
-            {
-                "role": "system",
-                "content": role_prompt(ctx, "Scout", places=settings["places"], lines=MAX_SCOUT_LINES, TOOLS=tools_line(settings, "the bundle is"))
-                + "\n\nFinish by calling submit_places.",
-            },
-            {"role": "user", "content": bundle},
-        ],
-        SUBMIT_PLACES,
+        messages,
+        KEEP_PLACES,
         deadline=ctx.deadline - CHECKER_RESERVE_SECONDS - ctx.models["finder"]["minutes"] * 60,
         cache_key=f"{ctx.cache_key}-s{index}",
-    )
-    places = scout_places(ctx, submitted, bundle_ranges(bundle), settings["places"])
-    code, added = scout_code(ctx, places)
-    print(
-        f"Dottore scout: packet={index}; submitted={len(as_list(submitted.get('places')))}; valid={len(places)}; "
-        f"added={added}; chars={len(code)}",
-        flush=True,
-    )
-    for path, start, end, why, base in places:
-        print(f"Dottore place: {path}:{start}-{end}{' (base)' if base else ''}; {why}", flush=True)
-    return code
+        keep="places",
+    )["places"]
+    print(f"Dottore scout: packet={index}; share={', '.join(area[1] for area in share) or 'all'}; kept={len(kept)}", flush=True)
+    return kept[: settings["places"]]
 
 
 def scout_bundles(ctx, pool):
-    """Stage 0: a scout per packet adds the code the bundle builder could not follow, before any reviewer runs. Off
-    when the scout has no reads or no places. A failed scout is logged and the packet keeps its code-built bundle."""
+    """Stage 0: scouts on each packet, one per share of its changes, add the code the bundle builder could not follow,
+    before any reviewer runs. Off when the scout has no reads or no places. A failed scout is logged and its share
+    keeps the code-built bundle. Returns how many scouts failed and how many ran."""
     settings = ctx.models["scout"]
-    if not settings["reads"] or not settings["places"]:
+    if not settings["reads"] or not settings["places"] or not settings["scouts"]:
         print("Dottore scout: off", flush=True)
-        return 0
+        return 0, 0
+    # ponytail: the scouts share the review's DOTTORE_CONCURRENCY workers, so a PR split into packets runs more scouts
+    # than workers in turn; raise DOTTORE_CONCURRENCY to run them all at once.
+    jobs = [
+        (index, pool.submit(staggered, CACHE_STAGGER_SECONDS * bool(number), run_scout, ctx, index, share, len(shares)))
+        for index in range(len(ctx.bundles))
+        for shares in [scout_shares(ctx, index, settings["scouts"]) or [[]]]
+        for number, share in enumerate(shares)
+    ]
     failures = 0
-    futures = [pool.submit(run_scout, ctx, index) for index in range(len(ctx.bundles))]
-    for index, future in enumerate(futures):
+    gathered = {index: [] for index in range(len(ctx.bundles))}
+    for index, future in jobs:
         try:
-            code = future.result()
+            gathered[index].append(future.result())
         except Exception as exc:
             failures += 1
             print(f"Dottore scout failed on packet {index}: {error_text(exc)}", flush=True)
-            continue
+    for index, lists in gathered.items():
+        # Round-robin, so the character limit cuts every scout's last places rather than one scout's all.
+        merged = [place for row in itertools.zip_longest(*lists) for place in row if place is not None]
+        places = scout_places(ctx, {"places": merged}, bundle_ranges(ctx.bundles[index]), len(merged))
+        code, added = scout_code(ctx, places)
+        print(f"Dottore scout: packet={index}; scouts={len(lists)}; kept={len(merged)}; valid={len(places)}; added={added}; chars={len(code)}", flush=True)
+        for path, start, end, why, base in places:
+            print(f"Dottore place: {path}:{start}-{end}{' (base)' if base else ''}; {why}", flush=True)
         if code:
             section = f"\n\n# Code the Scout Added\n{SCOUT_NOTE}\n\n{code}"
             ctx.bundles[index] += section
             ctx.packets[index] += section
     with ctx.lock:
         ctx.stats["bundle_chars"] = sum(len(bundle) for bundle in ctx.bundles)
-    return failures
+    return failures, len(jobs)
 
 
 def staggered(delay, function, *args, **kwargs):
@@ -1767,7 +1839,7 @@ def run_finders(ctx, pool):
             index,
             pool.submit(
                 staggered,
-                FINDER_STAGGER_SECONDS * copy,
+                CACHE_STAGGER_SECONDS * copy,
                 run_agent,
                 ctx,
                 "finder",
@@ -2326,7 +2398,7 @@ def recheck(ctx, head_sha, chunks, pool):
 
 def agentic_review(ctx, mode, pool):
     """Scout, then find and ask in parallel, merge, then let the checker judge each candidate before it can be posted."""
-    scout_failures = scout_bundles(ctx, pool)
+    scout_failures, scouts = scout_bundles(ctx, pool)
     reports, questions, asker_failures = run_finders(ctx, pool)
     merged = merge_segments(reports)
     claims, severity_nitpicks, withheld = validate_review_items(
@@ -2346,7 +2418,7 @@ def agentic_review(ctx, mode, pool):
                 "name": "Gathered Code",
                 "status": "warn",
                 "type": "Review Limitation",
-                "detail": f"The scout failed on {scout_failures} packet(s), so those were reviewed from the code-built bundle alone.",
+                "detail": f"{scout_failures} of {scouts} scouts failed, so the code they would have gathered is missing from the bundle.",
             }
         )
     if asker_failures:
@@ -3713,6 +3785,7 @@ def produce_review(args):
             files=frozenset(files),
             deadline=stats["started_at"] + REVIEW_DEADLINE_SECONDS,
             cost_limit=cost_limit(),
+            chunks=chunks,
         )
         print(
             "Dottore roles: "

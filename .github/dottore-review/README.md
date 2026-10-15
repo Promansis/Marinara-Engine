@@ -5,9 +5,10 @@ its changes marked and the code around it, the definitions it reads, the same-fi
 where changed names are used elsewhere, the path rules and a guidance index. Then four roles run, and reading is the
 small roles' job:
 
-- **`scout`** reads outward from the bundle with the read-only tools and submits places: the callers in other files,
-  imported definitions and what the changed values flow into. Code quotes those places into the bundle. The scout names
-  no defect. A failed scout is noted and the packet keeps its code-built bundle.
+- **`scout`** reads outward from the bundle with the read-only tools and keeps places as it reads: the callers in other
+  files, imported definitions and what the changed values flow into. Each packet's changed functions are split into
+  shares, one scout per share, and the scouts run at once, so the reading takes one scout's time. Code quotes the places
+  into the bundle. A scout names no defect. A failed scout is noted and its share keeps the code-built bundle.
 - **`finder`** makes one call with no tools on the bundle and claims defects at changed lines.
 - **`asker`** makes one call with no tools and writes check questions: a place, an input and what should happen. It runs
   beside the finder and names no verdict. A failed asker is noted in the review; a failed finder fails the review.
@@ -45,12 +46,13 @@ uses the default.
 | --- | --- | --- | --- | --- | --- |
 | `provider`, `model` | API format and model | shared | shared | shared | shared |
 | `effort` | Reasoning effort | shared | shared | `low` | shared |
-| `reads` | Read-tool calls; `0` offers none | `40` | `0` | `0` | `5`, plus 1 per extra candidate |
-| `chars` | Characters of tool output | `160000` | `0` | `0` | `40000`, plus 4000 per extra candidate |
-| `minutes` | Time box, from the role's first call | `8` | `10` | `10` | the review's last 8 minutes |
+| `reads` | Read-tool calls; `0` offers none | `10` per scout | `0` | `0` | `5`, plus 1 per extra candidate |
+| `chars` | Characters of tool output | `40000` per scout | `0` | `0` | `40000`, plus 4000 per extra candidate |
+| `minutes` | Time box, from the role's first call | `5` | `10` | `10` | the review's last 8 minutes |
 | `max_tokens` | Output cap per call, Claude models only | `16000` | `32000` | `32000` | `32000` |
 | `questions` | Questions per packet; `0` turns the asker off | – | – | `8` | – |
-| `places` | Places per packet; `0` turns the scout off | `24` | – | – | – |
+| `places` | Places each scout keeps; `0` turns the scouts off | `6` | – | – | – |
+| `scouts` | Scouts per packet, each with a share of its changes; a PR split into packets runs more scouts than `DOTTORE_CONCURRENCY` in turn | `4` | – | – | – |
 
 Setting `reads` on the finder restores a reading finder, and setting `0` on the checker makes it judge from what is in
 view alone and answer uncertain otherwise.
@@ -91,5 +93,5 @@ Effort values pass through unchanged, so use names the model accepts. Claude tak
 The prompts name no model. Before relying on a different model in a role, run a few reviews on pull requests whose
 problems you already know and compare what Dottore finds.
 
-Each review logs a `Dottore call:` line per model call, a `Dottore scout:` line per packet with the places it added, and
+Each review logs a `Dottore call:` line per model call, a `Dottore scout:` line per scout and per packet with the places they added, and
 a `Dottore telemetry:` line with totals by role. Use them to compare cost, caching and time between setups.

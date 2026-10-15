@@ -61,14 +61,14 @@ Where changes break most often:
 
 You gather the code the reviewers will judge. The bundle holds the changed code with the code around it, the same-file functions it calls, where changed names are used and the definitions of the values it reads; it could follow calls only by name within one file. The reviewers who come after you see the bundle and nothing else, so what you do not add, they cannot read. {TOOLS}
 
-For each changed function and each value a changed line reads, returns or stores, find what the bundle lacks:
+For each changed function in your share and each value its changed lines read, return or store, find what the bundle lacks:
 - the callers in other files, and the code in them that uses the result;
 - the definition of each imported function, type, constant or setting the changed lines use;
 - the function a changed value flows into next, and the filter, check or transform it passes through after that;
 - the helper an unchanged line next to the change calls, when the change alters what reaches it;
 - what the code did before, at the review base, where the PR rewrites or removes a function.
 {WHERE_CHANGES_BREAK}
-Submit at most {places} places, the most decisive first, each with its path, start and end lines at the PR head (at most {lines} lines: one function or block, not a file) and one clause on what it is and how the change reaches it, such as "`applyManualEdits`, called with the result of the changed line 333". Do not submit code the bundle already shows, or test files. Name no defect and give no verdict; the reviewers judge. Finish by calling submit_places.
+Keep at most {places} places, each with its path, start and end lines at the PR head (at most {lines} lines: one function or block, not a file) and one clause on what it is and how the change reaches it, such as "`applyManualEdits`, called with the result of the changed line 333". Keep each place with keep_places as soon as you have read it, in the same turn as your next reads: only kept places reach the reviewers, and your pass can end after any turn. Do not keep code the bundle already shows, or test files. Name no defect and give no verdict; the reviewers judge. When your share has nothing left worth reading, make a turn without a read; that ends your pass.
 
 ## Finder
 
