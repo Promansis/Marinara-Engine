@@ -46,6 +46,10 @@ on:
         required: false
       ANTHROPIC_BASE_URL:
         required: false
+      DOTTORE_SCOUT_BASE_URL:
+        required: false
+      DOTTORE_SCOUT_API_KEY:
+        required: false
       DOTTORE_FINDER_BASE_URL:
         required: false
       DOTTORE_FINDER_API_KEY:
@@ -178,6 +182,8 @@ jobs:
           DOTTORE_COST_LIMIT_USD: ${{ vars.DOTTORE_COST_LIMIT_USD }}
           DOTTORE_LAB_STAGE: ${{ vars.DOTTORE_LAB_STAGE }}
           # A role's own endpoint; unset, it uses the shared one for its provider.
+          DOTTORE_SCOUT_BASE_URL: ${{ secrets.DOTTORE_SCOUT_BASE_URL }}
+          DOTTORE_SCOUT_API_KEY: ${{ secrets.DOTTORE_SCOUT_API_KEY }}
           DOTTORE_FINDER_BASE_URL: ${{ secrets.DOTTORE_FINDER_BASE_URL }}
           DOTTORE_FINDER_API_KEY: ${{ secrets.DOTTORE_FINDER_API_KEY }}
           # DOTTORE_HYPO_* is the fork lab's older name for the asker's endpoint.

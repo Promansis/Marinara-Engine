@@ -51,9 +51,9 @@ MODEL_STREAM_LIMIT = 900
 MODEL_MAX_RETRIES = 1
 # Waits before resending a call that hit a transient gateway error (unavailable, overloaded, cut stream).
 RETRY_DELAYS = (15, 45)
-# The finder proposes claims at changed lines, the asker proposes check questions from the bundle alone, and the
-# checker ("verify") judges both against the code.
-REVIEW_ROLES = ("finder", "asker", "verify")
+# The scout gathers the code the bundle builder could not follow, the finder proposes claims at changed lines and the
+# asker check questions, both from the bundle alone, and the checker ("verify") judges both against the code.
+REVIEW_ROLES = ("scout", "finder", "asker", "verify")
 MAX_SEED_HITS_PER_NAME = 10
 MAX_TRACE_SEEDS = 40
 MAX_SEED_CHARS = 12_000
@@ -71,13 +71,19 @@ MAX_CHANGED_BLOCK_LINES = 150
 MAX_CALLEE_LINES = 60
 MAX_BUNDLE_CODE_CHARS = 160_000
 MAX_PR_DESCRIPTION_CHARS = 4_000
-# Per-role defaults; DOTTORE_MODELS overrides any of them (README.md). The finder's reads are nominal: MAX_TOOL_LINES and
-# MAX_TOOL_CHARS bound each read, the time box keeps the checker's share of the review deadline, and the character
-# total only guards the context window. The checker stops once it has a verdict, so its cap only guards runaway reads.
+# The scout adds code the bundle builder could not follow by name: places it submits, quoted by code.
+MAX_SCOUT_PLACES = 24
+MAX_SCOUT_LINES = 80
+MAX_SCOUT_CHARS = 40_000
+# Per-role defaults; DOTTORE_MODELS overrides any of them (README.md). Reading is the scout's job, so the finder makes
+# one call on the bundle with no tools, and the checker gets the code around each candidate quoted by code and a few
+# reads for what is still out of reach. Cost then follows the bundle's size, not a model's appetite for reading:
+# every turn of a tool loop resends the whole conversation.
 ROLE_DEFAULTS = {
-    "finder": {"reads": 100, "chars": 400_000, "minutes": 15, "max_tokens": 32_000},
+    "scout": {"reads": 40, "chars": 160_000, "minutes": 8, "max_tokens": 16_000, "places": MAX_SCOUT_PLACES},
+    "finder": {"reads": 0, "chars": 0, "minutes": 10, "max_tokens": 32_000},
     "asker": {"effort": "low", "reads": 0, "chars": 0, "minutes": 10, "max_tokens": 32_000, "questions": 8},
-    "verify": {"reads": 20, "chars": 96_000, "max_tokens": 32_000},
+    "verify": {"reads": 5, "chars": 40_000, "max_tokens": 32_000},
 }
 # DOTTORE_COST_LIMIT_USD stops a review's model calls once it has spent that much (calls in flight still finish).
 # Prices are per 1M tokens in USD: input, cached input, output and, for Claude, a 5-minute cache write. A model not
@@ -94,7 +100,7 @@ MODEL_PRICES_USD = {
 }
 # A checker judging several candidates gets this much more per extra candidate.
 VERIFIER_READS_PER_EXTRA = 1
-VERIFIER_CHARS_PER_EXTRA = 6_000
+VERIFIER_CHARS_PER_EXTRA = 4_000
 # The last part of the review deadline belongs to the checker: finders submit before it starts.
 CHECKER_RESERVE_SECONDS = 8 * 60
 # A second finder per packet starts this long after the first, so its first call can reuse the prefix the first has
@@ -498,7 +504,13 @@ BUNDLE_NOTE = (
     "removed lines shown unnumbered with `-` where they stood, each change with the code around it and its enclosing "
     "function when short, where the values the changed lines read are defined, and the same-file functions that code "
     "calls, two calls deep; where each changed function and each name declared on a changed line is used outside the "
-    "diff; and the diff of files other than code (docs, changelog, strings). Test files are listed, not shown."
+    "diff; the diff of files other than code (docs, changelog, strings); and, when a scout ran, the code it added "
+    "from other files: callers, imported definitions and what the changed values flow into. Test files are listed, "
+    "not shown."
+)
+SCOUT_NOTE = (
+    "Places the scout read and submitted, quoted by code from the PR head (or from the review base where marked), "
+    "with the PR's changed lines marked `+`."
 )
 
 
@@ -528,13 +540,14 @@ def removed_lines(base):
     return removed
 
 
-# ponytail: same-file and by name only. A call through an import or an overload is not followed; the finder and the
-# checker read those with their tools, and a language server would resolve them properly.
-def bundle_code(touched, sites, removed):
+# ponytail: same-file and by name only. A call through an import or an overload is not followed; the scout reads
+# those with its tools and submits them, and a language server would resolve them properly.
+def bundle_code(touched, sites, removed, marked=None, kind="bundle"):
     """The production code that decides the change, quoted per file from the PR head with changed lines marked: each
     change with BUNDLE_WINDOW lines either side and its short enclosing block, the definitions value_definitions
     follows, and the same-file functions any of that calls, BUNDLE_CALL_HOPS deep. Files in path order, cut at the
-    limit."""
+    limit. The lines in touched are quoted; the lines in marked (touched by default) are marked `+`, so the checker's
+    candidate slices quote unchanged lines with the PR's changes still marked."""
     try:
         found = value_definitions(touched, sites)
     except Exception as exc:
@@ -551,10 +564,11 @@ def bundle_code(touched, sites, removed):
             lines = head_file_text(path).splitlines()
         except Exception:
             continue
-        changed = {number for number in touched.get(path, {}).get("RIGHT", ()) if number <= len(lines)}
+        focus = {number for number in touched.get(path, {}).get("RIGHT", ()) if number <= len(lines)}
+        changed = {number for number in (marked or touched).get(path, {}).get("RIGHT", ()) if number <= len(lines)}
         gone = removed.get(path, {})
         ranges = list(definitions.get(path, ()))
-        for number in sorted(changed | {line for line in gone if line <= len(lines)}):
+        for number in sorted(focus | {line for line in gone if line <= len(lines)}):
             ranges.append((max(1, number - BUNDLE_WINDOW), min(len(lines), number + BUNDLE_WINDOW), ""))
             block = enclosing_block(lines, number)
             if block:
@@ -596,11 +610,23 @@ def bundle_code(touched, sites, removed):
             sections.append(f"## {path}:{low}-{high}{heading}\n```text\n{redact_for_model(body)}\n```")
     code = "\n\n".join(sections)
     print(
-        f"Dottore bundle code: sections={len(sections)}; definitions={len(found)}; callees={callees}; "
+        f"Dottore {kind} code: sections={len(sections)}; definitions={len(found)}; callees={callees}; "
         f"chars={len(code)}" + ("; cut at the limit" if len(code) > MAX_BUNDLE_CODE_CHARS else ""),
         flush=True,
     )
     return truncate(code, MAX_BUNDLE_CODE_CHARS)
+
+
+def bundle_ranges(text):
+    """The line ranges a bundle's code sections already show, by path, from their `## path:low-high` headings."""
+    shown = {}
+    for path, low, high in re.findall(r"^## (\S+?):(\d+)-(\d+)", text, re.M):
+        shown.setdefault(path, []).append((int(low), int(high)))
+    return shown
+
+
+def shown_in(shown, path, start, end):
+    return any(low <= start and end <= high for low, high in shown.get(path, ()))
 
 
 def build_bundle(base, focus, description):
@@ -694,9 +720,11 @@ def build_stats(review_packet):
     return {
         "started_at": time.monotonic(),
         "review_packet_chars": len(review_packet),
+        "bundle_chars": len(review_packet),
         "roles": {
             role: {
                 "model": "",
+                "usd": 0.0,
                 "model_calls": 0,
                 "tool_calls": 0,
                 "tool_chars": 0,
@@ -721,15 +749,27 @@ def print_telemetry(stats):
     elapsed = time.monotonic() - stats["started_at"]
     roles = stats["roles"]
     counters = ("model_calls", "tool_calls", "prompt_tokens", "cached_tokens", "completion_tokens", "reasoning_tokens", "total_tokens")
-    parts = [f"elapsed_s={elapsed:.1f}", f"review_packet_chars={stats['review_packet_chars']}"]
+    bundle_chars = stats["bundle_chars"]
+    parts = [
+        f"elapsed_s={elapsed:.1f}",
+        f"review_packet_chars={stats['review_packet_chars']}",
+        f"bundle_chars={bundle_chars}",
+        f"usd={sum(role['usd'] for role in roles.values()):.3f}",
+    ]
     parts += [f"{key}={sum(role[key] for role in roles.values())}" for key in counters]
     for name, role in roles.items():
-        parts.append(f"{name}=" + ",".join(f"{key}:{value}" for key, value in role.items() if value))
+        fields = [f"{key}:{value}" for key, value in role.items() if value and key != "usd"]
+        if role["prompt_tokens"]:
+            # Prompt tokens sent per bundle token (about one per four characters): a one-call role sends about one
+            # bundle; a tool loop sends the growing conversation again every turn. Cost should follow this ratio and
+            # the model's price, nothing else.
+            fields += [f"usd:{role['usd']:.3f}", f"prompt_x_bundle:{role['prompt_tokens'] / max(bundle_chars / 4, 1):.1f}"]
+        parts.append(f"{name}=" + ",".join(fields))
     parts += [f"{key}={value}" for key, value in stats["verification"].items()]
     print("Dottore telemetry: " + "; ".join(parts), flush=True)
 
 
-ROLE_SETTINGS = ("provider", "model", "effort", "max_tokens", "reads", "chars", "minutes", "questions")
+ROLE_SETTINGS = ("provider", "model", "effort", "max_tokens", "reads", "chars", "minutes", "questions", "places")
 
 
 def role_models():
@@ -763,7 +803,7 @@ def role_models():
         for key in ("provider", "model", "effort"):
             settings[key] = str(settings.get(key) or "").strip()
         settings["provider"] = settings["provider"].lower()
-        for key in ("max_tokens", "reads", "chars", "minutes", "questions"):
+        for key in ("max_tokens", "reads", "chars", "minutes", "questions", "places"):
             value = settings.get(key, 0)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"DOTTORE_MODELS {role}.{key} must be a whole number.")
@@ -856,6 +896,8 @@ class ReviewRun:
     clients: dict
     prompts: dict
     system: str
+    # One bundle per packet and the packet built on it; the scout appends to both before the other roles run.
+    bundles: list
     packets: list
     cache_key: str
     allowed: dict
@@ -1296,7 +1338,9 @@ def chat(ctx, role, messages, tools, tool_choice, cache_key=""):
         totals["model"] = settings["model"]
         totals["model_calls"] += 1
         add_usage(totals, usage)
-        ctx.spent_usd += call_cost_usd(settings["model"], usage)
+        cost = call_cost_usd(settings["model"], usage)
+        totals["usd"] += cost
+        ctx.spent_usd += cost
     # request_chars lets the provider's token counts be compared with what was actually sent.
     print(
         f"Dottore call: role={role}; messages={len(messages)}; "
@@ -1450,13 +1494,21 @@ def finder_packet(review_target, focus_note, prior_contracts, bundle):
     return f"{review_target} {focus_note}\n\n# Prior Dottore Repair Contracts\n{prior_contracts}\n\n{bundle}"
 
 
+def tools_line(settings, in_view):
+    """The sentence that tells a role what it can see: the bundle alone, or the read-only tools within its budget."""
+    if not settings["reads"]:
+        return f"You have no tools: {in_view} all you see."
+    return (
+        f"{in_view[:1].upper()}{in_view[1:]} in view; the read-only tools (read_file, search, file_diff, base_version) "
+        f"reach the rest of the repository within {settings['reads']} tool calls and {settings['chars']} characters of "
+        "tool output. Do not fetch what is already in view, put independent reads in one turn, and spend reads on the "
+        "deciding code; a repeated call returns nothing new."
+    )
+
+
 def finder_instructions(ctx):
     settings = ctx.models["finder"]
-    return (
-        f"{role_prompt(ctx, 'Finder')}\n\nPut independent reads in one turn. You have at most {settings['reads']} tool "
-        f"calls, {settings['chars']} characters of tool output and {settings['minutes']} minutes; a repeated call "
-        "returns nothing new. Finish by calling submit_findings."
-    )
+    return f"{role_prompt(ctx, 'Finder', TOOLS=tools_line(settings, 'the bundle is'))}\n\nFinish by calling submit_findings."
 
 
 SUBMIT_QUESTIONS = function_tool(
@@ -1558,12 +1610,141 @@ def ask_questions(ctx, bundle, packet):
     return questions
 
 
+SUBMIT_PLACES = function_tool(
+    "submit_places",
+    "Submit the places whose code the reviewers need, most decisive first. This ends the pass.",
+    {
+        "places": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": PATH_PARAM,
+                    **LINE_RANGE,
+                    "why": {"type": "string", "description": "One clause: what this code is and how the change reaches it."},
+                    "base": {"type": "boolean", "description": "true for lines at the review base, where the PR removed or rewrote them."},
+                },
+                "required": ["path", "start", "end", "why"],
+            },
+        }
+    },
+    ["places"],
+)
+
+
+def scout_places(ctx, submitted, shown, limit):
+    """The scout's valid places, at most limit: (path, start, end, why, base). A place in a test file, without lines
+    at the head (or the base, when marked), or already shown by the bundle is dropped; one longer than
+    MAX_SCOUT_LINES is cut."""
+    kept = []
+    for place in as_list(submitted.get("places")):
+        if len(kept) == limit:
+            break
+        if not isinstance(place, dict):
+            continue
+        try:
+            path = tool_path(place.get("path"))
+        except ValueError:
+            continue
+        start, end, base = place.get("start"), place.get("end"), place.get("base") is True
+        if any(isinstance(value, bool) or not isinstance(value, int) or value <= 0 for value in (start, end)) or end < start:
+            continue
+        end = min(end, start + MAX_SCOUT_LINES - 1)
+        if TEST_PATH_RE.search(path) or (not base and shown_in(shown, path, start, end)):
+            continue
+        try:
+            if start > len((base_file_text(ctx, path) if base else head_file_text(path)).splitlines()):
+                continue
+        except Exception:
+            continue
+        if any(kept_path == path and kept_base == base and kept_start <= start and end <= kept_end
+               for kept_path, kept_start, kept_end, _, kept_base in kept):
+            continue
+        why = " ".join(redact_for_model(str(place.get("why") or "")).split())[:MAX_QUESTION_CHARS]
+        kept.append((path, start, end, why, base))
+    return kept
+
+
+def scout_code(ctx, places):
+    """The places quoted by code, in the bundle's format, with the PR's changed lines marked; cut at MAX_SCOUT_CHARS."""
+    sections = []
+    for path, start, end, why, base in places:
+        try:
+            lines = (base_file_text(ctx, path) if base else head_file_text(path)).splitlines()
+        except Exception:
+            continue
+        if start > len(lines):
+            continue
+        end = min(end, len(lines))
+        changed = set() if base else ctx.allowed.get(path, {}).get("RIGHT", set())
+        body = "\n".join(f"{number}{'+' if number in changed else ':'} {lines[number - 1]}" for number in range(start, end + 1))
+        where = " at the review base" if base else ""
+        sections.append(f"## {path}:{start}-{end}{where} ({why})\n```text\n{redact_for_model(body)}\n```")
+    return truncate("\n\n".join(sections), MAX_SCOUT_CHARS), len(sections)
+
+
+def run_scout(ctx, index):
+    """One scout over one packet: it reads outward from the bundle and submits places; code quotes them."""
+    settings = ctx.models["scout"]
+    bundle = ctx.bundles[index]
+    submitted = run_agent(
+        ctx,
+        "scout",
+        [
+            {
+                "role": "system",
+                "content": role_prompt(ctx, "Scout", places=settings["places"], lines=MAX_SCOUT_LINES, TOOLS=tools_line(settings, "the bundle is"))
+                + "\n\nFinish by calling submit_places.",
+            },
+            {"role": "user", "content": bundle},
+        ],
+        SUBMIT_PLACES,
+        deadline=ctx.deadline - CHECKER_RESERVE_SECONDS - ctx.models["finder"]["minutes"] * 60,
+        cache_key=f"{ctx.cache_key}-s{index}",
+    )
+    places = scout_places(ctx, submitted, bundle_ranges(bundle), settings["places"])
+    code, added = scout_code(ctx, places)
+    print(
+        f"Dottore scout: packet={index}; submitted={len(as_list(submitted.get('places')))}; valid={len(places)}; "
+        f"added={added}; chars={len(code)}",
+        flush=True,
+    )
+    for path, start, end, why, base in places:
+        print(f"Dottore place: {path}:{start}-{end}{' (base)' if base else ''}; {why}", flush=True)
+    return code
+
+
+def scout_bundles(ctx, pool):
+    """Stage 0: a scout per packet adds the code the bundle builder could not follow, before any reviewer runs. Off
+    when the scout has no reads or no places. A failed scout is logged and the packet keeps its code-built bundle."""
+    settings = ctx.models["scout"]
+    if not settings["reads"] or not settings["places"]:
+        print("Dottore scout: off", flush=True)
+        return 0
+    failures = 0
+    futures = [pool.submit(run_scout, ctx, index) for index in range(len(ctx.bundles))]
+    for index, future in enumerate(futures):
+        try:
+            code = future.result()
+        except Exception as exc:
+            failures += 1
+            print(f"Dottore scout failed on packet {index}: {error_text(exc)}", flush=True)
+            continue
+        if code:
+            section = f"\n\n# Code the Scout Added\n{SCOUT_NOTE}\n\n{code}"
+            ctx.bundles[index] += section
+            ctx.packets[index] += section
+    with ctx.lock:
+        ctx.stats["bundle_chars"] = sum(len(bundle) for bundle in ctx.bundles)
+    return failures
+
+
 def staggered(delay, function, *args, **kwargs):
     time.sleep(delay)
     return function(*args, **kwargs)
 
 
-def run_finders(ctx, packets, bundles, pool):
+def run_finders(ctx, pool):
     """Stage 1: the finder copies and the asker run over every packet concurrently. Returns the finder reports
     as (label, packet, report) and the asker's question candidates. A finder failure ends the review; an asker
     failure is logged and the review goes on without its questions."""
@@ -1588,11 +1769,11 @@ def run_finders(ctx, packets, bundles, pool):
                 cache_key=f"{ctx.cache_key}-p{index}",
             ),
         )
-        for index, packet in enumerate(packets)
+        for index, packet in enumerate(ctx.packets)
         for copy in range(copies)
     ]
     askers = (
-        [pool.submit(ask_questions, ctx, bundle, index) for index, bundle in enumerate(bundles)]
+        [pool.submit(ask_questions, ctx, bundle, index) for index, bundle in enumerate(ctx.bundles)]
         if ctx.models["asker"]["questions"]
         else []
     )
@@ -1949,18 +2130,42 @@ def verification_prompt(ctx, candidates):
         listed.append({"candidate": number, **entry})
     path = candidates[0].path
     reads, chars = verifier_budget(ctx, candidates)
+    around = candidate_code(ctx, candidates)
     return (
-        f"{role_prompt(ctx, 'Checker')}\n\nYou have at most {reads} tool calls and {chars} characters of tool output. "
-        "Finish by calling submit_verdicts with one verdict per candidate number."
+        f"{role_prompt(ctx, 'Checker', TOOLS=tools_line({'reads': reads, 'chars': chars}, 'the bundle and the code around each candidate are'))}"
+        "\n\nFinish by calling submit_verdicts with one verdict per candidate number."
         f"\n\n# Candidates in {path}\n{json.dumps(listed, indent=2)}"
-        f"\n\n# Path Rules\n{matching_path_rules([path])}"
+        + (f"\n\n# Code Around the Candidates\nQuoted by code from the PR head where the bundle does not already show it, with the PR's changed lines marked `+`.\n\n{around}" if around else "")
+        + f"\n\n# Path Rules\n{matching_path_rules([path])}"
         f"\n\n# Diff of {path}\n{truncate(diff_for_path(ctx.base, path), MAX_CONTEXT_FILE_CHARS) or 'Unchanged by this PR.'}"
     )
+
+
+def candidate_code(ctx, candidates):
+    """The code around each candidate line the packet's bundle does not already show, quoted the bundle's way: the
+    line's window and short enclosing block, the values it reads and the same-file functions it calls. Questions
+    mostly point at unchanged code the change feeds, which is where the checker used to spend its reads."""
+    path = candidates[0].path
+    shown = bundle_ranges(ctx.bundles[candidates[0].packet])
+    lines = {
+        candidate.line
+        for candidate in candidates
+        if candidate.line and candidate.side == "RIGHT" and not shown_in(shown, path, candidate.line, candidate.line)
+    }
+    if not lines:
+        return ""
+    try:
+        return bundle_code({path: {"RIGHT": lines, "LEFT": set()}}, [], {}, marked=ctx.allowed, kind="candidate")
+    except Exception as exc:
+        print(f"Dottore candidate code failed for {path}: {error_text(exc)}", flush=True)
+        return ""
 
 
 def verifier_budget(ctx, candidates):
     settings = ctx.models["verify"]
     extra = len(candidates) - 1
+    if not settings["reads"]:
+        return 0, 0
     return settings["reads"] + VERIFIER_READS_PER_EXTRA * extra, settings["chars"] + VERIFIER_CHARS_PER_EXTRA * extra
 
 
@@ -2107,9 +2312,10 @@ def recheck(ctx, head_sha, chunks, pool):
     ctx.stats["verification"] = counts
 
 
-def agentic_review(ctx, bundles, mode, pool):
-    """Find and ask in parallel, merge, then let the checker judge each candidate before it can be posted."""
-    reports, questions, asker_failures = run_finders(ctx, ctx.packets, bundles, pool)
+def agentic_review(ctx, mode, pool):
+    """Scout, then find and ask in parallel, merge, then let the checker judge each candidate before it can be posted."""
+    scout_failures = scout_bundles(ctx, pool)
+    reports, questions, asker_failures = run_finders(ctx, pool)
     merged = merge_segments(reports)
     claims, severity_nitpicks, withheld = validate_review_items(
         {"findings": merged["findings"], "mode": mode}, ctx.base
@@ -2122,6 +2328,15 @@ def agentic_review(ctx, bundles, mode, pool):
     merged["open_questions"] = open_questions[:MAX_OPEN_QUESTIONS]
     merged["withheld_findings"] = withheld
     merged["verification"] = counts
+    if scout_failures:
+        merged["pre_merge_checks"].append(
+            {
+                "name": "Gathered Code",
+                "status": "warn",
+                "type": "Review Limitation",
+                "detail": f"The scout failed on {scout_failures} packet(s), so those were reviewed from the code-built bundle alone.",
+            }
+        )
     if asker_failures:
         merged["pre_merge_checks"].append(
             {
@@ -3475,6 +3690,7 @@ def produce_review(args):
             clients=review_clients(models),
             prompts=prompts,
             system=reviewer_system(prompts),
+            bundles=bundles,
             packets=packets,
             cache_key=f"dottore-{os.environ.get('GITHUB_REPOSITORY', 'local')}-{pr_num or head_sha[:12]}",
             allowed=touched_lines(base),
@@ -3506,7 +3722,7 @@ def produce_review(args):
                 )
                 print_telemetry(stats)
                 return
-            review_obj = agentic_review(ctx, bundles, effective_mode, pool)
+            review_obj = agentic_review(ctx, effective_mode, pool)
     except Exception as exc:
         write_skipped_review(
             "Review Failed",
