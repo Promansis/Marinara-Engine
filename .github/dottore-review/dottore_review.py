@@ -1450,6 +1450,10 @@ def run_agent(ctx, role, messages, submit_tool, deadline=None, cache_key="", bud
         if not calls and getattr(message, "capped", False):
             raise RuntimeError(f"the {role} reply reached its {settings['max_tokens']}-token output cap")
         if not calls:
+            print(f"Dottore {role} replied without a tool call: {redact_for_model(message.content or '')[:400]!r}", flush=True)
+            if time.monotonic() > min(deadline, box):
+                # Asking again takes as long as the first reply did: a one-call finder took 6-15 minutes a reply on 7288.
+                raise RuntimeError(f"the {role} replied without calling {submit} and its time is spent")
             messages += [
                 assistant_turn(message, content=message.content or ""),
                 {"role": "user", "content": f"Call {submit} to finish."},
