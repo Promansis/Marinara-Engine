@@ -43,7 +43,9 @@ MAX_CONTRACT_STATE_TEXT_CHARS = 320
 MAX_CONTRACT_STATE_LIST_ITEMS = 3
 # Replies stream, so these limit silence on the stream, not the reply: an attempt that sends nothing for
 # this long is retried. An agent's first call has nothing cached yet and has stalled for minutes in the
-# provider's queue, while a working one starts replying within about a minute, so it is retried sooner.
+# provider's queue, while a working one starts replying within about a minute, so it is retried sooner. A call
+# offered only its submit tool thinks over the whole bundle before replying, so it may stay silent for the rest of
+# its role's time instead (see chat).
 MODEL_REQUEST_TIMEOUT = 360
 FIRST_CALL_TIMEOUT = 180
 # Caps one attempt that keeps streaming; such an attempt is not retried.
@@ -1294,7 +1296,7 @@ class CostLimitReached(Exception):
     """The review has spent its DOTTORE_COST_LIMIT_USD, so no further model call is made."""
 
 
-def chat(ctx, role, messages, tools, tool_choice, cache_key=""):
+def chat(ctx, role, messages, tools, tool_choice, cache_key="", until=None):
     settings = ctx.models[role]
     with ctx.lock:
         if ctx.cost_limit and ctx.spent_usd >= ctx.cost_limit:
@@ -1304,7 +1306,6 @@ def chat(ctx, role, messages, tools, tool_choice, cache_key=""):
         if ctx.failures.get(role, 0) >= MAX_ROLE_FAILURES:
             raise RuntimeError(f"the {role} role failed {MAX_ROLE_FAILURES} calls in a row, so it makes no more")
     first_call = not any(message.get("role") == "assistant" for message in messages)
-    read_timeout = FIRST_CALL_TIMEOUT if first_call else MODEL_REQUEST_TIMEOUT
     reply = claude_reply if settings["provider"] == "anthropic" else openai_reply
     # The client retries a request that fails before its stream opens. This retries one that stalls after
     # it at once, at most MODEL_MAX_RETRIES times since each stall has already used a read timeout, and
@@ -1314,6 +1315,12 @@ def chat(ctx, role, messages, tools, tool_choice, cache_key=""):
     for attempt in range(len(RETRY_DELAYS) + 1):
         started = time.monotonic()
         timing = {}
+        if len(tools) == 1 and until:
+            # Offered only its submit tool, the model does all its thinking before its first byte, which over a
+            # whole bundle takes minutes, so it may stay silent for the rest of the role's time.
+            read_timeout = min(MODEL_STREAM_LIMIT, max(FIRST_CALL_TIMEOUT, until - started))
+        else:
+            read_timeout = FIRST_CALL_TIMEOUT if first_call else MODEL_REQUEST_TIMEOUT
         try:
             message, usage = reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing, cache_key)
             break
@@ -1410,7 +1417,7 @@ def run_agent(ctx, role, messages, submit_tool, deadline=None, cache_key="", bud
         if limits and claude and messages[-1]["role"] == "tool":
             # Claude cannot be made to submit, so it is told; its reads stay offered so the cached prefix holds.
             messages.append({"role": "user", "content": f"Your reads are spent and further reads are refused. Call {submit} now."})
-        message = chat(ctx, role, messages, tools, choice, cache_key)
+        message = chat(ctx, role, messages, tools, choice, cache_key, until=min(deadline, box))
         calls = list(message.tool_calls or [])
         if not calls and getattr(message, "capped", False):
             raise RuntimeError(f"the {role} reply reached its {settings['max_tokens']}-token output cap")
