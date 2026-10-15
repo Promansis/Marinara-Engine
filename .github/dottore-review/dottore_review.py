@@ -1414,6 +1414,10 @@ def run_agent(ctx, role, messages, submit_tool, deadline=None, cache_key="", bud
         ]
         forced = bool(limits) or not budget
         choice = {"type": "function", "function": {"name": submit}} if forced else "auto"
+        if forced and len(tools) == 1:
+            # "required" forces the only tool and every gateway takes it; one LinkAPI route refuses the named form
+            # with 400 "Missing required parameter: 'tool_choice.name'".
+            choice = "required"
         if limits and claude and messages[-1]["role"] == "tool":
             # Claude cannot be made to submit, so it is told; its reads stay offered so the cached prefix holds.
             messages.append({"role": "user", "content": f"Your reads are spent and further reads are refused. Call {submit} now."})
