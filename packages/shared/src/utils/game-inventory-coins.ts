@@ -55,7 +55,7 @@ export function payGameInventoryCoins(
   const held = new Map(
     family.map((coin) => [coin.item, stacks.filter((stack) => mine(stack, coin)).reduce((n, s) => n + s.quantity, 0)]),
   );
-  if (gameInventoryCoinWorth(stacks, holder, family) < owed) return { ok: false, reason: "cannot-afford" };
+  if (gameInventoryCoinWorth(stacks, holder, family) <= owed) return { ok: false, reason: "cannot-afford" };
   const largestFirst = [...family].sort((a, b) => b.value - a.value);
   const taken = new Map<string, number>();
   let left = owed;
