@@ -14,6 +14,11 @@ small roles' job:
   candidate in view and a few reads for what is still out of reach. Only confirmed findings are published; a confirmed
   claim whose defect differs from its wording carries the finding text the checker wrote.
 
+On a later review, the checker also re-judges Dottore's open threads on the files that review changed, in parallel
+with the finder: one call per packet, with each thread's finding and repair contract. A thread it finds repaired, with
+evidence quoted from the head, gets a reply in voice and is resolved; one a person has replied to, or one whose finding
+that review raised again, stays open. Threads on files the review left alone are not checked.
+
 The finder and checker send the bundle about once each, so a review's cost is the bundle's size times the models'
 prices. A role given reads resends its whole conversation on every turn, so reads belong to the cheapest role that can
 use them: the scout. Each `Dottore telemetry:` line reports per role the dollars spent and `prompt_x_bundle`, the prompt

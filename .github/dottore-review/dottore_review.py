@@ -1039,6 +1039,26 @@ SUBMIT_VERDICTS = function_tool(
     },
     ["verdicts"],
 )
+SUBMIT_REPAIRS = function_tool(
+    "submit_repairs",
+    "Submit a verdict on each open thread. This ends the check.",
+    {
+        "verdicts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "thread": {"type": "integer"},
+                    "verdict": {"type": "string", "enum": ["resolved", "still_open", "uncertain"]},
+                    "evidence": EVIDENCE,
+                    "note": {"type": "string"},
+                },
+                "required": ["thread", "verdict", "evidence", "note"],
+            },
+        },
+    },
+    ["verdicts"],
+)
 
 
 def tool_path(path):
@@ -2119,14 +2139,15 @@ def evidence_snippet(text):
     return " ".join(" ".join(lines).split())
 
 
-def evidence_grounded(ctx, evidence):
-    """True when at least one quoted snippet appears near its cited line in the head or base file."""
+def evidence_grounded(ctx, evidence, base=True):
+    """True when at least one quoted snippet appears near its cited line in the head file, or with base the base file."""
+    reads = (head_file_text, lambda path: base_file_text(ctx, path)) if base else (head_file_text,)
     for item in evidence:
         snippet = evidence_snippet(item.get("snippet"))
         if len(snippet) < 3:
             continue
         line = item.get("line")
-        for read in (head_file_text, lambda path: base_file_text(ctx, path)):
+        for read in reads:
             try:
                 lines = read(item.get("path")).splitlines()
             except Exception:
@@ -2146,7 +2167,7 @@ def verification_prompt(ctx, candidates):
         listed.append({"candidate": number, **entry})
     path = candidates[0].path
     reads, chars = verifier_budget(ctx, candidates)
-    around = candidate_code(ctx, candidates)
+    around = candidate_code(ctx, candidates[0].packet, [(c.path, c.line, c.side) for c in candidates])
     return (
         f"{role_prompt(ctx, 'Checker', TOOLS=tools_line({'reads': reads, 'chars': chars}, 'the bundle and the code around each candidate are'))}"
         "\n\nFinish by calling submit_verdicts with one verdict per candidate number."
@@ -2157,23 +2178,21 @@ def verification_prompt(ctx, candidates):
     )
 
 
-def candidate_code(ctx, candidates):
-    """The code around each candidate line the packet's bundle does not already show, quoted the bundle's way: the
-    line's window and short enclosing block, the values it reads and the same-file functions it calls. Questions
-    mostly point at unchanged code the change feeds, which is where the checker used to spend its reads."""
-    path = candidates[0].path
-    shown = bundle_ranges(ctx.bundles[candidates[0].packet])
-    lines = {
-        candidate.line
-        for candidate in candidates
-        if candidate.line and candidate.side == "RIGHT" and not shown_in(shown, path, candidate.line, candidate.line)
-    }
-    if not lines:
+def candidate_code(ctx, packet, places):
+    """The code around each (path, line, side) place the packet's bundle does not already show, quoted the bundle's
+    way: the line's window and short enclosing block, the values it reads and the same-file functions it calls.
+    Questions mostly point at unchanged code the change feeds, which is where the checker used to spend its reads."""
+    shown = bundle_ranges(ctx.bundles[packet])
+    touched = {}
+    for path, line, side in places:
+        if line and side == "RIGHT" and not shown_in(shown, path, line, line):
+            touched.setdefault(path, {"RIGHT": set(), "LEFT": set()})["RIGHT"].add(line)
+    if not touched:
         return ""
     try:
-        return bundle_code({path: {"RIGHT": lines, "LEFT": set()}}, [], {}, marked=ctx.allowed, kind="candidate")
+        return bundle_code(touched, [], {}, marked=ctx.allowed, kind="candidate")
     except Exception as exc:
-        print(f"Dottore candidate code failed for {path}: {error_text(exc)}", flush=True)
+        print(f"Dottore candidate code failed for {', '.join(touched)}: {error_text(exc)}", flush=True)
         return ""
 
 
@@ -2311,6 +2330,95 @@ def verify_candidates(ctx, candidates, pool):
     return confirmed, hypotheses, counts
 
 
+def repair_prompt(ctx, packet, threads):
+    listed = []
+    for number, thread in enumerate(threads, 1):
+        entry = {"thread": number, "path": thread["path"], "side": thread["side"]}
+        if thread["line"]:
+            entry["line"] = thread["line"]
+        else:
+            entry["line_at_the_earlier_head"] = thread["original_line"]
+        entry["finding"] = thread["finding"]
+        if thread["contract"]:
+            entry["repair_contract"] = thread["contract"]
+        listed.append(entry)
+    paths = sorted({thread["path"] for thread in threads})
+    reads, chars = verifier_budget(ctx, threads)
+    around = candidate_code(ctx, packet, [(thread["path"], thread["line"], thread["side"]) for thread in threads])
+    diffs = "\n\n".join(f"## {path}\n{diff_for_path(ctx.base, path)}" for path in paths)
+    return (
+        f"{role_prompt(ctx, 'Repair Check', TOOLS=tools_line({'reads': reads, 'chars': chars}, 'the bundle and the code around each thread are'))}"
+        "\n\nFinish by calling submit_repairs with one verdict per thread number."
+        f"\n\n# Open Threads\n{json.dumps(listed, indent=2)}"
+        + (f"\n\n# Code Around the Threads\nQuoted by code from the PR head where the bundle does not already show it, with the PR's changed lines marked `+`.\n\n{around}" if around else "")
+        + f"\n\n# Path Rules\n{matching_path_rules(paths)}"
+        f"\n\n# Diff of the Thread Files Since the Review Base\n{truncate(diffs, MAX_CONTEXT_FILE_CHARS)}"
+    )
+
+
+def check_repairs(ctx, packet, threads):
+    """The checker re-judges one packet's open threads against the PR head in one agent run, after the packet the
+    finder read, and returns one result per thread. A thread counts as resolved only on evidence quoted from the head."""
+    reads, chars = verifier_budget(ctx, threads)
+    submitted = run_agent(
+        ctx,
+        "verify",
+        [
+            {"role": "system", "content": ctx.system},
+            {"role": "user", "content": ctx.packets[packet]},
+            {"role": "user", "content": repair_prompt(ctx, packet, threads)},
+        ],
+        SUBMIT_REPAIRS,
+        cache_key=f"{ctx.cache_key}-p{packet}-repairs",
+        budget=reads,
+        output_budget=chars,
+    )
+    by_number = {}
+    for verdict in as_list(submitted.get("verdicts")):
+        if isinstance(verdict, dict) and isinstance(verdict.get("thread"), int):
+            by_number.setdefault(verdict["thread"], verdict)
+    results = []
+    for number, thread in enumerate(threads, 1):
+        verdict = by_number.get(number) or {}
+        outcome = str(verdict.get("verdict", "")).strip().lower()
+        note = " ".join(str(verdict.get("note") or "").split())
+        evidence = [item for item in as_list(verdict.get("evidence")) if isinstance(item, dict)]
+        if outcome not in {"resolved", "still_open"}:
+            outcome = "uncertain"
+        if outcome == "resolved" and not evidence_grounded(ctx, evidence, base=False):
+            outcome, note = "uncertain", f"The quoted evidence did not match the code at the head. {note}".strip()
+        print(f"Dottore thread: {outcome}; {thread['path']}:{thread['line'] or thread['original_line']}; {thread['title'][:120]}; note={note[:400]}", flush=True)
+        results.append(
+            {
+                **{key: thread[key] for key in ("thread_id", "comment_id", "id", "path", "line", "side", "title")},
+                "verdict": outcome,
+                "note": note,
+                "evidence": evidence[:3],
+            }
+        )
+    return results
+
+
+def check_threads(ctx, threads, pool):
+    """Start one repair check per packet holding open threads, and return a function that waits for the results."""
+    groups = {}
+    for thread in threads:
+        packet = next((index for index, chunk in enumerate(ctx.chunks) if thread["path"] in chunk), 0)
+        groups.setdefault(packet, []).append(thread)
+    futures = [pool.submit(check_repairs, ctx, packet, group) for packet, group in sorted(groups.items())]
+
+    def results():
+        checked = []
+        for future in futures:
+            try:
+                checked += future.result()
+            except Exception as exc:
+                print(f"Dottore repair check failed: {error_text(exc)}", flush=True)
+        return checked
+
+    return results
+
+
 # ponytail: lab stage (DOTTORE_LAB_STAGE=recheck) for the checker prompt alone: it judges candidates recorded from
 # earlier runs, each labelled right or wrong, so a prompt change is measured without finder variance. The
 # label rides in found_by on the candidate log line. Remove with the lab.
@@ -2329,9 +2437,11 @@ def recheck(ctx, head_sha, chunks, pool):
     ctx.stats["verification"] = counts
 
 
-def agentic_review(ctx, mode, pool):
-    """Scout, find, merge, then let the checker judge each candidate before it can be posted."""
+def agentic_review(ctx, mode, pool, threads=()):
+    """Scout, find, merge, then let the checker judge each candidate before it can be posted. The open threads are
+    re-judged alongside, once the scouts have filled the bundle."""
     scout_failures, scouts = scout_bundles(ctx, pool)
+    repairs = check_threads(ctx, threads, pool)
     reports = run_finders(ctx, pool)
     merged = merge_segments(reports)
     claims, severity_nitpicks, withheld = validate_review_items(
@@ -2345,6 +2455,7 @@ def agentic_review(ctx, mode, pool):
     merged["open_questions"] = open_questions[:MAX_OPEN_QUESTIONS]
     merged["withheld_findings"] = withheld
     merged["verification"] = counts
+    merged["repairs"] = repairs()
     if scout_failures:
         merged["pre_merge_checks"].append(
             {
@@ -2989,30 +3100,6 @@ def contract_matches_finding(entry, finding):
     return False
 
 
-def resolved_contracts_since_last_review(prior_entries, current_findings, changed):
-    resolved = []
-    for entry in normalize_contract_state_entries(prior_entries):
-        path = entry.get("path") or ""
-        if not path or path not in changed:
-            continue
-        if any(contract_matches_finding(entry, finding) for finding in current_findings):
-            continue
-        resolved.append(
-            {
-                "id": entry.get("id"),
-                "severity": entry.get("severity"),
-                "path": path,
-                "line": entry.get("line"),
-                "title": entry.get("title") or "Prior Dottore finding",
-                "side": entry.get("side") or "RIGHT",
-                "status": "likely_resolved",
-            }
-        )
-        if len(resolved) >= MAX_CONTRACT_STATE_ENTRIES:
-            break
-    return resolved
-
-
 def normalize_contract_state_entries(entries):
     normalized = []
     if not isinstance(entries, list):
@@ -3398,6 +3485,121 @@ def pull_inline_comments(pr_num):
     return load_json_list(gh.stdout)
 
 
+REVIEW_THREADS_QUERY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100) {
+        nodes {
+          id isResolved path line originalLine diffSide
+          comments(first: 50) { nodes { databaseId body author { __typename login } } }
+        }
+      }
+    }
+  }
+}
+"""
+RESOLVE_THREAD_MUTATION = "mutation($thread: ID!) { resolveReviewThread(input: {threadId: $thread}) { thread { id } } }"
+MAX_REPAIR_THREADS = 12
+
+
+def open_dottore_threads(pr_num):
+    """The unresolved review threads Dottore opened that no one else has replied to."""
+    # ponytail: the first 100 threads and 50 comments a thread; page reviewThreads when a PR outgrows that.
+    owner, name = os.environ["GITHUB_REPOSITORY"].split("/", 1)
+    gh = run_gh(
+        ["api", "graphql", "-f", f"query={REVIEW_THREADS_QUERY}", "-f", f"owner={owner}", "-f", f"name={name}", "-F", f"number={pr_num}"],
+        check=True,
+    )
+    data = json.loads(gh.stdout or "{}").get("data") or {}
+    nodes = ((((data.get("repository") or {}).get("pullRequest") or {}).get("reviewThreads") or {}).get("nodes")) or []
+    threads = []
+    for node in nodes:
+        comments = (node.get("comments") or {}).get("nodes") or []
+        if node.get("isResolved") or not comments:
+            continue
+        first = comments[0]
+        author = first.get("author") or {}
+        marker = FINDING_MARKER_RE.search(first.get("body") or "")
+        if author.get("__typename") != "Bot" or not marker:
+            continue
+        # A person who answered the thread owns its outcome.
+        if any((comment.get("author") or {}).get("login") != author.get("login") for comment in comments[1:]):
+            continue
+        threads.append(
+            {
+                "thread_id": node.get("id"),
+                "comment_id": first.get("databaseId"),
+                "id": marker.group(1),
+                "path": node.get("path") or "",
+                "line": node.get("line"),
+                "original_line": node.get("originalLine"),
+                "side": node.get("diffSide") or "RIGHT",
+                "body": first.get("body") or "",
+            }
+        )
+    return threads
+
+
+def threads_to_check(pr_num, files, prior_contracts):
+    """The open Dottore threads on the files this round changed, with their finding text and repair contract."""
+    # ponytail: a thread whose file this round left alone is not checked, so a repair made only in another file
+    # waits for a person or a later round that touches the thread's file; check every open thread if that shows up.
+    try:
+        threads = open_dottore_threads(pr_num) if pr_num else []
+    except Exception as exc:
+        print(f"Dottore could not list the open threads: {error_text(exc)}", flush=True)
+        return []
+    contracts = {entry.get("id"): entry for entry in prior_contracts}
+    chosen = []
+    for thread in threads:
+        if thread["path"] not in files:
+            continue
+        body = thread.pop("body")
+        heading = re.search(r"### .*?\b(?:BLOCKING|HIGH|MEDIUM|LOW):\s*(.+)", body)
+        contract = contracts.get(thread["id"]) or {}
+        chosen.append(
+            {
+                **thread,
+                "title": contract.get("title") or (heading.group(1).strip() if heading else "Prior Dottore finding"),
+                "finding": redact_for_model(FINDING_MARKER_RE.sub("", body).strip()),
+                "contract": contract.get("repair_contract"),
+            }
+        )
+    if len(chosen) > MAX_REPAIR_THREADS:
+        print(f"Dottore threads: checking {MAX_REPAIR_THREADS} of {len(chosen)} open threads on changed files", flush=True)
+    return chosen[:MAX_REPAIR_THREADS]
+
+
+def resolve_repaired_threads(pr_num, repaired, head_sha):
+    """Reply to each thread the checker found repaired, then resolve it, unless it was resolved or answered since."""
+    repaired = [item for item in repaired if item.get("thread_id") and item.get("comment_id")]
+    if not repaired:
+        return
+    try:
+        still_open = {thread["thread_id"] for thread in open_dottore_threads(pr_num)}
+    except Exception as exc:
+        print(f"::warning::Dottore could not list the open threads, so none were resolved: {error_text(exc)}", flush=True)
+        return
+    for item in repaired:
+        if item["thread_id"] not in still_open:
+            continue
+        reply = f"🎭 Hypothesis confirmed — repaired in `{short_ref(head_sha)}`: {item.get('note') or 'the defect no longer reproduces at this head.'}"
+        evidence = (item.get("evidence") or [{}])[0]
+        if evidence.get("snippet"):
+            reply += f"\n\n`{evidence.get('path')}:{evidence.get('line')}`\n```text\n{code_block_text(evidence['snippet'])}\n```"
+        try:
+            run_gh(
+                ["api", "--method", "POST", f"repos/{os.environ['GITHUB_REPOSITORY']}/pulls/{pr_num}/comments/{item['comment_id']}/replies", "--input", "-"],
+                input_text=json.dumps({"body": reply}),
+                check=True,
+            )
+            run_gh(["api", "graphql", "-f", f"query={RESOLVE_THREAD_MUTATION}", "-f", f"thread={item['thread_id']}"], check=True)
+            print(f"Dottore resolved thread {item['thread_id']} ({item.get('path')}:{item.get('line')})", flush=True)
+        except Exception as exc:
+            print(f"::warning::Dottore could not resolve thread {item['thread_id']}: {error_text(exc)}", flush=True)
+
+
 def extract_repair_contract_from_markdown(body):
     contract = {}
     in_contract = False
@@ -3674,6 +3876,7 @@ def produce_review(args):
         if prior_contract_state
         else prior_review_contracts_context(pr_num)
     )
+    threads = threads_to_check(pr_num, set(files), prior_contract_state)
     review_target = (
         f"Review this PR. The review base is commit '{base}' on target branch '{base_ref}', "
         f"head is '{head_sha}', and mode is '{effective_mode}'."
@@ -3730,7 +3933,7 @@ def produce_review(args):
                 )
                 print_telemetry(stats)
                 return
-            review_obj = agentic_review(ctx, effective_mode, pool)
+            review_obj = agentic_review(ctx, effective_mode, pool, threads)
     except Exception as exc:
         write_skipped_review(
             "Review Failed",
@@ -3758,19 +3961,21 @@ def produce_review(args):
     review_obj.setdefault("review_base", base)
     review_obj.setdefault("base_ref", base_ref)
     review_obj.setdefault("mode", effective_mode)
-    review_obj.setdefault("_prior_dottore_contract_state", prior_contract_state)
     review_obj.setdefault("what_i_checked", []).append(
         f"Selected review base `{base}` for target branch `{base_ref}` in `{effective_mode}` mode."
     )
     try:
         valid_findings, _, _ = validate_review_items(review_obj, base, outside_ok=True)
-        review_obj["resolved_since_last_review"] = resolved_contracts_since_last_review(
-            prior_contract_state,
-            valid_findings,
-            set(files),
-        )
+        raised = {finding_id(finding) for finding in valid_findings}
     except Exception:
-        review_obj.setdefault("resolved_since_last_review", [])
+        raised = set()
+    # A thread whose finding this round raised again stays open, whatever its check said.
+    resolved = [item for item in review_obj.get("repairs") or [] if item["verdict"] == "resolved" and item["id"] not in raised]
+    review_obj["resolved_since_last_review"] = resolved
+    # A resolved thread's contract is not carried into the next round.
+    review_obj["_prior_dottore_contract_state"] = [
+        entry for entry in prior_contract_state if entry.get("id") not in {item["id"] for item in resolved}
+    ]
     pathlib.Path("review.json").write_text(
         json.dumps(review_obj, indent=2, sort_keys=True) + "\n", "utf-8"
     )
@@ -3972,6 +4177,7 @@ def post_review(args):
         run_gh(["pr", "comment", pr_num, "--body-file", args.review_md], check=True)
 
     patch_command_status_complete(pr_num, head_sha)
+    resolve_repaired_threads(pr_num, load_review_for_status(args.review_json).get("resolved_since_last_review") or [], head_sha)
 
     comments = json.loads(pathlib.Path(args.inline_json).read_text("utf-8"))
     comments = filter_duplicate_inline_comments(pr_num, comments)
@@ -4051,6 +4257,7 @@ def main():
     post = sub.add_parser("post")
     post.add_argument("--review-md", default="review.md")
     post.add_argument("--inline-json", default="inline-comments.json")
+    post.add_argument("--review-json", default="review.json")
     status = sub.add_parser("status-state")
     status.add_argument("--review-json", default="review.json")
     status.add_argument("--job-status", default="success")
