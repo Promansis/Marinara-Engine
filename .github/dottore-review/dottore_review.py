@@ -1127,6 +1127,7 @@ def watched(stream, started, timing, limit=MODEL_STREAM_LIMIT):
     """Yield a stream's events, noting when the first arrived and stopping one that runs too long. A stopped stream
     returns no usage, so the error carries what had streamed by then: thinking, text and tool-input characters."""
     seen = {"thinking": 0, "text": 0, "tool": 0}
+    last = 0.0  # when the counts last grew; pings and block boundaries do not count
     for event in stream:
         elapsed = time.monotonic() - started
         timing.setdefault("first_chunk", elapsed)
@@ -1134,11 +1135,13 @@ def watched(stream, started, timing, limit=MODEL_STREAM_LIMIT):
         if delta is None and getattr(event, "choices", None):  # Chat Completions chunk
             delta = event.choices[0].delta
         for key, names in (("thinking", ("thinking", "reasoning", "reasoning_content")), ("text", ("text", "content")), ("tool", ("partial_json",))):
-            seen[key] += sum(len(getattr(delta, name, None) or "") for name in names) if delta is not None else 0
+            grew = sum(len(getattr(delta, name, None) or "") for name in names) if delta is not None else 0
+            seen[key] += grew
+            last = elapsed if grew else last
         if elapsed > limit:
             raise TimeoutError(
                 f"the reply was still streaming after {limit:.0f}s, with {seen['thinking']} thinking, {seen['text']} text "
-                f"and {seen['tool']} tool-input characters streamed"
+                f"and {seen['tool']} tool-input characters streamed, the last at {last:.0f}s"
             )
         yield event
 
@@ -1237,11 +1240,15 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         "timeout": anthropic.Timeout(read_timeout, connect=30),
     }
     if tools:
+        # The API holds back each tool-input parameter until it is complete, so a submission's findings list streams
+        # nothing while it is written: a Sonnet finder at low ran out its 600 s box with 912 tool-input characters
+        # shown. Eager streaming sends the input as it is written, so a cut-off reply says how far it got.
         request["tools"] = [
             {
                 "name": tool["function"]["name"],
                 "description": tool["function"]["description"],
                 "input_schema": tool["function"]["parameters"],
+                "eager_input_streaming": True,
             }
             for tool in tools
         ]
