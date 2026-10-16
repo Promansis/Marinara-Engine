@@ -2390,7 +2390,9 @@ def check_repairs(ctx, packet, threads):
         print(f"Dottore thread: {outcome}; {thread['path']}:{thread['line'] or thread['original_line']}; {thread['title'][:120]}; note={note[:400]}", flush=True)
         results.append(
             {
-                **{key: thread[key] for key in ("thread_id", "comment_id", "id", "path", "line", "side", "title")},
+                **{key: thread[key] for key in ("thread_id", "comment_id", "id", "path", "side", "title")},
+                # An outdated thread has no line at the head; the walkthrough shows where it was opened.
+                "line": thread["line"] or thread["original_line"],
                 "verdict": outcome,
                 "note": note,
                 "evidence": evidence[:3],
