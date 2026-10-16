@@ -4182,7 +4182,6 @@ def post_review(args):
         run_gh(["pr", "comment", pr_num, "--body-file", args.review_md], check=True)
 
     patch_command_status_complete(pr_num, head_sha)
-    resolve_repaired_threads(pr_num, load_review_for_status(args.review_json).get("resolved_since_last_review") or [], head_sha)
 
     comments = json.loads(pathlib.Path(args.inline_json).read_text("utf-8"))
     comments = filter_duplicate_inline_comments(pr_num, comments)
@@ -4262,7 +4261,8 @@ def main():
     post = sub.add_parser("post")
     post.add_argument("--review-md", default="review.md")
     post.add_argument("--inline-json", default="inline-comments.json")
-    post.add_argument("--review-json", default="review.json")
+    resolve = sub.add_parser("resolve")
+    resolve.add_argument("--review-json", default="review.json")
     status = sub.add_parser("status-state")
     status.add_argument("--review-json", default="review.json")
     status.add_argument("--job-status", default="success")
@@ -4276,6 +4276,9 @@ def main():
         post_review(args)
     elif args.command == "status-state":
         status_state(args)
+    elif args.command == "resolve":
+        review_obj = load_review_for_status(args.review_json)
+        resolve_repaired_threads(os.environ["PR_NUM"], review_obj.get("resolved_since_last_review") or [], review_obj.get("head_sha") or "")
 
 
 if __name__ == "__main__":
