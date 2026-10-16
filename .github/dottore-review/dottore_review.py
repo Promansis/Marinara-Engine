@@ -1124,12 +1124,22 @@ class StreamStalled(Exception):
 
 
 def watched(stream, started, timing, limit=MODEL_STREAM_LIMIT):
-    """Yield a stream's events, noting when the first arrived and stopping one that runs too long."""
+    """Yield a stream's events, noting when the first arrived and stopping one that runs too long. A stopped stream
+    returns no usage, so the error carries what had streamed by then: thinking, text and tool-input characters."""
+    seen = {"thinking": 0, "text": 0, "tool": 0}
     for event in stream:
         elapsed = time.monotonic() - started
         timing.setdefault("first_chunk", elapsed)
+        delta = getattr(event, "delta", None)  # Claude content_block_delta
+        if delta is None and getattr(event, "choices", None):  # Chat Completions chunk
+            delta = event.choices[0].delta
+        for key, names in (("thinking", ("thinking", "reasoning", "reasoning_content")), ("text", ("text", "content")), ("tool", ("partial_json",))):
+            seen[key] += sum(len(getattr(delta, name, None) or "") for name in names) if delta is not None else 0
         if elapsed > limit:
-            raise TimeoutError(f"the reply was still streaming after {limit:.0f}s")
+            raise TimeoutError(
+                f"the reply was still streaming after {limit:.0f}s, with {seen['thinking']} thinking, {seen['text']} text "
+                f"and {seen['tool']} tool-input characters streamed"
+            )
         yield event
 
 
