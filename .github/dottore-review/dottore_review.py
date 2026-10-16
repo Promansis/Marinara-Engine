@@ -48,8 +48,11 @@ MAX_CONTRACT_STATE_LIST_ITEMS = 3
 # its role's time instead (see chat).
 MODEL_REQUEST_TIMEOUT = 360
 FIRST_CALL_TIMEOUT = 180
-# Caps one attempt that keeps streaming; such an attempt is not retried.
+# Caps one attempt that keeps streaming, or the role's time box when that is longer; such an attempt is not retried.
 MODEL_STREAM_LIMIT = 900
+# Reasoning efforts from least to most. A role offered no tools whose reply hits its output cap is retried once at the
+# next lower effort: the cap is a symptom of thinking, and effort is the lever that reduces it.
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 MODEL_MAX_RETRIES = 1
 # Waits before resending a call that hit a transient gateway error (unavailable, overloaded, cut stream).
 RETRY_DELAYS = (15, 45)
@@ -88,7 +91,9 @@ ROLE_DEFAULTS = {
     "finder": {"reads": 0, "chars": 0, "minutes": 10, "max_tokens": 32_000},
     "verify": {"reads": 5, "chars": 40_000, "max_tokens": 32_000},
 }
-# DOTTORE_COST_LIMIT_USD stops a review's model calls once it has spent that much (calls in flight still finish).
+# DOTTORE_COST_LIMIT_USD stops a review's model calls once it has spent that much (calls in flight still finish). Unset,
+# a review may spend this much; 0 removes the limit.
+DEFAULT_COST_LIMIT_USD = 1.00
 # Prices are per 1M tokens in USD: input, cached input, output and, for Claude, a 5-minute cache write. A model not
 # listed counts at the dearest rates, so an unknown model reaches the limit early rather than late.
 # ponytail: LinkAPI's and OpenRouter's lab prices; a maintainer on other endpoints would set their own table.
@@ -827,7 +832,7 @@ def finder_count():
 def cost_limit():
     raw = os.environ.get("DOTTORE_COST_LIMIT_USD", "").strip()
     try:
-        return float(raw) if raw else 0.0
+        return float(raw) if raw else DEFAULT_COST_LIMIT_USD
     except ValueError as exc:
         raise ValueError("DOTTORE_COST_LIMIT_USD must be a number of dollars.") from exc
 
@@ -1118,20 +1123,20 @@ class StreamStalled(Exception):
     """The connection went quiet or dropped after the reply stream opened."""
 
 
-def watched(stream, started, timing):
+def watched(stream, started, timing, limit=MODEL_STREAM_LIMIT):
     """Yield a stream's events, noting when the first arrived and stopping one that runs too long."""
     for event in stream:
         elapsed = time.monotonic() - started
         timing.setdefault("first_chunk", elapsed)
-        if elapsed > MODEL_STREAM_LIMIT:
-            raise TimeoutError(f"the reply was still streaming after {MODEL_STREAM_LIMIT}s")
+        if elapsed > limit:
+            raise TimeoutError(f"the reply was still streaming after {limit:.0f}s")
         yield event
 
 
-def read_stream(stream, started, timing):
+def read_stream(stream, started, timing, limit=MODEL_STREAM_LIMIT):
     """Assemble a streamed Chat Completions reply; return (message, usage)."""
     content, calls, usage = [], {}, None
-    for chunk in watched(stream, started, timing):
+    for chunk in watched(stream, started, timing, limit):
         usage = getattr(chunk, "usage", None) or usage
         for choice in chunk.choices or []:
             delta = choice.delta
@@ -1173,7 +1178,7 @@ def openai_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         request["extra_body"] = {"prompt_cache_key": cache_key}
     try:
         with ctx.clients[client_key(settings)].chat.completions.create(**request) as stream:
-            return read_stream(stream, started, timing)
+            return read_stream(stream, started, timing, max(MODEL_STREAM_LIMIT, read_timeout))
     except (httpx.TimeoutException, httpx.TransportError) as exc:
         raise StreamStalled(error_text(exc)) from exc
 
@@ -1240,7 +1245,7 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         request["output_config"] = {"effort": settings["effort"]}
     try:
         with ctx.clients[client_key(settings)].messages.stream(**request) as stream:
-            for _ in watched(stream, started, timing):
+            for _ in watched(stream, started, timing, max(MODEL_STREAM_LIMIT, read_timeout)):
                 pass
             reply = stream.get_final_message()
     except (httpx2.TimeoutException, httpx2.TransportError) as exc:
@@ -1298,8 +1303,8 @@ class CostLimitReached(Exception):
     """The review has spent its DOTTORE_COST_LIMIT_USD, so no further model call is made."""
 
 
-def chat(ctx, role, messages, tools, tool_choice, cache_key="", until=None):
-    settings = ctx.models[role]
+def chat(ctx, role, messages, tools, tool_choice, cache_key="", until=None, settings=None):
+    settings = settings or ctx.models[role]
     with ctx.lock:
         if ctx.cost_limit and ctx.spent_usd >= ctx.cost_limit:
             raise CostLimitReached(
@@ -1319,8 +1324,8 @@ def chat(ctx, role, messages, tools, tool_choice, cache_key="", until=None):
         timing = {}
         if len(tools) == 1 and until:
             # Offered only its submit tool, the model does all its thinking before its first byte, which over a
-            # whole bundle takes minutes, so it may stay silent for the rest of the role's time.
-            read_timeout = min(MODEL_STREAM_LIMIT, max(FIRST_CALL_TIMEOUT, until - started))
+            # whole bundle takes minutes, so it may stay silent for the rest of the role's time box (`minutes`).
+            read_timeout = max(FIRST_CALL_TIMEOUT, until - started)
         else:
             read_timeout = FIRST_CALL_TIMEOUT if first_call else MODEL_REQUEST_TIMEOUT
         try:
@@ -1364,6 +1369,13 @@ def chat(ctx, role, messages, tools, tool_choice, cache_key="", until=None):
         flush=True,
     )
     return message
+
+
+def lower_effort(effort):
+    """The effort one level below the given one, or "" when there is none or the value is not a known level."""
+    levels = {level: index for index, level in enumerate(EFFORT_LEVELS)}
+    index = levels.get(str(effort or "").lower(), 0)
+    return EFFORT_LEVELS[index - 1] if index else ""
 
 
 def assistant_turn(message, **fields):
@@ -1417,6 +1429,7 @@ def run_agent(ctx, role, messages, submit_tool, deadline=None, cache_key="", bud
     answered = {}
     deadline = deadline or ctx.deadline
     box = time.monotonic() + settings["minutes"] * 60 if settings.get("minutes") else deadline
+    lowered = False
     for turn in range(budget + MAX_SUBMIT_ATTEMPTS):
         limits = [
             name
@@ -1437,7 +1450,7 @@ def run_agent(ctx, role, messages, submit_tool, deadline=None, cache_key="", bud
         if limits and claude and messages[-1]["role"] == "tool":
             # Claude cannot be made to submit, so it is told; its reads stay offered so the cached prefix holds.
             messages.append({"role": "user", "content": f"Your reads are spent and further reads are refused. Call {submit} now."})
-        message = chat(ctx, role, messages, tools, choice, cache_key, until=min(deadline, box))
+        message = chat(ctx, role, messages, tools, choice, cache_key, until=min(deadline, box), settings=settings)
         calls = list(message.tool_calls or [])
         if keep and (forced or all(call.function.name == submit for call in calls)):
             kept += [item for call in calls if call.function.name == submit for item in as_list((call_arguments(call) or {}).get(keep))]
@@ -1445,7 +1458,14 @@ def run_agent(ctx, role, messages, submit_tool, deadline=None, cache_key="", bud
                 ctx.stats["roles"][role][f"stop_{limits[0] if limits else 'own'}"] += 1
             return {keep: kept}
         if not calls and getattr(message, "capped", False):
-            raise RuntimeError(f"the {role} reply reached its {settings['max_tokens']}-token output cap")
+            lower = lower_effort(settings["effort"])
+            if lowered or not lower or time.monotonic() > min(deadline, box):
+                raise RuntimeError(f"the {role} reply reached its {settings['max_tokens']}-token output cap")
+            # The cap was spent on thinking, so the same call is sent once more at the next lower effort.
+            print(f"Dottore {role} reached its {settings['max_tokens']}-token output cap at effort {settings['effort']}; retrying once at {lower}", flush=True)
+            settings = {**settings, "effort": lower}
+            lowered = True
+            continue
         if not calls:
             print(f"Dottore {role} replied without a tool call: {redact_for_model(message.content or '')[:400]!r}", flush=True)
             if time.monotonic() > min(deadline, box):

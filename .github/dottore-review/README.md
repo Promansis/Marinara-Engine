@@ -33,7 +33,7 @@ Agents repository: its wrapper workflow passes its own secrets and variables to 
 | `DOTTORE_REASONING_EFFORT` | Reasoning effort for every role that does not set its own, such as `medium`, `high` or `xhigh` | The provider's default |
 | `DOTTORE_MODELS` | Per-role settings as JSON (see below) | None |
 | `DOTTORE_FINDERS` | Finder copies per packet, `1` or `2`; a second one starts a few seconds later and reuses the cache | `1` |
-| `DOTTORE_COST_LIMIT_USD` | Stop a review's model calls once it has spent this many dollars at the table in `dottore_review.py` | No limit |
+| `DOTTORE_COST_LIMIT_USD` | Stop a review's model calls once it has spent this many dollars at the price table in `dottore_review.py`; `0` removes the limit | `1.00` |
 | `DOTTORE_BASE_REFS` | Comma-separated base branches that get reviewed | `refactor,main,staging` |
 | `DOTTORE_CONCURRENCY` | Model calls run at once | `4` |
 
@@ -54,6 +54,18 @@ uses the default.
 Setting `reads` on the finder restores a reading finder, and setting `0` on the checker makes it judge from what is in
 view alone and answer uncertain otherwise.
 
+A role's `minutes` also bounds each of its model calls: a role offered no tools thinks before its first byte, so its
+call may stay silent for the whole box. A role offered no tools whose reply runs into `max_tokens` is sent once more
+at the next lower effort (`max` → `xhigh` → `high` → `medium` → `low`); at `low`, or with no effort set, the review
+fails instead. On Claude, thinking counts inside `max_tokens`, so give a Claude role a larger cap and let `effort`
+limit the thinking.
+
+Limits kept in code, in `dottore_review.py`: a 30-minute review (`REVIEW_DEADLINE_SECONDS`), the last 8 minutes of it
+reserved for the checker, at most 20 candidates checked per review (`MAX_VERIFIED_CANDIDATES`), 3 submit attempts,
+a role aborting after 3 failed calls in a row (`MAX_ROLE_FAILURES`), 180 s for a call's first byte and 360 s between
+bytes (`FIRST_CALL_TIMEOUT`, `MODEL_REQUEST_TIMEOUT`), 900 s per streaming reply or the role's box when longer
+(`MODEL_STREAM_LIMIT`), and the packet split for large PRs (`MAX_CHUNK_PATCH_CHARS`, `MAX_REVIEW_CHUNKS`).
+
 ## Models per role
 
 The shared model is the one the finder and checker use: they judge, so they take the most capable model available, and
@@ -65,6 +77,24 @@ model at a high effort fits it. For example, GPT for the finder and checker and 
   "scout": { "provider": "anthropic", "model": "claude-haiku-5-5", "effort": "high" }
 }
 ```
+
+### Switching a role's model
+
+Every setting is per role, so the finder and the checker can run one model and the scout another, each with its own
+provider, effort, caps and endpoint secrets. Starting values, to be measured on a few known pull requests before
+relying on them:
+
+| Role | GPT (Astra, Sol) | Claude Opus or Sonnet | Claude Haiku or GPT Luna |
+| --- | --- | --- | --- |
+| `finder` | `effort` `high` (measured: `xhigh` costs more for the same recall) | `effort` `high`, `max_tokens` `64000` | not recommended: small models browse without forming claims |
+| `verify` | `effort` `xhigh` | `effort` `high`, `max_tokens` `64000` | not recommended |
+| `scout` | `effort` `medium` | `effort` `medium`, `max_tokens` `16000` | `effort` `high`, `max_tokens` `16000` |
+
+A larger or slower model needs a larger `max_tokens` (Claude counts thinking inside it) and may need more `minutes`;
+the retry at a lower effort covers a reply that still runs into the cap. The cost limit stops a review that would
+cost more than expected: at the price table, an Opus finder and checker cost about three times Astra's for the same
+tokens, so set `DOTTORE_COST_LIMIT_USD` to what a review may spend before switching. The `Dottore roles:` line at the
+start of each run log shows the provider, model and effort each role resolved to.
 
 ## Secrets
 
