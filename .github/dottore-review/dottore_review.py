@@ -2244,7 +2244,11 @@ def judge(ctx, candidate, verdict):
             path = tool_path(verdict.get("path") or finding.path)
         except ValueError:
             path = ""
-        if path and head_line_exists(path, line):
+        anchored = finding.line in ctx.allowed.get(finding.path, {}).get(finding.side, set())
+        nearby = anchored and path == finding.path and abs(line - finding.line) <= GITHUB_CONTEXT_LINES
+        # A place a few lines from a changed-line anchor is the same spot (often a removal, which has no head line):
+        # keep the anchor so the finding stays an inline thread.
+        if path and head_line_exists(path, line) and not nearby:
             finding.path, finding.line, finding.side = path, line, "RIGHT"
     # A defect the checker places outside the changed lines is published in the walkthrough, not inline.
     finding.outside_diff = finding.line not in ctx.allowed.get(finding.path, {}).get(finding.side, set())
