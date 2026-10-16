@@ -6,7 +6,7 @@
  * coins go first, as many as fit the price without going over; what is still owed is paid by breaking
  * the smallest coin left that covers it, and the change comes back in the family's smaller coins,
  * largest first. So 5 gold is paid with 3 gold and 20 of 30 silver, and 1 silver out of 10 gold leaves
- * 9 gold and 9 silver. Pure: the caller saves the stacks.
+ * 9 gold and 9 silver. Pure: the caller saves the returned stacks.
  */
 import {
   gameInventoryBagKey,
