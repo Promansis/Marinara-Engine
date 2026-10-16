@@ -3572,7 +3572,7 @@ def threads_to_check(pr_num, files, prior_contracts):
 
 
 def resolve_repaired_threads(pr_num, repaired, head_sha):
-    """Reply to each thread the checker found repaired, then resolve it, unless it was resolved or answered since."""
+    """Resolve each thread the checker found repaired, then reply, unless it was resolved or answered since."""
     repaired = [item for item in repaired if item.get("thread_id") and item.get("comment_id")]
     if not repaired:
         return
@@ -3588,16 +3588,21 @@ def resolve_repaired_threads(pr_num, repaired, head_sha):
         evidence = (item.get("evidence") or [{}])[0]
         if evidence.get("snippet"):
             reply += f"\n\n`{evidence.get('path')}:{evidence.get('line')}`\n```text\n{code_block_text(evidence['snippet'])}\n```"
+        # Resolve first: a reply on a thread that stays open would be posted again by every later review.
+        try:
+            run_gh(["api", "graphql", "-f", f"query={RESOLVE_THREAD_MUTATION}", "-f", f"thread={item['thread_id']}"], check=True)
+        except Exception as exc:
+            print(f"::warning::Dottore could not resolve thread {item['thread_id']}: {error_text(exc)}", flush=True)
+            continue
+        print(f"Dottore resolved thread {item['thread_id']} ({item.get('path')}:{item.get('line')})", flush=True)
         try:
             run_gh(
                 ["api", "--method", "POST", f"repos/{os.environ['GITHUB_REPOSITORY']}/pulls/{pr_num}/comments/{item['comment_id']}/replies", "--input", "-"],
                 input_text=json.dumps({"body": reply}),
                 check=True,
             )
-            run_gh(["api", "graphql", "-f", f"query={RESOLVE_THREAD_MUTATION}", "-f", f"thread={item['thread_id']}"], check=True)
-            print(f"Dottore resolved thread {item['thread_id']} ({item.get('path')}:{item.get('line')})", flush=True)
         except Exception as exc:
-            print(f"::warning::Dottore could not resolve thread {item['thread_id']}: {error_text(exc)}", flush=True)
+            print(f"::warning::Dottore resolved thread {item['thread_id']} but could not reply: {error_text(exc)}", flush=True)
 
 
 def extract_repair_contract_from_markdown(body):
