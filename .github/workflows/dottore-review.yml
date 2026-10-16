@@ -73,6 +73,8 @@ jobs:
   review:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    outputs:
+      resolve: ${{ steps.repairs.outputs.resolve }}
     env:
       PR_NUM: ${{ inputs.pr_number }}
       DOTTORE_COMMENT_BODY: ${{ inputs.comment_body }}
@@ -197,6 +199,23 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python /tmp/dottore-review-tool/dottore_review.py post
 
+      - name: Hand repaired threads to the resolve job
+        id: repairs
+        run: |
+          if jq -e '(.resolved_since_last_review // []) | length > 0' review.json >/dev/null 2>&1; then
+            mkdir -p /tmp/dottore-repairs
+            cp review.json /tmp/dottore-review-tool/dottore_review.py /tmp/dottore-repairs/
+            echo "resolve=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload repaired threads
+        if: steps.repairs.outputs.resolve == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dottore-repairs
+          path: /tmp/dottore-repairs
+          retention-days: 1
+
       - name: Complete Dottore status
         if: always()
         env:
@@ -219,3 +238,28 @@ jobs:
             -f state="$STATE" -f context="Dottore Review" \
             -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             -f description="$DESCRIPTION" >/dev/null
+
+  # GitHub refuses resolveReviewThread to a token without contents: write, so resolving runs apart from the review:
+  # this job checks out nothing, runs only the trusted reviewer script the review job handed over, and holds no model
+  # key. A calling workflow (workflow_call) must grant contents: write too.
+  resolve:
+    needs: review
+    if: needs.review.outputs.resolve == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      PR_NUM: ${{ inputs.pr_number }}
+      PYTHONSAFEPATH: "1"
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dottore-repairs
+          path: /tmp/dottore-repairs
+
+      - name: Resolve repaired threads
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 /tmp/dottore-repairs/dottore_review.py resolve --review-json /tmp/dottore-repairs/review.json

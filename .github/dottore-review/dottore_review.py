@@ -3572,7 +3572,7 @@ def threads_to_check(pr_num, files, prior_contracts):
 
 
 def resolve_repaired_threads(pr_num, repaired, head_sha):
-    """Reply to each thread the checker found repaired, then resolve it, unless it was resolved or answered since."""
+    """Resolve each thread the checker found repaired, then reply, unless it was resolved or answered since."""
     repaired = [item for item in repaired if item.get("thread_id") and item.get("comment_id")]
     if not repaired:
         return
@@ -3588,16 +3588,21 @@ def resolve_repaired_threads(pr_num, repaired, head_sha):
         evidence = (item.get("evidence") or [{}])[0]
         if evidence.get("snippet"):
             reply += f"\n\n`{evidence.get('path')}:{evidence.get('line')}`\n```text\n{code_block_text(evidence['snippet'])}\n```"
+        # Resolve first: a reply on a thread that stays open would be posted again by every later review.
+        try:
+            run_gh(["api", "graphql", "-f", f"query={RESOLVE_THREAD_MUTATION}", "-f", f"thread={item['thread_id']}"], check=True)
+        except Exception as exc:
+            print(f"::warning::Dottore could not resolve thread {item['thread_id']}: {error_text(exc)}", flush=True)
+            continue
+        print(f"Dottore resolved thread {item['thread_id']} ({item.get('path')}:{item.get('line')})", flush=True)
         try:
             run_gh(
                 ["api", "--method", "POST", f"repos/{os.environ['GITHUB_REPOSITORY']}/pulls/{pr_num}/comments/{item['comment_id']}/replies", "--input", "-"],
                 input_text=json.dumps({"body": reply}),
                 check=True,
             )
-            run_gh(["api", "graphql", "-f", f"query={RESOLVE_THREAD_MUTATION}", "-f", f"thread={item['thread_id']}"], check=True)
-            print(f"Dottore resolved thread {item['thread_id']} ({item.get('path')}:{item.get('line')})", flush=True)
         except Exception as exc:
-            print(f"::warning::Dottore could not resolve thread {item['thread_id']}: {error_text(exc)}", flush=True)
+            print(f"::warning::Dottore resolved thread {item['thread_id']} but could not reply: {error_text(exc)}", flush=True)
 
 
 def extract_repair_contract_from_markdown(body):
@@ -4177,7 +4182,6 @@ def post_review(args):
         run_gh(["pr", "comment", pr_num, "--body-file", args.review_md], check=True)
 
     patch_command_status_complete(pr_num, head_sha)
-    resolve_repaired_threads(pr_num, load_review_for_status(args.review_json).get("resolved_since_last_review") or [], head_sha)
 
     comments = json.loads(pathlib.Path(args.inline_json).read_text("utf-8"))
     comments = filter_duplicate_inline_comments(pr_num, comments)
@@ -4257,7 +4261,8 @@ def main():
     post = sub.add_parser("post")
     post.add_argument("--review-md", default="review.md")
     post.add_argument("--inline-json", default="inline-comments.json")
-    post.add_argument("--review-json", default="review.json")
+    resolve = sub.add_parser("resolve")
+    resolve.add_argument("--review-json", default="review.json")
     status = sub.add_parser("status-state")
     status.add_argument("--review-json", default="review.json")
     status.add_argument("--job-status", default="success")
@@ -4271,6 +4276,9 @@ def main():
         post_review(args)
     elif args.command == "status-state":
         status_state(args)
+    elif args.command == "resolve":
+        review_obj = load_review_for_status(args.review_json)
+        resolve_repaired_threads(os.environ["PR_NUM"], review_obj.get("resolved_since_last_review") or [], review_obj.get("head_sha") or "")
 
 
 if __name__ == "__main__":

@@ -18,6 +18,9 @@ On a later review, the checker also re-judges Dottore's open threads on the file
 with the finder: one call per packet, with each thread's finding and repair contract. A thread it finds repaired, with
 evidence quoted from the head, gets a reply in voice and is resolved; one a person has replied to, or one whose finding
 that review raised again, stays open. Threads on files the review left alone are not checked.
+GitHub refuses to resolve a thread without `contents: write`, so a separate `resolve` job does it with that
+permission; it checks out no code and holds no model key, and runs only when a review found a repair. A repository that
+calls the shared workflow, such as Marinara-Agents, must grant `contents: write` in its caller too.
 
 The finder and checker send the bundle about once each, so a review's cost is the bundle's size times the models'
 prices. A role given reads resends its whole conversation on every turn, so reads belong to the cheapest role that can
