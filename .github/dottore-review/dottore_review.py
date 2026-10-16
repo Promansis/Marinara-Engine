@@ -21,6 +21,12 @@ from types import SimpleNamespace
 REPO_ROOT = pathlib.Path.cwd().resolve()
 DOTTORE_MARKER = "<!-- dottore:walkthrough -->"
 COMMAND_STATUS_MARKER = "<!-- dottore:command-status -->"
+AUTOFIX_MARKER = "<!-- dottore:autofix -->"
+AUTOFIX_BOX = f"- [ ] 🩺 Let Dottore fix the open findings on this PR {AUTOFIX_MARKER}"
+AUTOFIX_BOX_RE = re.compile(r"^- \[([ xX])\] .*" + re.escape(AUTOFIX_MARKER), re.M)
+# Each autofix commit carries this trailer; the push job writes it and autofix_rounds counts it.
+AUTOFIX_TRAILER = "Dottore-Autofix:"
+MAX_AUTOFIX_ROUNDS = 3
 FINDING_MARKER_RE = re.compile(r"<!-- dottore:finding=([0-9a-f]{16}) -->")
 STATE_MARKER_RE = re.compile(r"<!-- dottore:last-reviewed-sha=([0-9a-f]{40}) -->")
 CONTRACT_STATE_RE = re.compile(r"<!-- dottore:contract-state=([A-Za-z0-9_=-]+) -->")
@@ -3323,6 +3329,16 @@ def render_walkthrough(
     )
     if agent_prompt:
         body.extend(["", agent_prompt])
+    body.extend(
+        [
+            "",
+            "### 🩺 Autofix",
+            AUTOFIX_BOX,
+            "",
+            "While this is ticked, Dottore pushes a repair for its open findings after each review, then examines it like"
+            f" any push. It stops after {MAX_AUTOFIX_ROUNDS} repairs in a row. Ticking needs write access.",
+        ]
+    )
     if pre_merge:
         body.extend(
             [
@@ -4059,13 +4075,6 @@ def render_review(args):
     )
 
 
-def find_walkthrough_comment(pr_num):
-    comment = latest_walkthrough_comment(pr_num)
-    if comment:
-        return comment.get("id")
-    return None
-
-
 def find_command_status_comment(pr_num):
     for comment in issue_comments(pr_num):
         if COMMAND_STATUS_MARKER in comment.get("body", ""):
@@ -4183,7 +4192,10 @@ def post_review(args):
     head_sha = head_sha_match.group(1) if head_sha_match else os.environ.get(
         "PR_HEAD_SHA", ""
     )
-    comment_id = find_walkthrough_comment(pr_num)
+    existing = latest_walkthrough_comment(pr_num)
+    if existing and autofix_ticked(existing.get("body")):
+        body = body.replace(AUTOFIX_BOX, AUTOFIX_BOX.replace("- [ ]", "- [x]", 1), 1)
+    comment_id = existing.get("id") if existing else None
     if comment_id:
         run_gh(
             [
@@ -4224,6 +4236,74 @@ def post_review(args):
         input_text=json.dumps(payload),
         check=True,
     )
+
+
+def autofix_ticked(body):
+    match = AUTOFIX_BOX_RE.search(body or "")
+    return bool(match and match.group(1) in "xX")
+
+
+def autofix_rounds(pr_num):
+    """Dottore's repairs at the tip of the PR since the last commit a person pushed."""
+    # ponytail: the PR commits API lists at most 250 commits; past that the count reads 0 and the cap resets.
+    gh = run_gh(["api", f"repos/{os.environ['GITHUB_REPOSITORY']}/pulls/{pr_num}/commits?per_page=100", "--paginate"], check=True)
+    rounds = 0
+    for commit in reversed(load_json_list(gh.stdout)):
+        if AUTOFIX_TRAILER not in ((commit.get("commit") or {}).get("message") or ""):
+            break
+        rounds += 1
+    return rounds
+
+
+def autofix_task(threads):
+    parts = [
+        "Fix the open code-review findings below in this repository. Read AGENTS.md (and CLAUDE.md if present) for its"
+        " rules first.",
+        "Make the smallest change that repairs each one and touch only the files it needs.",
+        "If a finding is wrong or cannot be fixed safely, leave that code alone and say why in your final message.",
+    ]
+    for number, thread in enumerate(threads[:MAX_REPAIR_THREADS], 1):
+        parts += ["", f"## Finding {number}", re.sub(r"<!--.*?-->", "", thread["body"], flags=re.S).strip()]
+    return "\n".join(parts) + "\n"
+
+
+def autofix_prompt(args):
+    """Whether Dottore repairs this PR now: a person asked (ticked the box or commented /dottore autofix), or a review
+    just finished with the box ticked. Writes the fixer's prompt and the head it is for, and prints autofix=true for
+    GITHUB_OUTPUT; a reason it cannot goes to the PR as a comment."""
+    pr_num, repo = os.environ["PR_NUM"], os.environ["GITHUB_REPOSITORY"]
+    asked = args.trigger == "asked"
+    if not asked:
+        walkthrough = latest_walkthrough_comment(pr_num)
+        if not walkthrough or not autofix_ticked(walkthrough.get("body")):
+            return
+    fields = "isCrossRepository,headRefName,headRefOid,state"
+    pr = json.loads(run_gh(["pr", "view", pr_num, "--repo", repo, "--json", fields], check=True).stdout)
+    if pr.get("state") != "OPEN":
+        return
+    note, threads = "", []
+    if pr.get("isCrossRepository"):
+        note = "Dottore can only push repairs to this repository's own branches; use the copy prompt in the review instead."
+    elif not asked and (rounds := autofix_rounds(pr_num)) >= MAX_AUTOFIX_ROUNDS:
+        note = (
+            f"Dottore stopped after {rounds} repairs in a row with no push from a person. Push a change, or untick and"
+            " tick the box, to let it try again."
+        )
+    else:
+        threads = open_dottore_threads(pr_num)
+        if not threads and asked:
+            note = "There are no open Dottore findings to repair."
+    if note:
+        run_gh(["pr", "comment", pr_num, "--repo", repo, "--body", f"🩺 {note}"], check=True)
+    if not threads:
+        return
+    out = pathlib.Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "prompt.md").write_text(autofix_task(threads), "utf-8")
+    # The branch name is data for the push job (jq, quoted), never sourced as shell.
+    meta = {"head_ref": pr["headRefName"], "head_sha": pr["headRefOid"], "findings": len(threads)}
+    (out / "meta.json").write_text(json.dumps(meta), "utf-8")
+    print("autofix=true")
 
 
 def load_review_for_status(path):
@@ -4282,6 +4362,9 @@ def main():
     post.add_argument("--inline-json", default="inline-comments.json")
     resolve = sub.add_parser("resolve")
     resolve.add_argument("--review-json", default="review.json")
+    autofix = sub.add_parser("autofix-prompt")
+    autofix.add_argument("--trigger", choices=["review", "asked"], default="review")
+    autofix.add_argument("--out", default="/tmp/dottore-autofix")
     status = sub.add_parser("status-state")
     status.add_argument("--review-json", default="review.json")
     status.add_argument("--job-status", default="success")
@@ -4295,6 +4378,8 @@ def main():
         post_review(args)
     elif args.command == "status-state":
         status_state(args)
+    elif args.command == "autofix-prompt":
+        autofix_prompt(args)
     elif args.command == "resolve":
         review_obj = load_review_for_status(args.review_json)
         resolve_repaired_threads(os.environ["PR_NUM"], review_obj.get("resolved_since_last_review") or [], review_obj.get("head_sha") or "")
