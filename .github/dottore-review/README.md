@@ -55,16 +55,16 @@ Setting `reads` on the finder restores a reading finder, and setting `0` on the 
 view alone and answer uncertain otherwise.
 
 A role's `minutes` also bounds each of its model calls: a role offered no tools thinks before its first byte, so its
-call may stay silent for the whole box. A role offered no tools whose reply runs into `max_tokens` is sent once more
-at the next lower effort (`max` → `xhigh` → `high` → `medium` → `low`); at `low`, or with no effort set, the review
-fails instead. On Claude, thinking counts inside `max_tokens`, so give a Claude role a larger cap and let `effort`
+call may stay silent for the whole box, and a reply still streaming when the box ends is cut there. A role offered no
+tools whose reply runs into `max_tokens` is sent once more at the next lower effort (`max` → `xhigh` → `high` →
+`medium` → `low`) with a box of its own; at `low`, or with no effort set, the review fails instead. On Claude, thinking counts inside `max_tokens`, so give a Claude role a larger cap and let `effort`
 limit the thinking.
 
 Limits kept in code, in `dottore_review.py`: a 30-minute review (`REVIEW_DEADLINE_SECONDS`), the last 8 minutes of it
 reserved for the checker, at most 20 candidates checked per review (`MAX_VERIFIED_CANDIDATES`), 3 submit attempts,
 a role aborting after 3 failed calls in a row (`MAX_ROLE_FAILURES`), 180 s for a call's first byte and 360 s between
-bytes (`FIRST_CALL_TIMEOUT`, `MODEL_REQUEST_TIMEOUT`), 900 s per streaming reply or the role's box when longer
-(`MODEL_STREAM_LIMIT`), and the packet split for large PRs (`MAX_CHUNK_PATCH_CHARS`, `MAX_REVIEW_CHUNKS`).
+bytes (`FIRST_CALL_TIMEOUT`, `MODEL_REQUEST_TIMEOUT`), 900 s per streaming reply of a role with tools
+(`MODEL_STREAM_LIMIT`; a role without tools gets its box instead), and the packet split for large PRs (`MAX_CHUNK_PATCH_CHARS`, `MAX_REVIEW_CHUNKS`).
 
 ## Models per role
 

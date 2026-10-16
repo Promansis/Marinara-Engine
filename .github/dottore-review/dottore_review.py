@@ -1154,7 +1154,7 @@ def read_stream(stream, started, timing, limit=MODEL_STREAM_LIMIT):
     return SimpleNamespace(content="".join(content) or None, tool_calls=tool_calls or None), usage
 
 
-def openai_reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing, cache_key):
+def openai_reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing, cache_key, stream_limit=MODEL_STREAM_LIMIT):
     import httpx
     import openai
 
@@ -1178,7 +1178,7 @@ def openai_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         request["extra_body"] = {"prompt_cache_key": cache_key}
     try:
         with ctx.clients[client_key(settings)].chat.completions.create(**request) as stream:
-            return read_stream(stream, started, timing, max(MODEL_STREAM_LIMIT, read_timeout))
+            return read_stream(stream, started, timing, stream_limit)
     except (httpx.TimeoutException, httpx.TransportError) as exc:
         raise StreamStalled(error_text(exc)) from exc
 
@@ -1213,7 +1213,7 @@ def claude_messages(messages):
     return system, turns
 
 
-def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing, cache_key):
+def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing, cache_key, stream_limit=MODEL_STREAM_LIMIT):
     """One streamed Claude Messages call, returned in the Chat Completions shape the agents use."""
     import anthropic
     import httpx2
@@ -1245,7 +1245,7 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         request["output_config"] = {"effort": settings["effort"]}
     try:
         with ctx.clients[client_key(settings)].messages.stream(**request) as stream:
-            for _ in watched(stream, started, timing, max(MODEL_STREAM_LIMIT, read_timeout)):
+            for _ in watched(stream, started, timing, stream_limit):
                 pass
             reply = stream.get_final_message()
     except (httpx2.TimeoutException, httpx2.TransportError) as exc:
@@ -1324,12 +1324,14 @@ def chat(ctx, role, messages, tools, tool_choice, cache_key="", until=None, sett
         timing = {}
         if len(tools) == 1 and until:
             # Offered only its submit tool, the model does all its thinking before its first byte, which over a
-            # whole bundle takes minutes, so it may stay silent for the rest of the role's time box (`minutes`).
-            read_timeout = max(FIRST_CALL_TIMEOUT, until - started)
+            # whole bundle takes minutes, so it may stay silent for the rest of the role's time box (`minutes`), and
+            # a reply still streaming when the box ends is cut there: a Sonnet finder at high streamed thinking
+            # for 900 s past its box without finishing.
+            read_timeout = stream_limit = max(FIRST_CALL_TIMEOUT, until - started)
         else:
-            read_timeout = FIRST_CALL_TIMEOUT if first_call else MODEL_REQUEST_TIMEOUT
+            read_timeout, stream_limit = (FIRST_CALL_TIMEOUT if first_call else MODEL_REQUEST_TIMEOUT), MODEL_STREAM_LIMIT
         try:
-            message, usage = reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing, cache_key)
+            message, usage = reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing, cache_key, stream_limit)
             break
         except Exception as exc:
             with ctx.lock:
@@ -1461,9 +1463,11 @@ def run_agent(ctx, role, messages, submit_tool, deadline=None, cache_key="", bud
             lower = lower_effort(settings["effort"])
             if lowered or not lower or time.monotonic() > min(deadline, box):
                 raise RuntimeError(f"the {role} reply reached its {settings['max_tokens']}-token output cap")
-            # The cap was spent on thinking, so the same call is sent once more at the next lower effort.
+            # The cap was spent on thinking, so the same call is sent once more at the next lower effort, with a
+            # time box of its own: the capped call has usually spent most of the first one.
             print(f"Dottore {role} reached its {settings['max_tokens']}-token output cap at effort {settings['effort']}; retrying once at {lower}", flush=True)
             settings = {**settings, "effort": lower}
+            box = time.monotonic() + settings["minutes"] * 60 if settings.get("minutes") else deadline
             lowered = True
             continue
         if not calls:
