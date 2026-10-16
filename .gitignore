@@ -75,3 +75,6 @@ docker-compose.override.yaml
 .playwright-mcp
 # Dev MCP local state (journal, logs, lock)
 .dev-mcp/
+
+# Python bytecode
+__pycache__/
