@@ -99,7 +99,7 @@ def dottore_remark(label, head_sha):
 
 def dottore_chibi(label, head_sha):
     pose = pick_for_head(DOTTORE_CHIBIS.get(label) or DOTTORE_CHIBIS[""], head_sha)
-    repo = os.environ.get("DOTTORE_TOOLING_REPOSITORY") or "Promansis/Marinara-Engine"
+    repo = os.environ.get("DOTTORE_TOOLING_REPOSITORY") or "Pasta-Devs/Marinara-Engine"
     ref = os.environ.get("DOTTORE_TOOLING_SHA") or "staging"
     return f"https://raw.githubusercontent.com/{repo}/{ref}/.github/dottore-review/chibi/dottore-{pose}.png"
 MAX_REVIEW_PACKET_CHARS = 180_000
@@ -113,7 +113,6 @@ MAX_SEARCH_LINE_CHARS = 1_000
 DIFF_CONTEXT_LINES = 8
 GITHUB_CONTEXT_LINES = 3  # unchanged lines GitHub shows around each change in a PR diff
 MAX_FILE_PATCH_CHARS = 55_000
-MAX_FILE_SUMMARY_CHARS = 9_000
 MAX_REVIEW_CHUNKS = 8
 MAX_CHUNK_PATCH_CHARS = 90_000
 MAX_INLINE_COMMENT_CHARS = 1_200
@@ -177,7 +176,8 @@ ROLE_DEFAULTS = {
 DEFAULT_COST_LIMIT_USD = 1.00
 # Prices are per 1M tokens in USD: input, cached input, output and, for Claude, a 5-minute cache write. A model not
 # listed counts at the dearest rates, so an unknown model reaches the limit early rather than late.
-# ponytail: LinkAPI's and OpenRouter's lab prices; a maintainer on other endpoints would set their own table.
+# ponytail: the prices of the endpoints Dottore was measured on (LinkAPI, OpenRouter); a maintainer on other
+# endpoints sets their own.
 MODEL_PRICES_USD = {
     "gpt-6-astra": (0.4286, 0.04286, 2.143),
     "gpt-6.1-sol": (0.2857, 0.01143, 1.143),
@@ -206,6 +206,7 @@ MAX_TOOL_CHARS = 8_000
 NEARBY_LINES = 3
 MAX_VERIFIED_CANDIDATES = 20
 MAX_OPEN_QUESTIONS = 2
+MAX_NITPICKS = 2
 MAX_REVIEW_LIMITATIONS = 2
 MAX_GUIDANCE_HEADINGS = 40
 EVIDENCE_WINDOW = 3
@@ -225,10 +226,6 @@ SECRET_VALUE_RE = re.compile(
 SECRET_FILE_PART_RE = re.compile(
     r"(?i)(^|[/\\])(\.env[^/\\]*|.*secret.*|.*credential.*|id_rsa|id_ed25519|\.npmrc|\.netrc)([/\\]|$)"
 )
-
-
-class ReviewTooLarge(Exception):
-    pass
 
 
 @dataclass
@@ -463,15 +460,6 @@ def changed_files(base, excluded=False):
     return list(dict.fromkeys(paths))
 
 
-def load_json_file(path):
-    try:
-        return json.loads(read_text(path, 50_000))
-    except FileNotFoundError:
-        return None
-    except Exception as exc:
-        return {"_load_error": str(exc)}
-
-
 def dottore_prompt_path():
     prompt_path = pathlib.Path(
         os.environ.get("DOTTORE_REVIEW_PROMPT_PATH")
@@ -482,14 +470,10 @@ def dottore_prompt_path():
     return prompt_path
 
 
-def dottore_skill_dir():
-    return dottore_prompt_path().parent
-
-
 def load_rules():
     rules_path = pathlib.Path(
         os.environ.get("DOTTORE_REVIEW_RULES_PATH")
-        or dottore_skill_dir() / "rules.json"
+        or dottore_prompt_path().parent / "rules.json"
     )
     if not rules_path.is_absolute():
         rules_path = REPO_ROOT / rules_path
@@ -2469,24 +2453,6 @@ def check_threads(ctx, threads, pool):
     return results
 
 
-# ponytail: lab stage (DOTTORE_LAB_STAGE=recheck) for the checker prompt alone: it judges candidates recorded from
-# earlier runs, each labelled right or wrong, so a prompt change is measured without finder variance. The
-# label rides in found_by on the candidate log line. Remove with the lab.
-def recheck(ctx, head_sha, chunks, pool):
-    recorded = json.loads(pathlib.Path(__file__).with_name("lab-recheck.json").read_text("utf-8")).get(head_sha)
-    if not recorded:
-        raise RuntimeError(f"lab-recheck.json has no entries for {head_sha}")
-    candidates = []
-    for item in recorded:
-        candidate = normalize_review_item(item, default_severity="medium")
-        candidate.segment = f"recheck:{item['label']}:{item.get('source', '')}"
-        candidate.packet = next((index for index, chunk in enumerate(chunks) if candidate.path in chunk), 0)
-        candidates.append(candidate)
-    print(f"Dottore recheck: candidates={len(candidates)}", flush=True)
-    _, _, counts = verify_candidates(ctx, candidates, pool)
-    ctx.stats["verification"] = counts
-
-
 def agentic_review(ctx, mode, pool, threads=()):
     """Scout, find, merge, then let the checker judge each candidate before it can be posted. The open threads are
     re-judged alongside, once the scouts have filled the bundle."""
@@ -2729,7 +2695,7 @@ def validate_review_items(review_obj, base, outside_ok=False):
 
     severity_rank = {"blocking": 0, "high": 1, "medium": 2, "low": 3}
     findings.sort(key=lambda finding: severity_rank.get(finding.severity, 2))
-    return findings, nitpicks[:2], invalid
+    return findings, nitpicks[:MAX_NITPICKS], invalid
 
 
 def render_finding_body(finding):
@@ -3788,10 +3754,7 @@ def resolve_review_base(pr_num, requested_mode):
     data = json.loads(pr.stdout)
     base_ref = os.environ.get("PR_BASE_REF") or data["baseRefName"]
     head_sha = os.environ.get("PR_HEAD_SHA") or data["headRefOid"]
-    explicit_base = os.environ.get("DOTTORE_BASE_SHA")
     mode = requested_mode
-    if explicit_base:
-        return explicit_base, base_ref, head_sha, "custom"
     if mode == "full":
         return f"origin/{base_ref}", base_ref, head_sha, mode
     explicit_previous = os.environ.get("DOTTORE_LAST_REVIEWED_SHA", "").strip()
@@ -3815,7 +3778,7 @@ def review_base_commit(base, base_ref, mode):
     the review is full."""
     target = f"origin/{base_ref}"
     if mode != "incremental":
-        return git_out(["merge-base", base if mode == "custom" else target, "HEAD"]) or base, mode
+        return git_out(["merge-base", target, "HEAD"]) or base, mode
     now, then = git_out(["merge-base", target, "HEAD"]), git_out(["merge-base", target, base])
     if not now or not then or now == then:
         return base, mode
@@ -3949,15 +3912,6 @@ def produce_review(args):
             flush=True,
         )
         with ThreadPoolExecutor(max_workers=review_concurrency()) as pool:
-            if os.environ.get("DOTTORE_LAB_STAGE", "").strip().lower() == "recheck":
-                recheck(ctx, head_sha, chunks, pool)
-                write_skipped_review(
-                    "Lab Recheck Only",
-                    "DOTTORE_LAB_STAGE=recheck: the checker judged recorded candidates; nothing was published.",
-                    metadata={"head_sha": head_sha, "review_base": base, "base_ref": base_ref, "mode": effective_mode},
-                )
-                print_telemetry(stats)
-                return
             review_obj = agentic_review(ctx, effective_mode, pool, threads)
     except Exception as exc:
         write_skipped_review(
@@ -4008,22 +3962,13 @@ def produce_review(args):
 
 
 def findings_for_inline_comments(findings):
-    """Every defect, low included, becomes a review thread; nitpicks never do, whatever DOTTORE_INLINE_FINDINGS says.
-    `urgent` (the default) and `all` now mean the same; `none` posts no threads."""
-    mode = os.environ.get("DOTTORE_INLINE_FINDINGS", "urgent").strip().lower()
-    if mode in {"none", "off", "false", "0"}:
-        return []
+    """Every defect, low included, becomes a review thread; nitpicks never do."""
     return [finding for finding in findings if is_defect(finding)]
 
 
 def render_review(args):
     review_obj = json.loads(pathlib.Path(args.review_json).read_text("utf-8"))
-    base = (
-        args.base
-        or os.environ.get("DOTTORE_VALIDATION_BASE")
-        or os.environ.get("DOTTORE_BASE_SHA")
-        or review_obj.get("review_base")
-    )
+    base = args.base or review_obj.get("review_base")
     if not base:
         pr_num = os.environ.get("PR_NUM", "")
         requested_mode = args.mode or parse_command_mode()
@@ -4031,7 +3976,7 @@ def render_review(args):
     findings, nitpicks, invalid = validate_review_items(review_obj, base, outside_ok=True)
     # Candidates withheld before verification count with the ones withheld here.
     invalid = [*as_list(review_obj.get("withheld_findings")), *invalid]
-    head_sha = review_obj.get("head_sha") or os.environ.get("DOTTORE_HEAD_SHA", "")
+    head_sha = review_obj.get("head_sha") or os.environ.get("PR_HEAD_SHA", "")
     walkthrough = render_walkthrough(
         review_obj,
         findings,

@@ -1,4 +1,63 @@
-# Configuring Dottore
+# Dottore
+
+Dottore reviews pull requests from GitHub Actions. On request he builds a bundle of the change, has a small model read
+the code around it, a large model claim defects and check each claim against the code, and posts a walkthrough, a
+review thread per confirmed defect and the **Dottore Review** commit status. When asked, he repairs his own findings,
+and he approves a head he found viable once its checks pass. Everything a maintainer sets lives in repository
+settings (**Settings → Secrets and variables → Actions**) and in `rules.json`; the code names no model and no provider.
+
+## Files
+
+| File | What it is |
+| --- | --- |
+| `dottore_review.py` | The reviewer: bundle building, the three roles, rendering, posting, thread resolution, the repair request, approval and the commit status. One file, no package. |
+| `reviewer-prompt.md` | The prompts: one `## ` section per role, plus the voice, output and verdict shapes they share. It names no model. |
+| `rules.json` | This repository's review policy, read from the pull request's **base** branch, never its head (see Rules). |
+| `requirements.txt` | The two SDKs the reviewer imports, `openai` and `anthropic`. |
+| `chibi/` | Dottore's chibis, a pose per verdict, served raw from the tooling checkout the workflow pinned. |
+| `../workflows/dottore-review.yml` | The trusted review workflow: `workflow_dispatch` here, `workflow_call` for another repository. Jobs: examination, repair check (resolves repaired threads), discharge (approval), repair and repair push. |
+| `../workflows/dottore-review-command.yml` | Dispatcher for `/dottore` comments and the autofix tick box (`issue_comment`). |
+| `../workflows/dottore-review-auto.yml` | Dispatcher for pull request events (`pull_request_target`): Dottore's own repair pushes, and every event when `DOTTORE_AUTO_REVIEW` is `true`. |
+| `../workflows/dottore-review-approve.yml` | Dispatcher that re-tries the approval when a listed check workflow finishes on a discharged head. |
+
+The dispatchers read the event and call `gh workflow run` on the trusted workflow at the pull request's base ref; they
+check out and run no pull request code. The review job checks out the reviewer from the commit of the workflow file
+itself (`job.workflow_sha`), reads `rules.json` from the base branch, and fetches the head without executing it.
+
+## Asking for a review
+
+Reviews start on request. A repository owner, organisation member or collaborator comments on the pull request:
+
+| Comment | What happens |
+| --- | --- |
+| `/dottore` | Reviews what changed since Dottore's last review of the pull request, or everything when there was none. |
+| `/dottore full` | Reviews the whole pull request again. |
+| `/dottore autofix` | Repairs the open findings once (see Autofix). |
+| `/dottore approve` | Checks whether the head can be approved and replies with what is still missing (see Approval). |
+
+The command gets a progress window on the pull request, which the review turns into "Concluded" when it posts. A
+review can also be started from **Actions → Dottore Review → Run workflow** with the pull request number and a mode.
+With `DOTTORE_AUTO_REVIEW` set to `true`, a pull request is also reviewed when it opens, is marked ready for review or
+gets a push; a draft waits until it is ready. Only pull requests into the branches `DOTTORE_BASE_REFS` names are
+reviewed; a request on another gets a reply saying so.
+
+A review posts:
+
+- **The walkthrough**, one comment per pull request, updated in place: the verdict in its title, Dottore beside it, the
+  counts, the change summary, the defects table, the notes, the autofix box, his observations and lab notes, and, folded
+  at the end, a repair prompt for an agent of your own. The last reviewed head and the open repair contracts ride in
+  HTML comments inside it, so the next review knows where it left off.
+- **A review thread per confirmed defect**, at its line, with a suggested fix and a footer naming the two ways it gets
+  resolved: a push Dottore re-examines, or the autofix box.
+- **The `Dottore Review` commit status**: success once the review is posted, whatever it found, with the verdict and
+  the counts in its text; failure only when the review did not run or did not finish.
+
+The verdicts: **Viable** (nothing found) and **Viable, With Notes** (nitpicks only) discharge the head; **Repair
+Required** (defects open) and **Specimen Unstable** (a high or blocking defect, or a failed control) hold it; **No New
+Diff Reviewed** means the head was already reviewed; **Specimen Unexamined** means the review did not finish, so nothing
+is reported as found.
+
+## How a review runs
 
 Code first builds a bundle for each packet of the pull request: the PR description, the changed code at the head with
 its changes marked and the code around it, the definitions it reads, the same-file functions it calls two hops deep,
@@ -17,11 +76,12 @@ Models): the small model reads, the large one judges.
 What gets published depends on kind, not severity. Every finding is a defect, low included: each gets a review thread,
 as a CodeRabbit finding does, and any of them makes the verdict Repair Required (Specimen Unstable from high up), so a
 low finding is carried across reviews, repaired by autofix and resolved before merge like any other. Severity grades the
-size of the repair. Nitpicks are notes: they are listed under Minor Imperfections, get no thread, and leave the verdict
-Viable, With Notes. The walkthrough states the verdict once in its title, with a remark in his voice and one of his
-chibis beside the verdict box and the counts (`chibi/`, a pose per verdict, both chosen by the head SHA and served raw
-from the pinned tooling checkout); the commit status carries the same verdict with the counts. The repair contracts of the defects are repeated at the end of the walkthrough as a prompt for an
-agent of your own, for a pull request Dottore cannot push to.
+size of the repair. Nitpicks are notes: they are listed under Minor Imperfections, at most two, get no thread, and leave
+the verdict Viable, With Notes. The walkthrough states the verdict once in its title, with a remark in his voice and
+one of his chibis beside the verdict box and the counts (`chibi/`, a pose per verdict, both chosen by the head SHA and
+served raw from the pinned tooling checkout); the commit status carries the same verdict with the counts. The repair
+contracts of the defects are repeated at the end of the walkthrough as a prompt for an agent of your own, for a pull
+request Dottore cannot push to.
 
 On a later review, the checker also re-judges Dottore's open threads on the files that review changed, in parallel
 with the finder: one call per packet, with each thread's finding and repair contract. A thread it finds repaired, with
@@ -37,9 +97,8 @@ use them: the scout. Each `Dottore telemetry:` line reports per role the dollars
 tokens sent per bundle token; a one-call role sits near 1, and a number far above it means a role is reading.
 
 Each role has one prompt section in `reviewer-prompt.md`, which names no model, so either model can come from any
-provider. The two models are set with repository settings, under **Settings → Secrets and variables → Actions**, so
-changing them needs no code change. A new value applies from the next review. In Marinara-Agents, set them in the
-Agents repository: its wrapper workflow passes its own secrets and variables to the shared review.
+provider. A new setting applies from the next review. In Marinara-Agents, set them in the Agents repository: its
+wrapper workflow passes its own secrets and variables to the shared review.
 
 ## Autofix
 
@@ -134,22 +193,49 @@ requests before relying on them:
 
 The cost limit counts tokens at the price table in `dottore_review.py` (`MODEL_PRICES_USD`). A model it does not list
 counts at the dearest listed rates, so a review on it reports more than it spent and reaches `DOTTORE_COST_LIMIT_USD`
-early: add the model's prices to the table, or raise the limit. The prompts name no model. Before relying on a different
-model, run a few reviews on pull requests whose problems you already know and compare what Dottore finds.
+early: add the model's prices to the table, or raise the limit. Before relying on a different model, run a few reviews
+on pull requests whose problems you already know and compare what Dottore finds.
 
 Repairs run Claude Code on the small model's settings, its effort included, so they need `DOTTORE_SMALL_API` set to
 `anthropic`: Claude itself, or a provider's Anthropic-compatible endpoint. With any other value, ticking the autofix box
 gets a reply saying so.
 
-## Other variables
+## Variables
 
-| Variable | What it sets | Default |
-| --- | --- | --- |
-| `DOTTORE_AUTO_REVIEW` | `true` reviews a pull request when it opens, is marked ready for review or gets a push (drafts wait until ready). Otherwise a review starts only when someone with write access comments `/dottore` or `/dottore full`; a repair Dottore pushes is still reviewed | off |
-| `DOTTORE_FINDERS` | Finder copies per packet, `1` or `2`; a second one starts a few seconds later and reuses the cache | `1` |
-| `DOTTORE_COST_LIMIT_USD` | Stop a review's model calls once it has spent this many dollars at the price table in `dottore_review.py`; `0` removes the limit | `1.00` |
-| `DOTTORE_BASE_REFS` | Comma-separated base branches that get reviewed | `refactor,main,staging` |
-| `DOTTORE_CONCURRENCY` | Model calls run at once | `4` |
+These are all of Dottore's repository variables, beside the model settings above. Unset, each takes its default.
+
+| Variable | What it sets | Default | Read by |
+| --- | --- | --- | --- |
+| `DOTTORE_AUTO_REVIEW` | `true` reviews a pull request when it opens, is marked ready for review or gets a push (drafts wait until ready). Otherwise a review starts only on request; a repair Dottore pushes is still reviewed | off | the auto dispatcher |
+| `DOTTORE_BASE_REFS` | Comma-separated base branches whose pull requests get reviewed | `refactor,main,staging` | every dispatcher and the review job |
+| `DOTTORE_COST_LIMIT_USD` | Stop a review's model calls once it has spent this many dollars at the price table in `dottore_review.py`; `0` removes the limit | `1.00` | the review job |
+| `DOTTORE_CONCURRENCY` | Model calls run at once, up to 16 | `4` | the review job |
+| `DOTTORE_FINDERS` | Finder copies per packet, `1` or `2`; a second one starts a few seconds later and reuses the cache | `1` | the review job |
+
+Everything else the reviewer reads from its environment, the workflow sets itself: the pull request number, head and
+base, the mode, the paths of the prompt and rules it copied out of the pinned checkout, and that checkout's repository
+and commit, from which the chibis are served.
+
+## Secrets
+
+| Secret | Used for |
+| --- | --- |
+| `DOTTORE_SMALL_API_KEY`, `DOTTORE_LARGE_API_KEY` | The two models' keys (see Models) |
+| `DOTTORE_APP_ID`, `DOTTORE_APP_PRIVATE_KEY` | The Dottore GitHub App that pushes repairs (see Autofix) |
+
+## Rules
+
+`rules.json` is the repository's own review policy. The review job reads it from the pull request's base branch, so a
+pull request cannot change the rules that examine it, and a repository that calls the shared workflow keeps its own.
+
+| Key | What it does |
+| --- | --- |
+| `exclude_paths` | Glob patterns (`fnmatch`) of changed paths the review leaves out: they are listed as excluded in the bundle, and the tools neither read nor search them. |
+| `review_focus` | The areas the finder and checker are told to weigh, sent with the path rules. |
+| `severity_policy` | What each grade means, `blocking` to `nitpick`, sent to the models with the path rules. The prompt sets the same scale; keep the two in step. |
+| `repo_concerns` | Repository-wide rules that count as defects wherever a change touches them. |
+| `path_instructions` | A list of rules, each with a `name`, the path `prefixes` it applies to, the `guidance` documents whose headings go into the bundle's guidance index when a changed file matches, and the `checks` the models judge matching files against. `AGENTS.md` is always in the index. |
+| `autofix.validate` | The shell command the repair job runs on a patch before it is pushed, with a 25-minute limit; empty runs none. |
 
 ## Role limits
 
@@ -174,14 +260,26 @@ Other limits in `dottore_review.py`: a 30-minute review (`REVIEW_DEADLINE_SECOND
 reserved for the checker, at most 20 candidates checked per review (`MAX_VERIFIED_CANDIDATES`), 3 submit attempts,
 a role aborting after 3 failed calls in a row (`MAX_ROLE_FAILURES`), 180 s for a call's first byte and 360 s between
 bytes (`FIRST_CALL_TIMEOUT`, `MODEL_REQUEST_TIMEOUT`), 900 s per streaming reply of a role with tools
-(`MODEL_STREAM_LIMIT`; a role without tools gets its box instead), and the packet split for large PRs (`MAX_CHUNK_PATCH_CHARS`, `MAX_REVIEW_CHUNKS`).
+(`MODEL_STREAM_LIMIT`; a role without tools gets its box instead), at most 2 notes and 2 open questions per review
+(`MAX_NITPICKS`, `MAX_OPEN_QUESTIONS`), and the packet split for large PRs (`MAX_CHUNK_PATCH_CHARS`,
+`MAX_REVIEW_CHUNKS`).
 
-## Secrets
+## Reading the run log
 
-| Secret | Used for |
-| --- | --- |
-| `DOTTORE_SMALL_API_KEY`, `DOTTORE_LARGE_API_KEY` | The two models' keys (see Models) |
-| `DOTTORE_APP_ID`, `DOTTORE_APP_PRIVATE_KEY` | The Dottore GitHub App that pushes repairs (see Autofix) |
+Each review logs a `Dottore roles:` line with the model, API and effort each role resolved to; a `Dottore review base:`
+line when an incremental review merged the base branch into its diff base; a `Dottore call:` line per model call with
+its tokens, cache use, time and the dollars spent so far; a `Dottore scout:` line per scout and per packet with the
+places they added; and a `Dottore telemetry:` line with totals by role. The repair job logs an `Autofix:` line with
+Claude Code's turns, time and list price. Use them to compare cost, caching and time between setups.
 
-Each review logs a `Dottore call:` line per model call, a `Dottore scout:` line per scout and per packet with the places they added, and
-a `Dottore telemetry:` line with totals by role. Use them to compare cost, caching and time between setups.
+## Using Dottore from another repository
+
+Marinara-Agents runs the same reviewer through a wrapper workflow that calls this repository's
+`dottore-review.yml` pinned by commit SHA (`uses: Pasta-Devs/Marinara-Engine/.github/workflows/dottore-review.yml@<sha>`),
+passes the same inputs, and passes its own four secrets. Moving to a newer reviewer is a one-line bump of that SHA.
+The calling repository also keeps:
+
+- byte copies of the three dispatcher workflows, with its own workflow list in `dottore-review-approve.yml`;
+- its own `.github/dottore-review/rules.json`, read from its base branch;
+- its own model variables and secrets, the Dottore App installed there, and `contents: write` granted in the wrapper
+  for the repair check.
