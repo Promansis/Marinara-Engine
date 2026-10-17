@@ -172,8 +172,9 @@ The values the fork trial ran, Claude Haiku 5.5 reading and GPT Astra judging, b
 | `API_KEY` | a LinkAPI key whose group serves Claude | a LinkAPI key whose group serves GPT |
 | `EFFORT` | `high` | `xhigh` |
 
-When both models come from one provider, the two keys and base URLs hold the same values. A review missing a model's
-name or key is posted as Review Skipped, naming the missing setting. The `Dottore roles:` line at the start of each run
+Two models from one provider in the same API format share a key and a base URL; through a gateway, as above, the
+Claude model takes the bare host and each key serves its own model group. A review missing a model's name or key is
+posted as Review Skipped, naming the missing setting. The `Dottore roles:` line at the start of each run
 log shows the model, API and effort each role resolved to.
 
 ### Switching a model
