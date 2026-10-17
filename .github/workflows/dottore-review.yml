@@ -76,7 +76,7 @@ jobs:
       DOTTORE_COMMENT_BODY: ${{ inputs.comment_body }}
       DOTTORE_REVIEW_MODE: ${{ inputs.review_mode || 'auto' }}
       DOTTORE_LAST_REVIEWED_SHA: ${{ inputs.last_reviewed_sha }}
-      # Comma-separated exact refs; a single ref (staging or dottore-lab) also works.
+      # Comma-separated exact refs; a single ref also works.
       DOTTORE_BASE_REFS: ${{ vars.DOTTORE_BASE_REFS || 'refactor,main,staging' }}
       # Never import modules from the untrusted PR working directory.
       PYTHONSAFEPATH: "1"
@@ -127,8 +127,6 @@ jobs:
           git fetch --force origin "$BASE:refs/remotes/origin/$BASE"
           mkdir -p /tmp/dottore-review-tool
           cp .dottore-tooling/.github/dottore-review/{dottore_review.py,requirements.txt,reviewer-prompt.md} /tmp/dottore-review-tool/
-          # Lab only: recorded candidates for DOTTORE_LAB_STAGE=recheck.
-          cp .dottore-tooling/.github/dottore-review/lab-recheck.json /tmp/dottore-review-tool/ 2>/dev/null || true
           # Caller-specific rules are trusted base content, never PR-head content.
           git show "origin/$BASE:.github/dottore-review/rules.json" > /tmp/dottore-review-tool/rules.json
           rm -rf .dottore-tooling
@@ -182,7 +180,6 @@ jobs:
           DOTTORE_CONCURRENCY: ${{ vars.DOTTORE_CONCURRENCY }}
           DOTTORE_FINDERS: ${{ vars.DOTTORE_FINDERS }}
           DOTTORE_COST_LIMIT_USD: ${{ vars.DOTTORE_COST_LIMIT_USD }}
-          DOTTORE_LAB_STAGE: ${{ vars.DOTTORE_LAB_STAGE }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python /tmp/dottore-review-tool/dottore_review.py produce
 
