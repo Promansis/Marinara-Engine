@@ -21,6 +21,12 @@ from types import SimpleNamespace
 REPO_ROOT = pathlib.Path.cwd().resolve()
 DOTTORE_MARKER = "<!-- dottore:walkthrough -->"
 COMMAND_STATUS_MARKER = "<!-- dottore:command-status -->"
+AUTOFIX_MARKER = "<!-- dottore:autofix -->"
+AUTOFIX_BOX = f"- [ ] 🩺 Let Dottore fix the open findings on this PR {AUTOFIX_MARKER}"
+AUTOFIX_BOX_RE = re.compile(r"^- \[([ xX])\] .*" + re.escape(AUTOFIX_MARKER), re.M)
+# Each autofix commit carries this trailer; the push job writes it and autofix_rounds counts it.
+AUTOFIX_TRAILER = "Dottore-Autofix:"
+MAX_AUTOFIX_ROUNDS = 3
 FINDING_MARKER_RE = re.compile(r"<!-- dottore:finding=([0-9a-f]{16}) -->")
 STATE_MARKER_RE = re.compile(r"<!-- dottore:last-reviewed-sha=([0-9a-f]{40}) -->")
 CONTRACT_STATE_RE = re.compile(r"<!-- dottore:contract-state=([A-Za-z0-9_=-]+) -->")
@@ -33,6 +39,7 @@ MAX_SEARCH_HITS = 30
 MAX_SEARCH_FILE_BYTES = 5_000_000
 MAX_SEARCH_LINE_CHARS = 1_000
 DIFF_CONTEXT_LINES = 8
+GITHUB_CONTEXT_LINES = 3  # unchanged lines GitHub shows around each change in a PR diff
 MAX_FILE_PATCH_CHARS = 55_000
 MAX_FILE_SUMMARY_CHARS = 9_000
 MAX_REVIEW_CHUNKS = 8
@@ -2243,7 +2250,11 @@ def judge(ctx, candidate, verdict):
             path = tool_path(verdict.get("path") or finding.path)
         except ValueError:
             path = ""
-        if path and head_line_exists(path, line):
+        anchored = finding.line in ctx.allowed.get(finding.path, {}).get(finding.side, set())
+        nearby = anchored and path == finding.path and abs(line - finding.line) <= GITHUB_CONTEXT_LINES
+        # A place a few lines from a changed-line anchor is the same spot (often a removal, which has no head line):
+        # keep the anchor so the finding stays an inline thread.
+        if path and head_line_exists(path, line) and not nearby:
             finding.path, finding.line, finding.side = path, line, "RIGHT"
     # A defect the checker places outside the changed lines is published in the walkthrough, not inline.
     finding.outside_diff = finding.line not in ctx.allowed.get(finding.path, {}).get(finding.side, set())
@@ -2390,7 +2401,9 @@ def check_repairs(ctx, packet, threads):
         print(f"Dottore thread: {outcome}; {thread['path']}:{thread['line'] or thread['original_line']}; {thread['title'][:120]}; note={note[:400]}", flush=True)
         results.append(
             {
-                **{key: thread[key] for key in ("thread_id", "comment_id", "id", "path", "line", "side", "title")},
+                **{key: thread[key] for key in ("thread_id", "comment_id", "id", "path", "side", "title")},
+                # An outdated thread has no line at the head; the walkthrough shows where it was opened.
+                "line": thread["line"] or thread["original_line"],
                 "verdict": outcome,
                 "note": note,
                 "evidence": evidence[:3],
@@ -2626,10 +2639,17 @@ def validate_review_items(review_obj, base, outside_ok=False):
                 f"{finding.path}:{finding.line}: deleted-line findings need a full review (`/dottore full`)"
             )
             continue
+        removed = allowed[finding.path].get("LEFT", set())
+        if finding.side == "LEFT" and finding.line not in removed and removed:
+            # A defect that only removes code is often placed on the unchanged line beside the deletion; anchor it on
+            # the nearest removed line GitHub shows with it rather than withhold it.
+            near = min(removed, key=lambda number: abs(number - finding.line))
+            if abs(near - finding.line) <= GITHUB_CONTEXT_LINES:
+                finding.line = near
         if finding.line not in allowed[finding.path].get(finding.side, set()):
             invalid.append(
                 f"{finding.severity} '{finding.title or '<untitled>'}' at "
-                f"{finding.path}:{finding.line}: line is not a changed {finding.side} diff line"
+                f"{finding.path}:{finding.line}: line is not part of the change"
             )
             continue
         if not finding.title or not finding.body:
@@ -2651,7 +2671,7 @@ def validate_review_items(review_obj, base, outside_ok=False):
             )
             continue
         if nitpick.side != "RIGHT":
-            invalid.append(f"nitpick '{nitpick.title or '<untitled>'}' must use RIGHT side")
+            invalid.append(f"nitpick '{nitpick.title or '<untitled>'}' at {nitpick.path}:{nitpick.line}: nitpicks go on added lines")
             continue
         if isinstance(nitpick.line, bool) or not isinstance(nitpick.line, int) or nitpick.line <= 0:
             invalid.append(
@@ -2681,7 +2701,7 @@ def render_finding_body(finding):
         finding_marker(finding),
         f"### {meta['icon']} {meta['label']}: {finding.title}",
         "",
-        f"**Location:** `{finding.path}:{finding.line}` ({finding.side})",
+        f"**Location:** {location_label(finding)}",
         "",
         blockquote(finding.body),
     ]
@@ -3008,10 +3028,15 @@ def code_block_text(text):
     return str(text or "").replace("```", "'''").strip()
 
 
+def location_label(finding, cell=str):
+    """`path:line` as people read it; a removed line says so, since its number is in the old file."""
+    return f"`{cell(finding.path)}:{finding.line}`" + (" (removed line)" if finding.side == "LEFT" else "")
+
+
 def agent_prompt_for_finding(finding):
     contract = finding.repair_contract or {}
     lines = [
-        f"Task: Fix `{finding.path}:{finding.line}` on the {finding.side} side.",
+        f"Task: Fix {location_label(finding)}.",
         f"Finding: {finding.title}",
         f"Severity: {finding.severity}",
     ]
@@ -3263,7 +3288,7 @@ def render_walkthrough(
             body.append(
                 "| "
                 f"{status_badge(meta)} | "
-                f"`{md_cell(finding.path)}:{finding.line}` ({finding.side}) | "
+                f"{location_label(finding, md_cell)} | "
                 f"{md_cell(finding.title)} |"
             )
     else:
@@ -3294,7 +3319,7 @@ def render_walkthrough(
         for nitpick in nitpicks:
             body.append(
                 "| "
-                f"`{md_cell(nitpick.path)}:{nitpick.line}` ({nitpick.side}) | "
+                f"{location_label(nitpick, md_cell)} | "
                 f"{md_cell(nitpick.title)} |"
             )
     else:
@@ -3304,6 +3329,16 @@ def render_walkthrough(
     )
     if agent_prompt:
         body.extend(["", agent_prompt])
+    body.extend(
+        [
+            "",
+            "### 🩺 Autofix",
+            AUTOFIX_BOX,
+            "",
+            "While this is ticked, Dottore pushes a repair for its open findings after each review, then examines it like"
+            f" any push. It stops after {MAX_AUTOFIX_ROUNDS} repairs in a row. Ticking needs write access.",
+        ]
+    )
     if pre_merge:
         body.extend(
             [
@@ -4040,13 +4075,6 @@ def render_review(args):
     )
 
 
-def find_walkthrough_comment(pr_num):
-    comment = latest_walkthrough_comment(pr_num)
-    if comment:
-        return comment.get("id")
-    return None
-
-
 def find_command_status_comment(pr_num):
     for comment in issue_comments(pr_num):
         if COMMAND_STATUS_MARKER in comment.get("body", ""):
@@ -4164,7 +4192,10 @@ def post_review(args):
     head_sha = head_sha_match.group(1) if head_sha_match else os.environ.get(
         "PR_HEAD_SHA", ""
     )
-    comment_id = find_walkthrough_comment(pr_num)
+    existing = latest_walkthrough_comment(pr_num)
+    if existing and autofix_ticked(existing.get("body")):
+        body = body.replace(AUTOFIX_BOX, AUTOFIX_BOX.replace("- [ ]", "- [x]", 1), 1)
+    comment_id = existing.get("id") if existing else None
     if comment_id:
         run_gh(
             [
@@ -4205,6 +4236,76 @@ def post_review(args):
         input_text=json.dumps(payload),
         check=True,
     )
+
+
+def autofix_ticked(body):
+    match = AUTOFIX_BOX_RE.search(body or "")
+    return bool(match and match.group(1) in "xX")
+
+
+def autofix_rounds(pr_num):
+    """Dottore's repairs at the tip of the PR since the last commit a person pushed."""
+    # ponytail: the PR commits API lists at most 250 commits; past that the count reads 0 and the cap resets.
+    gh = run_gh(["api", f"repos/{os.environ['GITHUB_REPOSITORY']}/pulls/{pr_num}/commits?per_page=100", "--paginate"], check=True)
+    rounds = 0
+    for commit in reversed(load_json_list(gh.stdout)):
+        if AUTOFIX_TRAILER not in ((commit.get("commit") or {}).get("message") or ""):
+            break
+        rounds += 1
+    return rounds
+
+
+def autofix_task(threads):
+    parts = [
+        "Fix the open code-review findings below in this repository. Read AGENTS.md (and CLAUDE.md if present) for its"
+        " rules first.",
+        "Make the smallest change that repairs each one and touch only the files it needs.",
+        "If a finding is wrong or cannot be fixed safely, leave that code alone and say why in your final message.",
+    ]
+    for number, thread in enumerate(threads[:MAX_REPAIR_THREADS], 1):
+        parts += ["", f"## Finding {number}", re.sub(r"<!--.*?-->", "", thread["body"], flags=re.S).strip()]
+    return "\n".join(parts) + "\n"
+
+
+def autofix_prompt(args):
+    """Whether Dottore repairs this PR now: a person asked (ticked the box or commented /dottore autofix), or a review
+    just finished with the box ticked. Writes the fixer's prompt and the head it is for, and prints autofix=true for
+    GITHUB_OUTPUT; a reason it cannot goes to the PR as a comment."""
+    pr_num, repo = os.environ["PR_NUM"], os.environ["GITHUB_REPOSITORY"]
+    asked = args.trigger == "asked"
+    if not asked:
+        walkthrough = latest_walkthrough_comment(pr_num)
+        if not walkthrough or not autofix_ticked(walkthrough.get("body")):
+            return
+    fields = "isCrossRepository,headRefName,headRefOid,state"
+    pr = json.loads(run_gh(["pr", "view", pr_num, "--repo", repo, "--json", fields], check=True).stdout)
+    if pr.get("state") != "OPEN":
+        return
+    note, threads = "", []
+    if pr.get("isCrossRepository"):
+        note = "Dottore can only push repairs to this repository's own branches; use the copy prompt in the review instead."
+    elif not asked and (rounds := autofix_rounds(pr_num)) >= MAX_AUTOFIX_ROUNDS:
+        note = (
+            f"Dottore stopped after {rounds} repairs in a row with no push from a person. Push a change, or untick and"
+            " tick the box, to let it try again."
+        )
+    else:
+        # The resolve job closes the threads this review found repaired after this step, so they are not open work.
+        repaired = {item.get("thread_id") for item in load_review_for_status(args.review_json).get("resolved_since_last_review") or []}
+        threads = [thread for thread in open_dottore_threads(pr_num) if asked or thread["thread_id"] not in repaired]
+        if not threads and asked:
+            note = "There are no open Dottore findings to repair."
+    if note:
+        run_gh(["pr", "comment", pr_num, "--repo", repo, "--body", f"🩺 {note}"], check=True)
+    if not threads:
+        return
+    out = pathlib.Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "prompt.md").write_text(autofix_task(threads), "utf-8")
+    # The branch name is data for the push job (jq, quoted), never sourced as shell.
+    meta = {"head_ref": pr["headRefName"], "head_sha": pr["headRefOid"], "findings": len(threads)}
+    (out / "meta.json").write_text(json.dumps(meta), "utf-8")
+    print("autofix=true")
 
 
 def load_review_for_status(path):
@@ -4263,6 +4364,10 @@ def main():
     post.add_argument("--inline-json", default="inline-comments.json")
     resolve = sub.add_parser("resolve")
     resolve.add_argument("--review-json", default="review.json")
+    autofix = sub.add_parser("autofix-prompt")
+    autofix.add_argument("--trigger", choices=["review", "asked"], default="review")
+    autofix.add_argument("--out", default="/tmp/dottore-autofix")
+    autofix.add_argument("--review-json", default="review.json")
     status = sub.add_parser("status-state")
     status.add_argument("--review-json", default="review.json")
     status.add_argument("--job-status", default="success")
@@ -4276,6 +4381,8 @@ def main():
         post_review(args)
     elif args.command == "status-state":
         status_state(args)
+    elif args.command == "autofix-prompt":
+        autofix_prompt(args)
     elif args.command == "resolve":
         review_obj = load_review_for_status(args.review_json)
         resolve_repaired_threads(os.environ["PR_NUM"], review_obj.get("resolved_since_last_review") or [], review_obj.get("head_sha") or "")

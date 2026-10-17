@@ -22,6 +22,28 @@ GitHub refuses to resolve a thread without `contents: write`, so a separate `res
 permission; it checks out no code and holds no model key, and runs only when a review found a repair. A repository that
 calls the shared workflow, such as Marinara-Agents, must grant `contents: write` in its caller too.
 
+## Autofix
+
+Dottore repairs its open findings only on a pull request where someone asked: by ticking **Let Dottore fix the open
+findings on this PR** in the walkthrough, or by commenting `/dottore autofix` once. The tick counts only from someone
+with write access. While the box is ticked, each review that leaves findings open is followed by a repair; after
+three Dottore repairs in a row with no push from a person, it stops and says so. Repairs go to the pull request's own
+branch, so a pull request from a fork gets the copy prompt instead.
+
+A repair runs in two jobs after the review job:
+
+- **`fix`** checks out the head, gives the open threads to Claude Code (`claude -p`) with only file tools (read, edit,
+  write, search; no shell) and the Anthropic secrets, and no GitHub write token. A patch containing those secrets is
+  discarded. Then, without the key, it runs `autofix.validate` from the base branch's `rules.json`, such as
+  `pnpm install --frozen-lockfile && pnpm check`.
+- **`push`** commits a patch that passed, with a `Dottore-Autofix:` trailer, and pushes it with the Dottore GitHub
+  App's token, because a push made with `GITHUB_TOKEN` starts no CI and no review. That push starts the next review,
+  whose repair check resolves the threads the code confirms. A patch that changed nothing, failed the checks, or met a
+  branch that moved meanwhile is reported in a comment instead.
+
+The App needs **Contents: Read and write** on the repository, installed there, with its ID and private key in the
+`DOTTORE_APP_ID` and `DOTTORE_APP_PRIVATE_KEY` secrets. A calling workflow passes both.
+
 The finder and checker send the bundle about once each, so a review's cost is the bundle's size times the models'
 prices. A role given reads resends its whole conversation on every turn, so reads belong to the cheapest role that can
 use them: the scout. Each `Dottore telemetry:` line reports per role the dollars spent and `prompt_x_bundle`, the prompt
@@ -44,6 +66,7 @@ Agents repository: its wrapper workflow passes its own secrets and variables to 
 | `DOTTORE_COST_LIMIT_USD` | Stop a review's model calls once it has spent this many dollars at the price table in `dottore_review.py`; `0` removes the limit | `1.00` |
 | `DOTTORE_BASE_REFS` | Comma-separated base branches that get reviewed | `refactor,main,staging` |
 | `DOTTORE_CONCURRENCY` | Model calls run at once | `4` |
+| `DOTTORE_AUTOFIX_MODEL` | The Claude model that writes repairs | `claude-sonnet-5-5` |
 
 `DOTTORE_MODELS` maps `scout`, `finder` or `verify` to any of these settings. A role or setting it leaves out
 uses the default.
@@ -112,6 +135,7 @@ start of each run log shows the provider, model and effort each role resolved to
 | `LLM_BASE_URL` | The endpoint for `openai` roles, such as `https://linkapi.ai/v1`. Empty means OpenAI |
 | `ANTHROPIC_API_KEY` | Optional key for `anthropic` roles |
 | `ANTHROPIC_BASE_URL` | The endpoint for `anthropic` roles, without `/v1`, such as `https://linkapi.ai`. Empty means Anthropic |
+| `DOTTORE_APP_ID`, `DOTTORE_APP_PRIVATE_KEY` | The Dottore GitHub App that pushes repairs (see Autofix) |
 | `DOTTORE_<ROLE>_BASE_URL`, `DOTTORE_<ROLE>_API_KEY` | Optional endpoint for one role (`SCOUT`, `FINDER` or `VERIFY`); unset, the role uses the shared one for its provider. A value of `.` counts as unset |
 
 A gateway such as LinkAPI serves both formats with one key, so only the two base URLs need setting.

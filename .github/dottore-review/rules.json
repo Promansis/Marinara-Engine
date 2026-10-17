@@ -181,5 +181,8 @@
         "Workflow and agent-guidance changes remain concrete, testable, and narrow."
       ]
     }
-  ]
+  ],
+  "autofix": {
+    "validate": "pnpm install --frozen-lockfile && pnpm check"
+  }
 }
