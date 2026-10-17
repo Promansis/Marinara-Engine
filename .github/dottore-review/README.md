@@ -14,6 +14,13 @@ small roles' job:
   candidate in view and a few reads for what is still out of reach. Only confirmed findings are published; a confirmed
   claim whose defect differs from its wording carries the finding text the checker wrote.
 
+What gets published depends on severity. Blocking, high and medium findings are defects: each gets a review thread,
+and any of them makes the verdict Repair Required (Specimen Unstable from high up). Low findings are notes: they are
+listed under Minor Imperfections with the nitpicks, get no thread, and leave the verdict Viable, With Notes. The
+walkthrough states the verdict once in its title; the commit status carries the same verdict with the counts. The
+repair contracts of the defects are repeated at the end of the walkthrough as a prompt for an agent of your own, for a
+pull request Dottore cannot push to.
+
 On a later review, the checker also re-judges Dottore's open threads on the files that review changed, in parallel
 with the finder: one call per packet, with each thread's finding and repair contract. A thread it finds repaired, with
 evidence quoted from the head, gets a reply in voice and is resolved; one a person has replied to, or one whose finding
@@ -38,7 +45,9 @@ Dottore repairs its open findings only on a pull request where someone asked: by
 findings on this PR** in the walkthrough, or by commenting `/dottore autofix` once. The tick counts only from someone
 with write access. While the box is ticked, each review that leaves findings open is followed by a repair; after
 three Dottore repairs in a row with no push from a person, it stops and says so. Repairs go to the pull request's own
-branch, so a pull request from a fork gets the copy prompt instead.
+branch, so a pull request from a fork gets the repair prompt at the end of the walkthrough instead. The pushed commit
+names the findings it repairs, carries the runner's own account of the change, and ends with a `Dottore-Autofix`
+trailer that counts the rounds.
 
 A repair runs in two jobs after the review job:
 

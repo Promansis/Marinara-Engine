@@ -2131,7 +2131,7 @@ def merge_segments(reports):
         for question in as_list(report.get("open_questions")):
             if question not in merged["open_questions"]:
                 merged["open_questions"].append(question)
-        notes.append([f"{role.capitalize()}: {note}" for note in as_list(report.get("what_i_checked"))])
+        notes.append(as_list(report.get("what_i_checked")))
     limitations = [check for check in checks.values() if control_type(check) == "Review Limitation"]
     merged["pre_merge_checks"] = [
         check
@@ -2489,7 +2489,7 @@ def agentic_review(ctx, mode, pool, threads=()):
                 "name": "Unresolved Candidates",
                 "status": "warn",
                 "type": "Review Limitation",
-                "detail": f"{unresolved} more candidate(s) could be neither confirmed nor refuted from the code, so they were withheld.",
+                "detail": f"{plural(unresolved, 'more candidate')} could be neither confirmed nor refuted from the code, so they were withheld.",
             }
         )
     unexamined = counts["unverified"] + counts["failed"]
@@ -2499,7 +2499,7 @@ def agentic_review(ctx, mode, pool, threads=()):
                 "name": "Verification Coverage",
                 "status": "warn",
                 "type": "Review Limitation",
-                "detail": f"{unexamined} candidate(s) went unexamined ({counts['unverified']} past the {MAX_VERIFIED_CANDIDATES}-claim cap, the time limit or without a verdict, {counts['failed']} after a checker error), so they were withheld.",
+                "detail": f"{plural(unexamined, 'candidate')} went unexamined ({counts['unverified']} past the {MAX_VERIFIED_CANDIDATES}-claim cap, the time limit or without a verdict, {counts['failed']} after a checker error), so they were withheld.",
             }
         )
     return merged
@@ -2785,6 +2785,16 @@ def severity_meta(severity):
     }.get(str(severity or "").lower(), {"icon": "❔", "label": "UNKNOWN", "rank": 9})
 
 
+def is_defect(finding):
+    """Blocking, high and medium findings are defects: they get review threads and withhold the verdict. Low ones
+    are notes beside the nitpicks."""
+    return severity_meta(finding.severity)["rank"] <= severity_meta("medium")["rank"]
+
+
+def plural(count, noun):
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
 def status_meta(status):
     normalized = str(status or "").lower()
     if normalized in {"fail", "failure", "failed", "cancelled"}:
@@ -2834,23 +2844,6 @@ def warn_is_blocking_proof_gap(item):
     if "non-blocking" in combined or "not blocking" in combined:
         return False
     return "blocking" in combined or "merge-blocking" in combined
-
-
-def finding_summary(findings):
-    if not findings:
-        return "No actionable defects isolated."
-    counts = {}
-    for finding in findings:
-        severity = str(finding.severity or "unknown").lower()
-        counts[severity] = counts.get(severity, 0) + 1
-    pieces = []
-    for severity in ("blocking", "high", "medium", "low", "nitpick", "unknown"):
-        count = counts.get(severity, 0)
-        if not count:
-            continue
-        meta = severity_meta(severity)
-        pieces.append(f"{meta['icon']} {count} {severity}")
-    return f"{len(findings)} finding(s): " + ", ".join(pieces)
 
 
 def has_failed_review_check(pre_merge):
@@ -2923,20 +2916,21 @@ def merge_signal(review_obj, findings, nitpicks, pre_merge):
     }
 
 
-def render_merge_signal(review_obj, findings, nitpicks, pre_merge, head_sha):
-    signal = merge_signal(review_obj, findings, nitpicks, pre_merge)
+def render_merge_signal(review_obj, defects, notes, pre_merge, head_sha):
+    """The verdict once: in the title, with its one-line reason, and a row of counts."""
+    signal = merge_signal(review_obj, defects, notes, pre_merge)
     controls = control_summary(pre_merge)
     mode = review_obj.get("mode") or "unknown"
+    base = review_obj.get("review_base") or review_obj.get("base_ref") or "unknown"
     body = [
-        f"## Dottore Verdict: {signal['title']}",
+        f"## 🎭 Dottore Review: {signal['title']}",
         "",
         f"> [!{signal['admonition']}]",
-        f"> **{signal['label']}**",
         f"> {signal['detail']}",
         "",
-        "| Findings | Nitpicks | Controls | Reviewed Head | Mode |",
-        "| ---: | ---: | --- | --- | --- |",
-        f"| {len(findings)} | {len(nitpicks)} | {md_cell(controls)} | `{short_ref(head_sha)}` | `{md_cell(mode)}` |",
+        "| Defects | Notes | Controls | Mode | Head | Base |",
+        "| ---: | ---: | --- | --- | --- | --- |",
+        f"| {len(defects)} | {len(notes)} | {md_cell(controls)} | `{md_cell(mode)}` | `{short_ref(head_sha)}` | `{short_ref(base)}` |",
     ]
     return "\n".join(body)
 
@@ -2954,68 +2948,6 @@ def control_summary(pre_merge):
         if count:
             ordered.append(f"{count} {label}")
     return ", ".join(ordered) or f"{len(pre_merge)} control(s)"
-
-
-def review_callout(findings, pre_merge):
-    has_blocking = any(
-        severity_meta(finding.severity)["rank"] <= severity_meta("high")["rank"]
-        for finding in findings
-    )
-    review_failed = has_failed_review_check(pre_merge)
-    has_failed_check = any(
-        status_meta(item.get("status"))["label"] == "FAIL" for item in pre_merge
-    )
-    has_warn_check = any(
-        status_meta(item.get("status"))["label"] in {"WARN", "WARNING", "PENDING", "UNKNOWN"}
-        for item in pre_merge
-    )
-    summary = finding_summary(findings)
-    if review_failed and not findings:
-        return "\n".join(
-            [
-                "> [!CAUTION]",
-                "> **Specimen unexamined.** Dottore Review did not complete, so no model findings are available.",
-                "> Repair the failed review control or rerun Dottore before treating this PR as reviewed.",
-            ]
-        )
-    if has_blocking or has_failed_check:
-        return "\n".join(
-            [
-                "> [!CAUTION]",
-                f"> **Specimen unstable.** {summary}",
-                "> Repair blocking/high findings and failed controls before merge.",
-            ]
-        )
-    if findings or has_warn_check:
-        return "\n".join(
-            [
-                "> [!WARNING]",
-                f"> **Anomalies remain.** {summary}",
-                "> Examine the findings and warning rows before merge.",
-            ]
-        )
-    return "\n".join(
-        [
-            "> [!TIP]",
-            "> **No actionable defects isolated.** The examined mechanism yielded no merge-blocking specimen.",
-        ]
-    )
-
-
-def render_review_metadata(review_obj, head_sha):
-    mode = review_obj.get("mode") or "unknown"
-    base = review_obj.get("review_base") or review_obj.get("base_ref") or "unknown"
-    commit_message = review_obj.get("head_commit_message") or review_obj.get(
-        "commit_message"
-    )
-    return "\n".join(
-        [
-            "> [!NOTE]",
-            f"> Mode: `{mode}`  ",
-            f"> {commit_line(head_sha, commit_message, label='Head')}  ",
-            f"> {commit_line(base, label='Base')}",
-        ]
-    )
 
 
 CONTRACT_LABELS = (
@@ -3258,9 +3190,12 @@ def render_walkthrough(
         if head_sha and not has_incomplete_review_check(pre_merge)
         else "<!-- dottore:last-reviewed-sha=unrecorded -->"
     )
+    # Low findings are notes: listed with the nitpicks, no review thread, no hold on the verdict.
+    defects = [finding for finding in findings if is_defect(finding)]
+    notes = [finding for finding in findings if not is_defect(finding)] + list(nitpicks)
     contract_state_marker = encode_contract_state(
         merge_contract_state(
-            findings, open_prior_contract_state(findings, prior_contracts or [])
+            defects, open_prior_contract_state(defects, prior_contracts or [])
         )
     )
     body = [
@@ -3269,30 +3204,26 @@ def render_walkthrough(
     ]
     # ponytail: a head with no new diff to review is not discharged even when the last verdict was Viable;
     # carry the prior verdict forward if base merges keep withholding approval.
-    signal = merge_signal(review_obj, findings, nitpicks, pre_merge)
+    signal = merge_signal(review_obj, defects, notes, pre_merge)
     if "unrecorded" not in state_marker and signal["label"] in ("VIABLE", "VIABLE, WITH NOTES"):
         body.append(DISCHARGE_MARKER)
     if contract_state_marker:
         body.append(contract_state_marker)
     body.extend([
-        "## 🎭 Dottore Review",
-        "",
-        render_merge_signal(review_obj, findings, nitpicks, pre_merge, head_sha),
-        "",
-        render_review_metadata(review_obj, head_sha),
+        render_merge_signal(review_obj, defects, notes, pre_merge, head_sha),
         "",
         "### 🧭 Specimen Summary",
     ])
     body.extend([f"- {line}" for line in summary[:2]] or ["- No specimen summary produced."])
     body.extend(["", "### 🔎 Isolated Defects"])
-    if findings:
+    if defects:
         body.extend(
             [
                 "| Severity | Location | Finding |",
                 "| :---: | --- | --- |",
             ]
         )
-        for finding in findings:
+        for finding in defects:
             meta = severity_meta(finding.severity)
             body.append(
                 "| "
@@ -3312,32 +3243,28 @@ def render_walkthrough(
         else:
             body.extend(["", "> [!TIP]", "> No actionable defects isolated."])
     if resolved:
-        body.extend(["", "### ✅ Resolved Since Last Review"])
+        body.extend(["", "### ✅ Repairs Confirmed"])
         for item in resolved[:5]:
             location = f"{item.get('path') or 'unknown'}:{item.get('line') or '?'}"
             title = item.get("title") or "Prior Dottore finding"
             body.append(f"- `{md_cell(location)}` - {md_cell(title)}")
     body.extend(["", "### 🧹 Minor Imperfections"])
-    if nitpicks:
+    if notes:
         body.extend(
             [
-                "| Location | Nitpick |",
-                "| --- | --- |",
+                "| Kind | Location | Note |",
+                "| :---: | --- | --- |",
             ]
         )
-        for nitpick in nitpicks:
+        for note in notes:
             body.append(
                 "| "
-                f"{location_label(nitpick, md_cell)} | "
-                f"{md_cell(nitpick.title)} |"
+                f"{status_badge(severity_meta(note.severity))} | "
+                f"{location_label(note, md_cell)} | "
+                f"{md_cell(note.title)} |"
             )
     else:
         body.append("- None recorded.")
-    agent_prompt = render_agent_prompt_details(
-        findings, "🤖 Copy prompt for isolated Dottore findings"
-    )
-    if agent_prompt:
-        body.extend(["", agent_prompt])
     body.extend(
         [
             "",
@@ -3380,9 +3307,9 @@ def render_walkthrough(
     if verification:
         unexamined = verification.get("unverified", 0) + verification.get("failed", 0)
         body.append(
-            f"- Dottore examined {verification.get('candidates', 0)} candidate(s) against the code: "
+            f"- {plural(verification.get('candidates', 0), 'candidate')} examined against the code: "
             f"{verification.get('confirmed', 0)} confirmed, {verification.get('rejected', 0)} rejected, "
-            f"{verification.get('uncertain', 0)} unresolved"
+            f"{verification.get('uncertain', 0)} left unresolved"
             + (f", {verification['same_as']} the same defect as another" if verification.get("same_as") else "")
             + (f", {unexamined} unexamined." if unexamined else ".")
         )
@@ -3391,10 +3318,14 @@ def render_walkthrough(
             [
                 "",
                 "> [!WARNING]",
-                f"> Withheld {len(invalid_findings)} candidate(s) because their diff locations failed validation.",
+                f"> {plural(len(invalid_findings), 'candidate')} withheld: their diff locations failed validation.",
             ]
         )
         body.extend([f"- {note}" for note in invalid_findings[:5]])
+    # Last, for a pull request Dottore cannot push to (a fork): the same repair contracts, for an agent of your own.
+    agent_prompt = render_agent_prompt_details(defects, "🩺 Repair prompt for an agent of your own")
+    if agent_prompt:
+        body.extend(["", agent_prompt])
     return "\n".join(body).strip() + "\n"
 
 
@@ -4272,6 +4203,11 @@ def autofix_task(threads):
         " rules first.",
         "Make the smallest change that repairs each one and touch only the files it needs.",
         "If a finding is wrong or cannot be fixed safely, leave that code alone and say why in your final message.",
+        "Do not run tests, builds or commands: CI runs this repository's checks on your change after you finish, and"
+        " you do not commit.",
+        "Your final message becomes the commit body under a title that names the findings. Write it as a change"
+        " description in the third person, two to four sentences per finding: what was wrong and what the code now"
+        " does. No first person, no greetings, no mention of tests you did not run, no trailers.",
     ]
     for number, thread in enumerate(threads[:MAX_REPAIR_THREADS], 1):
         parts += ["", f"## Finding {number}", re.sub(r"<!--.*?-->", "", thread["body"], flags=re.S).strip()]
@@ -4294,7 +4230,7 @@ def autofix_prompt(args):
         return
     note, threads = "", []
     if pr.get("isCrossRepository"):
-        note = "Dottore can only push repairs to this repository's own branches; use the copy prompt in the review instead."
+        note = "Dottore can only push repairs to this repository's own branches; use the repair prompt at the end of the review instead."
     elif not asked and (rounds := autofix_rounds(pr_num)) >= MAX_AUTOFIX_ROUNDS:
         note = (
             f"Dottore stopped after {rounds} repairs in a row with no push from a person. Push a change, or untick and"
@@ -4313,8 +4249,14 @@ def autofix_prompt(args):
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     (out / "prompt.md").write_text(autofix_task(threads), "utf-8")
-    # The branch name is data for the push job (jq, quoted), never sourced as shell.
-    meta = {"head_ref": pr["headRefName"], "head_sha": pr["headRefOid"], "findings": len(threads)}
+    # The branch name and the findings are data for the push job (jq, quoted), never sourced as shell; the findings
+    # name the commit.
+    findings = []
+    for thread in threads[:MAX_REPAIR_THREADS]:
+        heading = re.search(r"### .*?\b(?:BLOCKING|HIGH|MEDIUM|LOW):\s*(.+)", thread["body"])
+        title = heading.group(1).strip() if heading else "Dottore finding"
+        findings.append({"path": thread["path"], "line": thread["line"], "title": title})
+    meta = {"head_ref": pr["headRefName"], "head_sha": pr["headRefOid"], "findings": findings}
     (out / "meta.json").write_text(json.dumps(meta), "utf-8")
     print("autofix=true")
 
@@ -4437,8 +4379,19 @@ def status_state(args):
         print("state=failure")
         print("description=Dottore Review posted a failure or skipped report; rerun after repairing the review control.")
         return
+    # The verdict in GitHub's 140 characters, from the review's own severities (validation may still withhold a few).
+    items = [SimpleNamespace(severity=item.get("severity", "medium")) for item in review_obj["findings"] if isinstance(item, dict)]
+    defects = [item for item in items if is_defect(item)]
+    notes = [item for item in items if not is_defect(item)] + review_obj["nitpicks"]
+    signal = merge_signal(review_obj, defects, notes, pre_merge)
+    if defects:
+        detail = f"{plural(len(defects), 'defect')} isolated, awaiting repair"
+    elif notes:
+        detail = f"no defects isolated; {plural(len(notes), 'note')} for the record"
+    else:
+        detail = "no defects isolated"
     print("state=success")
-    print("description=Examination concluded. Dottore's findings await their repair; independent controls remain separate.")
+    print(f"description={signal['title']}: {detail}."[:140])
 
 
 def main():
