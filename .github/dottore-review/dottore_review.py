@@ -72,6 +72,9 @@ DOTTORE_REMARKS = {
 }
 
 
+THREAD_FOOTER = "*🎭 Push a repair and Dottore re-examines this thread; or tick the 🩺 box in his walkthrough to let him repair it.*"
+
+
 def dottore_remark(label, head_sha):
     pool = DOTTORE_REMARKS.get(label) or DOTTORE_REMARKS[""]
     digits = re.sub(r"[^0-9a-f]", "", str(head_sha or "").lower())[:8]
@@ -2718,8 +2721,9 @@ def render_finding_body(finding):
     ]
     if finding.fix_hint:
         parts.extend([""] + alert_block("TIP", [f"**Suggested fix:** {finding.fix_hint}"]))
-    parts.extend(["", "*🎭 Push a repair and Dottore re-examines this thread; or tick the 🩺 box in his walkthrough to let him repair it.*"])
-    return inline_truncate("\n".join(parts).strip())
+    # The finding is cut to leave room for the footer, so a long one still carries its next step.
+    body = inline_truncate("\n".join(parts).strip(), MAX_INLINE_COMMENT_CHARS - len(THREAD_FOOTER) - 2)
+    return f"{body}\n\n{THREAD_FOOTER}"
 
 
 def finding_id(finding):
