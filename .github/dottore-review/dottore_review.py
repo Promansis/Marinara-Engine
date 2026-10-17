@@ -20,6 +20,10 @@ from types import SimpleNamespace
 
 REPO_ROOT = pathlib.Path.cwd().resolve()
 DOTTORE_MARKER = "<!-- dottore:walkthrough -->"
+# Dottore posts with the workflow's GITHUB_TOKEN; a comment from anyone else carrying its markers is not its own.
+DOTTORE_LOGIN = "github-actions[bot]"
+# Written into the walkthrough when the examined head's verdict is Viable, so approval reads the verdict, not prose.
+DISCHARGE_MARKER = "<!-- dottore:discharge -->"
 COMMAND_STATUS_MARKER = "<!-- dottore:command-status -->"
 AUTOFIX_MARKER = "<!-- dottore:autofix -->"
 AUTOFIX_BOX = f"- [ ] 🩺 Let Dottore fix the open findings on this PR {AUTOFIX_MARKER}"
@@ -3263,6 +3267,11 @@ def render_walkthrough(
         DOTTORE_MARKER,
         state_marker,
     ]
+    # ponytail: a head with no new diff to review is not discharged even when the last verdict was Viable;
+    # carry the prior verdict forward if base merges keep withholding approval.
+    signal = merge_signal(review_obj, findings, nitpicks, pre_merge)
+    if "unrecorded" not in state_marker and signal["label"] in ("VIABLE", "VIABLE, WITH NOTES"):
+        body.append(DISCHARGE_MARKER)
     if contract_state_marker:
         body.append(contract_state_marker)
     body.extend([
@@ -3489,7 +3498,9 @@ def issue_comments(pr_num):
 
 def sorted_walkthrough_comments(pr_num):
     walkthroughs = [
-        comment for comment in issue_comments(pr_num) if DOTTORE_MARKER in comment.get("body", "")
+        comment
+        for comment in issue_comments(pr_num)
+        if DOTTORE_MARKER in comment.get("body", "") and (comment.get("user") or {}).get("login") == DOTTORE_LOGIN
     ]
     return sorted(
         walkthroughs,
@@ -3538,8 +3549,8 @@ RESOLVE_THREAD_MUTATION = "mutation($thread: ID!) { resolveReviewThread(input: {
 MAX_REPAIR_THREADS = 12
 
 
-def open_dottore_threads(pr_num):
-    """The unresolved review threads Dottore opened that no one else has replied to."""
+def open_dottore_threads(pr_num, answered=False):
+    """The unresolved review threads Dottore opened that no one else has replied to, or all of them with answered."""
     # ponytail: the first 100 threads and 50 comments a thread; page reviewThreads when a PR outgrows that.
     owner, name = os.environ["GITHUB_REPOSITORY"].split("/", 1)
     gh = run_gh(
@@ -3559,7 +3570,7 @@ def open_dottore_threads(pr_num):
         if author.get("__typename") != "Bot" or not marker:
             continue
         # A person who answered the thread owns its outcome.
-        if any((comment.get("author") or {}).get("login") != author.get("login") for comment in comments[1:]):
+        if not answered and any((comment.get("author") or {}).get("login") != author.get("login") for comment in comments[1:]):
             continue
         threads.append(
             {
@@ -4308,6 +4319,86 @@ def autofix_prompt(args):
     print("autofix=true")
 
 
+def checks_not_passed(base, head):
+    """The checks the base branch's rulesets require that have not passed on head; every check on head when the
+    rulesets require none."""
+    repo = os.environ["GITHUB_REPOSITORY"]
+    rules = load_json_list(run_gh(["api", f"repos/{repo}/rules/branches/{base}"], check=True).stdout)
+    required = {
+        check.get("context")
+        for rule in rules
+        if rule.get("type") == "required_status_checks"
+        for check in (rule.get("parameters") or {}).get("required_status_checks") or []
+    }
+    passed = {}
+    # ponytail: the first 100 check runs on the head (the latest per name); page them when a PR carries more.
+    runs = json.loads(run_gh(["api", f"repos/{repo}/commits/{head}/check-runs?per_page=100"], check=True).stdout)
+    for check_run in runs.get("check_runs") or []:
+        done = check_run.get("status") == "completed" and check_run.get("conclusion") in ("success", "neutral", "skipped")
+        passed[check_run.get("name")] = done
+    combined = json.loads(run_gh(["api", f"repos/{repo}/commits/{head}/status"], check=True).stdout)
+    for status in combined.get("statuses") or []:
+        passed[status.get("context")] = status.get("state") == "success"
+    return sorted(name for name in (required or passed) if not passed.get(name))
+
+
+def approve(args):
+    """Approve the head when Dottore's verdict on it is Viable, none of its threads are unresolved and the checks
+    passed, and dismiss its approvals of earlier heads. The approval is a signal: no ruleset counts it. A person who
+    asked (/dottore approve) is told what is still missing."""
+    pr_num, repo = os.environ["PR_NUM"], os.environ["GITHUB_REPOSITORY"]
+    asked = args.trigger == "asked"
+    pr = json.loads(
+        run_gh(["pr", "view", pr_num, "--repo", repo, "--json", "state,isDraft,headRefOid,baseRefName"], check=True).stdout
+    )
+    head = pr["headRefOid"]
+    reviews = load_json_list(run_gh(["api", f"repos/{repo}/pulls/{pr_num}/reviews?per_page=100", "--paginate"], check=True).stdout)
+    approvals = [
+        review
+        for review in reviews
+        if (review.get("user") or {}).get("login") == DOTTORE_LOGIN and review.get("state") == "APPROVED"
+    ]
+    for review in approvals:
+        if review.get("commit_id") != head:
+            message = f"message=The specimen changed; `{short_ref(head)}` needs its own examination."
+            run_gh(["api", "-X", "PUT", f"repos/{repo}/pulls/{pr_num}/reviews/{review['id']}/dismissals", "-f", message, "-f", "event=DISMISS"], check=True)
+    if pr.get("state") != "OPEN" or pr.get("isDraft"):
+        return
+    if any(review.get("commit_id") == head for review in approvals):
+        if asked:
+            run_gh(["pr", "comment", pr_num, "--repo", repo, "--body", f"🎭 Dottore already discharged `{short_ref(head)}`."], check=True)
+        return
+    body = (latest_walkthrough_comment(pr_num) or {}).get("body") or ""
+    reviewed = STATE_MARKER_RE.search(body)
+    missing = []
+    if not reviewed or reviewed.group(1) != head:
+        missing.append(f"Dottore has not finished examining `{short_ref(head)}`")
+    elif DISCHARGE_MARKER not in body:
+        missing.append("its examination of this head did not end Viable")
+    if unresolved := len(open_dottore_threads(pr_num, answered=True)):
+        missing.append(f"{unresolved} Dottore thread(s) are unresolved")
+    if failing := checks_not_passed(pr["baseRefName"], head):
+        missing.append("these checks have not passed: " + ", ".join(f"`{name}`" for name in failing))
+    if missing:
+        print("Not approved: " + "; ".join(missing))
+        if asked:
+            note = "🎭 Dottore cannot discharge this specimen yet: " + "; ".join(missing) + "."
+            run_gh(["pr", "comment", pr_num, "--repo", repo, "--body", note], check=True)
+        return
+    approval = (
+        f"🎭 **Specimen discharged.** Dottore's examination of `{short_ref(head)}` ended Viable, every Dottore thread is"
+        " resolved and the checks passed. This approval is a signal; the merge decision stays with the maintainers."
+    )
+    result = run_gh(
+        ["api", "-X", "POST", f"repos/{repo}/pulls/{pr_num}/reviews", "-f", f"commit_id={head}", "-f", "event=APPROVE", "-f", f"body={approval}"]
+    )
+    if result.returncode:
+        # GitHub refuses unless the repository allows GitHub Actions to approve pull requests.
+        print(f"::warning::Dottore could not approve {short_ref(head)}: {(result.stderr or result.stdout).strip()[:300]}")
+        return
+    print(f"Approved {head}")
+
+
 def load_review_for_status(path):
     try:
         return json.loads(pathlib.Path(path).read_text("utf-8"))
@@ -4368,6 +4459,8 @@ def main():
     autofix.add_argument("--trigger", choices=["review", "asked"], default="review")
     autofix.add_argument("--out", default="/tmp/dottore-autofix")
     autofix.add_argument("--review-json", default="review.json")
+    approve_cmd = sub.add_parser("approve")
+    approve_cmd.add_argument("--trigger", choices=["auto", "asked"], default="auto")
     status = sub.add_parser("status-state")
     status.add_argument("--review-json", default="review.json")
     status.add_argument("--job-status", default="success")
@@ -4383,6 +4476,8 @@ def main():
         status_state(args)
     elif args.command == "autofix-prompt":
         autofix_prompt(args)
+    elif args.command == "approve":
+        approve(args)
     elif args.command == "resolve":
         review_obj = load_review_for_status(args.review_json)
         resolve_repaired_threads(os.environ["PR_NUM"], review_obj.get("resolved_since_last_review") or [], review_obj.get("head_sha") or "")

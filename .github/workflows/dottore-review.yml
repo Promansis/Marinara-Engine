@@ -13,7 +13,8 @@ on:
         description: Review mode for the requested pass.
         type: choice
         # autofix: no review; repair the open findings (the walkthrough box or /dottore autofix).
-        options: [auto, full, incremental, autofix]
+        # approve: no review; approve the head if Dottore discharged it and its checks passed (CI or /dottore approve).
+        options: [auto, full, incremental, autofix, approve]
         default: auto
       requested_by:
         description: GitHub login that requested the dispatch.
@@ -71,12 +72,13 @@ permissions:
   statuses: write
 
 concurrency:
-  # A repair run must not cancel a review, nor a review the repair it started.
-  group: dottore-review-${{ github.repository }}-${{ inputs.pr_number }}${{ inputs.review_mode == 'autofix' && '-autofix' || '' }}
+  # A repair or approval run must not cancel a review, nor a review the repair it started.
+  group: dottore-review-${{ github.repository }}-${{ inputs.pr_number }}${{ contains(fromJSON('["autofix","approve"]'), inputs.review_mode) && format('-{0}', inputs.review_mode) || '' }}
   cancel-in-progress: true
 
 jobs:
   review:
+    if: inputs.review_mode != 'approve'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     outputs:
@@ -297,6 +299,40 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 /tmp/dottore-repairs/dottore_review.py resolve --review-json /tmp/dottore-repairs/review.json
+
+  # Approval runs after resolve, so threads this review closed count as closed. It also runs after a failed review, to
+  # dismiss Dottore's approval of an earlier head; the walkthrough then names no examined head, so nothing is approved.
+  # GitHub accepts the approval only when the repository allows GitHub Actions to approve pull requests.
+  approve:
+    needs: [review, resolve]
+    if: >
+      !cancelled() && inputs.review_mode != 'autofix' && needs.resolve.result != 'failure' &&
+      (needs.review.result != 'skipped' || inputs.review_mode == 'approve')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      PR_NUM: ${{ inputs.pr_number }}
+      PYTHONSAFEPATH: "1"
+    steps:
+      - name: Checkout pinned Engine tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .dottore-tooling
+          sparse-checkout: .github/dottore-review
+          persist-credentials: false
+
+      - name: Approve a discharged head
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TRIGGER: ${{ startsWith(inputs.comment_body, '/dottore') && 'asked' || 'auto' }}
+        run: |
+          [[ "$PR_NUM" =~ ^[1-9][0-9]*$ ]] || exit 1
+          python3 .dottore-tooling/.github/dottore-review/dottore_review.py approve --trigger "$TRIGGER"
 
   # The repair: Claude Code edits the PR's files with the model key and no GitHub write token, and cannot run commands.
   # The repository's own checks (rules.json autofix.validate) then run on the patch in a later step, without the key.

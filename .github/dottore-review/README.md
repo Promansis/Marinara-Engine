@@ -22,6 +22,16 @@ GitHub refuses to resolve a thread without `contents: write`, so a separate `res
 permission; it checks out no code and holds no model key, and runs only when a review found a repair. A repository that
 calls the shared workflow, such as Marinara-Agents, must grant `contents: write` in its caller too.
 
+The finder and checker send the bundle about once each, so a review's cost is the bundle's size times the models'
+prices. A role given reads resends its whole conversation on every turn, so reads belong to the cheapest role that can
+use them: the scout. Each `Dottore telemetry:` line reports per role the dollars spent and `prompt_x_bundle`, the prompt
+tokens sent per bundle token; a one-call role sits near 1, and a number far above it means a role is reading.
+
+Each role has one prompt section in `reviewer-prompt.md`, which names no model, so any role can run any model. The
+models, providers and limits are set with repository settings, under **Settings → Secrets and variables → Actions**, so
+changing them needs no code change. A new value applies from the next review. In Marinara-Agents, set them in the
+Agents repository: its wrapper workflow passes its own secrets and variables to the shared review.
+
 ## Autofix
 
 Dottore repairs its open findings only on a pull request where someone asked: by ticking **Let Dottore fix the open
@@ -44,15 +54,24 @@ A repair runs in two jobs after the review job:
 The App needs **Contents: Read and write** on the repository, installed there, with its ID and private key in the
 `DOTTORE_APP_ID` and `DOTTORE_APP_PRIVATE_KEY` secrets. A calling workflow passes both.
 
-The finder and checker send the bundle about once each, so a review's cost is the bundle's size times the models'
-prices. A role given reads resends its whole conversation on every turn, so reads belong to the cheapest role that can
-use them: the scout. Each `Dottore telemetry:` line reports per role the dollars spent and `prompt_x_bundle`, the prompt
-tokens sent per bundle token; a one-call role sits near 1, and a number far above it means a role is reading.
+## Approval
 
-Each role has one prompt section in `reviewer-prompt.md`, which names no model, so any role can run any model. The
-models, providers and limits are set with repository settings, under **Settings → Secrets and variables → Actions**, so
-changing them needs no code change. A new value applies from the next review. In Marinara-Agents, set them in the
-Agents repository: its wrapper workflow passes its own secrets and variables to the shared review.
+Dottore approves a pull request's head, as a signal only, when all of these hold:
+
+- its examination of that head ended **Viable** or **Viable, With Notes**;
+- none of its threads are unresolved, including ones a person answered;
+- every check the base branch's rulesets require has passed, or, where they require none, every check on the head.
+
+The approval is tried when a review ends, when a workflow named in `dottore-review-approve.yml` finishes (by default
+Pull Request Checks, CodeQL and the Owner Approval Review Evaluator), and when someone comments `/dottore approve`; that
+comment gets a reply naming what is still missing. When a new head arrives, the next review or approval check dismisses
+Dottore's approval of the earlier one. No ruleset counts the approval: they require none, and the owner-approval check
+counts only the owner's.
+
+GitHub accepts it only when the repository allows it, under **Settings → Actions → General → Workflow permissions →
+Allow GitHub Actions to create and approve pull requests**. Without that, the approval step logs a warning and the review
+is unaffected. A repository that calls the shared workflow keeps its own copy of `dottore-review-approve.yml`, listing
+the workflows that report its required checks.
 
 ## Variables
 
