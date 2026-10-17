@@ -39,7 +39,8 @@ The command gets a progress window on the pull request, which the review turns i
 review can also be started from **Actions → Dottore Review → Run workflow** with the pull request number and a mode.
 With `DOTTORE_AUTO_REVIEW` set to `true`, a pull request is also reviewed when it opens, is marked ready for review or
 gets a push; a draft waits until it is ready. Only pull requests into the branches `DOTTORE_BASE_REFS` names are
-reviewed; a request on another gets a reply saying so.
+reviewed; a request on another gets a reply saying so. To keep Dottore strictly on request, disable the
+**Dottore Review Auto Dispatch** workflow under Actions: a repair Dottore pushes then also waits for the next `/dottore`.
 
 A review posts:
 
@@ -105,7 +106,9 @@ wrapper workflow passes its own secrets and variables to the shared review.
 Dottore repairs its open findings only on a pull request where someone asked: by ticking **Let Dottore fix the open
 findings on this PR** in the walkthrough, or by commenting `/dottore autofix` once. The tick counts only from someone
 with write access. While the box is ticked, each review that leaves findings open is followed by a repair; after
-three Dottore repairs in a row with no push from a person, it stops and says so. Repairs go to the pull request's own
+one Dottore repair with no push from a person, it stops and says so (`MAX_AUTOFIX_ROUNDS` in `dottore_review.py`
+raises that). The repair is reviewed again by the auto dispatcher; with that workflow disabled, the next review
+waits for a `/dottore` comment. Repairs go to the pull request's own
 branch, so a pull request from a fork gets the repair prompt at the end of the walkthrough instead. The pushed commit
 names the findings it repairs, carries the runner's own account of the change, and ends with a `Dottore-Autofix`
 trailer that counts the rounds.
@@ -158,6 +161,16 @@ Each model has the same five settings. The key is a secret; the rest are variabl
 | `DOTTORE_SMALL_BASE_URL`, `DOTTORE_LARGE_BASE_URL` | Variable | The provider's endpoint | OpenAI's or Anthropic's own |
 | `DOTTORE_SMALL_API`, `DOTTORE_LARGE_API` | Variable | `openai` for an OpenAI-compatible Chat Completions endpoint, `anthropic` for Claude's Messages format | `openai` |
 | `DOTTORE_SMALL_EFFORT`, `DOTTORE_LARGE_EFFORT` | Variable | Reasoning effort, such as `medium`, `high` or `xhigh` | The model's default |
+
+The values the fork trial ran, Claude Haiku 5.5 reading and GPT Astra judging, both through LinkAPI:
+
+| Setting | `DOTTORE_SMALL_*` | `DOTTORE_LARGE_*` |
+| --- | --- | --- |
+| `MODEL` | `claude-haiku-5-5` | `gpt-6-astra` |
+| `API` | `anthropic` | `openai` |
+| `BASE_URL` | `https://linkapi.ai` | `https://linkapi.ai/v1` |
+| `API_KEY` | a LinkAPI key whose group serves Claude | a LinkAPI key whose group serves GPT |
+| `EFFORT` | `high` | `xhigh` |
 
 When both models come from one provider, the two keys and base URLs hold the same values. A review missing a model's
 name or key is posted as Review Skipped, naming the missing setting. The `Dottore roles:` line at the start of each run

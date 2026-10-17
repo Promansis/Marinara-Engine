@@ -30,7 +30,7 @@ AUTOFIX_BOX = f"- [ ] 🩺 Let Dottore fix the open findings on this PR {AUTOFIX
 AUTOFIX_BOX_RE = re.compile(r"^- \[([ xX])\] .*" + re.escape(AUTOFIX_MARKER), re.M)
 # Each autofix commit carries this trailer; the push job writes it and autofix_rounds counts it.
 AUTOFIX_TRAILER = "Dottore-Autofix:"
-MAX_AUTOFIX_ROUNDS = 3
+MAX_AUTOFIX_ROUNDS = 1
 FINDING_MARKER_RE = re.compile(r"<!-- dottore:finding=([0-9a-f]{16}) -->")
 STATE_MARKER_RE = re.compile(r"<!-- dottore:last-reviewed-sha=([0-9a-f]{40}) -->")
 CONTRACT_STATE_RE = re.compile(r"<!-- dottore:contract-state=([A-Za-z0-9_=-]+) -->")
@@ -3279,7 +3279,8 @@ def render_walkthrough(
             AUTOFIX_BOX,
             "",
             "While this is ticked, Dottore pushes a repair for its open findings after each review, then examines it like"
-            f" any push. It stops after {MAX_AUTOFIX_ROUNDS} repairs in a row. Ticking needs write access.",
+            f" any push, and makes at most {MAX_AUTOFIX_ROUNDS} repair{'s' if MAX_AUTOFIX_ROUNDS != 1 else ''} between pushes"
+            " from a person. Ticking needs write access.",
         ]
     )
     if pre_merge:
@@ -4229,8 +4230,8 @@ def autofix_prompt(args):
         note = "Dottore repairs with its small model through Claude Code, which needs `DOTTORE_SMALL_API` set to `anthropic`."
     elif not asked and (rounds := autofix_rounds(pr_num)) >= MAX_AUTOFIX_ROUNDS:
         note = (
-            f"Dottore stopped after {rounds} repairs in a row with no push from a person. Push a change, or untick and"
-            " tick the box, to let it try again."
+            f"Dottore made {rounds} repair{'s' if rounds != 1 else ''} since the last push from a person and stops here."
+            " Push a change, or untick and tick the box, to let it try again."
         )
     else:
         # The resolve job closes the threads this review found repaired after this step, so they are not open work.
