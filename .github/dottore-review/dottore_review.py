@@ -34,6 +34,71 @@ MAX_AUTOFIX_ROUNDS = 3
 FINDING_MARKER_RE = re.compile(r"<!-- dottore:finding=([0-9a-f]{16}) -->")
 STATE_MARKER_RE = re.compile(r"<!-- dottore:last-reviewed-sha=([0-9a-f]{40}) -->")
 CONTRACT_STATE_RE = re.compile(r"<!-- dottore:contract-state=([A-Za-z0-9_=-]+) -->")
+# The Doctor himself beside the verdict: one of his chibis from .github/dottore-review/chibi, served raw from the
+# tooling checkout the workflow pinned (DOTTORE_TOOLING_REPOSITORY and DOTTORE_TOOLING_SHA), so a branch's own chibis
+# render in its reviews. A pose per verdict; chibi and remark are chosen by the head SHA so a head re-renders the same.
+DOTTORE_CHIBIS = {
+    "VIABLE": ["sorting", "reading"],
+    "VIABLE, WITH NOTES": ["writing", "reading"],
+    "REPAIR REQUIRED": ["explaining", "writing"],
+    "SPECIMEN UNSTABLE": ["inspecting", "explaining"],
+    "NO NEW DIFF REVIEWED": ["reading"],
+    "REVIEW INCOMPLETE": ["sorting"],
+    "": ["inspecting"],
+}
+# One remark per verdict, in his voice.
+DOTTORE_REMARKS = {
+    "VIABLE": [
+        "Not a tremor on the table. Dismissed, for now.",
+        "A clean specimen. How dull. How welcome.",
+        "Nothing to cut. I am almost disappointed.",
+        "The instruments found nothing to object to. Carry on before I look harder.",
+    ],
+    "VIABLE, WITH NOTES": [
+        "Nothing worth the scalpel, only a few smudges on the glass.",
+        "Healthy enough. Polish the notes before the next exhibit.",
+        "No incisions today. Read the notes; I do not write them for my own amusement.",
+    ],
+    "REPAIR REQUIRED": [
+        "The specimen lives, but it twitches where it should not. Hold the scalpel for now.",
+        "Fascinating. Bring it back when it stops bleeding.",
+        "Every thread below is an incision. Close each one and I will look again.",
+        "I have marked where it fails. Mend it, or let me.",
+    ],
+    "SPECIMEN UNSTABLE": [
+        "Do not move this specimen. Something inside is still reacting.",
+        "Lethal, and therefore interesting. Contain it before it reaches the branch.",
+        "The table is not clean. Repair the worst of it before anyone else touches it.",
+    ],
+    "NO NEW DIFF REVIEWED": [
+        "Nothing new under the glass since the last examination. The prior verdict stands.",
+        "A base merge is not a specimen. I examined what changed, which was nothing.",
+    ],
+    "REVIEW INCOMPLETE": [
+        "The instruments failed before the specimen did. Rerun the examination.",
+        "An interrupted experiment proves nothing. Again.",
+    ],
+    "": ["The examination ended before a verdict. Ask again and I will look properly."],
+}
+
+
+THREAD_FOOTER = "*🎭 Push a repair and Dottore re-examines this thread; or tick the 🩺 box in his walkthrough to let him repair it.*"
+
+
+def pick_for_head(pool, head_sha):
+    digits = re.sub(r"[^0-9a-f]", "", str(head_sha or "").lower())[:8]
+    return pool[int(digits or "0", 16) % len(pool)]
+
+
+def dottore_remark(label, head_sha):
+    return pick_for_head(DOTTORE_REMARKS.get(label) or DOTTORE_REMARKS[""], head_sha)
+
+
+def dottore_chibi(label, head_sha):
+    pose = pick_for_head(DOTTORE_CHIBIS.get(label) or DOTTORE_CHIBIS[""], head_sha)
+    repo = os.environ.get("DOTTORE_TOOLING_REPOSITORY") or "Promansis/Marinara-Engine"
+    ref = os.environ.get("DOTTORE_TOOLING_SHA") or "staging"
+    return f"https://raw.githubusercontent.com/{repo}/{ref}/.github/dottore-review/chibi/dottore-{pose}.png"
 MAX_REVIEW_PACKET_CHARS = 180_000
 MAX_SECTION_CHARS = 60_000
 MAX_CONTEXT_FILE_CHARS = 20_000
@@ -2676,7 +2741,9 @@ def render_finding_body(finding):
     ]
     if finding.fix_hint:
         parts.extend([""] + alert_block("TIP", [f"**Suggested fix:** {finding.fix_hint}"]))
-    return inline_truncate("\n".join(parts).strip())
+    # The finding is cut to leave room for the footer, so a long one still carries its next step.
+    body = inline_truncate("\n".join(parts).strip(), MAX_INLINE_COMMENT_CHARS - len(THREAD_FOOTER) - 2)
+    return f"{body}\n\n{THREAD_FOOTER}"
 
 
 def finding_id(finding):
@@ -2891,8 +2958,13 @@ def render_merge_signal(review_obj, defects, notes, pre_merge, head_sha):
     body = [
         f"## 🎭 Dottore Review: {signal['title']}",
         "",
+        # Floated right of the verdict box and the counts beneath it.
+        f'<img src="{dottore_chibi(signal["label"], head_sha)}" alt="Dottore" width="128" align="right">',
+        "",
         f"> [!{signal['admonition']}]",
         f"> {signal['detail']}",
+        ">",
+        f"> *{dottore_remark(signal['label'], head_sha)}*",
         "",
         "| Defects | Notes | Controls | Mode | Head | Base |",
         "| ---: | ---: | --- | --- | --- | --- |",
