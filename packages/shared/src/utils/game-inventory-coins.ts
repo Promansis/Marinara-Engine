@@ -21,7 +21,7 @@ export interface GameInventoryPayment {
   change: Array<{ name: string; count: number }>;
 }
 
-/** What one bag's coins of a family are worth, in the family's smallest coin. */
+/** What one bag's coins of a family are worth, counted in the family's smallest coin. */
 export function gameInventoryCoinWorth(
   stacks: readonly GameInventoryStack[],
   holder: string | undefined,
