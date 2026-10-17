@@ -34,6 +34,48 @@ MAX_AUTOFIX_ROUNDS = 3
 FINDING_MARKER_RE = re.compile(r"<!-- dottore:finding=([0-9a-f]{16}) -->")
 STATE_MARKER_RE = re.compile(r"<!-- dottore:last-reviewed-sha=([0-9a-f]{40}) -->")
 CONTRACT_STATE_RE = re.compile(r"<!-- dottore:contract-state=([A-Za-z0-9_=-]+) -->")
+# The Doctor himself, at the top of every walkthrough: the Engine's pixel sprite, served from upstream main.
+DOTTORE_SPRITE = "https://raw.githubusercontent.com/Pasta-Devs/Marinara-Engine/main/packages/client/public/sprites/dottore/dottore_jumping.gif"
+# One remark per verdict, in his voice, chosen by the head SHA so a head's walkthrough re-renders the same.
+DOTTORE_REMARKS = {
+    "VIABLE": [
+        "Not a tremor on the table. Dismissed, for now.",
+        "A clean specimen. How dull. How welcome.",
+        "Nothing to cut. I am almost disappointed.",
+        "The instruments found nothing to object to. Carry on before I look harder.",
+    ],
+    "VIABLE, WITH NOTES": [
+        "Nothing worth the scalpel, only a few smudges on the glass.",
+        "Healthy enough. Polish the notes before the next exhibit.",
+        "No incisions today. Read the notes; I do not write them for my own amusement.",
+    ],
+    "REPAIR REQUIRED": [
+        "The specimen lives, but it twitches where it should not. Hold the scalpel for now.",
+        "Fascinating. Bring it back when it stops bleeding.",
+        "Every thread below is an incision. Close each one and I will look again.",
+        "I have marked where it fails. Mend it, or let me.",
+    ],
+    "SPECIMEN UNSTABLE": [
+        "Do not move this specimen. Something inside is still reacting.",
+        "Lethal, and therefore interesting. Contain it before it reaches the branch.",
+        "The table is not clean. Repair the worst of it before anyone else touches it.",
+    ],
+    "NO NEW DIFF REVIEWED": [
+        "Nothing new under the glass since the last examination. The prior verdict stands.",
+        "A base merge is not a specimen. I examined what changed, which was nothing.",
+    ],
+    "REVIEW INCOMPLETE": [
+        "The instruments failed before the specimen did. Rerun the examination.",
+        "An interrupted experiment proves nothing. Again.",
+    ],
+    "": ["The examination ended before a verdict. Ask again and I will look properly."],
+}
+
+
+def dottore_remark(label, head_sha):
+    pool = DOTTORE_REMARKS.get(label) or DOTTORE_REMARKS[""]
+    digits = re.sub(r"[^0-9a-f]", "", str(head_sha or "").lower())[:8]
+    return pool[int(digits or "0", 16) % len(pool)]
 MAX_REVIEW_PACKET_CHARS = 180_000
 MAX_SECTION_CHARS = 60_000
 MAX_CONTEXT_FILE_CHARS = 20_000
@@ -2676,6 +2718,7 @@ def render_finding_body(finding):
     ]
     if finding.fix_hint:
         parts.extend([""] + alert_block("TIP", [f"**Suggested fix:** {finding.fix_hint}"]))
+    parts.extend(["", "*🎭 Push a repair and Dottore re-examines this thread; or tick the 🩺 box in his walkthrough to let him repair it.*"])
     return inline_truncate("\n".join(parts).strip())
 
 
@@ -2889,10 +2932,14 @@ def render_merge_signal(review_obj, defects, notes, pre_merge, head_sha):
     mode = review_obj.get("mode") or "unknown"
     base = review_obj.get("review_base") or review_obj.get("base_ref") or "unknown"
     body = [
+        f'<img src="{DOTTORE_SPRITE}" alt="Dottore" width="64" align="right">',
+        "",
         f"## 🎭 Dottore Review: {signal['title']}",
         "",
         f"> [!{signal['admonition']}]",
         f"> {signal['detail']}",
+        ">",
+        f"> *{dottore_remark(signal['label'], head_sha)}*",
         "",
         "| Defects | Notes | Controls | Mode | Head | Base |",
         "| ---: | ---: | --- | --- | --- | --- |",
