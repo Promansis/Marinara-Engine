@@ -14,12 +14,13 @@ Models): the small model reads, the large one judges.
   candidate in view and a few reads for what is still out of reach. Only confirmed findings are published; a confirmed
   claim whose defect differs from its wording carries the finding text the checker wrote.
 
-What gets published depends on severity. Blocking, high and medium findings are defects: each gets a review thread,
-and any of them makes the verdict Repair Required (Specimen Unstable from high up). Low findings are notes: they are
-listed under Minor Imperfections with the nitpicks, get no thread, and leave the verdict Viable, With Notes. The
-walkthrough states the verdict once in its title; the commit status carries the same verdict with the counts. The
-repair contracts of the defects are repeated at the end of the walkthrough as a prompt for an agent of your own, for a
-pull request Dottore cannot push to.
+What gets published depends on kind, not severity. Every finding is a defect, low included: each gets a review thread,
+as a CodeRabbit finding does, and any of them makes the verdict Repair Required (Specimen Unstable from high up), so a
+low finding is carried across reviews, repaired by autofix and resolved before merge like any other. Severity grades the
+size of the repair. Nitpicks are notes: they are listed under Minor Imperfections, get no thread, and leave the verdict
+Viable, With Notes. The walkthrough states the verdict once in its title; the commit status carries the same verdict
+with the counts. The repair contracts of the defects are repeated at the end of the walkthrough as a prompt for an
+agent of your own, for a pull request Dottore cannot push to.
 
 On a later review, the checker also re-judges Dottore's open threads on the files that review changed, in parallel
 with the finder: one call per packet, with each thread's finding and repair contract. A thread it finds repaired, with
