@@ -16,6 +16,7 @@ concurrency:
 
 jobs:
   dispatch:
+    name: Dottore dispatch
     if: >
       (!github.event.pull_request.draft || github.event.action == 'ready_for_review') &&
       contains(format(',{0},', vars.DOTTORE_BASE_REFS || 'refactor,main,staging'), format(',{0},', github.event.pull_request.base.ref))
@@ -41,8 +42,9 @@ jobs:
             exit 0
           fi
           if ! jq -en --arg refs "$DOTTORE_BASE_REFS" --arg ref "$TARGET_REF" '$refs | split(",") | index($ref) != null' >/dev/null; then
-            echo "::error::Unsupported Dottore review base ref: $TARGET_REF"
-            exit 1
+            # Not a failure of the pull request: Dottore examines pull requests into the bases DOTTORE_BASE_REFS names.
+            echo "::notice::Dottore does not examine pull requests into $TARGET_REF (DOTTORE_BASE_REFS=$DOTTORE_BASE_REFS)."
+            exit 0
           fi
           REVIEW_MODE=auto
 
