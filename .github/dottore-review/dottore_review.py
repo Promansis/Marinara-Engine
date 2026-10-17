@@ -2751,9 +2751,10 @@ def severity_meta(severity):
 
 
 def is_defect(finding):
-    """Blocking, high and medium findings are defects: they get review threads and withhold the verdict. Low ones
-    are notes beside the nitpicks."""
-    return severity_meta(finding.severity)["rank"] <= severity_meta("medium")["rank"]
+    """Every graded finding is a defect, low included: it gets a review thread, as a CodeRabbit finding does, and
+    withholds the verdict until repaired. Severity grades the size of the repair, not whether one is owed. Only an
+    ungraded item is a note beside the nitpicks."""
+    return severity_meta(finding.severity)["rank"] <= severity_meta("low")["rank"]
 
 
 def plural(count, noun):
@@ -3155,7 +3156,7 @@ def render_walkthrough(
         if head_sha and not has_incomplete_review_check(pre_merge)
         else "<!-- dottore:last-reviewed-sha=unrecorded -->"
     )
-    # Low findings are notes: listed with the nitpicks, no review thread, no hold on the verdict.
+    # Every graded finding is a defect: a review thread and a hold on the verdict. The notes are the nitpicks.
     defects = [finding for finding in findings if is_defect(finding)]
     notes = [finding for finding in findings if not is_defect(finding)] + list(nitpicks)
     contract_state_marker = encode_contract_state(
@@ -3932,8 +3933,8 @@ def produce_review(args):
 
 
 def findings_for_inline_comments(findings):
-    """Only defects become review threads; notes never do, whatever DOTTORE_INLINE_FINDINGS says. `urgent` (the
-    default) and `all` now mean the same; `none` posts no threads."""
+    """Every defect, low included, becomes a review thread; nitpicks never do, whatever DOTTORE_INLINE_FINDINGS says.
+    `urgent` (the default) and `all` now mean the same; `none` posts no threads."""
     mode = os.environ.get("DOTTORE_INLINE_FINDINGS", "urgent").strip().lower()
     if mode in {"none", "off", "false", "0"}:
         return []
@@ -4355,7 +4356,7 @@ def status_state(args):
     published = review_obj.get("published") if isinstance(review_obj.get("published"), dict) else None
     if published:
         defects = [SimpleNamespace(severity="medium")] * int(published.get("defects", 0))
-        notes = [SimpleNamespace(severity="low")] * int(published.get("notes", 0))
+        notes = [SimpleNamespace(severity="nitpick")] * int(published.get("notes", 0))
     else:
         items = [SimpleNamespace(severity=item.get("severity", "medium")) for item in review_obj["findings"] if isinstance(item, dict)]
         defects = [item for item in items if is_defect(item)]
