@@ -3965,16 +3965,12 @@ def produce_review(args):
 
 
 def findings_for_inline_comments(findings):
+    """Only defects become review threads; notes never do, whatever DOTTORE_INLINE_FINDINGS says. `urgent` (the
+    default) and `all` now mean the same; `none` posts no threads."""
     mode = os.environ.get("DOTTORE_INLINE_FINDINGS", "urgent").strip().lower()
     if mode in {"none", "off", "false", "0"}:
         return []
-    if mode in {"all", "true", "1"}:
-        return findings
-    return [
-        finding
-        for finding in findings
-        if severity_meta(finding.severity)["rank"] <= severity_meta("medium")["rank"]
-    ]
+    return [finding for finding in findings if is_defect(finding)]
 
 
 def render_review(args):
@@ -4002,6 +3998,10 @@ def render_review(args):
         prior_contracts=review_obj.get("_prior_dottore_contract_state") or [],
     )
     pathlib.Path("review.md").write_text(walkthrough, "utf-8")
+    # The counts the walkthrough published, for the commit status: the raw report still holds the withheld ones.
+    defects = sum(1 for finding in findings if is_defect(finding))
+    review_obj["published"] = {"defects": defects, "notes": len(findings) - defects + len(nitpicks)}
+    pathlib.Path(args.review_json).write_text(json.dumps(review_obj, indent=2, sort_keys=True) + "\n", "utf-8")
     inline_findings = findings_for_inline_comments([finding for finding in findings if not finding.outside_diff])
     inline = [
         {
@@ -4379,10 +4379,16 @@ def status_state(args):
         print("state=failure")
         print("description=Dottore Review posted a failure or skipped report; rerun after repairing the review control.")
         return
-    # The verdict in GitHub's 140 characters, from the review's own severities (validation may still withhold a few).
-    items = [SimpleNamespace(severity=item.get("severity", "medium")) for item in review_obj["findings"] if isinstance(item, dict)]
-    defects = [item for item in items if is_defect(item)]
-    notes = [item for item in items if not is_defect(item)] + review_obj["nitpicks"]
+    # The verdict in GitHub's 140 characters, from the counts the render step published; the raw report's severities
+    # stand in when the render did not run.
+    published = review_obj.get("published") if isinstance(review_obj.get("published"), dict) else None
+    if published:
+        defects = [SimpleNamespace(severity="medium")] * int(published.get("defects", 0))
+        notes = [SimpleNamespace(severity="low")] * int(published.get("notes", 0))
+    else:
+        items = [SimpleNamespace(severity=item.get("severity", "medium")) for item in review_obj["findings"] if isinstance(item, dict)]
+        defects = [item for item in items if is_defect(item)]
+        notes = [item for item in items if not is_defect(item)] + review_obj["nitpicks"]
     signal = merge_signal(review_obj, defects, notes, pre_merge)
     if defects:
         detail = f"{plural(len(defects), 'defect')} isolated, awaiting repair"
