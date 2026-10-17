@@ -2,8 +2,8 @@
 
 Code first builds a bundle for each packet of the pull request: the PR description, the changed code at the head with
 its changes marked and the code around it, the definitions it reads, the same-file functions it calls two hops deep,
-where changed names are used elsewhere, the path rules and a guidance index. Then four roles run, and reading is the
-small roles' job:
+where changed names are used elsewhere, the path rules and a guidance index. Then three roles run on two models (see
+Models): the small model reads, the large one judges.
 
 - **`scout`** reads outward from the bundle with the read-only tools and keeps places as it reads: the callers in other
   files, imported definitions and what the changed values flow into. Each packet's changed functions are split into
@@ -34,8 +34,8 @@ prices. A role given reads resends its whole conversation on every turn, so read
 use them: the scout. Each `Dottore telemetry:` line reports per role the dollars spent and `prompt_x_bundle`, the prompt
 tokens sent per bundle token; a one-call role sits near 1, and a number far above it means a role is reading.
 
-Each role has one prompt section in `reviewer-prompt.md`, which names no model, so any role can run any model. The
-models, providers and limits are set with repository settings, under **Settings → Secrets and variables → Actions**, so
+Each role has one prompt section in `reviewer-prompt.md`, which names no model, so either model can come from any
+provider. The two models are set with repository settings, under **Settings → Secrets and variables → Actions**, so
 changing them needs no code change. A new value applies from the next review. In Marinara-Agents, set them in the
 Agents repository: its wrapper workflow passes its own secrets and variables to the shared review.
 
@@ -52,8 +52,8 @@ trailer that counts the rounds.
 A repair runs in two jobs after the review job:
 
 - **`fix`** checks out the head, gives the open threads to Claude Code (`claude -p`) with only file tools (read, edit,
-  write, search; no shell) and the Anthropic secrets, and no GitHub write token. A patch containing those secrets is
-  discarded. Then, without the key, it runs `autofix.validate` from the base branch's `rules.json`, such as
+  write, search; no shell) on the small model (see Models), and no GitHub write token. A patch containing the small
+  model's key is discarded. Then, without the key, it runs `autofix.validate` from the base branch's `rules.json`, such as
   `pnpm install --frozen-lockfile && pnpm check`.
 - **`push`** commits a patch that passed, with a `Dottore-Autofix:` trailer, and pushes it with the Dottore GitHub
   App's token, because a push made with `GITHUB_TOKEN` starts no CI and no review. That push starts the next review,
@@ -82,27 +82,79 @@ Allow GitHub Actions to create and approve pull requests**. Without that, the ap
 is unaffected. A repository that calls the shared workflow keeps its own copy of `dottore-review-approve.yml`, listing
 the workflows that report its required checks.
 
-## Variables
+## Models
+
+Dottore runs on two models. The **small** model runs the scouts, which read, and the repairs. The **large** model runs
+the finder and the checker, which judge: each makes about one call per bundle, so its price is paid about once, while
+the scouts read turn after turn, which suits a small, fast model at a high effort.
+
+Each model has the same five settings. The key is a secret; the rest are variables, and the run log shows them.
+
+| Setting | Kind | What it sets | Default |
+| --- | --- | --- | --- |
+| `DOTTORE_SMALL_MODEL`, `DOTTORE_LARGE_MODEL` | Variable | The model's name at its provider | Required |
+| `DOTTORE_SMALL_API_KEY`, `DOTTORE_LARGE_API_KEY` | Secret | The provider's API key | Required |
+| `DOTTORE_SMALL_BASE_URL`, `DOTTORE_LARGE_BASE_URL` | Variable | The provider's endpoint | OpenAI's or Anthropic's own |
+| `DOTTORE_SMALL_API`, `DOTTORE_LARGE_API` | Variable | `openai` for an OpenAI-compatible Chat Completions endpoint, `anthropic` for Claude's Messages format | `openai` |
+| `DOTTORE_SMALL_EFFORT`, `DOTTORE_LARGE_EFFORT` | Variable | Reasoning effort, such as `medium`, `high` or `xhigh` | The model's default |
+
+When both models come from one provider, the two keys and base URLs hold the same values. A review missing a model's
+name or key is posted as Review Skipped, naming the missing setting. The `Dottore roles:` line at the start of each run
+log shows the model, API and effort each role resolved to.
+
+### Switching a model
+
+Most providers and gateways offer an OpenAI-compatible endpoint, so switching a model takes its name, its base URL (the
+one the provider's docs give for the OpenAI SDK) and its key, with `API` left at `openai`. For example, DeepSeek as the
+small model and GLM as the large one, both through LinkAPI:
+
+| Setting | `DOTTORE_SMALL_*` | `DOTTORE_LARGE_*` |
+| --- | --- | --- |
+| `MODEL` | `deepseek-v4-flash` | `glm-5.3` |
+| `API` | `openai` | `openai` |
+| `BASE_URL` | `https://linkapi.ai/v1` | `https://linkapi.ai/v1` |
+| `API_KEY` | a key whose group serves DeepSeek | a key whose group serves GLM |
+| `EFFORT` | empty | empty |
+
+Use `anthropic` for Claude models, even through a gateway that also offers Chat Completions: Claude's tool calls only
+work reliably in its own format, and prompt caching and effort work only there. Give a gateway's base URL without
+`/v1`, such as `https://linkapi.ai`.
+
+Effort passes through unchanged, as `reasoning_effort` in the OpenAI format and as Claude's `effort`, so use a value the
+model accepts, or leave it empty for a model that takes none. Starting values, to be measured on a few known pull
+requests before relying on them:
+
+| Model | As the large model | As the small model |
+| --- | --- | --- |
+| GPT (Astra, Sol) | `xhigh` | `medium` |
+| Claude Opus or Sonnet | `high` | `medium` |
+| Claude Haiku or GPT Luna | not recommended: small models browse without forming claims | `high` |
+
+The cost limit counts tokens at the price table in `dottore_review.py` (`MODEL_PRICES_USD`). A model it does not list
+counts at the dearest listed rates, so a review on it reports more than it spent and reaches `DOTTORE_COST_LIMIT_USD`
+early: add the model's prices to the table, or raise the limit. The prompts name no model. Before relying on a different
+model, run a few reviews on pull requests whose problems you already know and compare what Dottore finds.
+
+Repairs run Claude Code on the small model's settings, its effort included, so they need `DOTTORE_SMALL_API` set to
+`anthropic`: Claude itself, or a provider's Anthropic-compatible endpoint. With any other value, ticking the autofix box
+gets a reply saying so.
+
+## Other variables
 
 | Variable | What it sets | Default |
 | --- | --- | --- |
-| `DOTTORE_MODEL` | Model for every role | `gpt-5.5` |
-| `DOTTORE_PROVIDER` | API format for every role: `openai` or `anthropic` | `openai` |
-| `DOTTORE_REASONING_EFFORT` | Reasoning effort for every role that does not set its own, such as `medium`, `high` or `xhigh` | The provider's default |
-| `DOTTORE_MODELS` | Per-role settings as JSON (see below) | None |
+| `DOTTORE_AUTO_REVIEW` | `true` reviews a pull request when it opens, is marked ready for review or gets a push (drafts wait until ready). Otherwise a review starts only when someone with write access comments `/dottore` or `/dottore full`; a repair Dottore pushes is still reviewed | off |
 | `DOTTORE_FINDERS` | Finder copies per packet, `1` or `2`; a second one starts a few seconds later and reuses the cache | `1` |
 | `DOTTORE_COST_LIMIT_USD` | Stop a review's model calls once it has spent this many dollars at the price table in `dottore_review.py`; `0` removes the limit | `1.00` |
 | `DOTTORE_BASE_REFS` | Comma-separated base branches that get reviewed | `refactor,main,staging` |
 | `DOTTORE_CONCURRENCY` | Model calls run at once | `4` |
-| `DOTTORE_AUTOFIX_MODEL` | The Claude model that writes repairs | `claude-sonnet-5-5` |
 
-`DOTTORE_MODELS` maps `scout`, `finder` or `verify` to any of these settings. A role or setting it leaves out
-uses the default.
+## Role limits
 
-| Setting | Meaning | `scout` | `finder` | `verify` |
+Each role's limits are kept in code, in `ROLE_DEFAULTS` in `dottore_review.py`:
+
+| Limit | Meaning | `scout` | `finder` | `verify` |
 | --- | --- | --- | --- | --- |
-| `provider`, `model` | API format and model | shared | shared | shared |
-| `effort` | Reasoning effort | shared | shared | shared |
 | `reads` | Read-tool calls; `0` offers none | `10` per scout | `0` | `5`, plus 1 per extra candidate |
 | `chars` | Characters of tool output | `40000` per scout | `0` | `40000`, plus 4000 per extra candidate |
 | `minutes` | Time box, from the role's first call | `5` | `10` | the review's last 8 minutes |
@@ -110,73 +162,24 @@ uses the default.
 | `places` | Places each scout keeps; `0` turns the scouts off | `6` | – | – |
 | `scouts` | Scouts per packet, each with a share of its changes; a PR split into packets runs more scouts than `DOTTORE_CONCURRENCY` in turn | `4` | – | – |
 
-Setting `reads` on the finder restores a reading finder, and setting `0` on the checker makes it judge from what is in
-view alone and answer uncertain otherwise.
-
 A role's `minutes` also bounds each of its model calls: a role offered no tools thinks before its first byte, so its
 call may stay silent for the whole box, and a reply still streaming when the box ends is cut there. A role offered no
 tools whose reply runs into `max_tokens` is sent once more at the next lower effort (`max` → `xhigh` → `high` →
-`medium` → `low`) with a box of its own; at `low`, or with no effort set, the review fails instead. On Claude, thinking counts inside `max_tokens`, so give a Claude role a larger cap and let `effort`
-limit the thinking.
+`medium` → `low`) with a box of its own; at `low`, or with no effort set, the review fails instead. On Claude, thinking
+counts inside `max_tokens`, so a larger or slower Claude model may need a larger cap.
 
-Limits kept in code, in `dottore_review.py`: a 30-minute review (`REVIEW_DEADLINE_SECONDS`), the last 8 minutes of it
+Other limits in `dottore_review.py`: a 30-minute review (`REVIEW_DEADLINE_SECONDS`), the last 8 minutes of it
 reserved for the checker, at most 20 candidates checked per review (`MAX_VERIFIED_CANDIDATES`), 3 submit attempts,
 a role aborting after 3 failed calls in a row (`MAX_ROLE_FAILURES`), 180 s for a call's first byte and 360 s between
 bytes (`FIRST_CALL_TIMEOUT`, `MODEL_REQUEST_TIMEOUT`), 900 s per streaming reply of a role with tools
 (`MODEL_STREAM_LIMIT`; a role without tools gets its box instead), and the packet split for large PRs (`MAX_CHUNK_PATCH_CHARS`, `MAX_REVIEW_CHUNKS`).
 
-## Models per role
-
-The shared model is the one the finder and checker use: they judge, so they take the most capable model available, and
-they make one call each, so its price is paid about once per bundle. The scout reads without judging, so a small fast
-model at a high effort fits it. For example, GPT for the finder and checker and a small Claude model for the scout:
-
-```json
-{
-  "scout": { "provider": "anthropic", "model": "claude-haiku-5-5", "effort": "high" }
-}
-```
-
-### Switching a role's model
-
-Every setting is per role, so the finder and the checker can run one model and the scout another, each with its own
-provider, effort, caps and endpoint secrets. Starting values, to be measured on a few known pull requests before
-relying on them:
-
-| Role | GPT (Astra, Sol) | Claude Opus or Sonnet | Claude Haiku or GPT Luna |
-| --- | --- | --- | --- |
-| `finder` | `effort` `high` (measured: `xhigh` costs more for the same recall) | `effort` `high`, `max_tokens` `64000` | not recommended: small models browse without forming claims |
-| `verify` | `effort` `xhigh` | `effort` `high`, `max_tokens` `64000` | not recommended |
-| `scout` | `effort` `medium` | `effort` `medium`, `max_tokens` `16000` | `effort` `high`, `max_tokens` `16000` |
-
-A larger or slower model needs a larger `max_tokens` (Claude counts thinking inside it) and may need more `minutes`;
-the retry at a lower effort covers a reply that still runs into the cap. The cost limit stops a review that would
-cost more than expected: at the price table, an Opus finder and checker cost about three times Astra's for the same
-tokens, so set `DOTTORE_COST_LIMIT_USD` to what a review may spend before switching. The `Dottore roles:` line at the
-start of each run log shows the provider, model and effort each role resolved to.
-
 ## Secrets
 
 | Secret | Used for |
 | --- | --- |
-| `OPENAI_API_KEY` | Required. The key for `openai` roles, and for `anthropic` roles when `ANTHROPIC_API_KEY` is not set |
-| `LLM_BASE_URL` | The endpoint for `openai` roles, such as `https://linkapi.ai/v1`. Empty means OpenAI |
-| `ANTHROPIC_API_KEY` | Optional key for `anthropic` roles |
-| `ANTHROPIC_BASE_URL` | The endpoint for `anthropic` roles, without `/v1`, such as `https://linkapi.ai`. Empty means Anthropic |
+| `DOTTORE_SMALL_API_KEY`, `DOTTORE_LARGE_API_KEY` | The two models' keys (see Models) |
 | `DOTTORE_APP_ID`, `DOTTORE_APP_PRIVATE_KEY` | The Dottore GitHub App that pushes repairs (see Autofix) |
-| `DOTTORE_<ROLE>_BASE_URL`, `DOTTORE_<ROLE>_API_KEY` | Optional endpoint for one role (`SCOUT`, `FINDER` or `VERIFY`); unset, the role uses the shared one for its provider. A value of `.` counts as unset |
-
-A gateway such as LinkAPI serves both formats with one key, so only the two base URLs need setting.
-
-## Choosing a provider
-
-- **`openai`** sends OpenAI's Chat Completions format. Use it for GPT models and for any model a gateway serves in that format with tool calling.
-- **`anthropic`** sends Claude's Messages format. Use it for Claude models, even through a gateway that also offers Chat Completions: Claude's tool calls only work reliably in its own format, and prompt caching and effort work only there.
-
-Effort values pass through unchanged, so use names the model accepts. Claude takes `low`, `medium`, `high`, `xhigh` and `max`, though not every model supports all of them.
-
-The prompts name no model. Before relying on a different model in a role, run a few reviews on pull requests whose
-problems you already know and compare what Dottore finds.
 
 Each review logs a `Dottore call:` line per model call, a `Dottore scout:` line per scout and per packet with the places they added, and
 a `Dottore telemetry:` line with totals by role. Use them to compare cost, caching and time between setups.

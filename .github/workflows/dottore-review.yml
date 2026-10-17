@@ -40,26 +40,10 @@ on:
         type: string
         default: ""
     secrets:
-      OPENAI_API_KEY:
+      DOTTORE_SMALL_API_KEY:
         required: true
-      LLM_BASE_URL:
-        required: false
-      ANTHROPIC_API_KEY:
-        required: false
-      ANTHROPIC_BASE_URL:
-        required: false
-      DOTTORE_SCOUT_BASE_URL:
-        required: false
-      DOTTORE_SCOUT_API_KEY:
-        required: false
-      DOTTORE_FINDER_BASE_URL:
-        required: false
-      DOTTORE_FINDER_API_KEY:
-        required: false
-      DOTTORE_VERIFY_BASE_URL:
-        required: false
-      DOTTORE_VERIFY_API_KEY:
-        required: false
+      DOTTORE_LARGE_API_KEY:
+        required: true
       DOTTORE_APP_ID:
         required: false
       DOTTORE_APP_PRIVATE_KEY:
@@ -180,26 +164,21 @@ jobs:
         if: inputs.review_mode != 'autofix'
         timeout-minutes: 40
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
-          # Model settings; .github/dottore-review/README.md describes each one.
-          DOTTORE_PROVIDER: ${{ vars.DOTTORE_PROVIDER }}
-          LLM_MODEL: ${{ vars.DOTTORE_MODEL || 'gpt-5.5' }}
-          DOTTORE_REASONING_EFFORT: ${{ vars.DOTTORE_REASONING_EFFORT }}
-          DOTTORE_MODELS: ${{ vars.DOTTORE_MODELS }}
+          # The small model reads, the large one judges; .github/dottore-review/README.md describes each setting.
+          DOTTORE_SMALL_MODEL: ${{ vars.DOTTORE_SMALL_MODEL }}
+          DOTTORE_SMALL_API: ${{ vars.DOTTORE_SMALL_API }}
+          DOTTORE_SMALL_BASE_URL: ${{ vars.DOTTORE_SMALL_BASE_URL }}
+          DOTTORE_SMALL_EFFORT: ${{ vars.DOTTORE_SMALL_EFFORT }}
+          DOTTORE_SMALL_API_KEY: ${{ secrets.DOTTORE_SMALL_API_KEY }}
+          DOTTORE_LARGE_MODEL: ${{ vars.DOTTORE_LARGE_MODEL }}
+          DOTTORE_LARGE_API: ${{ vars.DOTTORE_LARGE_API }}
+          DOTTORE_LARGE_BASE_URL: ${{ vars.DOTTORE_LARGE_BASE_URL }}
+          DOTTORE_LARGE_EFFORT: ${{ vars.DOTTORE_LARGE_EFFORT }}
+          DOTTORE_LARGE_API_KEY: ${{ secrets.DOTTORE_LARGE_API_KEY }}
           DOTTORE_CONCURRENCY: ${{ vars.DOTTORE_CONCURRENCY }}
           DOTTORE_FINDERS: ${{ vars.DOTTORE_FINDERS }}
           DOTTORE_COST_LIMIT_USD: ${{ vars.DOTTORE_COST_LIMIT_USD }}
           DOTTORE_LAB_STAGE: ${{ vars.DOTTORE_LAB_STAGE }}
-          # A role's own endpoint; unset, it uses the shared one for its provider.
-          DOTTORE_SCOUT_BASE_URL: ${{ secrets.DOTTORE_SCOUT_BASE_URL }}
-          DOTTORE_SCOUT_API_KEY: ${{ secrets.DOTTORE_SCOUT_API_KEY }}
-          DOTTORE_FINDER_BASE_URL: ${{ secrets.DOTTORE_FINDER_BASE_URL }}
-          DOTTORE_FINDER_API_KEY: ${{ secrets.DOTTORE_FINDER_API_KEY }}
-          DOTTORE_VERIFY_BASE_URL: ${{ secrets.DOTTORE_VERIFY_BASE_URL }}
-          DOTTORE_VERIFY_API_KEY: ${{ secrets.DOTTORE_VERIFY_API_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python /tmp/dottore-review-tool/dottore_review.py produce
 
@@ -238,6 +217,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TRIGGER: ${{ inputs.review_mode == 'autofix' && 'asked' || 'review' }}
+          DOTTORE_SMALL_API: ${{ vars.DOTTORE_SMALL_API }}
         run: |
           python /tmp/dottore-review-tool/dottore_review.py autofix-prompt --trigger "$TRIGGER" >> "$GITHUB_OUTPUT"
           if [ -f /tmp/dottore-autofix/meta.json ]; then
@@ -369,28 +349,28 @@ jobs:
 
       - name: Repair the open findings
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
-          AUTOFIX_MODEL: ${{ vars.DOTTORE_AUTOFIX_MODEL || 'claude-sonnet-5-5' }}
+          # The small model repairs; the repair decision checked that it speaks Claude's Messages format.
+          ANTHROPIC_API_KEY: ${{ secrets.DOTTORE_SMALL_API_KEY }}
+          ANTHROPIC_BASE_URL: ${{ vars.DOTTORE_SMALL_BASE_URL }}
+          AUTOFIX_MODEL: ${{ vars.DOTTORE_SMALL_MODEL }}
+          AUTOFIX_EFFORT: ${{ vars.DOTTORE_SMALL_EFFORT }}
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
           DISABLE_TELEMETRY: "1"
         run: |
           mkdir -p /tmp/dottore-fix
-          claude -p "$(cat /tmp/dottore-autofix/prompt.md)" --model "$AUTOFIX_MODEL" --max-turns 40 \
+          claude -p "$(cat /tmp/dottore-autofix/prompt.md)" --model "$AUTOFIX_MODEL" ${AUTOFIX_EFFORT:+--effort "$AUTOFIX_EFFORT"} --max-turns 40 \
             --allowedTools "Read,Edit,Write,Grep,Glob" --permission-mode acceptEdits --output-format json \
             > /tmp/dottore-fix/claude.json || echo "::warning::Claude Code exited with an error."
           jq -r '"Autofix: \(.subtype) turns=\(.num_turns) seconds=\(.duration_ms / 1000) list_usd=\(.total_cost_usd)"' \
             /tmp/dottore-fix/claude.json || true
           jq -r '.result // ""' /tmp/dottore-fix/claude.json > /tmp/dottore-fix/summary.md 2>/dev/null || true
           git add -A -- . ':!.claude' && git diff --cached --binary > /tmp/dottore-fix/patch.diff
-          # The patch is pushed in public: refuse one that carries this step's secrets (a file read from the process).
-          for secret in "$ANTHROPIC_API_KEY" "$ANTHROPIC_BASE_URL"; do
-            if [ -n "$secret" ] && grep -qF -- "$secret" /tmp/dottore-fix/patch.diff /tmp/dottore-fix/summary.md; then
-              echo "::error::The repair contains a secret; discarding it."
-              : > /tmp/dottore-fix/patch.diff
-              echo "The repair was discarded because it contained a secret." > /tmp/dottore-fix/summary.md
-            fi
-          done
+          # The patch is pushed in public: refuse one that carries this step's key (a file read from the process).
+          if [ -n "$ANTHROPIC_API_KEY" ] && grep -qF -- "$ANTHROPIC_API_KEY" /tmp/dottore-fix/patch.diff /tmp/dottore-fix/summary.md; then
+            echo "::error::The repair contains a secret; discarding it."
+            : > /tmp/dottore-fix/patch.diff
+            echo "The repair was discarded because it contained a secret." > /tmp/dottore-fix/summary.md
+          fi
           rm -f /tmp/dottore-fix/claude.json
 
       - name: Run the repository's checks on the repair

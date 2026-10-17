@@ -68,8 +68,10 @@ MODEL_MAX_RETRIES = 1
 # Waits before resending a call that hit a transient gateway error (unavailable, overloaded, cut stream).
 RETRY_DELAYS = (15, 45)
 # The scout gathers the code the bundle builder could not follow, the finder proposes claims at changed lines from the
-# bundle alone, and the checker ("verify") judges each claim against the code.
+# bundle alone, and the checker ("verify") judges each claim against the code. Reading takes the small model and
+# judging the large one, each set by its DOTTORE_SMALL_* or DOTTORE_LARGE_* settings (README.md).
 REVIEW_ROLES = ("scout", "finder", "verify")
+MODEL_SLOTS = {"scout": "small", "finder": "large", "verify": "large"}
 MAX_SEED_HITS_PER_NAME = 10
 MAX_TRACE_SEEDS = 40
 MAX_SEED_CHARS = 12_000
@@ -93,7 +95,7 @@ MAX_SCOUT_PLACES = 6
 SCOUTS = 4
 MAX_SCOUT_LINES = 80
 MAX_SCOUT_CHARS = 40_000
-# Per-role defaults; DOTTORE_MODELS overrides any of them (README.md). Reading is the scout's job, so the finder makes
+# Per-role limits (README.md). Reading is the scout's job, so the finder makes
 # one call on the bundle with no tools, and the checker gets the code around each candidate quoted by code and a few
 # reads for what is still out of reach. Cost then follows the bundle's size, not a model's appetite for reading:
 # every turn of a tool loop resends the whole conversation.
@@ -139,9 +141,9 @@ MAX_OPEN_QUESTIONS = 2
 MAX_REVIEW_LIMITATIONS = 2
 MAX_GUIDANCE_HEADINGS = 40
 EVIDENCE_WINDOW = 3
-# Each role talks to OpenAI's Chat Completions format or Claude's Messages format; gateways such as
-# LinkAPI serve Claude only through the latter when tools are used.
-PROVIDERS = ("openai", "anthropic")
+# Each model is reached through OpenAI's Chat Completions format, which most providers and gateways offer, or Claude's
+# Messages format; gateways such as LinkAPI serve Claude only through the latter when tools are used.
+APIS = ("openai", "anthropic")
 CACHE_BREAKPOINT = {"type": "ephemeral"}
 DEFAULT_CONCURRENCY = 4
 MAX_CONCURRENCY = 16
@@ -787,50 +789,30 @@ def print_telemetry(stats):
     print("Dottore telemetry: " + "; ".join(parts), flush=True)
 
 
-ROLE_SETTINGS = ("provider", "model", "effort", "max_tokens", "reads", "chars", "minutes", "places", "scouts")
+def model_slot(slot):
+    """The small or large model from its DOTTORE_<SLOT>_MODEL, _API, _EFFORT and _BASE_URL settings."""
+    prefix = f"DOTTORE_{slot.upper()}_"
+    values = {name: os.environ.get(prefix + name.upper(), "").strip() for name in ("model", "api", "effort", "base_url")}
+    values["api"] = values["api"].lower() or APIS[0]
+    if values["api"] not in APIS:
+        raise ValueError(f"{prefix}API must be {' or '.join(APIS)}, not {values['api']}.")
+    return {"slot": slot, **values}
 
 
 def role_models():
-    """Resolve each role's settings: provider, model and effort from the shared variables, the rest from ROLE_DEFAULTS,
-    and DOTTORE_MODELS overriding any of them per role. A role whose DOTTORE_<ROLE>_BASE_URL or _API_KEY secret is set
-    uses that endpoint; an empty one falls back to the shared value for its provider."""
-    default_provider = os.environ.get("DOTTORE_PROVIDER", "").strip().lower() or PROVIDERS[0]
-    default_model = os.environ.get("LLM_MODEL", "").strip() or "gpt-5.5"
-    default_effort = os.environ.get("DOTTORE_REASONING_EFFORT", "").strip()
-    raw = os.environ.get("DOTTORE_MODELS", "").strip()
-    try:
-        overrides = json.loads(raw) if raw else {}
-    except ValueError as exc:
-        raise ValueError(f"DOTTORE_MODELS is not valid JSON: {exc}") from exc
-    if not isinstance(overrides, dict) or not all(
-        role in REVIEW_ROLES and isinstance(value, dict) and set(value) <= set(ROLE_SETTINGS)
-        for role, value in overrides.items()
-    ):
-        raise ValueError(
-            f"DOTTORE_MODELS must map {', '.join(REVIEW_ROLES)} to objects of {', '.join(ROLE_SETTINGS)}."
-        )
-    models = {}
-    for role in REVIEW_ROLES:
-        settings = {
-            "provider": default_provider,
-            "model": default_model,
-            "effort": default_effort,
-            **ROLE_DEFAULTS[role],
-            **{key: value for key, value in overrides.get(role, {}).items() if value not in (None, "")},
-        }
-        for key in ("provider", "model", "effort"):
-            settings[key] = str(settings.get(key) or "").strip()
-        settings["provider"] = settings["provider"].lower()
-        for key in ("max_tokens", "reads", "chars", "minutes", "places", "scouts"):
-            value = settings.get(key, 0)
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                raise ValueError(f"DOTTORE_MODELS {role}.{key} must be a whole number.")
-        settings["endpoint"] = role if any(role_endpoint(role)) else ""
-        models[role] = settings
-    unknown = sorted({settings["provider"] for settings in models.values()} - set(PROVIDERS))
-    if unknown:
-        raise ValueError(f"Unknown Dottore provider {', '.join(unknown)}; use {' or '.join(PROVIDERS)}.")
-    return models
+    """Each role's settings: its model slot's (MODEL_SLOTS) and its limits (ROLE_DEFAULTS)."""
+    slots = {slot: model_slot(slot) for slot in set(MODEL_SLOTS.values())}
+    return {role: {**slots[MODEL_SLOTS[role]], **ROLE_DEFAULTS[role]} for role in REVIEW_ROLES}
+
+
+def missing_model_setup():
+    """The settings a review cannot run without that this run lacks: each model's name and key."""
+    return [
+        f"DOTTORE_{slot}_{name}"
+        for slot in ("SMALL", "LARGE")
+        for name in ("MODEL", "API_KEY")
+        if not os.environ.get(f"DOTTORE_{slot}_{name}", "").strip()
+    ]
 
 
 def finder_count():
@@ -848,43 +830,26 @@ def cost_limit():
         raise ValueError("DOTTORE_COST_LIMIT_USD must be a number of dollars.") from exc
 
 
-def role_endpoint(role):
-    """A role's own endpoint, from the DOTTORE_<ROLE>_BASE_URL and DOTTORE_<ROLE>_API_KEY secrets. GitHub refuses an
-    empty secret, so a placeholder without a letter or digit, such as ".", counts as empty."""
-    prefix = f"DOTTORE_{role.upper()}_"
-    values = (os.environ.get(prefix + name, "").strip() for name in ("BASE_URL", "API_KEY"))
-    return tuple(value if re.search(r"[A-Za-z0-9]", value) else "" for value in values)
-
-
-def client_key(settings):
-    return f"{settings['provider']}:{settings['endpoint']}" if settings["endpoint"] else settings["provider"]
-
-
 def review_clients(models):
-    """One client per provider and endpoint the roles use."""
+    """One client per model slot, at its base URL (the provider's own when empty) with its DOTTORE_<SLOT>_API_KEY."""
     clients = {}
-    for role, settings in models.items():
-        key = client_key(settings)
-        if key in clients:
+    for settings in models.values():
+        slot = settings["slot"]
+        if slot in clients:
             continue
-        base_url, api_key = role_endpoint(role) if settings["endpoint"] else ("", "")
-        if settings["provider"] == "openai":
+        options = {
+            "api_key": os.environ[f"DOTTORE_{slot.upper()}_API_KEY"].strip(),
+            "base_url": settings["base_url"] or None,
+            "max_retries": MODEL_MAX_RETRIES,
+        }
+        if settings["api"] == "openai":
             from openai import OpenAI
 
-            clients[key] = OpenAI(
-                api_key=api_key or os.environ["OPENAI_API_KEY"],
-                base_url=base_url or os.environ.get("LLM_BASE_URL") or None,
-                max_retries=MODEL_MAX_RETRIES,
-            )
+            clients[slot] = OpenAI(**options)
         else:
             from anthropic import Anthropic
 
-            # Gateways such as LinkAPI take one key for both formats, so the shared key is the fallback.
-            clients[key] = Anthropic(
-                api_key=api_key or os.environ.get("ANTHROPIC_API_KEY") or os.environ["OPENAI_API_KEY"],
-                base_url=base_url or os.environ.get("ANTHROPIC_BASE_URL") or "https://api.anthropic.com",
-                max_retries=MODEL_MAX_RETRIES,
-            )
+            clients[slot] = Anthropic(**options)
     return clients
 
 
@@ -1221,7 +1186,7 @@ def openai_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         # One key per packet keeps the finder's and checker's requests, which share the bundle, on the same cache.
         request["extra_body"] = {"prompt_cache_key": cache_key}
     try:
-        with ctx.clients[client_key(settings)].chat.completions.create(**request) as stream:
+        with ctx.clients[settings["slot"]].chat.completions.create(**request) as stream:
             return read_stream(stream, started, timing, stream_limit)
     except (httpx.TimeoutException, httpx.TransportError) as exc:
         raise StreamStalled(error_text(exc)) from exc
@@ -1292,7 +1257,7 @@ def claude_reply(ctx, settings, messages, tools, tool_choice, read_timeout, star
         request["thinking"] = {"type": "adaptive"}
         request["output_config"] = {"effort": settings["effort"]}
     try:
-        with ctx.clients[client_key(settings)].messages.stream(**request) as stream:
+        with ctx.clients[settings["slot"]].messages.stream(**request) as stream:
             for _ in watched(stream, started, timing, stream_limit):
                 pass
             reply = stream.get_final_message()
@@ -1361,7 +1326,7 @@ def chat(ctx, role, messages, tools, tool_choice, cache_key="", until=None, sett
         if ctx.failures.get(role, 0) >= MAX_ROLE_FAILURES:
             raise RuntimeError(f"the {role} role failed {MAX_ROLE_FAILURES} calls in a row, so it makes no more")
     first_call = not any(message.get("role") == "assistant" for message in messages)
-    reply = claude_reply if settings["provider"] == "anthropic" else openai_reply
+    reply = claude_reply if settings["api"] == "anthropic" else openai_reply
     # The client retries a request that fails before its stream opens. This retries one that stalls after
     # it at once, at most MODEL_MAX_RETRIES times since each stall has already used a read timeout, and
     # waits out a transient gateway error, which can arrive mid-stream with a request to resend. A role whose
@@ -1471,7 +1436,7 @@ def run_agent(ctx, role, messages, submit_tool, deadline=None, cache_key="", bud
     # Claude's tool choice cannot be forced, so a role without reads is not offered them: Opus called the reads it
     # was offered and, refused, thought to its output cap on the next call.
     tools = [*READ_TOOLS, submit_tool] if budget else [submit_tool]
-    claude = settings["provider"] == "anthropic" or "claude" in settings["model"]
+    claude = settings["api"] == "anthropic" or "claude" in settings["model"]
     messages = list(messages)
     kept = []
     used = 0
@@ -3381,7 +3346,7 @@ def error_text(exc):
 
 
 def model_failure_detail(exc):
-    # Provider errors, a bad DOTTORE_MODELS value and an agent that never submits all land here.
+    # Provider errors, a bad DOTTORE_<SLOT>_API value and an agent that never submits all land here.
     return f"Dottore Review could not complete: {error_text(exc)}"
 
 
@@ -3802,14 +3767,17 @@ def parse_command_mode():
     return "auto"
 
 
+def missing_model_text(missing):
+    names = ", ".join(f"`{name}`" for name in missing)
+    return f"The reviewer could not run because {names} {'is' if len(missing) == 1 else 'are'} not set for this workflow run. The specimen stays unexamined."
+
+
 def produce_review(args):
     pr_num = os.environ.get("PR_NUM", "")
-    if not pr_num and not os.environ.get("OPENAI_API_KEY"):
-        write_skipped_review(
-            "Review Skipped",
-            "The reviewer could not run because `OPENAI_API_KEY` is absent from this workflow run. Repository-secret withholding leaves the specimen unexamined.",
-        )
-        print("Dottore telemetry: skipped=missing_openai_api_key", flush=True)
+    missing = missing_model_setup()
+    if not pr_num and missing:
+        write_skipped_review("Review Skipped", missing_model_text(missing))
+        print("Dottore telemetry: skipped=missing_model_setup", flush=True)
         return
 
     requested_mode = args.mode or parse_command_mode()
@@ -3835,10 +3803,10 @@ def produce_review(args):
         print("Dottore telemetry: skipped=no_new_diff_reviewed", flush=True)
         return
 
-    if not os.environ.get("OPENAI_API_KEY"):
+    if missing:
         write_skipped_review(
             "Review Skipped",
-            "The reviewer could not run because `OPENAI_API_KEY` is absent from this workflow run. Repository-secret withholding leaves the specimen unexamined.",
+            missing_model_text(missing),
             metadata={
                 "head_sha": head_sha,
                 "head_commit_message": commit_subject(head_sha),
@@ -3847,7 +3815,7 @@ def produce_review(args):
                 "mode": effective_mode,
             },
         )
-        print("Dottore telemetry: skipped=missing_openai_api_key", flush=True)
+        print("Dottore telemetry: skipped=missing_model_setup", flush=True)
         return
 
     chunks = chunk_changed_files(base, files)
@@ -3898,8 +3866,7 @@ def produce_review(args):
         print(
             "Dottore roles: "
             + "; ".join(
-                f"{role}={settings['provider']}/{settings['model']}/{settings['effort'] or '-'}"
-                + (" (own endpoint)" if settings["endpoint"] else "")
+                f"{role}={settings['slot']}:{settings['api']}/{settings['model']}/{settings['effort'] or '-'}"
                 for role, settings in models.items()
             )
             + f"; finders={finder_count()}; cost_limit_usd={ctx.cost_limit or '-'}",
@@ -4231,6 +4198,10 @@ def autofix_prompt(args):
     note, threads = "", []
     if pr.get("isCrossRepository"):
         note = "Dottore can only push repairs to this repository's own branches; use the repair prompt at the end of the review instead."
+    elif os.environ.get("DOTTORE_SMALL_API", "").strip().lower() != "anthropic":
+        # The repair runs Claude Code, which speaks only Claude's Messages format. Read raw, so a bad value gets this
+        # reply instead of model_slot's error.
+        note = "Dottore repairs with its small model through Claude Code, which needs `DOTTORE_SMALL_API` set to `anthropic`."
     elif not asked and (rounds := autofix_rounds(pr_num)) >= MAX_AUTOFIX_ROUNDS:
         note = (
             f"Dottore stopped after {rounds} repairs in a row with no push from a person. Push a change, or untick and"
