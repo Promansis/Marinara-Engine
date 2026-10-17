@@ -4290,7 +4290,9 @@ def autofix_prompt(args):
             " tick the box, to let it try again."
         )
     else:
-        threads = open_dottore_threads(pr_num)
+        # The resolve job closes the threads this review found repaired after this step, so they are not open work.
+        repaired = {item.get("thread_id") for item in load_review_for_status(args.review_json).get("resolved_since_last_review") or []}
+        threads = [thread for thread in open_dottore_threads(pr_num) if asked or thread["thread_id"] not in repaired]
         if not threads and asked:
             note = "There are no open Dottore findings to repair."
     if note:
@@ -4365,6 +4367,7 @@ def main():
     autofix = sub.add_parser("autofix-prompt")
     autofix.add_argument("--trigger", choices=["review", "asked"], default="review")
     autofix.add_argument("--out", default="/tmp/dottore-autofix")
+    autofix.add_argument("--review-json", default="review.json")
     status = sub.add_parser("status-state")
     status.add_argument("--review-json", default="review.json")
     status.add_argument("--job-status", default="success")
