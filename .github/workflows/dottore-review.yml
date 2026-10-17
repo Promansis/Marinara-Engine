@@ -353,11 +353,12 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.DOTTORE_SMALL_API_KEY }}
           ANTHROPIC_BASE_URL: ${{ vars.DOTTORE_SMALL_BASE_URL }}
           AUTOFIX_MODEL: ${{ vars.DOTTORE_SMALL_MODEL }}
+          AUTOFIX_EFFORT: ${{ vars.DOTTORE_SMALL_EFFORT }}
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
           DISABLE_TELEMETRY: "1"
         run: |
           mkdir -p /tmp/dottore-fix
-          claude -p "$(cat /tmp/dottore-autofix/prompt.md)" --model "$AUTOFIX_MODEL" --max-turns 40 \
+          claude -p "$(cat /tmp/dottore-autofix/prompt.md)" --model "$AUTOFIX_MODEL" ${AUTOFIX_EFFORT:+--effort "$AUTOFIX_EFFORT"} --max-turns 40 \
             --allowedTools "Read,Edit,Write,Grep,Glob" --permission-mode acceptEdits --output-format json \
             > /tmp/dottore-fix/claude.json || echo "::warning::Claude Code exited with an error."
           jq -r '"Autofix: \(.subtype) turns=\(.num_turns) seconds=\(.duration_ms / 1000) list_usd=\(.total_cost_usd)"' \

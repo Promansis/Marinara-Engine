@@ -4198,8 +4198,9 @@ def autofix_prompt(args):
     note, threads = "", []
     if pr.get("isCrossRepository"):
         note = "Dottore can only push repairs to this repository's own branches; use the repair prompt at the end of the review instead."
-    elif model_slot("small")["api"] != "anthropic":
-        # The repair runs Claude Code, which speaks only Claude's Messages format.
+    elif os.environ.get("DOTTORE_SMALL_API", "").strip().lower() != "anthropic":
+        # The repair runs Claude Code, which speaks only Claude's Messages format. Read raw, so a bad value gets this
+        # reply instead of model_slot's error.
         note = "Dottore repairs with its small model through Claude Code, which needs `DOTTORE_SMALL_API` set to `anthropic`."
     elif not asked and (rounds := autofix_rounds(pr_num)) >= MAX_AUTOFIX_ROUNDS:
         note = (

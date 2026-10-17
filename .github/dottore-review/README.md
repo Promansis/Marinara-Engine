@@ -135,14 +135,15 @@ counts at the dearest listed rates, so a review on it reports more than it spent
 early: add the model's prices to the table, or raise the limit. The prompts name no model. Before relying on a different
 model, run a few reviews on pull requests whose problems you already know and compare what Dottore finds.
 
-Repairs run Claude Code on the small model's settings, so they need `DOTTORE_SMALL_API` set to `anthropic`: Claude
-itself, or a provider's Anthropic-compatible endpoint. With any other value, ticking the autofix box gets a reply
-saying so.
+Repairs run Claude Code on the small model's settings, its effort included, so they need `DOTTORE_SMALL_API` set to
+`anthropic`: Claude itself, or a provider's Anthropic-compatible endpoint. With any other value, ticking the autofix box
+gets a reply saying so.
 
 ## Other variables
 
 | Variable | What it sets | Default |
 | --- | --- | --- |
+| `DOTTORE_AUTO_REVIEW` | `true` reviews a pull request when it opens, is marked ready for review or gets a push (drafts wait until ready). Otherwise a review starts only when someone with write access comments `/dottore` or `/dottore full`; a repair Dottore pushes is still reviewed | off |
 | `DOTTORE_FINDERS` | Finder copies per packet, `1` or `2`; a second one starts a few seconds later and reuses the cache | `1` |
 | `DOTTORE_COST_LIMIT_USD` | Stop a review's model calls once it has spent this many dollars at the price table in `dottore_review.py`; `0` removes the limit | `1.00` |
 | `DOTTORE_BASE_REFS` | Comma-separated base branches that get reviewed | `refactor,main,staging` |
