@@ -18,8 +18,9 @@ What gets published depends on kind, not severity. Every finding is a defect, lo
 as a CodeRabbit finding does, and any of them makes the verdict Repair Required (Specimen Unstable from high up), so a
 low finding is carried across reviews, repaired by autofix and resolved before merge like any other. Severity grades the
 size of the repair. Nitpicks are notes: they are listed under Minor Imperfections, get no thread, and leave the verdict
-Viable, With Notes. The walkthrough states the verdict once in its title, under Dottore's sprite and with a remark in
-his voice chosen by the head SHA; the commit status carries the same verdict with the counts. The repair contracts of the defects are repeated at the end of the walkthrough as a prompt for an
+Viable, With Notes. The walkthrough states the verdict once in its title, with a remark in his voice and one of his
+chibis beside the verdict box and the counts (`chibi/`, a pose per verdict, both chosen by the head SHA and served raw
+from the pinned tooling checkout); the commit status carries the same verdict with the counts. The repair contracts of the defects are repeated at the end of the walkthrough as a prompt for an
 agent of your own, for a pull request Dottore cannot push to.
 
 On a later review, the checker also re-judges Dottore's open threads on the files that review changed, in parallel

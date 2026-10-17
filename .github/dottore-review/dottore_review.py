@@ -34,9 +34,19 @@ MAX_AUTOFIX_ROUNDS = 3
 FINDING_MARKER_RE = re.compile(r"<!-- dottore:finding=([0-9a-f]{16}) -->")
 STATE_MARKER_RE = re.compile(r"<!-- dottore:last-reviewed-sha=([0-9a-f]{40}) -->")
 CONTRACT_STATE_RE = re.compile(r"<!-- dottore:contract-state=([A-Za-z0-9_=-]+) -->")
-# The Doctor himself, at the top of every walkthrough: the Engine's pixel sprite, served from upstream main.
-DOTTORE_SPRITE = "https://raw.githubusercontent.com/Pasta-Devs/Marinara-Engine/main/packages/client/public/sprites/dottore/dottore_jumping.gif"
-# One remark per verdict, in his voice, chosen by the head SHA so a head's walkthrough re-renders the same.
+# The Doctor himself beside the verdict: one of his chibis from .github/dottore-review/chibi, served raw from the
+# tooling checkout the workflow pinned (DOTTORE_TOOLING_REPOSITORY and DOTTORE_TOOLING_SHA), so a branch's own chibis
+# render in its reviews. A pose per verdict; chibi and remark are chosen by the head SHA so a head re-renders the same.
+DOTTORE_CHIBIS = {
+    "VIABLE": ["sorting", "reading"],
+    "VIABLE, WITH NOTES": ["writing", "reading"],
+    "REPAIR REQUIRED": ["explaining", "writing"],
+    "SPECIMEN UNSTABLE": ["inspecting", "explaining"],
+    "NO NEW DIFF REVIEWED": ["reading"],
+    "REVIEW INCOMPLETE": ["sorting"],
+    "": ["inspecting"],
+}
+# One remark per verdict, in his voice.
 DOTTORE_REMARKS = {
     "VIABLE": [
         "Not a tremor on the table. Dismissed, for now.",
@@ -75,10 +85,20 @@ DOTTORE_REMARKS = {
 THREAD_FOOTER = "*🎭 Push a repair and Dottore re-examines this thread; or tick the 🩺 box in his walkthrough to let him repair it.*"
 
 
-def dottore_remark(label, head_sha):
-    pool = DOTTORE_REMARKS.get(label) or DOTTORE_REMARKS[""]
+def pick_for_head(pool, head_sha):
     digits = re.sub(r"[^0-9a-f]", "", str(head_sha or "").lower())[:8]
     return pool[int(digits or "0", 16) % len(pool)]
+
+
+def dottore_remark(label, head_sha):
+    return pick_for_head(DOTTORE_REMARKS.get(label) or DOTTORE_REMARKS[""], head_sha)
+
+
+def dottore_chibi(label, head_sha):
+    pose = pick_for_head(DOTTORE_CHIBIS.get(label) or DOTTORE_CHIBIS[""], head_sha)
+    repo = os.environ.get("DOTTORE_TOOLING_REPOSITORY") or "Promansis/Marinara-Engine"
+    ref = os.environ.get("DOTTORE_TOOLING_SHA") or "staging"
+    return f"https://raw.githubusercontent.com/{repo}/{ref}/.github/dottore-review/chibi/dottore-{pose}.png"
 MAX_REVIEW_PACKET_CHARS = 180_000
 MAX_SECTION_CHARS = 60_000
 MAX_CONTEXT_FILE_CHARS = 20_000
@@ -2936,9 +2956,10 @@ def render_merge_signal(review_obj, defects, notes, pre_merge, head_sha):
     mode = review_obj.get("mode") or "unknown"
     base = review_obj.get("review_base") or review_obj.get("base_ref") or "unknown"
     body = [
-        f'<img src="{DOTTORE_SPRITE}" alt="Dottore" width="64" align="right">',
-        "",
         f"## 🎭 Dottore Review: {signal['title']}",
+        "",
+        # Floated right of the verdict box and the counts beneath it.
+        f'<img src="{dottore_chibi(signal["label"], head_sha)}" alt="Dottore" width="128" align="right">',
         "",
         f"> [!{signal['admonition']}]",
         f"> {signal['detail']}",

@@ -86,11 +86,15 @@ jobs:
       - name: Validate trusted tooling reference
         env:
           TOOLING_SHA: ${{ job.workflow_sha }}
+          TOOLING_REPOSITORY: ${{ job.workflow_repository }}
         run: |
           [[ "$TOOLING_SHA" =~ ^[0-9a-f]{40}$ ]] || {
             echo "::error::job.workflow_sha is unavailable, so Dottore cannot pin its own tooling."
             exit 1
           }
+          # The walkthrough serves Dottore's chibis raw from this same checkout.
+          echo "DOTTORE_TOOLING_REPOSITORY=$TOOLING_REPOSITORY" >> "$GITHUB_ENV"
+          echo "DOTTORE_TOOLING_SHA=$TOOLING_SHA" >> "$GITHUB_ENV"
 
       - name: Checkout calling repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
