@@ -44,6 +44,9 @@ DOTTORE_CHIBIS = {
     "SPECIMEN UNSTABLE": ["inspecting", "explaining"],
     "NO NEW DIFF REVIEWED": ["reading"],
     "REVIEW INCOMPLETE": ["sorting"],
+    # The command status window while the review runs, and once it has posted.
+    "EXPERIMENT IN PROGRESS": ["inspecting", "reading"],
+    "CONCLUDED": ["sorting"],
     "": ["inspecting"],
 }
 # One remark per verdict, in his voice.
@@ -4070,6 +4073,8 @@ def patch_command_status_running(pr_num, head_sha, mode):
             COMMAND_STATUS_MARKER,
             "## 🎭 Dottore Review — Experiment in Progress",
             "",
+            f'<img src="{dottore_chibi("EXPERIMENT IN PROGRESS", head_sha)}" alt="Dottore" width="96" align="right">',
+            "",
             "> [!NOTE]",
             "> Reviewer workflow is running. The specimen is under observation.",
             "",
@@ -4085,6 +4090,8 @@ def patch_command_status_complete(pr_num, head_sha):
         [
             COMMAND_STATUS_MARKER,
             "## 🎭 Dottore Review — Concluded",
+            "",
+            f'<img src="{dottore_chibi("CONCLUDED", head_sha)}" alt="Dottore" width="96" align="right">',
             "",
             "> [!TIP]",
             "> Review posted. The specimen has left the observation table.",
