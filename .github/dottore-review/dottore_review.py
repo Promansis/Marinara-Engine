@@ -36,18 +36,20 @@ STATE_MARKER_RE = re.compile(r"<!-- dottore:last-reviewed-sha=([0-9a-f]{40}) -->
 CONTRACT_STATE_RE = re.compile(r"<!-- dottore:contract-state=([A-Za-z0-9_=-]+) -->")
 # The Doctor himself beside the verdict: one of his chibis from .github/dottore-review/chibi, served raw from the
 # tooling checkout the workflow pinned (DOTTORE_TOOLING_REPOSITORY and DOTTORE_TOOLING_SHA), so a branch's own chibis
-# render in its reviews. A pose per verdict; chibi and remark are chosen by the head SHA so a head re-renders the same.
+# render in its reviews. A few poses per verdict; chibi and remark are chosen by the head SHA so a head re-renders the
+# same. The command status window has poses of its own that no verdict uses, so the two comments on a pull request
+# never show the same chibi at once, whichever heads they were rendered for.
 DOTTORE_CHIBIS = {
-    "VIABLE": ["sorting", "reading"],
-    "VIABLE, WITH NOTES": ["writing", "reading"],
-    "REPAIR REQUIRED": ["explaining", "writing"],
-    "SPECIMEN UNSTABLE": ["inspecting", "explaining"],
-    "NO NEW DIFF REVIEWED": ["reading"],
-    "REVIEW INCOMPLETE": ["sorting"],
+    "VIABLE": ["viable", "discharged"],
+    "VIABLE, WITH NOTES": ["viable-with-notes", "writing"],
+    "REPAIR REQUIRED": ["repair-required", "stitching", "explaining", "writing"],
+    "SPECIMEN UNSTABLE": ["specimen-unstable", "repair-required", "explaining"],
+    "NO NEW DIFF REVIEWED": ["discharged", "viable"],
+    "REVIEW INCOMPLETE": ["instrument-failed"],
     # The command status window while the review runs, and once it has posted.
-    "EXPERIMENT IN PROGRESS": ["inspecting", "reading"],
-    "CONCLUDED": ["sorting"],
-    "": ["inspecting"],
+    "EXPERIMENT IN PROGRESS": ["inspecting", "reading", "sorting"],
+    "CONCLUDED": ["sorting", "reading"],
+    "": ["instrument-failed"],
 }
 # One remark per verdict, in his voice.
 DOTTORE_REMARKS = {
@@ -88,17 +90,18 @@ DOTTORE_REMARKS = {
 THREAD_FOOTER = "*🎭 Push a repair and Dottore re-examines this thread; or tick the 🩺 box in his walkthrough to let him repair it.*"
 
 
-def pick_for_head(pool, head_sha):
+def pick_for_head(pool, head_sha, slot=""):
+    """Stable for a head; the slot keeps the remark, the chibi and the status window from moving in step."""
     digits = re.sub(r"[^0-9a-f]", "", str(head_sha or "").lower())[:8]
-    return pool[int(digits or "0", 16) % len(pool)]
+    return pool[int(hashlib.sha1(f"{slot}:{digits}".encode()).hexdigest()[:8], 16) % len(pool)]
 
 
 def dottore_remark(label, head_sha):
-    return pick_for_head(DOTTORE_REMARKS.get(label) or DOTTORE_REMARKS[""], head_sha)
+    return pick_for_head(DOTTORE_REMARKS.get(label) or DOTTORE_REMARKS[""], head_sha, "remark")
 
 
 def dottore_chibi(label, head_sha):
-    pose = pick_for_head(DOTTORE_CHIBIS.get(label) or DOTTORE_CHIBIS[""], head_sha)
+    pose = pick_for_head(DOTTORE_CHIBIS.get(label) or DOTTORE_CHIBIS[""], head_sha, f"chibi:{label}")
     repo = os.environ.get("DOTTORE_TOOLING_REPOSITORY") or "Pasta-Devs/Marinara-Engine"
     ref = os.environ.get("DOTTORE_TOOLING_SHA") or "staging"
     return f"https://raw.githubusercontent.com/{repo}/{ref}/.github/dottore-review/chibi/dottore-{pose}.png"
@@ -2927,8 +2930,8 @@ def render_merge_signal(review_obj, defects, notes, pre_merge, head_sha):
     body = [
         f"## 🎭 Dottore Review: {signal['title']}",
         "",
-        # Floated right of the verdict box and the counts beneath it.
-        f'<img src="{dottore_chibi(signal["label"], head_sha)}" alt="Dottore" width="128" align="right">',
+        # Floated right of the verdict box and the counts beneath it, inset from the comment's edge.
+        f'<img src="{dottore_chibi(signal["label"], head_sha)}" alt="Dottore" width="128" align="right" hspace="16">',
         "",
         f"> [!{signal['admonition']}]",
         f"> {signal['detail']}",
@@ -4019,7 +4022,7 @@ def patch_command_status_running(pr_num, head_sha, mode):
             COMMAND_STATUS_MARKER,
             "## 🎭 Dottore Review — Experiment in Progress",
             "",
-            f'<img src="{dottore_chibi("EXPERIMENT IN PROGRESS", head_sha)}" alt="Dottore" width="96" align="right">',
+            f'<img src="{dottore_chibi("EXPERIMENT IN PROGRESS", head_sha)}" alt="Dottore" width="96" align="right" hspace="16">',
             "",
             "> [!NOTE]",
             "> Reviewer workflow is running. The specimen is under observation.",
@@ -4037,7 +4040,7 @@ def patch_command_status_complete(pr_num, head_sha):
             COMMAND_STATUS_MARKER,
             "## 🎭 Dottore Review — Concluded",
             "",
-            f'<img src="{dottore_chibi("CONCLUDED", head_sha)}" alt="Dottore" width="96" align="right">',
+            f'<img src="{dottore_chibi("CONCLUDED", head_sha)}" alt="Dottore" width="96" align="right" hspace="16">',
             "",
             "> [!TIP]",
             "> Review posted. The specimen has left the observation table.",
