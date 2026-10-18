@@ -106,9 +106,9 @@ wrapper workflow passes its own secrets and variables to the shared review.
 Dottore repairs its open findings only on a pull request where someone asked: by ticking **Let Dottore fix the open
 findings on this PR** in the walkthrough, or by commenting `/dottore autofix` once. The tick counts only from someone
 with write access. While the box is ticked, each review that leaves findings open is followed by a repair; after
-one Dottore repair with no push from a person, it stops and says so (`MAX_AUTOFIX_ROUNDS` in `dottore_review.py`
-raises that). The repair is reviewed again by the auto dispatcher; with that workflow disabled, the next review
-waits for a `/dottore` comment. Repairs go to the pull request's own
+three Dottore repairs in a row with no push from a person, it stops and says so (`MAX_AUTOFIX_ROUNDS` in
+`dottore_review.py`). The repair is reviewed again by the auto dispatcher; with that workflow disabled, the next
+review waits for a `/dottore` comment, so each repair is one `/dottore` away. Repairs go to the pull request's own
 branch, so a pull request from a fork gets the repair prompt at the end of the walkthrough instead. The pushed commit
 names the findings it repairs, carries the runner's own account of the change, and ends with a `Dottore-Autofix`
 trailer that counts the rounds.

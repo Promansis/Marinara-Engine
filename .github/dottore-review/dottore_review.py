@@ -30,7 +30,7 @@ AUTOFIX_BOX = f"- [ ] 🩺 Let Dottore fix the open findings on this PR {AUTOFIX
 AUTOFIX_BOX_RE = re.compile(r"^- \[([ xX])\] .*" + re.escape(AUTOFIX_MARKER), re.M)
 # Each autofix commit carries this trailer; the push job writes it and autofix_rounds counts it.
 AUTOFIX_TRAILER = "Dottore-Autofix:"
-MAX_AUTOFIX_ROUNDS = 1
+MAX_AUTOFIX_ROUNDS = 3
 FINDING_MARKER_RE = re.compile(r"<!-- dottore:finding=([0-9a-f]{16}) -->")
 STATE_MARKER_RE = re.compile(r"<!-- dottore:last-reviewed-sha=([0-9a-f]{40}) -->")
 CONTRACT_STATE_RE = re.compile(r"<!-- dottore:contract-state=([A-Za-z0-9_=-]+) -->")
