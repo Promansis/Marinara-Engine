@@ -14,7 +14,7 @@ settings (**Settings → Secrets and variables → Actions**) and in `rules.json
 | `reviewer-prompt.md` | The prompts: one `## ` section per role, plus the voice, output and verdict shapes they share. It names no model. |
 | `rules.json` | This repository's review policy, read from the pull request's **base** branch, never its head (see Rules). |
 | `requirements.txt` | The two SDKs the reviewer imports, `openai` and `anthropic`. |
-| `chibi/` | Dottore's chibis, a pose per verdict, served raw from the tooling checkout the workflow pinned. |
+| `chibi/` | Dottore's chibis, a few poses per verdict and two for the command status window, served raw from the tooling checkout the workflow pinned. |
 | `../workflows/dottore-review.yml` | The trusted review workflow: `workflow_dispatch` here, `workflow_call` for another repository. Jobs: examination, repair check (resolves repaired threads), discharge (approval), repair and repair push. |
 | `../workflows/dottore-review-command.yml` | Dispatcher for `/dottore` comments and the autofix tick box (`issue_comment`). |
 | `../workflows/dottore-review-auto.yml` | Dispatcher for pull request events (`pull_request_target`): Dottore's own repair pushes, and every event when `DOTTORE_AUTO_REVIEW` is `true`. |
@@ -79,8 +79,9 @@ as a CodeRabbit finding does, and any of them makes the verdict Repair Required 
 low finding is carried across reviews, repaired by autofix and resolved before merge like any other. Severity grades the
 size of the repair. Nitpicks are notes: they are listed under Minor Imperfections, at most two, get no thread, and leave
 the verdict Viable, With Notes. The walkthrough states the verdict once in its title, with a remark in his voice and
-one of his chibis beside the verdict box and the counts (`chibi/`, a pose per verdict, both chosen by the head SHA and
-served raw from the pinned tooling checkout); the commit status carries the same verdict with the counts. The repair
+one of his chibis beside the verdict box and the counts (`chibi/`, a few poses per verdict, both chosen by the head SHA
+and served raw from the pinned tooling checkout; the command status window has poses of its own, so the two comments
+never show the same one); the commit status carries the same verdict with the counts. The repair
 contracts of the defects are repeated at the end of the walkthrough as a prompt for an agent of your own, for a pull
 request Dottore cannot push to.
 
