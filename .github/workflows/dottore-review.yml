@@ -127,10 +127,14 @@ jobs:
           git fetch --force origin "$BASE:refs/remotes/origin/$BASE"
           mkdir -p /tmp/dottore-review-tool
           cp .dottore-tooling/.github/dottore-review/{dottore_review.py,requirements.txt,reviewer-prompt.md} /tmp/dottore-review-tool/
-          # Caller-specific rules are trusted base content, never PR-head content; a repository without the file
-          # reviews with the defaults.
-          git show "origin/$BASE:.github/dottore-review/rules.json" > /tmp/dottore-review-tool/rules.json 2>/dev/null \
-            || echo '{}' > /tmp/dottore-review-tool/rules.json
+          # Caller-specific rules are trusted base content, never PR-head content. A repository without the file
+          # reviews with the defaults; one whose file cannot be read fails here, since an empty policy would let a
+          # repair through without its checks.
+          if git cat-file -e "origin/$BASE:.github/dottore-review/rules.json" 2>/dev/null; then
+            git show "origin/$BASE:.github/dottore-review/rules.json" > /tmp/dottore-review-tool/rules.json
+          else
+            echo '{}' > /tmp/dottore-review-tool/rules.json
+          fi
           rm -rf .dottore-tooling
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0

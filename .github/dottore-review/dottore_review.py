@@ -2934,6 +2934,14 @@ def merge_signal(review_obj, findings, nitpicks, pre_merge):
             "admonition": "WARNING",
             "detail": "Actionable findings or blocking proof gaps remain for this head.",
         }
+    if unexamined_candidates(review_obj):
+        # Chosen candidates went unjudged (the Lab Notes count them): nothing certifies this head as viable.
+        return {
+            "label": "REVIEW INCOMPLETE",
+            "title": "Examination Incomplete",
+            "admonition": "CAUTION",
+            "detail": "Some candidates went unjudged, so no viable verdict is certified; rerun the review.",
+        }
     has_notes = nitpicks or any(
         status_meta(item.get("status"))["label"] in {"WARN", "WARNING", "PENDING", "UNKNOWN"}
         for item in pre_merge
