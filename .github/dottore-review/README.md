@@ -14,7 +14,7 @@ settings (**Settings → Secrets and variables → Actions**) and in `rules.json
 | `reviewer-prompt.md` | The prompts: one `## ` section per role, plus the voice, output and verdict shapes they share. It names no model. |
 | `rules.json` | This repository's review policy, read from the pull request's **base** branch, never its head (see Rules). |
 | `requirements.txt` | The two SDKs the reviewer imports, `openai` and `anthropic`. |
-| `chibi/` | Dottore's chibis, a few poses per verdict and two for the command status window, served raw from the tooling checkout the workflow pinned. |
+| `chibi/` | Dottore's chibis, a few poses per verdict and three for the command status window, served raw from the tooling checkout the workflow pinned. |
 | `../workflows/dottore-review.yml` | The trusted review workflow: `workflow_dispatch` here, `workflow_call` for another repository. Jobs: examination, repair check (resolves repaired threads), discharge (approval), repair and repair push. |
 | `../workflows/dottore-review-command.yml` | Dispatcher for `/dottore` comments and the autofix tick box (`issue_comment`). |
 | `../workflows/dottore-review-auto.yml` | Dispatcher for pull request events (`pull_request_target`): Dottore's own repair pushes, and every event when `DOTTORE_AUTO_REVIEW` is `true`. |
