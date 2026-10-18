@@ -34,6 +34,19 @@ MAX_AUTOFIX_ROUNDS = 3
 FINDING_MARKER_RE = re.compile(r"<!-- dottore:finding=([0-9a-f]{16}) -->")
 STATE_MARKER_RE = re.compile(r"<!-- dottore:last-reviewed-sha=([0-9a-f]{40}) -->")
 CONTRACT_STATE_RE = re.compile(r"<!-- dottore:contract-state=([A-Za-z0-9_=-]+) -->")
+
+
+def walkthrough_header(body):
+    """The marker lines Dottore wrote at the top of a walkthrough, the only place a marker is read from: the rest of
+    the comment is model-written text, which a prompt planted in the specimen could make write a marker."""
+    lines = []
+    for line in str(body or "").splitlines():
+        if not line.startswith("<!-- dottore:"):
+            break
+        lines.append(line)
+    return "\n".join(lines)
+
+
 # The Doctor himself beside the verdict: one of his chibis from .github/dottore-review/chibi, served raw from the
 # tooling checkout the workflow pinned (DOTTORE_TOOLING_REPOSITORY and DOTTORE_TOOLING_SHA), so a branch's own chibis
 # render in its reviews. A few poses per verdict; chibi and remark are chosen by the head SHA so a head re-renders the
@@ -948,6 +961,8 @@ class ReviewRun:
     cost_limit: float = 0.0
     spent_usd: float = 0.0
     failures: dict = field(default_factory=dict)
+    # The lines a review thread can anchor to: the diff from the merge base, which is `allowed` in a full review.
+    anchorable: dict = field(default_factory=dict)
     # Each packet's changed files; empty means one packet of every changed file.
     chunks: list = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -1360,11 +1375,18 @@ def transient_error(exc):
     """
     if isinstance(exc, StreamStalled):
         return True
+    import anthropic
     import openai
 
+    if isinstance(exc, anthropic.APIStatusError):
+        # An error event inside a Claude stream carries the stream's 200 and names its kind in the body.
+        body = getattr(exc, "body", None) if isinstance(getattr(exc, "body", None), dict) else {}
+        error = body.get("error") if isinstance(body.get("error"), dict) else body
+        kind = error.get("type")
+        return exc.status_code == 429 or exc.status_code >= 500 or kind in {"overloaded_error", "api_error", "rate_limit_error"}
     if isinstance(exc, openai.APIStatusError):
         return exc.status_code == 429 or exc.status_code >= 500
-    return isinstance(exc, openai.APIError)
+    return isinstance(exc, (openai.APIError, anthropic.APIError))
 
 
 class CostLimitReached(Exception):
@@ -1384,8 +1406,9 @@ def chat(ctx, role, messages, tools, tool_choice, cache_key="", until=None, sett
     reply = claude_reply if settings["api"] == "anthropic" else openai_reply
     # The client retries a request that fails before its stream opens. This retries one that stalls after
     # it at once, at most MODEL_MAX_RETRIES times since each stall has already used a read timeout, and
-    # waits out a transient gateway error, which can arrive mid-stream with a request to resend. A role whose
-    # attempts fail MAX_ROLE_FAILURES times in a row, across its calls, stops: a dead endpoint costs no more.
+    # waits out a transient gateway error, which can arrive mid-stream with a request to resend. A role whose calls
+    # give up MAX_ROLE_FAILURES times in a row stops: a dead endpoint costs no more. Attempts are not counted, so a
+    # rate-limit burst across parallel calls does not trip the breaker before any of them retries.
     stalls = 0
     for attempt in range(len(RETRY_DELAYS) + 1):
         started = time.monotonic()
@@ -1402,12 +1425,12 @@ def chat(ctx, role, messages, tools, tool_choice, cache_key="", until=None, sett
             message, usage = reply(ctx, settings, messages, tools, tool_choice, read_timeout, started, timing, cache_key, stream_limit)
             break
         except Exception as exc:
-            with ctx.lock:
-                ctx.failures[role] = failures = ctx.failures.get(role, 0) + 1
             stalled = isinstance(exc, StreamStalled)
             stalls += stalled
             retry = stalls <= MODEL_MAX_RETRIES if stalled else transient_error(exc)
-            if not retry or attempt == len(RETRY_DELAYS) or failures >= MAX_ROLE_FAILURES:
+            if not retry or attempt == len(RETRY_DELAYS):
+                with ctx.lock:
+                    ctx.failures[role] = ctx.failures.get(role, 0) + 1
                 raise
             wait = 0 if stalled else RETRY_DELAYS[attempt]
             print(
@@ -2274,14 +2297,14 @@ def judge(ctx, candidate, verdict):
             path = tool_path(verdict.get("path") or finding.path)
         except ValueError:
             path = ""
-        anchored = finding.line in ctx.allowed.get(finding.path, {}).get(finding.side, set())
+        anchored = finding.line in ctx.anchorable.get(finding.path, {}).get(finding.side, set())
         nearby = anchored and path == finding.path and abs(line - finding.line) <= GITHUB_CONTEXT_LINES
         # A place a few lines from a changed-line anchor is the same spot (often a removal, which has no head line):
         # keep the anchor so the finding stays an inline thread.
         if path and head_line_exists(path, line) and not nearby:
             finding.path, finding.line, finding.side = path, line, "RIGHT"
     # A defect the checker places outside the changed lines is published in the walkthrough, not inline.
-    finding.outside_diff = finding.line not in ctx.allowed.get(finding.path, {}).get(finding.side, set())
+    finding.outside_diff = finding.line not in ctx.anchorable.get(finding.path, {}).get(finding.side, set())
     return outcome, finding, note, evidence
 
 
@@ -2333,9 +2356,11 @@ def verify_candidates(ctx, candidates, pool):
     for candidate in sorted(chosen, key=lambda candidate: (candidate.packet, candidate.path, candidate.line or 0)):
         groups.setdefault((candidate.packet, candidate.path), []).append(candidate)
     futures = {key: pool.submit(verify_file, ctx, key[0], group) for key, group in groups.items()}
-    counts = dict.fromkeys(("candidates", "confirmed", "rejected", "uncertain", "same_as", "unverified", "failed"), 0)
+    counts = dict.fromkeys(("candidates", "confirmed", "rejected", "uncertain", "same_as", "unverified", "failed", "capped"), 0)
     counts["candidates"] = len(candidates)
-    counts["unverified"] = len(candidates) - len(chosen)
+    # Claims past the cap are the lowest-severity ones and a rerun would skip them again, so they are counted apart
+    # from the chosen candidates the checker left without a verdict.
+    counts["capped"] = len(candidates) - len(chosen)
     results = {}
     for key, future in futures.items():
         try:
@@ -2494,14 +2519,14 @@ def agentic_review(ctx, mode, pool, threads=()):
                 "detail": f"{plural(unresolved, 'more candidate')} could be neither confirmed nor refuted from the code, so they were withheld.",
             }
         )
-    unexamined = counts["unverified"] + counts["failed"]
+    unexamined = counts["capped"] + counts["unverified"] + counts["failed"]
     if unexamined:
         merged["pre_merge_checks"].append(
             {
                 "name": "Verification Coverage",
                 "status": "warn",
                 "type": "Review Limitation",
-                "detail": f"{plural(unexamined, 'candidate')} went unexamined ({counts['unverified']} past the {MAX_VERIFIED_CANDIDATES}-claim cap, the time limit or without a verdict, {counts['failed']} after a checker error), so they were withheld.",
+                "detail": f"{plural(unexamined, 'candidate')} went unexamined ({counts['capped']} past the {MAX_VERIFIED_CANDIDATES}-claim cap, {counts['unverified']} after the time limit or without a verdict, {counts['failed']} after a checker error), so they were withheld.",
             }
         )
     return merged
@@ -2859,6 +2884,13 @@ def has_failed_review_check(pre_merge):
     )
 
 
+def unexamined_candidates(review_obj):
+    """Chosen candidates the checker did not judge (it failed, or the deadline left some without a verdict). Claims past
+    the cap do not count: a rerun would skip them again."""
+    counts = review_obj.get("verification") if isinstance(review_obj.get("verification"), dict) else {}
+    return any(isinstance(counts.get(key), int) and counts[key] > 0 for key in ("failed", "unverified"))
+
+
 def has_incomplete_review_check(pre_merge):
     names = {"review failed", "review skipped"}
     return any(str(item.get("name", "")).strip().lower() in names for item in pre_merge)
@@ -3195,9 +3227,11 @@ def render_walkthrough(
     checked = review_obj.get("what_i_checked") or []
     pre_merge = review_obj.get("pre_merge_checks") or []
     resolved = review_obj.get("resolved_since_last_review") or []
+    # An examination that left candidates unjudged is not recorded: the commit status fails on it, the head is not
+    # discharged, and the next review examines it in full.
     state_marker = (
         f"<!-- dottore:last-reviewed-sha={head_sha} -->"
-        if head_sha and not has_incomplete_review_check(pre_merge)
+        if head_sha and not has_incomplete_review_check(pre_merge) and not unexamined_candidates(review_obj)
         else "<!-- dottore:last-reviewed-sha=unrecorded -->"
     )
     # Every graded finding is a defect: a review thread and a hold on the verdict. The notes are the nitpicks.
@@ -3316,7 +3350,7 @@ def render_walkthrough(
     if invalid_findings or verification:
         body.extend(["", "### 📝 Lab Notes"])
     if verification:
-        unexamined = verification.get("unverified", 0) + verification.get("failed", 0)
+        unexamined = verification.get("capped", 0) + verification.get("unverified", 0) + verification.get("failed", 0)
         body.append(
             f"- {plural(verification.get('candidates', 0), 'candidate')} examined against the code: "
             f"{verification.get('confirmed', 0)} confirmed, {verification.get('rejected', 0)} rejected, "
@@ -3700,14 +3734,14 @@ def prior_review_contract_state(pr_num):
         return []
     comment = latest_walkthrough_comment(pr_num)
     if comment:
-        entries = decode_contract_state_from_body(comment.get("body", ""))
+        entries = decode_contract_state_from_body(walkthrough_header(comment.get("body")))
         if entries:
             return entries
     return prior_inline_contract_state(pr_num)
 
 
 def is_completed_review_body(body):
-    if not STATE_MARKER_RE.search(body):
+    if not STATE_MARKER_RE.search(walkthrough_header(body)):
         return False
     lowered = body.lower()
     failed_markers = (
@@ -3725,7 +3759,7 @@ def discover_last_reviewed_sha(pr_num):
         body = comment.get("body", "")
         if not is_completed_review_body(body):
             continue
-        matches = STATE_MARKER_RE.findall(body)
+        matches = STATE_MARKER_RE.findall(walkthrough_header(body))
         if matches:
             return matches[-1]
     return None
@@ -3799,6 +3833,14 @@ def review_base_commit(base, base_ref, mode):
     return git_out(["merge-base", target, "HEAD"]) or target, "full"
 
 
+def anchorable_lines(allowed, base_ref, mode):
+    """GitHub anchors a review thread to the pull request's diff from its merge base, not to an incremental review's
+    base: a line the previous head changed and this head changed back has no thread, so its finding goes in the
+    walkthrough."""
+    merge_base = git_out(["merge-base", f"origin/{base_ref}", "HEAD"]) if mode == "incremental" else ""
+    return touched_lines(merge_base) if merge_base else allowed
+
+
 def parse_command_mode():
     body = os.environ.get("DOTTORE_COMMENT_BODY", "")
     if "/dottore" not in body:
@@ -3830,6 +3872,8 @@ def produce_review(args):
     patch_command_status_running(pr_num, head_sha, effective_mode)
     files = changed_files(base)
     if not files and effective_mode == "incremental":
+        # The last walkthrough (a base merge or a repeated /dottore changed nothing) is carried to this head.
+        carried = (latest_walkthrough_comment(pr_num) or {}).get("body") or ""
         write_skipped_review(
             "No New Diff Reviewed",
             "Dottore already reviewed this head; this run did not inspect new changes.",
@@ -3841,6 +3885,7 @@ def produce_review(args):
                 "base_ref": base_ref,
                 "mode": effective_mode,
                 "review_state": "no_new_diff_reviewed",
+                "carried_walkthrough": carried if STATE_MARKER_RE.search(walkthrough_header(carried)) else "",
             },
         )
         print("Dottore telemetry: skipped=no_new_diff_reviewed", flush=True)
@@ -3887,6 +3932,7 @@ def produce_review(args):
         packets.append(finder_packet(review_target, focus_note, prior_contract_context, bundle))
     stats = build_stats("".join(bundles))
     print(f"Dottore bundles: packets={len(bundles)}; chars={','.join(str(len(bundle)) for bundle in bundles)}", flush=True)
+    allowed = touched_lines(base)
     try:
         models = role_models()
         ctx = ReviewRun(
@@ -3896,7 +3942,8 @@ def produce_review(args):
             bundles=bundles,
             packets=packets,
             cache_key=f"dottore-{os.environ.get('GITHUB_REPOSITORY', 'local')}-{pr_num or head_sha[:12]}",
-            allowed=touched_lines(base),
+            allowed=allowed,
+            anchorable=anchorable_lines(allowed, base_ref, effective_mode),
             models=models,
             stats=stats,
             base=base,
@@ -3970,8 +4017,32 @@ def findings_for_inline_comments(findings):
     return [finding for finding in findings if is_defect(finding)]
 
 
+CARRY_NOTE_RE = re.compile(r"\n\n> 🎭 \*No new diff since [^\n]*\*\s*$")
+
+
+def carry_walkthrough(body, head_sha):
+    """The last walkthrough, now recorded for this head: its verdict, threads state and discharge stand, because the
+    code it examined is this head's code. A fresh examination is one `/dottore full` away."""
+    reviewed = STATE_MARKER_RE.search(walkthrough_header(body))
+    carried = body.replace(reviewed.group(0), f"<!-- dottore:last-reviewed-sha={head_sha} -->", 1)
+    return CARRY_NOTE_RE.sub("", carried).rstrip() + (
+        f"\n\n> 🎭 *No new diff since `{short_ref(reviewed.group(1))}`; that examination stands for `{short_ref(head_sha)}`."
+        " Comment `/dottore full` for a fresh one.*"
+    )
+
+
+def carried_title(review_obj):
+    match = re.search(r"^## 🎭 Dottore Review: (.+)$", review_obj.get("carried_walkthrough") or "", re.M)
+    return match.group(1).strip() if match else ""
+
+
 def render_review(args):
     review_obj = json.loads(pathlib.Path(args.review_json).read_text("utf-8"))
+    if review_obj.get("review_state") == "no_new_diff_reviewed" and carried_title(review_obj):
+        head_sha = review_obj.get("head_sha") or os.environ.get("PR_HEAD_SHA", "")
+        pathlib.Path("review.md").write_text(carry_walkthrough(review_obj["carried_walkthrough"], head_sha), "utf-8")
+        pathlib.Path("inline-comments.json").write_text("[]\n", "utf-8")
+        return
     base = args.base or review_obj.get("review_base")
     if not base:
         pr_num = os.environ.get("PR_NUM", "")
@@ -3991,8 +4062,13 @@ def render_review(args):
     )
     pathlib.Path("review.md").write_text(walkthrough, "utf-8")
     # The counts the walkthrough published, for the commit status: the raw report still holds the withheld ones.
-    defects = sum(1 for finding in findings if is_defect(finding))
-    review_obj["published"] = {"defects": defects, "notes": len(findings) - defects + len(nitpicks)}
+    defects = [finding for finding in findings if is_defect(finding)]
+    notes = [finding for finding in findings if not is_defect(finding)] + list(nitpicks)
+    review_obj["published"] = {
+        "defects": len(defects),
+        "notes": len(notes),
+        "verdict": merge_signal(review_obj, defects, notes, review_obj.get("pre_merge_checks") or [])["title"],
+    }
     pathlib.Path(args.review_json).write_text(json.dumps(review_obj, indent=2, sort_keys=True) + "\n", "utf-8")
     inline_findings = findings_for_inline_comments([finding for finding in findings if not finding.outside_diff])
     inline = [
@@ -4010,10 +4086,13 @@ def render_review(args):
 
 
 def find_command_status_comment(pr_num):
-    for comment in issue_comments(pr_num):
-        if COMMAND_STATUS_MARKER in comment.get("body", ""):
-            return comment.get("id")
-    return None
+    """The latest status window Dottore posted; another author's comment carrying the marker cannot be edited."""
+    ids = [
+        comment.get("id")
+        for comment in issue_comments(pr_num)
+        if COMMAND_STATUS_MARKER in comment.get("body", "") and (comment.get("user") or {}).get("login") == DOTTORE_LOGIN
+    ]
+    return ids[-1] if ids else None
 
 
 def patch_command_status_running(pr_num, head_sha, mode):
@@ -4034,7 +4113,7 @@ def patch_command_status_running(pr_num, head_sha, mode):
     patch_or_create_command_status(pr_num, body)
 
 
-def patch_command_status_complete(pr_num, head_sha):
+def patch_command_status_complete(pr_num, head_sha, carried=False):
     body = "\n".join(
         [
             COMMAND_STATUS_MARKER,
@@ -4043,7 +4122,9 @@ def patch_command_status_complete(pr_num, head_sha):
             f'<img src="{dottore_chibi("CONCLUDED", head_sha)}" alt="Dottore" width="96" align="right" hspace="16">',
             "",
             "> [!TIP]",
-            "> Review posted. The specimen has left the observation table.",
+            "> No new diff since the last examination; its verdict stands for this head. Comment `/dottore full` for a fresh one."
+            if carried
+            else "> Review posted. The specimen has left the observation table.",
             "",
             f"- **{commit_line(head_sha)}**",
         ]
@@ -4126,7 +4207,7 @@ def filter_duplicate_inline_comments(pr_num, comments):
 def post_review(args):
     pr_num = os.environ["PR_NUM"]
     body = pathlib.Path(args.review_md).read_text("utf-8")
-    head_sha_match = STATE_MARKER_RE.search(body)
+    head_sha_match = STATE_MARKER_RE.search(walkthrough_header(body))
     head_sha = head_sha_match.group(1) if head_sha_match else os.environ.get(
         "PR_HEAD_SHA", ""
     )
@@ -4150,7 +4231,7 @@ def post_review(args):
     else:
         run_gh(["pr", "comment", pr_num, "--body-file", args.review_md], check=True)
 
-    patch_command_status_complete(pr_num, head_sha)
+    patch_command_status_complete(pr_num, head_sha, carried=bool(carried_title(load_review_for_status(args.review_json))))
 
     comments = json.loads(pathlib.Path(args.inline_json).read_text("utf-8"))
     comments = filter_duplicate_inline_comments(pr_num, comments)
@@ -4197,7 +4278,8 @@ def autofix_task(threads):
     parts = [
         "Fix the open code-review findings below in this repository. Read AGENTS.md (and CLAUDE.md if present) for its"
         " rules first.",
-        "Make the smallest change that repairs each one and touch only the files it needs.",
+        "Make the smallest change that repairs each one and touch only the files it needs. Never edit a file under"
+        " .github/workflows/: if a finding needs that, leave it and say so.",
         "If a finding is wrong or cannot be fixed safely, leave that code alone and say why in your final message.",
         "Do not run tests, builds or commands: CI runs this repository's checks on your change after you finish, and"
         " you do not commit.",
@@ -4310,7 +4392,7 @@ def approve(args):
         if asked:
             run_gh(["pr", "comment", pr_num, "--repo", repo, "--body", f"🎭 Dottore already discharged `{short_ref(head)}`."], check=True)
         return
-    body = (latest_walkthrough_comment(pr_num) or {}).get("body") or ""
+    body = walkthrough_header((latest_walkthrough_comment(pr_num) or {}).get("body"))
     reviewed = STATE_MARKER_RE.search(body)
     missing = []
     if not reviewed or reviewed.group(1) != head:
@@ -4370,14 +4452,17 @@ def status_state(args):
         print("state=failure")
         print("description=The control record is malformed; Dottore cannot certify this examination.")
         return
-    counts = review_obj.get("verification") if isinstance(review_obj.get("verification"), dict) else {}
-    if any(isinstance(counts.get(key), int) and counts[key] > 0 for key in ("failed", "unverified")):
+    if unexamined_candidates(review_obj):
         print("state=failure")
         print("description=Some candidates went unexamined, so Dottore cannot certify this examination; rerun the review.")
         return
     if has_incomplete_review_check(pre_merge or []):
         print("state=failure")
         print("description=Dottore Review posted a failure or skipped report; rerun after repairing the review control.")
+        return
+    if carried := carried_title(review_obj):
+        print("state=success")
+        print(f"description={carried}: no new diff since the last examination, which stands for this head."[:140])
         return
     # The verdict in GitHub's 140 characters, from the counts the render step published; the raw report's severities
     # stand in when the render did not run.
@@ -4389,7 +4474,7 @@ def status_state(args):
         items = [SimpleNamespace(severity=item.get("severity", "medium")) for item in review_obj["findings"] if isinstance(item, dict)]
         defects = [item for item in items if is_defect(item)]
         notes = [item for item in items if not is_defect(item)] + review_obj["nitpicks"]
-    signal = merge_signal(review_obj, defects, notes, pre_merge)
+    title = (published or {}).get("verdict") or merge_signal(review_obj, defects, notes, pre_merge)["title"]
     if defects:
         detail = f"{plural(len(defects), 'defect')} isolated, awaiting repair"
     elif notes:
@@ -4397,7 +4482,7 @@ def status_state(args):
     else:
         detail = "no defects isolated"
     print("state=success")
-    print(f"description={signal['title']}: {detail}."[:140])
+    print(f"description={title}: {detail}."[:140])
 
 
 def main():
@@ -4412,6 +4497,7 @@ def main():
     post = sub.add_parser("post")
     post.add_argument("--review-md", default="review.md")
     post.add_argument("--inline-json", default="inline-comments.json")
+    post.add_argument("--review-json", default="review.json")
     resolve = sub.add_parser("resolve")
     resolve.add_argument("--review-json", default="review.json")
     autofix = sub.add_parser("autofix-prompt")
