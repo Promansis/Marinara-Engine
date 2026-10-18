@@ -54,9 +54,10 @@ A review posts:
   the counts in its text; failure only when the review did not run or did not finish.
 
 The verdicts: **Viable** (nothing found) and **Viable, With Notes** (nitpicks only) discharge the head; **Repair
-Required** (defects open) and **Specimen Unstable** (a high or blocking defect, or a failed control) hold it; **No New
-Diff Reviewed** means the head was already reviewed; **Specimen Unexamined** means the review did not finish, so nothing
-is reported as found.
+Required** (defects open) and **Specimen Unstable** (a high or blocking defect, or a failed control) hold it; **Specimen
+Unexamined** means the review did not finish, so nothing is reported as found. A head with no new diff since the last
+examination (a base merge, a repeated `/dottore`) keeps that examination's walkthrough and verdict, recorded for the
+new head; `/dottore full` examines it afresh.
 
 ## How a review runs
 
@@ -122,8 +123,9 @@ A repair runs in two jobs after the review job:
   `pnpm install --frozen-lockfile && pnpm check`.
 - **`push`** commits a patch that passed, with a `Dottore-Autofix:` trailer, and pushes it with the Dottore GitHub
   App's token, because a push made with `GITHUB_TOKEN` starts no CI and no review. That push starts the next review,
-  whose repair check resolves the threads the code confirms. A patch that changed nothing, failed the checks, or met a
-  branch that moved meanwhile is reported in a comment instead.
+  whose repair check resolves the threads the code confirms. A patch that changed nothing, failed the checks, met a
+  branch that moved meanwhile, or was rejected by the push (one editing a workflow file, which the App's token cannot
+  push, so the repair is told not to) is reported in a comment instead.
 
 The App needs **Contents: Read and write** on the repository, installed there, with its ID and private key in the
 `DOTTORE_APP_ID` and `DOTTORE_APP_PRIVATE_KEY` secrets. A calling workflow passes both.
