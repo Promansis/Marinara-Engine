@@ -175,7 +175,7 @@ function openTrackerLookMenu(controlId: string) {
  * Open the place a searchable control lives in and scroll to it. The player switch lives in the Music DJ agent's
  * detail; when that agent is not installed there is no detail, so open its Agents catalog entry instead. The
  * custom-parameters row lives in the shared parameters editor (see `openChatParameters`), and the Tracker look
- * controls live in the Tracker panel's header menu (see `openTrackerLookMenu`).
+ * controls live in the Tracker panel's header menu (see `openTrackerLookMenu`). The help-pages repair actions live in the help viewer.
  */
 export function openSettingsControlHome(controlId: string, panel: NonNullable<SettingsSearchableControlMeta["home"]>) {
   const ui = useUIStore.getState();
@@ -188,6 +188,9 @@ export function openSettingsControlHome(controlId: string, panel: NonNullable<Se
     ui.openAgentDetail(MUSIC_DJ_AGENT_ID);
   } else if (panel === "tracker") {
     return openTrackerLookMenu(controlId);
+  } else if (panel === "docs") {
+    // The help-pages repair actions live in the help viewer's header.
+    ui.openModal("docs-viewer");
   } else ui.openRightPanel(panel);
   scrollToSettingsAnchor(controlId);
 }

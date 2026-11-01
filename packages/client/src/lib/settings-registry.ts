@@ -66,6 +66,7 @@ export function settingsControlLocationPath(
   if (home === "music-dj") return `${localize("Agents")} › ${localize("Music DJ")}`;
   if (home === "chat-parameters") return `${localize("Chat Settings")} › ${localize("Advanced Parameters")}`;
   if (home === "tracker") return `${localize("Tracker")} › ${localize("Panel settings")}`;
+  if (home === "docs") return localize("Documentation");
   return settingsLocationPath(sectionId, localize);
 }
 
@@ -96,7 +97,7 @@ export function settingsControlDescription(control: SettingsSearchableControlMet
   return t(control.descriptionKey, control.description);
 }
 
-export type SettingsControlKind = "Toggle" | "Slider" | "Select" | "Input" | "Picker" | "Button group";
+export type SettingsControlKind = "Toggle" | "Slider" | "Select" | "Input" | "Picker" | "Button" | "Button group";
 
 export type SettingsSearchableControlMeta = {
   id: string;
@@ -121,10 +122,10 @@ export type SettingsSearchableControlMeta = {
   kind: SettingsControlKind;
   /**
    * Set when the control lives somewhere other than Settings. A jump opens that place (the Connections panel, the
-   * Music DJ agent's detail, or the active chat's Advanced Parameters) and scrolls to the element with id `settings-control-<id>` (see
+   * Music DJ agent's detail, the help viewer, or the active chat's Advanced Parameters) and scrolls to the element with id `settings-control-<id>` (see
    * `openSettingsControlHome` in `state-navigation.ts`).
    */
-  home?: "connections" | "music-dj" | "chat-parameters" | "tracker";
+  home?: "connections" | "music-dj" | "chat-parameters" | "tracker" | "docs";
 };
 
 export type SettingsSearchResult =
@@ -157,8 +158,8 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     id: "docs-language",
     sectionId: "application",
     labelKey: "settings.application.docsLanguage.label",
-    label: "Documentation Language",
-    description: "Choose the language for Marinara's built-in guides.",
+    label: "Help pages language",
+    description: "Choose the language for Marinara's help pages, or follow the app language.",
     descriptionKey: "settings.search.docsLanguage.description",
     aliases: [
       "documentation",
@@ -191,6 +192,28 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
       "हिन्दी",
     ],
     kind: "Select",
+  },
+  {
+    id: "docs-download-replace",
+    sectionId: "application",
+    labelKey: "settings.application.docsLanguage.downloadAndReplace",
+    label: "Download & replace docs",
+    description: "Download the help pages in the language you picked and replace the ones installed now.",
+    descriptionKey: "settings.search.docsDownloadReplace.description",
+    aliases: ["documentation", "guides", "help pages", "download docs", "reinstall docs", "language pack"],
+    kind: "Button",
+    home: "docs",
+  },
+  {
+    id: "docs-fix",
+    sectionId: "application",
+    labelKey: "settings.application.docsLanguage.fix",
+    label: "Fix documentation",
+    description: "Check the installed help pages and repair them if they are broken or incomplete.",
+    descriptionKey: "settings.search.docsFix.description",
+    aliases: ["documentation", "guides", "help pages", "repair docs", "broken docs", "docs missing"],
+    kind: "Button",
+    home: "docs",
   },
   {
     id: "confirm-before-delete",

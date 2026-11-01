@@ -102,19 +102,25 @@ test("soup/language picker searches native names and English names with keyboard
   expect(errors).toEqual([]);
 });
 
-test("soup/documentation picker stages a language without switching or downloading a pack", async ({ page }) => {
-  const writes: string[] = [];
+test("soup/help pages language follows the app, and an explicit pick applies at once", async ({ page }) => {
+  const writes: unknown[] = [];
+  let active = "en";
   await page.route("**/api/docs/language", async (route) => {
-    if (route.request().method() !== "GET") writes.push(route.request().method());
+    const request = route.request();
+    if (request.method() !== "GET") {
+      const body = request.postDataJSON() as { language: string };
+      writes.push(body);
+      active = body.language;
+    }
     await route.fulfill({
       json: {
-        active: "en",
-        configured: true,
+        active,
+        configured: active !== "en" || writes.length > 0,
         install: null,
         integrity: { ok: true },
         available: [
           { code: "en", label: "English", englishLabel: "English", installed: true, translated: 10, total: 10 },
-          { code: "de", label: "Deutsch", englishLabel: "German", installed: false, translated: 0, total: 10 },
+          { code: "de", label: "Deutsch", englishLabel: "German", installed: true, translated: 10, total: 10 },
         ],
       },
     });
@@ -122,12 +128,15 @@ test("soup/documentation picker stages a language without switching or downloadi
   await page.goto("/");
   await clickTopbarPanel(page, "settings");
   const trigger = page.locator("#settings-docs-language-select");
+  await expect(page.getByText("Help pages language", { exact: true })).toBeVisible();
+  await expect(trigger).toContainText("Same as app language");
+  await expect(page.getByRole("button", { name: "Fix documentation", exact: true })).toHaveCount(0);
   await trigger.click();
   await page.getByRole("combobox", { name: "Search languages" }).fill("german");
   await page.getByRole("option", { name: /Deutsch/ }).click();
   await expect(trigger).toContainText("Deutsch");
-  await expect(page.getByRole("button", { name: "Download & Replace", exact: true })).toBeVisible();
-  expect(writes).toEqual([]);
+  await expect.poll(() => writes).toEqual([{ language: "de" }]);
+  await expect(page.getByText(/Help pages are still in/)).toHaveCount(0);
 });
 
 test("soup/onboarding language picker closes on Escape without ending the tutorial", async ({ page }) => {

@@ -221,7 +221,7 @@ export function LanguagePicker({ id, label, value, options, onChange, disabled }
             aria-label={label}
             data-language-picker-portal="true"
             onKeyDown={handleKeyDown}
-            className="mari-chrome-token-scope fixed z-[10001] flex flex-col overflow-x-hidden overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] shadow-xl"
+            className="mari-chrome-token-scope fixed z-[calc(var(--mari-layer-omnibar)+1)] flex flex-col overflow-x-hidden overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] shadow-xl"
             style={position ?? { visibility: "hidden" }}
           >
             <div className="flex shrink-0 items-center gap-2 border-b border-[var(--border)] p-2.5">

@@ -50,3 +50,33 @@ export function normalizeDocsLanguage(value: unknown): string | null {
   const code = value.trim().toLowerCase();
   return DOCS_LANGUAGE_CODE_RE.test(code) ? code : null;
 }
+
+/**
+ * The docs pack that matches an app language, or null when none does. The full
+ * lowercased code wins (pt-BR finds the "pt-br" pack), then a base-language
+ * match ("pt" still finds "pt-br"). Used when help pages follow the app language.
+ */
+export function matchDocsLanguage(appLanguage: string | null | undefined, codes: readonly string[]): string | null {
+  const lower = appLanguage?.toLowerCase() || DEFAULT_DOCS_LANGUAGE;
+  const base = lower.split("-")[0];
+  // ponytail: the base-language fallback maps any "zh-*" app locale to "zh-hans"; if a zh-Hant UI locale is ever
+  // added it needs its own pack or an explicit exclusion here.
+  return codes.find((code) => code === lower) ?? codes.find((code) => code.split("-")[0] === base) ?? null;
+}
+
+/**
+ * Whether help pages follow the app language. An explicit stored choice wins; with none, a server that holds
+ * no stored language follows, and one that already holds a pick keeps it (existing installs keep reading it).
+ */
+export function docsFollowsAppLanguage(stored: boolean | null | undefined, configured: boolean): boolean {
+  return stored ?? !configured;
+}
+
+/**
+ * The stored follow flag after a request to download the follow target. A first download stores the flag, since
+ * the server holds a language afterwards and `docsFollowsAppLanguage` would otherwise stop following; an explicit
+ * choice, either way, is left alone.
+ */
+export function pinDocsFollow(stored: boolean | null | undefined): boolean {
+  return stored ?? true;
+}

@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 import { useState, useEffect, useCallback, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { APP_VERSION, type SettingsTabId } from "@marinara-engine/shared";
+import { APP_VERSION, matchDocsLanguage, type SettingsTabId } from "@marinara-engine/shared";
 import { MOBILE_SHELL_MEDIA_QUERY, useUIStore, type ChatModeShortcut } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { useTrackAchievement } from "../../hooks/use-achievements";
@@ -583,14 +583,12 @@ function OnboardingTutorialInner() {
   const activeDocsLanguage = docsLanguageStatus?.active ?? "en";
   // Pre-select the user's existing choice whenever one has been made, so an
   // untouched picker is a guaranteed no-op on tutorial replays. Only on a
-  // genuinely fresh install (nothing configured yet) suggest the UI language.
-  // Match the full lowercased UI locale first (pt-BR → the "pt-br" pack), then
-  // fall back to a base-language match ("pt" would still find "pt-br").
-  const uiLanguageLower = uiLanguage?.toLowerCase() ?? "en";
-  const uiLanguageBase = uiLanguageLower.split("-")[0];
-  const uiMatchedDocsLanguage =
-    docsLanguageOptions.find((option) => option.code === uiLanguageLower)?.code ??
-    docsLanguageOptions.find((option) => option.code.split("-")[0] === uiLanguageBase)?.code;
+  // genuinely fresh install (nothing configured yet) suggest the UI language
+  // (pt-BR → the "pt-br" pack, then a base-language match).
+  const uiMatchedDocsLanguage = matchDocsLanguage(
+    uiLanguage ?? "en",
+    docsLanguageOptions.map((option) => option.code),
+  );
   const suggestedDocsLanguage =
     docsLanguageStatus?.configured || !uiMatchedDocsLanguage ? activeDocsLanguage : uiMatchedDocsLanguage;
   const effectiveDocsLanguagePick = docsLanguagePick ?? suggestedDocsLanguage;
@@ -603,6 +601,11 @@ function OnboardingTutorialInner() {
    * failure only means the user stays on English (fixable later in Settings).
    */
   const commitDocsLanguage = useCallback(() => {
+    // A touched picker is an explicit pick. An untouched one on a fresh install keeps the help pages following
+    // the app language (the same default Settings shows), stored once the status has loaded; an explicit
+    // "no" already stored is never overwritten.
+    if (docsLanguagePick !== null) useUIStore.getState().setDocsFollowsApp(false);
+    else if (docsLanguageStatus && !docsLanguageStatus.configured) useUIStore.getState().pinDocsFollowing();
     if (effectiveDocsLanguagePick === activeDocsLanguage) return;
     const info = docsLanguageOptions.find((option) => option.code === effectiveDocsLanguagePick);
     const label = info?.label ?? effectiveDocsLanguagePick;
@@ -629,7 +632,15 @@ function OnboardingTutorialInner() {
           }),
         );
       });
-  }, [activeDocsLanguage, docsLanguageOptions, effectiveDocsLanguagePick, localizeUi, queryClient]);
+  }, [
+    activeDocsLanguage,
+    docsLanguageOptions,
+    docsLanguagePick,
+    docsLanguageStatus?.configured,
+    effectiveDocsLanguagePick,
+    localizeUi,
+    queryClient,
+  ]);
 
   useEffect(() => {
     const updateViewportMode = () => setIsMobileViewport(getViewportWidth() < MOBILE_BREAKPOINT);

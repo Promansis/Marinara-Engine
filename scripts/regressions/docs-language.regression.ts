@@ -25,8 +25,15 @@ import { fileURLToPath } from "node:url";
 const fixtureRoot = mkdtempSync(join(tmpdir(), "marinara-docs-pack-regression-"));
 process.env.DATA_DIR = fixtureRoot;
 
-const { normalizeDocsLanguage, DEFAULT_DOCS_LANGUAGE, DOCS_LANGUAGE_LABELS, docsLanguageDirection } =
-  await import("../../packages/shared/src/constants/docs-languages.ts");
+const {
+  normalizeDocsLanguage,
+  matchDocsLanguage,
+  docsFollowsAppLanguage,
+  pinDocsFollow,
+  DEFAULT_DOCS_LANGUAGE,
+  DOCS_LANGUAGE_LABELS,
+  docsLanguageDirection,
+} = await import("../../packages/shared/src/constants/docs-languages.ts");
 const { rankDocSearchResults, resolvePhysical, supportedDocLanguages } =
   await import("../../packages/server/src/routes/docs.routes.ts");
 const {
@@ -238,6 +245,56 @@ try {
       ruleBody.includes("direction: ltr"),
       `${cssRule} must force direction: ltr in CSS — the chat HTML path strips dir attributes, so the stylesheet is the only protection there`,
     );
+  }
+
+  // ── Help pages follow the app language (soup settings panel item 6) ──
+  assert.equal(matchDocsLanguage("pt-BR", ["en", "es", "pt-br"]), "pt-br", "a full locale matches its own pack");
+  assert.equal(matchDocsLanguage("pt", ["en", "pt-br"]), "pt-br", "a base language finds a regional pack");
+  assert.equal(matchDocsLanguage("ar", ["en", "es"]), null, "no pack for the app language means no match (English)");
+  assert.equal(matchDocsLanguage("es", []), null, "nothing available means no match");
+  assert.equal(matchDocsLanguage("zh-Hans", ["en", "zh-hans"]), "zh-hans", "Simplified Chinese finds its pack");
+  assert.equal(matchDocsLanguage("zh", ["en", "zh-hans"]), "zh-hans", "a bare zh finds the Simplified Chinese pack");
+
+  // The follow flag: nothing stored follows on a fresh install, and the first download of the follow target
+  // pins it, so the server holding a language afterwards (configured) does not silently stop the following.
+  assert.equal(docsFollowsAppLanguage(null, false), true, "a fresh install follows the app language");
+  assert.equal(docsFollowsAppLanguage(undefined, true), false, "an existing server pick stays explicit");
+  const pinned = pinDocsFollow(null);
+  assert.equal(pinned, true, "the first download of the follow target stores that the pages follow");
+  assert.equal(docsFollowsAppLanguage(pinned, true), true, "once configured, a pinned follow keeps following");
+  assert.equal(docsFollowsAppLanguage(false, false), false, "an explicit choice never follows");
+  assert.equal(pinDocsFollow(false), false, "pinning never overwrites an explicit choice");
+  assert.equal(pinDocsFollow(true), true);
+  const clientSrc = join(repoRoot, "packages", "client", "src");
+  const docsHook = readFileSync(join(clientSrc, "hooks", "use-docs-language.ts"), "utf8");
+  assert.ok(
+    docsHook.includes("const following = docsFollowsAppLanguage(stored, data?.configured ?? false);"),
+    "a stored help-pages choice from before the follow option stays explicit; only a fresh install follows",
+  );
+  const docsControl = readFileSync(
+    join(clientSrc, "components", "panels", "settings", "DocsLanguageControl.tsx"),
+    "utf8",
+  );
+  const docsViewer = readFileSync(join(clientSrc, "components", "modals", "DocsViewerModal.tsx"), "utf8");
+  assert.ok(
+    docsViewer.includes("<DocsViewerLanguageStrip />"),
+    "the help viewer shows the language picker and repair actions",
+  );
+  for (const anchor of ["settings-control-docs-download-replace", "settings-control-docs-fix"]) {
+    assert.ok(
+      docsControl.includes(`<span id="${anchor}" className="inline-flex">`),
+      `the viewer wraps its own action in the ${anchor} anchor, so the search jump focuses that action`,
+    );
+  }
+  const settingsPanelSource = readFileSync(join(clientSrc, "components", "panels", "SettingsPanel.tsx"), "utf8");
+  assert.ok(
+    !settingsPanelSource.includes("useFixDocsLanguage") && settingsPanelSource.includes("<DocsLanguagePicker"),
+    "Settings keeps only the picker; the repair actions moved to the help viewer",
+  );
+  const registrySource = readFileSync(join(clientSrc, "lib", "settings-registry.ts"), "utf8");
+  for (const id of ["docs-download-replace", "docs-fix"]) {
+    const entry = registrySource.slice(registrySource.indexOf(`id: "${id}"`));
+    assert.ok(entry.slice(0, entry.indexOf("\n  },")).includes('home: "docs"'), `${id} jumps to the help viewer`);
   }
 
   console.log(`docs-language regression passed: languages ${supported.join(", ")}; fixture pack at ${packDir}`);

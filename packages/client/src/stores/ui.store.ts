@@ -15,6 +15,7 @@ import {
   LOCAL_SIDECAR_CONNECTION_ID,
   normalizeImageStyleProfileSettings,
   normalizeQuoteFormat,
+  pinDocsFollow,
   SETTINGS_TABS,
   type ImageStyleProfileSettings,
   type SettingsTabId,
@@ -944,6 +945,12 @@ interface UIState {
   // ── Settings (persisted) ──
   fontSize: FontSize;
   language: AppLanguage;
+  /**
+   * Whether the help pages follow the app language. null = never chosen: follows while the server holds no
+   * stored help-pages language (an existing choice stays explicit); the first download of the follow target
+   * stores true (`pinDocsFollowing`).
+   */
+  docsFollowsApp: boolean | null;
   /** Font size for chat messages (px) */
   chatFontSize: number;
   /** Custom font family name (empty = default Inter) */
@@ -1431,6 +1438,9 @@ interface UIState {
   // Settings actions
   setFontSize: (size: FontSize) => void;
   setLanguage: (language: AppLanguage) => void;
+  setDocsFollowsApp: (follows: boolean | null) => void;
+  /** Store "follows" when nothing is stored yet; an explicit choice is kept (see `pinDocsFollow`). */
+  pinDocsFollowing: () => void;
   setChatFontSize: (size: number) => void;
   setFontFamily: (family: string) => void;
   setChatWidgetPreset: (preset: ChatWidgetPreset) => void;
@@ -1709,6 +1719,7 @@ export function pickSyncedSettings(state: UIState) {
     chatBackgroundBlur: state.chatBackgroundBlur,
     conversationBackgroundImageOpacity: state.conversationBackgroundImageOpacity,
     language: state.language,
+    docsFollowsApp: state.docsFollowsApp,
     fontFamily: state.fontFamily,
     chatWidgetPreset: state.chatWidgetPreset,
     chatWidgetFont: state.chatWidgetFont,
@@ -1974,6 +1985,7 @@ export function pickPersistedUIState(state: UIState) {
     conversationBackgroundImageOpacity: state.conversationBackgroundImageOpacity,
     fontSize: state.fontSize,
     language: state.language,
+    docsFollowsApp: state.docsFollowsApp,
     chatFontSize: state.chatFontSize,
     fontFamily: state.fontFamily,
     chatWidgetPreset: state.chatWidgetPreset,
@@ -2288,6 +2300,7 @@ export const useUIStore = create<UIState>()(
         // Settings defaults
         fontSize: 17 as FontSize,
         language: DEFAULT_APP_LANGUAGE as AppLanguage,
+        docsFollowsApp: null,
         chatFontSize: 16,
         fontFamily: "",
         chatWidgetPreset: "default" as ChatWidgetPreset,
@@ -3181,6 +3194,8 @@ export const useUIStore = create<UIState>()(
         // Settings actions
         setFontSize: (size) => set({ fontSize: size }),
         setLanguage: (language) => set({ language }),
+        setDocsFollowsApp: (docsFollowsApp) => set({ docsFollowsApp }),
+        pinDocsFollowing: () => set((state) => ({ docsFollowsApp: pinDocsFollow(state.docsFollowsApp) })),
         setChatFontSize: (size) => set({ chatFontSize: size }),
         setFontFamily: (family) => set({ fontFamily: family }),
         setChatWidgetPreset: (preset) =>

@@ -5,6 +5,7 @@ import { useCodeBlockCopy } from "../../hooks/use-code-block-copy";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, BookOpen, FileText, Search, X } from "lucide-react";
 import { Modal } from "../ui/Modal";
+import { DocsViewerLanguageStrip } from "../panels/settings/DocsLanguageControl";
 import { cn } from "../../lib/utils";
 import { renderMarkdownBlocks, applyInlineMarkdown } from "../../lib/markdown";
 import { useDocContent, useDocsIndex, useDocsSearch, type DocSummary } from "../../hooks/use-docs";
@@ -626,240 +627,247 @@ export function DocsViewerModal({
       width="max-w-6xl"
       mobileFullscreen
     >
-      <div className="flex h-full min-h-0 gap-3 sm:h-[min(46rem,calc(90dvh-6.5rem))]">
-        {/* Guide list / search */}
-        <aside
-          className={cn("flex w-full min-w-0 flex-col sm:w-64 sm:shrink-0", selected !== null && "hidden sm:flex")}
-        >
-          <div className="mb-2 flex shrink-0 items-center gap-2 rounded-xl border border-[var(--border)]/60 bg-[var(--background)]/70 px-3 py-2">
-            <Search size="0.875rem" className="shrink-0 text-[var(--muted-foreground)]" />
-            <input
-              type="search"
-              dir="auto"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder={localizeUi("ui.modals.docsviewermodal.searchAllGuides")}
-              aria-label={localizeUi("ui.modals.docsviewermodal.searchDocumentation")}
-              className="min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]/65 [&::-webkit-search-cancel-button]:hidden [&::-webkit-search-cancel-button]:appearance-none"
-            />
-            {searchQuery ? (
-              <button
-                type="button"
-                onClick={() => setSearchQuery("")}
-                className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                aria-label={localizeUi("ui.modals.docsviewermodal.clearDocumentationSearch")}
-              >
-                <X size="0.6875rem" />
-              </button>
-            ) : null}
-          </div>
+      <div className="flex h-full min-h-0 flex-col gap-2 sm:h-[min(46rem,calc(90dvh-6.5rem))]">
+        {/* Help-pages language and the pack repair actions live here, with the pages they affect. */}
+        <DocsViewerLanguageStrip />
+        <div className="flex min-h-0 flex-1 gap-3">
+          {/* Guide list / search */}
+          <aside
+            className={cn("flex w-full min-w-0 flex-col sm:w-64 sm:shrink-0", selected !== null && "hidden sm:flex")}
+          >
+            <div className="mb-2 flex shrink-0 items-center gap-2 rounded-xl border border-[var(--border)]/60 bg-[var(--background)]/70 px-3 py-2">
+              <Search size="0.875rem" className="shrink-0 text-[var(--muted-foreground)]" />
+              <input
+                type="search"
+                dir="auto"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder={localizeUi("ui.modals.docsviewermodal.searchAllGuides")}
+                aria-label={localizeUi("ui.modals.docsviewermodal.searchDocumentation")}
+                className="min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]/65 [&::-webkit-search-cancel-button]:hidden [&::-webkit-search-cancel-button]:appearance-none"
+              />
+              {searchQuery ? (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                  aria-label={localizeUi("ui.modals.docsviewermodal.clearDocumentationSearch")}
+                >
+                  <X size="0.6875rem" />
+                </button>
+              ) : null}
+            </div>
 
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pe-1">
-            {indexLoading ? (
-              <p className="px-1 py-2 text-xs text-[var(--muted-foreground)]">
-                {localizeUi("ui.modals.docsviewermodal.loadingGuides")}
-              </p>
-            ) : indexError || !index ? (
-              <p className="px-1 py-2 text-xs text-[var(--muted-foreground)]">
-                {localizeUi("ui.modals.docsviewermodal.couldNotLoadTheDocumentationListTheDocsFolder")}
-              </p>
-            ) : searching ? (
-              searchResults.length === 0 ? (
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pe-1">
+              {indexLoading ? (
                 <p className="px-1 py-2 text-xs text-[var(--muted-foreground)]">
-                  {searchFetching
-                    ? localizeUi("ui.modals.docsviewermodal.searching")
-                    : localizeUi("ui.modals.docsviewermodal.noMatchesForValue1", { value1: trimmedQuery })}
+                  {localizeUi("ui.modals.docsviewermodal.loadingGuides")}
                 </p>
-              ) : (
-                <div className={cn("space-y-1.5", searchFetching && "opacity-60")}>
-                  {searchResults.map((result) => (
-                    <button
-                      key={result.path}
-                      type="button"
-                      onClick={() => selectDoc(result.path, highlightTerm)}
-                      className={cn(
-                        "flex w-full flex-col gap-1 rounded-lg border px-2.5 py-2 text-start transition-colors",
-                        selected === result.path
-                          ? "border-[var(--primary)]/40 bg-[var(--accent)]"
-                          : "border-transparent hover:border-[var(--border)] hover:bg-[var(--accent)]/60",
-                      )}
-                    >
-                      <span className="flex items-center gap-2">
-                        <FileText size="0.875rem" className="shrink-0 text-[var(--muted-foreground)]" />
-                        <span
-                          dir="auto"
-                          className="min-w-0 flex-1 truncate text-xs font-medium text-[var(--foreground)]"
-                        >
-                          {highlightTermNodes(result.title, highlightTerm)}
-                        </span>
-                        {docsLanguage !== "en" && result.language === "en" ? englishBadge : null}
-                        <span className="shrink-0 rounded-full border border-[var(--border)]/60 bg-black/5 px-1.5 py-0.5 text-[0.5625rem] text-[var(--muted-foreground)]/80 dark:bg-white/6">
-                          {result.matches}
-                        </span>
-                      </span>
-                      {result.snippets.map((snippet) => (
-                        <span
-                          key={`${result.path}-${snippet.line}`}
-                          dir="auto"
-                          className="block truncate ps-6 text-[0.625rem] leading-snug text-[var(--muted-foreground)]/80"
-                        >
-                          {highlightTermNodes(snippet.text, highlightTerm)}
-                        </span>
-                      ))}
-                    </button>
-                  ))}
-                </div>
-              )
-            ) : groups.length === 0 ? (
-              <p className="px-1 py-2 text-xs text-[var(--muted-foreground)]">
-                {localizeUi("ui.modals.docsviewermodal.noGuidesFoundInTheDocsFolder")}
-              </p>
-            ) : (
-              groups.map((group) => (
-                <div key={group.dir || "root"}>
-                  <p
-                    dir="auto"
-                    className={cn(
-                      "px-1 pb-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]/70",
-                      sidebarHeaderTracked && "uppercase tracking-[0.16em]",
-                    )}
-                  >
-                    {dirLabel(group.dir, docsLanguage)}
+              ) : indexError || !index ? (
+                <p className="px-1 py-2 text-xs text-[var(--muted-foreground)]">
+                  {localizeUi("ui.modals.docsviewermodal.couldNotLoadTheDocumentationListTheDocsFolder")}
+                </p>
+              ) : searching ? (
+                searchResults.length === 0 ? (
+                  <p className="px-1 py-2 text-xs text-[var(--muted-foreground)]">
+                    {searchFetching
+                      ? localizeUi("ui.modals.docsviewermodal.searching")
+                      : localizeUi("ui.modals.docsviewermodal.noMatchesForValue1", { value1: trimmedQuery })}
                   </p>
-                  <div className="space-y-1">
-                    {group.docs.map((entry) => (
+                ) : (
+                  <div className={cn("space-y-1.5", searchFetching && "opacity-60")}>
+                    {searchResults.map((result) => (
                       <button
-                        key={entry.path}
+                        key={result.path}
                         type="button"
-                        onClick={() => selectDoc(entry.path)}
-                        title={
-                          entry.updatedAt
-                            ? localizeUi("ui.modals.docsviewermodal.lastUpdatedValue1", {
-                                value1: formatUpdatedAt(entry.updatedAt, uiLocale),
-                              })
-                            : undefined
-                        }
+                        onClick={() => selectDoc(result.path, highlightTerm)}
                         className={cn(
-                          "flex w-full items-start gap-2 rounded-lg border px-2.5 py-2 text-start transition-colors",
-                          selected === entry.path
-                            ? "border-[var(--primary)]/40 bg-[var(--accent)] text-[var(--foreground)]"
-                            : "border-transparent text-[var(--muted-foreground)] hover:border-[var(--border)] hover:bg-[var(--accent)]/60 hover:text-[var(--foreground)]",
+                          "flex w-full flex-col gap-1 rounded-lg border px-2.5 py-2 text-start transition-colors",
+                          selected === result.path
+                            ? "border-[var(--primary)]/40 bg-[var(--accent)]"
+                            : "border-transparent hover:border-[var(--border)] hover:bg-[var(--accent)]/60",
                         )}
                       >
-                        <FileText size="0.875rem" className="mt-0.5 shrink-0" />
-                        <span className="min-w-0 flex-1">
-                          <span dir="auto" className="block break-words text-xs font-medium leading-snug">
-                            {entry.title}
+                        <span className="flex items-center gap-2">
+                          <FileText size="0.875rem" className="shrink-0 text-[var(--muted-foreground)]" />
+                          <span
+                            dir="auto"
+                            className="min-w-0 flex-1 truncate text-xs font-medium text-[var(--foreground)]"
+                          >
+                            {highlightTermNodes(result.title, highlightTerm)}
                           </span>
-                          <span dir="ltr" className="block truncate text-[0.625rem] text-[var(--muted-foreground)]/70">
-                            {entry.path}
+                          {docsLanguage !== "en" && result.language === "en" ? englishBadge : null}
+                          <span className="shrink-0 rounded-full border border-[var(--border)]/60 bg-black/5 px-1.5 py-0.5 text-[0.5625rem] text-[var(--muted-foreground)]/80 dark:bg-white/6">
+                            {result.matches}
                           </span>
                         </span>
-                        {docsLanguage !== "en" && entry.language === "en" ? englishBadge : null}
+                        {result.snippets.map((snippet) => (
+                          <span
+                            key={`${result.path}-${snippet.line}`}
+                            dir="auto"
+                            className="block truncate ps-6 text-[0.625rem] leading-snug text-[var(--muted-foreground)]/80"
+                          >
+                            {highlightTermNodes(snippet.text, highlightTerm)}
+                          </span>
+                        ))}
                       </button>
                     ))}
                   </div>
+                )
+              ) : groups.length === 0 ? (
+                <p className="px-1 py-2 text-xs text-[var(--muted-foreground)]">
+                  {localizeUi("ui.modals.docsviewermodal.noGuidesFoundInTheDocsFolder")}
+                </p>
+              ) : (
+                groups.map((group) => (
+                  <div key={group.dir || "root"}>
+                    <p
+                      dir="auto"
+                      className={cn(
+                        "px-1 pb-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]/70",
+                        sidebarHeaderTracked && "uppercase tracking-[0.16em]",
+                      )}
+                    >
+                      {dirLabel(group.dir, docsLanguage)}
+                    </p>
+                    <div className="space-y-1">
+                      {group.docs.map((entry) => (
+                        <button
+                          key={entry.path}
+                          type="button"
+                          onClick={() => selectDoc(entry.path)}
+                          title={
+                            entry.updatedAt
+                              ? localizeUi("ui.modals.docsviewermodal.lastUpdatedValue1", {
+                                  value1: formatUpdatedAt(entry.updatedAt, uiLocale),
+                                })
+                              : undefined
+                          }
+                          className={cn(
+                            "flex w-full items-start gap-2 rounded-lg border px-2.5 py-2 text-start transition-colors",
+                            selected === entry.path
+                              ? "border-[var(--primary)]/40 bg-[var(--accent)] text-[var(--foreground)]"
+                              : "border-transparent text-[var(--muted-foreground)] hover:border-[var(--border)] hover:bg-[var(--accent)]/60 hover:text-[var(--foreground)]",
+                          )}
+                        >
+                          <FileText size="0.875rem" className="mt-0.5 shrink-0" />
+                          <span className="min-w-0 flex-1">
+                            <span dir="auto" className="block break-words text-xs font-medium leading-snug">
+                              {entry.title}
+                            </span>
+                            <span
+                              dir="ltr"
+                              className="block truncate text-[0.625rem] text-[var(--muted-foreground)]/70"
+                            >
+                              {entry.path}
+                            </span>
+                          </span>
+                          {docsLanguage !== "en" && entry.language === "en" ? englishBadge : null}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            {index ? (
+              <div className="mt-2 shrink-0 border-t border-[var(--border)]/60 pt-2">
+                <p className="text-[0.625rem] text-[var(--muted-foreground)]/70">
+                  {localizeUi("ui.modals.docsviewermodal.alsoOnDiskAt")}
+                </p>
+                <code
+                  dir="ltr"
+                  className="block break-all text-[0.625rem] text-[var(--muted-foreground)]"
+                  title={index.root}
+                >
+                  {index.root}
+                </code>
+              </div>
+            ) : null}
+          </aside>
+
+          {/* Reader */}
+          <div
+            className={cn(
+              "min-w-0 flex-1 flex-col sm:flex sm:border-s sm:border-[var(--border)]/60 sm:ps-3",
+              selected === null ? "hidden sm:flex" : "flex",
+            )}
+          >
+            {selected === null ? (
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 text-[var(--muted-foreground)]">
+                <BookOpen size="1.5rem" className="opacity-60" />
+                <p className="text-xs">{localizeUi("ui.modals.docsviewermodal.pickAGuideFromTheListToStartReading")}</p>
+              </div>
+            ) : (
+              <>
+                <div className="mb-2 flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      writeSavedPlace({ doc: null, scrollTop: 0 });
+                      setSelectedState(null);
+                    }}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] sm:hidden"
+                    aria-label={localizeUi("ui.modals.docsviewermodal.backToGuideList")}
+                  >
+                    <ArrowLeft size="0.875rem" />
+                  </button>
+                  <p className="min-w-0 truncate text-[0.625rem] text-[var(--muted-foreground)]/70">
+                    {/* The path is an LTR isolate so an RTL UI locale cannot
+                      reorder it against the updated-at clause beside it. */}
+                    <span dir="ltr" className="[unicode-bidi:isolate]">
+                      {localizeUi("ui.modals.docsviewermodal.docs")}
+                      {selected}
+                    </span>
+                    <span>
+                      {doc?.updatedAt
+                        ? localizeUi("ui.modals.docsviewermodal.lastUpdatedValue1_f97aff7", {
+                            value1: formatUpdatedAt(doc.updatedAt, uiLocale),
+                          })
+                        : ""}
+                    </span>
+                  </p>
+                  {doc && docsLanguage !== "en" && doc.language === "en" ? englishBadge : null}
                 </div>
-              ))
+                <div
+                  key={selected}
+                  ref={setScrollEl}
+                  onScroll={(event) => {
+                    if (selected) writeSavedPlace({ doc: selected, scrollTop: event.currentTarget.scrollTop });
+                  }}
+                  className="min-h-0 flex-1 overflow-y-auto pe-1"
+                >
+                  {docLoading ? (
+                    <p className="py-2 text-xs text-[var(--muted-foreground)]">
+                      {localizeUi("ui.panels.ttsconfigcard.loading")}
+                    </p>
+                  ) : docError || !doc ? (
+                    <p className="py-2 text-xs text-[var(--muted-foreground)]">
+                      {localizeUi("ui.modals.docsviewermodal.couldNotLoadThisGuide")}
+                    </p>
+                  ) : (
+                    <div
+                      // Keyed on the rendered tree's identity so React remounts
+                      // (never reconciles) the subtree the highlight/copy effects
+                      // mutate — see renderedKey above.
+                      key={renderedKey}
+                      // Direction follows the SERVED doc, not the pack: an English
+                      // fallback file inside an RTL pack must stay LTR.
+                      dir={docsLanguageDirection(doc.language)}
+                      // Code blocks wrap instead of scrolling horizontally: the shared
+                      // .mari-md-codeblock rule is unlayered CSS (beats the utilities
+                      // layer, hence the !), and the corner-anchored lang tag + Copy
+                      // button would float over the text of a scrolled block.
+                      className="mari-message-content docs-reader-content whitespace-pre-wrap break-words text-sm text-[var(--foreground)] [&_.mari-md-codeblock]:whitespace-pre-wrap! [&_.mari-md-codeblock]:[overflow-wrap:anywhere]! [&_.mari-md-codeblock]:pb-12!"
+                      onClick={handleContentClick}
+                    >
+                      {rendered}
+                    </div>
+                  )}
+                </div>
+              </>
             )}
           </div>
-          {index ? (
-            <div className="mt-2 shrink-0 border-t border-[var(--border)]/60 pt-2">
-              <p className="text-[0.625rem] text-[var(--muted-foreground)]/70">
-                {localizeUi("ui.modals.docsviewermodal.alsoOnDiskAt")}
-              </p>
-              <code
-                dir="ltr"
-                className="block break-all text-[0.625rem] text-[var(--muted-foreground)]"
-                title={index.root}
-              >
-                {index.root}
-              </code>
-            </div>
-          ) : null}
-        </aside>
-
-        {/* Reader */}
-        <div
-          className={cn(
-            "min-w-0 flex-1 flex-col sm:flex sm:border-s sm:border-[var(--border)]/60 sm:ps-3",
-            selected === null ? "hidden sm:flex" : "flex",
-          )}
-        >
-          {selected === null ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-2 text-[var(--muted-foreground)]">
-              <BookOpen size="1.5rem" className="opacity-60" />
-              <p className="text-xs">{localizeUi("ui.modals.docsviewermodal.pickAGuideFromTheListToStartReading")}</p>
-            </div>
-          ) : (
-            <>
-              <div className="mb-2 flex shrink-0 items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    writeSavedPlace({ doc: null, scrollTop: 0 });
-                    setSelectedState(null);
-                  }}
-                  className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] sm:hidden"
-                  aria-label={localizeUi("ui.modals.docsviewermodal.backToGuideList")}
-                >
-                  <ArrowLeft size="0.875rem" />
-                </button>
-                <p className="min-w-0 truncate text-[0.625rem] text-[var(--muted-foreground)]/70">
-                  {/* The path is an LTR isolate so an RTL UI locale cannot
-                      reorder it against the updated-at clause beside it. */}
-                  <span dir="ltr" className="[unicode-bidi:isolate]">
-                    {localizeUi("ui.modals.docsviewermodal.docs")}
-                    {selected}
-                  </span>
-                  <span>
-                    {doc?.updatedAt
-                      ? localizeUi("ui.modals.docsviewermodal.lastUpdatedValue1_f97aff7", {
-                          value1: formatUpdatedAt(doc.updatedAt, uiLocale),
-                        })
-                      : ""}
-                  </span>
-                </p>
-                {doc && docsLanguage !== "en" && doc.language === "en" ? englishBadge : null}
-              </div>
-              <div
-                key={selected}
-                ref={setScrollEl}
-                onScroll={(event) => {
-                  if (selected) writeSavedPlace({ doc: selected, scrollTop: event.currentTarget.scrollTop });
-                }}
-                className="min-h-0 flex-1 overflow-y-auto pe-1"
-              >
-                {docLoading ? (
-                  <p className="py-2 text-xs text-[var(--muted-foreground)]">
-                    {localizeUi("ui.panels.ttsconfigcard.loading")}
-                  </p>
-                ) : docError || !doc ? (
-                  <p className="py-2 text-xs text-[var(--muted-foreground)]">
-                    {localizeUi("ui.modals.docsviewermodal.couldNotLoadThisGuide")}
-                  </p>
-                ) : (
-                  <div
-                    // Keyed on the rendered tree's identity so React remounts
-                    // (never reconciles) the subtree the highlight/copy effects
-                    // mutate — see renderedKey above.
-                    key={renderedKey}
-                    // Direction follows the SERVED doc, not the pack: an English
-                    // fallback file inside an RTL pack must stay LTR.
-                    dir={docsLanguageDirection(doc.language)}
-                    // Code blocks wrap instead of scrolling horizontally: the shared
-                    // .mari-md-codeblock rule is unlayered CSS (beats the utilities
-                    // layer, hence the !), and the corner-anchored lang tag + Copy
-                    // button would float over the text of a scrolled block.
-                    className="mari-message-content docs-reader-content whitespace-pre-wrap break-words text-sm text-[var(--foreground)] [&_.mari-md-codeblock]:whitespace-pre-wrap! [&_.mari-md-codeblock]:[overflow-wrap:anywhere]! [&_.mari-md-codeblock]:pb-12!"
-                    onClick={handleContentClick}
-                  >
-                    {rendered}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
         </div>
       </div>
     </Modal>
