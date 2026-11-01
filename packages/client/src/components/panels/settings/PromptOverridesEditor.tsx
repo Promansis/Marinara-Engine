@@ -29,6 +29,7 @@ type PromptOverridesEditorProps = {
   description?: string;
   help?: string;
   keys?: readonly string[];
+  excludeKeys?: readonly string[];
   preferredKey?: string;
   defaultOpen?: boolean;
 };
@@ -116,6 +117,7 @@ export function PromptOverridesEditor({
   description = "Edit the templates used by image and sprite prompt builders.",
   help = "Global templates for registered prompt builders, including the conversation selfie prompt writer.",
   keys,
+  excludeKeys,
   preferredKey = PREFERRED_PROMPT_KEY,
   defaultOpen = false,
 }: PromptOverridesEditorProps) {
@@ -160,21 +162,30 @@ export function PromptOverridesEditor({
 
       {hasOpened && (
         <div id={contentId} hidden={!isOpen} className="border-t border-[var(--border)]/70 p-3 pt-2.5">
-          <PromptOverridesEditorBody keys={keys} preferredKey={preferredKey} />
+          <PromptOverridesEditorBody keys={keys} excludeKeys={excludeKeys} preferredKey={preferredKey} />
         </div>
       )}
     </section>
   );
 }
 
-function PromptOverridesEditorBody({ keys, preferredKey }: { keys?: readonly string[]; preferredKey: string }) {
+function PromptOverridesEditorBody({
+  keys,
+  excludeKeys,
+  preferredKey,
+}: {
+  keys?: readonly string[];
+  excludeKeys?: readonly string[];
+  preferredKey: string;
+}) {
   const { t: localizeUi } = useUiTranslation();
   const { data: entries = [], isLoading: loadingEntries, isError: listFailed } = usePromptOverrides();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const keySet = useMemo(() => (keys ? new Set(keys) : null), [keys]);
+  const excludeKeySet = useMemo(() => (excludeKeys ? new Set(excludeKeys) : null), [excludeKeys]);
   const filteredEntries = useMemo(
-    () => (keySet ? entries.filter((entry) => keySet.has(entry.key)) : entries),
-    [entries, keySet],
+    () => entries.filter((entry) => (!keySet || keySet.has(entry.key)) && !excludeKeySet?.has(entry.key)),
+    [entries, keySet, excludeKeySet],
   );
   const selectedEntry = useMemo(
     () => filteredEntries.find((entry) => entry.key === selectedKey),

@@ -256,7 +256,7 @@ const TABS = [
   },
   {
     id: "generations",
-    label: "Generations",
+    label: "Images & Video",
     labelKey: "settings.tabs.generations.label",
     icon: WandSparkles,
     description: "Image/video defaults and prompt templates.",
@@ -762,6 +762,7 @@ const IMAGE_PROMPT_MODE_OPTIONS: Array<{ value: ImagePromptMode; label: string }
 function ImageDimensionRow({
   label,
   help,
+  hint,
   width,
   height,
   onCommit,
@@ -769,6 +770,7 @@ function ImageDimensionRow({
 }: {
   label: string;
   help: string;
+  hint?: string;
   width: number;
   height: number;
   onCommit: (width: number, height: number) => void;
@@ -785,6 +787,7 @@ function ImageDimensionRow({
           {label}
           <HelpTooltip text={help} />
         </div>
+        {hint && <div className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">{hint}</div>}
         <div className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
           {localizeUi("ui.panels.imagedimensionrow.pixelsClampedFrom64To4096")}
         </div>
@@ -2889,6 +2892,7 @@ function ImageGenerationSettings() {
           controlId="image-portrait-size"
           label={localizeUi("settings.controls.portraits.label")}
           help={localizeUi("settings.controls.portraits.help")}
+          hint={localizeUi("settings.controls.portraits.hint")}
           width={imagePortraitWidth}
           height={imagePortraitHeight}
           onCommit={setImagePortraitDimensions}
@@ -5387,16 +5391,6 @@ function AppearanceSettings({ group = "app" }: { group?: AppearanceGroup }) {
 
 function GenerationsSettings() {
   const { t: localizeUi } = useUiTranslation();
-  const { data: installedCapabilities = [], isLoading } = useInstalledCapabilityPackages();
-  const openRightPanel = useUIStore((state) => state.openRightPanel);
-  const openAgentCatalog = useUIStore((state) => state.openAgentCatalog);
-  const illustratorInstalled = installedCapabilities.some(
-    (capability) => capability.id === "illustrator" && capability.status === "active",
-  );
-  const openDownloadAgents = useCallback(() => {
-    openRightPanel("agents");
-    openAgentCatalog("illustrator");
-  }, [openAgentCatalog, openRightPanel]);
 
   return (
     <div className="flex flex-col gap-3">
@@ -5404,54 +5398,35 @@ function GenerationsSettings() {
         {localizeUi("ui.panels.generationssettings.globalDefaultsForGeneratedImagesVideosAndReusablePrompt")}
       </SettingsIntro>
 
-      {isLoading ? (
-        <div className="flex items-center justify-center gap-2 rounded-xl border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-highlight-bg)] px-4 py-8 text-xs text-[var(--marinara-chat-chrome-panel-muted)]">
-          <Loader2 size="1rem" className="animate-spin" />
-          {localizeUi("ui.panels.generationssettings.checkingInstalledAgents")}
-        </div>
-      ) : !illustratorInstalled ? (
-        <div className="flex flex-col items-center gap-3 rounded-xl border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-highlight-bg)] px-5 py-8 text-center">
-          <WandSparkles size="1.5rem" className="text-[var(--marinara-chat-chrome-highlight-text)]" />
-          <p className="max-w-md text-xs leading-relaxed text-[var(--marinara-chat-chrome-panel-text)]">
-            {localizeUi("ui.panels.generationssettings.downloadIllustratorAgentFirstFromAgentsTabToEnable")}
-          </p>
-          <button type="button" onClick={openDownloadAgents} className={SETTINGS_PRIMARY_FULL_BUTTON_CLASS}>
-            <Download size="0.8125rem" />
-            {localizeUi("ui.panels.generationssettings.downloadIllustratorAgent")}
-          </button>
-        </div>
-      ) : (
-        <>
-          <OverallGenerationSettings />
-          <ImageGenerationSettings />
-          <VideoGenerationSettings />
-          <div id={getSettingsSectionAnchorId("prompt-overrides")} className="flex flex-col gap-3">
-            <div className="flex items-center justify-between gap-2 rounded-lg border border-[var(--border)]/70 bg-[var(--background)]/35 px-3 py-2">
-              <div className="min-w-0">
-                <div className="text-xs font-semibold text-[var(--foreground)]">
-                  {localizeUi("settings.sections.promptOverrides.title")}
-                </div>
-                <div className="mt-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
-                  {localizeUi("settings.sections.promptOverrides.description")}
-                </div>
-              </div>
+      <OverallGenerationSettings />
+      <ImageGenerationSettings />
+      <VideoGenerationSettings />
+      <div id={getSettingsSectionAnchorId("prompt-overrides")} className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-[var(--border)]/70 bg-[var(--background)]/35 px-3 py-2">
+          <div className="min-w-0">
+            <div className="text-xs font-semibold text-[var(--foreground)]">
+              {localizeUi("settings.sections.promptOverrides.title")}
             </div>
-            <PromptOverridesEditor
-              title={localizeUi("settings.prompts.video.title")}
-              description={localizeUi("settings.prompts.video.description")}
-              help={localizeUi("settings.prompts.video.help")}
-              keys={VIDEO_PROMPT_TEMPLATE_KEYS}
-              preferredKey="game.video"
-            />
-            <PromptOverridesEditor
-              title={localizeUi("settings.prompts.image.title")}
-              description={localizeUi("settings.prompts.image.description")}
-              help={localizeUi("settings.prompts.image.help")}
-              preferredKey="game.npcPortrait"
-            />
+            <div className="mt-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
+              {localizeUi("settings.sections.promptOverrides.description")}
+            </div>
           </div>
-        </>
-      )}
+        </div>
+        <PromptOverridesEditor
+          title={localizeUi("settings.prompts.video.title")}
+          description={localizeUi("settings.prompts.video.description")}
+          help={localizeUi("settings.prompts.video.help")}
+          keys={VIDEO_PROMPT_TEMPLATE_KEYS}
+          preferredKey="game.video"
+        />
+        <PromptOverridesEditor
+          title={localizeUi("settings.prompts.image.title")}
+          description={localizeUi("settings.prompts.image.description")}
+          help={localizeUi("settings.prompts.image.help")}
+          excludeKeys={VIDEO_PROMPT_TEMPLATE_KEYS}
+          preferredKey="game.npcPortrait"
+        />
+      </div>
     </div>
   );
 }

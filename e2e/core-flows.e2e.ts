@@ -587,7 +587,7 @@ test("Settings switches share one centered track and thumb geometry", async ({ p
   for (const { id, label } of [
     { id: "general", label: "General" },
     { id: "appearance", label: "Appearance" },
-    { id: "generations", label: "Generations" },
+    { id: "generations", label: "Images & Video" },
     { id: "addons", label: "Addons" },
     { id: "import", label: "Imports" },
     { id: "advanced", label: "Advanced" },
