@@ -150,4 +150,49 @@ assert.match(
   "Phone top-bar controls must keep fixed desktop-style sizes instead of filling the row",
 );
 
+// The Tracker look controls live in the Tracker panel's header menu; a search for one only navigates.
+const trackerHeaderSource = readFileSync(
+  new URL("../../packages/client/src/features/tracker-panel/components/TrackerSidebarHeader.tsx", import.meta.url),
+  "utf8",
+);
+const trackerShowStart = stateNavigationSource.indexOf("function showTrackerLookMenu");
+const trackerJumpEnd = stateNavigationSource.indexOf("export function openSettingsControlHome");
+assert.ok(trackerShowStart >= 0 && trackerJumpEnd > trackerShowStart, "The Tracker jump functions must exist");
+const trackerJumpSource = stateNavigationSource.slice(trackerShowStart, trackerJumpEnd);
+assert.equal(
+  trackerJumpSource.match(/setTrackerPanelEnabled/gu)?.length,
+  1,
+  "A search must not change the saved Tracker switch; only the toast action may turn it on",
+);
+assert.match(
+  trackerJumpSource,
+  /onClick: \(\) => \{\s*useUIStore\.getState\(\)\.setTrackerPanelEnabled\(true\);/u,
+  "Turning the Tracker panel on needs the person's explicit action",
+);
+assert.match(
+  trackerJumpSource,
+  /confirmEditorLeave\([\s\S]*?\)\) return;\s*ui\.closeAllDetails\(\);/u,
+  "The Tracker jump must ask before leaving an editor, then close the details covering the panel",
+);
+assert.match(
+  trackerJumpSource,
+  /closeRightPanel\(\);\s*requestAnimationFrame\(showMenu\)/u,
+  "On the phone shell the right panel closes and the menu opens on the next frame",
+);
+assert.match(
+  trackerJumpSource,
+  /scrollToSettingsAnchor\(controlId, \(\) => useUIStore\.getState\(\)\.consumeTrackerLookMenuRequest\(\)\)/u,
+  "A request nobody picked up must be cleared",
+);
+assert.doesNotMatch(
+  trackerHeaderSource,
+  /TRACKER_TOOLBAR_ITEM_ORDER = \[[^\]]*"look"/u,
+  "The Panel settings button sits beside the gear, outside the gear toolbar",
+);
+assert.match(
+  trackerHeaderSource,
+  /aria-label=\{localizeUi\("ui\.trackerPanel\.lookMenu\.panelSettings"\)\}\s*aria-expanded=\{lookOpen\}/u,
+  "The Panel settings button needs a name and its expanded state",
+);
+
 console.info("Music DJ availability and floating UI regressions passed.");

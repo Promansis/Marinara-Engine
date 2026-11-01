@@ -1,4 +1,4 @@
-import { useRef, useState, type FocusEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FocusEvent, type KeyboardEvent, type ReactNode } from "react";
 import {
   BarChart3,
   Braces,
@@ -10,16 +10,24 @@ import {
   PanelRight,
   Plus,
   Settings2,
+  SlidersHorizontal,
   Trash2,
   Unlock,
 } from "lucide-react";
 import { HelpTooltip } from "../../../components/ui/HelpTooltip";
 import { TrackerPanelIcon } from "../../../components/ui/TrackerPanelIcon";
 import { TrackerSizeTierIcon } from "../../../components/ui/TrackerSizeTierIcon";
-import type { TrackerPanelSide, TrackerPanelSizeProfile, TrackerStatDisplayMode } from "../../../stores/ui.store";
+import {
+  useUIStore,
+  type TrackerLookMenuView,
+  type TrackerPanelSide,
+  type TrackerPanelSizeProfile,
+  type TrackerStatDisplayMode,
+} from "../../../stores/ui.store";
 import { cn } from "../../../lib/utils";
 import type { TrackerEditMode } from "../tracker-panel.types";
 import { useTranslation as useUiTranslation } from "react-i18next";
+import { TrackerLookMenu } from "./TrackerLookMenu";
 
 const TRACKER_PANEL_SIZE_SEQUENCE: TrackerPanelSizeProfile[] = ["compact", "standard", "expanded"];
 const TRACKER_PANEL_SIZE_LABELS: Record<TrackerPanelSizeProfile, string> = {
@@ -79,7 +87,12 @@ export function TrackerSidebarHeader({
 }) {
   const { t: localizeUi } = useUiTranslation();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [lookOpen, setLookOpen] = useState(false);
+  const [lookView, setLookView] = useState<TrackerLookMenuView>("menu");
   const [toolbarFocusIndex, setToolbarFocusIndex] = useState(0);
+  const lookRequest = useUIStore((s) => s.trackerLookMenuRequest);
+  const consumeLookRequest = useUIStore((s) => s.consumeTrackerLookMenuRequest);
+  const lookButtonRef = useRef<HTMLButtonElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const addMode = activeEditMode === "add";
@@ -116,6 +129,18 @@ export function TrackerSidebarHeader({
     setSettingsOpen(false);
     onSetEditMode(null);
   };
+  const closeLook = () => {
+    setLookOpen(false);
+    setLookView("menu");
+  };
+
+  // Search sends people here for the look controls that moved into this menu.
+  useEffect(() => {
+    if (!lookRequest) return;
+    setLookOpen(true);
+    setLookView(lookRequest.view);
+    consumeLookRequest();
+  }, [consumeLookRequest, lookRequest]);
 
   const getToolbarItems = () =>
     TRACKER_TOOLBAR_ITEM_ORDER.flatMap((_, index) => {
@@ -170,6 +195,26 @@ export function TrackerSidebarHeader({
     nextItem.element.focus();
   };
 
+  const lookButton = (
+    <button
+      ref={lookButtonRef}
+      type="button"
+      onClick={() => (lookOpen ? closeLook() : setLookOpen(true))}
+      title={localizeUi("ui.trackerPanel.lookMenu.panelSettings")}
+      aria-label={localizeUi("ui.trackerPanel.lookMenu.panelSettings")}
+      aria-expanded={lookOpen}
+      aria-controls="tracker-panel-look-menu"
+      className={cn(
+        "flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-[var(--muted-foreground)] ring-1 transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-[var(--primary)] active:scale-90",
+        lookOpen
+          ? "bg-[var(--foreground)]/12 text-[var(--foreground)] ring-[var(--foreground)]/24"
+          : "ring-transparent",
+      )}
+    >
+      <SlidersHorizontal size="0.8rem" />
+    </button>
+  );
+
   const settingsButton = (
     <button
       ref={settingsButtonRef}
@@ -208,6 +253,7 @@ export function TrackerSidebarHeader({
           {localizeUi("ui.trackerPanel.trackersidebarheader.tapFieldToEdit")}
         </span>
       )}
+      {lookButton}
       {settingsButton}
       {/* The panel stays dark in light theme, so the icon takes the panel's muted color.
           ponytail: HelpTooltip portals into the main window, so the popped-out panel has no help;
@@ -470,6 +516,19 @@ export function TrackerSidebarHeader({
           </div>
         </div>
       </div>
+      {lookOpen && (
+        <div className="border-b border-[var(--border)]/30">
+          <TrackerLookMenu
+            id="tracker-panel-look-menu"
+            view={lookView}
+            onViewChange={setLookView}
+            onEscape={() => {
+              closeLook();
+              lookButtonRef.current?.focus();
+            }}
+          />
+        </div>
+      )}
       <div className="absolute inset-x-0 bottom-0 h-px bg-[var(--border)]/30" />
     </div>
   );

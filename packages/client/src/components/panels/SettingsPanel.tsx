@@ -2,8 +2,6 @@
 // Panel: Settings (polished)
 // ──────────────────────────────────────────────
 import {
-  TRACKER_DATA_PANEL_SECTIONS,
-  TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR,
   QUICK_REPLIES_SETTINGS_CONTROL_ID,
   useUIStore,
   SIDEBAR_WIDTH_MIN,
@@ -14,7 +12,6 @@ import {
   getDefaultAppBackgroundColor,
   getDefaultChatChromeTextColor,
   getDefaultChatTextColor,
-  getTrackerPanelWidthForProfile,
   type ChatWidgetPreset,
   type ChatWidgetShape,
   type ConversationAvatarShape,
@@ -23,10 +20,6 @@ import {
   type ChatListBackgroundMode,
   type RoleplayAvatarStyle,
   type RoleplayChatPosition,
-  type TrackerDataPanelSection,
-  type TrackerPanelSizeProfile,
-  type TrackerStatDisplayMode,
-  type TrackerThoughtBubbleDisplay,
   type VisualTheme,
 } from "../../stores/ui.store";
 import { UILanguageSetting } from "./settings/UILanguageSetting";
@@ -113,8 +106,6 @@ import {
   useUpdateTheme,
 } from "../../hooks/use-themes";
 import {
-  ArrowDown,
-  ArrowUp,
   Upload,
   X,
   Image,
@@ -138,7 +129,6 @@ import {
   Eye,
   EyeOff,
   Download,
-  Dock,
   FolderOpen,
   MessageCircle,
   RefreshCw,
@@ -153,7 +143,6 @@ import {
   Bell,
   Copy,
   BookOpen,
-  BarChart3,
   Gauge,
   HardDrive,
   LifeBuoy,
@@ -179,7 +168,6 @@ import { ColorPicker } from "../ui/ColorPicker";
 import { getChatWidgetColorRoles, getChatWidgetColorStyle, type ChatWidgetColors } from "../../lib/chat-widget-colors";
 import { EmojiPicker } from "../ui/EmojiPicker";
 import { TrackerPanelIcon } from "../ui/TrackerPanelIcon";
-import { TrackerSizeTierIcon } from "../ui/TrackerSizeTierIcon";
 import {
   ConversationSoundSetting,
   SETTINGS_BUTTON_CLASS,
@@ -193,7 +181,6 @@ import {
   SettingsSwitch,
   ToggleSetting,
 } from "./settings/SettingControls";
-import { TrackerCardColorSettings } from "./settings/TrackerCardColorSettings";
 import { PromptOverridesEditor } from "./settings/PromptOverridesEditor";
 import { BackgroundPicker } from "./settings/BackgroundPicker";
 import { AccessStatusSettings } from "./settings/AccessStatusSettings";
@@ -591,74 +578,6 @@ const GAME_DIALOGUE_DISPLAY_OPTIONS: Array<{ id: GameDialogueDisplayMode; label:
     desc: "Shows prior segments above the dialogue box and keeps the full session scrollable there.",
   },
 ];
-
-const TRACKER_THOUGHT_BUBBLE_DISPLAY_OPTIONS: Array<{
-  id: TrackerThoughtBubbleDisplay;
-  label: string;
-  desc: string;
-}> = [
-  {
-    id: "inline",
-    label: "Docked",
-    desc: "Thoughts open inside the character card for a stable panel shape.",
-  },
-  {
-    id: "floating",
-    label: "Floating",
-    desc: "Thoughts open as a bubble beside the portrait.",
-  },
-];
-
-const TRACKER_STAT_DISPLAY_OPTIONS: TrackerStatDisplayMode[] = ["bars", "gauges"];
-
-const TRACKER_PANEL_SIZE_PROFILE_OPTIONS: Array<{
-  id: TrackerPanelSizeProfile;
-  label: string;
-  desc: string;
-}> = [
-  {
-    id: "compact",
-    label: "Compact",
-    desc: "A narrow reference rail for quick stats and one-column cards.",
-  },
-  {
-    id: "standard",
-    label: "Standard",
-    desc: "Balanced tracker cards with room for editing and thoughts.",
-  },
-  {
-    id: "expanded",
-    label: "Expanded",
-    desc: "A roomier board for featured cards, portraits, and full thoughts.",
-  },
-];
-
-const TRACKER_PANEL_CARD_OPTIONS: Record<TrackerDataPanelSection, { label: string; desc: string }> = {
-  world: {
-    label: "World State",
-    desc: "Date, time, location, weather, and temperature.",
-  },
-  persona: {
-    label: "Persona",
-    desc: "Persona status, stats, portrait, and inventory.",
-  },
-  characters: {
-    label: "Characters",
-    desc: "Present character cards, stats, portraits, and thoughts.",
-  },
-  inventory: {
-    label: "ui.panels.trackerOrder.inventoryTracker",
-    desc: "ui.panels.trackerOrder.inventoryTrackerDescription",
-  },
-  quests: {
-    label: "Quests",
-    desc: "Active quest progress and objectives.",
-  },
-  custom: {
-    label: "Custom",
-    desc: "Extra tracker fields from custom tracker agents.",
-  },
-};
 
 const QUOTE_FORMAT_OPTIONS: Array<{ id: QuoteFormat; label: string; sample: string }> = [
   { id: "straight", label: "Straight", sample: '"Hello," it\'s me.' },
@@ -1108,142 +1027,12 @@ function ImageStyleProfilesEditor({
   );
 }
 
-function TrackerPanelCardOrderSetting() {
-  const { t: localizeUi } = useUiTranslation();
-  const trackerPanelSectionOrder = useUIStore((s) => s.trackerPanelSectionOrder);
-  const setTrackerPanelSectionOrder = useUIStore((s) => s.setTrackerPanelSectionOrder);
-  const orderedSections = [
-    ...trackerPanelSectionOrder.filter((section) => TRACKER_DATA_PANEL_SECTIONS.includes(section)),
-    ...TRACKER_DATA_PANEL_SECTIONS.filter((section) => !trackerPanelSectionOrder.includes(section)),
-  ];
-  const isDefaultOrder = orderedSections.every((section, index) => section === TRACKER_DATA_PANEL_SECTIONS[index]);
-  const [orderOpen, setOrderOpen] = useState(!isDefaultOrder);
-  const orderId = React.useId();
-
-  const moveCard = (section: TrackerDataPanelSection, direction: -1 | 1) => {
-    const index = orderedSections.indexOf(section);
-    const nextIndex = index + direction;
-    if (index < 0 || nextIndex < 0 || nextIndex >= orderedSections.length) return;
-
-    const nextOrder = [...orderedSections];
-    [nextOrder[index], nextOrder[nextIndex]] = [nextOrder[nextIndex]!, nextOrder[index]!];
-    setTrackerPanelSectionOrder(nextOrder);
-  };
-
-  return (
-    <div className="mt-1.5 flex flex-col gap-1.5 rounded-lg bg-[var(--background)]/36 p-1.5 ring-1 ring-[var(--border)]">
-      <div className="flex min-h-5 items-center justify-between gap-2 px-0.5">
-        <button
-          type="button"
-          onClick={() => setOrderOpen((open) => !open)}
-          aria-expanded={orderOpen}
-          aria-controls={orderId}
-          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm text-left text-[0.625rem] font-medium text-[var(--foreground)] transition-colors hover:text-[var(--primary)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--primary)]"
-        >
-          <ChevronDown
-            size="0.6875rem"
-            className={cn("shrink-0 text-[var(--muted-foreground)] transition-transform", !orderOpen && "-rotate-90")}
-          />
-          <span className="truncate">{localizeUi("ui.panels.trackerpanelcardordersetting.cardOrder")}</span>
-          <span className="shrink-0 rounded-full bg-[var(--secondary)] px-1.5 py-0.5 text-[0.5625rem] font-normal text-[var(--muted-foreground)]">
-            {isDefaultOrder
-              ? localizeUi("ui.noodle.noodlehome.default")
-              : localizeUi("settings.notifications.customSound.status.custom")}
-          </span>
-        </button>
-        <HelpTooltip
-          text={localizeUi("ui.panels.trackerpanelcardordersetting.controlsTheTopToBottomOrderOfTrackerCards")}
-        />
-        <button
-          type="button"
-          onClick={() => setTrackerPanelSectionOrder([...TRACKER_DATA_PANEL_SECTIONS])}
-          disabled={isDefaultOrder}
-          title={localizeUi("settings.actions.resetTrackerOrder")}
-          aria-label={localizeUi("settings.actions.resetTrackerOrder")}
-          className={SETTINGS_ICON_BUTTON_CLASS}
-        >
-          <RotateCcw size="0.75rem" />
-        </button>
-      </div>
-      {orderOpen && (
-        <div id={orderId} className="grid gap-0.5">
-          {orderedSections.map((section, index) => {
-            const option = TRACKER_PANEL_CARD_OPTIONS[section];
-            return (
-              <div
-                key={section}
-                className="grid min-h-7 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5 rounded-sm bg-[var(--secondary)]/42 px-1.5 py-1 ring-1 ring-[var(--border)]/60"
-                title={localizeUi(option.desc)}
-              >
-                <div className="min-w-0">
-                  <div className="truncate text-[0.6875rem] font-medium leading-4 text-[var(--foreground)]">
-                    {localizeUi(option.label)}
-                  </div>
-                </div>
-                <div className="flex shrink-0 items-center gap-0.5">
-                  <button
-                    type="button"
-                    onClick={() => moveCard(section, -1)}
-                    disabled={index === 0 || (section === "custom" && orderedSections[index - 1] === "inventory")}
-                    title={localizeUi("ui.panels.trackerpanelcardordersetting.moveValue1Up", {
-                      value1: localizeUi(option.label),
-                    })}
-                    aria-label={localizeUi("ui.panels.trackerpanelcardordersetting.moveValue1Up", {
-                      value1: localizeUi(option.label),
-                    })}
-                    className={SETTINGS_ICON_BUTTON_CLASS}
-                  >
-                    <ArrowUp size="0.75rem" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => moveCard(section, 1)}
-                    disabled={
-                      index === orderedSections.length - 1 ||
-                      (section === "inventory" && orderedSections[index + 1] === "custom")
-                    }
-                    title={localizeUi("ui.panels.trackerpanelcardordersetting.moveValue1Down", {
-                      value1: localizeUi(option.label),
-                    })}
-                    aria-label={localizeUi("ui.panels.trackerpanelcardordersetting.moveValue1Down", {
-                      value1: localizeUi(option.label),
-                    })}
-                    className={SETTINGS_ICON_BUTTON_CLASS}
-                  >
-                    <ArrowDown size="0.75rem" />
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function TrackerPanelAppearanceDrawer() {
   const { t: localizeUi } = useUiTranslation();
   const trackerPanelEnabled = useUIStore((state) => state.trackerPanelEnabled);
   const setTrackerPanelEnabled = useUIStore((state) => state.setTrackerPanelEnabled);
-  const trackerPanelHideHudWidgets = useUIStore((state) => state.trackerPanelHideHudWidgets);
-  const setTrackerPanelHideHudWidgets = useUIStore((state) => state.setTrackerPanelHideHudWidgets);
-  const trackerPanelUseExpressionSprites = useUIStore((state) => state.trackerPanelUseExpressionSprites);
-  const setTrackerPanelUseExpressionSprites = useUIStore((state) => state.setTrackerPanelUseExpressionSprites);
-  const trackerPanelThoughtBubbleDisplay = useUIStore((state) => state.trackerPanelThoughtBubbleDisplay);
-  const setTrackerPanelThoughtBubbleDisplay = useUIStore((state) => state.setTrackerPanelThoughtBubbleDisplay);
-  const trackerPanelDockedThoughtsAlwaysVisible = useUIStore((state) => state.trackerPanelDockedThoughtsAlwaysVisible);
-  const setTrackerPanelDockedThoughtsAlwaysVisible = useUIStore(
-    (state) => state.setTrackerPanelDockedThoughtsAlwaysVisible,
-  );
-  const trackerPanelSizeProfile = useUIStore((state) => state.trackerPanelSizeProfile);
-  const setTrackerPanelSizeProfile = useUIStore((state) => state.setTrackerPanelSizeProfile);
-  const trackerPanelBackgroundColor = useUIStore((state) => state.trackerPanelBackgroundColor);
-  const setTrackerPanelBackgroundColor = useUIStore((state) => state.setTrackerPanelBackgroundColor);
   const trackerTemperatureUnit = useUIStore((state) => state.trackerTemperatureUnit);
   const setTrackerTemperatureUnit = useUIStore((state) => state.setTrackerTemperatureUnit);
-  const trackerStatDisplayMode = useUIStore((state) => state.trackerStatDisplayMode);
-  const setTrackerStatDisplayMode = useUIStore((state) => state.setTrackerStatDisplayMode);
 
   return (
     <section className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--background)]/34 shadow-[inset_0_1px_0_color-mix(in_srgb,var(--foreground)_8%,transparent)]">
@@ -1279,154 +1068,13 @@ function TrackerPanelAppearanceDrawer() {
       <fieldset
         disabled={!trackerPanelEnabled}
         className={cn(
-          "border-t border-[var(--border)] px-3 pb-3 pt-2 transition-opacity",
+          "border-t border-[var(--border)] px-3 pb-3 pt-1 transition-opacity",
           trackerPanelEnabled ? "" : "opacity-45",
         )}
       >
-        <ToggleSetting
-          anchorId={getSettingsControlAnchorId("tracker-replace-hud-icons")}
-          label={localizeUi("settings.controls.replaceTrackerIcons.label")}
-          checked={trackerPanelHideHudWidgets}
-          onChange={setTrackerPanelHideHudWidgets}
-          help={localizeUi("settings.controls.replaceTrackerIcons.help")}
-        />
-        <ToggleSetting
-          anchorId={getSettingsControlAnchorId("tracker-expression-sprites")}
-          label={localizeUi("settings.controls.useExpressionSprites.label")}
-          checked={trackerPanelUseExpressionSprites}
-          onChange={setTrackerPanelUseExpressionSprites}
-          help={localizeUi("settings.controls.useExpressionSprites.help")}
-        />
-        <div id={getSettingsControlAnchorId("tracker-panel-background")} className="mt-2 scroll-mt-3">
-          <ColorPicker
-            value={trackerPanelBackgroundColor}
-            onChange={setTrackerPanelBackgroundColor}
-            gradient
-            compact
-            label={localizeUi("settings.controls.panelBackground.label")}
-            helpText="Pick the Tracker panel and tracker section background. CSS colors and gradients are accepted."
-            emptyText={localizeUi("ui.panels.trackerpanelappearancedrawer.defaultValue1", {
-              value1: TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR,
-            })}
-            clearLabel="Reset"
-          />
-        </div>
-        <div id={getSettingsControlAnchorId("tracker-desktop-size")} className="mt-2 grid scroll-mt-3 gap-1.5">
-          <span className="inline-flex items-center gap-1 text-[0.6875rem] font-medium">
-            {localizeUi("ui.panels.trackerpanelappearancedrawer.desktopSize")}
-            <HelpTooltip
-              text={localizeUi(
-                "ui.panels.trackerpanelappearancedrawer.chooseTheDesignedDesktopWidthForTheTrackerPanel",
-              )}
-            />
-          </span>
-          <div className="flex flex-wrap gap-1">
-            {TRACKER_PANEL_SIZE_PROFILE_OPTIONS.map((opt) => {
-              const selected = trackerPanelSizeProfile === opt.id;
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => setTrackerPanelSizeProfile(opt.id)}
-                  aria-pressed={selected}
-                  title={localizeUi("ui.panels.trackerpanelappearancedrawer.value1Value2PxValue3", {
-                    value1: opt.label,
-                    value2: getTrackerPanelWidthForProfile(opt.id),
-                    value3: opt.desc,
-                  })}
-                  className={cn(SETTINGS_BUTTON_CLASS, "flex-auto")}
-                >
-                  <span className="inline-flex items-center gap-1">
-                    <span className="inline-flex">
-                      <TrackerSizeTierIcon sizeProfile={opt.id} />
-                    </span>
-                    {opt.label}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-        <div id={getSettingsControlAnchorId("tracker-thought-display-mode")} className="mt-2 grid scroll-mt-3 gap-1.5">
-          <span className="inline-flex items-center gap-1 text-[0.6875rem] font-medium">
-            {localizeUi("ui.panels.trackerpanelappearancedrawer.thoughtDisplayMode")}
-            <HelpTooltip
-              text={localizeUi(
-                "ui.panels.trackerpanelappearancedrawer.chooseWhetherFeaturedCharacterThoughtsOpenInsideTheTracker",
-              )}
-            />
-          </span>
-          <div className="grid grid-cols-2 gap-1">
-            {TRACKER_THOUGHT_BUBBLE_DISPLAY_OPTIONS.map((opt) => {
-              const selected = trackerPanelThoughtBubbleDisplay === opt.id;
-              const Icon = opt.id === "inline" ? Dock : MessageCircle;
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => setTrackerPanelThoughtBubbleDisplay(opt.id)}
-                  aria-pressed={selected}
-                  title={opt.desc}
-                  className={SETTINGS_BUTTON_CLASS}
-                >
-                  <span className="inline-flex items-center gap-1.5">
-                    <Icon size="0.75rem" />
-                    {opt.label}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-        <div id={getSettingsControlAnchorId("tracker-stat-display-mode")} className="mt-2 grid scroll-mt-3 gap-1.5">
-          <span className="inline-flex items-center gap-1 text-[0.6875rem] font-medium">
-            {localizeUi("ui.panels.trackerpanelappearancedrawer.statDisplayMode")}
-            <HelpTooltip
-              text={localizeUi("ui.panels.trackerpanelappearancedrawer.chooseBarsOrGaugesForTrackerStats")}
-            />
-          </span>
-          <div className="grid grid-cols-2 gap-1">
-            {TRACKER_STAT_DISPLAY_OPTIONS.map((option) => {
-              const selected = trackerStatDisplayMode === option;
-              const Icon = option === "bars" ? BarChart3 : Gauge;
-              const label = localizeUi(
-                option === "bars"
-                  ? "ui.panels.trackerpanelappearancedrawer.bars"
-                  : "ui.panels.trackerpanelappearancedrawer.gauges",
-              );
-              const description = localizeUi(
-                option === "bars"
-                  ? "ui.panels.trackerpanelappearancedrawer.barsDescription"
-                  : "ui.panels.trackerpanelappearancedrawer.gaugesDescription",
-              );
-              return (
-                <button
-                  key={option}
-                  type="button"
-                  onClick={() => setTrackerStatDisplayMode(option)}
-                  aria-pressed={selected}
-                  title={description}
-                  className={SETTINGS_BUTTON_CLASS}
-                >
-                  <span className="inline-flex items-center gap-1.5">
-                    <Icon size="0.75rem" />
-                    {label}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-        <ToggleSetting
-          anchorId={getSettingsControlAnchorId("tracker-docked-thoughts")}
-          label={localizeUi("settings.controls.alwaysShowDockedThoughts.label")}
-          checked={trackerPanelDockedThoughtsAlwaysVisible}
-          onChange={setTrackerPanelDockedThoughtsAlwaysVisible}
-          help={localizeUi("settings.controls.alwaysShowDockedThoughts.help")}
-        />
         <div
           id={getSettingsControlAnchorId("tracker-temperature-unit")}
-          className="mt-2 flex scroll-mt-3 min-h-8 items-center justify-between gap-2"
+          className="mt-1 flex scroll-mt-3 min-h-8 items-center justify-between gap-2"
         >
           <span className="inline-flex items-center gap-1 text-[0.6875rem] font-medium">
             {localizeUi("ui.panels.trackerpanelappearancedrawer.temperatureUnit")}
@@ -1468,10 +1116,6 @@ function TrackerPanelAppearanceDrawer() {
             ))}
           </div>
         </div>
-        <TrackerPanelCardOrderSetting />
-        <SearchableSettingTarget controlId="tracker-card-colors">
-          <TrackerCardColorSettings />
-        </SearchableSettingTarget>
       </fieldset>
     </section>
   );

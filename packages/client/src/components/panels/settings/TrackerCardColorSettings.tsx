@@ -9,7 +9,6 @@ import {
 } from "../../../hooks/use-characters";
 import { useChat } from "../../../hooks/use-chats";
 import { useChatStore } from "../../../stores/chat.store";
-import { useUIStore } from "../../../stores/ui.store";
 import { parseCharacterDisplayData } from "../../../lib/character-display";
 import { cn } from "../../../lib/utils";
 import {
@@ -117,7 +116,6 @@ function resolvePresentCharacterId(
 export function TrackerCardColorSettings() {
   const { t: localizeUi } = useUiTranslation();
   const activeChatId = useChatStore((s) => s.activeChatId);
-  const settingsTab = useUIStore((s) => s.settingsTab);
   const { data: activeChat } = useChat(activeChatId);
   const { currentGameState, gameStateLoadStatus, retryGameState } = useTrackerGameState(activeChatId);
   const { data: personasData } = usePersonas(!!activeChatId);
@@ -125,6 +123,8 @@ export function TrackerCardColorSettings() {
   const updatePersonaTrackerCard = useUpdatePersonaTrackerCard();
   const updateCharacter = useUpdateCharacter();
   const [selectedTargetKey, setSelectedTargetKey] = useState("");
+  // Until the person picks a target, the default follows the lists as they load (the persona may arrive first).
+  const pickedTargetRef = useRef(false);
   const [draftConfig, setDraftConfig] = useState<TrackerCardColorConfig | null>(null);
   const [saveState, setSaveState] = useState<TrackerCardColorSaveState>("idle");
   const savedConfigRef = useRef<SavedTrackerCardColorConfig | null>(null);
@@ -143,15 +143,6 @@ export function TrackerCardColorSettings() {
       restorePreviewSnapshot();
     };
   }, [restorePreviewSnapshot]);
-
-  useEffect(() => {
-    if (settingsTab === "appearance") return;
-    const restored = restorePreviewSnapshot();
-    if (!restored) return;
-    savedConfigRef.current = null;
-    setDraftConfig(null);
-    setSaveState("idle");
-  }, [restorePreviewSnapshot, settingsTab]);
 
   const targets = useMemo<TrackerCardColorTarget[]>(() => {
     const personas = Array.isArray(personasData) ? (personasData as Persona[]) : [];
@@ -246,8 +237,10 @@ export function TrackerCardColorSettings() {
       setSelectedTargetKey("");
       return;
     }
-    if (!selectedTargetKey || !targets.some((target) => target.key === selectedTargetKey)) {
-      setSelectedTargetKey(targets[0]!.key);
+    if (!pickedTargetRef.current || !selectedTargetKey || !targets.some((target) => target.key === selectedTargetKey)) {
+      // Open on the chat's character; the persona is the fallback.
+      const defaultKey = (targets.find((target) => target.kind === "character") ?? targets[0]!).key;
+      if (defaultKey !== selectedTargetKey) setSelectedTargetKey(defaultKey);
     }
   }, [selectedTargetKey, targets]);
 
@@ -282,14 +275,6 @@ export function TrackerCardColorSettings() {
     savedConfigRef.current = targetSavedConfig;
     setDraftConfig(selectedTarget.config);
   }, [restorePreviewSnapshot, selectedTarget]);
-
-  useEffect(() => {
-    if (settingsTab !== "appearance" || !selectedTarget || draftConfig) return;
-
-    savedConfigRef.current = getTargetSavedConfig(selectedTarget);
-    setDraftConfig(selectedTarget.config);
-    setSaveState("idle");
-  }, [draftConfig, selectedTarget, settingsTab]);
 
   const persistTargetConfig = useCallback(
     async (target: TrackerCardColorTarget, config: TrackerCardColorConfig) => {
@@ -376,23 +361,19 @@ export function TrackerCardColorSettings() {
 
   const saveMessage =
     saveState === "saving"
-      ? "Saving..."
+      ? localizeUi("ui.panels.trackercardcolorsettings.saving")
       : saveState === "error"
-        ? "Save failed"
+        ? localizeUi("ui.panels.trackercardcolorsettings.saveFailed")
         : hasUnsavedChanges
-          ? "Unsaved preview"
+          ? localizeUi("ui.panels.trackercardcolorsettings.unsavedPreview")
           : saveState === "saved"
-            ? "Saved"
+            ? localizeUi("ui.panels.trackercardcolorsettings.saved")
             : "";
 
   return (
-    <div className="mt-2 flex flex-col gap-1.5 rounded-lg bg-[var(--background)]/36 p-1.5 ring-1 ring-[var(--border)]">
-      <div className="flex min-h-5 items-center justify-between gap-2 px-0.5">
-        <span className="inline-flex min-w-0 items-center gap-1 text-[0.625rem] font-medium text-[var(--foreground)]">
-          <Palette size="0.6875rem" className="text-[var(--primary)]" />
-          {localizeUi("ui.panels.trackercardcolorsettings.cardColors")}
-        </span>
-        {saveMessage && (
+    <div className="flex flex-col gap-1.5 rounded-lg bg-[var(--background)]/36 p-1.5 ring-1 ring-[var(--border)]">
+      {saveMessage && (
+        <div className="flex min-h-5 items-center justify-end gap-2 px-0.5">
           <span
             className={cn(
               "inline-flex shrink-0 items-center gap-1 text-[0.5625rem] text-[var(--muted-foreground)]",
@@ -412,8 +393,8 @@ export function TrackerCardColorSettings() {
             )}
             {saveMessage}
           </span>
-        )}
-      </div>
+        </div>
+      )}
 
       {!activeChatId ? (
         <p className="rounded-md bg-[var(--secondary)]/42 px-2 py-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
@@ -442,7 +423,10 @@ export function TrackerCardColorSettings() {
             </span>
             <select
               value={selectedTargetKey}
-              onChange={(event) => setSelectedTargetKey(event.target.value)}
+              onChange={(event) => {
+                pickedTargetRef.current = true;
+                setSelectedTargetKey(event.target.value);
+              }}
               disabled={saveState === "saving" || hasUnsavedChanges}
               title={
                 hasUnsavedChanges

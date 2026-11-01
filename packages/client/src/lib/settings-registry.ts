@@ -65,6 +65,7 @@ export function settingsControlLocationPath(
   if (home === "connections") return localize("Connections");
   if (home === "music-dj") return `${localize("Agents")} › ${localize("Music DJ")}`;
   if (home === "chat-parameters") return `${localize("Chat Settings")} › ${localize("Advanced Parameters")}`;
+  if (home === "tracker") return `${localize("Tracker")} › ${localize("Panel settings")}`;
   return settingsLocationPath(sectionId, localize);
 }
 
@@ -123,7 +124,7 @@ export type SettingsSearchableControlMeta = {
    * Music DJ agent's detail, or the active chat's Advanced Parameters) and scrolls to the element with id `settings-control-<id>` (see
    * `openSettingsControlHome` in `state-navigation.ts`).
    */
-  home?: "connections" | "music-dj" | "chat-parameters";
+  home?: "connections" | "music-dj" | "chat-parameters" | "tracker";
 };
 
 export type SettingsSearchResult =
@@ -1271,12 +1272,13 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
   {
     id: "tracker-replace-hud-icons",
     sectionId: "roleplay-tracker",
-    labelKey: "settings.search.trackerReplaceHudIcons.label",
-    label: "Replace tracker HUD icons",
-    description: "Hide the old world/player tracker icon strip.",
-    descriptionKey: "settings.search.trackerReplaceHudIcons.description",
-    aliases: ["tracker", "hud", "icons"],
+    labelKey: "settings.controls.replaceTrackerIcons.label",
+    label: "Dock Tracker Panel to edge",
+    description: "Places Tracker Panel against the screen edge and keeps nearby chat controls clear of it.",
+    descriptionKey: "settings.controls.replaceTrackerIcons.help",
+    aliases: ["tracker", "hud", "icons", "replace tracker hud icons", "hide hud widgets"],
     kind: "Toggle",
+    home: "tracker",
   },
   {
     id: "tracker-expression-sprites",
@@ -1287,6 +1289,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     descriptionKey: "settings.search.trackerExpressionSprites.description",
     aliases: ["tracker", "sprites", "portraits"],
     kind: "Toggle",
+    home: "tracker",
   },
   {
     id: "tracker-panel-background",
@@ -1297,6 +1300,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     descriptionKey: "settings.search.trackerPanelBackground.description",
     aliases: ["tracker", "background", "color"],
     kind: "Picker",
+    home: "tracker",
   },
   {
     id: "tracker-desktop-size",
@@ -1307,26 +1311,29 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     descriptionKey: "settings.search.trackerDesktopSize.description",
     aliases: ["tracker", "width", "compact", "expanded"],
     kind: "Button group",
+    home: "tracker",
   },
   {
     id: "tracker-thought-display-mode",
     sectionId: "roleplay-tracker",
-    labelKey: "ui.panels.trackerpanelappearancedrawer.thoughtDisplayMode",
-    label: "Thought display mode",
+    labelKey: "ui.trackerPanel.lookMenu.thoughtDisplay",
+    label: "Thought display",
     description: "Choose how featured character thoughts open.",
     descriptionKey: "settings.search.trackerThoughtDisplayMode.description",
-    aliases: ["tracker", "thoughts", "dock", "floating"],
+    aliases: ["tracker", "thoughts", "dock", "floating", "thought display mode"],
     kind: "Button group",
+    home: "tracker",
   },
   {
     id: "tracker-stat-display-mode",
     sectionId: "roleplay-tracker",
-    labelKey: "ui.panels.trackerpanelappearancedrawer.statDisplayMode",
-    label: "Stat display mode",
+    labelKey: "ui.trackerPanel.lookMenu.statDisplay",
+    label: "Stat display",
     description: "Choose whether persona and character stats use compact bars or circular gauges.",
     descriptionKey: "ui.panels.trackerpanelappearancedrawer.chooseBarsOrGaugesForTrackerStats",
-    aliases: ["tracker", "stats", "bars", "gauges", "circular"],
+    aliases: ["tracker", "stats", "bars", "gauges", "circular", "stat display mode"],
     kind: "Button group",
+    home: "tracker",
   },
   {
     id: "tracker-docked-thoughts",
@@ -1337,6 +1344,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     descriptionKey: "settings.search.trackerDockedThoughts.description",
     aliases: ["tracker", "thoughts", "dock"],
     kind: "Toggle",
+    home: "tracker",
   },
   {
     id: "tracker-temperature-unit",
@@ -1349,6 +1357,17 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     kind: "Toggle",
   },
   {
+    id: "tracker-card-order",
+    sectionId: "roleplay-tracker",
+    labelKey: "ui.trackerPanel.lookMenu.cardOrder",
+    label: "Card order",
+    description: "Choose the top-to-bottom order of Tracker cards.",
+    descriptionKey: "settings.search.trackerCardOrder.description",
+    aliases: ["tracker", "cards", "reorder", "move up", "move down", "reset order"],
+    kind: "Button group",
+    home: "tracker",
+  },
+  {
     id: "tracker-card-colors",
     sectionId: "roleplay-tracker",
     labelKey: "settings.search.trackerCardColors.label",
@@ -1357,6 +1376,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     descriptionKey: "settings.search.trackerCardColors.description",
     aliases: ["tracker", "card", "colour", "color", "character colors", "palette"],
     kind: "Picker",
+    home: "tracker",
   },
   {
     id: "roleplay-vn-display",

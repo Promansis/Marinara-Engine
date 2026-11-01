@@ -133,6 +133,8 @@ export type TrackerTemperatureUnit = (typeof TRACKER_TEMPERATURE_UNITS)[number];
 export { QUICK_REPLIES_SETTINGS_CONTROL_ID } from "../lib/settings-registry";
 export const TRACKER_PANEL_SIZE_PROFILES = ["compact", "standard", "expanded"] as const;
 export type TrackerPanelSizeProfile = (typeof TRACKER_PANEL_SIZE_PROFILES)[number];
+export type TrackerLookMenuView = "menu" | "colors";
+export type TrackerLookMenuRequest = { view: TrackerLookMenuView; id: number };
 export type TrackerDataPanelSection = "world" | "persona" | "characters" | "inventory" | "quests" | "custom";
 export type TrackerPanelCollapsedSections = Partial<Record<TrackerDataPanelSection, boolean>>;
 export type TrackerPanelSectionOrder = TrackerDataPanelSection[];
@@ -733,6 +735,8 @@ interface UIState {
   trackerTemperatureUnit: TrackerTemperatureUnit;
   trackerPanelCollapsedSections: TrackerPanelCollapsedSections;
   trackerPanelSectionOrder: TrackerPanelSectionOrder;
+  /** Transient ask for the Tracker panel's header menu to open (search lands on the controls that moved there). */
+  trackerLookMenuRequest: TrackerLookMenuRequest | null;
   settingsTab: SettingsTabId;
   /** Transient control id that the Settings panel should reveal and focus. */
   settingsTargetControlId: string | null;
@@ -1311,6 +1315,8 @@ interface UIState {
   setMariFieldDeclined: (declined: { key: string; fields: Array<{ entityId: string; fieldId: string }> }) => void;
   setLastAppError: (error: UIState["lastAppError"]) => void;
   setSettingsTargetControlId: (controlId: string | null) => void;
+  requestTrackerLookMenu: (view: TrackerLookMenuView) => void;
+  consumeTrackerLookMenuRequest: () => void;
   requestHome: (request: HomeRequest) => void;
   consumeHomeRequest: () => void;
   requestWhatsNew: () => void;
@@ -2187,6 +2193,7 @@ export const useUIStore = create<UIState>()(
         lastAppError: null,
         settingsTargetControlId: null,
         homeRequest: null,
+        trackerLookMenuRequest: null,
         connectionDetailReturnTab: null,
         whatsNewRequested: false,
         agentImportRequested: false,
@@ -2584,6 +2591,9 @@ export const useUIStore = create<UIState>()(
         setMariFieldDeclined: (declined) => set({ mariFieldDeclined: declined }),
         setLastAppError: (error) => set({ lastAppError: error }),
         setSettingsTargetControlId: (controlId) => set({ settingsTargetControlId: controlId }),
+        requestTrackerLookMenu: (view) =>
+          set((s) => ({ trackerLookMenuRequest: { view, id: (s.trackerLookMenuRequest?.id ?? 0) + 1 } })),
+        consumeTrackerLookMenuRequest: () => set({ trackerLookMenuRequest: null }),
         requestHome: (homeRequest) => set({ homeRequest }),
         consumeHomeRequest: () => set({ homeRequest: null }),
         requestWhatsNew: () => set({ whatsNewRequested: true }),

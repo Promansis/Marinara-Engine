@@ -14,6 +14,7 @@ import { queryClient } from "./query-client";
 import { useChatStore } from "../stores/chat.store";
 import { isMobileShellViewport, useUIStore, type HomeRequest } from "../stores/ui.store";
 import { requestChatSettingsSectionOpen } from "./chat-floating-ui-events";
+import { TRACKER_PANEL_BUBBLE_ID, useFloatingWindowStore } from "../stores/floating-window.store";
 import { requestProfessorMariOpen } from "./professor-mari-open";
 import type { ProfessorMariNavigationTarget } from "./professor-mari-navigation";
 import { isOmnibarSettingsTarget, settingsControlHome, type SettingsSearchableControlMeta } from "./settings-registry";
@@ -119,9 +120,62 @@ function openChatParameters(controlId: string) {
 }
 
 /**
+ * Show the Tracker panel with its header menu open, at the menu or at Card colors. Anything covering the chat is
+ * closed first (asking before an open editor with unsaved edits is left), and on the phone shell the right panel
+ * goes too, with the menu asked for on the next frame.
+ */
+function showTrackerLookMenu(controlId: string, chatId: string) {
+  const ui = useUIStore.getState();
+  // An open editor or library unmounts the chat (desktop) or covers it (phone), so the Tracker panel cannot show.
+  if (ui.hasAnyDetailOpen()) {
+    if (!confirmEditorLeave(ui, translate("commandCenter.dirtyEditor"))) return;
+    ui.closeAllDetails();
+  }
+  const showMenu = () => {
+    const current = useUIStore.getState();
+    current.setTrackerPanelOpen(true, chatId);
+    useFloatingWindowStore.getState().openWindow(TRACKER_PANEL_BUBBLE_ID, null, { focus: false });
+    current.requestTrackerLookMenu(controlId === "tracker-card-colors" ? "colors" : "menu");
+    // A request nobody picked up (the panel is popped out, or never mounted) must not open the menu later.
+    scrollToSettingsAnchor(controlId, () => useUIStore.getState().consumeTrackerLookMenuRequest());
+  };
+  if (isMobileShellViewport()) {
+    ui.closeRightPanel();
+    requestAnimationFrame(showMenu);
+  } else showMenu();
+}
+
+/**
+ * Send a search for a Tracker look control to the Tracker panel's header menu. Nothing is changed on the way: a
+ * switched-off panel is only turned on from the toast's action, and with no Roleplay chat open there is no panel
+ * to show.
+ */
+function openTrackerLookMenu(controlId: string) {
+  const { activeChatId, activeChat } = useChatStore.getState();
+  if (!activeChatId || activeChat?.id !== activeChatId || activeChat.mode !== "roleplay") {
+    toast(translate("ui.trackerPanel.lookMenu.needsRoleplayChat"));
+    return;
+  }
+  if (!useUIStore.getState().trackerPanelEnabled) {
+    toast(translate("ui.trackerPanel.lookMenu.panelOff"), {
+      action: {
+        label: translate("ui.trackerPanel.lookMenu.turnOn"),
+        onClick: () => {
+          useUIStore.getState().setTrackerPanelEnabled(true);
+          showTrackerLookMenu(controlId, activeChatId);
+        },
+      },
+    });
+    return;
+  }
+  showTrackerLookMenu(controlId, activeChatId);
+}
+
+/**
  * Open the place a searchable control lives in and scroll to it. The player switch lives in the Music DJ agent's
  * detail; when that agent is not installed there is no detail, so open its Agents catalog entry instead. The
- * custom-parameters row lives in the shared parameters editor (see `openChatParameters`).
+ * custom-parameters row lives in the shared parameters editor (see `openChatParameters`), and the Tracker look
+ * controls live in the Tracker panel's header menu (see `openTrackerLookMenu`).
  */
 export function openSettingsControlHome(controlId: string, panel: NonNullable<SettingsSearchableControlMeta["home"]>) {
   const ui = useUIStore.getState();
@@ -132,6 +186,8 @@ export function openSettingsControlHome(controlId: string, panel: NonNullable<Se
       return;
     }
     ui.openAgentDetail(MUSIC_DJ_AGENT_ID);
+  } else if (panel === "tracker") {
+    return openTrackerLookMenu(controlId);
   } else ui.openRightPanel(panel);
   scrollToSettingsAnchor(controlId);
 }
