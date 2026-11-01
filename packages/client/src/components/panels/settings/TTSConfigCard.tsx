@@ -1693,6 +1693,7 @@ export function TTSConfigCard() {
 
   return (
     <div
+      id="settings-control-text-to-speech"
       data-component="TTSConfigCard"
       className={cn(
         "rounded-xl border border-sky-400/20 bg-gradient-to-br from-sky-400/5 to-blue-500/5 p-3 transition-all",

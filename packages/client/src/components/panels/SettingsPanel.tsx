@@ -46,6 +46,7 @@ import {
   type SettingsSectionMeta,
   type SettingsTabId,
 } from "../../lib/settings-registry";
+import { openSettingsControlHome } from "../../lib/state-navigation";
 import { cn, copyToClipboard } from "../../lib/utils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -1488,7 +1489,9 @@ function TrackerPanelAppearanceDrawer() {
           </div>
         </div>
         <TrackerPanelCardOrderSetting />
-        <TrackerCardColorSettings />
+        <SearchableSettingTarget controlId="tracker-card-colors">
+          <TrackerCardColorSettings />
+        </SearchableSettingTarget>
       </fieldset>
     </section>
   );
@@ -1557,6 +1560,10 @@ export function SettingsPanel() {
       // Q2: the omnibar's settings live in the omnibar; open them there, at the control.
       if (isOmnibarSettingsTarget({ sectionId: section.id })) {
         useUIStore.getState().openOmnibarSettings(result.type === "control" ? result.control.id : null);
+        return;
+      }
+      if (result.type === "control" && result.control.home) {
+        openSettingsControlHome(result.control.id, result.control.home);
         return;
       }
       if (section.tab === "appearance") setAppearanceGroup(appearanceGroupForSection(section.id));
@@ -3053,7 +3060,10 @@ function VideoGenerationSettings() {
             </div>
           </div>
 
-          <div className="rounded-lg bg-[var(--background)]/55 p-3 ring-1 ring-[var(--border)]">
+          <div
+            id={getSettingsControlAnchorId("call-clip-lengths")}
+            className="scroll-mt-3 rounded-lg bg-[var(--background)]/55 p-3 ring-1 ring-[var(--border)]"
+          >
             <div className="mb-2 flex items-center gap-1 text-xs font-medium text-[var(--foreground)]">
               {localizeUi("ui.panels.videogenerationsettings.conversationCallClips")}
               <HelpTooltip
@@ -4590,12 +4600,14 @@ function AppearanceSettings({ group = "app" }: { group?: AppearanceGroup }) {
                     ))}
                   </select>
                 </label>
-                <BackgroundPicker
-                  selected={chatBackground}
-                  onSelect={setChatBackground}
-                  defaultRoleplayBackground={defaultRoleplayBackground}
-                  onDefaultChange={setDefaultRoleplayBackground}
-                />
+                <SearchableSettingTarget controlId="background-picker">
+                  <BackgroundPicker
+                    selected={chatBackground}
+                    onSelect={setChatBackground}
+                    defaultRoleplayBackground={defaultRoleplayBackground}
+                    onDefaultChange={setDefaultRoleplayBackground}
+                  />
+                </SearchableSettingTarget>
               </div>
             </div>
           </SettingsSection>

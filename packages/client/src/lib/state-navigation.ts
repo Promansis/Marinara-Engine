@@ -4,7 +4,7 @@ import { useChatStore } from "../stores/chat.store";
 import { isMobileShellViewport, useUIStore, type HomeRequest } from "../stores/ui.store";
 import { requestProfessorMariOpen } from "./professor-mari-open";
 import type { ProfessorMariNavigationTarget } from "./professor-mari-navigation";
-import { isOmnibarSettingsTarget } from "./settings-registry";
+import { isOmnibarSettingsTarget, settingsControlHome, type SettingsSearchableControlMeta } from "./settings-registry";
 
 const DISCORD_INVITE_URL = "https://discord.com/invite/KdAkTg94ME";
 const SUPPORT_URL = "https://ko-fi.com/marinara_spaghetti";
@@ -21,6 +21,28 @@ function openHomeWith(request: HomeRequest) {
   ui.closeAllDetails();
   ui.closeRightPanel();
   ui.requestHome(request);
+}
+
+/**
+ * Open the panel a searchable control lives in and scroll to it. The panel is lazy and its card may load data
+ * first, so wait a few seconds for the anchor instead of looking once.
+ */
+export function openSettingsControlHome(controlId: string, panel: NonNullable<SettingsSearchableControlMeta["home"]>) {
+  useUIStore.getState().openRightPanel(panel);
+  let attempts = 0;
+  const scrollWhenReady = () => {
+    const anchor = document.getElementById(`settings-control-${controlId}`);
+    if (anchor) {
+      const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      anchor.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+      anchor
+        .querySelector<HTMLElement>("button, input, select, textarea, [tabindex]:not([tabindex='-1'])")
+        ?.focus({ preventScroll: true });
+      return;
+    }
+    if (++attempts < 30) window.setTimeout(scrollWhenReady, 100);
+  };
+  scrollWhenReady();
 }
 
 export function executeStateNavigation(target: ProfessorMariNavigationTarget): boolean {
@@ -49,6 +71,8 @@ export function executeStateNavigation(target: ProfessorMariNavigationTarget): b
     useChatStore.getState().setActiveChatId(target.chatId);
   } else if (target.kind === "panel") {
     ui.openRightPanel(target.panel);
+  } else if (target.kind === "settings" && target.controlId && settingsControlHome(target.controlId)) {
+    openSettingsControlHome(target.controlId, settingsControlHome(target.controlId)!);
   } else if (target.kind === "settings" && isOmnibarSettingsTarget(target)) {
     // Q2: these live in the omnibar's settings view, which keeps the omnibar open.
     ui.openOmnibarSettings(target.controlId ?? null);

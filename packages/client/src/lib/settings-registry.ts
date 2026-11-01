@@ -46,6 +46,12 @@ export function isOmnibarSettingsTarget(target: { sectionId?: string | null; con
   );
 }
 
+/** Where a control lives when that is another panel, not Settings (see `SettingsSearchableControlMeta.home`). */
+export function settingsControlHome(controlId?: string | null): SettingsSearchableControlMeta["home"] {
+  if (!controlId) return undefined;
+  return SETTINGS_SEARCHABLE_CONTROLS.find((control) => control.id === controlId)?.home;
+}
+
 /**
  * "Tab › Section" for a section, so a row away from the Settings panel (the
  * omnibar) can still say where a setting lives. Both pieces are the registry's
@@ -96,6 +102,11 @@ export type SettingsSearchableControlMeta = {
    */
   keywords?: string[];
   kind: SettingsControlKind;
+  /**
+   * Set when the control lives in another panel, not in Settings. A jump opens that panel and scrolls to the
+   * element with id `settings-control-<id>` (see `openSettingsControlHome` in `state-navigation.ts`).
+   */
+  home?: "connections";
 };
 
 export type SettingsSearchResult =
@@ -135,6 +146,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
       "documentation",
       "guides",
       "docs",
+      "help pages",
       "manual",
       "spanish",
       "español",
@@ -452,6 +464,28 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     kind: "Toggle",
   },
   {
+    id: "browser-generation-notifications",
+    sectionId: "notifications",
+    labelKey: "settings.search.browserGenerationNotifications.label",
+    label: "Generation completion browser notifications",
+    description: "Show a browser notification when a reply you started finishes while Marinara is not focused.",
+    descriptionKey: "settings.search.browserGenerationNotifications.description",
+    aliases: ["generation", "completion", "browser", "reply finished", "done", "notifications"],
+    keywords: ["desktop notification", "push notification"],
+    kind: "Toggle",
+  },
+  {
+    id: "mobile-generation-notifications",
+    sectionId: "notifications",
+    labelKey: "settings.search.mobileGenerationNotifications.label",
+    label: "Generation completion mobile notifications",
+    description: "Show a native Android notification when a reply you started finishes while Marinara is not focused.",
+    descriptionKey: "settings.search.mobileGenerationNotifications.description",
+    aliases: ["generation", "completion", "mobile", "android", "reply finished", "done", "notifications"],
+    keywords: ["push notification", "phone alert"],
+    kind: "Toggle",
+  },
+  {
     id: "enable-streaming",
     sectionId: "responses",
     labelKey: "settings.controls.enableStreaming.label",
@@ -549,6 +583,18 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     aliases: ["microphone", "dictation", "speech"],
     keywords: ["voice typing", "talk to text"],
     kind: "Toggle",
+  },
+  {
+    id: "text-to-speech",
+    sectionId: "input-editing",
+    labelKey: "settings.search.textToSpeech.label",
+    label: "Text to speech",
+    description: "Have Marinara read replies aloud. Set up in Connections.",
+    descriptionKey: "settings.search.textToSpeech.description",
+    aliases: ["tts", "text to speech", "voice", "read aloud"],
+    keywords: ["narrator", "speak replies", "read replies"],
+    kind: "Select",
+    home: "connections",
   },
   {
     id: "intuitive-swipe-navigation",
@@ -692,7 +738,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     description:
       "Sends image and video generation jobs to each provider account one at a time, from every feature. Keep this on for providers that reject simultaneous requests.",
     descriptionKey: "settings.controls.queueMedia.help",
-    aliases: ["media", "image", "video", "queue", "generation"],
+    aliases: ["media", "image", "video", "queue", "generation", "picture", "photo", "pic"],
     kind: "Toggle",
   },
   {
@@ -714,6 +760,9 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
       "portrait",
       "sprite",
       "animated expression",
+      "picture",
+      "photo",
+      "pic",
     ],
     keywords: ["review image prompt", "approve image"],
     kind: "Toggle",
@@ -726,7 +775,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     description:
       "Store new generated images as WebP. This can reduce storage, depending on the image and quality. Existing images stay unchanged. When conversion is unavailable, keep the original image.",
     descriptionKey: "settings.controls.generatedImageWebp.help",
-    aliases: ["webp", "png", "image", "format", "storage"],
+    aliases: ["webp", "png", "image", "format", "storage", "picture", "photo", "pic"],
     kind: "Toggle",
   },
   {
@@ -736,7 +785,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     label: "WebP quality",
     description: "Higher values preserve more detail and use more disk space. Transparency is preserved.",
     descriptionKey: "settings.controls.generatedImageWebpQuality.help",
-    aliases: ["webp", "image", "quality", "compression"],
+    aliases: ["webp", "image", "quality", "compression", "picture", "photo", "pic"],
     kind: "Slider",
   },
   {
@@ -746,7 +795,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     label: "Background image size",
     description: "Set default generated background dimensions.",
     descriptionKey: "settings.search.imageBackgroundSize.description",
-    aliases: ["image", "resolution", "canvas"],
+    aliases: ["image", "resolution", "canvas", "picture", "photo", "pic"],
     kind: "Input",
   },
   {
@@ -756,7 +805,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     label: "Illustration image size",
     description: "Set default generated illustration dimensions.",
     descriptionKey: "settings.search.imageIllustrationSize.description",
-    aliases: ["image", "resolution", "canvas", "illustrator"],
+    aliases: ["image", "resolution", "canvas", "illustrator", "picture", "photo", "pic"],
     kind: "Input",
   },
   {
@@ -766,7 +815,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     label: "Game scene image size",
     description: "Set the default dimensions for generated Game scene illustrations.",
     descriptionKey: "settings.search.imageGameSize.description",
-    aliases: ["image", "resolution", "canvas", "game", "illustrator"],
+    aliases: ["image", "resolution", "canvas", "game", "illustrator", "picture", "photo", "pic"],
     kind: "Input",
   },
   {
@@ -776,7 +825,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     label: "Portrait image size",
     description: "Set default generated portrait dimensions.",
     descriptionKey: "settings.search.imagePortraitSize.description",
-    aliases: ["image", "resolution", "canvas", "character"],
+    aliases: ["image", "resolution", "canvas", "character", "picture", "photo", "pic"],
     kind: "Input",
   },
   {
@@ -786,7 +835,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     label: "Character sheets",
     description: "Set character reference sheet dimensions independently of backgrounds.",
     descriptionKey: "settings.controls.characterSheets.help",
-    aliases: ["image", "resolution", "canvas", "character", "reference", "sheet"],
+    aliases: ["image", "resolution", "canvas", "character", "reference", "sheet", "picture", "photo", "pic"],
     kind: "Input",
   },
   {
@@ -796,7 +845,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     label: "Selfie image size",
     description: "Set default generated selfie dimensions.",
     descriptionKey: "settings.search.imageSelfieSize.description",
-    aliases: ["image", "resolution", "canvas", "conversation"],
+    aliases: ["image", "resolution", "canvas", "conversation", "picture", "photo", "pic"],
     kind: "Input",
   },
   {
@@ -806,7 +855,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     label: "Style Profiles",
     description: "Tune reusable image prompt style profiles.",
     descriptionKey: "settings.search.imageStyleProfiles.description",
-    aliases: ["image", "style", "danbooru", "anime", "realistic"],
+    aliases: ["image", "style", "danbooru", "anime", "realistic", "picture", "photo", "pic"],
     keywords: ["art style", "image style"],
     kind: "Select",
   },
@@ -838,6 +887,16 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     description: "Set how many video messages characters can send in one reply.",
     descriptionKey: "settings.search.videoPerReply.description",
     aliases: ["video", "group", "limit", "clips", "conversation"],
+    kind: "Input",
+  },
+  {
+    id: "call-clip-lengths",
+    sectionId: "video-generation",
+    labelKey: "ui.panels.videogenerationsettings.conversationCallClips",
+    label: "Conversation Call Clips",
+    description: "Set how long generated character video-call presence clips run.",
+    descriptionKey: "settings.search.callClipLengths.description",
+    aliases: ["call", "video call", "clip", "length", "duration", "presence", "idle", "speaking"],
     kind: "Input",
   },
   {
@@ -899,7 +958,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     id: "app-background-color",
     sectionId: "app-style",
     labelKey: "settings.controls.backgroundColor.label",
-    label: "Background Color",
+    label: "App Background Color",
     description: "Set the main app shell background color.",
     descriptionKey: "settings.search.appBackgroundColor.description",
     aliases: ["background", "theme", "gradient"],
@@ -1014,8 +1073,8 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
   {
     id: "font-family",
     sectionId: "text-scale",
-    labelKey: "settings.controls.chatWidgetFont.label",
-    label: "Font",
+    labelKey: "ui.panels.appearancesettings.font",
+    label: "App Font",
     description: "Choose the font used across the app.",
     descriptionKey: "settings.search.fontFamily.description",
     aliases: ["typography", "typeface"],
@@ -1261,6 +1320,16 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     kind: "Toggle",
   },
   {
+    id: "tracker-card-colors",
+    sectionId: "roleplay-tracker",
+    labelKey: "settings.search.trackerCardColors.label",
+    label: "Tracker card colors",
+    description: "Set the colors of character cards in the Tracker panel.",
+    descriptionKey: "settings.search.trackerCardColors.description",
+    aliases: ["tracker", "card", "colour", "color", "character colors", "palette"],
+    kind: "Picker",
+  },
+  {
     id: "roleplay-vn-display",
     sectionId: "roleplay-messages",
     labelKey: "settings.roleplayVn.enabled",
@@ -1453,6 +1522,16 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     descriptionKey: "settings.search.chatListBackgrounds.description",
     aliases: ["sidebar", "chat list", "banner", "background", "row"],
     kind: "Button group",
+  },
+  {
+    id: "background-picker",
+    sectionId: "chat-backgrounds",
+    labelKey: "settings.search.backgroundPicker.label",
+    label: "Chat background image",
+    description: "Choose or upload the background image behind chats, and set the Roleplay default.",
+    descriptionKey: "settings.search.backgroundPicker.description",
+    aliases: ["background", "wallpaper", "scene", "image", "picture", "photo", "upload"],
+    kind: "Picker",
   },
   {
     id: "game-dialogue-display",
