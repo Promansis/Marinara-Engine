@@ -126,7 +126,7 @@ import {
   useInstalledRulesets,
   useCapabilityAgentRegistry,
 } from "../../hooks/use-capability-packages";
-import { useAgentImportPolicy } from "../../hooks/use-agents";
+import { useAgentImportSwitch } from "../../hooks/use-agents";
 import { useGameAssetStore } from "../../stores/game-asset.store";
 import { useUIStore } from "../../stores/ui.store";
 import {
@@ -579,15 +579,24 @@ export function GameSetupWizard({
   const [experienceSeed, setExperienceSeed] = useState(() => String(crypto.getRandomValues(new Uint32Array(1))[0]));
   // Rules are chosen once, for a new game only, and stay independent of combat presentation.
   const { data: installedRulesets, isLoading: rulesetsLoading } = useInstalledRulesets(isNewGame);
-  const { data: agentImportPolicy, isLoading: agentImportPolicyLoading } = useAgentImportPolicy();
+  const {
+    enabled: agentImportsOn,
+    loading: agentImportPolicyLoading,
+    pending: agentImportPending,
+    setEnabled: setAgentImportsEnabled,
+    policyKnown: agentImportPolicyKnown,
+  } = useAgentImportSwitch();
   // With custom imports off the server refuses a new game on an imported ruleset, so it is not
   // offered here either, and it is only offered once the policy is KNOWN to be on. Games that
   // already pinned one keep playing: nothing else consults this.
   const rulesets = useMemo(() => {
     if (!isNewGame) return [];
     const installed = installedRulesets ?? [];
-    return agentImportPolicy?.enabled === true ? installed : installed.filter((entry) => !entry.source);
-  }, [agentImportPolicy, installedRulesets, isNewGame]);
+    return agentImportsOn ? installed : installed.filter((entry) => !entry.source);
+  }, [agentImportsOn, installedRulesets, isNewGame]);
+  const agentImportsOff = agentImportPolicyKnown && !agentImportsOn;
+  const importedRulesetsHidden =
+    isNewGame && agentImportsOff && (installedRulesets ?? []).some((entry) => entry.source);
   const [rulesetId, setRulesetId] = useState<string | null>(null);
   // The layers checked on the chosen ruleset, by id. They belong to THAT ruleset, so choosing a
   // different one clears them rather than carrying a name the new rules do not have.
@@ -1384,7 +1393,7 @@ export function GameSetupWizard({
       (installedRulesets ?? []).some((entry) => entry.definition.id === sharedRuleset.id);
     const droppedRulesetNotice = !hiddenFromList
       ? "game.ruleset.setup.unavailableImport"
-      : agentImportPolicy?.enabled === false
+      : agentImportsOff
         ? "game.ruleset.setup.importsOffImport"
         : "game.ruleset.setup.importPolicyUnknownImport";
     setRulesetImportNotice(
@@ -2495,6 +2504,19 @@ export function GameSetupWizard({
                           )
                         }
                       />
+                    )}
+                    {importedRulesetsHidden && (
+                      <div className="flex items-center justify-between gap-3 rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs text-[var(--muted-foreground)]">
+                        <span>{localizeUi("game.ruleset.setup.importsOffChip")}</span>
+                        <button
+                          type="button"
+                          disabled={agentImportPending}
+                          onClick={() => void setAgentImportsEnabled(true)}
+                          className="shrink-0 rounded-md bg-[var(--primary)] px-2.5 py-1 font-medium text-[var(--primary-foreground)] disabled:opacity-60"
+                        >
+                          {localizeUi("settings.agentImports.allow")}
+                        </button>
+                      </div>
                     )}
                     {rulesetImportNotice && (
                       <p role="status" className="text-xs text-[var(--muted-foreground)]">

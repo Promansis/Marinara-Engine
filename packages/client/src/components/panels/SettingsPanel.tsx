@@ -206,7 +206,7 @@ import {
   PersonalExtensionsSettings,
 } from "./settings/PersonalExtensionsSettings";
 import { usePersonalExtensionPolicy, useSetExternalExtensionsEnabled } from "../../hooks/use-personal-extensions";
-import { useAgentImportPolicy, useSetAgentImportsEnabled } from "../../hooks/use-agents";
+import { useAgentImportSwitch } from "../../hooks/use-agents";
 import { DraftNumberInput } from "../ui/DraftNumberInput";
 import { ExportFormatDialog, type ExportFormatChoice } from "../ui/ExportFormatDialog";
 import { inspectCharacterFilesForEmbeddedLorebooks } from "../../lib/character-import";
@@ -6600,6 +6600,8 @@ function ImportSettings() {
               )}
             </div>
           )}
+
+          <AgentFileImportRow />
         </div>
       </SettingsSection>
 
@@ -6656,6 +6658,52 @@ function ImportSettings() {
       <StorageOptimizationSettings />
       <GameAssetsSettings />
     </div>
+  );
+}
+
+/** Data › Import: an agent file goes through the Agents panel's own import, so its permission review applies. */
+function AgentFileImportRow() {
+  const { t: localizeUi } = useUiTranslation();
+  const agentImports = useAgentImportSwitch();
+  return (
+    <SearchableSettingTarget
+      controlId="agent-file"
+      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--background)]/45 p-2.5"
+    >
+      <div className="min-w-0 flex-1">
+        <div className="text-xs font-medium text-[var(--foreground)]">
+          {localizeUi("settings.agentImports.file.label")}
+        </div>
+        <div className="text-[0.6875rem] text-[var(--muted-foreground)]">
+          {agentImports.policyKnown
+            ? localizeUi(
+                agentImports.enabled ? "settings.agentImports.file.helpOn" : "settings.agentImports.file.helpOff",
+              )
+            : null}
+        </div>
+      </div>
+      <div className="flex shrink-0 gap-1.5">
+        {agentImports.policyKnown && !agentImports.enabled && (
+          <button
+            type="button"
+            onClick={() => void agentImports.setEnabled(true)}
+            disabled={agentImports.pending}
+            className={SETTINGS_BUTTON_CLASS}
+          >
+            {localizeUi("settings.agentImports.allow")}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => useUIStore.getState().requestAgentImport()}
+          disabled={agentImports.loading}
+          className={SETTINGS_BUTTON_CLASS}
+        >
+          <Download size="0.75rem" />
+          {localizeUi("settings.agentImports.importAgent")}
+        </button>
+      </div>
+    </SearchableSettingTarget>
   );
 }
 
@@ -7211,8 +7259,7 @@ function ExtensionsImportsSettings() {
   const { t } = useTranslation();
   const { data: extensionPolicy, isLoading: extensionPolicyLoading } = usePersonalExtensionPolicy();
   const setExternalExtensionsEnabled = useSetExternalExtensionsEnabled();
-  const { data: agentImportPolicy, isLoading: agentImportPolicyLoading } = useAgentImportPolicy();
-  const setAgentImportsEnabled = useSetAgentImportsEnabled();
+  const agentImports = useAgentImportSwitch();
 
   const handleExternalExtensionsToggle = useCallback(
     async (enabled: boolean) => {
@@ -7236,28 +7283,6 @@ function ExtensionsImportsSettings() {
     [setExternalExtensionsEnabled, t],
   );
 
-  const handleAgentImportsToggle = useCallback(
-    async (enabled: boolean) => {
-      if (enabled) {
-        const confirmed = await showConfirmDialog({
-          title: t("settings.agentImports.confirm.title"),
-          message: t("settings.agentImports.warning"),
-          confirmLabel: t("settings.agentImports.confirm.action"),
-          cancelLabel: t("settings.agentImports.confirm.cancel"),
-          tone: "destructive",
-        });
-        if (!confirmed) return;
-      }
-      try {
-        await setAgentImportsEnabled.mutateAsync(enabled);
-        toast.success(enabled ? t("settings.agentImports.enabled") : t("settings.agentImports.disabled"));
-      } catch (toggleError) {
-        toast.error(getPrivilegedActionErrorMessage(toggleError, t("settings.agentImports.error")));
-      }
-    },
-    [setAgentImportsEnabled, t],
-  );
-
   return (
     <SettingsSection
       title={localizeUi("settings.sections.extensionsImports.title")}
@@ -7269,11 +7294,20 @@ function ExtensionsImportsSettings() {
         <div className="flex flex-col gap-2 rounded-lg border border-[var(--border)] bg-[var(--background)]/45 p-2.5">
           <ToggleSetting
             label={t("settings.agentImports.toggle.label")}
-            checked={agentImportPolicy?.enabled ?? false}
-            onChange={(enabled) => void handleAgentImportsToggle(enabled)}
-            disabled={agentImportPolicyLoading || setAgentImportsEnabled.isPending}
+            checked={agentImports.enabled}
+            onChange={(enabled) => void agentImports.setEnabled(enabled)}
+            disabled={agentImports.loading || agentImports.pending}
             help={t("settings.agentImports.toggle.help")}
           />
+          <button
+            type="button"
+            onClick={() => useUIStore.getState().requestAgentImport()}
+            disabled={agentImports.loading}
+            className={cn(SETTINGS_BUTTON_CLASS, "self-start")}
+          >
+            <Download size="0.75rem" />
+            {t("settings.agentImports.importAgent")}
+          </button>
           <div className="flex items-start gap-2 text-[0.6875rem] leading-relaxed text-[var(--primary)]">
             <ShieldAlert size="0.875rem" className="mt-0.5 shrink-0" />
             <p>{t("settings.agentImports.warning")}</p>

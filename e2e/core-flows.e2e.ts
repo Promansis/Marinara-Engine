@@ -8772,14 +8772,19 @@ test("external Agent imports require the Extensions & imports gate and explicit 
 
     await page.goto("/");
     await clickTopbarPanel(page, "agents");
-    const disabledHelp = 'Enable "Allow custom Agent imports" in Settings → Advanced → Extensions & imports first.';
-    const lockedImportButton = page.getByTitle(disabledHelp).first();
-    await expect(lockedImportButton).toHaveAttribute("aria-disabled", "true");
-    await lockedImportButton.dispatchEvent("click");
-    const disabledToast = page.locator("[data-sonner-toast]").filter({ hasText: disabledHelp }).last();
-    await expect(disabledToast).toBeVisible();
-    await disabledToast.getByRole("button", { name: "Close toast" }).click();
-    await expect(disabledToast).toBeHidden();
+    // With imports off the button is not locked: it offers the switch in place, behind the same
+    // warning confirm as Settings, and cancelling leaves imports off.
+    const offHelp = "Custom Agent imports are off. You will be asked to allow them first.";
+    const offImportButton = page.getByTitle(offHelp).first();
+    await expect(offImportButton).not.toHaveAttribute("aria-disabled", "true");
+    await offImportButton.click();
+    const allowDialog = page.getByRole("dialog", { name: "Allow Custom Agent Imports?" });
+    await expect(allowDialog).toBeVisible();
+    await allowDialog.getByRole("button", { name: "Keep Imports Locked" }).click();
+    await expect(allowDialog).toBeHidden();
+    expect(((await (await request.get("/api/agents/import-policy")).json()) as { enabled: boolean }).enabled).toBe(
+      false,
+    );
 
     await clickTopbarPanel(page, "settings");
     await page.getByRole("tab", { name: "Advanced" }).click();
@@ -8805,7 +8810,7 @@ test("external Agent imports require the Extensions & imports gate and explicit 
     await clickTopbarPanel(page, "agents");
     const importAgents = page.getByTitle("Import agents");
     await expect(importAgents).toHaveCount(1);
-    await expect(importAgents).toHaveAttribute("aria-disabled", "false");
+    await expect(importAgents).toBeEnabled();
     await expect(page.getByTitle("Import agent folder")).toHaveCount(0);
     await importAgents.click();
     const importSourceDialog = page.getByRole("dialog", { name: "Import agents" });

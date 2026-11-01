@@ -1,9 +1,13 @@
 // ──────────────────────────────────────────────
 // Hooks: Agent Configs (React Query)
 // ──────────────────────────────────────────────
+import { useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import type { AgentSuiteRewriteInput, CustomAgentImportPolicy, ImportAgentConfigInput } from "@marinara-engine/shared";
-import { ApiError, api } from "../lib/api-client";
+import { ApiError, api, getPrivilegedActionErrorMessage } from "../lib/api-client";
+import { showConfirmDialog } from "../lib/app-dialogs";
 
 export const agentKeys = {
   all: ["agents"] as const,
@@ -78,6 +82,50 @@ export function useSetAgentImportsEnabled() {
       qc.setQueryData(agentKeys.importPolicy(), policy);
     },
   });
+}
+
+/**
+ * The "Allow custom Agent imports" switch with its warning confirm, shared by Settings and every
+ * place that offers the switch in place (Agents import, repositories, Game setup). `setEnabled`
+ * resolves true only when the policy now has the requested value; a cancelled confirm or a failed
+ * save resolves false.
+ */
+export function useAgentImportSwitch() {
+  const { t } = useTranslation();
+  const { data: policy, isLoading } = useAgentImportPolicy();
+  const mutation = useSetAgentImportsEnabled();
+  const mutateAsync = mutation.mutateAsync;
+  const setEnabled = useCallback(
+    async (enabled: boolean) => {
+      if (enabled) {
+        const confirmed = await showConfirmDialog({
+          title: t("settings.agentImports.confirm.title"),
+          message: t("settings.agentImports.warning"),
+          confirmLabel: t("settings.agentImports.confirm.action"),
+          cancelLabel: t("settings.agentImports.confirm.cancel"),
+          tone: "destructive",
+        });
+        if (!confirmed) return false;
+      }
+      try {
+        await mutateAsync(enabled);
+        toast.success(enabled ? t("settings.agentImports.enabled") : t("settings.agentImports.disabled"));
+        return true;
+      } catch (toggleError) {
+        toast.error(getPrivilegedActionErrorMessage(toggleError, t("settings.agentImports.error")));
+        return false;
+      }
+    },
+    [mutateAsync, t],
+  );
+  return {
+    enabled: policy?.enabled === true,
+    // Only an answer that says "off" counts as off: a policy that could not be read is neither.
+    policyKnown: typeof policy?.enabled === "boolean",
+    loading: isLoading,
+    pending: mutation.isPending,
+    setEnabled,
+  };
 }
 
 export function useImportAgent() {

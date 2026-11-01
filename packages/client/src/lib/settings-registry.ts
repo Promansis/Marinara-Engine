@@ -585,6 +585,17 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     kind: "Toggle",
   },
   {
+    id: "agent-file",
+    sectionId: "profile-marinara",
+    labelKey: "settings.search.agentFile.label",
+    label: "Agent file",
+    description: "Import an Agent file (.json or .zip). Asks to allow custom Agent imports first if they are off.",
+    descriptionKey: "settings.search.agentFile.description",
+    aliases: ["agent file", "install agent", "import agent", "storyteller", "add agent", "custom agent"],
+    keywords: ["json", "custom agent imports", "agent import"],
+    kind: "Button group",
+  },
+  {
     id: "text-to-speech",
     sectionId: "input-editing",
     labelKey: "settings.search.textToSpeech.label",

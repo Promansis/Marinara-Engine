@@ -41,7 +41,7 @@ import {
   useAgentConfigs,
   useCreateAgent,
   useDeleteAgent,
-  useAgentImportPolicy,
+  useAgentImportSwitch,
   useImportAgent,
   useUploadAgentImage,
   type AgentConfigRow,
@@ -294,7 +294,11 @@ export function AgentsPanel() {
   const importRuleset = useImportRuleset();
   const importRulesetPackage = useImportRulesetPackage();
   const removeRuleset = useRemoveRuleset();
-  const { data: agentImportPolicy, isLoading: agentImportPolicyLoading } = useAgentImportPolicy();
+  const {
+    enabled: agentImportsEnabled,
+    loading: agentImportPolicyLoading,
+    setEnabled: setAgentImportsEnabled,
+  } = useAgentImportSwitch();
   const deleteAgent = useDeleteAgent();
   const uninstallCapabilityPackage = useUninstallCapabilityPackage();
   const uploadAgentImage = useUploadAgentImage();
@@ -333,27 +337,20 @@ export function AgentsPanel() {
   const handleFolderRenameGesture = useFolderRenameGesture();
   const touchSafeAgentDragMode = useTouchSafeAgentDragMode();
   const nativeAgentDragEnabled = !touchSafeAgentDragMode;
-  const agentImportsEnabled = agentImportPolicy?.enabled === true;
+  // The button's title promises the allow prompt, which only the button gives; the file inputs do not.
   const agentImportsDisabledHelp = localizeUi("settings.agentImports.enableFirst");
+  const agentImportsOffError = localizeUi("settings.agentImports.offBlocked");
 
-  const openAgentImportPicker = useCallback(
-    (kind: "file" | "folder" | "ruleset") => {
-      if (!agentImportsEnabled) {
-        toast.info(agentImportsDisabledHelp);
-        return;
-      }
-      if (kind === "file") agentImportInputRef.current?.click();
-      else if (kind === "folder") agentFolderImportInputRef.current?.click();
-      else rulesetImportInputRef.current?.click();
-    },
-    [agentImportsDisabledHelp, agentImportsEnabled],
-  );
+  const openAgentImportPicker = useCallback((kind: "file" | "folder" | "ruleset") => {
+    if (kind === "file") agentImportInputRef.current?.click();
+    else if (kind === "folder") agentFolderImportInputRef.current?.click();
+    else rulesetImportInputRef.current?.click();
+  }, []);
 
+  // Imports are offered in place: with them off, the same switch and warning confirm as Settings
+  // open first, and the picker follows only once they are on.
   const chooseAgentImportSource = useCallback(async () => {
-    if (!agentImportsEnabled) {
-      openAgentImportPicker("file");
-      return;
-    }
+    if (!agentImportsEnabled && !(await setAgentImportsEnabled(true))) return;
 
     const source = await showChoiceDialog({
       title: localizeUi("ui.panels.agentspanel.importAgents"),
@@ -365,7 +362,15 @@ export function AgentsPanel() {
       ],
     });
     if (source === "file" || source === "folder" || source === "ruleset") openAgentImportPicker(source);
-  }, [agentImportsEnabled, localizeUi, openAgentImportPicker]);
+  }, [agentImportsEnabled, localizeUi, openAgentImportPicker, setAgentImportsEnabled]);
+
+  // Settings' "Import agent" buttons land here, once the policy is known.
+  const agentImportRequested = useUIStore((state) => state.agentImportRequested);
+  useEffect(() => {
+    if (!useUIStore.getState().agentImportRequested || agentImportPolicyLoading) return;
+    useUIStore.getState().consumeAgentImportRequest();
+    void chooseAgentImportSource();
+  }, [agentImportRequested, agentImportPolicyLoading, chooseAgentImportSource]);
 
   const agentConfigRows = useMemo(() => (agentConfigs ?? []) as AgentConfigRow[], [agentConfigs]);
   const availableBuiltInAgents = useMemo(() => {
@@ -988,7 +993,7 @@ export function AgentsPanel() {
       const file = event.target.files?.[0];
       if (!file) return;
       if (!agentImportsEnabled) {
-        setAgentImportError(agentImportsDisabledHelp);
+        setAgentImportError(agentImportsOffError);
         event.target.value = "";
         return;
       }
@@ -1033,7 +1038,7 @@ export function AgentsPanel() {
 
       event.target.value = "";
     },
-    [agentImportsDisabledHelp, agentImportsEnabled, localizeUi, prepareAgentEntries],
+    [agentImportsOffError, agentImportsEnabled, localizeUi, prepareAgentEntries],
   );
 
   const handleImportAgentFolder = useCallback(
@@ -1041,7 +1046,7 @@ export function AgentsPanel() {
       setAgentImportError(null);
       setAgentImportSuccess(null);
       if (!agentImportsEnabled) {
-        setAgentImportError(agentImportsDisabledHelp);
+        setAgentImportError(agentImportsOffError);
         event.target.value = "";
         return;
       }
@@ -1062,7 +1067,7 @@ export function AgentsPanel() {
       }
       event.target.value = "";
     },
-    [agentImportsDisabledHelp, agentImportsEnabled, prepareAgentEntries],
+    [agentImportsOffError, agentImportsEnabled, prepareAgentEntries],
   );
 
   // A ruleset is parsed with the SAME shared parser the server stores it through, so a file that
@@ -1075,7 +1080,7 @@ export function AgentsPanel() {
       event.target.value = "";
       if (!files.length) return;
       if (!agentImportsEnabled) {
-        setAgentImportError(agentImportsDisabledHelp);
+        setAgentImportError(agentImportsOffError);
         return;
       }
       // One ruleset, with the language packs (1.811) published beside its package file if any were picked.
@@ -1180,7 +1185,7 @@ export function AgentsPanel() {
         setAgentImportError(localizeUi("game.ruleset.import.unusableId", { id: parsed.definition.id }));
       }
     },
-    [agentImportsDisabledHelp, agentImportsEnabled, localizeUi],
+    [agentImportsOffError, agentImportsEnabled, localizeUi],
   );
 
   const handleConfirmRulesetImport = useCallback(async () => {
@@ -1459,11 +1464,9 @@ export function AgentsPanel() {
         <button
           type="button"
           onClick={() => void chooseAgentImportSource()}
-          aria-disabled={!agentImportsEnabled || agentImportPolicyLoading}
-          className={cn(
-            "mari-chrome-control mari-chrome-control--primary flex-1 text-xs",
-            (!agentImportsEnabled || agentImportPolicyLoading) && "cursor-not-allowed grayscale opacity-45",
-          )}
+          disabled={agentImportPolicyLoading}
+          className="mari-chrome-control mari-chrome-control--primary flex-1 text-xs"
+          aria-label={localizeUi("ui.panels.agentspanel.importAgents")}
           title={agentImportsEnabled ? localizeUi("ui.panels.agentspanel.importAgents") : agentImportsDisabledHelp}
         >
           <Download size="0.8125rem" />

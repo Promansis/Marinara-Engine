@@ -744,6 +744,8 @@ interface UIState {
   connectionDetailReturnTab: string | null;
   /** Not saved: the What's New window should open again (see `requestWhatsNew`). */
   whatsNewRequested: boolean;
+  /** Not saved: the Agents panel should start its import (see `requestAgentImport`). */
+  agentImportRequested: boolean;
   modal: { type: string; props?: Record<string, unknown> } | null;
   /** Not saved: an Advanced Memory scene to open, or a Fix to start, once its Chat Settings section shows. */
   advancedMemoryRequest: { chatId: string; sceneId?: string; fix?: boolean } | null;
@@ -1313,6 +1315,8 @@ interface UIState {
   consumeHomeRequest: () => void;
   requestWhatsNew: () => void;
   consumeWhatsNewRequest: () => void;
+  requestAgentImport: () => void;
+  consumeAgentImportRequest: () => void;
   setSettingsTargetSectionId: (sectionId: string | null) => void;
   openModal: (type: string, props?: Record<string, unknown>) => void;
   closeModal: () => void;
@@ -2185,6 +2189,7 @@ export const useUIStore = create<UIState>()(
         homeRequest: null,
         connectionDetailReturnTab: null,
         whatsNewRequested: false,
+        agentImportRequested: false,
         settingsTargetSectionId: null,
         modal: null,
         advancedMemoryRequest: null,
@@ -2583,6 +2588,12 @@ export const useUIStore = create<UIState>()(
         consumeHomeRequest: () => set({ homeRequest: null }),
         requestWhatsNew: () => set({ whatsNewRequested: true }),
         consumeWhatsNewRequest: () => set({ whatsNewRequested: false }),
+        // Settings has no import handler of its own: the Agents panel owns the picker and the permission review.
+        requestAgentImport: () => {
+          get().openRightPanel("agents");
+          set({ agentImportRequested: true });
+        },
+        consumeAgentImportRequest: () => set({ agentImportRequested: false }),
         setSettingsTargetSectionId: (sectionId) => set({ settingsTargetSectionId: sectionId }),
         openModal: (type, props) => set({ modal: { type, props } }),
         closeModal: () => set({ modal: null }),

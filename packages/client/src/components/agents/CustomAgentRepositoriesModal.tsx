@@ -22,7 +22,7 @@ import { showConfirmDialog } from "../../lib/app-dialogs";
 import { cn } from "../../lib/utils";
 import { Modal } from "../ui/Modal";
 import { useTranslation as useUiTranslation } from "react-i18next";
-import { useAgentImportPolicy } from "../../hooks/use-agents";
+import { useAgentImportSwitch } from "../../hooks/use-agents";
 
 const TRUST_WARNING =
   "This repo and its agents are not affiliated with or vetted by PastaDevs. Custom agents can run tools, send prompts to your configured connections, and change behavior on every sync. Only add repos from people or sources you trust.";
@@ -84,7 +84,7 @@ function previewPermissions(change: CustomAgentRepositoryChange): CustomAgentCap
 export function CustomAgentRepositoriesModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t: localizeUi } = useUiTranslation();
   const repositories = useCustomAgentRepositories();
-  const { data: agentImportPolicy } = useAgentImportPolicy();
+  const agentImports = useAgentImportSwitch();
   const previewMutation = usePreviewCustomAgentRepository();
   const addMutation = useAddCustomAgentRepository();
   const syncMutation = useSyncCustomAgentRepository();
@@ -107,7 +107,7 @@ export function CustomAgentRepositoriesModal({ open, onClose }: { open: boolean;
     previewMutation.isPending || addMutation.isPending || syncMutation.isPending || removeMutation.isPending;
   // A preview from a server that predates repository rulesets has no `rulesets` at all.
   const previewRulesets = preview?.rulesets ?? [];
-  const agentImportsEnabled = agentImportPolicy?.enabled === true;
+  const agentImportsEnabled = agentImports.enabled;
 
   /** Adding or syncing reports what happened to the rulesets separately, because a version already
    *  installed with other contents is deliberately left alone rather than replaced. */
@@ -147,7 +147,7 @@ export function CustomAgentRepositoriesModal({ open, onClose }: { open: boolean;
   const applyPreview = async () => {
     if (!preview) return;
     if (!agentImportsEnabled) {
-      toast.info(localizeUi("settings.agentImports.enableFirst"));
+      toast.info(localizeUi("settings.agentImports.allowAbove"));
       return;
     }
     if (!configuredRepository) {
@@ -271,6 +271,29 @@ export function CustomAgentRepositoriesModal({ open, onClose }: { open: boolean;
           <TriangleAlert className="mt-0.5 shrink-0 text-[var(--marinara-chat-chrome-highlight-text)]" size="1rem" />
           <p className="max-w-[70ch] text-[var(--muted-foreground)]">{TRUST_WARNING}</p>
         </div>
+
+        {/* Only an answer that says on or off is shown: a policy that could not be read is neither. */}
+        {agentImports.policyKnown && (
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] p-3 text-sm leading-6 text-[var(--muted-foreground)]">
+            <p className="max-w-[70ch]">
+              {localizeUi(
+                agentImportsEnabled
+                  ? "settings.agentImports.repositories.on"
+                  : "settings.agentImports.repositories.off",
+              )}
+            </p>
+            {!agentImportsEnabled && (
+              <button
+                type="button"
+                className="mari-chrome-control mari-chrome-control--primary h-9 shrink-0 px-4 text-sm"
+                disabled={agentImports.pending}
+                onClick={() => void agentImports.setEnabled(true)}
+              >
+                {localizeUi("settings.agentImports.allow")}
+              </button>
+            )}
+          </div>
+        )}
 
         <section aria-labelledby="custom-repository-add-heading">
           <h3 id="custom-repository-add-heading" className="text-base font-semibold">
@@ -412,7 +435,7 @@ export function CustomAgentRepositoriesModal({ open, onClose }: { open: boolean;
                 className="mari-chrome-control mari-chrome-control--primary h-10 px-4 text-sm"
                 onClick={() => void applyPreview()}
                 disabled={pending || !agentImportsEnabled}
-                title={agentImportsEnabled ? undefined : localizeUi("settings.agentImports.enableFirst")}
+                title={agentImportsEnabled ? undefined : localizeUi("settings.agentImports.allowAbove")}
               >
                 {addMutation.isPending || syncMutation.isPending ? (
                   <Loader2 size="0.9rem" className="animate-spin" />
