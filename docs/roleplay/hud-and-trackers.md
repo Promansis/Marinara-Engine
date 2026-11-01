@@ -103,7 +103,7 @@ In **Chat Settings → Agents**, open **Trackers Control** and turn a tracker on
 
 ## The Tracker Panel
 
-The **Tracker Panel** is a larger side panel that shows the same tracker data as the compact HUD widgets. It gives the tracker cards more room and adds portrait and thought features. Its look is set from the **Panel settings** menu in the panel header, beside the gear.
+The **Tracker Panel** is a larger side panel that shows the same tracker data as the compact HUD widgets. It gives the tracker cards more room and adds portrait and thought features. Its look is set from the **Panel settings** button, in the bar the gear in the panel header opens.
 
 To turn it on in a Roleplay chat, open **Chat Settings** and click the **Tracker Panel** button (the die) in its title bar, next to pin and lock. It stays highlighted while the panel is on, and the panel shows beside the chat. Click it again to turn the panel off and hide it. On a computer, the trackers then show in the Trackers window.
 

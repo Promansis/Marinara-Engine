@@ -43,6 +43,7 @@ const TRACKER_TOOLBAR_ITEM_ORDER = [
   "side",
   "size",
   "statDisplay",
+  "look",
   "hide",
   "lock",
   "add",
@@ -198,6 +199,7 @@ export function TrackerSidebarHeader({
   const lookButton = (
     <button
       ref={lookButtonRef}
+      {...getToolbarItemProps("look")}
       type="button"
       onClick={() => (lookOpen ? closeLook() : setLookOpen(true))}
       title={localizeUi("ui.trackerPanel.lookMenu.panelSettings")}
@@ -253,7 +255,6 @@ export function TrackerSidebarHeader({
           {localizeUi("ui.trackerPanel.trackersidebarheader.tapFieldToEdit")}
         </span>
       )}
-      {lookButton}
       {settingsButton}
       {/* The panel stays dark in light theme, so the icon takes the panel's muted color.
           ponytail: HelpTooltip portals into the main window, so the popped-out panel has no help;
@@ -358,6 +359,9 @@ export function TrackerSidebarHeader({
           />
           <Gauge size="0.75rem" className={cn("relative z-10 mx-auto", gaugesSelected && "text-[var(--foreground)]")} />
         </button>
+        {/* With the display controls, not in the header row: at the panel's narrowest a fourth header button
+            pushes help outside the panel. */}
+        {lookButton}
       </div>
       <div
         role="group"
@@ -524,7 +528,8 @@ export function TrackerSidebarHeader({
             onViewChange={setLookView}
             onEscape={() => {
               closeLook();
-              lookButtonRef.current?.focus();
+              // A search jump opens the menu with the gear toolbar closed, and its button is then inert.
+              (settingsOpen ? lookButtonRef : settingsButtonRef).current?.focus();
             }}
           />
         </div>

@@ -184,10 +184,12 @@ assert.match(
   /scrollToSettingsAnchor\(controlId, \(\) => useUIStore\.getState\(\)\.consumeTrackerLookMenuRequest\(\)\)/u,
   "A request nobody picked up must be cleared",
 );
-assert.doesNotMatch(
+// The docked panel can be 96 px wide and its header row does not wrap, so a fourth header button pushes
+// "Show help" out of the panel: Panel settings lives in the gear toolbar instead.
+assert.match(
   trackerHeaderSource,
   /TRACKER_TOOLBAR_ITEM_ORDER = \[[^\]]*"look"/u,
-  "The Panel settings button sits beside the gear, outside the gear toolbar",
+  "The Panel settings button is a gear toolbar item, not a fourth header button",
 );
 assert.match(
   trackerHeaderSource,

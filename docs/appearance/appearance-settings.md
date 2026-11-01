@@ -93,7 +93,7 @@ The **Conversation Display** section has one control, **Chat Layout**, that chan
 
 ## Tracker Panel
 
-The **Tracker Panel** section, in the **Roleplay** view, has the **Tracker Panel** on/off switch and the **Temperature unit** (**°C** or **°F**). How the panel looks (size, stat and thought display, background, card order and colors) is in the **Panel settings** menu beside the gear in the tracker header. That panel is a separate feature with its own guide. See [Roleplay HUD and Trackers](../roleplay/hud-and-trackers.md).
+The **Tracker Panel** section, in the **Roleplay** view, has the **Tracker Panel** on/off switch and the **Temperature unit** (**°C** or **°F**). How the panel looks (size, stat and thought display, background, card order and colors) is in the **Panel settings** menu, in the bar the gear in the tracker header opens. That panel is a separate feature with its own guide. See [Roleplay HUD and Trackers](../roleplay/hud-and-trackers.md).
 
 ## Roleplay message appearance
 
