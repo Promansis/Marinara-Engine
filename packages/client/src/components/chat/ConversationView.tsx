@@ -30,7 +30,8 @@ import { PinnedImageOverlay } from "./PinnedImageOverlay";
 import { useChatStore } from "../../stores/chat.store";
 import { hasActiveTextSelection } from "../../lib/text-selection";
 import { useConversationGamesStore } from "../../stores/conversation-games.store";
-import { useUIStore } from "../../stores/ui.store";
+import { CONVO_GRADIENT_DEFAULTS, useUIStore } from "../../stores/ui.store";
+import { validCssColor } from "../../lib/css-colors";
 import { playConfiguredNotificationPing } from "../../lib/notification-sound";
 import { rememberBoundedSetValue } from "../../lib/bounded-set";
 import { useRenderTimer } from "../../lib/perf-diagnostics";
@@ -522,8 +523,10 @@ export function ConversationView({
   const conversationBackgroundImageOpacity = useUIStore((s) => s.conversationBackgroundImageOpacity);
   const reduceAmbientEffects = useReducedAmbientEffects();
   const gradientStyle = useMemo(() => {
-    const g = convoGradient[theme];
-    const defaults = theme === "dark" ? { from: "#0a0a0e", to: "#1c2133" } : { from: "#f2eff7", to: "#eae6f0" };
+    let g = convoGradient[theme];
+    const defaults = CONVO_GRADIENT_DEFAULTS[theme];
+    // A typed or cleared colour can be invalid; one bad stop would drop the whole background.
+    g = { from: validCssColor(g.from, defaults.from), to: validCssColor(g.to, defaults.to) };
     if (g.from === defaults.from && g.to === defaults.to) {
       return {
         background: `linear-gradient(135deg, var(--marinara-conversation-gradient-from, ${g.from}), var(--marinara-conversation-gradient-to, ${g.to}))`,

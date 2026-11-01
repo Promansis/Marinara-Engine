@@ -60,7 +60,7 @@ import {
 } from "@marinara-engine/shared";
 import { DraftNumberInput } from "../../ui/DraftNumberInput";
 import { HelpTooltip } from "../../ui/HelpTooltip";
-import { SettingsCheckbox, SettingsSwitch } from "./SettingControls";
+import { SettingsCheckbox, SettingsSlider, SettingsSwitch } from "./SettingControls";
 import { useTranslation as useUiTranslation } from "react-i18next";
 import { ApiError } from "../../../lib/api-client";
 
@@ -2288,26 +2288,20 @@ export function TTSConfigCard() {
           </FieldRow>
 
           {/* Speed */}
-          <FieldRow label={speedLabel} help={speedHelp}>
-            <input
-              type="range"
-              min={speedMin}
-              max={speedMax}
-              step={0.05}
-              value={speedSliderValue}
-              disabled={speedUnavailable}
-              onChange={(e) => {
-                setSpeed(parseFloat(e.target.value));
-                mark({ speed: parseFloat(e.target.value) });
-              }}
-              className="w-full accent-[var(--primary)]"
-            />
-            <div className="flex justify-between text-[0.6rem] text-[var(--muted-foreground)]">
-              <span>{speedMin.toFixed(2)}×</span>
-              <span>1.0×</span>
-              <span>{speedMax.toFixed(2)}×</span>
-            </div>
-          </FieldRow>
+          <SettingsSlider
+            label={speedLabel}
+            help={speedHelp}
+            min={speedMin}
+            max={speedMax}
+            step={0.05}
+            value={speedSliderValue}
+            disabled={speedUnavailable}
+            onChange={(next) => {
+              setSpeed(next);
+              mark({ speed: next });
+            }}
+            captions={[`${speedMin.toFixed(2)}×`, "1.0×", `${speedMax.toFixed(2)}×`]}
+          />
 
           {source === "elevenlabs" && (
             <FieldRow
@@ -2343,31 +2337,25 @@ export function TTSConfigCard() {
           )}
 
           {source === "elevenlabs" && (
-            <FieldRow
+            <SettingsSlider
               label={localizeUi("ui.panels.ttsconfigcard.stabilityValue1", {
                 value1: Math.round(elevenLabsStability * 100),
               })}
               help={localizeUi("ui.panels.ttsconfigcard.elevenlabsVoiceStabilityLowerValuesAreMoreExpressiveAnd")}
-            >
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.05}
-                value={elevenLabsStability}
-                onChange={(e) => {
-                  const next = parseFloat(e.target.value);
-                  setElevenLabsStability(next);
-                  mark({ elevenLabsStability: next });
-                }}
-                className="w-full accent-[var(--primary)]"
-              />
-              <div className="flex justify-between text-[0.6rem] text-[var(--muted-foreground)]">
-                <span>{localizeUi("ui.panels.ttsconfigcard.creative")}</span>
-                <span>{localizeUi("ui.panels.ttsconfigcard.natural")}</span>
-                <span>{localizeUi("ui.panels.ttsconfigcard.robust")}</span>
-              </div>
-            </FieldRow>
+              min={0}
+              max={1}
+              step={0.05}
+              value={elevenLabsStability}
+              onChange={(next) => {
+                setElevenLabsStability(next);
+                mark({ elevenLabsStability: next });
+              }}
+              captions={[
+                localizeUi("ui.panels.ttsconfigcard.creative"),
+                localizeUi("ui.panels.ttsconfigcard.natural"),
+                localizeUi("ui.panels.ttsconfigcard.robust"),
+              ]}
+            />
           )}
 
           <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">
@@ -2483,7 +2471,7 @@ export function TTSConfigCard() {
               }}
             />
             {dialogueOnly && (
-              <FieldRow
+              <SettingsSlider
                 label={localizeUi("ui.panels.ttsconfigcard.pauseBetweenDialoguesValue1Value2", {
                   value1: dialoguePauseSeconds,
                   value2:
@@ -2492,30 +2480,20 @@ export function TTSConfigCard() {
                       : localizeUi("ui.panels.ttsconfigcard.seconds"),
                 })}
                 help={localizeUi("ui.panels.ttsconfigcard.addsSilenceBetweenSeparateDialogueLinesInTheSame")}
-              >
-                <input
-                  type="range"
-                  aria-label={localizeUi("ui.panels.ttsconfigcard.pauseBetweenDialoguesInSeconds")}
-                  min={TTS_DIALOGUE_PAUSE_MIN_SECONDS}
-                  max={TTS_DIALOGUE_PAUSE_MAX_SECONDS}
-                  step={1}
-                  value={dialoguePauseSeconds}
-                  onChange={(event) => {
-                    const next = Number(event.target.value);
-                    setDialoguePauseSeconds(next);
-                    mark({ dialoguePauseMs: next * 1000 });
-                  }}
-                  className="w-full accent-[var(--primary)]"
-                />
-                <div className="flex justify-between text-[0.6rem] text-[var(--muted-foreground)]">
-                  <span>
-                    {TTS_DIALOGUE_PAUSE_MIN_SECONDS} {localizeUi("ui.noodle.stageprofileview.s")}
-                  </span>
-                  <span>
-                    {TTS_DIALOGUE_PAUSE_MAX_SECONDS} {localizeUi("ui.noodle.stageprofileview.s")}
-                  </span>
-                </div>
-              </FieldRow>
+                ariaLabel={localizeUi("ui.panels.ttsconfigcard.pauseBetweenDialoguesInSeconds")}
+                min={TTS_DIALOGUE_PAUSE_MIN_SECONDS}
+                max={TTS_DIALOGUE_PAUSE_MAX_SECONDS}
+                step={1}
+                value={dialoguePauseSeconds}
+                onChange={(next) => {
+                  setDialoguePauseSeconds(next);
+                  mark({ dialoguePauseMs: next * 1000 });
+                }}
+                captions={[
+                  `${TTS_DIALOGUE_PAUSE_MIN_SECONDS} ${localizeUi("ui.noodle.stageprofileview.s")}`,
+                  `${TTS_DIALOGUE_PAUSE_MAX_SECONDS} ${localizeUi("ui.noodle.stageprofileview.s")}`,
+                ]}
+              />
             )}
             <ToggleRow
               label={localizeUi("tts.filters.tags")}

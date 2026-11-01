@@ -21,6 +21,12 @@ export function getCssColorFallback(value: string | null | undefined, fallback: 
   return getCssGradientColorStops(trimmed, fallback)[0] ?? fallback;
 }
 
+/** The value when the browser accepts it as a CSS color, else the fallback. */
+export function validCssColor(value: string | null | undefined, fallback: string): string {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  return trimmed && CSS.supports("color", trimmed) ? trimmed : fallback;
+}
+
 export function getCssBackgroundStyle(value: string) {
   return isCssGradient(value) ? { background: value } : { backgroundColor: value };
 }

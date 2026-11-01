@@ -63,6 +63,10 @@ export type ChatModeShortcut = "conversation" | "roleplay" | "game";
 
 /** Not saved: a Home surface the omnibar or a Command Center row asks Home to open. */
 export type HomeRequest = { kind: "faq" | "widgets" | "credits" } | { kind: "tab"; tab: string };
+export const CONVO_GRADIENT_DEFAULTS = {
+  dark: { from: "#0a0a0e", to: "#1c2133" },
+  light: { from: "#f2eff7", to: "#eae6f0" },
+} as const;
 export const CHARACTER_LIBRARY_SORT_OPTIONS = ["name-asc", "name-desc", "newest", "oldest", "favorites"] as const;
 export type CharacterLibrarySort = (typeof CHARACTER_LIBRARY_SORT_OPTIONS)[number];
 export type CardLibraryKind = "characters" | "personas";
@@ -2427,8 +2431,8 @@ export const useUIStore = create<UIState>()(
         textStrokeColor: "#000000",
         visualTheme: "default" as VisualTheme,
         convoGradient: {
-          dark: { from: "#0a0a0e", to: "#1c2133" },
-          light: { from: "#f2eff7", to: "#eae6f0" },
+          dark: { ...CONVO_GRADIENT_DEFAULTS.dark },
+          light: { ...CONVO_GRADIENT_DEFAULTS.light },
         },
         convoNotificationSound: true,
         rpNotificationSound: true,
@@ -3505,8 +3509,8 @@ export const useUIStore = create<UIState>()(
             textStrokeColor: "#000000",
             visualTheme: "default" as VisualTheme,
             convoGradient: {
-              dark: { from: "#0a0a0e", to: "#1c2133" },
-              light: { from: "#f2eff7", to: "#eae6f0" },
+              dark: { ...CONVO_GRADIENT_DEFAULTS.dark },
+              light: { ...CONVO_GRADIENT_DEFAULTS.light },
             },
             weatherEffects: true,
           }),

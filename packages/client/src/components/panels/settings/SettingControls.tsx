@@ -426,7 +426,7 @@ function CustomNotificationSoundSetting() {
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-[0.6875rem] font-medium">{t("settings.notifications.customSound.label")}</span>
-            <span className="rounded-full bg-[var(--background)] px-1.5 py-0.5 text-[0.5625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+            <span className="rounded-full bg-[var(--background)] px-1.5 py-0.5 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
               {isLoading
                 ? t("settings.notifications.customSound.status.loading")
                 : status?.configured
@@ -437,7 +437,7 @@ function CustomNotificationSoundSetting() {
           <p className="mt-1 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
             {t("settings.notifications.customSound.description")}
           </p>
-          <p className="mt-0.5 text-[0.5625rem] text-[var(--muted-foreground)]/80">
+          <p className="mt-0.5 text-[0.625rem] text-[var(--muted-foreground)]/80">
             {t("settings.notifications.customSound.formats")}
           </p>
         </div>
@@ -739,6 +739,263 @@ export function SettingsSwitch({
       {labelPosition === "start" && text}
       {switchCluster}
       {labelPosition === "end" && text}
+    </div>
+  );
+}
+
+const SETTINGS_FIELD_DESCRIPTION_CLASS =
+  "text-[0.625rem] leading-relaxed text-[var(--marinara-chat-chrome-panel-muted)]";
+
+type SettingsFieldProps = {
+  label: ReactNode;
+  help?: string;
+  /** Visible line under the label, such as why the control has no effect right now. */
+  description?: ReactNode;
+  disabled?: boolean;
+  anchorId?: string;
+  /** id of the native control, for callers or tests that address it directly. */
+  id?: string;
+  className?: string;
+};
+
+function SettingsFieldHeader({
+  inputId,
+  label,
+  help,
+  value,
+  disabled,
+}: {
+  inputId: string;
+  label: ReactNode;
+  help?: string;
+  value?: ReactNode;
+  disabled?: boolean;
+}) {
+  const localize = useLocalizedUiText();
+  return (
+    <div className="flex min-w-0 items-center gap-1.5">
+      <label
+        htmlFor={inputId}
+        className={cn("min-w-0 text-xs font-medium", disabled ? "cursor-not-allowed" : "cursor-pointer")}
+      >
+        {localizeStringNode(label, localize)}
+      </label>
+      {help && <HelpTooltip text={localize(help)} />}
+      {value !== undefined && (
+        <output htmlFor={inputId} className="ml-auto shrink-0 text-xs tabular-nums text-[var(--muted-foreground)]">
+          {value}
+        </output>
+      )}
+    </div>
+  );
+}
+
+function SettingsFieldDescription({ children }: { children?: ReactNode }) {
+  const localize = useLocalizedUiText();
+  const localized = localizeStringNode(children, localize);
+  return localized ? <p className={SETTINGS_FIELD_DESCRIPTION_CLASS}>{localized}</p> : null;
+}
+
+type SettingsSliderProps = SettingsFieldProps & {
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  onChange: (value: number) => void;
+  /** Formatted readout beside the label; omit when the label already carries the value. */
+  valueLabel?: ReactNode;
+  /** Scale captions spread under the track, such as Slow and Fast. */
+  captions?: readonly ReactNode[];
+  /** Accessible name when it must differ from the visible label. */
+  ariaLabel?: string;
+  /** Compact control after the track, such as a reset button; it follows the slider in tab order. */
+  endAction?: ReactNode;
+};
+
+/** A labelled range input: label, value readout, help, optional hint line and scale captions. */
+export function SettingsSlider({
+  label,
+  value,
+  min,
+  max,
+  step = 1,
+  onChange,
+  valueLabel,
+  captions,
+  ariaLabel,
+  help,
+  description,
+  endAction,
+  disabled = false,
+  anchorId,
+  id,
+  className,
+}: SettingsSliderProps) {
+  const generatedId = useId();
+  const inputId = id ?? generatedId;
+  const localize = useLocalizedUiText();
+  return (
+    <div
+      id={anchorId}
+      className={cn("flex min-w-0 scroll-mt-3 flex-col gap-1 rounded-lg p-1", disabled && "opacity-60", className)}
+    >
+      <SettingsFieldHeader inputId={inputId} label={label} help={help} value={valueLabel} disabled={disabled} />
+      <SettingsFieldDescription>{description}</SettingsFieldDescription>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <input
+          id={inputId}
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          disabled={disabled}
+          aria-label={ariaLabel ? localize(ariaLabel) : undefined}
+          onChange={(event) => onChange(Number(event.target.value))}
+          className="h-8 w-full min-w-32 flex-1 cursor-pointer accent-[var(--primary)] disabled:cursor-not-allowed"
+        />
+        {endAction}
+      </div>
+      {captions && captions.length > 0 && (
+        <div className="flex justify-between gap-2 text-[0.625rem] text-[var(--muted-foreground)]">
+          {captions.map((caption, index) => (
+            <span key={index}>{localizeStringNode(caption, localize)}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export type SettingsSelectOption<T extends string> = { value: T; label: string; disabled?: boolean };
+
+type SettingsSelectProps<T extends string> = SettingsFieldProps & {
+  value: T;
+  options: readonly SettingsSelectOption<T>[];
+  onChange: (value: T) => void;
+};
+
+/** A labelled native select with help and an optional hint line. */
+export function SettingsSelect<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+  help,
+  description,
+  disabled = false,
+  anchorId,
+  id,
+  className,
+}: SettingsSelectProps<T>) {
+  const generatedId = useId();
+  const inputId = id ?? generatedId;
+  return (
+    <div id={anchorId} className={cn("flex min-w-0 scroll-mt-3 flex-col gap-1", disabled && "opacity-60", className)}>
+      <SettingsFieldHeader inputId={inputId} label={label} help={help} disabled={disabled} />
+      <SettingsFieldDescription>{description}</SettingsFieldDescription>
+      <select
+        id={inputId}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value as T)}
+        className="w-full min-w-0 rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-[var(--border)] transition-shadow focus-visible:ring-[var(--primary)] disabled:cursor-not-allowed"
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value} disabled={option.disabled}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+export type SettingsSegmentedOption<T extends string> = {
+  value: T;
+  label: ReactNode;
+  title?: string;
+  icon?: ReactNode;
+};
+
+type SettingsSegmentedProps<T extends string> = {
+  /** Names the button group; shown above it unless hideLabel. */
+  label: string;
+  hideLabel?: boolean;
+  value: T;
+  options: readonly SettingsSegmentedOption<T>[];
+  onChange: (value: T) => void;
+  help?: string;
+  description?: ReactNode;
+  disabled?: boolean;
+  anchorId?: string;
+  /** Shrink the labels with the group's width so long names stay on one line in narrow panels. */
+  fitText?: boolean;
+  className?: string;
+};
+
+/** One-of-N choice as a row of joined aria-pressed buttons. */
+export function SettingsSegmented<T extends string>({
+  label,
+  hideLabel = false,
+  value,
+  options,
+  onChange,
+  help,
+  description,
+  disabled = false,
+  anchorId,
+  fitText = false,
+  className,
+}: SettingsSegmentedProps<T>) {
+  const labelId = useId();
+  const localize = useLocalizedUiText();
+  const localizedLabel = localize(label);
+  return (
+    <div id={anchorId} className={cn("flex min-w-0 scroll-mt-3 flex-col gap-1", disabled && "opacity-60", className)}>
+      {!hideLabel && (
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span id={labelId} className="min-w-0 text-xs font-medium">
+            {localizedLabel}
+          </span>
+          {help && <HelpTooltip text={localize(help)} />}
+        </div>
+      )}
+      <SettingsFieldDescription>{description}</SettingsFieldDescription>
+      <div
+        role="group"
+        aria-label={hideLabel ? localizedLabel : undefined}
+        aria-labelledby={hideLabel ? undefined : labelId}
+        className={cn(
+          "grid divide-x divide-[var(--border)] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--secondary)]/40",
+          fitText && "@container",
+        )}
+        style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}
+      >
+        {options.map((option) => {
+          const selected = option.value === value;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              aria-pressed={selected}
+              title={option.title ? localize(option.title) : undefined}
+              disabled={disabled}
+              onClick={() => onChange(option.value)}
+              className={cn(
+                "inline-flex min-h-11 min-w-0 items-center justify-center gap-1.5 py-2 font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)] disabled:cursor-not-allowed",
+                fitText ? "px-0.5 text-center text-[0.625rem] leading-tight" : "whitespace-nowrap px-2 text-xs",
+                selected
+                  ? "bg-[var(--primary)]/15 text-[var(--primary)]"
+                  : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
+              )}
+            >
+              {option.icon}
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
