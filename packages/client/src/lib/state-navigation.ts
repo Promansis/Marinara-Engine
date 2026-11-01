@@ -15,6 +15,7 @@ import { useChatStore } from "../stores/chat.store";
 import { isMobileShellViewport, useUIStore, type HomeRequest } from "../stores/ui.store";
 import { requestChatSettingsSectionOpen } from "./chat-floating-ui-events";
 import { TRACKER_PANEL_BUBBLE_ID, useFloatingWindowStore } from "../stores/floating-window.store";
+import { revealSettingsSection } from "./settings-section-open";
 import { requestProfessorMariOpen } from "./professor-mari-open";
 import type { ProfessorMariNavigationTarget } from "./professor-mari-navigation";
 import { isOmnibarSettingsTarget, settingsControlHome, type SettingsSearchableControlMeta } from "./settings-registry";
@@ -39,12 +40,17 @@ function openHomeWith(request: HomeRequest) {
 }
 
 /** Every mounted copy of a control's anchor; duplicated ids are why this is not `getElementById`. */
-function visibleSettingsAnchor(controlId: string): HTMLElement | null {
-  const matches = document.querySelectorAll<HTMLElement>(
-    `[id="settings-control-${controlId}"], [data-settings-anchor="${controlId}"]`,
+function settingsAnchorNodes(controlId: string): HTMLElement[] {
+  return Array.from(
+    document.querySelectorAll<HTMLElement>(
+      `[id="settings-control-${controlId}"], [data-settings-anchor="${controlId}"]`,
+    ),
   );
+}
+
+function visibleSettingsAnchor(controlId: string): HTMLElement | null {
   return (
-    Array.from(matches)
+    settingsAnchorNodes(controlId)
       .reverse()
       .find((node) => node.getClientRects().length > 0 && getComputedStyle(node).visibility !== "hidden") ?? null
   );
@@ -65,6 +71,8 @@ function scrollToSettingsAnchor(controlId: string, onMissing?: () => void) {
       )?.focus({ preventScroll: true });
       return;
     }
+    // An anchor inside a collapsed Settings section has no box yet: open the section and look again.
+    settingsAnchorNodes(controlId).forEach(revealSettingsSection);
     if (++attempts < 30) window.setTimeout(scrollWhenReady, 100);
     else onMissing?.();
   };

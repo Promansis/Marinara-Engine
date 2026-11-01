@@ -1,5 +1,18 @@
-import { useEffect, useId, useRef, useState, type ChangeEvent, type ReactNode } from "react";
-import { Bell, BellRing, Loader2, Play, Trash2, Upload, Volume2 } from "lucide-react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ReactNode,
+} from "react";
+import { flushSync } from "react-dom";
+import { Bell, BellRing, ChevronDown, Loader2, Play, Trash2, Upload, Volume2 } from "lucide-react";
 import { useTranslation, useTranslation as useUiTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useUIStore } from "../../../stores/ui.store";
@@ -20,6 +33,7 @@ import {
   useUploadCustomNotificationSound,
 } from "../../../hooks/use-custom-notification-sound";
 import { cn } from "../../../lib/utils";
+import { SETTINGS_SECTION_OPEN_EVENT } from "../../../lib/settings-section-open";
 import { localizeStringNode, useLocalizedUiText } from "../../../localization/use-localized-ui-text";
 import { HelpTooltip } from "../../ui/HelpTooltip";
 
@@ -43,6 +57,70 @@ export function SettingsIntro({ children }: { children: ReactNode }) {
     <p className="text-xs leading-relaxed text-[var(--marinara-chat-chrome-panel-muted)]">
       {localizeStringNode(children, localize)}
     </p>
+  );
+}
+
+type SettingsSectionScopeValue = {
+  collapsed: ReadonlySet<string>;
+  setOpen: (key: string, open: boolean) => void;
+  /** Tell the scope a section is shown; returns the undo. */
+  register: (key: string) => () => void;
+};
+
+/** Collapsed state and the shown sections of one Settings tab (or Appearance group); session only. */
+const SettingsSectionScope = createContext<SettingsSectionScopeValue | null>(null);
+
+/** Wraps a Settings tab: its sections share collapsed state, and a bar on top folds or unfolds them all. */
+export function SettingsSectionScopeProvider({ children }: { children: ReactNode }) {
+  const { t } = useTranslation();
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+  const [shown, setShown] = useState<ReadonlySet<string>>(() => new Set());
+  const setOpen = useCallback((key: string, open: boolean) => {
+    setCollapsed((prev) => {
+      if (prev.has(key) === !open) return prev;
+      const next = new Set(prev);
+      if (open) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+  const register = useCallback((key: string) => {
+    setShown((prev) => new Set(prev).add(key));
+    return () =>
+      setShown((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+  }, []);
+  const value = useMemo(() => ({ collapsed, setOpen, register }), [collapsed, setOpen, register]);
+
+  const anyOpen = Array.from(shown).some((key) => !collapsed.has(key));
+  // Only the shown sections fold: an Appearance group that is not on screen keeps its own state.
+  const toggleAll = () =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      for (const key of shown) {
+        if (anyOpen) next.add(key);
+        else next.delete(key);
+      }
+      return next;
+    });
+  return (
+    <SettingsSectionScope.Provider value={value}>
+      {shown.size > 0 && (
+        <div className="mb-2 flex items-center justify-end gap-2 px-1 text-[0.6875rem] font-medium text-[var(--marinara-chat-chrome-panel-muted)]">
+          <button
+            type="button"
+            className="inline-flex min-h-8 items-center rounded px-1 underline underline-offset-2 hover:text-[var(--foreground)] focus-visible:outline-2 focus-visible:outline-[var(--ring)]"
+            onClick={toggleAll}
+          >
+            {t(anyOpen ? "settings.pane.collapseAll" : "settings.pane.expandAll")}
+          </button>
+        </div>
+      )}
+      {children}
+    </SettingsSectionScope.Provider>
   );
 }
 
@@ -71,48 +149,106 @@ export function SettingsSection({
 }) {
   const localize = useLocalizedUiText();
   const localizedDescription = localizeStringNode(description, localize);
+  const contentId = useId();
+  const scope = useContext(SettingsSectionScope);
+  const [localOpen, setLocalOpen] = useState(true);
+  const key = anchorId ?? title;
+  const open = scope ? !scope.collapsed.has(key) : localOpen;
+  const setOpen = scope ? (next: boolean) => scope.setOpen(key, next) : setLocalOpen;
+
+  const register = scope?.register;
+  useLayoutEffect(() => register?.(key), [register, key]);
+
+  // A jump to something inside this section opens it first (see `revealSettingsSection`).
+  const sectionRef = useRef<HTMLElement>(null);
+  const setOpenRef = useRef(setOpen);
+  setOpenRef.current = setOpen;
+  useEffect(() => {
+    const element = sectionRef.current;
+    if (!element) return;
+    // flushSync: the jump scrolls right after, so the content must be laid out by then.
+    const reveal = () => flushSync(() => setOpenRef.current(true));
+    element.addEventListener(SETTINGS_SECTION_OPEN_EVENT, reveal);
+    return () => element.removeEventListener(SETTINGS_SECTION_OPEN_EVENT, reveal);
+  }, []);
+
+  const iconNode = icon && (
+    <span
+      className={cn(
+        "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md ring-1",
+        tone === "danger"
+          ? "bg-[var(--destructive)]/10 text-[var(--destructive)] ring-[var(--destructive)]/25"
+          : "bg-[var(--secondary)]/70 text-[var(--marinara-chat-chrome-button-text-active)] ring-[var(--border)]",
+      )}
+    >
+      {icon}
+    </span>
+  );
 
   return (
     <section
       id={anchorId}
+      ref={sectionRef}
+      data-settings-section=""
+      data-collapsed={open ? undefined : "true"}
       className={cn(
         "overflow-hidden rounded-lg border bg-[var(--background)]/35 shadow-[inset_0_1px_0_color-mix(in_srgb,var(--foreground)_8%,transparent)]",
         tone === "danger" ? "border-[var(--destructive)]/30 bg-[var(--destructive)]/5" : "border-[var(--border)]/70",
         className,
       )}
     >
-      <div className="flex items-start gap-2 px-3 py-2.5">
-        {icon && (
-          <span
-            className={cn(
-              "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md ring-1",
-              tone === "danger"
-                ? "bg-[var(--destructive)]/10 text-[var(--destructive)] ring-[var(--destructive)]/25"
-                : "bg-[var(--secondary)]/70 text-[var(--marinara-chat-chrome-button-text-active)] ring-[var(--border)]",
-            )}
+      <div className="px-3 py-2.5">
+        <div className="flex items-start gap-2">
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls={contentId}
+            onClick={() => setOpen(!open)}
+            className="-m-1 flex min-h-11 min-w-0 flex-1 items-start gap-2 rounded-md p-1 text-left hover:bg-[var(--secondary)]/50 focus-visible:outline-2 focus-visible:outline-[var(--ring)]"
           >
-            {icon}
-          </span>
-        )}
-        <div className="min-w-0 flex-1">
+            {iconNode}
+            <span
+              className={cn(
+                "min-w-0 flex-1 self-center break-words text-xs font-semibold",
+                tone === "danger" ? "text-[var(--destructive)]" : "text-[var(--marinara-chat-chrome-panel-title)]",
+              )}
+            >
+              {localize(title)}
+            </span>
+            <ChevronDown
+              size="0.875rem"
+              aria-hidden="true"
+              className={cn(
+                "shrink-0 self-center text-[var(--marinara-chat-chrome-panel-muted)] transition-transform motion-reduce:transition-none",
+                open && "rotate-180",
+              )}
+            />
+          </button>
+          {help && (
+            <span className="shrink-0 self-center">
+              <HelpTooltip text={localize(help)} />
+            </span>
+          )}
+          {headerAction && <div className="shrink-0 self-center">{headerAction}</div>}
+        </div>
+        {localizedDescription && (
           <div
             className={cn(
-              "inline-flex items-center gap-1 text-xs font-semibold",
-              tone === "danger" ? "text-[var(--destructive)]" : "text-[var(--marinara-chat-chrome-panel-title)]",
+              "mt-1 text-[0.625rem] leading-relaxed text-[var(--marinara-chat-chrome-panel-muted)]",
+              icon && "pl-9",
             )}
           >
-            {localize(title)}
-            {help && <HelpTooltip text={localize(help)} />}
+            {localizedDescription}
           </div>
-          {localizedDescription && (
-            <div className="mt-1 text-[0.625rem] leading-relaxed text-[var(--marinara-chat-chrome-panel-muted)]">
-              {localizedDescription}
-            </div>
-          )}
-        </div>
-        {headerAction && <div className="shrink-0">{headerAction}</div>}
+        )}
       </div>
-      <div className={cn("border-t border-[var(--border)]/60 px-3 pb-3 pt-2.5", contentClassName)}>{children}</div>
+      <div
+        id={contentId}
+        hidden={!open}
+        className={cn("border-t border-[var(--border)]/60 px-3 pb-3 pt-2.5", contentClassName)}
+      >
+        {children}
+      </div>
     </section>
   );
 }

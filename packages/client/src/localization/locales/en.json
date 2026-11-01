@@ -6086,6 +6086,8 @@
   "settings.notifications.sounds.description": "Play a notification ping when you receive a new message while on a different chat.",
   "settings.notifications.sounds.title": "Notification Sounds",
   "settings.notifications.unfocusedOnly": "Only when Marinara is unfocused",
+  "settings.pane.collapseAll": "Collapse all",
+  "settings.pane.expandAll": "Expand all",
   "settings.personalExtensions.approval.browser": "Enable \"{{name}}\" at hash {{hash}}? Its browser code runs in an opaque-origin iframe without access to Marinara's DOM, origin data, or network. It receives private extension storage, logging, managed timers, constrained Marinara-rendered UI, and read-only active chat and Character IDs. {{permissions}} It cannot read messages, the full Character or Persona libraries, undeclared record fields, or chat metadata.",
   "settings.personalExtensions.approval.cancelLabel": "Keep Disabled",
   "settings.personalExtensions.approval.confirmLabel": "Run Exact Code",

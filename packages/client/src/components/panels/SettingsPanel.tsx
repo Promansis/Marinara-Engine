@@ -24,6 +24,7 @@ import {
   CONVO_GRADIENT_DEFAULTS,
   MOBILE_SHELL_MEDIA_QUERY,
 } from "../../stores/ui.store";
+import { revealSettingsSection } from "../../lib/settings-section-open";
 import { validCssColor } from "../../lib/css-colors";
 import { UILanguageSetting } from "./settings/UILanguageSetting";
 import { DocsLanguagePicker } from "./settings/DocsLanguageControl";
@@ -179,6 +180,7 @@ import {
   SETTINGS_PRIMARY_FULL_BUTTON_CLASS,
   SettingsIntro,
   SettingsSection,
+  SettingsSectionScopeProvider,
   SettingsSegmented,
   SettingsSelect,
   SettingsSlider,
@@ -1190,6 +1192,8 @@ export function SettingsPanel() {
           const target =
             document.getElementById(targetId) ?? document.getElementById(getSettingsSectionAnchorId(section.id));
           if (!panel || !target) return;
+          // A collapsed section opens first, so the target has a place to scroll to.
+          revealSettingsSection(target);
           panel.scrollTo({ top: Math.max(0, target.offsetTop - 12), behavior: "smooth" });
           const focusTarget =
             result.type === "control"
@@ -1365,28 +1369,30 @@ export function SettingsPanel() {
                 className="absolute inset-0 overflow-y-auto p-3"
                 style={active ? undefined : { clipPath: "inset(100%)", pointerEvents: "none" }}
               >
-                {tab.id === "appearance" ? (
-                  <>
-                    <SettingsSegmented
-                      label={localizeUi("settings.appearance.modeNavigation")}
-                      hideLabel
-                      fitText
-                      className="mb-3"
-                      value={appearanceGroup}
-                      options={APPEARANCE_GROUPS.map((mode) => ({
-                        value: mode,
-                        label: localizeUi(`settings.appearance.modes.${mode}`),
-                      }))}
-                      onChange={(mode) => {
-                        setAppearanceGroup(mode);
-                        activePanelRef.current?.scrollTo({ top: 0 });
-                      }}
-                    />
-                    <AppearanceSettings group={appearanceGroup} />
-                  </>
-                ) : (
-                  <Comp />
-                )}
+                <SettingsSectionScopeProvider>
+                  {tab.id === "appearance" ? (
+                    <>
+                      <SettingsSegmented
+                        label={localizeUi("settings.appearance.modeNavigation")}
+                        hideLabel
+                        fitText
+                        className="mb-3"
+                        value={appearanceGroup}
+                        options={APPEARANCE_GROUPS.map((mode) => ({
+                          value: mode,
+                          label: localizeUi(`settings.appearance.modes.${mode}`),
+                        }))}
+                        onChange={(mode) => {
+                          setAppearanceGroup(mode);
+                          activePanelRef.current?.scrollTo({ top: 0 });
+                        }}
+                      />
+                      <AppearanceSettings group={appearanceGroup} />
+                    </>
+                  ) : (
+                    <Comp />
+                  )}
+                </SettingsSectionScopeProvider>
               </div>
             </Activity>
           );
