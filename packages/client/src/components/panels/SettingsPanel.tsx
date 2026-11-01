@@ -1694,8 +1694,6 @@ function GeneralSettings() {
   const setTrimIncompleteModelOutput = useUIStore((s) => s.setTrimIncompleteModelOutput);
   const continueAddsNewline = useUIStore((s) => s.continueAddsNewline);
   const setContinueAddsNewline = useUIStore((s) => s.setContinueAddsNewline);
-  const speechToTextEnabled = useUIStore((s) => s.speechToTextEnabled);
-  const setSpeechToTextEnabled = useUIStore((s) => s.setSpeechToTextEnabled);
   const intuitiveSwipeNavigation = useUIStore((s) => s.intuitiveSwipeNavigation);
   const setIntuitiveSwipeNavigation = useUIStore((s) => s.setIntuitiveSwipeNavigation);
   const intuitiveSwipeRerollLatest = useUIStore((s) => s.intuitiveSwipeRerollLatest);
@@ -1949,13 +1947,6 @@ function GeneralSettings() {
 
           <QuickRepliesSetting />
 
-          <ToggleSetting
-            anchorId={getSettingsControlAnchorId("speech-to-text")}
-            label={localizeUi("settings.controls.speechToText.label")}
-            checked={speechToTextEnabled}
-            onChange={setSpeechToTextEnabled}
-            help={localizeUi("settings.controls.speechToText.help")}
-          />
           <ToggleSetting
             anchorId={getSettingsControlAnchorId("intuitive-swipe-navigation")}
             label={localizeUi("settings.controls.intuitiveSwipes.label")}

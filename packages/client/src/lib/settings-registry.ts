@@ -618,13 +618,14 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
   {
     id: "speech-to-text",
     sectionId: "input-editing",
-    labelKey: "settings.controls.speechToText.label",
-    label: "Speech-to-text microphone",
-    description: "Show a microphone button in chat inputs.",
+    labelKey: "settings.search.speechToText.label",
+    label: "Speech to text",
+    description: "Choose Off, Browser or your own server for speech to text. Set up in Connections.",
     descriptionKey: "settings.search.speechToText.description",
     aliases: ["microphone", "dictation", "speech"],
     keywords: ["voice typing", "talk to text"],
-    kind: "Toggle",
+    kind: "Select",
+    home: "connections",
   },
   {
     id: "agent-file",

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, Check, ChevronDown, ChevronUp, Globe, Key, Loader2, Mic, PlugZap } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { AlertTriangle, Check, Globe, Key, Loader2, Mic, PlugZap } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { SPEECH_TO_TEXT_DEFAULT_MODEL, type SpeechToTextConfig } from "@marinara-engine/shared";
@@ -11,7 +11,9 @@ import {
 } from "../../../hooks/use-speech-to-text";
 import { cn } from "../../../lib/utils";
 import { translate } from "../../../localization/i18n";
-import { SettingsSwitch } from "./SettingControls";
+import { useUIStore } from "../../../stores/ui.store";
+import { CommandCenterSegmentedChoice } from "../../command-center/CommandCenterSegmentedChoice";
+import { SETTINGS_BUTTON_CLASS } from "./SettingControls";
 
 const INPUT_CLS = "mari-chrome-field w-full px-3 py-2.5 text-sm placeholder:text-[var(--muted-foreground)]";
 /** An address, not copy: the usual root of a self-hosted server on the same machine. */
@@ -29,19 +31,25 @@ function Field({ label, help, children }: { label: string; help: string; childre
   );
 }
 
-function serverName(baseUrl: string): string {
-  try {
-    return new URL(baseUrl).host;
-  } catch {
-    return baseUrl;
-  }
+type SpeechToTextMode = "off" | "browser" | "own";
+
+/**
+ * One choice over two stored keys, so nobody's setup changes on upgrade: the server config's `enabled` (Calls
+ * use your own server) wins, else the UI store's `speechToTextEnabled` (the chat microphones, which dictate
+ * through the browser) means Browser, else Off.
+ */
+function speechToTextMode(serverEnabled: boolean, micEnabled: boolean): SpeechToTextMode {
+  if (serverEnabled) return "own";
+  return micEnabled ? "browser" : "off";
 }
 
-/** Lets Calls send recorded speech to the user's own speech-to-text server instead of Local Whisper. */
+/** Off / Browser / Own server. Own server sends Calls' recorded speech to the user's server instead of Local Whisper. */
 export function SpeechToTextCard() {
   const { t } = useTranslation();
+  const micEnabled = useUIStore((state) => state.speechToTextEnabled);
+  const setMicEnabled = useUIStore((state) => state.setSpeechToTextEnabled);
   const { data: installedPackages } = useInstalledCapabilityPackages();
-  // Only Calls records speech, so the card stays out of the way until it is installed.
+  // Only Calls records speech for the server, so Own server is offered once it is installed.
   const callsInstalled = useMemo(
     () =>
       (installedPackages ?? []).some(
@@ -49,11 +57,12 @@ export function SpeechToTextCard() {
       ),
     [installedPackages],
   );
-  const { data: savedConfig } = useSpeechToTextConfig(callsInstalled);
+  // Unknown until the package list loads, so the hint does not flash for someone who has Calls.
+  const callsMissing = installedPackages !== undefined && !callsInstalled;
+  const { data: savedConfig } = useSpeechToTextConfig();
   const updateConfig = useUpdateSpeechToTextConfig();
   const testServer = useTestSpeechToText();
   const [draft, setDraft] = useState<SpeechToTextConfig | null>(null);
-  const [expanded, setExpanded] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -90,8 +99,6 @@ export function SpeechToTextCard() {
     [putConfig],
   );
 
-  if (!callsInstalled || !draft) return null;
-
   const saveNow = async (config: SpeechToTextConfig) => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
@@ -111,6 +118,7 @@ export function SpeechToTextCard() {
   };
 
   const change = (patch: Partial<SpeechToTextConfig>) => {
+    if (!draft) return;
     const next = { ...draft, ...patch };
     setDraft(next);
     setTestResult(null);
@@ -123,6 +131,7 @@ export function SpeechToTextCard() {
   };
 
   const handleTest = async () => {
+    if (!draft) return;
     setTestResult(null);
     try {
       await saveNow(draft);
@@ -136,15 +145,30 @@ export function SpeechToTextCard() {
     }
   };
 
-  const active = draft.enabled && Boolean(draft.baseUrl.trim());
+  // Until the config loads (or if it fails to), Off and Browser still work: they only write the local mic key.
+  const mode = speechToTextMode(draft?.enabled ?? false, micEnabled);
   const testing = testServer.isPending;
+  const needsCallsHintId = useId();
+
+  // Both keys come from this one choice. Own server also turns the chat microphones on: they dictate through
+  // the browser whichever mode is on, so Own server must not take the microphone away. Picking the current
+  // mode still writes when a stored key disagrees with it (the legacy server-on, mic-off combination).
+  const chooseMode = (next: SpeechToTextMode) => {
+    const wantsServer = next === "own";
+    const wantsMic = next !== "off";
+    if (next === mode && micEnabled === wantsMic && (draft?.enabled ?? false) === wantsServer) return;
+    if (wantsServer && !draft) return;
+    setMicEnabled(wantsMic);
+    if (draft && draft.enabled !== wantsServer) change({ enabled: wantsServer });
+  };
 
   return (
     <div
+      id="settings-control-speech-to-text"
       data-component="SpeechToTextCard"
       className={cn(
         "rounded-xl border border-sky-400/20 bg-gradient-to-br from-sky-400/5 to-blue-500/5 p-3 transition-all",
-        expanded && "border-sky-400/30",
+        mode === "own" && "border-sky-400/30",
       )}
     >
       <div className="flex items-center gap-2.5">
@@ -153,41 +177,62 @@ export function SpeechToTextCard() {
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium">{t("connections.speechToText.title")}</div>
-          <div className="truncate text-[0.6875rem] text-[var(--muted-foreground)]">
-            {active
-              ? t("connections.speechToText.summaryOn", {
-                  model: draft.model || SPEECH_TO_TEXT_DEFAULT_MODEL,
-                  server: serverName(draft.baseUrl.trim()),
-                })
-              : t("connections.speechToText.summaryOff")}
-          </div>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <SettingsSwitch
-            checked={draft.enabled}
-            onChange={(checked) => change({ enabled: checked })}
-            ariaLabel={t("connections.speechToText.toggle")}
-            title={t("connections.speechToText.toggle")}
-            className="rounded-lg p-1 hover:bg-[var(--secondary)]"
-          />
-          <button
-            type="button"
-            onClick={() => setExpanded((value) => !value)}
-            className="mari-chrome-control mari-chrome-control--small h-8 min-h-0 w-8 p-0"
-            title={expanded ? t("ui.panels.ttsconfigcard.collapse") : t("ui.panels.ttsconfigcard.expand")}
-            aria-label={expanded ? t("ui.panels.ttsconfigcard.collapse") : t("ui.panels.ttsconfigcard.expand")}
-            aria-expanded={expanded}
-          >
-            {expanded ? <ChevronUp size="0.875rem" /> : <ChevronDown size="0.875rem" />}
-          </button>
+          <div className="text-[0.6875rem] text-[var(--muted-foreground)]">{t("connections.speechToText.hint")}</div>
         </div>
       </div>
 
-      {expanded && (
+      <div className="mt-3 space-y-2">
+        <CommandCenterSegmentedChoice<SpeechToTextMode>
+          value={mode}
+          label={t("connections.speechToText.title")}
+          onValueChange={chooseMode}
+          options={[
+            { value: "off", label: t("connections.speechToText.mode.off") },
+            { value: "browser", label: t("connections.speechToText.mode.browser") },
+            {
+              value: "own",
+              label: t("connections.speechToText.mode.own"),
+              disabled: !draft || (callsMissing && mode !== "own"),
+            },
+          ]}
+        />
+        {callsMissing && (
+          <div className="flex flex-wrap items-center gap-2 text-[0.6875rem] text-[var(--muted-foreground)]">
+            <span id={needsCallsHintId}>{t("connections.speechToText.needsCalls")}</span>
+            <button
+              type="button"
+              onClick={() => useUIStore.getState().openAgentCatalog("conversation-calls")}
+              className={SETTINGS_BUTTON_CLASS}
+            >
+              {t("connections.speechToText.getCalls")}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {saveStatus === "error" && (
+        <p role="alert" className="mt-2 text-[0.6875rem] text-[var(--marinara-app-accent-static)]">
+          {t("connections.speechToText.saveFailed")}
+        </p>
+      )}
+
+      {callsInstalled && mode !== "own" && (
+        <p className="mt-2 text-[0.6875rem] text-[var(--muted-foreground)]">
+          {t("connections.speechToText.localWhisper")}
+        </p>
+      )}
+
+      {mode === "own" && draft && (
         <div className="mt-3 space-y-4 border-t border-sky-400/10 pt-3">
           <p className="text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
             {t("connections.speechToText.intro")}
           </p>
+
+          {!draft.baseUrl.trim() && (
+            <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
+              {t("connections.speechToText.localWhisperUntilUrl")}
+            </p>
+          )}
 
           <Field label={t("connections.speechToText.serverUrl")} help={t("connections.speechToText.serverUrlHelp")}>
             <span className="relative block">
@@ -269,11 +314,6 @@ export function SpeechToTextCard() {
               <span className="flex items-center gap-1 text-[0.6875rem] text-[var(--muted-foreground)]">
                 <Check size="0.625rem" />
                 {t("chat.settings.inlineEditor.saved")}
-              </span>
-            )}
-            {saveStatus === "error" && (
-              <span className="text-[0.6875rem] text-[var(--marinara-app-accent-static)]">
-                {t("connections.speechToText.saveFailed")}
               </span>
             )}
           </div>

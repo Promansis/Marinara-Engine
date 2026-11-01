@@ -2222,7 +2222,7 @@ export function ConnectionsPanel() {
       {/* ── Text to Speech ── */}
       <TTSConfigCard />
 
-      {/* ── Speech to Text (Calls only) ── */}
+      {/* ── Speech to Text ── */}
       <SpeechToTextCard />
 
       {isLoading && (

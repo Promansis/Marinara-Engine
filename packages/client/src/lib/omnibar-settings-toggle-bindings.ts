@@ -11,7 +11,7 @@
  * (`android-status-bar`), a non-boolean control mislabeled `Toggle` in the
  * registry (`default-dialogue-color`, actually a color picker), and a
  * two-value enum rather than a real boolean (`tracker-temperature-unit`).
- * `music-player`, `speech-to-text`, `notification-unfocused-only`,
+ * `music-player`, `notification-unfocused-only`,
  * `show-message-timestamps`, `show-model-name` and `show-token-usage` are
  * also skipped here: they already flip via the hand-built rows in
  * `omnibar-results.ts` (`toggleRows`), and binding them again would show the

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { clickTopbarPanel } from "./topbar-navigation.js";
 import { seedUIState } from "./ui-state-fixture.js";
@@ -21,7 +21,8 @@ const callsManifest = {
 // #7344: an edit made just before leaving Connections is saved once, and Connections shows it when opened again.
 // On a phone, switching to the chat list unmounts the card at once, so it must not come back with older settings.
 test("Speech to Text keeps an edit made just before leaving Connections", async ({ page }, testInfo) => {
-  const saved = { enabled: false, baseUrl: "", apiKey: "", model: "", language: "" };
+  // Own server is the saved choice, so its fields are showing when Connections opens.
+  const saved = { enabled: true, baseUrl: "", apiKey: "", model: "", language: "" };
   const saves: Array<Record<string, unknown>> = [];
   let heldSave: Promise<void> | null = null;
   let failHeldSave = false;
@@ -77,12 +78,17 @@ test("Speech to Text keeps an edit made just before leaving Connections", async 
   };
   const openCard = async () => {
     await clickTopbarPanel(page, "connections");
-    const toggle = card.locator("button[aria-expanded]");
-    if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
     await expect(serverUrl).toBeVisible();
   };
 
   await openCard();
+  // Off / Browser / Own server is one radio group, and Own server is the one picked.
+  const modes = card.getByRole("radiogroup", { name: "Speech to text" });
+  await expect(modes.getByRole("radio")).toHaveText(["Off", "Browser", "Own server"]);
+  await expect(modes.getByRole("radio", { name: "Own server" })).toBeChecked();
+  // Own server only changes Calls; the chat microphone still dictates through the browser, and the card says so.
+  await expect(card.getByText("Typing by voice in chat still uses your browser.", { exact: false })).toBeVisible();
+  await expect(card.getByText("Calls use Local Whisper until you set a server address.")).toBeVisible();
   await expect(card.locator("div.bg-gradient-to-br").first()).toHaveClass(/from-sky-400 to-blue-500/);
   const ttsCard = page.locator('[data-component="TTSConfigCard"]');
   const expandTts = ttsCard.getByTitle("Expand", { exact: true });
@@ -208,4 +214,107 @@ test("Speech to Text keeps an edit made just before leaving Connections", async 
   await expect(serverUrl).toHaveValue("http://localhost:9004/v1");
   await page.waitForTimeout(700);
   expect(saves).toHaveLength(beforeNewerEdit + 2);
+});
+
+type SpeechToTextFixture = { calls: boolean; enabled: boolean; micEnabled: boolean };
+
+async function openSpeechToTextCard(page: Page, fixture: SpeechToTextFixture) {
+  const saved = { enabled: fixture.enabled, baseUrl: "", apiKey: "", model: "", language: "" };
+  const saves: Array<Record<string, unknown>> = [];
+  await page.route("**/api/app-settings/ui", (route) =>
+    route.fulfill({ json: route.request().method() === "GET" ? { value: null } : { success: true } }),
+  );
+  await page.route("**/api/capability-packages/installed", (route) =>
+    route.fulfill({
+      json: fixture.calls
+        ? [
+            {
+              id: callsManifest.id,
+              version: callsManifest.version,
+              manifest: callsManifest,
+              installedAt: "2026-10-09T00:00:00Z",
+              status: "active",
+              error: null,
+              readiness: "ready",
+              readinessError: null,
+              legacy: false,
+            },
+          ]
+        : [],
+    }),
+  );
+  await page.route("**/api/capability-packages/conversation-calls/client*", (route) =>
+    route.fulfill({
+      contentType: "application/javascript",
+      body: 'customElements.define("marinara-capability-conversation-calls", class extends HTMLElement {});',
+    }),
+  );
+  await page.route("**/api/speech-to-text/config", (route) => {
+    if (route.request().method() !== "PUT") return route.fulfill({ json: saved });
+    const body = route.request().postDataJSON() as typeof saved;
+    saves.push(body);
+    Object.assign(saved, body);
+    return route.fulfill({ status: 204 });
+  });
+  await seedUIState(page, {
+    hasCompletedOnboarding: true,
+    sidebarOpen: false,
+    rightPanelOpen: false,
+    speechToTextEnabled: fixture.micEnabled,
+  });
+  await page.addInitScript((version) => localStorage.setItem("marinara:whats-new:seen-version", version), version);
+  await page.goto("/");
+  await clickTopbarPanel(page, "connections");
+  const card = page.locator('[data-component="SpeechToTextCard"]');
+  const modes = card.getByRole("radiogroup", { name: "Speech to text" });
+  await expect(modes).toBeVisible();
+  const micEnabled = () =>
+    page.evaluate(async () => {
+      const { useUIStore } = await import("/src/stores/ui.store.ts" as string);
+      return useUIStore.getState().speechToTextEnabled as boolean;
+    });
+  return { card, modes, saves, micEnabled };
+}
+
+// Off / Browser / Own server write the chat microphone key and the server's enabled flag together.
+test("Speech to text modes write both stored keys", async ({ page }) => {
+  const { modes, saves, micEnabled } = await openSpeechToTextCard(page, {
+    calls: true,
+    enabled: false,
+    micEnabled: false,
+  });
+  await expect(modes.getByRole("radio", { name: "Off" })).toBeChecked();
+
+  await modes.getByRole("radio", { name: "Browser" }).click();
+  await expect(modes.getByRole("radio", { name: "Browser" })).toBeChecked();
+  expect(await micEnabled()).toBe(true);
+  await page.waitForTimeout(700);
+  expect(saves).toHaveLength(0);
+
+  await modes.getByRole("radio", { name: "Own server" }).click();
+  await expect(modes.getByRole("radio", { name: "Own server" })).toBeChecked();
+  expect(await micEnabled()).toBe(true);
+  await expect.poll(() => saves.length).toBe(1);
+  expect(saves[0]).toMatchObject({ enabled: true });
+
+  await modes.getByRole("radio", { name: "Off" }).click();
+  await expect(modes.getByRole("radio", { name: "Off" })).toBeChecked();
+  expect(await micEnabled()).toBe(false);
+  await expect.poll(() => saves.length).toBe(2);
+  expect(saves[1]).toMatchObject({ enabled: false });
+});
+
+// Without Calls the card still shows, Off and Browser work, and Own server says what it needs.
+test("Speech to text without Calls disables Own server and offers Get Calls", async ({ page }) => {
+  const { card, modes, micEnabled } = await openSpeechToTextCard(page, {
+    calls: false,
+    enabled: false,
+    micEnabled: false,
+  });
+  await expect(modes.getByRole("radio", { name: "Own server" })).toBeDisabled();
+  await expect(card.getByText("Own server needs Calls.")).toBeVisible();
+  await expect(card.getByRole("button", { name: "Get Calls" })).toBeVisible();
+  await modes.getByRole("radio", { name: "Browser" }).click();
+  await expect(modes.getByRole("radio", { name: "Browser" })).toBeChecked();
+  expect(await micEnabled()).toBe(true);
 });

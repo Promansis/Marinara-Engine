@@ -162,7 +162,6 @@ export type OmnibarControlSetters = {
   setUserStatusManual: (value: OmnibarUserStatus) => void;
   setReduceAmbientEffects: (value: boolean) => void;
   setMusicPlayerEnabled: (value: boolean) => void;
-  setSpeechToTextEnabled: (value: boolean) => void;
   setNotificationSoundsOnlyWhenUnfocused: (value: boolean) => void;
   setShowTimestamps: (value: boolean) => void;
   setShowModelName: (value: boolean) => void;
@@ -186,7 +185,6 @@ export type OmnibarControlResultsInput = {
   showModelName: boolean;
   showTimestamps: boolean;
   showTokenUsage: boolean;
-  speechToTextEnabled: boolean;
   t: OmnibarTranslate;
   theme: string;
   userStatus: OmnibarUserStatus;
@@ -342,7 +340,6 @@ export function buildOmnibarControlResults({
   showModelName,
   showTimestamps,
   showTokenUsage,
-  speechToTextEnabled,
   t,
   theme,
   userStatus,
@@ -366,14 +363,6 @@ export function buildOmnibarControlResults({
       musicPlayerEnabled,
       setters.setMusicPlayerEnabled,
       "music-player",
-    ],
-    [
-      "speechToTextEnabled",
-      "commandCenter.controls.speechToText",
-      "Speech to text",
-      speechToTextEnabled,
-      setters.setSpeechToTextEnabled,
-      "speech-to-text",
     ],
     [
       "notificationSoundsOnlyWhenUnfocused",

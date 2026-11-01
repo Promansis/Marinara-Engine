@@ -60,6 +60,7 @@ function scrollToSettingsAnchor(controlId: string, onMissing?: () => void) {
       anchor.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
       (
         anchor.querySelector<HTMLElement>("[data-settings-focus]") ??
+        anchor.querySelector<HTMLElement>("[role='radio'][tabindex='0']") ??
         anchor.querySelector<HTMLElement>("button, input, select, textarea, [tabindex]:not([tabindex='-1'])")
       )?.focus({ preventScroll: true });
       return;

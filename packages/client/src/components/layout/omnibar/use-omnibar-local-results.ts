@@ -30,7 +30,6 @@ export function useOmnibarLocalResults({
   const localize = useLocalizedUiText();
   const reduceAmbientEffects = useUIStore((state) => state.reduceAmbientEffects);
   const musicPlayerEnabled = useUIStore((state) => state.musicPlayerEnabled);
-  const speechToTextEnabled = useUIStore((state) => state.speechToTextEnabled);
   const notificationSoundsOnlyWhenUnfocused = useUIStore((state) => state.notificationSoundsOnlyWhenUnfocused);
   const showTimestamps = useUIStore((state) => state.showTimestamps);
   const showModelName = useUIStore((state) => state.showModelName);
@@ -57,7 +56,6 @@ export function useOmnibarLocalResults({
         showModelName,
         showTimestamps,
         showTokenUsage,
-        speechToTextEnabled,
         t,
         theme,
         userStatus,
@@ -71,7 +69,6 @@ export function useOmnibarLocalResults({
       showModelName,
       showTimestamps,
       showTokenUsage,
-      speechToTextEnabled,
       t,
       theme,
       userStatus,
