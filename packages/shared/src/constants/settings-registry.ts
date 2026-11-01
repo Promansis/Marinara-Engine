@@ -40,7 +40,6 @@ export type SettingsSectionId =
   | "updates"
   | "support-diagnostics"
   | "request-timeouts"
-  | "parameters"
   | "message-tools"
   | "backup-export"
   | "storage-optimization"
@@ -359,13 +358,6 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionMeta[] = [
     label: "Request timeouts",
     description: "Adjust how long text, agents and media wait for a slow backend.",
     aliases: ["timeout", "slow", "koboldcpp", "images", "video", "seconds", "backend"],
-  },
-  {
-    id: "parameters",
-    tab: "advanced",
-    label: "Parameters",
-    description: "Reusable numeric controls for provider-specific request fields.",
-    aliases: ["custom parameters", "generation", "provider", "min p", "min_p"],
   },
   {
     id: "message-tools",

@@ -210,7 +210,7 @@ export type GenerationParameterSendMap = Partial<Record<GenerationParameterSendK
 
 export const CUSTOM_GENERATION_PARAMETERS_SETTINGS_KEY = "custom-generation-parameters";
 
-/** A reusable numeric provider parameter defined in Settings → Advanced. */
+/** A reusable numeric provider parameter defined in the parameters editor (Chat Settings › Advanced Parameters). */
 export interface ManagedGenerationParameterDefinition {
   id: string;
   name: string;

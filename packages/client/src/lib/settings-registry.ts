@@ -64,6 +64,7 @@ export function settingsControlLocationPath(
   const home = settingsControlHome(controlId);
   if (home === "connections") return localize("Connections");
   if (home === "music-dj") return `${localize("Agents")} › ${localize("Music DJ")}`;
+  if (home === "chat-parameters") return `${localize("Chat Settings")} › ${localize("Advanced Parameters")}`;
   return settingsLocationPath(sectionId, localize);
 }
 
@@ -118,11 +119,11 @@ export type SettingsSearchableControlMeta = {
   keywords?: string[];
   kind: SettingsControlKind;
   /**
-   * Set when the control lives somewhere other than Settings. A jump opens that place (the Connections panel, or
-   * the Music DJ agent's detail) and scrolls to the element with id `settings-control-<id>` (see
+   * Set when the control lives somewhere other than Settings. A jump opens that place (the Connections panel, the
+   * Music DJ agent's detail, or the active chat's Advanced Parameters) and scrolls to the element with id `settings-control-<id>` (see
    * `openSettingsControlHome` in `state-navigation.ts`).
    */
-  home?: "connections" | "music-dj";
+  home?: "connections" | "music-dj" | "chat-parameters";
 };
 
 export type SettingsSearchResult =
@@ -1627,13 +1628,15 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
   },
   {
     id: "custom-generation-parameters",
-    sectionId: "parameters",
+    sectionId: "request-timeouts",
     labelKey: "settings.search.customGenerationParameters.label",
     label: "Custom generation parameters",
-    description: "Create reusable numeric provider parameters for chats and connections.",
+    description:
+      "Add a reusable numeric provider parameter to every chat. Find it under Advanced Parameters in Chat Settings.",
     descriptionKey: "settings.search.customGenerationParameters.description",
     aliases: ["parameter", "provider", "min p", "min_p", "range", "tooltip"],
     kind: "Input",
+    home: "chat-parameters",
   },
   {
     id: QUICK_REPLIES_SETTINGS_CONTROL_ID,

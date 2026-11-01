@@ -19,6 +19,7 @@ import {
 } from "@marinara-engine/shared";
 import { cn } from "../../lib/utils";
 import { SettingsSwitch } from "../panels/settings/SettingControls";
+import { CustomGenerationParametersSettings } from "../panels/settings/CustomGenerationParametersSettings";
 import { MacroTextarea, type MacroTextareaProps } from "./MacroTextarea";
 import { HelpTooltip } from "./HelpTooltip";
 import { parseGenerationParameterDraft } from "../../lib/generation-parameter-draft";
@@ -463,6 +464,7 @@ export function GenerationParametersFields({
           })}
         </div>
       )}
+      {show("customParameters") && <CustomGenerationParametersSettings />}
       <div className="space-y-2">
         <div className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
           <span className="inline-flex items-center gap-1">

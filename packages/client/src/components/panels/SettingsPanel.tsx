@@ -199,7 +199,6 @@ import { BackgroundPicker } from "./settings/BackgroundPicker";
 import { AccessStatusSettings } from "./settings/AccessStatusSettings";
 import { RequestTimeoutSettings } from "./settings/RequestTimeoutSettings";
 import { FEATURE_SWITCHES_CONTROL_ID, FeatureSwitchesSettings } from "./settings/FeatureSwitchesSettings";
-import { CustomGenerationParametersSettings } from "./settings/CustomGenerationParametersSettings";
 import {
   ExternalExtensionsSettings,
   ExtensionRevisionHistorySettings,
@@ -8000,18 +7999,6 @@ function AdvancedSettings() {
         {...getSettingsSectionAnchorProps("request-timeouts")}
       >
         <RequestTimeoutSettings />
-      </SettingsSection>
-
-      <SettingsSection
-        title={localizeUi("settings.customGenerationParameters.title")}
-        description={localizeUi("settings.customGenerationParameters.sectionDescription")}
-        help={localizeUi("settings.customGenerationParameters.help")}
-        icon={<SlidersHorizontal size="0.875rem" />}
-        {...getSettingsSectionAnchorProps("parameters")}
-      >
-        <SearchableSettingTarget controlId="custom-generation-parameters">
-          <CustomGenerationParametersSettings />
-        </SearchableSettingTarget>
       </SettingsSection>
 
       <SettingsSection

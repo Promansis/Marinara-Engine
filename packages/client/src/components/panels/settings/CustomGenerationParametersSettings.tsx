@@ -17,7 +17,6 @@ import {
   SETTINGS_BUTTON_CLASS,
   SETTINGS_COMPACT_PRIMARY_BUTTON_CLASS,
   SETTINGS_ICON_BUTTON_CLASS,
-  SETTINGS_PRIMARY_FULL_BUTTON_CLASS,
 } from "./SettingControls";
 
 type DefinitionDraft = {
@@ -38,13 +37,19 @@ const EMPTY_DRAFT: DefinitionDraft = {
   tooltip: "",
 };
 
+/**
+ * Search jumps here (`home: "chat-parameters"` in the settings registry). Several editors can be mounted at once, so
+ * this is a data attribute, not an id; `state-navigation` picks the visible copy.
+ */
+const ANCHOR = "custom-generation-parameters";
+
 function makeDefinitionId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `parameter-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 export function CustomGenerationParametersSettings() {
   const { t } = useTranslation();
-  const { data: definitions = [], isLoading } = useCustomGenerationParameters();
+  const { data: definitions = [], isLoading, isSuccess } = useCustomGenerationParameters();
   const saveDefinitions = useSaveCustomGenerationParameters();
   const [draft, setDraft] = useState<DefinitionDraft>(EMPTY_DRAFT);
   const [formOpen, setFormOpen] = useState(false);
@@ -138,47 +143,38 @@ export function CustomGenerationParametersSettings() {
     }
   };
 
+  // A failed load leaves `definitions` empty, and saving then would overwrite every stored definition.
+  const canEdit = isSuccess;
+
   if (isLoading) {
-    return <p className="text-xs text-[var(--muted-foreground)]">{t("settings.customGenerationParameters.loading")}</p>;
+    return (
+      <p data-settings-anchor={ANCHOR} className="text-xs text-[var(--muted-foreground)]">
+        {t("settings.customGenerationParameters.loading")}
+      </p>
+    );
   }
 
   return (
-    <div className="space-y-3">
-      <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">
-        {t("settings.customGenerationParameters.description")}
-      </p>
-
-      {definitions.length > 0 ? (
+    <div data-settings-anchor={ANCHOR} className="scroll-mt-3 space-y-3">
+      {definitions.length > 0 && (
         <div className="space-y-2">
           {definitions.map((definition) => (
             <div
               key={definition.id}
-              className="flex items-start gap-2 rounded-lg bg-[var(--background)]/55 p-2.5 ring-1 ring-[var(--border)]"
+              className="flex items-center gap-2 rounded-lg bg-[var(--background)]/55 p-2 ring-1 ring-[var(--border)]"
             >
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                  <span className="text-xs font-semibold text-[var(--foreground)]">{definition.name}</span>
-                  <code className="text-[0.625rem] text-[var(--marinara-chat-chrome-button-text-active)]">
-                    {definition.requestKey}
-                  </code>
-                </div>
-                <p className="mt-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
-                  {t("settings.customGenerationParameters.range", {
-                    min: definition.min,
-                    max: definition.max,
-                  })}
-                </p>
-                {definition.tooltip && (
-                  <p className="mt-1 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-                    {definition.tooltip}
-                  </p>
-                )}
+              <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <span className="text-xs font-semibold text-[var(--foreground)]">{definition.name}</span>
+                <code className="text-[0.625rem] text-[var(--marinara-chat-chrome-button-text-active)]">
+                  {definition.requestKey}
+                </code>
               </div>
               {/* 16px (1rem) icons here are a maintainer choice from #4125; core-flows pins them. */}
               <div className="flex shrink-0 gap-1">
                 <button
                   type="button"
                   onClick={() => openForEdit(definition)}
+                  disabled={!canEdit}
                   className={SETTINGS_ICON_BUTTON_CLASS}
                   aria-label={t("settings.customGenerationParameters.editAction", { name: definition.name })}
                   title={t("settings.customGenerationParameters.editAction", { name: definition.name })}
@@ -188,7 +184,7 @@ export function CustomGenerationParametersSettings() {
                 <button
                   type="button"
                   onClick={() => void deleteDefinition(definition)}
-                  disabled={saveDefinitions.isPending}
+                  disabled={!canEdit || saveDefinitions.isPending}
                   className={cn(SETTINGS_ICON_BUTTON_CLASS, "mari-chrome-control--danger")}
                   aria-label={t("settings.customGenerationParameters.deleteActionNamed", { name: definition.name })}
                   title={t("settings.customGenerationParameters.deleteActionNamed", { name: definition.name })}
@@ -198,10 +194,6 @@ export function CustomGenerationParametersSettings() {
               </div>
             </div>
           ))}
-        </div>
-      ) : (
-        <div className="rounded-lg border border-dashed border-[var(--border)] px-3 py-4 text-center text-xs text-[var(--muted-foreground)]">
-          {t("settings.customGenerationParameters.empty")}
         </div>
       )}
 
@@ -282,17 +274,26 @@ export function CustomGenerationParametersSettings() {
           </div>
         </div>
       ) : (
-        <button
-          type="button"
-          onClick={() => {
-            setDraft(EMPTY_DRAFT);
-            setFormOpen(true);
-          }}
-          className={SETTINGS_PRIMARY_FULL_BUTTON_CLASS}
-        >
-          <Plus size="0.8125rem" />
-          {t("settings.customGenerationParameters.add")}
-        </button>
+        <div className="flex items-center justify-between gap-3">
+          <p className="min-w-0 text-[0.625rem] text-[var(--muted-foreground)]">
+            {canEdit
+              ? t("settings.customGenerationParameters.addHint")
+              : t("settings.customGenerationParameters.loadFailed")}
+          </p>
+          <button
+            type="button"
+            data-settings-focus
+            disabled={!canEdit}
+            onClick={() => {
+              setDraft(EMPTY_DRAFT);
+              setFormOpen(true);
+            }}
+            className={cn(SETTINGS_COMPACT_PRIMARY_BUTTON_CLASS, "shrink-0")}
+          >
+            <Plus size="0.75rem" />
+            {t("settings.customGenerationParameters.add")}
+          </button>
+        </div>
       )}
     </div>
   );

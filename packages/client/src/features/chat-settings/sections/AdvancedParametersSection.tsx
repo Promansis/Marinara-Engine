@@ -210,9 +210,6 @@ export function AdvancedParametersSection({
       bodyClassName="pt-3 space-y-3"
       rootAttributes={{ "data-chat-settings-section": "advanced-parameters" }}
     >
-      <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-        {localizeUi("settings.customGenerationParameters.availabilityHint")}
-      </p>
       <p className="text-[0.625rem] text-[var(--muted-foreground)]">
         {localizeUi(
           preview.isError

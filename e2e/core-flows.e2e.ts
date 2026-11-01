@@ -13742,6 +13742,37 @@ test("Backup & Export identifies the automatic backup location", async ({ page }
   await expect(backupSection).toContainText("On Android, app storage is usually inaccessible");
 });
 
+test("custom generation parameters search opens a preset's parameters when no chat is open", async ({
+  page,
+  request,
+}, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "The search jump fallback is covered on desktop.");
+
+  const presetName = `Custom Parameters Search ${testInfo.project.name}-${Date.now().toString(36)}`;
+  const presetResponse = await request.post("/api/prompts", { data: { name: presetName } });
+  expect(presetResponse.ok()).toBeTruthy();
+  const preset = (await presetResponse.json()) as { id: string };
+
+  try {
+    await page.addInitScript(() => localStorage.removeItem("marinara-active-chat-id"));
+    await page.goto("/");
+    await clickTopbarPanel(page, "settings");
+    await page.getByPlaceholder("Search settings").fill("custom generation parameters");
+    await page
+      .locator(".mari-settings-search-header button")
+      .filter({ hasText: "Custom generation parameters" })
+      .first()
+      .click();
+
+    // With no chat to show it, the row opens in an editable preset's Parameters tab.
+    const parameterSettings = page.locator('[data-settings-anchor="custom-generation-parameters"]');
+    await expect(parameterSettings.last()).toBeVisible();
+    await expect(parameterSettings.last().getByRole("button", { name: "Add parameter" })).toBeFocused();
+  } finally {
+    await request.delete(`/api/prompts/${preset.id}`).catch(() => undefined);
+  }
+});
+
 test("custom generation parameters become reusable chat controls", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("desktop"), "Reusable parameter authoring is covered on desktop.");
 
@@ -13774,6 +13805,12 @@ test("custom generation parameters become reusable chat controls", async ({ page
 
   try {
     await page.goto("/");
+    await page.evaluate((chatId) => {
+      localStorage.setItem("marinara-active-chat-id", chatId);
+    }, chat.id);
+    await page.reload();
+
+    // Settings search lands on the row in Chat Settings › Advanced Parameters, next to the sliders it adds to.
     await clickTopbarPanel(page, "settings");
     await page.getByPlaceholder("Search settings").fill("custom generation parameters");
     await page
@@ -13781,20 +13818,11 @@ test("custom generation parameters become reusable chat controls", async ({ page
       .filter({ hasText: "Custom generation parameters" })
       .first()
       .click();
-
-    const parameterSettings = page.locator("#settings-control-custom-generation-parameters");
+    const drawer = page.locator(".mari-chat-settings-drawer");
+    const parameterSettings = drawer.locator('[data-settings-anchor="custom-generation-parameters"]');
     await expect(parameterSettings).toBeVisible();
-    const parametersSection = page.locator("#settings-section-parameters");
-    const parametersHelp = parametersSection.getByRole("button", { name: "Show help" });
-    await parametersHelp.click();
-    await expect(
-      page.getByText(
-        "Create reusable numeric provider parameters here. Once added, they become available in Chat Settings and connection defaults.",
-        { exact: true },
-      ),
-    ).toBeVisible();
-    await parametersHelp.click();
-
+    await expect(parameterSettings.getByRole("button", { name: "Add parameter" })).toBeFocused();
+    await expect(parameterSettings.getByText("Adds to every chat", { exact: true })).toBeVisible();
     await parameterSettings.getByRole("button", { name: "Add parameter" }).click();
     await parameterSettings.getByLabel("Name").fill("Min P");
     await parameterSettings.getByLabel("Value", { exact: true }).fill("min_p");
@@ -13825,17 +13853,9 @@ test("custom generation parameters become reusable chat controls", async ({ page
     }>;
     expect(savedDefinitions).toMatchObject([{ name: "Min P", requestKey: "min_p", min: 0.1, max: 1 }]);
 
-    await page.evaluate((chatId) => {
-      localStorage.setItem("marinara-active-chat-id", chatId);
-    }, chat.id);
-    await page.reload();
-
-    await page.getByRole("button", { name: "Chat Settings", exact: true }).filter({ visible: true }).click();
-    const drawer = page.locator(".mari-chat-settings-drawer");
-    await drawer.getByText("Advanced Parameters", { exact: true }).click();
     await expect(drawer.locator('textarea[placeholder="<thinking>"]')).toHaveAttribute("placeholder", "<thinking>");
-    await expect(drawer.getByText("Min P", { exact: true })).toBeVisible();
     const minPInput = drawer.getByRole("textbox", { name: "Min P", exact: true });
+    await expect(minPInput).toBeVisible();
     const [frequencyInputBox, presenceInputBox, minPInputBox] = await Promise.all([
       drawer.getByRole("textbox", { name: "Frequency", exact: true }).boundingBox(),
       drawer.getByRole("textbox", { name: "Presence", exact: true }).boundingBox(),

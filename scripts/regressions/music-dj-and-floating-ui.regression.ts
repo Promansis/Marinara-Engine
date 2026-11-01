@@ -48,6 +48,56 @@ const stateNavigationSource = readFileSync(
 assert.match(stateNavigationSource, /openAgentDetail\(MUSIC_DJ_AGENT_ID\)/u, "Installed: open the agent detail");
 assert.match(stateNavigationSource, /openAgentCatalog\(MUSIC_DJ_AGENT_ID\)/u, "Not installed: open its catalog entry");
 
+// Custom generation parameters are added where the sliders are (the shared editor), not in Settings.
+const parametersEditorSource = readFileSync(
+  new URL("../../packages/client/src/components/ui/GenerationParametersEditor.tsx", import.meta.url),
+  "utf8",
+);
+assert.match(
+  parametersEditorSource,
+  /<CustomGenerationParametersSettings \/>/u,
+  "The editor carries the Add parameter row",
+);
+assert.doesNotMatch(settingsSource, /CustomGenerationParametersSettings/u, "Custom parameters left Settings");
+assert.match(
+  registrySource,
+  /id: "custom-generation-parameters",[\s\S]{0,600}home: "chat-parameters"/u,
+  "Search still finds custom parameters and jumps to the chat's Advanced Parameters",
+);
+assert.match(
+  stateNavigationSource,
+  /requestChatSettingsSectionOpen\(chatId, "advanced-parameters"\)/u,
+  "The search jump opens the chat's Advanced Parameters",
+);
+assert.match(
+  stateNavigationSource,
+  /openPresetDetail\(preset\.id, \{ initialTab: "parameters" \}\)/u,
+  "With no chat to show the row, the search jump opens an editable preset's Parameters tab",
+);
+assert.match(
+  stateNavigationSource,
+  /confirmEditorLeave\([\s\S]{0,1500}openPresetDetail/u,
+  "The preset fallback asks before leaving an editor with unsaved edits",
+);
+const customParametersSource = readFileSync(
+  new URL(
+    "../../packages/client/src/components/panels/settings/CustomGenerationParametersSettings.tsx",
+    import.meta.url,
+  ),
+  "utf8",
+);
+assert.match(
+  customParametersSource,
+  /data-settings-anchor=\{ANCHOR\}/u,
+  "The anchor is a data attribute because several editors can be mounted at once",
+);
+assert.doesNotMatch(customParametersSource, /\bid=\{ANCHOR/u, "The anchor must not be a duplicated DOM id");
+assert.match(
+  customParametersSource,
+  /const canEdit = isSuccess;[\s\S]*disabled=\{!canEdit\b[\s\S]*disabled=\{!canEdit \|\| saveDefinitions\.isPending\}/u,
+  "A failed load must not allow a save that overwrites every stored definition",
+);
+
 // 5bb03f918 replaced Professor Mari's floating window with the top-bar presence pill; she lives in
 // the omnibar and Home only, so no floating follow-up or floating window may come back.
 assert.doesNotMatch(
