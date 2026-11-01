@@ -40,6 +40,7 @@ import {
   searchSettings,
   settingsControlDescription,
   settingsControlLabel,
+  settingsControlLocationPath,
   type SettingsSearchResult,
   type SettingsSectionId,
   type SettingsTabId,
@@ -172,7 +173,6 @@ import { useChatStore } from "../../stores/chat.store";
 import { parseChatMetadata } from "../../lib/chat-display";
 import { useOpenGameAssetsFolder, useRescanGameAssets } from "../../hooks/use-game-assets";
 import { chatKeys } from "../../hooks/use-chats";
-import { useInstalledCapabilityPackages } from "../../hooks/use-capability-packages";
 import { useDocsLanguage, useFixDocsLanguage, useSetDocsLanguage } from "../../hooks/use-docs-language";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { ColorPicker } from "../ui/ColorPicker";
@@ -1608,6 +1608,11 @@ export function SettingsPanel() {
                     result.type === "control"
                       ? settingsControlDescription(result.control, t)
                       : localize(section.description);
+                  const where =
+                    result.type === "control" && result.control.home
+                      ? settingsControlLocationPath(result.control.id, section.id, localize)
+                      : `${tab ? t(tab.labelKey) : localize("Settings")} / ${localize(section.label)}`;
+                  const whereAndWhat = `${where} / ${description}`;
                   return (
                     <button
                       key={`${result.type}-${result.type === "control" ? result.control.id : section.id}`}
@@ -1621,9 +1626,7 @@ export function SettingsPanel() {
                           {localize(result.type === "control" ? result.control.kind : "Section")}
                         </span>
                       </span>
-                      <span className="truncate text-[0.625rem] text-[var(--muted-foreground)]">
-                        {tab ? t(tab.labelKey) : localize("Settings")} / {localize(section.label)} / {description}
-                      </span>
+                      <span className="truncate text-[0.625rem] text-[var(--muted-foreground)]">{whereAndWhat}</span>
                     </button>
                   );
                 })}
@@ -2172,10 +2175,6 @@ function GeneralSettings() {
   const { t: localizeUi } = useUiTranslation();
   const { t } = useTranslation();
   const localize = useLocalizedUiText();
-  const { data: installedCapabilities = [] } = useInstalledCapabilityPackages();
-  const musicDjInstalled = installedCapabilities.some(
-    (capability) => capability.id === "spotify" && capability.status === "active",
-  );
   const enableStreaming = useUIStore((s) => s.enableStreaming);
   const notificationPosition = useUIStore((s) => s.notificationPosition);
   const setNotificationPosition = useUIStore((s) => s.setNotificationPosition);
@@ -2212,8 +2211,6 @@ function GeneralSettings() {
   const setContinueAddsNewline = useUIStore((s) => s.setContinueAddsNewline);
   const speechToTextEnabled = useUIStore((s) => s.speechToTextEnabled);
   const setSpeechToTextEnabled = useUIStore((s) => s.setSpeechToTextEnabled);
-  const musicPlayerEnabled = useUIStore((s) => s.musicPlayerEnabled);
-  const setMusicPlayerEnabled = useUIStore((s) => s.setMusicPlayerEnabled);
   const intuitiveSwipeNavigation = useUIStore((s) => s.intuitiveSwipeNavigation);
   const setIntuitiveSwipeNavigation = useUIStore((s) => s.setIntuitiveSwipeNavigation);
   const intuitiveSwipeRerollLatest = useUIStore((s) => s.intuitiveSwipeRerollLatest);
@@ -2273,16 +2270,6 @@ function GeneralSettings() {
             checked={seasonalThemesDisabled}
             onChange={setSeasonalThemesDisabled}
             help={localizeUi("settings.controls.disableSeasonalThemes.help")}
-          />
-          <ToggleSetting
-            anchorId={getSettingsControlAnchorId("music-player")}
-            label={localizeUi("settings.controls.musicPlayer.label")}
-            checked={musicDjInstalled && musicPlayerEnabled}
-            onChange={setMusicPlayerEnabled}
-            help={localizeUi(
-              musicDjInstalled ? "settings.controls.musicPlayer.help" : "settings.controls.musicPlayer.requiresMusicDj",
-            )}
-            disabled={!musicDjInstalled}
           />
           {/* Q2: every omnibar and Professor Mari setting lives in the omnibar; this row opens it. */}
           <div

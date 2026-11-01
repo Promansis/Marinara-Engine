@@ -8,6 +8,7 @@ const professorMariUrl = new URL(
   import.meta.url,
 );
 const settingsUrl = new URL("../../packages/client/src/components/panels/SettingsPanel.tsx", import.meta.url);
+const agentEditorUrl = new URL("../../packages/client/src/components/agents/AgentEditor.tsx", import.meta.url);
 const globalsUrl = new URL("../../packages/client/src/styles/globals.css", import.meta.url);
 const unavailablePlayerUrl = new URL(
   "../../packages/client/src/components/music/MusicDjUnavailablePlayer.tsx",
@@ -18,16 +19,34 @@ const topBarSource = readFileSync(topBarUrl, "utf8");
 const appShellSource = readFileSync(appShellUrl, "utf8");
 const professorMariSource = readFileSync(professorMariUrl, "utf8");
 const settingsSource = readFileSync(settingsUrl, "utf8");
+const agentEditorSource = readFileSync(agentEditorUrl, "utf8");
 const globalsSource = readFileSync(globalsUrl, "utf8");
 
 assert.equal(existsSync(unavailablePlayerUrl), false, "Music DJ must not leave an absent-package player placeholder");
 assert.doesNotMatch(topBarSource, /MusicDjUnavailablePlayer/u);
 assert.doesNotMatch(appShellSource, /MusicDjUnavailablePlayer/u);
 assert.match(
-  settingsSource,
-  /checked=\{musicDjInstalled && musicPlayerEnabled\}[\s\S]{0,300}disabled=\{!musicDjInstalled\}/u,
+  agentEditorSource,
+  /checked=\{musicDjInstalled && musicPlayerEnabled\}[\s\S]{0,500}disabled=\{!musicDjInstalled\}/u,
   "The Music Player switch must remain off and unavailable until Music DJ is installed",
 );
+assert.match(agentEditorSource, /id="settings-control-music-player"/u, "Search lands on the Music DJ player switch");
+assert.doesNotMatch(settingsSource, /music-player|musicPlayerEnabled/u, "The Music Player switch left Settings");
+const registrySource = readFileSync(
+  new URL("../../packages/client/src/lib/settings-registry.ts", import.meta.url),
+  "utf8",
+);
+assert.match(
+  registrySource,
+  /id: "music-player",[\s\S]{0,500}home: "music-dj"/u,
+  "Search still finds the Music Player and jumps to the Music DJ agent",
+);
+const stateNavigationSource = readFileSync(
+  new URL("../../packages/client/src/lib/state-navigation.ts", import.meta.url),
+  "utf8",
+);
+assert.match(stateNavigationSource, /openAgentDetail\(MUSIC_DJ_AGENT_ID\)/u, "Installed: open the agent detail");
+assert.match(stateNavigationSource, /openAgentCatalog\(MUSIC_DJ_AGENT_ID\)/u, "Not installed: open its catalog entry");
 
 // 5bb03f918 replaced Professor Mari's floating window with the top-bar presence pill; she lives in
 // the omnibar and Home only, so no floating follow-up or floating window may come back.

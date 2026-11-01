@@ -1,4 +1,4 @@
-import type { AchievementEvent } from "@marinara-engine/shared";
+import { BUILT_IN_AGENTS, type AchievementEvent } from "@marinara-engine/shared";
 import { trackAchievementEvent } from "../hooks/use-achievements";
 import { useChatStore } from "../stores/chat.store";
 import { isMobileShellViewport, useUIStore, type HomeRequest } from "../stores/ui.store";
@@ -6,6 +6,8 @@ import { requestProfessorMariOpen } from "./professor-mari-open";
 import type { ProfessorMariNavigationTarget } from "./professor-mari-navigation";
 import { isOmnibarSettingsTarget, settingsControlHome, type SettingsSearchableControlMeta } from "./settings-registry";
 
+/** Music DJ is both the agent type and the package id. */
+const MUSIC_DJ_AGENT_ID = "spotify";
 const DISCORD_INVITE_URL = "https://discord.com/invite/KdAkTg94ME";
 const SUPPORT_URL = "https://ko-fi.com/marinara_spaghetti";
 
@@ -24,11 +26,19 @@ function openHomeWith(request: HomeRequest) {
 }
 
 /**
- * Open the panel a searchable control lives in and scroll to it. The panel is lazy and its card may load data
- * first, so wait a few seconds for the anchor instead of looking once.
+ * Open the place a searchable control lives in and scroll to it. The place is lazy and its card may load data
+ * first, so wait a few seconds for the anchor instead of looking once. The player switch lives in the Music DJ
+ * agent's detail; when that agent is not installed there is no detail, so open its Agents catalog entry instead.
  */
 export function openSettingsControlHome(controlId: string, panel: NonNullable<SettingsSearchableControlMeta["home"]>) {
-  useUIStore.getState().openRightPanel(panel);
+  const ui = useUIStore.getState();
+  if (panel === "music-dj") {
+    if (!BUILT_IN_AGENTS.some((agent) => agent.id === MUSIC_DJ_AGENT_ID)) {
+      ui.openAgentCatalog(MUSIC_DJ_AGENT_ID);
+      return;
+    }
+    ui.openAgentDetail(MUSIC_DJ_AGENT_ID);
+  } else ui.openRightPanel(panel);
   let attempts = 0;
   const scrollWhenReady = () => {
     const anchor = document.getElementById(`settings-control-${controlId}`);

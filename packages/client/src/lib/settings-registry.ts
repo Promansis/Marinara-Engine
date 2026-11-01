@@ -53,6 +53,21 @@ export function settingsControlHome(controlId?: string | null): SettingsSearchab
 }
 
 /**
+ * Where a search row says a control lives: its home panel when it left Settings, else its section's
+ * "Tab › Section". English pieces; the caller localizes them like `settingsLocationPath`.
+ */
+export function settingsControlLocationPath(
+  controlId: string | null | undefined,
+  sectionId: SettingsSectionId,
+  localize: (englishText: string) => string,
+): string | null {
+  const home = settingsControlHome(controlId);
+  if (home === "connections") return localize("Connections");
+  if (home === "music-dj") return `${localize("Agents")} › ${localize("Music DJ")}`;
+  return settingsLocationPath(sectionId, localize);
+}
+
+/**
  * "Tab › Section" for a section, so a row away from the Settings panel (the
  * omnibar) can still say where a setting lives. Both pieces are the registry's
  * English; the caller localizes the same way the rest of this module does.
@@ -103,10 +118,11 @@ export type SettingsSearchableControlMeta = {
   keywords?: string[];
   kind: SettingsControlKind;
   /**
-   * Set when the control lives in another panel, not in Settings. A jump opens that panel and scrolls to the
-   * element with id `settings-control-<id>` (see `openSettingsControlHome` in `state-navigation.ts`).
+   * Set when the control lives somewhere other than Settings. A jump opens that place (the Connections panel, or
+   * the Music DJ agent's detail) and scrolls to the element with id `settings-control-<id>` (see
+   * `openSettingsControlHome` in `state-navigation.ts`).
    */
-  home?: "connections";
+  home?: "connections" | "music-dj";
 };
 
 export type SettingsSearchResult =
@@ -220,10 +236,11 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
     sectionId: "application",
     labelKey: "settings.controls.musicPlayer.label",
     label: "Music Player",
-    description: "Show the compact Music Player.",
+    description: "Turn the player on or off in the Music DJ agent.",
     descriptionKey: "settings.search.musicPlayer.description",
     aliases: ["spotify", "youtube", "music dj"],
     kind: "Toggle",
+    home: "music-dj",
   },
   // Q2: everything below up to "notification-position" lives in the omnibar's settings view
   // (`OmnibarSettingsMenu.tsx`), in its order: Search, Quick answers, Professor Mari, Around the app, Appearance.

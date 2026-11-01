@@ -52,7 +52,7 @@ import {
   localizeOmnibarSettingDescription,
   localizeOmnibarSettingTitle,
 } from "./omnibar-settings";
-import { SETTINGS_SEARCHABLE_CONTROLS, settingsLocationPath } from "./settings-registry";
+import { SETTINGS_SEARCHABLE_CONTROLS, settingsControlLocationPath } from "./settings-registry";
 import { OMNIBAR_SETTINGS_TOGGLE_BINDINGS } from "./omnibar-settings-toggle-bindings";
 import type { ChatResourceDragKind } from "./chat-resource-drag";
 import { getSlashCompletions } from "./slash-commands";
@@ -433,8 +433,9 @@ export function buildOmnibarControlResults({
       // A description that only repeats the title ("Theme" under Theme) is left out.
       description: (() => {
         const path =
-          (setting.controlId && setting.sectionId ? settingsLocationPath(setting.sectionId, localize) : null) ??
-          localize(setting.sectionLabel);
+          (setting.controlId && setting.sectionId
+            ? settingsControlLocationPath(setting.controlId, setting.sectionId, localize)
+            : null) ?? localize(setting.sectionLabel);
         const explanation = localizeOmnibarSettingDescription(setting, localize, t);
         return explanation === title ? path : `${path} · ${explanation}`;
       })(),
@@ -502,7 +503,7 @@ export function buildOmnibarControlResults({
         title: t(key, fallback),
         category: "settings" as const,
         score: 170,
-        description: (sectionId ? settingsLocationPath(sectionId, localize) : null) ?? undefined,
+        description: (sectionId ? settingsControlLocationPath(controlId, sectionId, localize) : null) ?? undefined,
         control: {
           type: "toggle" as const,
           label: t(key, fallback),

@@ -103,7 +103,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionMeta[] = [
     id: "application",
     tab: "general",
     label: "App Behavior",
-    description: "Language, safety confirmations, achievements, music, and playful extras.",
+    description: "Language, safety confirmations, privacy, achievements, and playful extras.",
     aliases: ["language", "delete", "confirm", "music", "achievements", "app"],
   },
   {

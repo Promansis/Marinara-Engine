@@ -15306,7 +15306,7 @@ test("agent catalog reports API failures without diagnosing an internet outage",
   await expect(catalogView.getByText(/Check the server internet connection/)).toHaveCount(0);
 });
 
-test("Music Player stays unavailable until Music DJ is installed", async ({ page }, testInfo) => {
+test("Music Player is switched in the Music DJ agent, and Settings search finds it", async ({ page }, testInfo) => {
   const errors = collectUnexpectedErrors(page);
   let musicDjInstalled = false;
   const musicDjManifest = {
@@ -15337,6 +15337,30 @@ test("Music Player stays unavailable until Music DJ is installed", async ({ page
                 status: "active",
                 error: null,
                 legacy: false,
+              },
+            ]
+          : [],
+      ),
+    });
+  });
+  // The agent registry (`BUILT_IN_AGENTS`) fills from this route; install refetches it.
+  await page.route("**/api/capability-packages/agents", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(
+        musicDjInstalled
+          ? [
+              {
+                id: "spotify",
+                packageId: "spotify",
+                name: "Music DJ",
+                description: "Matches scene mood with Spotify, YouTube, or local music.",
+                phase: "post_processing",
+                enabledByDefault: false,
+                category: "misc",
+                execution: "host",
+                defaultPromptTemplate: "",
               },
             ]
           : [],
@@ -15384,13 +15408,13 @@ test("Music Player stays unavailable until Music DJ is installed", async ({ page
     });
   });
 
-  const openMusicPlayerSetting = async () => {
-    const row = page.locator("#settings-control-music-player");
+  // The player switch lives in the Music DJ agent's detail; Settings search jumps there.
+  const searchMusicPlayerSetting = async () => {
     const settingsButton = page.locator('[data-tour="panel-settings"]');
     await expect(settingsButton).toHaveAttribute("aria-pressed", /true|false/u);
     if ((await settingsButton.getAttribute("aria-pressed")) !== "true") await clickTopbarPanel(page, "settings");
-    await expect(row).toBeVisible();
-    return row;
+    await page.getByPlaceholder("Search settings").fill("music player");
+    await page.locator(".mari-settings-search-header button").filter({ hasText: "Music Player" }).first().click();
   };
   await page.goto("/");
   await page.evaluate(async () => {
@@ -15399,16 +15423,11 @@ test("Music Player stays unavailable until Music DJ is installed", async ({ page
   });
   const musicPlayer = page.locator('[data-component^="SpotifyMiniPlayer."]');
   await expect(musicPlayer).toHaveCount(0);
-  let musicPlayerRow = await openMusicPlayerSetting();
-  const musicPlayerToggle = musicPlayerRow.locator('input[type="checkbox"]');
-  await expect(musicPlayerToggle).toHaveCount(1);
-  await expect(musicPlayerToggle).toBeDisabled();
-  await expect(musicPlayerToggle).not.toBeChecked();
-  await musicPlayerRow.getByRole("button", { name: "Show help" }).click();
-  await expect(page.getByText("Download the Music DJ agent to use the Music Player.")).toBeVisible();
+  await clickTopbarPanel(page, "settings");
+  await expect(page.locator("#settings-control-music-player")).toHaveCount(0);
 
-  await clickTopbarPanel(page, "agents");
-  await page.getByLabel("Agents").getByRole("button", { name: "Download Agents", exact: true }).click();
+  // Not installed: search opens the Agents catalog at Music DJ.
+  await searchMusicPlayerSetting();
   const catalogView = page.locator('[data-component="AgentCatalogView"]');
   await expect(catalogView).toBeVisible();
   if (testInfo.project.name.includes("mobile")) {
@@ -15423,7 +15442,10 @@ test("Music Player stays unavailable until Music DJ is installed", async ({ page
   await installedToast.getByRole("button", { name: "Close toast" }).click();
   await expect(installedToast).toHaveCount(0);
 
-  musicPlayerRow = await openMusicPlayerSetting();
+  // Installed: search opens the Music DJ agent's detail, on the player switch.
+  await searchMusicPlayerSetting();
+  const musicPlayerRow = page.locator("#settings-control-music-player");
+  await expect(musicPlayerRow).toBeVisible();
   const installedMusicPlayerToggle = musicPlayerRow.locator('input[type="checkbox"]');
   await expect(installedMusicPlayerToggle).toBeEnabled();
   await expect(installedMusicPlayerToggle).toBeChecked();

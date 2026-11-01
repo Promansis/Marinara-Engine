@@ -21,7 +21,11 @@ import {
   useCreateAgent,
   type AgentConfigRow,
 } from "../../hooks/use-agents";
-import { useCapabilityAgentRegistry, useCapabilityCatalog } from "../../hooks/use-capability-packages";
+import {
+  useCapabilityAgentRegistry,
+  useCapabilityCatalog,
+  useInstalledCapabilityPackages,
+} from "../../hooks/use-capability-packages";
 import { useConnections } from "../../hooks/use-connections";
 import { useOpenGameAssetsFolder } from "../../hooks/use-game-assets";
 import { AgentDetailHeader } from "./AgentDetailHeader";
@@ -909,6 +913,12 @@ export function AgentEditor() {
   const setEditorDirty = useUIStore((s) => s.setEditorDirty);
   const musicPlayerSource = useUIStore((s) => s.musicPlayerSource);
   const setMusicPlayerSource = useUIStore((s) => s.setMusicPlayerSource);
+  const musicPlayerEnabled = useUIStore((s) => s.musicPlayerEnabled);
+  const setMusicPlayerEnabled = useUIStore((s) => s.setMusicPlayerEnabled);
+  const { data: installedCapabilities = [] } = useInstalledCapabilityPackages();
+  const musicDjInstalled = installedCapabilities.some(
+    (capability) => capability.id === "spotify" && capability.status === "active",
+  );
   useEffect(() => {
     setEditorDirty(dirty);
   }, [dirty, setEditorDirty]);
@@ -3783,11 +3793,26 @@ export function AgentEditor() {
 
           {isMusicAgent && (
             <FieldGroup
-              label={localizeUi("settings.controls.musicPlayer.label")}
+              label={localizeUi("ui.agents.agenteditor.playerSource")}
               icon={<Music size="0.875rem" className="text-[var(--muted-foreground)]" />}
               help={localizeUi("ui.agents.agenteditor.chooseWhichServiceMusicDjShouldUseForFuture")}
             >
               <div className="flex flex-col gap-2">
+                {/* Search jumps here (`home: "music-dj"` in the settings registry). */}
+                <div id="settings-control-music-player" className="scroll-mt-3">
+                  <EditorSwitchRow
+                    label={localizeUi("settings.controls.musicPlayer.label")}
+                    checked={musicDjInstalled && musicPlayerEnabled}
+                    onChange={setMusicPlayerEnabled}
+                    description={localizeUi(
+                      musicDjInstalled
+                        ? "settings.controls.musicPlayer.help"
+                        : "settings.controls.musicPlayer.requiresMusicDj",
+                    )}
+                    disabled={!musicDjInstalled}
+                    labelClassName="text-sm"
+                  />
+                </div>
                 <div className="grid grid-cols-3 gap-2 rounded-xl border border-white/10 bg-white/[0.03] p-1">
                   {(["spotify", "youtube", "custom"] as const).map((provider) => {
                     const active = localMusicProvider === provider;
