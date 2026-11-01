@@ -62,9 +62,21 @@ export async function mockUILanguagePacks(page: Page) {
       },
     });
   });
+  // Help pages follow the app language, so picking one sends a docs-language switch. The e2e server is shared by
+  // every test in the run: a real switch downloads that pack and leaves later tests reading translated guides.
+  // Answer the switch here instead; reads still reach the server.
+  const docsSwitches: string[] = [];
+  await page.route("**/api/docs/language", async (route) => {
+    if (route.request().method() === "GET") return route.fallback();
+    const { language } = route.request().postDataJSON() as { language: string };
+    docsSwitches.push(language);
+    const status = await (await route.fetch({ method: "GET" })).json();
+    return route.fulfill({ json: { ...status, active: language, configured: true } });
+  });
   return {
     installed,
     downloads,
+    docsSwitches,
     setOffline: (value: boolean) => {
       failDownload = value;
     },
