@@ -984,11 +984,12 @@ export function SettingsSegmented<T extends string>({
               onClick={() => onChange(option.value)}
               className={cn(
                 "inline-flex min-h-11 min-w-0 items-center justify-center gap-1.5 py-2 font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)] disabled:cursor-not-allowed",
-                fitText ? "px-0.5 text-center text-[0.625rem] leading-tight" : "whitespace-nowrap px-2 text-xs",
+                fitText ? "whitespace-nowrap px-0.5" : "whitespace-nowrap px-2 text-xs",
                 selected
                   ? "bg-[var(--primary)]/15 text-[var(--primary)]"
                   : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
               )}
+              style={fitText ? { fontSize: "clamp(0.5rem, 3.5cqi, 0.625rem)" } : undefined}
             >
               {option.icon}
               {option.label}
