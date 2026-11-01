@@ -148,9 +148,8 @@ export function CustomGenerationParametersSettings() {
 
   if (isLoading) {
     return (
-      <p data-settings-anchor={ANCHOR} className="text-xs text-[var(--muted-foreground)]">
-        {t("settings.customGenerationParameters.loading")}
-      </p>
+      // No anchor while loading: a search jump would land here, find no Add parameter button and stop waiting.
+      <p className="text-xs text-[var(--muted-foreground)]">{t("settings.customGenerationParameters.loading")}</p>
     );
   }
 
