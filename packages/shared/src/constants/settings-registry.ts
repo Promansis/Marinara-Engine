@@ -14,8 +14,6 @@ export type SettingsSectionId =
   | "notifications"
   | "responses"
   | "input-editing"
-  | "text-rules"
-  | "game-playback"
   | "overall-generations"
   | "image-generation"
   | "video-generation"
@@ -71,7 +69,7 @@ export const SETTINGS_TABS: readonly {
   {
     id: "general",
     label: "General",
-    description: "Language, responses, input, notifications, and playback.",
+    description: "Language, responses, input, and notifications.",
     aliases: ["general", "application", "notifications", "responses", "input", "editing"],
   },
   {
@@ -135,9 +133,10 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionMeta[] = [
     id: "input-editing",
     tab: "general",
     label: "Input & Editing",
-    description: "Message input behavior and fast edit controls.",
+    description: "Message input, fast edit controls, and game navigation.",
     aliases: [
       "enter",
+      "navigation",
       "send",
       "microphone",
       "speech",
@@ -149,21 +148,9 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionMeta[] = [
       "post only",
       "guide reply",
       "impersonate",
+      "mouse wheel",
+      "middle mouse",
     ],
-  },
-  {
-    id: "text-rules",
-    tab: "general",
-    label: "Text Rules",
-    description: "Formatting applied to chat text.",
-    aliases: ["quotes", "bold", "dialogue", "latex", "symbols", "typographic"],
-  },
-  {
-    id: "game-playback",
-    tab: "general",
-    label: "Game Playback",
-    description: "Game mode reading and navigation.",
-    aliases: ["game", "text speed", "auto play", "middle mouse", "navigation", "vn"],
   },
   {
     id: "overall-generations",
@@ -204,7 +191,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionMeta[] = [
     id: "text-scale",
     tab: "appearance",
     label: "Text & Scale",
-    description: "Fonts, display size, chat text colors, and legibility controls.",
+    description: "Fonts, display size, chat text colors, text rules, and legibility controls.",
     aliases: [
       "font",
       "google fonts",
@@ -215,6 +202,11 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionMeta[] = [
       "outline",
       "chrome text",
       "legibility",
+      "quotes",
+      "bold",
+      "dialogue",
+      "latex",
+      "symbols",
     ],
   },
   {
@@ -242,8 +234,19 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionMeta[] = [
     id: "game-presentation",
     tab: "appearance",
     label: "Game Presentation",
-    description: "Game VN art scale and dialogue display.",
-    aliases: ["game", "vn", "dialogue", "portrait", "sprite", "full body", "presentation"],
+    description: "Game VN art scale, dialogue display, and narration playback.",
+    aliases: [
+      "game",
+      "vn",
+      "dialogue",
+      "portrait",
+      "sprite",
+      "full body",
+      "presentation",
+      "text speed",
+      "auto play",
+      "playback",
+    ],
   },
   {
     id: "motion-backgrounds",

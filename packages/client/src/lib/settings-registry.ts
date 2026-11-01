@@ -639,7 +639,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
   },
   {
     id: "bold-dialogue",
-    sectionId: "text-rules",
+    sectionId: "text-scale",
     labelKey: "settings.controls.boldDialogue.label",
     label: "Bold dialogue in quotes",
     description: "Bold quoted dialogue text in chat display.",
@@ -649,7 +649,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
   },
   {
     id: "convert-latex-symbols",
-    sectionId: "text-rules",
+    sectionId: "text-scale",
     labelKey: "settings.controls.convertLatex.label",
     label: "Convert LaTeX symbols",
     description: "Display common LaTeX commands as regular symbols.",
@@ -659,7 +659,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
   },
   {
     id: "load-remote-message-images",
-    sectionId: "text-rules",
+    sectionId: "application",
     labelKey: "settings.controls.loadRemoteMessageImages.label",
     label: "Load images from other websites in messages",
     description: "Show images from other websites in messages without clicking Load image first.",
@@ -670,7 +670,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
   },
   {
     id: "quote-style",
-    sectionId: "text-rules",
+    sectionId: "text-scale",
     labelKey: "settings.controls.quoteStyle.label",
     label: "Quote style",
     description: "Choose how quotation marks are unified.",
@@ -680,7 +680,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
   },
   {
     id: "disable-inline-name-gradients",
-    sectionId: "text-rules",
+    sectionId: "text-scale",
     labelKey: "settings.controls.disableInlineNameGradients.label",
     label: "Force Solid Colors for Inline Names",
     description: "Replace gradient name colors with the brightest solid color inline.",
@@ -690,7 +690,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
   },
   {
     id: "game-instant-text-reveal",
-    sectionId: "game-playback",
+    sectionId: "game-presentation",
     labelKey: "settings.controls.gameInstantText.label",
     label: "Instantly reveal game text",
     description: "Skip the Game mode narration typewriter effect.",
@@ -701,7 +701,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
   },
   {
     id: "game-middle-mouse-navigation",
-    sectionId: "game-playback",
+    sectionId: "input-editing",
     labelKey: "settings.controls.gameMouseNavigation.label",
     label: "Mouse-wheel + click navigation",
     description: "Navigate Game mode with mouse wheel and background clicks.",
@@ -711,7 +711,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
   },
   {
     id: "game-narration-speed",
-    sectionId: "game-playback",
+    sectionId: "game-presentation",
     labelKey: "settings.search.gameNarrationSpeed.label",
     label: "Game narration speed",
     description: "Tune the Game mode narration typewriter speed.",
@@ -722,7 +722,7 @@ export const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMet
   },
   {
     id: "game-auto-play-delay",
-    sectionId: "game-playback",
+    sectionId: "game-presentation",
     labelKey: "settings.search.gameAutoPlayDelay.label",
     label: "Game auto-play segment delay",
     description: "Pause between Game mode auto-play narration segments.",

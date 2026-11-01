@@ -241,7 +241,7 @@ const TABS = [
     label: "General",
     labelKey: "settings.tabs.general.label",
     icon: Settings2,
-    description: "App behavior, responses, input, and playback.",
+    description: "App behavior, responses, and input.",
     descriptionKey: "settings.tabs.general.description",
   },
   {
@@ -2170,7 +2170,7 @@ function DocsLanguageSetting() {
 
 function GeneralSettings() {
   const { t: localizeUi } = useUiTranslation();
-  const { t, i18n: localization } = useTranslation();
+  const { t } = useTranslation();
   const localize = useLocalizedUiText();
   const { data: installedCapabilities = [] } = useInstalledCapabilityPackages();
   const musicDjInstalled = installedCapabilities.some(
@@ -2182,14 +2182,8 @@ function GeneralSettings() {
   const setEnableStreaming = useUIStore((s) => s.setEnableStreaming);
   const streamingSpeed = useUIStore((s) => s.streamingSpeed);
   const setStreamingSpeed = useUIStore((s) => s.setStreamingSpeed);
-  const gameInstantTextReveal = useUIStore((s) => s.gameInstantTextReveal);
-  const setGameInstantTextReveal = useUIStore((s) => s.setGameInstantTextReveal);
   const gameMiddleMouseNav = useUIStore((s) => s.gameMiddleMouseNav);
   const setGameMiddleMouseNav = useUIStore((s) => s.setGameMiddleMouseNav);
-  const gameTextSpeed = useUIStore((s) => s.gameTextSpeed);
-  const setGameTextSpeed = useUIStore((s) => s.setGameTextSpeed);
-  const gameAutoPlayDelay = useUIStore((s) => s.gameAutoPlayDelay);
-  const setGameAutoPlayDelay = useUIStore((s) => s.setGameAutoPlayDelay);
   const enterToSendRP = useUIStore((s) => s.enterToSendRP);
   const setEnterToSendRP = useUIStore((s) => s.setEnterToSendRP);
   const enterToSendConvo = useUIStore((s) => s.enterToSendConvo);
@@ -2210,14 +2204,6 @@ function GeneralSettings() {
   const setSeasonalThemesDisabled = useUIStore((s) => s.setSeasonalThemesDisabled);
   const messagesPerPage = useUIStore((s) => s.messagesPerPage);
   const setMessagesPerPage = useUIStore((s) => s.setMessagesPerPage);
-  const boldDialogue = useUIStore((s) => s.boldDialogue);
-  const setBoldDialogue = useUIStore((s) => s.setBoldDialogue);
-  const disableInlineNameGradients = useUIStore((s) => s.disableInlineNameGradients);
-  const setDisableInlineNameGradients = useUIStore((s) => s.setDisableInlineNameGradients);
-  const quoteFormat = useUIStore((s) => s.quoteFormat);
-  const setQuoteFormat = useUIStore((s) => s.setQuoteFormat);
-  const convertLatexSymbols = useUIStore((s) => s.convertLatexSymbols);
-  const setConvertLatexSymbols = useUIStore((s) => s.setConvertLatexSymbols);
   const loadRemoteMessageImages = useUIStore((s) => s.loadRemoteMessageImages);
   const setLoadRemoteMessageImages = useUIStore((s) => s.setLoadRemoteMessageImages);
   const trimIncompleteModelOutput = useUIStore((s) => s.trimIncompleteModelOutput);
@@ -2273,6 +2259,13 @@ function GeneralSettings() {
             checked={achievementsEnabled}
             onChange={setAchievementsEnabled}
             help={localizeUi("settings.controls.achievements.help")}
+          />
+          <ToggleSetting
+            anchorId={getSettingsControlAnchorId("load-remote-message-images")}
+            label={localizeUi("settings.controls.loadRemoteMessageImages.label")}
+            checked={loadRemoteMessageImages}
+            onChange={setLoadRemoteMessageImages}
+            help={localizeUi("settings.controls.loadRemoteMessageImages.help")}
           />
           <ToggleSetting
             anchorId={getSettingsControlAnchorId("disable-seasonal-themes")}
@@ -2516,91 +2509,6 @@ function GeneralSettings() {
             onChange={setEditMessageOnDoubleClick}
             help={localizeUi("settings.controls.doubleClickEdit.help")}
           />
-        </div>
-      </SettingsSection>
-
-      <SettingsSection
-        title={localizeUi("settings.sections.textRules.title")}
-        description={localizeUi("settings.sections.textRules.description")}
-        icon={<FileText size="0.875rem" />}
-        {...getSettingsSectionAnchorProps("text-rules")}
-      >
-        <div className="flex flex-col gap-2.5">
-          <ToggleSetting
-            anchorId={getSettingsControlAnchorId("bold-dialogue")}
-            label={localizeUi("settings.controls.boldDialogue.label")}
-            checked={boldDialogue ?? true}
-            onChange={setBoldDialogue}
-            help={localizeUi("settings.controls.boldDialogue.help")}
-          />
-          <ToggleSetting
-            anchorId={getSettingsControlAnchorId("convert-latex-symbols")}
-            label={localizeUi("settings.controls.convertLatex.label")}
-            checked={convertLatexSymbols}
-            onChange={setConvertLatexSymbols}
-            help={localizeUi("ui.panels.generalsettings.turnsCommonModelWrittenLatexCommandsLikeRightarrowNeq")}
-          />
-          <ToggleSetting
-            anchorId={getSettingsControlAnchorId("load-remote-message-images")}
-            label={localizeUi("settings.controls.loadRemoteMessageImages.label")}
-            checked={loadRemoteMessageImages}
-            onChange={setLoadRemoteMessageImages}
-            help={localizeUi("settings.controls.loadRemoteMessageImages.help")}
-          />
-          <ToggleSetting
-            anchorId={getSettingsControlAnchorId("disable-inline-name-gradients")}
-            label={localizeUi("settings.controls.disableInlineNameGradients.label")}
-            checked={disableInlineNameGradients ?? false}
-            onChange={setDisableInlineNameGradients}
-            help={localizeUi("settings.controls.disableInlineNameGradients.help")}
-          />
-          <div
-            id={getSettingsControlAnchorId("quote-style")}
-            className="flex scroll-mt-3 flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--accent)]/50"
-          >
-            <div className="flex items-center gap-2">
-              <span className="text-xs">{localize("Quote style")}</span>
-              <HelpTooltip
-                text={localize(
-                  "Choose how straight and smart quotation marks are unified in chat inputs and displayed AI output.",
-                )}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-1.5">
-              {QUOTE_FORMAT_OPTIONS.map((option) => {
-                const active = quoteFormat === option.id;
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => setQuoteFormat(option.id)}
-                    className={SETTINGS_CHOICE_CARD_CLASS}
-                  >
-                    <span className="font-semibold">{localize(option.label)}</span>
-                    <span className="text-[0.625rem] opacity-80">{option.sample}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      </SettingsSection>
-
-      <SettingsSection
-        title={localizeUi("settings.sections.gamePlayback.title")}
-        description={localizeUi("settings.sections.gamePlayback.description")}
-        icon={<ScrollText size="0.875rem" />}
-        {...getSettingsSectionAnchorProps("game-playback")}
-      >
-        <div className="flex flex-col gap-2.5">
-          <ToggleSetting
-            anchorId={getSettingsControlAnchorId("game-instant-text-reveal")}
-            label={localizeUi("settings.controls.gameInstantText.label")}
-            checked={gameInstantTextReveal}
-            onChange={setGameInstantTextReveal}
-            help={localizeUi("settings.controls.gameInstantText.help")}
-          />
           <ToggleSetting
             anchorId={getSettingsControlAnchorId("game-middle-mouse-navigation")}
             label={localizeUi("settings.controls.gameMouseNavigation.label")}
@@ -2608,71 +2516,6 @@ function GeneralSettings() {
             onChange={setGameMiddleMouseNav}
             help={localizeUi("settings.controls.gameMouseNavigation.help")}
           />
-
-          {!gameInstantTextReveal && (
-            <label
-              id={getSettingsControlAnchorId("game-narration-speed")}
-              className="flex scroll-mt-3 flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--accent)]/50"
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-xs">{localize("Game narration speed")}</span>
-                <span className="text-xs tabular-nums text-[var(--muted-foreground)]">{gameTextSpeed}</span>
-                <HelpTooltip
-                  text={localize(
-                    "How fast the typewriter effect displays narration text in Game mode. Lower values give a slower cinematic reveal. Higher values show text almost instantly.",
-                  )}
-                />
-              </div>
-              <input
-                type="range"
-                min={1}
-                max={100}
-                step={1}
-                value={gameTextSpeed}
-                onChange={(e) => setGameTextSpeed(Number(e.target.value))}
-                className="w-full accent-[var(--primary)]"
-              />
-              <div className="flex justify-between text-[0.625rem] text-[var(--muted-foreground)]">
-                <span>{localize("Slow")}</span>
-                <span>{localize("Fast")}</span>
-              </div>
-            </label>
-          )}
-
-          <label
-            id={getSettingsControlAnchorId("game-auto-play-delay")}
-            className="flex scroll-mt-3 flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--accent)]/50"
-          >
-            <div className="flex items-center gap-2">
-              <span className="text-xs">{localize("Game auto-play segment delay")}</span>
-              <span className="text-xs tabular-nums text-[var(--muted-foreground)]">
-                {t("settings.units.secondsShort", {
-                  value: new Intl.NumberFormat(localization.resolvedLanguage ?? localization.language, {
-                    minimumFractionDigits: 1,
-                    maximumFractionDigits: 1,
-                  }).format(gameAutoPlayDelay / 1000),
-                })}
-              </span>
-              <HelpTooltip
-                text={localize(
-                  "Pause between each narration segment when auto-play is enabled in Game mode. Enable auto-play via the ▶ button next to Next.",
-                )}
-              />
-            </div>
-            <input
-              type="range"
-              min={200}
-              max={5000}
-              step={100}
-              value={gameAutoPlayDelay}
-              onChange={(e) => setGameAutoPlayDelay(Number(e.target.value))}
-              className="w-full accent-[var(--primary)]"
-            />
-            <div className="flex justify-between text-[0.625rem] text-[var(--muted-foreground)]">
-              <span>{t("settings.common.short")}</span>
-              <span>{t("settings.common.long")}</span>
-            </div>
-          </label>
         </div>
       </SettingsSection>
     </div>
@@ -3388,6 +3231,22 @@ function ChatWidgetStylePreview({
 
 function AppearanceSettings({ group = "app" }: { group?: AppearanceGroup }) {
   const { t: localizeUi } = useUiTranslation();
+  const { t, i18n: localization } = useTranslation();
+  const localize = useLocalizedUiText();
+  const gameInstantTextReveal = useUIStore((s) => s.gameInstantTextReveal);
+  const setGameInstantTextReveal = useUIStore((s) => s.setGameInstantTextReveal);
+  const gameTextSpeed = useUIStore((s) => s.gameTextSpeed);
+  const setGameTextSpeed = useUIStore((s) => s.setGameTextSpeed);
+  const gameAutoPlayDelay = useUIStore((s) => s.gameAutoPlayDelay);
+  const setGameAutoPlayDelay = useUIStore((s) => s.setGameAutoPlayDelay);
+  const boldDialogue = useUIStore((s) => s.boldDialogue);
+  const setBoldDialogue = useUIStore((s) => s.setBoldDialogue);
+  const disableInlineNameGradients = useUIStore((s) => s.disableInlineNameGradients);
+  const setDisableInlineNameGradients = useUIStore((s) => s.setDisableInlineNameGradients);
+  const quoteFormat = useUIStore((s) => s.quoteFormat);
+  const setQuoteFormat = useUIStore((s) => s.setQuoteFormat);
+  const convertLatexSymbols = useUIStore((s) => s.convertLatexSymbols);
+  const setConvertLatexSymbols = useUIStore((s) => s.setConvertLatexSymbols);
   const theme = useUIStore((s) => s.theme);
   const setTheme = useUIStore((s) => s.setTheme);
   const sidebarWidth = useUIStore((state) => state.sidebarWidth);
@@ -4400,6 +4259,57 @@ function AppearanceSettings({ group = "app" }: { group?: AppearanceGroup }) {
                   {localizeUi("ui.panels.appearancesettings.resetToDefault")}
                 </button>
               </div>
+              <ToggleSetting
+                anchorId={getSettingsControlAnchorId("bold-dialogue")}
+                label={localizeUi("settings.controls.boldDialogue.label")}
+                checked={boldDialogue ?? true}
+                onChange={setBoldDialogue}
+                help={localizeUi("settings.controls.boldDialogue.help")}
+              />
+              <ToggleSetting
+                anchorId={getSettingsControlAnchorId("convert-latex-symbols")}
+                label={localizeUi("settings.controls.convertLatex.label")}
+                checked={convertLatexSymbols}
+                onChange={setConvertLatexSymbols}
+                help={localizeUi("ui.panels.generalsettings.turnsCommonModelWrittenLatexCommandsLikeRightarrowNeq")}
+              />
+              <ToggleSetting
+                anchorId={getSettingsControlAnchorId("disable-inline-name-gradients")}
+                label={localizeUi("settings.controls.disableInlineNameGradients.label")}
+                checked={disableInlineNameGradients ?? false}
+                onChange={setDisableInlineNameGradients}
+                help={localizeUi("settings.controls.disableInlineNameGradients.help")}
+              />
+              <div
+                id={getSettingsControlAnchorId("quote-style")}
+                className="flex scroll-mt-3 flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--accent)]/50"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-xs">{localize("Quote style")}</span>
+                  <HelpTooltip
+                    text={localize(
+                      "Choose how straight and smart quotation marks are unified in chat inputs and displayed AI output.",
+                    )}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {QUOTE_FORMAT_OPTIONS.map((option) => {
+                    const active = quoteFormat === option.id;
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => setQuoteFormat(option.id)}
+                        className={SETTINGS_CHOICE_CARD_CLASS}
+                      >
+                        <span className="font-semibold">{localize(option.label)}</span>
+                        <span className="text-[0.625rem] opacity-80">{option.sample}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           </SettingsSection>
 
@@ -5309,6 +5219,77 @@ function AppearanceSettings({ group = "app" }: { group?: AppearanceGroup }) {
                 onChange={setGameTextEffectsEnabled}
                 help={localizeUi("settings.controls.gameTextEffects.help")}
               />
+              <ToggleSetting
+                anchorId={getSettingsControlAnchorId("game-instant-text-reveal")}
+                label={localizeUi("settings.controls.gameInstantText.label")}
+                checked={gameInstantTextReveal}
+                onChange={setGameInstantTextReveal}
+                help={localizeUi("settings.controls.gameInstantText.help")}
+              />
+              {!gameInstantTextReveal && (
+                <label
+                  id={getSettingsControlAnchorId("game-narration-speed")}
+                  className="flex scroll-mt-3 flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--accent)]/50"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs">{localize("Game narration speed")}</span>
+                    <span className="text-xs tabular-nums text-[var(--muted-foreground)]">{gameTextSpeed}</span>
+                    <HelpTooltip
+                      text={localize(
+                        "How fast the typewriter effect displays narration text in Game mode. Lower values give a slower cinematic reveal. Higher values show text almost instantly.",
+                      )}
+                    />
+                  </div>
+                  <input
+                    type="range"
+                    min={1}
+                    max={100}
+                    step={1}
+                    value={gameTextSpeed}
+                    onChange={(e) => setGameTextSpeed(Number(e.target.value))}
+                    className="w-full accent-[var(--primary)]"
+                  />
+                  <div className="flex justify-between text-[0.625rem] text-[var(--muted-foreground)]">
+                    <span>{localize("Slow")}</span>
+                    <span>{localize("Fast")}</span>
+                  </div>
+                </label>
+              )}
+
+              <label
+                id={getSettingsControlAnchorId("game-auto-play-delay")}
+                className="flex scroll-mt-3 flex-col gap-1.5 rounded-lg p-1 transition-colors hover:bg-[var(--accent)]/50"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-xs">{localize("Game auto-play segment delay")}</span>
+                  <span className="text-xs tabular-nums text-[var(--muted-foreground)]">
+                    {t("settings.units.secondsShort", {
+                      value: new Intl.NumberFormat(localization.resolvedLanguage ?? localization.language, {
+                        minimumFractionDigits: 1,
+                        maximumFractionDigits: 1,
+                      }).format(gameAutoPlayDelay / 1000),
+                    })}
+                  </span>
+                  <HelpTooltip
+                    text={localize(
+                      "Pause between each narration segment when auto-play is enabled in Game mode. Enable auto-play via the ▶ button next to Next.",
+                    )}
+                  />
+                </div>
+                <input
+                  type="range"
+                  min={200}
+                  max={5000}
+                  step={100}
+                  value={gameAutoPlayDelay}
+                  onChange={(e) => setGameAutoPlayDelay(Number(e.target.value))}
+                  className="w-full accent-[var(--primary)]"
+                />
+                <div className="flex justify-between text-[0.625rem] text-[var(--muted-foreground)]">
+                  <span>{t("settings.common.short")}</span>
+                  <span>{t("settings.common.long")}</span>
+                </div>
+              </label>
             </div>
           </SettingsSection>
         </>
