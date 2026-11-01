@@ -929,7 +929,10 @@ export function BackgroundPicker({
               data-background-download
               onClick={() => {
                 cancelPendingClose();
-                void saveExportUrl(background.url, background.filename);
+                void saveExportUrl(background.url, background.filename).then((status) => {
+                  if (status === "saved")
+                    toast.success(localizeUi("ui.panels.backgroundpicker.downloadedValue1", { value1: title }));
+                });
               }}
               className={SETTINGS_ICON_BUTTON_CLASS}
               title={localizeUi("ui.panels.backgroundpicker.downloadBackground")}

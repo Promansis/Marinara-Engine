@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, Loader2, Palette, RotateCcw, Save, TriangleAlert } from "lucide-react";
+import { toast } from "sonner";
 import type { Persona, PresentCharacter, TrackerCardColorConfig } from "@marinara-engine/shared";
 import {
   useCharacters,
@@ -177,7 +178,7 @@ export function TrackerCardColorSettings() {
         id: activePersona.id,
         kind: "persona",
         entityLabel: "Persona",
-        optionLabel: activePersona.name || "Persona",
+        optionLabel: activePersona.name || localizeUi("ui.trackerPanel.lookMenu.cardPersona"),
         chatColors: getPersonaChatColors(activePersona),
         config,
       });
@@ -211,7 +212,7 @@ export function TrackerCardColorSettings() {
     }
 
     return nextTargets;
-  }, [activeChat, charactersData, currentGameState?.presentCharacters, personasData]);
+  }, [activeChat, charactersData, currentGameState?.presentCharacters, localizeUi, personasData]);
 
   const selectedTarget = targets.find((target) => target.key === selectedTargetKey) ?? null;
   const getSavedConfigForTarget = useCallback((target: TrackerCardColorTarget): SavedTrackerCardColorConfig => {
@@ -343,11 +344,14 @@ export function TrackerCardColorSettings() {
       previewTargetKeyRef.current = null;
       setDraftConfig(persistedConfig);
       setSaveState("saved");
+      toast.success(
+        localizeUi("ui.panels.trackercardcolorsettings.colorsSavedFor", { name: selectedTarget.optionLabel }),
+      );
     } catch (error) {
       console.error("[TrackerCardColorSettings] Save failed:", error);
       setSaveState("error");
     }
-  }, [draftConfig, getSavedConfigForTarget, persistTargetConfig, selectedTarget]);
+  }, [draftConfig, getSavedConfigForTarget, localizeUi, persistTargetConfig, selectedTarget]);
 
   const handleRevert = useCallback(() => {
     if (!selectedTarget) return;

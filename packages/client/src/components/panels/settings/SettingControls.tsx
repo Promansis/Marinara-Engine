@@ -484,6 +484,7 @@ export function ToggleSetting({
   checked,
   onChange,
   help,
+  description,
   endAction,
   disabled = false,
   anchorId,
@@ -493,6 +494,8 @@ export function ToggleSetting({
   checked: boolean;
   onChange: (v: boolean) => void;
   help?: string;
+  /** Visible text under the label, e.g. why the switch does nothing right now (a tooltip alone is not enough). */
+  description?: ReactNode;
   endAction?: ReactNode;
   disabled?: boolean;
   anchorId?: string;
@@ -505,6 +508,7 @@ export function ToggleSetting({
       checked={checked}
       onChange={onChange}
       help={help}
+      description={description}
       disabled={disabled}
       labelPosition="start"
       className="justify-between gap-3 p-1.5"

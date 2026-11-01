@@ -500,6 +500,7 @@ test("Roleplay wizard and Appearance persist the VN choice and art scales", asyn
       for (let step = 0; step < Math.round((Number(value) - 0.75) / 0.05); step++) await slider.press("ArrowRight");
     }
     const autoplay = page.getByRole("checkbox", { name: "Auto-play VN paragraphs", exact: true });
+    await expect(autoplay).toBeEnabled();
     await expect(autoplay).not.toBeChecked();
     const delay = page.locator("#settings-control-roleplay-vn-autoplay-delay input");
     await expect(delay).toBeVisible();

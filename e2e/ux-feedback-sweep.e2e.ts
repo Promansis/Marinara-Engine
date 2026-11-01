@@ -357,7 +357,10 @@ test("UX sweep: Appearance groups, width and hidden-panel state", async ({ page 
   }
   await modes.getByRole("button", { name: "App", exact: true }).click();
   const slider = panel.getByLabel("Desktop sidebar width", { exact: true });
-  await slider.fill("280");
+  const mobileShell = testInfo.project.name.includes("mobile");
+  // Phone shells open panels as overlays, so the docked width has nothing to adjust there.
+  if (mobileShell) await expect(slider).toHaveCount(0);
+  else await slider.fill("280");
   await modes.scrollIntoViewIfNeeded();
   expect(
     await modes
@@ -365,8 +368,10 @@ test("UX sweep: Appearance groups, width and hidden-panel state", async ({ page 
       .evaluateAll((buttons) => buttons.every((button) => button.scrollWidth <= button.clientWidth)),
   ).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("appearance-narrow.png") });
-  await slider.fill("480");
-  await expect(slider).toHaveValue("480");
+  if (!mobileShell) {
+    await slider.fill("480");
+    await expect(slider).toHaveValue("480");
+  }
   await page.screenshot({ path: testInfo.outputPath("appearance-groups.png") });
   await page.getByRole("tab", { name: "General", exact: true }).click();
   await page.getByPlaceholder("Search settings").fill("width draft preserved");
@@ -379,7 +384,7 @@ test("UX sweep: Appearance groups, width and hidden-panel state", async ({ page 
     useUIStore.getState().openRightPanel("settings");
   });
   await page.getByRole("tab", { name: "Appearance", exact: true }).click();
-  await expect(page.getByLabel("Desktop sidebar width", { exact: true })).toHaveValue("480");
+  if (!mobileShell) await expect(page.getByLabel("Desktop sidebar width", { exact: true })).toHaveValue("480");
 });
 
 test("UX sweep: Background library mobile toolbar, accent marker and settled modal", async ({ page }, testInfo) => {

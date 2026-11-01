@@ -647,10 +647,15 @@ function ExtensionSettings({ mode }: { mode: ExtensionSettingsMode }) {
                 <button
                   type="button"
                   onClick={() =>
-                    downloadZipFile(
+                    void downloadZipFile(
                       createPersonalExtensionPackageFiles(current),
                       createPersonalExtensionPackageFilename(current.name),
-                    )
+                    ).then((status) => {
+                      if (status === "saved")
+                        toast.success(
+                          localizeUi("ui.panels.extensionsettings.exportedValue1", { value1: current.name }),
+                        );
+                    })
                   }
                   aria-label={localizeUi("ui.panels.extensionsettings.exportLocalPackage")}
                   title={localizeUi("ui.panels.extensionsettings.exportLocalPackage")}

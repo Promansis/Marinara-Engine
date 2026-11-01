@@ -21,9 +21,11 @@ import {
   type RoleplayAvatarStyle,
   type RoleplayChatPosition,
   type VisualTheme,
+  MOBILE_SHELL_MEDIA_QUERY,
 } from "../../stores/ui.store";
 import { UILanguageSetting } from "./settings/UILanguageSetting";
 import { DocsLanguagePicker } from "./settings/DocsLanguageControl";
+import { useMatchMedia } from "../../hooks/use-match-media";
 import { MultiplayerSettings } from "../../features/multiplayer/MultiplayerSettings";
 import { useLocalizedUiText } from "../../localization/use-localized-ui-text";
 import {
@@ -349,12 +351,10 @@ function AndroidStatusBarSetting() {
     [t],
   );
 
-  let help = t("settings.application.androidStatusBar.unavailable");
-  if (supported) {
-    help = t("settings.application.androidStatusBar.help");
-  } else if (isMarinaraAndroidShell()) {
-    help = t("settings.application.androidStatusBar.updateRequired");
-  }
+  // Browsers and desktop installs have no Android status bar to toggle; only the Android shell shows this.
+  const hasLauncher = typeof getMarinaraAndroidBridge()?.openLauncher === "function";
+  if (!supported && !hasLauncher && !isMarinaraAndroidShell()) return null;
+  const help = t("settings.application.androidStatusBar.help");
 
   return (
     <>
@@ -364,9 +364,10 @@ function AndroidStatusBarSetting() {
         checked={visible}
         onChange={handleChange}
         help={help}
+        description={supported ? undefined : t("settings.application.androidStatusBar.updateRequired")}
         disabled={!supported}
       />
-      {typeof getMarinaraAndroidBridge()?.openLauncher === "function" && (
+      {hasLauncher && (
         <button
           type="button"
           className={SETTINGS_PRIMARY_FULL_BUTTON_CLASS}
@@ -2606,7 +2607,12 @@ function GameAssetsSettings() {
             multiple
             accept={assetCategoryMeta.accept}
             className="hidden"
-            onChange={(e) => setAssetFiles(Array.from(e.target.files ?? []))}
+            onChange={(e) => {
+              const chosen = Array.from(e.target.files ?? []);
+              setAssetFiles(chosen);
+              if (chosen.length > 0)
+                toast.success(localizeUi("settings.fileActions.assetsChosen", { count: chosen.length }));
+            }}
           />
           <button type="button" onClick={() => assetFileRef.current?.click()} className={SETTINGS_BUTTON_CLASS}>
             <Upload size="0.75rem" />
@@ -2724,10 +2730,11 @@ function AppearanceSettings({ group = "app" }: { group?: AppearanceGroup }) {
   const setConvertLatexSymbols = useUIStore((s) => s.setConvertLatexSymbols);
   const theme = useUIStore((s) => s.theme);
   const setTheme = useUIStore((s) => s.setTheme);
-  const sidebarWidth = useUIStore((state) => state.sidebarWidth);
-  const setSidebarWidth = useUIStore((state) => state.setSidebarWidth);
   const rightPanelWidth = useUIStore((state) => state.rightPanelWidth);
   const setRightPanelWidth = useUIStore((state) => state.setRightPanelWidth);
+  const sidebarWidth = useUIStore((state) => state.sidebarWidth);
+  const setSidebarWidth = useUIStore((state) => state.setSidebarWidth);
+  const mobileShellMedia = useMatchMedia(MOBILE_SHELL_MEDIA_QUERY);
   const appBackgroundColor = useUIStore((s) => s.appBackgroundColor);
   const setAppBackgroundColor = useUIStore((s) => s.setAppBackgroundColor);
   const appAccentColor = useUIStore((s) => s.appAccentColor);
@@ -2995,6 +3002,9 @@ function AppearanceSettings({ group = "app" }: { group?: AppearanceGroup }) {
     appearanceChat?.mode === "roleplay"
       ? (parseChatMetadata(appearanceChat.metadata).roleplayDisplayStyle ?? roleplayDisplayStyle)
       : roleplayDisplayStyle;
+  // Auto-play and the VN scales are global settings but only a Visual Novel presentation reads them
+  // (ChatRoleplaySurface.tsx, ChatMessage.tsx), so a chat in the classic style shows a hint, not a disabled switch.
+  const vnDisplayOn = activeRoleplayStyle === "visual-novel";
   const gameDialogueDisplayMode = useUIStore((s) => s.gameDialogueDisplayMode);
   const setGameDialogueDisplayMode = useUIStore((s) => s.setGameDialogueDisplayMode);
   const chatListBackgrounds = useUIStore((s) => s.chatListBackgrounds);
@@ -3118,43 +3128,46 @@ function AppearanceSettings({ group = "app" }: { group?: AppearanceGroup }) {
                 </button>
               </div>
               {/* ── Visual Style ── */}
-              <div className="flex min-w-0 flex-col gap-2" id={getSettingsControlAnchorId("desktop-sidebar-width")}>
-                <label htmlFor="desktop-sidebar-width" className="text-xs font-medium">
-                  {localizeUi("settings.appearance.sidebarWidth")}
-                </label>
-                <span className="text-[0.625rem] text-[var(--muted-foreground)]">
-                  {localizeUi("settings.appearance.sidebarWidthHelp")}
-                </span>
-                <span className="flex min-w-0 items-center gap-2">
-                  <input
-                    id="desktop-sidebar-width"
-                    type="range"
-                    min={Math.max(SIDEBAR_WIDTH_MIN, RIGHT_PANEL_WIDTH_MIN)}
-                    max={Math.min(SIDEBAR_WIDTH_MAX, RIGHT_PANEL_WIDTH_MAX)}
-                    step={8}
-                    value={rightPanelWidth || sidebarWidth}
-                    onChange={(event) => {
-                      const width = Number(event.target.value);
-                      setSidebarWidth(width);
-                      setRightPanelWidth(width);
-                    }}
-                    className="min-w-0 flex-1 accent-[var(--primary)]"
-                  />
-                  <output className="shrink-0 text-xs tabular-nums">
-                    {localizeUi("ui.panels.appearancesettings.value1Px", { value1: rightPanelWidth || sidebarWidth })}
-                  </output>
-                  <button
-                    type="button"
-                    className={SETTINGS_BUTTON_CLASS}
-                    onClick={() => {
-                      setSidebarWidth(320);
-                      setRightPanelWidth(320);
-                    }}
-                  >
-                    {localizeUi("settings.appearance.resetSidebarWidth")}
-                  </button>
-                </span>
-              </div>
+              {/* Phone-sized shells open panels as overlays and ignore the docked width (AppShell.tsx shellOverlayMode). */}
+              {!mobileShellMedia && (
+                <div className="flex min-w-0 flex-col gap-2" id={getSettingsControlAnchorId("desktop-sidebar-width")}>
+                  <label htmlFor="desktop-sidebar-width" className="text-xs font-medium">
+                    {localizeUi("settings.appearance.sidebarWidth")}
+                  </label>
+                  <span className="text-[0.625rem] text-[var(--muted-foreground)]">
+                    {localizeUi("settings.appearance.sidebarWidthHelp")}
+                  </span>
+                  <span className="flex min-w-0 items-center gap-2">
+                    <input
+                      id="desktop-sidebar-width"
+                      type="range"
+                      min={Math.max(SIDEBAR_WIDTH_MIN, RIGHT_PANEL_WIDTH_MIN)}
+                      max={Math.min(SIDEBAR_WIDTH_MAX, RIGHT_PANEL_WIDTH_MAX)}
+                      step={8}
+                      value={rightPanelWidth || sidebarWidth}
+                      onChange={(event) => {
+                        const width = Number(event.target.value);
+                        setSidebarWidth(width);
+                        setRightPanelWidth(width);
+                      }}
+                      className="min-w-0 flex-1 accent-[var(--primary)]"
+                    />
+                    <output className="shrink-0 text-xs tabular-nums">
+                      {localizeUi("ui.panels.appearancesettings.value1Px", { value1: rightPanelWidth || sidebarWidth })}
+                    </output>
+                    <button
+                      type="button"
+                      className={SETTINGS_BUTTON_CLASS}
+                      onClick={() => {
+                        setSidebarWidth(320);
+                        setRightPanelWidth(320);
+                      }}
+                    >
+                      {localizeUi("settings.appearance.resetSidebarWidth")}
+                    </button>
+                  </span>
+                </div>
+              )}
               <div id={getSettingsControlAnchorId("visual-theme")} className="flex scroll-mt-3 flex-col gap-2">
                 <div className="flex items-center gap-1.5">
                   <Paintbrush size="0.75rem" className="text-[var(--marinara-chat-chrome-button-text-active)]" />
@@ -4254,7 +4267,7 @@ function AppearanceSettings({ group = "app" }: { group?: AppearanceGroup }) {
                 anchorId={getSettingsControlAnchorId("roleplay-vn-display")}
                 label={localizeUi("settings.roleplayVn.enabled")}
                 help={localizeUi("settings.roleplayVn.help")}
-                checked={activeRoleplayStyle === "visual-novel"}
+                checked={vnDisplayOn}
                 onChange={(enabled) => {
                   const style = enabled ? "visual-novel" : "classic";
                   setRoleplayDisplayStyle(style);
@@ -4267,6 +4280,7 @@ function AppearanceSettings({ group = "app" }: { group?: AppearanceGroup }) {
                 anchorId={getSettingsControlAnchorId("roleplay-vn-autoplay")}
                 label={localizeUi("settings.roleplayVn.autoPlay")}
                 help={localizeUi("settings.roleplayVn.autoPlayHelp")}
+                description={vnDisplayOn ? undefined : localizeUi("settings.inert.needsVisualNovel")}
                 checked={roleplayVnAutoPlay}
                 onChange={setRoleplayVnAutoPlay}
               />
@@ -4295,6 +4309,11 @@ function AppearanceSettings({ group = "app" }: { group?: AppearanceGroup }) {
                   className="flex scroll-mt-3 min-w-0 flex-col gap-2 text-xs"
                 >
                   <span>{localizeUi("ui.panels.appearancesettings.dialoguePortraitScale")}</span>
+                  {!vnDisplayOn && (
+                    <span className="text-[0.625rem] text-[var(--muted-foreground)]">
+                      {localizeUi("settings.inert.needsVisualNovel")}
+                    </span>
+                  )}
                   <div className="flex min-h-11 items-center gap-2">
                     <input
                       type="range"
@@ -4313,6 +4332,11 @@ function AppearanceSettings({ group = "app" }: { group?: AppearanceGroup }) {
                   className="flex scroll-mt-3 min-w-0 flex-col gap-2 text-xs"
                 >
                   <span>{localizeUi("ui.panels.appearancesettings.fullBodySpriteScale")}</span>
+                  {!vnDisplayOn && (
+                    <span className="text-[0.625rem] text-[var(--muted-foreground)]">
+                      {localizeUi("settings.inert.needsVisualNovel")}
+                    </span>
+                  )}
                   <div className="flex min-h-11 items-center gap-2">
                     <input
                       type="range"
@@ -4519,6 +4543,12 @@ function AppearanceSettings({ group = "app" }: { group?: AppearanceGroup }) {
                         <span className="text-[0.6875rem] font-medium text-[var(--foreground)]">
                           {localizeUi("ui.panels.appearancesettings.messageAvatarScale")}
                         </span>
+                        {/* Avatar style None draws no avatar and reserves no room for one (ChatMessage.tsx, ChatRoleplaySurface.tsx), so the scale has nothing to size. */}
+                        {roleplayAvatarStyle === "none" && (
+                          <span className="text-[0.625rem] text-[var(--muted-foreground)]">
+                            {localizeUi("settings.inert.avatarStyleNone")}
+                          </span>
+                        )}
                         <div className="flex items-center gap-2">
                           <input
                             type="range"
@@ -4526,8 +4556,9 @@ function AppearanceSettings({ group = "app" }: { group?: AppearanceGroup }) {
                             max={2.5}
                             step={0.05}
                             value={roleplayAvatarScale}
+                            disabled={roleplayAvatarStyle === "none"}
                             onChange={(e) => setRoleplayAvatarScale(Number(e.target.value))}
-                            className="min-w-0 flex-1 accent-[var(--primary)]"
+                            className="min-w-0 flex-1 accent-[var(--primary)] disabled:cursor-not-allowed disabled:opacity-50"
                           />
                           <span className="w-12 text-right text-xs tabular-nums text-[var(--muted-foreground)]">
                             {Math.round(roleplayAvatarScale * 100)}%
@@ -4991,7 +5022,7 @@ function ThemesSettings() {
         const description = [...failureMessages, ...skipMessages].slice(0, 3).join(" ");
         if (failed > 0) toast.warning(message, { description, duration: 12_000 });
         else if (skipped > 0) toast.warning(message, { description, duration: 12_000 });
-        else toast.success(message);
+        else toast.success(localizeUi("settings.fileActions.themeImported", { count: imported }));
       } else {
         toast.error(localizeUi("ui.panels.themessettings.noValidThemesFoundInFile"));
       }
@@ -5216,7 +5247,7 @@ function ThemesSettings() {
                 <button
                   type="button"
                   onClick={() => {
-                    downloadJsonFile(
+                    void downloadJsonFile(
                       {
                         kind: "marinara.theme-folder",
                         version: 1,
@@ -5233,7 +5264,9 @@ function ThemesSettings() {
                         ],
                       },
                       `${sanitizeExportFilenamePart(t.name, "theme")}.json`,
-                    );
+                    ).then((status) => {
+                      if (status === "saved") toast.success(localizeUi("settings.fileActions.themeExported"));
+                    });
                   }}
                   className={SETTINGS_ICON_BUTTON_CLASS}
                   title={localizeUi("settings.actions.exportTheme")}
