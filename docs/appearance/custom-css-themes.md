@@ -43,8 +43,8 @@ Only one custom theme can be active at a time. You can keep as many themes in yo
 ## Where to find the Theme Library
 
 1. Open **Settings**.
-2. Open the **Addons** tab.
-3. Find the **Theme Library** section.
+2. Open the **Appearance** tab.
+3. Find the **Theme Library** section, right after **App Style**.
 
 The section is titled **Theme Library** and reads "Create, import, activate, edit, export, or remove custom CSS themes."
 
@@ -82,7 +82,7 @@ The second kind is a small file you write yourself. For a single theme, this is 
 
 Imported themes sync to your server, but they do not activate on their own. A theme that already exists on the server, with the same name and the same CSS, is skipped instead of added twice.
 
-To export a theme, find it in the **Installed Themes** list and click the upload icon (its tooltip reads **Export theme**). Marinara downloads a `.json` file that you can import somewhere else.
+To export a theme, find it in the **Installed Themes** list and click the upload icon (its tooltip reads **Export theme**). Marinara downloads a `.json` file that you can import somewhere else, and a toast confirms the download started.
 
 ## Activating a theme
 

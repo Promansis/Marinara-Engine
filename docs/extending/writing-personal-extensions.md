@@ -9,7 +9,7 @@ Code you write and import yourself is treated as an **External Extension**. It s
 External Extensions are hidden until both safety gates are open:
 
 1. Set `ENABLE_EXTERNAL_EXTENSIONS=true` in the Marinara host's `.env` file.
-2. Open **Settings** > **Advanced** > **Danger Zone** and enable **Allow third-party extension imports**.
+2. Open **Settings** > **Advanced** > **Extensions & imports** and enable **Allow third-party extension imports**.
 
 Importing and managing extensions also requires localhost access or configured **Admin Access**. If you use Marinara from a phone, LAN address, or remote browser, set `ADMIN_SECRET` on the server and enter the same value under **Settings** > **Advanced** > **Admin Access**.
 
@@ -97,7 +97,7 @@ Use this `extension.css` to style the constrained iframe window opened by the bu
 
 Then import and run it:
 
-1. Open **Settings** > **Addons** > **External Extensions**.
+1. Open **Settings** > **Advanced** > **Extensions & imports** > **External Extensions**.
 2. Choose **Import Extension Folder** and select `Hello Panel`, or zip the folder and import the ZIP with **Import Extension File**.
 3. Open the disabled draft and inspect its manifest and JavaScript.
 4. Choose **Review and Run** and approve the exact displayed hash.
@@ -239,16 +239,16 @@ The ZIP, request, sandbox-message, and storage limits protect separate transport
 
 ## Debugging
 
-| Symptom                                                                 | Check                                                                                              |
-| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| External import controls are missing                                    | Open both External Extension gates described above                                                 |
-| Management says localhost or Admin Access is required                   | Configure `ADMIN_SECRET` and save it under **Admin Access**                                        |
-| Import finds no extension                                               | Check `manifest.json` and its relative paths; Server needs JS, while Browser needs CSS or JS       |
-| The extension disables after an edit                                    | Expected: inspect and approve the new exact hash                                                   |
-| Browser code cannot use `document`, `window`, `fetch`, or local storage | Expected in the safe sandbox; use the documented broker APIs                                       |
-| Server Extension is unavailable                                         | Use macOS Seatbelt or Linux with Bubblewrap, or switch to a Browser Extension                      |
-| Browser Extension throws                                                | Open browser developer tools; `marinara.log` and startup errors are tagged with the extension name |
-| Server Extension throws                                                 | Check its status in **Settings** > **Addons** and the Marinara server log                          |
+| Symptom                                                                 | Check                                                                                                  |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| External import controls are missing                                    | Open both External Extension gates described above                                                     |
+| Management says localhost or Admin Access is required                   | Configure `ADMIN_SECRET` and save it under **Admin Access**                                            |
+| Import finds no extension                                               | Check `manifest.json` and its relative paths; Server needs JS, while Browser needs CSS or JS           |
+| The extension disables after an edit                                    | Expected: inspect and approve the new exact hash                                                       |
+| Browser code cannot use `document`, `window`, `fetch`, or local storage | Expected in the safe sandbox; use the documented broker APIs                                           |
+| Server Extension is unavailable                                         | Use macOS Seatbelt or Linux with Bubblewrap, or switch to a Browser Extension                          |
+| Browser Extension throws                                                | Open browser developer tools; `marinara.log` and startup errors are tagged with the extension name     |
+| Server Extension throws                                                 | Check its status in **Settings** > **Advanced** > **Extensions & imports** and the Marinara server log |
 
 CSS, private storage, import archives, and runtime messages retain separate safety limits. Marinara should report the boundary that rejected a package instead of presenting it as an execution failure.
 

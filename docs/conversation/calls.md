@@ -79,19 +79,18 @@ Uninstalling Calls also deletes every downloaded Whisper model and its saved sel
 
 If Local Whisper struggles with your language or your accent, you can send your recorded voice to another speech-to-text model instead. This works with any server that offers the OpenAI-style `/audio/transcriptions` endpoint. That includes self-hosted servers such as Speaches, faster-whisper servers, LocalAI and whisper.cpp server (started with `--inference-path /v1/audio/transcriptions`), and providers such as OpenAI or Groq.
 
-1. Install Calls, then open **Connections** and find the **Speech to Text** card. The card is hidden while Calls is not installed.
-2. Expand the card and enter the **Server URL**, for example `http://localhost:8000/v1` for a server on your own machine.
+1. Install Calls, then open **Connections** and find the **Speech to text** card. It has **Off**, **Browser** and **Own server**. **Own server** needs Calls.
+2. Choose **Own server**, then enter the **Server URL**, for example `http://localhost:8000/v1` for a server on your own machine.
 3. Enter an **API key** if your server or provider needs one. It is saved encrypted, and the card only shows it masked.
 4. Enter the **Model** name your server uses. Leave it empty to send `whisper-1`.
 5. Optional: enter a **Language** code, such as `pl` or `de`. Telling the model your language usually improves accuracy. Leave it empty to let the server detect it.
 6. Click **Test**. Marinara sends a one-second silent clip and tells you whether the server answered.
-7. Turn the card's switch on.
 
-While the switch is on, **Mic recording + Local Whisper** sends your speech to this server instead of Local Whisper. You do not need to download Local Whisper for it. Turn the switch off to go back to Local Whisper. Your audio goes to the server you entered, so use a server you trust.
+While **Own server** is chosen, **Mic recording + Local Whisper** sends your speech to this server instead of Local Whisper. You do not need to download Local Whisper for it. Choose another mode to go back to Local Whisper. Typing by voice in chat still uses your browser. Your audio goes to the server you entered, so use a server you trust.
 
 A server on the same machine as Marinara works as is. A server on another machine in your home network is refused unless you set `STT_LOCAL_URLS_ENABLED=true` in the server `.env` file. See [Server Configuration Reference](../CONFIGURATION.md).
 
-This needs a Calls version that supports it. If calls still use Local Whisper after you turn the switch on, update Calls from **Agents → Agent Organizer**.
+This needs a Calls version that supports it. If calls still use Local Whisper after you choose **Own server**, update Calls from **Agents → Agent Organizer**.
 
 ## Turn calls on for a chat
 
@@ -272,7 +271,7 @@ Check your Text to Speech settings and voice assignments. The character needs ei
 
 Try **Whisper Base (Multilingual)** instead of Whisper Tiny for better accuracy. Reduce background noise and music. If your model supports it, switch **Audio input mode** to **Provider-native audio/video** so the model hears your audio directly. For a language Whisper handles poorly, [use your own speech-to-text server](#use-your-own-speech-to-text-server) with a model that knows it, and set its **Language** code.
 
-### The Speech to Text test fails
+### The Speech to text test fails
 
 Read the message under the **Test** button. "Could not reach the speech-to-text server" means the address is wrong or the server is not running. A message naming `STT_LOCAL_URLS_ENABLED` means the server is on another machine in your network; set that variable to `true` in `.env`. A number such as 401 or 404 comes from your server: 401 usually means a wrong API key, and 404 a wrong address or model name.
 

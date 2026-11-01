@@ -13,7 +13,7 @@ You pick one profile as the app-wide default. You can override it for a single c
 To find the editor, follow these steps.
 
 1. Open **Settings**.
-2. Open the **Generations** tab.
+2. Open the **Images & Video** tab.
 3. Find the **Image Generation** section.
 4. Scroll to **Style Profiles**.
 
@@ -44,7 +44,7 @@ The built-in profiles are:
 
 The global default profile applies to every generated image unless a chat or connection overrides it. To change it, follow these steps.
 
-1. Open **Settings**, then the **Generations** tab, then **Image Generation**, then **Style Profiles**.
+1. Open **Settings**, then the **Images & Video** tab, then **Image Generation**, then **Style Profiles**.
 2. Open the **Default style** dropdown.
 3. Pick the profile you want to use app-wide.
 

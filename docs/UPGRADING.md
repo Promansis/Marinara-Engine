@@ -10,7 +10,7 @@ Marinara keeps your data in a local data folder on the machine that runs the ser
 
 When upgrading from a version that bundled first-party agents, maps, calls, or Conversation games, the first start downloads their matching optional packages from the official catalog. Existing chat selections, agent settings, stored runtime data, and history are preserved. Keep the server online for that first start. If the catalog cannot be reached, Marinara retries the migration the next time it starts instead of deleting or disabling your stored configuration.
 
-If you use a downloaded documentation language (**Settings** → **General** → **Documentation Language**), the first start after an update also checks that language pack for changes and refreshes it automatically. If the download source cannot be reached, Marinara keeps your installed pack (any guides missing from it show in English) and tries again on the next start. Your language choice is never reset by an update.
+If you use a downloaded documentation language (**Settings** → **General** → **App Behavior** → **Help pages language**), the first start after an update also checks that language pack for changes and refreshes it automatically. If the download source cannot be reached, Marinara keeps your installed pack (any guides missing from it show in English) and tries again on the next start. Your language choice is never reset by an update.
 
 UI language packs use a separate, manual download flow. On the first upgrade from bundled UI translations,
 the interface returns to English; reselect your language in **Settings** → **General** → **Language** to download
@@ -24,7 +24,7 @@ To learn where your data lives and how to save a copy, see [Backing Up and Resto
 Upgrades are safe, but a backup is cheap insurance. Make one before any large jump between versions.
 
 1. Open **Settings**.
-2. Go to the **Advanced** tab.
+2. Go to the **Data** tab.
 3. Find the **Backup & Export** section.
 4. Click **Download Backup**.
 5. Save the `.zip` file somewhere safe.

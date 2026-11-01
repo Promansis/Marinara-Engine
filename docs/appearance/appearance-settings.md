@@ -9,7 +9,12 @@ Fonts, backgrounds, and custom CSS themes each have their own guide. This page l
 1. Open **Settings**.
 2. Select the **Appearance** tab.
 
-The tab is split into sections you scroll through: **App Style**, **Text & Scale**, **Conversation Display**, **Tracker Panel**, **Roleplay Messages**, **Game Presentation**, **Atmosphere**, **Conversation Theme**, and **Backgrounds**.
+Four buttons at the top pick what you are styling: **App**, **Conversation**, **Roleplay**, or **Game**. Each shows its own sections:
+
+- **App**: **App Style**, **Theme Library**, **Text & Scale**, **Atmosphere**, and **Backgrounds**.
+- **Conversation**: **Conversation Display** and **Conversation Theme**.
+- **Roleplay**: **Tracker Panel** and **Roleplay Presentation**.
+- **Game**: **Game Presentation**.
 
 ## Color Scheme (Dark or Light)
 
@@ -29,11 +34,11 @@ Several colors below have separate dark and light defaults. They follow the acti
 
 This is only a skin. It has nothing to do with importing data from SillyTavern, which is a separate tool.
 
-## Background Color and Accent Color
+## App Background Color and Accent Color
 
 These two controls are in the **App Style** section. Both accept a plain color or a gradient. A gradient is a smooth blend between two or more colors.
 
-- **Background Color** paints the main app shell behind everything. The default is `#050312` in Dark mode and `#faf8ff` in Light mode.
+- **App Background Color** paints the main app shell behind everything. The default is `#050312` in Dark mode and `#faf8ff` in Light mode.
 - **Accent Color** colors buttons, active icons, focus rings, highlights, and panel outlines. The default is `#d4acfb` in both schemes.
 
 A value like `#d4acfb` is a hex color code, a short way to write a color. To go back to the scheme default, clear the field with **Reset to default**.
@@ -64,7 +69,7 @@ These two controls are in the **Text & Scale** section.
 - **Display Size** sets the base text size for the whole app on this device. The choices are **Tiny**, **Small**, **Medium**, **Default** (17px), **Large**, and **Huge**.
 - **Chat Font Size** is a slider that sets the size of chat message text. It ranges from 12px to 48px. The default is 16px.
 
-The **Font** dropdown lives in this same section. To add your own fonts or download from Google Fonts, see [Custom Fonts and Google Fonts](fonts.md).
+The **App Font** dropdown lives in this same section. To add your own fonts or download from Google Fonts, see [Custom Fonts and Google Fonts](fonts.md).
 
 ## Chat text colors and outline
 
@@ -77,6 +82,8 @@ Also in the **Text & Scale** section, four controls change how chat text reads o
 
 Each color follows the Color Scheme default until you set your own. Clearing a color field returns it to that scheme default rather than leaving it blank.
 
+The same section also holds **Bold dialogue in quotes**, **Convert LaTeX symbols**, **Quote style**, and **Force Solid Colors for Inline Names**. See [Text rules](../settings/settings-overview.md#text-rules).
+
 ## Chat Layout (Conversation Display)
 
 The **Conversation Display** section has one control, **Chat Layout**, that changes how Conversation-mode messages look. A live preview updates as you pick.
@@ -86,22 +93,22 @@ The **Conversation Display** section has one control, **Chat Layout**, that chan
 
 ## Tracker Panel
 
-The **Tracker Panel** section styles the Roleplay tracker side panel. That panel is a separate feature with its own guide. See [Roleplay HUD and Trackers](../roleplay/hud-and-trackers.md).
+The **Tracker Panel** section, in the **Roleplay** view, has the **Tracker Panel** on/off switch and the **Temperature unit** (**°C** or **°F**). How the panel looks (size, stat and thought display, background, card order and colors) is in the **Panel settings** menu beside the gear in the tracker header. That panel is a separate feature with its own guide. See [Roleplay HUD and Trackers](../roleplay/hud-and-trackers.md).
 
 ## Roleplay message appearance
 
-The **Roleplay Messages** section styles messages in Roleplay chats.
+The **Roleplay Presentation** section styles messages in Roleplay chats.
 
 - **Chat position** chooses where the messages and the input box sit on wide screens: **Left**, **Center** (the default), or **Right**. They move together, and an open sidebar or a Tracker Panel on the same side moves them along so the chat never sits underneath. On phones and narrow windows the chat keeps the full width, and Game mode keeps its dialogue box centered.
 - **Roleplay Messages Background Opacity** is a slider from 0% to 100%. The default is 90%. Lower it to let the background show through the message bubbles.
 - **Roleplay Avatars** picks the avatar style beside each message. The four options are **None**, **Small Circles** (the default), **Small Rectangles**, and **Glued Side Panel**.
 - **Scrollable Avatars** (default off) keeps avatars visible while you scroll through a long message.
-- **Message avatar scale** is a slider from 75% to 250%. The default is 100%.
+- **Message avatar scale** is a slider from 75% to 250%. The default is 100%. It is greyed out while **Roleplay Avatars** is **None**.
 - **Default sprite scale** is a slider from 50% to 175%. The default is 100%. A per-chat sprite size still overrides this default.
 
 ## Game Presentation
 
-The **Game Presentation** section scales the art in Game mode. Game mode can show both a dialogue portrait and a full-body sprite. These two sliders set their size.
+The **Game Presentation** section, in the **Game** view, sets how Game mode looks and reveals text. Game mode can show both a dialogue portrait and a full-body sprite. These two sliders set their size.
 
 - **Dialogue portrait scale** is a slider from 75% to 175%. The default is 100%.
 - **Full-body sprite scale** is a slider from 75% to 275%. The default is 135%.
@@ -110,6 +117,8 @@ The **Game Presentation** section scales the art in Game mode. Game mode can sho
 
 - **Classic VN** (the default). One active segment shows in the dialogue box. Older lines are in the **Logs** button.
 - **History Above VN**. Prior segments show above the dialogue box. The full session stays scrollable there.
+
+**Game text effects**, **Instantly reveal game text**, **Game narration speed**, and **Game auto-play segment delay** set how text appears and advances.
 
 ## Atmosphere weather effects
 

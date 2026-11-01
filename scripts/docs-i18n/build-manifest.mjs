@@ -5,7 +5,7 @@
 //   <pack-dir> is one language folder of a docs-i18n checkout, e.g. ../docs-i18n/es
 //
 // Writes <pack-dir>/manifest.json with a sha256 + byte size for every .md file,
-// which the server verifies during Download & Replace. Run this after every
+// which the server verifies during Download & replace docs. Run this after every
 // content change on the docs-i18n branch, before committing.
 // ──────────────────────────────────────────────
 import { createHash } from "node:crypto";

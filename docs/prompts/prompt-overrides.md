@@ -18,7 +18,7 @@ Some terms used below:
 The editors live in the app settings.
 
 1. Open **Settings**.
-2. Click the **Generations** tab.
+2. Click the **Images & Video** tab.
 3. Scroll to the **Prompt Overrides** area, described as "Reusable image and video prompt templates."
 
 You should see two collapsible editors there.

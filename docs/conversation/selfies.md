@@ -95,7 +95,7 @@ You can also request a selfie yourself instead of waiting for the character.
 1. Open **Chat Settings** and expand the **Gallery** section.
 2. Click the **Selfie** button (the camera icon).
 3. If the chat has more than one character, pick who should take the selfie from the character list next to the button.
-4. If **Expose media prompts before sending** is enabled under **Settings**, **Generations**, **Overall Generations**, review or edit the final compiled selfie prompt and click **Generate**. Canceling the review does not send an image request.
+4. If **Expose media prompts before sending** is enabled under **Settings**, **Images & Video**, **Overall Generations**, review or edit the final compiled selfie prompt and click **Generate**. Canceling the review does not send an image request.
 5. Wait while the button shows **Generating...**.
 
 When the selfie is ready, you should see a "Selfie generated." message, and the picture appears in the chat. This manual request also uses your chosen **Selfie Connection**, so it uses one image generation request too.
@@ -118,7 +118,7 @@ Set this up under **Chat Settings**, **Agents**, **Illustrator Settings**, in th
   - **Video Run Interval** (shown once it is on) sets how many messages must pass between these clips. **0** stops them.
   - `/video` and the Gallery's **Video** button work either way and ignore the interval.
   - Swiping a reply that sent a clip lets the new swipe send its own.
-  - In a group chat, each character can send one clip per reply, up to **Videos per reply** (3 by default) under **Settings**, **Generations**, **Video Generation**.
+  - In a group chat, each character can send one clip per reply, up to **Videos per reply** (3 by default) under **Settings**, **Images & Video**, **Video Generation**.
 - **Video Connection** picks the Video Generation connection. Leave it on **Default video connection** to use your default one. A connection's **Video Prompting Instructions** guide the AI that writes the video prompt.
 - **First frame** picks the picture the clip starts from:
   - **New selfie, or the avatar if no selfie connection** (the default) makes a new selfie when selfies are on and a **Selfie Connection** is set, and otherwise uses the avatar.
@@ -126,7 +126,7 @@ Set this up under **Chat Settings**, **Agents**, **Illustrator Settings**, in th
   - **Avatar or sprite** starts from the character's avatar, or a full-body sprite when there is no avatar.
   - **Prompt only (no picture)** sends no picture, so the video model works from the prompt alone. Some ComfyUI workflows need a picture and fail without one. When **Send Avatar References** includes videos, this choice reads **Prompt only (avatar from Send Avatar References)** and the clip starts from the avatar instead.
 
-Pictures in other formats, such as WebP, are converted for the video service. A video message makes one video request, plus one image request when it starts from a new selfie. The AI that writes the prompt is your **Prompt Model**, and **Settings**, **Generations**, **Video Generation Prompt Overrides**, **Conversation Video Message** holds its instructions.
+Pictures in other formats, such as WebP, are converted for the video service. A video message makes one video request, plus one image request when it starts from a new selfie. The AI that writes the prompt is your **Prompt Model**, and **Settings**, **Images & Video**, **Video Generation Prompt Overrides**, **Conversation Video Message** holds its instructions.
 
 ## Related guides
 

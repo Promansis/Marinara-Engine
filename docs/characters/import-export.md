@@ -82,7 +82,7 @@ The zip holds one **Marinara Native** file per character. There is no PNG or com
 
 ## Importing a whole SillyTavern folder
 
-The steps above cover cards you pick by hand. To move an entire SillyTavern install at once, use the bulk folder importer instead. It brings over characters, chats, presets, and lorebooks together. It lives in **Settings** under the **Imports** tab. See [Importing from SillyTavern](../data/importing-from-sillytavern.md) for the full walkthrough.
+The steps above cover cards you pick by hand. To move an entire SillyTavern install at once, use the bulk folder importer instead. It brings over characters, chats, presets, and lorebooks together. It lives in **Settings** on the **Data** tab. See [Importing from SillyTavern](../data/importing-from-sillytavern.md) for the full walkthrough.
 
 ## Related guides
 

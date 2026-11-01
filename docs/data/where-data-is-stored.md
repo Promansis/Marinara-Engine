@@ -49,7 +49,7 @@ Some advanced setups provide the key through an `ENCRYPTION_KEY` environment var
 
 On Android, the server's data folder usually sits in app storage that you cannot reach without root access. This means you cannot simply copy the folder off the phone.
 
-To get a copy of your data on Android, use the **Download Backup** button. You can find it in **Settings**, on the **Advanced** tab, in the **Backup & Export** section. This creates a single zip file with your data. The zip includes the `.encryption-key` file when one exists. This is the most reliable way to save your data from a phone.
+To get a copy of your data on Android, use the **Download Backup** button. You can find it in **Settings**, on the **Data** tab, in the **Backup & Export** section. This creates a single zip file with your data. The zip includes the `.encryption-key` file when one exists. This is the most reliable way to save your data from a phone.
 
 The same section can keep 1 to 9999 rotating daily, weekly, or monthly automatic archives in `backups/` inside the
 data folder. The newest is `marinara-automatic-backup.zip`, and retained older automatic archives are timestamped.

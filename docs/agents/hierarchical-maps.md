@@ -591,7 +591,7 @@ provider. Positive prompt material is not copied into the negative prompt.
 
 ## Customize the automatic artwork prompt
 
-Open **Settings → Generations → Prompt Overrides** and select **Maps location
+Open **Settings → Images & Video → Prompt Overrides** and select **Maps location
 artwork**. This is the global template used when Maps previews and generates
 automatic location artwork. Variables use `${variableName}` syntax and can be
 inserted from the editor.
@@ -870,7 +870,7 @@ Browsing controls never move the story.
 
 ### The automatic artwork prompt always includes the Game genre
 
-Open **Settings → Generations → Prompt Overrides → Maps location artwork** and
+Open **Settings → Images & Video → Prompt Overrides → Maps location artwork** and
 remove `${genreLine}` from the template. Save the override, then reopen the
 artwork review.
 

@@ -78,7 +78,7 @@ This page covers what a ruleset is, how to start one, and how to try and share i
 
 ## Trying your ruleset
 
-Community rulesets use the same switch as imported agents. Open **Settings** > **Advanced** > **Danger Zone** and make sure **Allow custom Agent imports** is on. Importing also needs localhost access or configured **Admin Access**.
+Community rulesets use the same switch as imported agents. Make sure **Allow custom Agent imports** is on in **Settings** > **Advanced** > **Extensions & imports**, or accept it when the import asks. Importing also needs localhost access or configured **Admin Access**.
 
 1. Open the **Agents** panel and choose the **Import agents** button (the download icon in the row of buttons at the top of the panel).
 2. Pick **Game Mode ruleset** and choose your JSON file, or a ruleset package file ending in `.ruleset.json` (see [Sharing your ruleset](#sharing-your-ruleset)).

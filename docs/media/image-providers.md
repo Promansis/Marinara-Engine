@@ -233,7 +233,7 @@ NovelAI precise reference images only work on a V4.5 model, such as `nai-diffusi
 
 ## Queue media generation requests
 
-The **Queue media generation requests** toggle lives in **Settings**, then **Generations**, then **Overall Generations**. It is on by default.
+The **Queue media generation requests** toggle lives in **Settings**, then **Images & Video**, then **Overall Generations**. It is on by default.
 
 When it is on, Marinara sends image jobs to each image provider account one at a time, and video jobs to each video provider account one at a time, in separate queues. An image and a video for the same account can run together. This applies whichever feature asks for them: the Illustrator, trackers, commands, the Gallery, Game assets and downloaded agents such as Slurp. Two connections with the same address and API key share the corresponding queue. Different accounts and providers still work at the same time. NovelAI also gets a short pause between jobs. When NovelAI answers that it is busy, Marinara waits and tries again twice instead of failing the image.
 

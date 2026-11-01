@@ -181,7 +181,7 @@ To remove only the selected model, click the trash button titled **Delete Local 
 
 Your recorded audio never leaves your machine. Only the transcribed text is sent to your chosen chat connection. To use it in a call, set the call audio input mode to the Local Whisper option. See [Conversation Audio and Video Calls](../conversation/calls.md).
 
-If you turn on the **Speech to Text** card in Connections, that call mode sends your speech to the server you entered there instead of Local Whisper. See [Use your own speech-to-text server](../conversation/calls.md#use-your-own-speech-to-text-server).
+If you choose **Own server** on the **Speech to text** card in Connections, that call mode sends your speech to the server you entered there instead of Local Whisper. See [Use your own speech-to-text server](../conversation/calls.md#use-your-own-speech-to-text-server).
 
 ## Troubleshooting
 

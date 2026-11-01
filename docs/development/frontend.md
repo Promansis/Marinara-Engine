@@ -391,7 +391,7 @@ Synced theme CSS can request the built-in Accent Pulse engine with `--marinara-t
 
 ### Personal Extensions
 
-Personal Extensions are server-stored, exact-hash-approved sandboxed code. The Addons UI uses `use-personal-extensions.ts`; `PersonalExtensionInjector.tsx` hosts approved Browser code in a dedicated Worker inside an opaque-origin sandboxed iframe and brokers immutable active-chat context snapshots. The context fields are always present; outside an active chat, `chatId` and `characterId` are `null` and `characterIds` is empty. Bounded active Character-card and selected-Persona fields require separately declared, hash-bound permissions. Server extensions run in a separate Node process inside macOS Seatbelt or Linux Bubblewrap and fail closed when neither backend is available. External sources require the `.env` gate plus the Danger Zone opt-in at listing, approval, and runtime boundaries.
+Personal Extensions are server-stored, exact-hash-approved sandboxed code. The **Extensions & imports** UI uses `use-personal-extensions.ts`; `PersonalExtensionInjector.tsx` hosts approved Browser code in a dedicated Worker inside an opaque-origin sandboxed iframe and brokers immutable active-chat context snapshots. The context fields are always present; outside an active chat, `chatId` and `characterId` are `null` and `characterIds` is empty. Bounded active Character-card and selected-Persona fields require separately declared, hash-bound permissions. Server extensions run in a separate Node process inside macOS Seatbelt or Linux Bubblewrap and fail closed when neither backend is available. External sources require the `.env` gate plus the **Allow third-party extension imports** opt-in at listing, approval, and runtime boundaries.
 
 See [Personal Extension Architecture](personal-extensions.md) before changing this feature.
 
@@ -506,7 +506,7 @@ Agent memory tools use `/api/agents/memory/:agentType/:chatId`, where `agentType
 | `/api/gallery/:chatId`        | Per-chat gallery images      |
 | `/api/global-gallery`         | Global gallery images        |
 | `/api/tts`                    | Text-to-speech routes        |
-| `/api/speech-to-text`         | Speech to Text server settings and test |
+| `/api/speech-to-text`         | Speech-to-text server settings and test |
 | `/api/avatar-models`          | 2D and 3D avatar models for the avatar agents |
 | `/api/avatar-generation`      | Avatar drafts from sprites and the Tripo key |
 | `/api/avatar-classify`        | Avatar emotion classifier and its local model |

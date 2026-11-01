@@ -149,7 +149,7 @@ For setup and details, see [Memory and Summaries](agents/memory.md).
 
 ## How do I back up my data?
 
-Open **Settings**, go to the **Advanced** tab, find the **Backup & Export** section, and click **Download Backup**. This saves a single `.zip` archive with your data and your uploaded files. To restore it later, use **Import Profile (JSON/ZIP)** in **Settings** under the **Imports** tab and choose the same `.zip`.
+Open **Settings**, go to the **Data** tab, find the **Backup & Export** section, and click **Download Backup**. This saves a single `.zip` archive with your data and your uploaded files. To restore it later, use **Import Profile (JSON/ZIP)** in **Settings** on the **Data** tab and choose the same `.zip`.
 
 You can also enable a rotating daily, weekly, or monthly automatic backup in the same section. Full backup ZIPs can
 contain the encrypted records and the key file needed to unlock them, so keep them private. **Import Profile** still
@@ -162,7 +162,7 @@ By default, only Professor Mari can create a Personal Extension draft for you. I
 
 Browser code uses a dedicated Worker inside an opaque-origin iframe by default. In addition to narrow logging, private-storage, timer, cleanup, and declarative UI capabilities, it receives the opaque IDs of the currently active chat and Characters so extensions such as Notepad can keep chat-specific state. A Browser Extension may separately request bounded snapshots of only the Character cards participating in that chat and/or the Persona selected for it. Those permissions are shown during exact-hash approval; without them, the corresponding records are absent. Sandboxed extensions never receive messages, whole Character or Persona libraries, undeclared fields, chat metadata, DOM access, network access, or mutation APIs. Server code runs in a separate OS-sandboxed process on supported macOS and Linux hosts and does not receive browser chat context.
 
-Third-party imports are hidden by default. The host operator must set `ENABLE_EXTERNAL_EXTENSIONS=true` in `.env`, then the user must accept the warning under **Settings → Advanced → Danger Zone**. Until both gates are open, external records—including manually stored and profile-imported records—do not appear, cannot be approved, and cannot execute.
+Third-party imports are hidden by default. The host operator must set `ENABLE_EXTERNAL_EXTENSIONS=true` in `.env`, then the user must turn on **Allow third-party extension imports** under **Settings → Advanced → Extensions & imports**. Until both gates are open, external records—including manually stored and profile-imported records—do not appear, cannot be approved, and cannot execute.
 
 An External Extension may request **Full page access** when legacy compatibility genuinely requires Marinara's DOM. This is not sandboxed: the exact approved code runs in Marinara's page and can access page content, browser storage, network APIs, and the current same-origin session. Professor Mari drafts cannot request it. Enable it only after inspecting and trusting that exact version; reload after disabling if unregistered changes remain. See [Personal Extensions](extending/personal-extensions.md).
 

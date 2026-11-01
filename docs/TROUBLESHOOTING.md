@@ -303,7 +303,7 @@ If starting a game fails because the model returned broken JSON, Marinara opens 
 
 - If characters do not speak during a call, Text to Speech is not set up. Open **Connections** > **Text to Speech**, enable it, choose a source, enter your key, pick a voice, and save. A character with no voice appears as text only.
 - If speech stops with **No audio after 60 s**, your voice server is slower than Marinara waits. A local server on a laptop often is. Raise **Request timeout (seconds)** in **Connections** > **Text to Speech**, or in the audio connection the message names. See [Request timeout](media/tts-setup.md#request-timeout).
-- If the microphone is not working, you may need the local speech model. Install **Calls** from **Agents > Agent Organizer**, then open **Connections** > **Local Model**, expand the card, find **Local Speech Model**, choose a Whisper model, and click **Download Whisper**. Firefox in particular needs this because it lacks browser speech recognition. Uninstalling Calls deletes its Whisper models to reclaim disk space. You can also use your own speech-to-text server from the **Speech to Text** card in **Connections**; see [Use your own speech-to-text server](conversation/calls.md#use-your-own-speech-to-text-server).
+- If the microphone is not working, you may need the local speech model. Install **Calls** from **Agents > Agent Organizer**, then open **Connections** > **Local Model**, expand the card, find **Local Speech Model**, choose a Whisper model, and click **Download Whisper**. Firefox in particular needs this because it lacks browser speech recognition. Uninstalling Calls deletes its Whisper models to reclaim disk space. You can also use your own speech-to-text server from the **Speech to text** card in **Connections**; see [Use your own speech-to-text server](conversation/calls.md#use-your-own-speech-to-text-server).
 - On a Lite build, the message **Local Whisper is disabled in Lite mode** means that small build cannot run the local speech model. Use a full Marinara install instead.
 
 ### Music DJ Spotify login fails on a remote or network install
@@ -471,20 +471,20 @@ If the lite container restarts whenever it sends an AI request on a Raspberry Pi
 
 The regular (non-lite) image is not affected. Until the upstream fix ships, use the regular image on that device. Known affected lite images include `1.5.7-lite` and `1.5.8-lite`. Last checked against Marinara Engine 2.2.0.
 
-### External Extensions is missing from Addons
+### External Extensions is missing
 
 The section is intentionally hidden until both safety gates are open:
 
 1. Set `ENABLE_EXTERNAL_EXTENSIONS=true` in the host's `.env`.
-2. Wait about two seconds for the configuration watcher, then open **Settings → Advanced → Danger Zone**, scroll below the data-deletion controls, and enable **Allow third-party extension imports**.
+2. Wait about two seconds for the configuration watcher, then open **Settings → Advanced → Extensions & imports** and enable **Allow third-party extension imports**.
 
-If the Danger Zone switch is disabled, the host flag is still false or the app has not observed the change. Confirm that you edited the active `.env` path described in [Server Configuration](CONFIGURATION.md). On Docker, that is normally `/app/data/.env`.
+If the switch is locked, the host flag is still false or the app has not observed the change. Confirm that you edited the active `.env` path described in [Server Configuration](CONFIGURATION.md). On Docker, that is normally `/app/data/.env`.
 
 When either gate is closed, external, legacy, profile-imported, manually stored, and unknown-source extension records do not appear and cannot run. Reopening the gates does not automatically re-enable them.
 
 ### An imported browser extension appears but does not work
 
-Open the extension in **Settings → Addons → External Extensions** and inspect **Requested access**. Older packages that use the `marinara.extension` v1 format without a capabilities declaration should show **Full page access**. Approve only the exact hash you inspected and trust.
+Open the extension in **Settings → Advanced → Extensions & imports → External Extensions** and inspect **Requested access**. Older packages that use the `marinara.extension` v1 format without a capabilities declaration should show **Full page access**. Approve only the exact hash you inspected and trust.
 
 If an older package was exported again with an explicit empty capabilities list, Marinara treats it as a safe sandbox extension; DOM-dependent code will not work there. Add `full_page_access` to its manifest only if you understand that the code will gain access to the whole Marinara page, browser storage, network APIs, and same-origin session.
 

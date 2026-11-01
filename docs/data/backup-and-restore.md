@@ -11,7 +11,7 @@ Marinara gives you two save options. They live in different places and do differ
 
 If you just want one safe copy of everything, use **Download Backup**. Use **Export Profile** when you want a smaller file or a version other roleplay tools can read.
 
-Both save options live in **Settings** on the **Advanced** tab, in the **Backup & Export** section.
+Both save options live in **Settings** on the **Data** tab, in the **Backup & Export** section.
 
 ## Access on the same device or another device
 
@@ -24,7 +24,7 @@ From a phone, tablet, or any other device, backup and restore need the **Admin A
 **Download Backup** creates one **.zip** file with your database, your settings, and all your media folders (avatars, sprites, backgrounds, gallery images, fonts, your custom notification sound, and more).
 
 1. Open **Settings**.
-2. Go to the **Advanced** tab.
+2. Go to the **Data** tab.
 3. Find the **Backup & Export** section.
 4. Click **Download Backup**.
 5. The button shows **Creating backup…** while it works.
@@ -58,7 +58,7 @@ to the Automatic Backups control; it tries again on the next check once space is
 **Export Profile** creates a smaller file with your account data. Media is included, so avatars, images, and your custom notification sound come along too.
 
 1. Open **Settings**.
-2. Go to the **Advanced** tab.
+2. Go to the **Data** tab.
 3. Find the **Backup & Export** section.
 4. Click **Export Profile**.
 5. A dialog titled **Export Profile** opens with two choices.
@@ -76,16 +76,16 @@ Choose **Marinara Native** to keep a copy you can restore in Marinara later. Sma
 `marinara-profile.json`; larger profiles are offered as a streamed `marinara-profile.zip` whose data is split into
 bounded table files so a large library does not have to fit into one in-memory JSON string.
 
-Personal Extension code is preserved in a native profile, but its enabled state and execution approval are not. Every restored extension arrives disabled and must be reviewed again in **Settings** > **Addons**.
+Personal Extension code is preserved in a native profile, but its enabled state and execution approval are not. Every restored extension arrives disabled and must be reviewed again in **Settings** > **Advanced** > **Extensions & imports**.
 
 Choose **Compatible JSON** only when you want to move characters or lorebooks to another tool. It downloads a **.zip** of plain files. You cannot restore this file back into Marinara with **Import Profile**.
 
 ## Restoring with Import Profile
 
-To put a saved profile or a **Download Backup** archive back, use **Import Profile**. It lives on a different tab from the save tools.
+To put a saved profile or a **Download Backup** archive back, use **Import Profile**. It is in a different section from the save tools.
 
 1. Open **Settings**.
-2. Go to the **Imports** tab.
+2. Go to the **Data** tab.
 3. Find the **Profile & Marinara** section.
 4. Click **Import Profile (JSON/ZIP)**.
 5. Pick your file. It can be a `marinara-profile.json`, a `marinara-profile.zip`, or a full **Download Backup** **.zip**.

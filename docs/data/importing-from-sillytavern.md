@@ -20,7 +20,7 @@ There are two ways to import. Use the single-file buttons for one file. Use the 
 
 ## Quick single-file imports
 
-Open **Settings**, then the **Imports** tab, then find the **SillyTavern Import** section. Its description reads "Bring over characters, chats, presets, and lorebooks from SillyTavern files."
+Open **Settings**, then the **Data** tab, then find the **SillyTavern Import** section. Its description reads "Bring over characters, chats, presets, and lorebooks from SillyTavern files."
 
 This section has four one-file buttons. Each one opens a normal file picker with no extra options:
 
@@ -43,7 +43,7 @@ The single-file **Import Chat (JSONL)** button above always makes a **Roleplay**
 
 This wizard scans a full SillyTavern folder and imports many items at once. It reads characters, chats, group chats, presets, lorebooks, backgrounds, and personas together.
 
-To open it, go to **Settings**, then **Imports**, then the **SillyTavern Import** section, then click **Import from SillyTavern Folder**. A window titled **Import from SillyTavern** opens.
+To open it, go to **Settings**, then **Data**, then the **SillyTavern Import** section, then click **Import from SillyTavern Folder**. A window titled **Import from SillyTavern** opens.
 
 ### Step 1: point at your SillyTavern folder
 

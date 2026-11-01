@@ -254,11 +254,11 @@ To export from the editor, click the **Export agent** button (the upload icon) i
 
 To export several agents at once, use **Select agents** in the **Agents** panel, pick the agents you want, and export the group.
 
-External Agent imports are locked by default. Open **Settings → Advanced → Danger Zone** and enable **Allow custom Agent imports** first. This toggle does not need an `.env` change. It affects only Agents supplied through files, folders, or custom repositories: Agents you create in Marinara and official Agents installed through **Agent Organizer** remain available normally.
+External Agent imports are locked by default. Enable **Allow custom Agent imports** first, in **Settings → Advanced → Extensions & imports** or when an import asks. This toggle does not need an `.env` change. It affects only Agents supplied through files, folders, or custom repositories: Agents you create in Marinara and official Agents installed through **Agent Organizer** remain available normally.
 
 To import, open the **Agents** panel and click **Import agents** for a single file, or **Import agent folder** to pick a whole folder. Marinara shows a permission review before anything is stored. Approve only the capabilities the Agent needs; unchecked capabilities stay blocked. Each file import receives a new custom identity, so it cannot replace a curated Agent with the same internal type.
 
-For safety, Marinara ignores bundled functions, clears tool selections from imported settings, sanitizes temporary CSS before applying it, and checks approved capabilities before an imported Agent can change messages, trackers, lorebooks, backgrounds, sprites, media, haptics, About Me data, prompts, or generated images. Import trusted functions separately from **Function Calls**, review them, and explicitly attach them to the Agent afterward. Turning the Danger Zone toggle off again prevents externally imported Agents from running; locally authored and official Agents are not affected.
+For safety, Marinara ignores bundled functions, clears tool selections from imported settings, sanitizes temporary CSS before applying it, and checks approved capabilities before an imported Agent can change messages, trackers, lorebooks, backgrounds, sprites, media, haptics, About Me data, prompts, or generated images. Import trusted functions separately from **Function Calls**, review them, and explicitly attach them to the Agent afterward. Turning **Allow custom Agent imports** off again prevents externally imported Agents from running; locally authored and official Agents are not affected.
 
 ## Related guides
 

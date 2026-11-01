@@ -134,13 +134,13 @@ In **Roleplay**, **Video** in the action row at the top of the Gallery makes a c
 - **Avatar**: the clip starts from whoever your description names first, your persona included. A part of a name that no one else shares is enough, written with a capital ("Lena" for "Dr. Lena Kowalski"). With no one named, it starts from the chat's character.
 - **Review**: when **Expose media prompts before sending** is on, you can review and edit the clip's prompt first.
 - **What it reads**: the AI writing the clip reads as many recent messages as Illustrator does for a picture (Illustrator's **Context Size**, under **Agent Budget** on its setup screen), so it shows what is happening now.
-- **Without a picture**: when the clip starts from no picture or an avatar, the AI describes the scene itself. Its instructions are **Roleplay Clip Director** under **Settings**, **Generations**, **Video Generation Prompt Overrides**.
+- **Without a picture**: when the clip starts from no picture or an avatar, the AI describes the scene itself. Its instructions are **Roleplay Clip Director** under **Settings**, **Images & Video**, **Video Generation Prompt Overrides**.
 
 In **Game Mode**, **Video** animates the newest picture:
 
 1. Make sure at least one picture exists under the **Images** tab. Use **Illustrate** or upload a picture first.
 2. Click **Video** in the action row at the top of the Gallery.
-3. If **Expose media prompts before sending** is enabled under **Settings**, **Generations**, **Overall Generations**, review or edit the compiled animation prompt and click **Generate**. Canceling this window does not start a provider request.
+3. If **Expose media prompts before sending** is enabled under **Settings**, **Images & Video**, **Overall Generations**, review or edit the compiled animation prompt and click **Generate**. Canceling this window does not start a provider request.
 4. The button changes to **Generating...**, and a banner tells you video generation is running.
 5. When it finishes, the clip appears under the **Videos** tab.
 
@@ -152,7 +152,7 @@ To animate one specific picture instead of the newest one:
 2. Hover over the picture you want.
 3. Click the **Animate illustration** button (the film icon) in the hover controls.
 
-The same **Review Video Prompt** window appears for **Animate illustration** when prompt review is enabled. It shows the exact server-compiled prompt, duration, aspect ratio, and resolution that will be used for that selected image. Your edit applies only to that generation. In Roleplay, the AI planning the motion reads as many recent messages as Illustrator does (its **Context Size**), ending at the reply the picture belongs to. In Roleplay, the reusable instructions that produce this prompt are controlled separately by **Roleplay Gallery Animation Director** under **Settings**, **Generations**, **Video Generation Prompt Overrides**.
+The same **Review Video Prompt** window appears for **Animate illustration** when prompt review is enabled. It shows the exact server-compiled prompt, duration, aspect ratio, and resolution that will be used for that selected image. Your edit applies only to that generation. In Roleplay, the AI planning the motion reads as many recent messages as Illustrator does (its **Context Size**), ending at the reply the picture belongs to. In Roleplay, the reusable instructions that produce this prompt are controlled separately by **Roleplay Gallery Animation Director** under **Settings**, **Images & Video**, **Video Generation Prompt Overrides**.
 
 Under the **Videos** tab, each clip plays inline and shows its length and model name. You can pin a clip with **Pin video to chat**, or save it with **Download scene video**. If there are no clips yet, the tab reads **No videos yet**.
 
@@ -193,7 +193,7 @@ If a chat has no video connection of its own, Marinara falls back to the connect
 
 ## Video generation settings
 
-Some video defaults live in the app settings, not on a connection. Open **Settings**, then **Generations**, then the **Video Generation** section. It is described as "Set default clip lengths and edit reusable video prompts for Game, Gallery, and Calls."
+Some video defaults live in the app settings, not on a connection. Open **Settings**, then **Images & Video**, then the **Video Generation** section. It is described as "Set default clip lengths and edit reusable video prompts for Game, Gallery, and Calls."
 
 The main scene-video setting here is **Scene video fallback length**, which defaults to 10 seconds. It is used only when the selected video connection has no length of its own. You can set it from 1 to 60 seconds.
 

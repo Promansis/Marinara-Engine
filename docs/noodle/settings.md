@@ -97,7 +97,7 @@ The **Image Generation** section lets Noodle attach AI-made images to some posts
 
 If you turn on **Noodle image generation** but have no usable image connection, a refresh is blocked. You will see the message "Choose an image generation connection for Noodle first." A failed image is retried once. If the second attempt also fails, the refresh continues and publishes a clean text-only post instead of exposing the unused image prompt.
 
-The template Noodle uses to write these image prompts is called **Noodle Post Image**. You can edit it under **Settings** > **Generations** > **Image Generation Prompt Overrides**. Your **Image instructions (sent to your LLM)** text is passed into that template, and the result then goes through your normal image style profile. See [Prompt Overrides for Image and Video](../prompts/prompt-overrides.md) and [Image Style Profiles](../media/style-profiles.md). Professor Mari has no character card, so her image posts use her built-in avatar and reference art instead.
+The template Noodle uses to write these image prompts is called **Noodle Post Image**. You can edit it under **Settings** > **Images & Video** > **Image Generation Prompt Overrides**. Your **Image instructions (sent to your LLM)** text is passed into that template, and the result then goes through your normal image style profile. See [Prompt Overrides for Image and Video](../prompts/prompt-overrides.md) and [Image Style Profiles](../media/style-profiles.md). Professor Mari has no character card, so her image posts use her built-in avatar and reference art instead.
 
 ## Image Understanding
 
@@ -118,7 +118,7 @@ The **Timeline Writing** section tunes the refresh writer's tone and long-term m
 
 ## Customizing the timeline writer's voice
 
-Noodle's refresh writer follows a built-in set of tone and creative-freedom instructions: how much personality each account's posts should carry, and how much accounts may banter, joke, or clash with each other. You can rewrite this text under **Settings** > **Generations** > **Image Generation Prompt Overrides** > **Noodle Timeline Voice & Tone** (the section title says "Image," but this list holds every customizable Noodle/Conversation text prompt, not only image ones). The default text shown there follows the **Enhanced tone & continuity** toggle above until you customize it; once you save your own text, it is used regardless of that toggle.
+Noodle's refresh writer follows a built-in set of tone and creative-freedom instructions: how much personality each account's posts should carry, and how much accounts may banter, joke, or clash with each other. You can rewrite this text under **Settings** > **Images & Video** > **Image Generation Prompt Overrides** > **Noodle Timeline Voice & Tone** (the section title says "Image," but this list holds every customizable Noodle/Conversation text prompt, not only image ones). The default text shown there follows the **Enhanced tone & continuity** toggle above until you customize it; once you save your own text, it is used regardless of that toggle.
 
 This override only covers voice and tone. The rules that keep a refresh's output valid (which structured actions are allowed, how interactions must be targeted, and so on) are not part of this text and always stay in effect, so a rewritten voice cannot break a refresh.
 

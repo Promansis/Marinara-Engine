@@ -1,6 +1,6 @@
 # Personal Extensions
 
-Personal Extensions are private code drafts created for you by Professor Mari. Open **Settings** > **Addons** > **Personal Extensions**.
+Personal Extensions are private code drafts created for you by Professor Mari. Open **Settings** > **Advanced** > **Extensions & imports** > **Personal Extensions**.
 
 The default message is:
 
@@ -206,7 +206,7 @@ If an External Extension genuinely depends on host DOM access, it may request:
 
 **Full page access is not a sandbox capability.** The approved JavaScript and CSS run inside Marinara's page. The code can read or change anything visible to the current browser session, inspect chats and cards, use browser storage, make network requests, and call same-origin Marinara APIs. It has the same practical page authority as code pasted into the browser console. Professor Mari drafts cannot request it.
 
-Full page extensions should use `marinara.fetch(...)` for network requests. It has the same signature and result as `window.fetch`, while allowing **Settings > Addons > External Extensions** to show that extension's session request count, transferred bytes reported by responses, recent request rate, and sustained high-traffic warning. Raw `window.fetch` remains available because full page access is trusted page code, but those requests cannot be attributed to the extension.
+Full page extensions should use `marinara.fetch(...)` for network requests. It has the same signature and result as `window.fetch`, while allowing **Settings > Advanced > Extensions & imports > External Extensions** to show that extension's session request count, transferred bytes reported by responses, recent request rate, and sustained high-traffic warning. Raw `window.fetch` remains available because full page access is trusted page code, but those requests cannot be attributed to the extension.
 
 Marinara recognizes the older `kind: "marinara.extension"` v1 envelope without an explicit `capabilities` field as a pre-sandbox package and assigns **Full page access** during import. This allows legacy packages such as WeatherTweaker to reach the correct review flow instead of silently failing in a Worker. A modern package that uses that envelope but wants the safe runtime must include `"capabilities": []`.
 
@@ -238,9 +238,9 @@ On Windows and Android there is no supported OS process sandbox, so Server Exten
 Third-party imports are locked and hidden by default. Two steps are required:
 
 1. On the Marinara host, set `ENABLE_EXTERNAL_EXTENSIONS=true` in `.env`.
-2. Open **Settings** > **Advanced** > **Danger Zone**, scroll below the data-deletion controls, read the warning, and enable **Allow third-party extension imports**.
+2. Open **Settings** > **Advanced** > **Extensions & imports**, read the warning, and enable **Allow third-party extension imports**.
 
-Only then does **Settings** > **Addons** show **External Extensions** with file and folder import controls. Supported formats are always expanded:
+Only then does **Extensions & imports** show **External Extensions** with file and folder import controls. Supported formats are always expanded:
 
 - `.personal-extension.zip` and compatible `.zip` packages;
 - `.json` manifests;
@@ -260,7 +260,7 @@ Third-party extensions may contain malicious or dangerous code. Always inspect e
 
 Use an extension's export action to download a portable package. Exported and restored packages remain disabled. Restoring a revision also returns it to a disabled draft.
 
-**Settings → Addons → Extension revision history** controls how many previous code versions are kept for every Personal and External Extension. The default is **10**; choose **0–10**, with **0** disabling history. Reducing the limit asks for confirmation before permanently removing older revisions. Current extension code, approvals, enabled state, and saved extension data are preserved. Future edits and rollbacks follow the same limit, including edits made through Professor Mari.
+**Settings → Advanced → Extensions & imports → Extension revision history** controls how many previous code versions are kept for every Personal and External Extension. The default is **10**; choose **0–10**, with **0** disabling history. Reducing the limit asks for confirmation before permanently removing older revisions. Current extension code, approvals, enabled state, and saved extension data are preserved. Future edits and rollbacks follow the same limit, including edits made through Professor Mari.
 
 If an extension misbehaves, choose **Disable**. If the interface is unavailable, stop Marinara and set the relevant `installed_extensions` record's `enabled` value to `"false"`. Never set `approvedHash` by hand.
 

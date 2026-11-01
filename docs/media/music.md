@@ -20,7 +20,7 @@ You set up **Music DJ** in one shared place. Open the right-side **Agents** pane
 
 ### Choosing a music source
 
-In the **Music DJ** editor, the **Music Player** field has three buttons: **Spotify**, **YouTube**, and **Custom**. The help text reads "Choose which service Music DJ should use for future music picks. The same choice switches the visible player surface."
+In the **Music DJ** editor, the **Player source** field has three buttons: **Spotify**, **YouTube**, and **Custom**. The help text reads "Choose the service Music DJ plays music from. This also switches the player you see."
 
 Under the buttons, a line shows which source is live now, for example "Visible player: Spotify. Saved provider: Spotify." This source choice is shared across the whole app. It is not saved per chat.
 
@@ -106,12 +106,12 @@ Playing from a folder outside Game Assets needs local access on the server. If y
 
 The **Music Player** appears as a small pill in the top bar on desktop, or a draggable floating widget on mobile. You can hide or show it with a setting.
 
-Open **Settings**, go to the **General** tab, and find the **App Behavior** section. Toggle **Music Player** on or off. The help text reads "Shows the compact Music Player. Switch between Spotify, YouTube, and Custom from the player itself or the Music DJ agent settings." This toggle is always available and is on by default. If it is enabled without Music DJ installed, the desktop or mobile player surface instead reads **Download Music DJ Agent to configure** and provides an **Agent Organizer** button.
+Open **Agents**, open **Music DJ**, and toggle **Music Player** on or off, above **Player source**. It is on by default. The toggle needs the Music DJ agent installed. Without it, the player surface reads **Download Music DJ Agent to configure** and provides an **Agent Organizer** button.
 
 On a fresh profile the visible source starts as **YouTube**. You can change the source three ways:
 
 - Use the small round source switch on the player. Its tooltip reads "Switch to ... player".
-- Use the **Music Player** buttons in the **Music DJ** editor.
+- Use the **Player source** buttons in the **Music DJ** editor.
 - Use a chat's **Music DJ** settings.
 
 The player shows the current track's cover art or thumbnail, title, and artist or channel. Controls depend on the source.
@@ -166,7 +166,7 @@ If Spotify is not connected or lacks playback permission, a Spotify song command
 
 ## Troubleshooting
 
-- The mini player is missing. Turn on **Music Player** in **Settings**, **General** tab, **App Behavior** section.
+- The mini player is missing. Turn on **Music Player** in the **Music DJ** editor.
 - Spotify plays nothing. Playback control needs Spotify Premium and an active Spotify device. Open the desktop app on a device, or click **Enable Marinara player** on desktop.
 - The Spotify login window fails on another machine. Use the "Browser couldn't reach the callback?" paste box, or set `SPOTIFY_REDIRECT_URI` on the server.
 - YouTube search fails. Confirm the **YouTube Data API v3** is enabled for your project and the key is not restricted by HTTP referrer. If you hit the daily quota, try again the next day or use another key.

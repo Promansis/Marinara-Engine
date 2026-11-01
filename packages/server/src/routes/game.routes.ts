@@ -7114,7 +7114,8 @@ export async function gameRoutes(app: FastifyInstance, options: GameRouteOptions
       // keeps running — turning the switch off must not break somebody's campaign.
       if (isCommunityRulesetId(requestedRulesetId) && !(await getCustomAgentImportPolicy(app.db)).enabled) {
         return rejectGenerationOutput(reply, 400, {
-          error: "Imported rulesets are turned off in Settings, so a new game cannot start on one.",
+          error:
+            "Imported rulesets are turned off, so a new game cannot start on one. Allow custom Agent imports and try again.",
           code: "ruleset_imports_disabled",
         });
       }

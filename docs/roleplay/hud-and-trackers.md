@@ -103,11 +103,11 @@ In **Chat Settings → Agents**, open **Trackers Control** and turn a tracker on
 
 ## The Tracker Panel
 
-The **Tracker Panel** is a larger side panel that shows the same tracker data as the compact HUD widgets. It gives the tracker cards more room and adds portrait and thought features. You set it up in **Settings**, under the **Appearance** tab, in the **Tracker Panel** section.
+The **Tracker Panel** is a larger side panel that shows the same tracker data as the compact HUD widgets. It gives the tracker cards more room and adds portrait and thought features. Its look is set from the **Panel settings** menu in the panel header, beside the gear.
 
 To turn it on in a Roleplay chat, open **Chat Settings** and click the **Tracker Panel** button (the die) in its title bar, next to pin and lock. It stays highlighted while the panel is on, and the panel shows beside the chat. Click it again to turn the panel off and hide it. On a computer, the trackers then show in the Trackers window.
 
-On a computer, the panel fits into the space beside your messages, up to the width you choose in **Desktop size**. When the window is too narrow for both, such as with the chats sidebar open, your messages and message box narrow a little so the panel keeps room for its own buttons.
+On a computer, the panel fits into the space beside your messages, up to the width you choose in **Desktop size** in **Panel settings**. When the window is too narrow for both, such as with the chats sidebar open, your messages and message box narrow a little so the panel keeps room for its own buttons.
 
 On a phone or tablet, turning it on puts a Tracker Panel button on the chat that you can drag anywhere. Tap it to open the panel, and tap it again to close it. While the panel or another screen covers the chat, the chat's movable buttons are hidden, and they come back in the same places when you return to the chat. With the panel off, use the separate **World State** and **Player & Tracker** buttons.
 
@@ -122,22 +122,27 @@ Custom field names define the structure and remain stable across tracker runs. T
 
 A character's large card can make a new portrait once the Character Tracker has an image connection. On a compact card, click **Feature character card** to open the large one. The Trackers window on a computer always shows large cards. Hover the portrait and click the eye button to make a new portrait from the **Look**, or the shirt button to make one from the **Look** and **Outfit**. The shirt button appears only when the character has an outfit. The old portrait stays until the new one is ready, and stays if making it fails. Characters shown with their card's avatar or an expression sprite don't have these buttons.
 
-These settings control it:
+The **Panel settings** menu in the panel header controls how it looks:
 
-- **Tracker Panel**: the master on or off toggle, the same one the die in Chat Settings turns on and off. It is on by default. When on, the label reads "Shown in the Roleplay HUD". When off, trackers show in the Trackers window on a computer.
-- **Replace tracker HUD icons**: hides the separate tracker buttons on phones and lets the panel dock to the screen edge instead.
+- **Dock Tracker Panel to edge**: hides the separate tracker buttons on phones and lets the panel dock to the screen edge instead.
 - **Use expression sprites for tracker portraits**: lets tracker portraits use a character's expression sprite (their current emotion portrait) instead of the plain avatar, when one exists. Expression sprites are explained in [Character Sprites](../characters/sprites.md).
 - **Panel background**: a color or gradient picker for the panel's background.
 - **Desktop size**: choose the panel width. The options are **Compact**, **Standard**, and **Expanded**.
-- **Thought display mode**: choose how a character's thoughts appear. **Docked** opens them inside the character card. **Floating** opens them as a bubble beside the portrait.
-- **Always show Docked thoughts**: when **Thought display mode** is **Docked**, keeps every featured character's thought visible instead of hiding it behind a button.
+- **Thought display**: choose how a character's thoughts appear. **Docked** opens them inside the character card. **Floating** opens them as a bubble beside the portrait.
+- **Stat display**: show stats as bars or gauges.
+- **Always show Docked thoughts**: when **Thought display** is **Docked**, keeps every featured character's thought visible instead of hiding it behind a button.
+- **Card order** and **Card colors**: reorder the cards and color them for the open chat.
+
+Two settings stay in **Settings → Appearance → Roleplay**, in the **Tracker Panel** section:
+
+- **Tracker Panel**: the master on or off toggle, the same one the die in Chat Settings turns on and off. It is on by default. When on, the label reads "Shown in the Roleplay HUD". When off, trackers show in the Trackers window on a computer.
 - **Temperature unit**: choose **°C** (Celsius) or **°F** (Fahrenheit) for temperature displays. The default is °C. This changes only the display, not the saved world-state value.
 
 ## The State Editor
 
 The **State Editor** shows every tracker of the current turn in one window, so you can find a value and fix it without opening each tracker. It also works on a phone.
 
-To open it, click the gear (**Tracker panel settings**) in the Tracker Panel header, then the **{ }** button (**Open in State Editor**). The **{ }** button is also in the title bar of the **Trackers** window. It is in every tracker you popped out into its own window. On a phone it is in the **World State** and **Player & Tracker** sheets. Where a control belongs to one tracker, the editor opens on that tracker's own section: World State opens on **Scene**, Present Characters on **Present Characters**, and so on. In **Agent Suite**, the **Tracker Data** header has an **Open in State Editor** link too. It opens on the section of the agent you have selected.
+To open it, click the gear (**Open tracker settings**) in the Tracker Panel header, then the **{ }** button (**Open in State Editor**). The **{ }** button is also in the title bar of the **Trackers** window. It is in every tracker you popped out into its own window. On a phone it is in the **World State** and **Player & Tracker** sheets. Where a control belongs to one tracker, the editor opens on that tracker's own section: World State opens on **Scene**, Present Characters on **Present Characters**, and so on. In **Agent Suite**, the **Tracker Data** header has an **Open in State Editor** link too. It opens on the section of the agent you have selected.
 
 - **Which turn you're editing:** the line under the search box says which message and swipe the state belongs to, for example "Editing message #12 · swipe 2 of 3". **Latest** marks the newest turn, and a short excerpt of the message helps you match it to the chat. Each swipe has its own state, so swipe first if you want to fix a different one.
 - **Sections:** **Scene**, **Present Characters**, **Persona Stats**, **Inventory Tracker**, **Custom Tracker Fields**, and **Active Quests**. On a phone they are a row of chips above the editor. A dot marks a section you changed.

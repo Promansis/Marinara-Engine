@@ -29,9 +29,9 @@ The tour has 18 steps. Here they are in order, with the exact title of each card
 13. **Home: Your Story Hub** Goes back to the Home screen and highlights its top part, with the buttons that start a new chat. The card explains that Home is where you continue a recent chat, start a new one and arrange your widgets.
 14. **Ask Me Where Things Are** Highlights the search bar at the top of Home. On a phone, the card tells you to pull down from the top bar instead.
 15. **Guides and Home Controls** Highlights the **Documentation**, **Tutorial**, **FAQ** and **Widgets** bookmarks on Home.
-16. **Migrating from SillyTavern?** Highlights the **Settings** button again and opens **Settings** to the **Imports** tab.
+16. **Migrating from SillyTavern?** Highlights the **Settings** button again and opens **Settings** to the **Data** tab.
 17. **You're All Set!** Highlights the **Connections** panel button one more time.
-18. **One Last Thing: Guide Language** Highlights the **Documentation** bookmark. This closing card has a **Documentation** button and a **Documentation Language** list. Pick the language you want the in-app guides in. Guides that are not translated yet show in English.
+18. **One Last Thing: Guide Language** Highlights the **Documentation** bookmark. This closing card has a **Documentation** button and a language list. Pick the language you want the in-app guides in. Guides that are not translated yet show in English.
 
 To move to the next card, click the **Next** button. On the last step, that button reads **Get Started** instead.
 
@@ -39,7 +39,7 @@ To move to the next card, click the **Next** button. On the last step, that butt
 
 You do not have to finish the whole tour. Every card has a skip button. On the first card it reads **Skip Tutorial**. On every card after that it reads **Skip**.
 
-Clicking **Skip** or **Skip Tutorial** ends the tour right away. Clicking **Get Started** on the last card also ends it. Both actions mark the tour as done, so it will not start on its own again. Only **Get Started** saves the guide language you picked on the last card; **Skip** leaves it as it was. You can change it later in **Settings** under **General**. Finishing or skipping the tour can also unlock an achievement.
+Clicking **Skip** or **Skip Tutorial** ends the tour right away. Clicking **Get Started** on the last card also ends it. Both actions mark the tour as done, so it will not start on its own again. Only **Get Started** saves the guide language you picked on the last card; **Skip** leaves it as it was. You can change it later in **Settings** under **General**, as **Help pages language**, or in the help viewer. Finishing or skipping the tour can also unlock an achievement.
 
 You can watch the tour again any time. On the Home screen, click the **Tutorial** bookmark, or **Replay tutorial** in the **Learn the engine** widget. The guided tour starts over from the first step. This is handy if you skipped it early and want the full walk-through later.
 

@@ -13,7 +13,7 @@ Keep these properties true:
 5. Backup and profile import clear approval and enabled state.
 6. Professor Mari may create and update drafts but has no action that approves or enables them.
 7. Every source other than `professor_mari` is external, including `external`, `local`, `legacy`, `profile_import`, and unknown values normalized to `legacy`.
-8. External records are absent from management and runtime responses unless `ENABLE_EXTERNAL_EXTENSIONS=true` and the persisted Danger Zone opt-in is also true.
+8. External records are absent from management and runtime responses unless `ENABLE_EXTERNAL_EXTENSIONS=true` and the persisted **Allow third-party extension imports** opt-in is also true.
 9. Closing either gate disables stored external records and stops active server processes. Browser runtime polling removes active browser workers.
 10. Sandboxed Browser code never executes in the Marinara document. Only an external Browser Extension with exact-hash-approved `full_page_access` may use the separate page runtime. Server code never executes in the Marinara server process.
 11. There is no URL installer, remote catalog, or automatic updater.
@@ -27,7 +27,7 @@ The gates are enforced in routes and runtime services. Hiding controls is not a 
 
 ## Storage and policy
 
-The `installed_extensions` file table stores metadata, executable code, `contentHash`, `approvedHash`, source, and up to ten prior executable revisions. Private extension settings use `app_settings` keys prefixed with `extension-storage:`. The Danger Zone opt-in uses `external-extensions-enabled`.
+The `installed_extensions` file table stores metadata, executable code, `contentHash`, `approvedHash`, source, and up to ten prior executable revisions. Private extension settings use `app_settings` keys prefixed with `extension-storage:`. The **Allow third-party extension imports** opt-in uses `external-extensions-enabled`.
 
 Startup runs `preparePersonalExtensionTrust`. A legacy row without a hash is retained but disabled and unapproved. A row whose stored hash no longer matches its executable fields is also disabled and re-fingerprinted.
 
@@ -38,7 +38,7 @@ Startup runs `preparePersonalExtensionTrust`. A legacy row without a hash is ret
 The management surface is under `/api/personal-extensions`:
 
 - `GET /policy` returns both gate states and server sandbox availability.
-- `PATCH /policy/external` changes the Danger Zone opt-in and refuses `true` unless the `.env` gate is open.
+- `PATCH /policy/external` changes the **Allow third-party extension imports** opt-in and refuses `true` unless the `.env` gate is open.
 - `GET /` lists Professor drafts plus external drafts only when both gates are open.
 - `POST /` imports an External Extension and is rejected unless both gates are open.
 - `PATCH /:id` edits or disables a draft.

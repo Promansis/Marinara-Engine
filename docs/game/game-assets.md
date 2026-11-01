@@ -36,7 +36,7 @@ The **Asset Browser** is a file manager for your game assets. You can open it tw
 From **Settings**:
 
 1. Open **Settings**.
-2. Go to the **Imports** tab.
+2. Go to the **Data** tab.
 3. Find the **Game Assets** section.
 4. Click the **Asset Browser** button.
 
@@ -65,7 +65,7 @@ You must be inside a category folder first. If you drop files at the top level, 
 
 ### Upload from Settings
 
-1. Open **Settings** and go to the **Imports** tab.
+1. Open **Settings** and go to the **Data** tab.
 2. Find the **Game Assets** section.
 3. Pick a category from the **Type** menu: **Music**, **Ambient**, **Sound Effects**, **Sprites**, or **Backgrounds**.
 4. Set the destination in the **Folder** box, or keep the suggested default.

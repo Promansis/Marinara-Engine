@@ -701,7 +701,7 @@ export async function docsRoutes(app: FastifyInstance) {
 
   /**
    * Switch the served documentation language. Downloads the language's pack
-   * into the data dir when it isn't installed yet (Download & Replace), then
+   * into the data dir when it isn't installed yet (Download & replace docs), then
    * flips the setting and removes every other downloaded pack. Never mutates docs/.
    */
   app.put("/language", async (req, reply) => {
