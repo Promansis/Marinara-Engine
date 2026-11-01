@@ -422,10 +422,6 @@ for (const theme of ["dark", "light"] as const) {
         "border-top-color",
         await renderedColor(`color-mix(in oklab, ${border} 55%, transparent)`),
       );
-      await expect(page.getByRole("button", { name: /^Quick Access/u }).locator("../..")).toHaveCSS(
-        "border-top-color",
-        await renderedColor(`color-mix(in oklab, ${border} 60%, transparent)`),
-      );
       if (!info.project.name.includes("mobile")) {
         const edgeColor = await renderedColor(`color-mix(in srgb, ${color} 14%, var(--background) 86%)`);
         await expect

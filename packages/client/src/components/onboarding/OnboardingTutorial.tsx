@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 import { useState, useEffect, useCallback, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { APP_VERSION } from "@marinara-engine/shared";
+import { APP_VERSION, type SettingsTabId } from "@marinara-engine/shared";
 import { MOBILE_SHELL_MEDIA_QUERY, useUIStore, type ChatModeShortcut } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { useTrackAchievement } from "../../hooks/use-achievements";
@@ -49,7 +49,7 @@ interface TourStep {
   /** Keep the tutorial card centered while still spotlighting its target */
   centerCard?: boolean;
   /** Optional settings tab to show when the Settings panel is open */
-  settingsTab?: string;
+  settingsTab?: SettingsTabId;
   /** Render the documentation-language picker inside this step's card */
   docsLanguagePicker?: boolean;
   /** Professor Mari sprite to display */
@@ -187,7 +187,7 @@ const STEPS: TourStep[] = [
   {
     target: "panel-settings",
     title: "Migrating from SillyTavern?",
-    body: "If you have characters, chats, or presets from SillyTavern, open Settings and use the Import tab. I can bring those files in so you do not have to rebuild your library by hand.",
+    body: "If you have characters, chats, or presets from SillyTavern, open Settings and use the Data tab. I can bring those files in so you do not have to rebuild your library by hand.",
     side: "bottom",
     openPanel: "settings",
     settingsTab: "import",

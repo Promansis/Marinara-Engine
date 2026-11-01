@@ -321,7 +321,7 @@ test("UX sweep: Use a voice per character keeps Text to Speech settings saved el
   }
 });
 
-test("UX sweep: Appearance groups, quick access, width and hidden-panel state", async ({ page }, testInfo) => {
+test("UX sweep: Appearance groups, width and hidden-panel state", async ({ page }, testInfo) => {
   await page.goto("/");
   await clickTopbarPanel(page, "settings");
   await page.getByRole("tab", { name: "Appearance", exact: true }).click();
@@ -339,7 +339,7 @@ test("UX sweep: Appearance groups, quick access, width and hidden-panel state", 
   await expect(modes.getByRole("button", { name: "App", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(
     page.getByRole("tabpanel", { name: "Appearance", exact: true }).locator('[id^="settings-section-"]'),
-  ).toHaveCount(4);
+  ).toHaveCount(5);
   await modes.getByRole("button", { name: "Roleplay", exact: true }).click();
   const panel = page.getByRole("tabpanel", { name: "Appearance", exact: true });
   await expect(panel.locator("#settings-section-roleplay-tracker")).toBeVisible();

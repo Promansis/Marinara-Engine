@@ -67,7 +67,7 @@ test("shell panel focus returns to its opener and profile import is keyboard rea
   await expect(panel).toBeVisible();
   await expect.poll(() => panel.evaluate((element) => document.activeElement === element)).toBe(true);
 
-  await page.getByRole("tab", { name: "Imports", exact: true }).click();
+  await page.getByRole("tab", { name: "Data", exact: true }).click();
   const importProfile = page.getByRole("button", { name: "Import Profile (JSON/ZIP)", exact: true });
   await expect(importProfile).toBeVisible();
   const hiddenInput = page.locator('input[type="file"][accept=".json,.zip,application/json,application/zip"]');

@@ -6,7 +6,7 @@
  *
  * Adding a setting: add it here and every surface that reads this finds it.
  */
-export type SettingsTabId = "general" | "appearance" | "generations" | "addons" | "import" | "advanced";
+export type SettingsTabId = "general" | "appearance" | "generations" | "import" | "advanced";
 
 export type SettingsSectionId =
   | "application"
@@ -31,6 +31,7 @@ export type SettingsSectionId =
   | "chat-backgrounds"
   | "prompt-overrides"
   | "personal-extensions"
+  | "extensions-imports"
   | "theme-library"
   | "profile-marinara"
   | "sillytavern-import"
@@ -77,31 +78,25 @@ export const SETTINGS_TABS: readonly {
     id: "appearance",
     label: "Appearance",
     description: "Theme, chat display, art, motion, and backgrounds.",
-    aliases: ["appearance", "style", "display", "font", "background"],
+    aliases: ["appearance", "style", "display", "font", "background", "themes", "custom css"],
   },
   {
     id: "generations",
-    label: "Generations",
+    label: "Images & Video",
     description: "Image, video, asset, and prompt defaults.",
     aliases: ["generation", "image", "video", "assets", "prompts"],
   },
   {
-    id: "addons",
-    label: "Addons",
-    description: "Personal extensions and custom themes.",
-    aliases: ["addons", "extensions", "custom css", "themes"],
-  },
-  {
     id: "import",
-    label: "Imports",
-    description: "Profiles, assets, and data transfer.",
-    aliases: ["import", "restore", "profile", "transfer"],
+    label: "Data",
+    description: "Import, export, backups, storage, and game assets.",
+    aliases: ["data", "import", "export", "restore", "profile", "transfer", "backup", "storage"],
   },
   {
     id: "advanced",
     label: "Advanced",
-    description: "Updates, diagnostics, backups, and tools.",
-    aliases: ["advanced", "admin", "debug", "backup", "diagnostics", "storage"],
+    description: "Updates, diagnostics, extensions, and tools.",
+    aliases: ["advanced", "admin", "debug", "diagnostics", "extensions", "addons"],
   },
 ];
 
@@ -279,15 +274,22 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionMeta[] = [
     aliases: ["prompt", "template", "override", "video prompt", "image prompt"],
   },
   {
+    id: "extensions-imports",
+    tab: "advanced",
+    label: "Extensions & imports",
+    description: "Custom Agent and extension import switches, plus your extensions.",
+    aliases: ["agent imports", "custom agents", "third-party", "external extensions", "addons", "plugins"],
+  },
+  {
     id: "personal-extensions",
-    tab: "addons",
+    tab: "advanced",
     label: "Personal Extensions",
     description: "Sandboxed extension drafts authored by Professor Mari.",
     aliases: ["extensions", "addons", "local code", "browser", "server", "professor mari"],
   },
   {
     id: "theme-library",
-    tab: "addons",
+    tab: "appearance",
     label: "Theme Library",
     description: "Synced themes and custom theme CSS.",
     aliases: ["themes", "custom css", "css", "library", "export theme"],
@@ -371,14 +373,14 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionMeta[] = [
   },
   {
     id: "backup-export",
-    tab: "advanced",
+    tab: "import",
     label: "Backup & Export",
     description: "Backups and manual export tools.",
     aliases: ["backup", "export", "download", "archive", "automatic", "scheduled"],
   },
   {
     id: "storage-optimization",
-    tab: "advanced",
+    tab: "import",
     label: "Storage Optimization",
     description: "Find and remove abandoned avatar files.",
     aliases: ["storage", "avatar", "cleanup", "optimize", "orphan", "abandoned"],

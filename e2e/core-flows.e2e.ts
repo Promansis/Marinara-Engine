@@ -588,8 +588,7 @@ test("Settings switches share one centered track and thumb geometry", async ({ p
     { id: "general", label: "General" },
     { id: "appearance", label: "Appearance" },
     { id: "generations", label: "Images & Video" },
-    { id: "addons", label: "Addons" },
-    { id: "import", label: "Imports" },
+    { id: "import", label: "Data" },
     { id: "advanced", label: "Advanced" },
   ]) {
     await page.getByRole("tab", { name: label, exact: true }).click();
@@ -721,7 +720,7 @@ test("Art scale sliders stay interactive at the largest display size", async ({ 
 test("custom theme live preview batches stylesheet updates while typing", async ({ page }) => {
   await page.goto("/");
   await clickTopbarPanel(page, "settings");
-  await page.getByRole("tab", { name: "Addons" }).click();
+  await page.getByRole("tab", { name: "Appearance", exact: true }).click();
   await page.getByRole("button", { name: "Create Theme" }).click();
 
   const themeCssEditor = page.getByPlaceholder("/* Enter your CSS here... */");
@@ -8645,7 +8644,8 @@ test("legacy browser records are cleaned while extension imports stay locked", a
   ).toBeUndefined();
 
   await clickTopbarPanel(page, "settings");
-  await page.getByRole("tab", { name: "Addons" }).click();
+  await page.getByRole("tab", { name: "Advanced" }).click();
+  await expect(page.locator("#settings-section-extensions-imports")).toBeVisible();
   await expect(page.getByText("Personal Extensions", { exact: true }).first()).toBeVisible();
   await expect(
     page
@@ -8660,7 +8660,6 @@ test("legacy browser records are cleaned while extension imports stay locked", a
   await expect(page.getByRole("button", { name: "Import Extension Folder" })).toHaveCount(0);
   await expect(page.getByText("External Extensions", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Supported local formats", { exact: true })).toHaveCount(0);
-  await expect(page.getByText("Theme Library", { exact: true })).toBeVisible();
   await expect(page.getByText("Legacy Extension Cleanup", { exact: true })).toHaveCount(0);
   await expect(page.getByText(/Extensions have been removed/i)).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Import CSS Extension/i })).toHaveCount(0);
@@ -8670,8 +8669,9 @@ test("legacy browser records are cleaned while extension imports stay locked", a
 test("Personal Extensions default to the Professor Mari-only locked workflow", async ({ page }) => {
   await page.goto("/");
   await clickTopbarPanel(page, "settings");
-  await page.getByRole("tab", { name: "Addons" }).click();
+  await page.getByRole("tab", { name: "Advanced" }).click();
 
+  await expect(page.locator("#settings-section-extensions-imports")).toBeVisible();
   await expect(page.getByText("Personal Extensions", { exact: true }).first()).toBeVisible();
   await expect(
     page
@@ -8696,7 +8696,7 @@ test("Personal Extensions default to the Professor Mari-only locked workflow", a
       const clearAll = [...document.querySelectorAll("button")].find(
         (button) => button.textContent?.trim() === "Clear All Data",
       );
-      return Boolean(clearAll && (clearAll.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
+      return Boolean(clearAll && (clearAll.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_PRECEDING) !== 0);
     }),
   ).toBe(true);
 
@@ -8716,7 +8716,7 @@ test("Personal Extensions default to the Professor Mari-only locked workflow", a
   expect(warningColors.warning).toBe(warningColors.accent);
 });
 
-test("external Agent imports require the Danger Zone gate and explicit capabilities", async ({
+test("external Agent imports require the Extensions & imports gate and explicit capabilities", async ({
   page,
   request,
 }, testInfo) => {
@@ -8772,7 +8772,7 @@ test("external Agent imports require the Danger Zone gate and explicit capabilit
 
     await page.goto("/");
     await clickTopbarPanel(page, "agents");
-    const disabledHelp = 'Enable "Allow custom Agent imports" in Advanced Settings → Danger Zone first.';
+    const disabledHelp = 'Enable "Allow custom Agent imports" in Settings → Advanced → Extensions & imports first.';
     const lockedImportButton = page.getByTitle(disabledHelp).first();
     await expect(lockedImportButton).toHaveAttribute("aria-disabled", "true");
     await lockedImportButton.dispatchEvent("click");
@@ -19711,7 +19711,7 @@ test("Settings profile import reuses its preview upload and skips one invalid as
   try {
     await page.goto("/");
     await clickTopbarPanel(page, "settings");
-    await page.getByRole("tab", { name: "Imports", exact: true }).click();
+    await page.getByRole("tab", { name: "Data", exact: true }).click();
     await page.locator('input[type="file"][accept*="application/zip"]').setInputFiles({
       name: `profile-import-${suffix}.json`,
       mimeType: "application/json",

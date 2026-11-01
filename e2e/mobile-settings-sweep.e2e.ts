@@ -154,7 +154,7 @@ for (const theme of ["dark", "light"] as const) {
       (await request.patch("/api/personal-extensions/revision-history", { data: { limit: 10 } })).ok(),
     ).toBeTruthy();
     try {
-      await prepare(page, theme, { rightPanelOpen: true, rightPanel: "settings", settingsTab: "addons" });
+      await prepare(page, theme, { rightPanelOpen: true, rightPanel: "settings", settingsTab: "advanced" });
       await page.goto("/");
       const limit = page.getByLabel("Previous revisions to keep", { exact: true });
       await expect(limit).toHaveValue("10");
@@ -198,7 +198,7 @@ for (const theme of ["dark", "light"] as const) {
       }
       await route.fulfill({ json: { limit: storedLimit } });
     });
-    await prepare(page, theme, { rightPanelOpen: true, rightPanel: "settings", settingsTab: "addons" });
+    await prepare(page, theme, { rightPanelOpen: true, rightPanel: "settings", settingsTab: "advanced" });
     await page.goto("/");
     const limit = page.getByLabel("Previous revisions to keep", { exact: true });
     await expect(limit).toHaveValue("3");

@@ -1442,7 +1442,8 @@ export async function personalExtensionsRoutes(app: FastifyInstance) {
     const policy = await getPersonalExtensionPolicy(app.db);
     if (!policy.externalExtensionsEnabled) {
       return reply.status(403).send({
-        error: "External Extension imports require both ENABLE_EXTERNAL_EXTENSIONS=true and the Danger Zone opt-in.",
+        error:
+          "External Extension imports require both ENABLE_EXTERNAL_EXTENSIONS=true and the opt-in under Settings → Advanced → Extensions & imports.",
       });
     }
     const input = createPersonalExtensionSchema.parse(req.body);

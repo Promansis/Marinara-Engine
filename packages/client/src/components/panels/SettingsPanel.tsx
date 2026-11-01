@@ -36,14 +36,12 @@ import { useLocalizedUiText } from "../../localization/use-localized-ui-text";
 import {
   SETTINGS_SEARCHABLE_CONTROLS,
   SETTINGS_SECTION_BY_ID,
-  SETTINGS_SECTIONS,
   isOmnibarSettingsTarget,
   searchSettings,
   settingsControlDescription,
   settingsControlLabel,
   type SettingsSearchResult,
   type SettingsSectionId,
-  type SettingsSectionMeta,
   type SettingsTabId,
 } from "../../lib/settings-registry";
 import { openSettingsControlHome } from "../../lib/state-navigation";
@@ -133,7 +131,6 @@ import {
   Paintbrush,
   AlertTriangle,
   ShieldAlert,
-  Tag,
   Code,
   Plus,
   Save,
@@ -264,19 +261,11 @@ const TABS = [
     descriptionKey: "settings.tabs.generations.description",
   },
   {
-    id: "addons",
-    label: "Addons",
-    labelKey: "settings.tabs.addons.label",
-    icon: Puzzle,
-    description: "Personal Extensions and custom themes.",
-    descriptionKey: "settings.tabs.addons.description",
-  },
-  {
     id: "import",
-    label: "Imports",
+    label: "Data",
     labelKey: "settings.tabs.imports.label",
     icon: Download,
-    description: "Imports, asset folders, and data transfer.",
+    description: "Import, export, backups, storage, and game assets.",
     descriptionKey: "settings.tabs.imports.description",
   },
   {
@@ -284,7 +273,7 @@ const TABS = [
     label: "Advanced",
     labelKey: "settings.tabs.advanced.label",
     icon: Terminal,
-    description: "Admin access, updates, tools, backups, and danger zone.",
+    description: "Admin access, updates, tools, extensions, and danger zone.",
     descriptionKey: "settings.tabs.advanced.description",
   },
 ] as const satisfies readonly { id: SettingsTabId; [key: string]: unknown }[];
@@ -434,17 +423,9 @@ const SETTINGS_COMPONENTS: Record<(typeof TABS)[number]["id"], React.FC> = {
   general: React.memo(GeneralSettings),
   appearance: React.memo(AppearanceSettings),
   generations: React.memo(GenerationsSettings),
-  addons: React.memo(AddonsSettings),
   import: React.memo(ImportSettings),
   advanced: React.memo(AdvancedSettings),
 };
-
-function normalizeSettingsTab(tab: string): (typeof TABS)[number]["id"] {
-  if (tab === "themes") return "addons";
-  if (tab === "extensions") return "addons";
-  if (tab === "import") return "import";
-  return TABS.some((entry) => entry.id === tab) ? (tab as (typeof TABS)[number]["id"]) : "general";
-}
 
 function getSettingsSectionAnchorId(sectionId: SettingsSectionId) {
   return `settings-section-${sectionId}`;
@@ -1511,47 +1492,19 @@ export function SettingsPanel() {
   const { t: localizeUi } = useUiTranslation();
   const { t } = useTranslation();
   const localize = useLocalizedUiText();
-  const rawSettingsTab = useUIStore((s) => s.settingsTab);
+  const settingsTab = useUIStore((s) => s.settingsTab);
   const setSettingsTab = useUIStore((s) => s.setSettingsTab);
   const settingsTargetControlId = useUIStore((s) => s.settingsTargetControlId);
   const setSettingsTargetControlId = useUIStore((s) => s.setSettingsTargetControlId);
   const settingsTargetSectionId = useUIStore((s) => s.settingsTargetSectionId);
   const setSettingsTargetSectionId = useUIStore((s) => s.setSettingsTargetSectionId);
-  const settingsTab = normalizeSettingsTab(rawSettingsTab);
   const [settingsSearch, setSettingsSearch] = useState("");
-  const [quickAccessOpen, setQuickAccessOpen] = useState(false);
   const [appearanceGroup, setAppearanceGroup] = useState<AppearanceGroup>("app");
   const activePanelRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
-    if (rawSettingsTab !== settingsTab) {
-      setSettingsTab(settingsTab);
-    }
-  }, [rawSettingsTab, setSettingsTab, settingsTab]);
-
   mountedSettingsTabs.add(settingsTab);
 
-  const activeSections = SETTINGS_SECTIONS.filter((section) => section.tab === settingsTab);
   const searchResults = searchSettings(settingsSearch, localize, t);
-
-  const jumpToSection = useCallback(
-    (section: SettingsSectionMeta) => {
-      if (isOmnibarSettingsTarget({ sectionId: section.id })) {
-        useUIStore.getState().openOmnibarSettings();
-        return;
-      }
-      setSettingsTab(section.tab);
-      if (section.tab === "appearance") setAppearanceGroup(appearanceGroupForSection(section.id));
-      mountedSettingsTabs.add(section.tab);
-      window.requestAnimationFrame(() => {
-        const panel = activePanelRef.current;
-        const target = document.getElementById(getSettingsSectionAnchorId(section.id));
-        if (!panel || !target) return;
-        panel.scrollTo({ top: Math.max(0, target.offsetTop - 12), behavior: "smooth" });
-      });
-    },
-    [setSettingsTab, mountedSettingsTabs],
-  );
 
   const jumpToSearchResult = useCallback(
     (result: SettingsSearchResult) => {
@@ -1605,10 +1558,9 @@ export function SettingsPanel() {
   }, [jumpToSearchResult, setSettingsTargetControlId, settingsTargetControlId]);
 
   // A jump that names a section rather than one control, which is what the
-  // omnibar's section rows ask for. It goes through `jumpToSearchResult` rather
-  // than `jumpToSection` because it can arrive from another tab with the panel
-  // freshly mounted: that path waits two frames and falls back to the section
-  // anchor, where `jumpToSection`'s single frame can still see the old panel.
+  // omnibar's section rows ask for. It can arrive from another tab with the
+  // panel freshly mounted, so `jumpToSearchResult` waits two frames and falls
+  // back to the section anchor.
   useEffect(() => {
     if (!settingsTargetSectionId) return;
     const section = SETTINGS_SECTION_BY_ID.get(settingsTargetSectionId);
@@ -1733,44 +1685,6 @@ export function SettingsPanel() {
             );
           })}
         </div>
-
-        {activeSections.length > 1 && (
-          <div className="min-w-0 rounded-xl border border-[var(--border)]/60 bg-[var(--background)]/24 p-0.5 shadow-[inset_0_1px_0_color-mix(in_srgb,var(--foreground)_6%,transparent)]">
-            <div className="flex max-w-full flex-wrap items-center gap-1">
-              <button
-                type="button"
-                onClick={() => setQuickAccessOpen((open) => !open)}
-                aria-expanded={quickAccessOpen}
-                className={cn(SETTINGS_BUTTON_CLASS, "max-w-full")}
-                title={localize(quickAccessOpen ? "Collapse Quick Access" : "Expand Quick Access")}
-              >
-                <Tag size="0.75rem" className="shrink-0" />
-                <span>
-                  {localize("Quick Access")} ({activeSections.length})
-                </span>
-                <ChevronDown
-                  size="0.75rem"
-                  className={cn("shrink-0 transition-transform", quickAccessOpen ? "rotate-180" : "")}
-                />
-              </button>
-              {quickAccessOpen &&
-                activeSections.map((section) => (
-                  <button
-                    key={section.id}
-                    type="button"
-                    onClick={() => jumpToSection(section)}
-                    className={cn(SETTINGS_BUTTON_CLASS, "max-w-full")}
-                    title={localizeUi("ui.panels.settingspanel.value1Value2", {
-                      value1: localize(section.label),
-                      value2: localize(section.description),
-                    })}
-                  >
-                    <span>{localize(section.label)}</span>
-                  </button>
-                ))}
-            </div>
-          </div>
-        )}
       </div>
 
       <div className="relative min-h-0 flex-1">
@@ -4253,6 +4167,8 @@ function AppearanceSettings({ group = "app" }: { group?: AppearanceGroup }) {
             </div>
           </SettingsSection>
 
+          <ThemesSettings />
+
           <SettingsSection
             title={localizeUi("settings.sections.textScale.title")}
             description={localizeUi("settings.sections.textScale.description")}
@@ -5443,25 +5359,9 @@ function GenerationsSettings() {
   );
 }
 
-function AddonsSettings() {
-  const { t: localizeUi } = useUiTranslation();
-  const { data: extensionPolicy } = usePersonalExtensionPolicy();
-  return (
-    <div className="flex flex-col gap-3">
-      <SettingsIntro>
-        {localizeUi("ui.panels.addonssettings.privateCustomBehaviorAndAppearanceSyncedByThisMarinara")}
-      </SettingsIntro>
-      <ExtensionRevisionHistorySettings />
-      <PersonalExtensionsSettings showIntro={false} />
-      {extensionPolicy?.externalExtensionsEnabled && <ExternalExtensionsSettings />}
-      <ThemesSettings showIntro={false} />
-    </div>
-  );
-}
-
 const THEME_PREVIEW_DEBOUNCE_MS = 300;
 
-function ThemesSettings({ showIntro = true }: { showIntro?: boolean } = {}) {
+function ThemesSettings() {
   const { t: localizeUi } = useUiTranslation();
   const { data: syncedThemes = [], isLoading } = useThemes();
   const createTheme = useCreateTheme();
@@ -5765,12 +5665,6 @@ function ThemesSettings({ showIntro = true }: { showIntro?: boolean } = {}) {
   // ── Theme List View ──
   return (
     <div className="flex flex-col gap-3">
-      {showIntro && (
-        <SettingsIntro>
-          {localizeUi("ui.panels.themessettings.createOrImportCustomCssThemesThemesSyncAcross")}
-        </SettingsIntro>
-      )}
-
       <SettingsSection
         title={localizeUi("settings.sections.themeLibrary.title")}
         description={localizeUi("settings.sections.themeLibrary.componentDescription")}
@@ -6604,9 +6498,7 @@ function ImportSettings() {
 
   return (
     <div className="flex flex-col gap-3">
-      <SettingsIntro>
-        {localizeUi("ui.panels.importsettings.importDataFromMarinaraExportsSillytavernOrAssetFolders")}
-      </SettingsIntro>
+      <SettingsIntro>{localizeUi("ui.panels.importsettings.importExportBackUpAndTidyYourMarinaraData")}</SettingsIntro>
 
       <SettingsSection
         title={localizeUi("settings.sections.profileMarinara.title")}
@@ -6779,6 +6671,8 @@ function ImportSettings() {
         </div>
       </SettingsSection>
 
+      <BackupExportSettings />
+      <StorageOptimizationSettings />
       <GameAssetsSettings />
     </div>
   );
@@ -6910,155 +6804,10 @@ function ManualUpdateCommand({ command }: { command: string }) {
   );
 }
 
-function AdvancedSettings() {
+function BackupExportSettings() {
   const { t: localizeUi } = useUiTranslation();
-  const { t } = useTranslation();
-  const activeChatId = useChatStore((state) => state.activeChatId);
-  const { data: activeChat, isLoading: isActiveChatLoading } = useChat(activeChatId);
-  const { data: rawConnections, isLoading: isConnectionsLoading } = useConnections();
-  const showTimestamps = useUIStore((s) => s.showTimestamps);
-  const setShowTimestamps = useUIStore((s) => s.setShowTimestamps);
-  const showModelName = useUIStore((s) => s.showModelName);
-  const setShowModelName = useUIStore((s) => s.setShowModelName);
-  const showTokenUsage = useUIStore((s) => s.showTokenUsage);
-  const setShowTokenUsage = useUIStore((s) => s.setShowTokenUsage);
-  const showContextUsage = useUIStore((s) => s.showContextUsage);
-  const setShowContextUsage = useUIStore((s) => s.setShowContextUsage);
-  const showMessageNumbers = useUIStore((s) => s.showMessageNumbers);
-  const setShowMessageNumbers = useUIStore((s) => s.setShowMessageNumbers);
-  const showHistoryTrimNotice = useUIStore((s) => s.showHistoryTrimNotice);
-  const setShowHistoryTrimNotice = useUIStore((s) => s.setShowHistoryTrimNotice);
-  const showCharactersInPersonaPickers = useUIStore((s) => s.showCharactersInPersonaPickers);
-  const setShowCharactersInPersonaPickers = useUIStore((s) => s.setShowCharactersInPersonaPickers);
-  const guideGenerations = useUIStore((s) => s.guideGenerations);
-  const setGuideGenerations = useUIStore((s) => s.setGuideGenerations);
-  const includeReasoningInExports = useUIStore((s) => s.includeReasoningInExports);
-  const setIncludeReasoningInExports = useUIStore((s) => s.setIncludeReasoningInExports);
-  const includePrivateNotesInExports = useUIStore((s) => s.includePrivateNotesInExports);
-  const setIncludePrivateNotesInExports = useUIStore((s) => s.setIncludePrivateNotesInExports);
-  const debugMode = useUIStore((s) => s.debugMode);
-  const setDebugMode = useUIStore((s) => s.setDebugMode);
-  const clearAllData = useClearAllData();
-  const expungeData = useExpungeData();
-  const [selectedScopes, setSelectedScopes] = useState<ExpungeScope[]>([]);
-  const [confirmAction, setConfirmAction] = useState<"selected" | "all" | null>(null);
   const [exportingProfile, setExportingProfile] = useState(false);
   const [exportProfileDialogOpen, setExportProfileDialogOpen] = useState(false);
-  const [refreshingSpa, setRefreshingSpa] = useState(false);
-  const [adminSecret, setAdminSecret] = useState(() => localStorage.getItem(ADMIN_SECRET_STORAGE_KEY) ?? "");
-  const restartServer = useMutation({
-    mutationFn: () => api.post<{ status: "restarting" }>("/admin/restart", { confirm: true }),
-    onSuccess: () => toast.success(localizeUi("settings.serverRestart.success")),
-    onError: (error) => {
-      toast.error(getPrivilegedActionErrorMessage(error, localizeUi("settings.serverRestart.error")));
-    },
-  });
-  const { data: extensionPolicy, isLoading: extensionPolicyLoading } = usePersonalExtensionPolicy();
-  const setExternalExtensionsEnabled = useSetExternalExtensionsEnabled();
-  const { data: agentImportPolicy, isLoading: agentImportPolicyLoading } = useAgentImportPolicy();
-  const setAgentImportsEnabled = useSetAgentImportsEnabled();
-  type AvatarStorageSummary = { files: number; bytes: number; minimumAgeMinutes: number };
-  const [avatarStorageSummary, setAvatarStorageSummary] = useState<AvatarStorageSummary | null>(null);
-  const scanAvatarStorage = useMutation({
-    mutationFn: () => api.get<AvatarStorageSummary>("/admin/avatar-storage/abandoned"),
-    onSuccess: setAvatarStorageSummary,
-    onError: (error) => {
-      toast.error(getPrivilegedActionErrorMessage(error, localizeUi("settings.storageOptimization.error")));
-    },
-  });
-  const cleanAvatarStorage = useMutation({
-    mutationFn: () => api.post<AvatarStorageSummary>("/admin/avatar-storage/cleanup", { confirm: true }),
-    onSuccess: (result) => {
-      setAvatarStorageSummary({ ...result, files: 0, bytes: 0 });
-      toast.success(
-        localizeUi("settings.storageOptimization.deleted", {
-          count: result.files,
-          size: formatStorageBytes(result.bytes),
-        }),
-      );
-    },
-    onError: (error) => {
-      toast.error(getPrivilegedActionErrorMessage(error, localizeUi("settings.storageOptimization.error")));
-    },
-  });
-  const nativeConsoleBridge = getMarinaraAndroidBridge();
-  const canOpenNativeConsole = typeof nativeConsoleBridge?.openConsole === "function";
-  const nativeConsoleHelp = getNativeConsoleShortcutHelp();
-
-  const handleOpenNativeConsole = useCallback(() => {
-    const bridge = getMarinaraAndroidBridge();
-    if (typeof bridge?.openConsole !== "function") {
-      toast.info(getNativeConsoleShortcutHelp());
-      return;
-    }
-
-    const token = getAndroidBridgeToken();
-    if (token) bridge.openConsole(token);
-    else bridge.openConsole();
-    toast.info(localizeUi("ui.panels.advancedsettings.openingTermuxConsole"));
-  }, [localizeUi]);
-
-  const handleExternalExtensionsToggle = useCallback(
-    async (enabled: boolean) => {
-      if (enabled) {
-        const confirmed = await showConfirmDialog({
-          title: t("settings.externalExtensions.confirm.title"),
-          message: t("settings.externalExtensions.warning"),
-          confirmLabel: t("settings.externalExtensions.confirm.action"),
-          cancelLabel: t("settings.externalExtensions.confirm.cancel"),
-          tone: "destructive",
-        });
-        if (!confirmed) return;
-      }
-      try {
-        await setExternalExtensionsEnabled.mutateAsync(enabled);
-        toast.success(enabled ? t("settings.externalExtensions.enabled") : t("settings.externalExtensions.disabled"));
-      } catch (toggleError) {
-        toast.error(getPrivilegedActionErrorMessage(toggleError, t("settings.externalExtensions.error")));
-      }
-    },
-    [setExternalExtensionsEnabled, t],
-  );
-
-  const handleAgentImportsToggle = useCallback(
-    async (enabled: boolean) => {
-      if (enabled) {
-        const confirmed = await showConfirmDialog({
-          title: t("settings.agentImports.confirm.title"),
-          message: t("settings.agentImports.warning"),
-          confirmLabel: t("settings.agentImports.confirm.action"),
-          cancelLabel: t("settings.agentImports.confirm.cancel"),
-          tone: "destructive",
-        });
-        if (!confirmed) return;
-      }
-      try {
-        await setAgentImportsEnabled.mutateAsync(enabled);
-        toast.success(enabled ? t("settings.agentImports.enabled") : t("settings.agentImports.disabled"));
-      } catch (toggleError) {
-        toast.error(getPrivilegedActionErrorMessage(toggleError, t("settings.agentImports.error")));
-      }
-    },
-    [setAgentImportsEnabled, t],
-  );
-
-  const handleDeleteAbandonedAvatars = useCallback(async () => {
-    if (!avatarStorageSummary || avatarStorageSummary.files < 1) return;
-    const confirmed = await showConfirmDialog({
-      title: localizeUi("settings.storageOptimization.confirm.title", {
-        count: avatarStorageSummary.files,
-      }),
-      message: localizeUi("settings.storageOptimization.confirm.message", {
-        count: avatarStorageSummary.files,
-        minutes: avatarStorageSummary.minimumAgeMinutes,
-        size: formatStorageBytes(avatarStorageSummary.bytes),
-      }),
-      confirmLabel: localizeUi("settings.storageOptimization.action.delete"),
-      cancelLabel: localizeUi("chat.delete.dialog.cancel"),
-      tone: "destructive",
-    });
-    if (confirmed) cleanAvatarStorage.mutate();
-  }, [avatarStorageSummary, cleanAvatarStorage, localizeUi]);
 
   type ProfileExportFormat = "native" | "compatible" | "zip";
   const profileExportFallbackNames: Record<ProfileExportFormat, string> = {
@@ -7112,22 +6861,6 @@ function AdvancedSettings() {
   const handleExportProfileChoice = (format: ExportFormatChoice) => {
     if (format === "compatible-png") return;
     void handleExportProfile(format);
-  };
-
-  const handleForceRefreshSpa = async () => {
-    if (refreshingSpa) {
-      return;
-    }
-
-    setRefreshingSpa(true);
-
-    try {
-      toast.info(localizeUi("ui.panels.advancedsettings.clearingCachesAndRefreshingApp"));
-      await forceRefreshSpa();
-    } catch (err) {
-      setRefreshingSpa(false);
-      toast.error(err instanceof Error ? err.message : localizeUi("ui.panels.advancedsettings.failedToRefreshTheApp"));
-    }
   };
 
   const qc = useQueryClient();
@@ -7216,6 +6949,454 @@ function AdvancedSettings() {
       frequency: patch.frequency ?? current.frequency,
       retentionCount: patch.retentionCount ?? current.retentionCount,
     });
+  };
+
+  const deleteBackupMutation = useMutation({
+    mutationFn: (name: string) => api.delete(`/backup/${name}`),
+    onSuccess: () => {
+      toast.success(localizeUi("ui.panels.advancedsettings.backupDeleted"));
+      qc.invalidateQueries({ queryKey: ["backups"] });
+    },
+  });
+
+  return (
+    <>
+      <ExportFormatDialog
+        open={exportProfileDialogOpen}
+        title={localizeUi("settings.transfer.exportProfile.title")}
+        description={localizeUi("settings.transfer.exportProfile.description")}
+        nativeDescription="Keeps Marinara fields, lorebook folders, character/persona metadata, presets, agents, themes, and inline assets for re-import."
+        compatibleDescription="Exports direct character JSON, simple persona JSON, and folderless lorebooks for other roleplay tools."
+        onClose={() => setExportProfileDialogOpen(false)}
+        onSelect={handleExportProfileChoice}
+      />
+
+      <SettingsSection
+        title={localizeUi("settings.sections.backupExport.title")}
+        description={localizeUi("settings.sections.backupExport.componentDescription")}
+        help={localizeUi("settings.transfer.fullBackup.help")}
+        icon={<Download size="0.875rem" />}
+        {...getSettingsSectionAnchorProps("backup-export")}
+      >
+        <div className="flex flex-col gap-2">
+          {automaticBackupQuery.data && (
+            <div className="rounded-lg border border-[var(--border)]/70 bg-[var(--secondary)]/35 p-2.5">
+              <ToggleSetting
+                anchorId={getSettingsControlAnchorId("automatic-backups")}
+                label={localizeUi("ui.panels.advancedsettings.automaticBackups")}
+                help={localizeUi("ui.panels.advancedsettings.automaticBackupsDescription")}
+                checked={automaticBackupQuery.data.enabled}
+                onChange={(enabled) => updateAutomaticBackup({ enabled })}
+                disabled={automaticBackupMutation.isPending}
+              />
+              <div className="mt-2 grid grid-cols-3 gap-1">
+                {(["daily", "weekly", "monthly"] as const).map((frequency) => (
+                  <button
+                    key={frequency}
+                    type="button"
+                    onClick={() => updateAutomaticBackup({ frequency })}
+                    disabled={automaticBackupMutation.isPending}
+                    aria-pressed={automaticBackupQuery.data.frequency === frequency}
+                    className={SETTINGS_BUTTON_CLASS}
+                  >
+                    {localizeUi(`ui.panels.advancedsettings.automaticBackupFrequency.${frequency}`)}
+                  </button>
+                ))}
+              </div>
+              <div
+                id={getSettingsControlAnchorId("automatic-backups-kept")}
+                className="mt-2 grid scroll-mt-3 gap-2 border-t border-[var(--border)]/60 pt-2 sm:grid-cols-[minmax(0,1fr)_5.5rem] sm:items-center"
+              >
+                <div className="min-w-0">
+                  <label
+                    htmlFor="automatic-backup-retention-count"
+                    className="text-[0.6875rem] font-medium text-[var(--foreground)]"
+                  >
+                    {localizeUi("ui.panels.advancedsettings.automaticBackupsKept")}
+                  </label>
+                  <p className="mt-0.5 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+                    {localizeUi("ui.panels.advancedsettings.automaticBackupsKeptDescription")}
+                  </p>
+                </div>
+                <DraftNumberInput
+                  id="automatic-backup-retention-count"
+                  value={automaticBackupQuery.data.retentionCount}
+                  min={1}
+                  max={9999}
+                  selectOnFocus
+                  disabled={automaticBackupMutation.isPending}
+                  onCommit={(retentionCount) => updateAutomaticBackup({ retentionCount })}
+                  ariaLabel={localizeUi("ui.panels.advancedsettings.automaticBackupsKeptAriaLabel")}
+                  className="mari-chrome-field h-9 w-full px-2 text-right text-xs tabular-nums"
+                />
+              </div>
+              <p className="mt-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+                {automaticBackupQuery.data.lastError
+                  ? localizeUi("ui.panels.advancedsettings.automaticBackupErrorValue1", {
+                      value1: automaticBackupQuery.data.lastError,
+                    })
+                  : automaticBackupQuery.data.lastBackupAt
+                    ? localizeUi("ui.panels.advancedsettings.lastAutomaticBackupValue1", {
+                        value1: new Date(automaticBackupQuery.data.lastBackupAt).toLocaleString(),
+                      })
+                    : automaticBackupQuery.data.enabled
+                      ? localizeUi("ui.panels.advancedsettings.automaticBackupWillBeCreatedShortly")
+                      : localizeUi("ui.panels.advancedsettings.automaticBackupsAreOff")}
+              </p>
+              <div className="mt-2 flex items-start gap-1.5 rounded-md bg-[var(--background)]/45 px-2 py-1.5 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]/60">
+                <FolderOpen size="0.75rem" className="mt-0.5 shrink-0 text-[var(--primary)]" aria-hidden="true" />
+                <p>{localizeUi("settings.transfer.automaticBackup.location")}</p>
+              </div>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={handleCreateBackup}
+            disabled={creatingBackup}
+            className={SETTINGS_PRIMARY_FULL_BUTTON_CLASS}
+          >
+            {creatingBackup ? (
+              <>
+                <Loader2 size="0.8125rem" className="animate-spin" />
+                {localizeUi("ui.panels.advancedsettings.creatingBackup")}
+              </>
+            ) : (
+              <>
+                <Download size="0.8125rem" />
+                {localizeUi("ui.panels.advancedsettings.downloadBackup")}
+              </>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setExportProfileDialogOpen(true)}
+            disabled={exportingProfile}
+            className={SETTINGS_PRIMARY_FULL_BUTTON_CLASS}
+          >
+            {exportingProfile ? (
+              <>
+                <Loader2 size="0.8125rem" className="animate-spin" />
+                {localizeUi("ui.panels.advancedsettings.exporting")}
+              </>
+            ) : (
+              <>
+                <Upload size="0.8125rem" />
+                {localizeUi("settings.transfer.exportProfile.title")}
+              </>
+            )}
+          </button>
+          {backups && backups.length > 0 && (
+            <div className="flex flex-col gap-1 mt-1">
+              <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                {localizeUi("ui.panels.advancedsettings.existingBackups")}
+              </span>
+              {backups.map((b) => (
+                <div
+                  key={b.name}
+                  className="flex items-center justify-between rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 ring-1 ring-[var(--border)]"
+                >
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-[0.6875rem] font-medium truncate">{b.name}</span>
+                    <span className="text-[0.5625rem] text-[var(--muted-foreground)]">
+                      {new Date(b.createdAt).toLocaleString()}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => deleteBackupMutation.mutate(b.name)}
+                    aria-label={localizeUi("settings.actions.deleteBackup")}
+                    title={localizeUi("settings.actions.deleteBackup")}
+                    className={cn(SETTINGS_ICON_BUTTON_CLASS, "mari-chrome-control--danger ml-2")}
+                  >
+                    <Trash2 size="0.75rem" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </SettingsSection>
+    </>
+  );
+}
+
+function StorageOptimizationSettings() {
+  const { t: localizeUi } = useUiTranslation();
+  type AvatarStorageSummary = { files: number; bytes: number; minimumAgeMinutes: number };
+  const [avatarStorageSummary, setAvatarStorageSummary] = useState<AvatarStorageSummary | null>(null);
+  const scanAvatarStorage = useMutation({
+    mutationFn: () => api.get<AvatarStorageSummary>("/admin/avatar-storage/abandoned"),
+    onSuccess: setAvatarStorageSummary,
+    onError: (error) => {
+      toast.error(getPrivilegedActionErrorMessage(error, localizeUi("settings.storageOptimization.error")));
+    },
+  });
+  const cleanAvatarStorage = useMutation({
+    mutationFn: () => api.post<AvatarStorageSummary>("/admin/avatar-storage/cleanup", { confirm: true }),
+    onSuccess: (result) => {
+      setAvatarStorageSummary({ ...result, files: 0, bytes: 0 });
+      toast.success(
+        localizeUi("settings.storageOptimization.deleted", {
+          count: result.files,
+          size: formatStorageBytes(result.bytes),
+        }),
+      );
+    },
+    onError: (error) => {
+      toast.error(getPrivilegedActionErrorMessage(error, localizeUi("settings.storageOptimization.error")));
+    },
+  });
+
+  const handleDeleteAbandonedAvatars = useCallback(async () => {
+    if (!avatarStorageSummary || avatarStorageSummary.files < 1) return;
+    const confirmed = await showConfirmDialog({
+      title: localizeUi("settings.storageOptimization.confirm.title", {
+        count: avatarStorageSummary.files,
+      }),
+      message: localizeUi("settings.storageOptimization.confirm.message", {
+        count: avatarStorageSummary.files,
+        minutes: avatarStorageSummary.minimumAgeMinutes,
+        size: formatStorageBytes(avatarStorageSummary.bytes),
+      }),
+      confirmLabel: localizeUi("settings.storageOptimization.action.delete"),
+      cancelLabel: localizeUi("chat.delete.dialog.cancel"),
+      tone: "destructive",
+    });
+    if (confirmed) cleanAvatarStorage.mutate();
+  }, [avatarStorageSummary, cleanAvatarStorage, localizeUi]);
+
+  return (
+    <SettingsSection
+      title={localizeUi("settings.sections.storageOptimization.title")}
+      description={localizeUi("settings.sections.storageOptimization.componentDescription")}
+      icon={<HardDrive size="0.875rem" />}
+      {...getSettingsSectionAnchorProps("storage-optimization")}
+    >
+      <SearchableSettingTarget controlId="avatar-storage-optimization" className="flex flex-col gap-2">
+        <p className="text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+          {localizeUi("settings.storageOptimization.description")}
+        </p>
+        <button
+          type="button"
+          onClick={() => scanAvatarStorage.mutate()}
+          disabled={scanAvatarStorage.isPending || cleanAvatarStorage.isPending}
+          className={SETTINGS_PRIMARY_FULL_BUTTON_CLASS}
+        >
+          {scanAvatarStorage.isPending ? (
+            <Loader2 size="0.8125rem" className="animate-spin" />
+          ) : (
+            <Search size="0.8125rem" />
+          )}
+          {scanAvatarStorage.isPending
+            ? localizeUi("settings.storageOptimization.scanning")
+            : localizeUi("settings.storageOptimization.action.check")}
+        </button>
+        {avatarStorageSummary && (
+          <div className="rounded-lg bg-[var(--background)]/55 p-2.5 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+            {avatarStorageSummary.files > 0
+              ? localizeUi("settings.storageOptimization.found", {
+                  count: avatarStorageSummary.files,
+                  minutes: avatarStorageSummary.minimumAgeMinutes,
+                  size: formatStorageBytes(avatarStorageSummary.bytes),
+                })
+              : localizeUi("settings.storageOptimization.clean")}
+          </div>
+        )}
+        {avatarStorageSummary && avatarStorageSummary.files > 0 && (
+          <button
+            type="button"
+            onClick={() => void handleDeleteAbandonedAvatars()}
+            disabled={cleanAvatarStorage.isPending || scanAvatarStorage.isPending}
+            className={cn(SETTINGS_PRIMARY_FULL_BUTTON_CLASS, "mari-chrome-control--danger")}
+          >
+            {cleanAvatarStorage.isPending ? (
+              <Loader2 size="0.8125rem" className="animate-spin" />
+            ) : (
+              <Trash2 size="0.8125rem" />
+            )}
+            {cleanAvatarStorage.isPending
+              ? localizeUi("settings.storageOptimization.deleting")
+              : localizeUi("settings.storageOptimization.action.delete")}
+          </button>
+        )}
+      </SearchableSettingTarget>
+    </SettingsSection>
+  );
+}
+
+/** Advanced › Extensions & imports: both code-import switches, then the extensions they govern. */
+function ExtensionsImportsSettings() {
+  const { t: localizeUi } = useUiTranslation();
+  const { t } = useTranslation();
+  const { data: extensionPolicy, isLoading: extensionPolicyLoading } = usePersonalExtensionPolicy();
+  const setExternalExtensionsEnabled = useSetExternalExtensionsEnabled();
+  const { data: agentImportPolicy, isLoading: agentImportPolicyLoading } = useAgentImportPolicy();
+  const setAgentImportsEnabled = useSetAgentImportsEnabled();
+
+  const handleExternalExtensionsToggle = useCallback(
+    async (enabled: boolean) => {
+      if (enabled) {
+        const confirmed = await showConfirmDialog({
+          title: t("settings.externalExtensions.confirm.title"),
+          message: t("settings.externalExtensions.warning"),
+          confirmLabel: t("settings.externalExtensions.confirm.action"),
+          cancelLabel: t("settings.externalExtensions.confirm.cancel"),
+          tone: "destructive",
+        });
+        if (!confirmed) return;
+      }
+      try {
+        await setExternalExtensionsEnabled.mutateAsync(enabled);
+        toast.success(enabled ? t("settings.externalExtensions.enabled") : t("settings.externalExtensions.disabled"));
+      } catch (toggleError) {
+        toast.error(getPrivilegedActionErrorMessage(toggleError, t("settings.externalExtensions.error")));
+      }
+    },
+    [setExternalExtensionsEnabled, t],
+  );
+
+  const handleAgentImportsToggle = useCallback(
+    async (enabled: boolean) => {
+      if (enabled) {
+        const confirmed = await showConfirmDialog({
+          title: t("settings.agentImports.confirm.title"),
+          message: t("settings.agentImports.warning"),
+          confirmLabel: t("settings.agentImports.confirm.action"),
+          cancelLabel: t("settings.agentImports.confirm.cancel"),
+          tone: "destructive",
+        });
+        if (!confirmed) return;
+      }
+      try {
+        await setAgentImportsEnabled.mutateAsync(enabled);
+        toast.success(enabled ? t("settings.agentImports.enabled") : t("settings.agentImports.disabled"));
+      } catch (toggleError) {
+        toast.error(getPrivilegedActionErrorMessage(toggleError, t("settings.agentImports.error")));
+      }
+    },
+    [setAgentImportsEnabled, t],
+  );
+
+  return (
+    <SettingsSection
+      title={localizeUi("settings.sections.extensionsImports.title")}
+      description={localizeUi("settings.sections.extensionsImports.description")}
+      icon={<Puzzle size="0.875rem" />}
+      {...getSettingsSectionAnchorProps("extensions-imports")}
+    >
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-2 rounded-lg border border-[var(--border)] bg-[var(--background)]/45 p-2.5">
+          <ToggleSetting
+            label={t("settings.agentImports.toggle.label")}
+            checked={agentImportPolicy?.enabled ?? false}
+            onChange={(enabled) => void handleAgentImportsToggle(enabled)}
+            disabled={agentImportPolicyLoading || setAgentImportsEnabled.isPending}
+            help={t("settings.agentImports.toggle.help")}
+          />
+          <div className="flex items-start gap-2 text-[0.6875rem] leading-relaxed text-[var(--primary)]">
+            <ShieldAlert size="0.875rem" className="mt-0.5 shrink-0" />
+            <p>{t("settings.agentImports.warning")}</p>
+          </div>
+          <div className="my-1 border-t border-[var(--border)]" />
+          <ToggleSetting
+            label={t("settings.externalExtensions.toggle.label")}
+            checked={extensionPolicy?.externalExtensionsEnabled ?? false}
+            onChange={(enabled) => void handleExternalExtensionsToggle(enabled)}
+            disabled={
+              extensionPolicyLoading ||
+              setExternalExtensionsEnabled.isPending ||
+              !extensionPolicy?.externalExtensionsEnvEnabled
+            }
+            help={
+              extensionPolicy?.externalExtensionsEnvEnabled
+                ? t("settings.externalExtensions.toggle.help")
+                : t("settings.externalExtensions.toggle.locked")
+            }
+          />
+          <div className="flex items-start gap-2 text-[0.6875rem] leading-relaxed text-[var(--primary)]">
+            <ShieldAlert size="0.875rem" className="mt-0.5 shrink-0" />
+            <p>{t("settings.externalExtensions.warning")}</p>
+          </div>
+        </div>
+        <ExtensionRevisionHistorySettings />
+        <PersonalExtensionsSettings />
+        {extensionPolicy?.externalExtensionsEnabled && <ExternalExtensionsSettings />}
+      </div>
+    </SettingsSection>
+  );
+}
+
+function AdvancedSettings() {
+  const { t: localizeUi } = useUiTranslation();
+  const activeChatId = useChatStore((state) => state.activeChatId);
+  const { data: activeChat, isLoading: isActiveChatLoading } = useChat(activeChatId);
+  const { data: rawConnections, isLoading: isConnectionsLoading } = useConnections();
+  const showTimestamps = useUIStore((s) => s.showTimestamps);
+  const setShowTimestamps = useUIStore((s) => s.setShowTimestamps);
+  const showModelName = useUIStore((s) => s.showModelName);
+  const setShowModelName = useUIStore((s) => s.setShowModelName);
+  const showTokenUsage = useUIStore((s) => s.showTokenUsage);
+  const setShowTokenUsage = useUIStore((s) => s.setShowTokenUsage);
+  const showContextUsage = useUIStore((s) => s.showContextUsage);
+  const setShowContextUsage = useUIStore((s) => s.setShowContextUsage);
+  const showMessageNumbers = useUIStore((s) => s.showMessageNumbers);
+  const setShowMessageNumbers = useUIStore((s) => s.setShowMessageNumbers);
+  const showHistoryTrimNotice = useUIStore((s) => s.showHistoryTrimNotice);
+  const setShowHistoryTrimNotice = useUIStore((s) => s.setShowHistoryTrimNotice);
+  const showCharactersInPersonaPickers = useUIStore((s) => s.showCharactersInPersonaPickers);
+  const setShowCharactersInPersonaPickers = useUIStore((s) => s.setShowCharactersInPersonaPickers);
+  const guideGenerations = useUIStore((s) => s.guideGenerations);
+  const setGuideGenerations = useUIStore((s) => s.setGuideGenerations);
+  const includeReasoningInExports = useUIStore((s) => s.includeReasoningInExports);
+  const setIncludeReasoningInExports = useUIStore((s) => s.setIncludeReasoningInExports);
+  const includePrivateNotesInExports = useUIStore((s) => s.includePrivateNotesInExports);
+  const setIncludePrivateNotesInExports = useUIStore((s) => s.setIncludePrivateNotesInExports);
+  const debugMode = useUIStore((s) => s.debugMode);
+  const setDebugMode = useUIStore((s) => s.setDebugMode);
+  const clearAllData = useClearAllData();
+  const expungeData = useExpungeData();
+  const [selectedScopes, setSelectedScopes] = useState<ExpungeScope[]>([]);
+  const [confirmAction, setConfirmAction] = useState<"selected" | "all" | null>(null);
+  const [refreshingSpa, setRefreshingSpa] = useState(false);
+  const [adminSecret, setAdminSecret] = useState(() => localStorage.getItem(ADMIN_SECRET_STORAGE_KEY) ?? "");
+  const restartServer = useMutation({
+    mutationFn: () => api.post<{ status: "restarting" }>("/admin/restart", { confirm: true }),
+    onSuccess: () => toast.success(localizeUi("settings.serverRestart.success")),
+    onError: (error) => {
+      toast.error(getPrivilegedActionErrorMessage(error, localizeUi("settings.serverRestart.error")));
+    },
+  });
+  const nativeConsoleBridge = getMarinaraAndroidBridge();
+  const canOpenNativeConsole = typeof nativeConsoleBridge?.openConsole === "function";
+  const nativeConsoleHelp = getNativeConsoleShortcutHelp();
+
+  const handleOpenNativeConsole = useCallback(() => {
+    const bridge = getMarinaraAndroidBridge();
+    if (typeof bridge?.openConsole !== "function") {
+      toast.info(getNativeConsoleShortcutHelp());
+      return;
+    }
+
+    const token = getAndroidBridgeToken();
+    if (token) bridge.openConsole(token);
+    else bridge.openConsole();
+    toast.info(localizeUi("ui.panels.advancedsettings.openingTermuxConsole"));
+  }, [localizeUi]);
+
+  const handleForceRefreshSpa = async () => {
+    if (refreshingSpa) {
+      return;
+    }
+
+    setRefreshingSpa(true);
+
+    try {
+      toast.info(localizeUi("ui.panels.advancedsettings.clearingCachesAndRefreshingApp"));
+      await forceRefreshSpa();
+    } catch (err) {
+      setRefreshingSpa(false);
+      toast.error(err instanceof Error ? err.message : localizeUi("ui.panels.advancedsettings.failedToRefreshTheApp"));
+    }
   };
 
   const health = useQuery<{
@@ -7327,14 +7508,6 @@ function AdvancedSettings() {
       toast.error(localizeUi("ui.panels.advancedsettings.supportDiagnosticsCopyFailed"));
     }
   }, [activeConnection, health.data, health.error, localizeUi, mariStatus.data, mariStatus.isError]);
-
-  const deleteBackupMutation = useMutation({
-    mutationFn: (name: string) => api.delete(`/backup/${name}`),
-    onSuccess: () => {
-      toast.success(localizeUi("ui.panels.advancedsettings.backupDeleted"));
-      qc.invalidateQueries({ queryKey: ["backups"] });
-    },
-  });
 
   const saveAdminSecret = useCallback(() => {
     const trimmed = adminSecret.trim();
@@ -7503,18 +7676,8 @@ function AdvancedSettings() {
 
   return (
     <div className="flex flex-col gap-3">
-      <ExportFormatDialog
-        open={exportProfileDialogOpen}
-        title={localizeUi("settings.transfer.exportProfile.title")}
-        description={localizeUi("settings.transfer.exportProfile.description")}
-        nativeDescription="Keeps Marinara fields, lorebook folders, character/persona metadata, presets, agents, themes, and inline assets for re-import."
-        compatibleDescription="Exports direct character JSON, simple persona JSON, and folderless lorebooks for other roleplay tools."
-        onClose={() => setExportProfileDialogOpen(false)}
-        onSelect={handleExportProfileChoice}
-      />
-
       <SettingsIntro>
-        {localizeUi("ui.panels.advancedsettings.serverMaintenanceMessageUtilitiesBackupsAndDataRemoval")}
+        {localizeUi("ui.panels.advancedsettings.serverMaintenanceMessageUtilitiesExtensionsAndDataRemoval")}
       </SettingsIntro>
       <MultiplayerSettings />
 
@@ -7950,207 +8113,7 @@ function AdvancedSettings() {
         </div>
       </SettingsSection>
 
-      <SettingsSection
-        title={localizeUi("settings.sections.backupExport.title")}
-        description={localizeUi("settings.sections.backupExport.componentDescription")}
-        help={localizeUi("settings.transfer.fullBackup.help")}
-        icon={<Download size="0.875rem" />}
-        {...getSettingsSectionAnchorProps("backup-export")}
-      >
-        <div className="flex flex-col gap-2">
-          {automaticBackupQuery.data && (
-            <div className="rounded-lg border border-[var(--border)]/70 bg-[var(--secondary)]/35 p-2.5">
-              <ToggleSetting
-                anchorId={getSettingsControlAnchorId("automatic-backups")}
-                label={localizeUi("ui.panels.advancedsettings.automaticBackups")}
-                help={localizeUi("ui.panels.advancedsettings.automaticBackupsDescription")}
-                checked={automaticBackupQuery.data.enabled}
-                onChange={(enabled) => updateAutomaticBackup({ enabled })}
-                disabled={automaticBackupMutation.isPending}
-              />
-              <div className="mt-2 grid grid-cols-3 gap-1">
-                {(["daily", "weekly", "monthly"] as const).map((frequency) => (
-                  <button
-                    key={frequency}
-                    type="button"
-                    onClick={() => updateAutomaticBackup({ frequency })}
-                    disabled={automaticBackupMutation.isPending}
-                    aria-pressed={automaticBackupQuery.data.frequency === frequency}
-                    className={SETTINGS_BUTTON_CLASS}
-                  >
-                    {localizeUi(`ui.panels.advancedsettings.automaticBackupFrequency.${frequency}`)}
-                  </button>
-                ))}
-              </div>
-              <div
-                id={getSettingsControlAnchorId("automatic-backups-kept")}
-                className="mt-2 grid scroll-mt-3 gap-2 border-t border-[var(--border)]/60 pt-2 sm:grid-cols-[minmax(0,1fr)_5.5rem] sm:items-center"
-              >
-                <div className="min-w-0">
-                  <label
-                    htmlFor="automatic-backup-retention-count"
-                    className="text-[0.6875rem] font-medium text-[var(--foreground)]"
-                  >
-                    {localizeUi("ui.panels.advancedsettings.automaticBackupsKept")}
-                  </label>
-                  <p className="mt-0.5 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-                    {localizeUi("ui.panels.advancedsettings.automaticBackupsKeptDescription")}
-                  </p>
-                </div>
-                <DraftNumberInput
-                  id="automatic-backup-retention-count"
-                  value={automaticBackupQuery.data.retentionCount}
-                  min={1}
-                  max={9999}
-                  selectOnFocus
-                  disabled={automaticBackupMutation.isPending}
-                  onCommit={(retentionCount) => updateAutomaticBackup({ retentionCount })}
-                  ariaLabel={localizeUi("ui.panels.advancedsettings.automaticBackupsKeptAriaLabel")}
-                  className="mari-chrome-field h-9 w-full px-2 text-right text-xs tabular-nums"
-                />
-              </div>
-              <p className="mt-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-                {automaticBackupQuery.data.lastError
-                  ? localizeUi("ui.panels.advancedsettings.automaticBackupErrorValue1", {
-                      value1: automaticBackupQuery.data.lastError,
-                    })
-                  : automaticBackupQuery.data.lastBackupAt
-                    ? localizeUi("ui.panels.advancedsettings.lastAutomaticBackupValue1", {
-                        value1: new Date(automaticBackupQuery.data.lastBackupAt).toLocaleString(),
-                      })
-                    : automaticBackupQuery.data.enabled
-                      ? localizeUi("ui.panels.advancedsettings.automaticBackupWillBeCreatedShortly")
-                      : localizeUi("ui.panels.advancedsettings.automaticBackupsAreOff")}
-              </p>
-              <div className="mt-2 flex items-start gap-1.5 rounded-md bg-[var(--background)]/45 px-2 py-1.5 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]/60">
-                <FolderOpen size="0.75rem" className="mt-0.5 shrink-0 text-[var(--primary)]" aria-hidden="true" />
-                <p>{localizeUi("settings.transfer.automaticBackup.location")}</p>
-              </div>
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={handleCreateBackup}
-            disabled={creatingBackup}
-            className={SETTINGS_PRIMARY_FULL_BUTTON_CLASS}
-          >
-            {creatingBackup ? (
-              <>
-                <Loader2 size="0.8125rem" className="animate-spin" />
-                {localizeUi("ui.panels.advancedsettings.creatingBackup")}
-              </>
-            ) : (
-              <>
-                <Download size="0.8125rem" />
-                {localizeUi("ui.panels.advancedsettings.downloadBackup")}
-              </>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => setExportProfileDialogOpen(true)}
-            disabled={exportingProfile}
-            className={SETTINGS_PRIMARY_FULL_BUTTON_CLASS}
-          >
-            {exportingProfile ? (
-              <>
-                <Loader2 size="0.8125rem" className="animate-spin" />
-                {localizeUi("ui.panels.advancedsettings.exporting")}
-              </>
-            ) : (
-              <>
-                <Upload size="0.8125rem" />
-                {localizeUi("settings.transfer.exportProfile.title")}
-              </>
-            )}
-          </button>
-          {backups && backups.length > 0 && (
-            <div className="flex flex-col gap-1 mt-1">
-              <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                {localizeUi("ui.panels.advancedsettings.existingBackups")}
-              </span>
-              {backups.map((b) => (
-                <div
-                  key={b.name}
-                  className="flex items-center justify-between rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 ring-1 ring-[var(--border)]"
-                >
-                  <div className="flex flex-col min-w-0">
-                    <span className="text-[0.6875rem] font-medium truncate">{b.name}</span>
-                    <span className="text-[0.5625rem] text-[var(--muted-foreground)]">
-                      {new Date(b.createdAt).toLocaleString()}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => deleteBackupMutation.mutate(b.name)}
-                    aria-label={localizeUi("settings.actions.deleteBackup")}
-                    title={localizeUi("settings.actions.deleteBackup")}
-                    className={cn(SETTINGS_ICON_BUTTON_CLASS, "mari-chrome-control--danger ml-2")}
-                  >
-                    <Trash2 size="0.75rem" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </SettingsSection>
-
-      <SettingsSection
-        title={localizeUi("settings.sections.storageOptimization.title")}
-        description={localizeUi("settings.sections.storageOptimization.componentDescription")}
-        icon={<HardDrive size="0.875rem" />}
-        {...getSettingsSectionAnchorProps("storage-optimization")}
-      >
-        <SearchableSettingTarget controlId="avatar-storage-optimization" className="flex flex-col gap-2">
-          <p className="text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-            {localizeUi("settings.storageOptimization.description")}
-          </p>
-          <button
-            type="button"
-            onClick={() => scanAvatarStorage.mutate()}
-            disabled={scanAvatarStorage.isPending || cleanAvatarStorage.isPending}
-            className={SETTINGS_PRIMARY_FULL_BUTTON_CLASS}
-          >
-            {scanAvatarStorage.isPending ? (
-              <Loader2 size="0.8125rem" className="animate-spin" />
-            ) : (
-              <Search size="0.8125rem" />
-            )}
-            {scanAvatarStorage.isPending
-              ? localizeUi("settings.storageOptimization.scanning")
-              : localizeUi("settings.storageOptimization.action.check")}
-          </button>
-          {avatarStorageSummary && (
-            <div className="rounded-lg bg-[var(--background)]/55 p-2.5 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-              {avatarStorageSummary.files > 0
-                ? localizeUi("settings.storageOptimization.found", {
-                    count: avatarStorageSummary.files,
-                    minutes: avatarStorageSummary.minimumAgeMinutes,
-                    size: formatStorageBytes(avatarStorageSummary.bytes),
-                  })
-                : localizeUi("settings.storageOptimization.clean")}
-            </div>
-          )}
-          {avatarStorageSummary && avatarStorageSummary.files > 0 && (
-            <button
-              type="button"
-              onClick={() => void handleDeleteAbandonedAvatars()}
-              disabled={cleanAvatarStorage.isPending || scanAvatarStorage.isPending}
-              className={cn(SETTINGS_PRIMARY_FULL_BUTTON_CLASS, "mari-chrome-control--danger")}
-            >
-              {cleanAvatarStorage.isPending ? (
-                <Loader2 size="0.8125rem" className="animate-spin" />
-              ) : (
-                <Trash2 size="0.8125rem" />
-              )}
-              {cleanAvatarStorage.isPending
-                ? localizeUi("settings.storageOptimization.deleting")
-                : localizeUi("settings.storageOptimization.action.delete")}
-            </button>
-          )}
-        </SearchableSettingTarget>
-      </SettingsSection>
+      <ExtensionsImportsSettings />
 
       <SettingsSection
         title={localizeUi("settings.sections.dangerZone.title")}
@@ -8255,39 +8218,6 @@ function AdvancedSettings() {
               </div>
             </div>
           )}
-          <div className="mt-2 flex flex-col gap-2 rounded-lg border border-[var(--border)] bg-[var(--background)]/45 p-2.5">
-            <ToggleSetting
-              label={t("settings.agentImports.toggle.label")}
-              checked={agentImportPolicy?.enabled ?? false}
-              onChange={(enabled) => void handleAgentImportsToggle(enabled)}
-              disabled={agentImportPolicyLoading || setAgentImportsEnabled.isPending}
-              help={t("settings.agentImports.toggle.help")}
-            />
-            <div className="flex items-start gap-2 text-[0.6875rem] leading-relaxed text-[var(--primary)]">
-              <ShieldAlert size="0.875rem" className="mt-0.5 shrink-0" />
-              <p>{t("settings.agentImports.warning")}</p>
-            </div>
-            <div className="my-1 border-t border-[var(--border)]" />
-            <ToggleSetting
-              label={t("settings.externalExtensions.toggle.label")}
-              checked={extensionPolicy?.externalExtensionsEnabled ?? false}
-              onChange={(enabled) => void handleExternalExtensionsToggle(enabled)}
-              disabled={
-                extensionPolicyLoading ||
-                setExternalExtensionsEnabled.isPending ||
-                !extensionPolicy?.externalExtensionsEnvEnabled
-              }
-              help={
-                extensionPolicy?.externalExtensionsEnvEnabled
-                  ? t("settings.externalExtensions.toggle.help")
-                  : t("settings.externalExtensions.toggle.locked")
-              }
-            />
-            <div className="flex items-start gap-2 text-[0.6875rem] leading-relaxed text-[var(--primary)]">
-              <ShieldAlert size="0.875rem" className="mt-0.5 shrink-0" />
-              <p>{t("settings.externalExtensions.warning")}</p>
-            </div>
-          </div>
         </div>
       </SettingsSection>
     </div>

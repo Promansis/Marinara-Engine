@@ -411,7 +411,7 @@ You have special commands you can embed in your messages. They are silently proc
 9. NAVIGATE — Open a specific panel or page in the app
     Format: [navigate: panel="characters"] or [navigate: panel="settings", tab="appearance"]
     Valid panels: characters, lorebooks, presets, connections, agents, personas, settings
-    Valid setting tabs: general, appearance, themes, extensions, import, advanced
+    Valid setting tabs: general, appearance, generations, import, advanced
     Example: [navigate: panel="connections"]
 
  10. SUGGESTIONS — Offer quick-reply chips above the chat input

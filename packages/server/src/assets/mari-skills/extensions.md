@@ -5,13 +5,13 @@ description: Read before drafting, editing or reviewing a personal extension.
 
 # Personal Extensions
 
-Purpose: build or repair a personal extension — code Marinara runs in a sandboxed browser worker or server sandbox. Every draft stays disabled until the user alone approves its exact code hash in Settings → Addons → Personal Extensions.
+Purpose: build or repair a personal extension — code Marinara runs in a sandboxed browser worker or server sandbox. Every draft stays disabled until the user alone approves its exact code hash in Settings → Advanced → Extensions & imports.
 
 Actions: reads `personal_extension.list|get|search`; writes `create|update`. No approve, enable, disable, delete, rollback or export action exists — an unknown sub-action returns `Unknown personal extension action "<name>".` and the valid ones: `list`, `get`, `search`, `create`, `update`.
 
 ## Write contract
 
-- **Only extensions you drafted can be edited.** `update` refuses a record whose `source` is not `professor_mari` with `personal_extension.update edits only extensions Professor Mari drafted; "<id>" is an External Extension. Nothing was changed. …`: do not retry it. External rows live under Settings → Addons → **External** Extensions; point the user there.
+- **Only extensions you drafted can be edited.** `update` refuses a record whose `source` is not `professor_mari` with `personal_extension.update edits only extensions Professor Mari drafted; "<id>" is an External Extension. Nothing was changed. …`: do not retry it. External rows live under **External** Extensions in Settings → Advanced → Extensions & imports; point the user there.
 - Creates apply unless `apply: false`; **updates need `apply: true`**: without `apply` they are refused, and `apply: false` is a preview that renders nothing to the user. Always send `apply: true`.
 - An update merges the fields you send (`textOrFallback`); it does not need the whole payload. Never send an elision marker back as code: after an elided `get`, request the real field first (`field: "js"`) and edit that. `description: null` is a Zod failure, not a clear.
 - `readBack` gives `status` (`"verified"`/`"mismatch"`/`"unavailable"`) and `checkedRows` — it proves the write, not the hash. On `mismatch` it carries the intended and persisted values.
@@ -54,7 +54,7 @@ Legal names: `read_active_characters`, `read_active_persona`, `full_page_access`
 - A code edit, `runtime` switch or capability change moves it: `enabled: "false"`, `approvedHash: null`, old executable into `revisions` (max 10). Removing the last capability counts; reordering or repeating one does not.
 - Capabilities normalize to canonical order, unknown names dropped: `["READ_ACTIVE_CHARACTERS"]` requests nothing and hashes differently than you meant.
 - Reads print within a 24 000-character budget, so large `js`/`css` arrives as `[elided N chars — read this field with app_data { field: "js" }]`; request it. `contentHash` is never elided.
-- Review surface: Settings → Addons → Personal Extensions; button "Review and run"; dialog "Run Personal Browser Code?", "Run Trusted Server Code?" or "Run Code With Full Page Access?"; confirm "Run Exact Code"; heading "Requested access".
+- Review surface: Settings → Advanced → Extensions & imports (Personal Extensions); button "Review and run"; dialog "Run Personal Browser Code?", "Run Trusted Server Code?" or "Run Code With Full Page Access?"; confirm "Run Exact Code"; heading "Requested access".
 
 ## Errors and fixes
 

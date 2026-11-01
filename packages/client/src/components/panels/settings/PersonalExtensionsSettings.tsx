@@ -71,7 +71,6 @@ import {
   SETTINGS_COMPACT_PRIMARY_BUTTON_CLASS,
   SETTINGS_ICON_BUTTON_CLASS,
   SETTINGS_PRIMARY_FULL_BUTTON_CLASS,
-  SettingsIntro,
   SettingsSection,
 } from "./SettingControls";
 
@@ -252,15 +251,15 @@ export function ExtensionRevisionHistorySettings() {
   );
 }
 
-export function PersonalExtensionsSettings({ showIntro = true }: { showIntro?: boolean }) {
-  return <ExtensionSettings showIntro={showIntro} mode="personal" />;
+export function PersonalExtensionsSettings() {
+  return <ExtensionSettings mode="personal" />;
 }
 
-export function ExternalExtensionsSettings({ showIntro = false }: { showIntro?: boolean }) {
-  return <ExtensionSettings showIntro={showIntro} mode="external" />;
+export function ExternalExtensionsSettings() {
+  return <ExtensionSettings mode="external" />;
 }
 
-function ExtensionSettings({ showIntro, mode }: { showIntro: boolean; mode: ExtensionSettingsMode }) {
+function ExtensionSettings({ mode }: { mode: ExtensionSettingsMode }) {
   const { t: localizeUi } = useUiTranslation();
   const { t } = useTranslation();
   const { data: allExtensions = [], isLoading, error } = usePersonalExtensions();
@@ -941,11 +940,6 @@ function ExtensionSettings({ showIntro, mode }: { showIntro: boolean; mode: Exte
 
   return (
     <div className="flex flex-col gap-3">
-      {showIntro && (
-        <SettingsIntro>
-          {isExternal ? t("settings.externalExtensions.intro") : t("settings.personalExtensions.empty.description")}
-        </SettingsIntro>
-      )}
       <SettingsSection
         title={
           isExternal ? t("settings.externalExtensions.title") : localizeUi("settings.sections.personalExtensions.title")

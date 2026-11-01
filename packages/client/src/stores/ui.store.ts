@@ -15,7 +15,9 @@ import {
   LOCAL_SIDECAR_CONNECTION_ID,
   normalizeImageStyleProfileSettings,
   normalizeQuoteFormat,
+  SETTINGS_TABS,
   type ImageStyleProfileSettings,
+  type SettingsTabId,
   type GenerateSpatialMapDraftResponse,
   type LorebookCategory,
   type QuoteFormat,
@@ -87,6 +89,17 @@ function normalizeConnectionPanelSort(value: unknown): ConnectionPanelSort {
   return CONNECTION_PANEL_SORT_OPTIONS.includes(value as ConnectionPanelSort)
     ? (value as ConnectionPanelSort)
     : "name-asc";
+}
+
+/**
+ * A Settings tab id the panel still has. Old ids (persisted state, Professor Mari's navigate action,
+ * links) open the tab their content moved to: Addons split into Appearance (themes) and Advanced
+ * (extensions). Anything else unknown opens General.
+ */
+export function normalizeSettingsTab(value: unknown): SettingsTabId {
+  if (value === "addons" || value === "themes") return "appearance";
+  if (value === "extensions") return "advanced";
+  return SETTINGS_TABS.find((tab) => tab.id === value)?.id ?? "general";
 }
 type FontSize = 12 | 14 | 16 | 17 | 19 | 22 | 26 | 30 | 34;
 export type VisualTheme = "default" | "sillytavern";
@@ -720,7 +733,7 @@ interface UIState {
   trackerTemperatureUnit: TrackerTemperatureUnit;
   trackerPanelCollapsedSections: TrackerPanelCollapsedSections;
   trackerPanelSectionOrder: TrackerPanelSectionOrder;
-  settingsTab: string;
+  settingsTab: SettingsTabId;
   /** Transient control id that the Settings panel should reveal and focus. */
   settingsTargetControlId: string | null;
   /** A settings section to scroll to, when the jump names a section rather than one control. */
@@ -1283,7 +1296,7 @@ interface UIState {
   openRightPanel: (panel: Panel) => void;
   closeRightPanel: () => void;
   toggleRightPanel: (panel: Panel) => void;
-  setSettingsTab: (tab: string) => void;
+  setSettingsTab: (tab: SettingsTabId) => void;
   setActiveEditorField: (field: { id: string; label: string } | null) => void;
   setMariFieldDraft: (draft: UIState["mariFieldDraft"]) => void;
   revealMariField: (entityId: string, path: string, options?: { scroll?: boolean }) => void;
@@ -2553,7 +2566,7 @@ export const useUIStore = create<UIState>()(
             };
           }),
 
-        setSettingsTab: (tab) => set({ settingsTab: tab }),
+        setSettingsTab: (tab) => set({ settingsTab: normalizeSettingsTab(tab) }),
         setActiveEditorField: (field) => set({ activeEditorField: field }),
         setMariFieldDraft: (draft) => set({ mariFieldDraft: draft }),
         revealMariField: (entityId, path, options) => set({ mariRevealField: { entityId, path, ...options } }),
@@ -4251,6 +4264,7 @@ export const useUIStore = create<UIState>()(
         return {
           ...currentState,
           ...persisted,
+          settingsTab: normalizeSettingsTab(persisted.settingsTab ?? currentState.settingsTab),
           mariWindowHeightRem: normalizeMariWindowHeightRem(persisted.mariWindowHeightRem),
           mariWindowWidthRem: normalizeMariWindowWidthRem(persisted.mariWindowWidthRem),
           mariCompanionDocked: persisted.mariCompanionDocked !== false,

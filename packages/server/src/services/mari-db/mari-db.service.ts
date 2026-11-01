@@ -5314,7 +5314,7 @@ export class MariDbService {
         // would move it past the External gates while it keeps running.
         if (existing.source !== "professor_mari")
           throw new Error(
-            `personal_extension.update edits only extensions Professor Mari drafted; "${id}" is an External Extension. Nothing was changed. Point the user to Settings → Addons → External Extensions to change it there.`,
+            `personal_extension.update edits only extensions Professor Mari drafted; "${id}" is an External Extension. Nothing was changed. Point the user to External Extensions in Settings → Advanced → Extensions & imports to change it there.`,
           );
         const data = actionDataWithTopLevel(
           args,
@@ -9023,7 +9023,7 @@ export class MariDbService {
         level: "error",
         table: "installed_extensions",
         message:
-          "Professor Mari cannot mutate Personal Extensions through raw DB actions. Use personal_extension.create or personal_extension.update; only the user can approve execution in Settings > Addons.",
+          "Professor Mari cannot mutate Personal Extensions through raw DB actions. Use personal_extension.create or personal_extension.update; only the user can approve execution in Settings > Advanced > Extensions & imports.",
       });
     }
     if (request.personalExtensionDraftMutation) {

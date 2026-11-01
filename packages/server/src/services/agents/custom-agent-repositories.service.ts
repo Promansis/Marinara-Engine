@@ -589,7 +589,7 @@ export function createCustomAgentRepositoriesService(db: DB) {
       }
     }
     // A definition removed upstream is detached from repository management, but
-    // keeps its external-import provenance so the Danger Zone gate still applies.
+    // keeps its external-import provenance so the Agent-imports gate still applies.
     // This honors the remote list without deleting the user's runs or memory.
     for (const agent of managed.values()) {
       await storage.update(agent.id, { settings: withoutSource(agent.settings) });
