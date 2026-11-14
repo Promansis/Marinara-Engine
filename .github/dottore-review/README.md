@@ -218,9 +218,10 @@ succeeds on the same head, `dottore-coderabbit-fallback.yml` sets **Dottore Revi
 Only a request posted after the failure, by someone GitHub shows as the organization's owner or member, counts;
 collaborators and outside contributors ask a maintainer. It replaces only a failure:
 a Dottore pass or a head Dottore never tried is left alone, and a new push needs a new review. A `/dottore` run still in
-progress posts its own result when it ends, replacing the fallback; if that is another failure, re-run the fallback's
-workflow run. CodeRabbit's inline findings are review threads, which the ruleset requires resolved, as it does
-Dottore's. GitHub runs this `check_run` workflow only from the default branch.
+progress posts its own result when it ends, replacing the fallback; if that is another failure, ask again with
+`@coderabbitai full review`, since only a request after the newest failure counts. CodeRabbit's inline findings are
+review threads, which the ruleset requires resolved, as it does Dottore's. GitHub runs this `check_run` workflow only
+from the default branch.
 
 ## Models
 
