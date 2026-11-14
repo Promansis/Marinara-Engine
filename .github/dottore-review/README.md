@@ -406,3 +406,5 @@ The calling repository also keeps:
 - its own `.github/dottore-review/rules.json`, read from its base branch;
 - its own model variables and secrets, the Dottore App installed there, and `contents: write` granted in the wrapper
   for the repair check.
+
+Fallback test line (throwaway PR; not for merge).
