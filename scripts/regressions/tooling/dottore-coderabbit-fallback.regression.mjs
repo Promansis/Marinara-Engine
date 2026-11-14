@@ -11,7 +11,7 @@ if (process.platform === "win32") {
 }
 
 const source = readFileSync(
-  new URL("../../.github/workflows/dottore-coderabbit-fallback.yml", import.meta.url),
+  new URL("../../../.github/workflows/dottore-coderabbit-fallback.yml", import.meta.url),
   "utf8",
 );
 assert.ok(
